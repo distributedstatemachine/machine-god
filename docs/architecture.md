@@ -40,10 +40,12 @@ Provider terminal establishment is the cancellation precedence boundary. A
 provider stop or failure retains its pending observer delivery and final reason
 even if cancellation races afterward; only cancellation established before that
 boundary may bypass observer backpressure.
-Provider-stream polling includes a post-poll cancellation observation before
-any returned item is interpreted. Cancellation observed there establishes the
-terminal outcome first; otherwise a returned stop, error, or EOF establishes
-provider precedence before its delivery is staged.
+Provider startup, stream, and observer delivery polls each include a post-poll
+cancellation observation before their result is interpreted. Cancellation
+observed there establishes the terminal outcome first while the turn remains
+preterminal; otherwise a returned stop, provider error, or EOF establishes
+provider precedence before its delivery is staged. The same observation cannot
+override an already-established provider terminal outcome.
 Cancellation treats wakers as user-controlled callback objects: cloning happens
 before locking, registry mutation only moves values, and superseded, removed, or
 drained wakers are dropped or invoked after unlocking.

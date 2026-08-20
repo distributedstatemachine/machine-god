@@ -527,6 +527,15 @@ impl Turn {
         });
     }
 
+    fn establish_cancellation_if_observed(&mut self) -> bool {
+        if self.cancellation.is_cancelled() && !self.terminal_seen {
+            self.establish_cancellation();
+            true
+        } else {
+            false
+        }
+    }
+
     fn cancel_pending_delivery(&mut self) -> Option<EngineEvent> {
         if !self.cancellation.is_cancelled() {
             return None;
@@ -577,7 +586,11 @@ impl Turn {
                 "event delivery state was lost".to_owned(),
             ))));
         };
-        match delivery.future.as_mut().poll(context) {
+        let result = delivery.future.as_mut().poll(context);
+        if let Some(event) = self.cancel_pending_delivery() {
+            return Poll::Ready(Some(Ok(event)));
+        }
+        match result {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => {
                 let Some(delivery) = self.delivery.take() else {
@@ -619,12 +632,10 @@ impl Stream for Turn {
                 return self.poll_delivery(context);
             }
 
-            if self.cancellation.is_cancelled()
-                && !self.terminal_seen
-                && !matches!(self.state, TurnState::EmitStarted(_))
-            {
-                self.establish_cancellation();
-            } else if !self.terminal_seen {
+            if !matches!(self.state, TurnState::EmitStarted(_)) {
+                self.establish_cancellation_if_observed();
+            }
+            if !self.terminal_seen {
                 let cancellation = self.cancellation.clone();
                 cancellation.register(&mut self.cancellation_waiter, context.waker());
             }
@@ -636,19 +647,22 @@ impl Stream for Turn {
                         TurnState::Starting(starting.take().expect("starting future is available"));
                     self.stage(TurnEvent::Started);
                 }
-                TurnState::Starting(mut starting) => match starting.as_mut().poll(context) {
-                    Poll::Pending => {
-                        self.state = TurnState::Starting(starting);
-                        return Poll::Pending;
+                TurnState::Starting(mut starting) => {
+                    let result = starting.as_mut().poll(context);
+                    if !self.establish_cancellation_if_observed() {
+                        match result {
+                            Poll::Pending => {
+                                self.state = TurnState::Starting(starting);
+                                return Poll::Pending;
+                            }
+                            Poll::Ready(Ok(stream)) => self.state = TurnState::Streaming(stream),
+                            Poll::Ready(Err(error)) => self.fail_provider(error),
+                        }
                     }
-                    Poll::Ready(Ok(stream)) => self.state = TurnState::Streaming(stream),
-                    Poll::Ready(Err(error)) => self.fail_provider(error),
-                },
+                }
                 TurnState::Streaming(mut stream) => {
                     let result = stream.as_mut().poll_next(context);
-                    if self.cancellation.is_cancelled() && !self.terminal_seen {
-                        self.establish_cancellation();
-                    } else {
+                    if !self.establish_cancellation_if_observed() {
                         match result {
                             Poll::Pending => {
                                 self.state = TurnState::Streaming(stream);

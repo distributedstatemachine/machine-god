@@ -1177,6 +1177,48 @@ impl Stream for BarrierPollStream {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum BarrierStartupOutcome {
+    Success,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+struct BarrierStartupProvider {
+    barrier: Arc<Barrier>,
+    outcome: BarrierStartupOutcome,
+}
+
+impl ModelProvider for BarrierStartupProvider {
+    fn name(&self) -> &'static str {
+        "barrier-startup"
+    }
+
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        let barrier = Arc::clone(&self.barrier);
+        let outcome = self.outcome;
+        Box::pin(async move {
+            barrier.wait();
+            barrier.wait();
+            match outcome {
+                BarrierStartupOutcome::Success => {
+                    Ok(Box::pin(futures_util::stream::pending()) as ModelEventStream)
+                }
+                BarrierStartupOutcome::Error => Err(ProviderError::new(
+                    ProviderErrorKind::Unavailable,
+                    "startup_race",
+                    "provider startup failed while cancellation raced",
+                    true,
+                )),
+            }
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 enum RetainedStream {
     Pending,
     Completed,
@@ -1291,6 +1333,61 @@ fn cancellation_observed_before_end_poll_result_wins() {
     assert_cancellation_during_provider_poll_wins(
         BarrierPollOutcome::End,
         "cancel-before-end-result",
+    );
+}
+
+fn assert_cancellation_during_provider_startup_wins(
+    outcome: BarrierStartupOutcome,
+    session_id: &str,
+) {
+    let barrier = Arc::new(Barrier::new(2));
+    let engine = Engine::builder()
+        .provider(BarrierStartupProvider {
+            barrier: Arc::clone(&barrier),
+            outcome,
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new(session_id).unwrap());
+    let mut turn = prompt(&session, "startup race");
+    let handle = turn.handle();
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+
+    let cancelling = std::thread::spawn(move || {
+        barrier.wait();
+        assert!(handle.cancel());
+        barrier.wait();
+    });
+    let completed = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    cancelling.join().unwrap();
+
+    assert!(matches!(
+        completed.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(futures_executor::block_on(turn.next()).is_none());
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn cancellation_observed_before_startup_error_wins() {
+    assert_cancellation_during_provider_startup_wins(
+        BarrierStartupOutcome::Error,
+        "cancel-before-startup-error",
+    );
+}
+
+#[test]
+fn cancellation_observed_before_startup_success_wins() {
+    assert_cancellation_during_provider_startup_wins(
+        BarrierStartupOutcome::Success,
+        "cancel-before-startup-success",
     );
 }
 
@@ -1489,6 +1586,90 @@ impl EventSink for PendingSink {
     fn emit(&self, _event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
         Box::pin(std::future::pending())
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BarrierDeliveryOutcome {
+    Success,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+struct BarrierDeliverySink {
+    barrier: Arc<Barrier>,
+    outcome: BarrierDeliveryOutcome,
+}
+
+impl EventSink for BarrierDeliverySink {
+    fn emit(&self, _event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
+        let barrier = Arc::clone(&self.barrier);
+        let outcome = self.outcome;
+        Box::pin(async move {
+            barrier.wait();
+            barrier.wait();
+            match outcome {
+                BarrierDeliveryOutcome::Success => Ok(()),
+                BarrierDeliveryOutcome::Error => Err(EventSinkError::new(
+                    "delivery_race",
+                    "observer failed while cancellation raced",
+                )),
+            }
+        })
+    }
+}
+
+fn assert_cancellation_during_nonterminal_delivery_wins(
+    outcome: BarrierDeliveryOutcome,
+    session_id: &str,
+) {
+    let barrier = Arc::new(Barrier::new(2));
+    let engine = Engine::builder()
+        .provider(PendingProvider)
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(BarrierDeliverySink {
+            barrier: Arc::clone(&barrier),
+            outcome,
+        })
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new(session_id).unwrap());
+    let mut turn = prompt(&session, "delivery race");
+    let handle = turn.handle();
+
+    let cancelling = std::thread::spawn(move || {
+        barrier.wait();
+        assert!(handle.cancel());
+        barrier.wait();
+    });
+    let completed = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    cancelling.join().unwrap();
+
+    assert!(matches!(
+        completed.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(futures_executor::block_on(turn.next()).is_none());
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn cancellation_observed_before_nonterminal_delivery_success_wins() {
+    assert_cancellation_during_nonterminal_delivery_wins(
+        BarrierDeliveryOutcome::Success,
+        "cancel-before-delivery-success",
+    );
+}
+
+#[test]
+fn cancellation_observed_before_nonterminal_delivery_error_wins() {
+    assert_cancellation_during_nonterminal_delivery_wins(
+        BarrierDeliveryOutcome::Error,
+        "cancel-before-delivery-error",
+    );
 }
 
 #[derive(Clone, Debug)]

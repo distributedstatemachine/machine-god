@@ -124,11 +124,13 @@ over observer backpressure: core drops a pending observer future and yields the
 terminal cancellation directly before releasing the session lease. Once a
 provider `Stop`, provider failure, or missing-stop failure is established, later
 cancellation cannot relabel or bypass its pending delivery or terminal result.
-Core rechecks cancellation immediately after every provider-stream poll and
-before interpreting its result: cancellation observed at that boundary wins
-over a simultaneously returned event, error, or end-of-stream. If cancellation
-is not observed there, a returned terminal outcome establishes provider
-precedence.
+Core rechecks cancellation immediately after provider startup, provider-stream,
+and observer-delivery polls and before interpreting their results. Before a
+provider terminal outcome exists, cancellation observed at one of those
+boundaries wins over a simultaneously returned startup error, stream event,
+stream error, EOF, observer success, or observer failure. If cancellation is not
+observed there, a returned provider terminal outcome establishes precedence;
+its later observer delivery remains protected from cancellation.
 An already-staged `Completed(Cancelled)` still bypasses observer delivery so an
 optional observer cannot make cancellation or shutdown wait forever.
 

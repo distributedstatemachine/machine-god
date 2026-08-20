@@ -157,3 +157,15 @@ provider poll and before matching or staging any result while no terminal is
 established. Barrier-controlled cross-thread regressions cover all three return
 forms and require `Completed(Cancelled)`; established-provider-terminal tests
 continue to prove that later cancellation cannot change the outcome.
+
+A follow-up review of `7f68cdd` found the same missing post-poll observation at
+provider startup and observer delivery. Cancellation completing inside a
+startup poll could lose to a returned startup error. Cancellation completing
+inside a nonterminal delivery poll could lose to either observer success or
+observer failure. Both paths now store the poll result, recheck cancellation,
+and only then interpret it. Startup and provider-stream paths share one
+preterminal observation helper; delivery reuses its terminal-aware cancellation
+path so established provider outcomes remain protected. Barrier-controlled
+regressions cover startup error and success plus nonterminal delivery success
+and error, while the existing pending provider-terminal delivery controls remain
+green.
