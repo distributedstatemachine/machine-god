@@ -51,4 +51,6 @@ records at the same revision. Intrinsic load validation precedes registry
 publication, preventing a concurrent handle from retaining invalid persisted
 state even when the originating load returns an error. Revision zero is an
 in-memory unsaved sentinel only; persisted loads and conflict reloads require a
-positive optimistic-concurrency revision.
+positive optimistic-concurrency revision. Missing conflict reloads may change
+persistence status only with an exact snapshot comparison under the session-state
+lock, while record revisions stay monotonic independently of that status flag.

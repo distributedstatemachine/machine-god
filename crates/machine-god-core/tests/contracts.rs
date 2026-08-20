@@ -706,6 +706,56 @@ struct ConflictReloadStore {
     loads: Arc<Mutex<VecDeque<SessionRecord>>>,
 }
 
+#[derive(Clone, Debug)]
+enum ScriptedLoad {
+    Ready(Option<SessionRecord>),
+    MissingWhen(Arc<AtomicBool>),
+}
+
+#[derive(Clone, Debug)]
+struct ScriptedConflictStore {
+    loads: Arc<Mutex<VecDeque<ScriptedLoad>>>,
+    expected_revisions: Arc<Mutex<Vec<Option<SessionRevision>>>>,
+}
+
+impl SessionStore for ScriptedConflictStore {
+    fn load(
+        &self,
+        _id: SessionId,
+    ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+        let load = self.loads.lock().unwrap().pop_front().unwrap();
+        match load {
+            ScriptedLoad::Ready(record) => Box::pin(async move { Ok(record) }),
+            ScriptedLoad::MissingWhen(ready) => Box::pin(std::future::poll_fn(move |_context| {
+                if ready.load(Ordering::Acquire) {
+                    Poll::Ready(Ok(None))
+                } else {
+                    Poll::Pending
+                }
+            })),
+        }
+    }
+
+    fn save(
+        &self,
+        _record: SessionRecord,
+        expected_revision: Option<SessionRevision>,
+    ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+        self.expected_revisions
+            .lock()
+            .unwrap()
+            .push(expected_revision);
+        Box::pin(async {
+            Err(SessionStoreError::new(
+                machine_god_core::SessionStoreErrorKind::Conflict,
+                "scripted_conflict",
+                "force scripted conflict reload",
+                true,
+            ))
+        })
+    }
+}
+
 impl SessionStore for ConflictReloadStore {
     fn load(
         &self,
@@ -755,6 +805,101 @@ fn engine_with_conflict_loads(records: Vec<SessionRecord>) -> Engine {
         .permission_handler(AllowOnce)
         .build()
         .unwrap()
+}
+
+#[test]
+fn missing_conflict_load_cannot_clear_a_newer_concurrent_revision() {
+    let id = SessionId::new("missing-conflict-concurrent-load").unwrap();
+    let missing_ready = Arc::new(AtomicBool::new(false));
+    let expected_revisions = Arc::new(Mutex::new(Vec::new()));
+    let current = stored_record(&id, 5, 6, "current");
+    let newer = stored_record(&id, 6, 7, "newer");
+    let stale = current.clone();
+    let store = ScriptedConflictStore {
+        loads: Arc::new(Mutex::new(
+            vec![
+                ScriptedLoad::Ready(Some(current)),
+                ScriptedLoad::MissingWhen(Arc::clone(&missing_ready)),
+                ScriptedLoad::Ready(Some(newer.clone())),
+                ScriptedLoad::Ready(Some(stale)),
+            ]
+            .into(),
+        )),
+        expected_revisions: Arc::clone(&expected_revisions),
+    };
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store)
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = futures_executor::block_on(engine.load_session(id.clone()))
+        .unwrap()
+        .unwrap();
+    let mut reserving = session.prompt("reserve");
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    assert!(matches!(
+        reserving.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    let concurrently_loaded = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(concurrently_loaded.record(), newer);
+
+    missing_ready.store(true, Ordering::Release);
+    assert!(matches!(
+        reserving.as_mut().poll(&mut context),
+        Poll::Ready(Err(EngineError::Protocol(message)))
+            if message.contains("stale revision")
+    ));
+    assert_eq!(
+        *expected_revisions.lock().unwrap(),
+        [Some(SessionRevision(5)), Some(SessionRevision(6))]
+    );
+    assert_eq!(session.record(), newer);
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn stale_reload_cannot_regress_a_positive_record_after_missing_conflict_load() {
+    let id = SessionId::new("missing-conflict-stale-reload").unwrap();
+    let expected_revisions = Arc::new(Mutex::new(Vec::new()));
+    let current = stored_record(&id, 5, 6, "current");
+    let stale = stored_record(&id, 4, 5, "stale");
+    let store = ScriptedConflictStore {
+        loads: Arc::new(Mutex::new(
+            vec![
+                ScriptedLoad::Ready(Some(current.clone())),
+                ScriptedLoad::Ready(None),
+                ScriptedLoad::Ready(Some(stale)),
+            ]
+            .into(),
+        )),
+        expected_revisions: Arc::clone(&expected_revisions),
+    };
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store)
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        futures_executor::block_on(session.prompt("reserve")),
+        Err(EngineError::Protocol(message)) if message.contains("stale revision")
+    ));
+    assert_eq!(
+        *expected_revisions.lock().unwrap(),
+        [Some(SessionRevision(5)), None]
+    );
+    assert_eq!(session.record(), current);
+    assert!(!session.has_active_turn());
 }
 
 #[test]

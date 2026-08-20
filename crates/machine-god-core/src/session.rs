@@ -141,7 +141,7 @@ impl SessionState {
                 record.id, data.record.id
             )));
         }
-        if !data.persisted || record.revision > data.record.revision {
+        if record.revision > data.record.revision {
             data.record = record;
             data.persisted = true;
         } else if record.revision < data.record.revision {
@@ -153,6 +153,8 @@ impl SessionState {
             return Err(EngineError::Protocol(
                 "session store returned different records at the same revision".to_owned(),
             ));
+        } else {
+            data.persisted = true;
         }
         Ok(())
     }
@@ -162,13 +164,15 @@ impl SessionState {
             .data
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !data.persisted || data.record.revision < record.revision {
+        if data.record.revision < record.revision {
             data.record.clone_from(record);
             data.persisted = true;
         } else if data.record.revision == record.revision && data.record != *record {
             return Err(EngineError::Protocol(
                 "successful save diverged from canonical record at the same revision".to_owned(),
             ));
+        } else if data.record.revision == record.revision {
+            data.persisted = true;
         }
         Ok(())
     }
@@ -287,7 +291,7 @@ impl Session {
         const MAX_CONFLICT_RETRIES: usize = 32;
 
         for _ in 0..MAX_CONFLICT_RETRIES {
-            let (mut candidate, expected_revision) = {
+            let (snapshot, expected_revision) = {
                 let data = self
                     .state
                     .data
@@ -298,6 +302,7 @@ impl Session {
                     data.persisted.then_some(data.record.revision),
                 )
             };
+            let mut candidate = snapshot.clone();
             let turn_sequence = candidate.next_turn_sequence;
             candidate.next_turn_sequence = turn_sequence.checked_add(1).ok_or_else(|| {
                 EngineError::Protocol("session turn sequence is exhausted".to_owned())
@@ -335,7 +340,10 @@ impl Session {
                                 "session identity changed during turn reservation".to_owned(),
                             ));
                         }
-                        data.persisted = false;
+                        if data.record == snapshot && data.persisted == expected_revision.is_some()
+                        {
+                            data.persisted = false;
+                        }
                         continue;
                     };
                     if current.id != id {

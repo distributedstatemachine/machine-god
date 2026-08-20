@@ -94,6 +94,12 @@ during reconciliation. Revision zero is reserved for an unsaved
 `SessionRecord::empty`; every record returned by a store must have a positive
 revision, including conflict reloads. The first successful save replaces the
 zero sentinel with a positive revision.
+If a conflict reload reports that the record is absent, core clears its
+persisted flag only when the canonical record and persistence status still match
+the exact snapshot used by the failed save. A concurrent newer load is therefore
+preserved, and the retry uses its positive revision. Revision comparisons remain
+monotonic even after a legitimate missing-record result; the persistence flag
+cannot make an older load or save eligible to replace newer canonical state.
 
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:

@@ -93,3 +93,14 @@ the out-of-band failure terminal, while already-terminal provider behavior is
 unchanged. A retained-provider regression accepts `Started`, rejects the first
 model event, and verifies the sink error, cancelled token, false stale-handle
 cancel result, exhausted turn stream, and released lease.
+
+A fresh review of `4789dc6` found that a conflict reload returning `None`
+unconditionally cleared the canonical persistence flag after an async gap. A
+concurrent `Engine::load_session` could install revision N+1 during that gap, only
+for the stale reservation to retry with `expected_revision=None` and make later
+reconciliation replaceable through the cleared flag. Reservation now retains its
+entire attempted snapshot and clears persistence only if both record and status
+still match under lock. Load and successful-save reconciliation compare revisions
+monotonically regardless of persistence status. Controlled tests cover a blocked
+missing reload followed by a concurrent N+1 load and `Some(N+1)` retry, plus a
+legitimate missing-record clear followed by a rejected stale reload.
