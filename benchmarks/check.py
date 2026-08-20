@@ -6,7 +6,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import shutil
 import statistics
+import subprocess
 from pathlib import Path
 
 
@@ -49,6 +52,8 @@ def main() -> int:
             raise SystemExit("schema 2 validation requires both actual binaries")
         if not args.expected_runner_class:
             raise SystemExit("schema 2 validation requires --expected-runner-class")
+        if not args.expected_git_sha:
+            raise SystemExit("schema 2 validation requires --expected-git-sha")
         try:
             from upstream import (
                 parse_upstream_lock,
@@ -58,19 +63,45 @@ def main() -> int:
 
             canonical_lock_path = Path(__file__).resolve().parent / "upstream.lock"
             canonical_lock = parse_upstream_lock(canonical_lock_path)
+            canonical_root = Path(__file__).resolve().parents[1]
+            git = shutil.which("git")
+            if git is None:
+                raise ValueError("git is required to bind the machine source tree")
+            git_environment = {
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_TERMINAL_PROMPT": "0",
+                "HOME": str(canonical_root),
+                "PATH": os.environ.get("PATH", ""),
+            }
+            expected_machine_tree = subprocess.check_output(
+                [
+                    git,
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "rev-parse",
+                    f"{args.expected_git_sha}^{{tree}}",
+                ],
+                cwd=canonical_root,
+                env=git_environment,
+                text=True,
+                timeout=10,
+            ).strip()
             validate_upstream_evidence(
                 data,
                 expected_lock=canonical_lock,
                 expected_lock_path=canonical_lock_path,
                 expected_lock_sha256=sha256_file(canonical_lock_path),
-                expected_root=Path(__file__).resolve().parents[1],
+                expected_root=canonical_root,
                 expected_runner_class=args.expected_runner_class,
+                expected_machine_tree=expected_machine_tree,
                 expected_binaries={
                     "fx": args.fx_binary,
                     "machine-god": args.machine_god_binary,
                 },
             )
-        except (OSError, ValueError) as error:
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
             raise SystemExit(str(error)) from error
         if (
             args.expected_git_sha

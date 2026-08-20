@@ -42,13 +42,21 @@ Source preparation disables system/global Git configuration, hooks, interactive
 authentication, and local or `ext` transports. Before cloning, the harness also
 checks tracked, untracked, and ignored machine-god files. Only `.bench`,
 `benchmarks/results`, and `target` are accepted as output directories; an
-untracked configuration or other possible build input fails the run. The exact
-release builds are:
+untracked configuration or other possible build input fails the run. It then
+archives the recorded machine-god commit by object ID into
+`scratch/machine-source`, records the Git tree, archive hash, and canonical
+materialized-tree hash, and builds and measures only from that fresh source.
+Changing the developer worktree after the snapshot therefore cannot change the
+build input. The source tree is hashed again after measurement and by the
+checker. The exact release builds are:
 
 ```sh
 (cd .bench/fx && zig build -Doptimize=ReleaseSafe)
-CARGO_TARGET_DIR=.bench/scratch/machine-target \
-  cargo +1.94.1 build --locked --release -p machine-god-cli
+(
+  cd .bench/scratch/machine-source
+  CARGO_TARGET_DIR=../machine-target \
+    cargo +1.94.1 build --locked --release -p machine-god-cli
+)
 ```
 
 Use `--zig /absolute/path/to/zig` when Zig 0.16.0 is not the default `zig` on the
@@ -57,9 +65,13 @@ without changing its classification. At least ten measured runs and one warmup
 are mandatory; the defaults are 30 and 5. Fetch/tool, build, and individual
 sample limits default to 300, 1200, and 10 seconds and can be changed with the
 corresponding `--fetch-timeout`, `--build-timeout`, and `--sample-timeout`
-options. A timeout terminates the complete process group. The final JSON is
-written atomically only after validation; failure removes the named evidence
-output rather than leaving a partial or stale artifact.
+options. A timeout closes captured pipes and uses bounded cleanup waits. Linux
+CI additionally records a per-run containment token inherited by descendants,
+discovers matching same-user processes through `/proc`, and stops and kills them
+even after `setsid` or a double fork; execution fails closed when `/proc`
+containment is unavailable or a successful command leaks a descendant. The
+final JSON is written atomically only after validation; failure removes the
+named evidence output rather than leaving a partial or stale artifact.
 
 The schema 2 artifact records both source revisions, the verified fx origin and
 commit and lock checksum, clone/fetch/checkout command records, CPU model, CI
@@ -71,6 +83,10 @@ SHA-256 digests so the artifact binds their output without embedding lengthy
 logs. Build and measurement processes receive only recorded allowlisted
 variables; ambient `RUSTFLAGS`, Cargo profile overrides, loader injection, user
 configuration, and shared Zig/Cargo build caches are not inherited.
+`CARGO_HOME` and `RUSTUP_HOME` used by the machine build must exactly match the
+verified tool environment. Home, temporary, Cargo cache, Cargo target, Zig
+caches, archive, and materialized source paths are all derived from and checked
+against the fresh scratch directory.
 
 The checker binds schema 2 evidence to the repository's canonical
 `benchmarks/upstream.lock`, the current machine-god SHA, both exact build

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -14,16 +15,20 @@ sys.path.insert(0, str(ROOT / "benchmarks"))
 
 from upstream import (  # noqa: E402
     ALLOWED_MACHINE_OUTPUTS,
+    CONTAINMENT_ENVIRONMENT_KEY,
     EXPECTED_RUST_VERSION,
     EXPECTED_ZIG_VERSION,
     ProcessTimeout,
     UpstreamLock,
     check_machine_cleanliness,
     command_plan,
+    machine_archive_command,
+    materialize_machine_source,
     parse_upstream_lock,
     prepare_upstream,
     run_process,
     sha256_file,
+    source_tree_sha256,
     unavailable_workloads,
     validate_upstream_evidence,
 )
@@ -142,14 +147,15 @@ class BenchmarkScriptsTest(unittest.TestCase):
 
 
 class UpstreamHarnessTest(unittest.TestCase):
-    def base_environment(self, root: Path) -> dict[str, str]:
+    def base_environment(self, scratch: Path) -> dict[str, str]:
         return {
-            "HOME": str(root / ".bench/scratch/home"),
+            "HOME": str(scratch / "home"),
             "LANG": "C",
             "LC_ALL": "C",
+            CONTAINMENT_ENVIRONMENT_KEY: "a" * 32,
             "NO_COLOR": "1",
             "PATH": "/usr/bin:/bin",
-            "TMPDIR": str(root / ".bench/scratch/tmp"),
+            "TMPDIR": str(scratch / "tmp"),
         }
 
     def command_record(
@@ -176,6 +182,8 @@ class UpstreamHarnessTest(unittest.TestCase):
         *,
         fx_root: Path | None = None,
         scratch: Path | None = None,
+        machine_sha: str = "3" * 40,
+        git_tree: str = "5" * 40,
     ) -> dict[str, object]:
         lock_path = ROOT / "benchmarks/upstream.lock"
         lock = parse_upstream_lock(lock_path)
@@ -183,11 +191,14 @@ class UpstreamHarnessTest(unittest.TestCase):
         scratch = scratch or root / ".bench/scratch"
         fx_binary = fx_root / "zig-out/bin/fx"
         machine_binary = scratch / "machine-target/release/machine-god"
-        base = self.base_environment(root)
+        machine_source = scratch / "machine-source"
+        machine_archive = scratch / "machine-source.tar"
+        base = self.base_environment(scratch)
         git_environment = {
             **base,
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
             "GIT_TERMINAL_PROMPT": "0",
         }
         fx_environment = {
@@ -244,6 +255,22 @@ class UpstreamHarnessTest(unittest.TestCase):
             self.command_record(plan[name], git_environment, 5.0, root)
             for name in ("clone", "fetch", "checkout")
         ]
+        materialization = {
+            "method": "git-archive",
+            "source_dir": str(machine_source),
+            "archive_path": str(machine_archive),
+            "archive_sha256": "4" * 64,
+            "git_tree": git_tree,
+            "source_tree_sha256": "6" * 64,
+            "command": self.command_record(
+                machine_archive_command(
+                    tools["git"]["executable"], machine_sha, machine_archive
+                ),
+                git_environment,
+                5.0,
+                root,
+            ),
+        }
         samples = [{"elapsed_ns": value, "returncode": 0} for value in range(1, 11)]
         fx_build = self.command_record(plan["fx_build"], fx_environment, 10.0, fx_root)
         fx_build.update(
@@ -258,7 +285,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             }
         )
         machine_build = self.command_record(
-            plan["machine_god_build"], machine_environment, 10.0, root
+            plan["machine_god_build"], machine_environment, 10.0, machine_source
         )
         machine_build.update(
             {
@@ -281,7 +308,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "project": project,
                     "status": "measured",
                     "command": [str(binary)],
-                    "cwd": str(root),
+                    "cwd": str(machine_source),
                     "environment": environment,
                     "timeout_seconds": 1.0,
                     "warmup": 1,
@@ -299,9 +326,11 @@ class UpstreamHarnessTest(unittest.TestCase):
             "timeouts_seconds": {"fetch": 5.0, "build": 10.0, "sample": 1.0},
             "source": {
                 "machine_god": {
-                    "git_sha": "3" * 40,
+                    "git_sha": machine_sha,
                     "dirty": False,
+                    "repository_root": str(root),
                     "allowed_output_directories": list(ALLOWED_MACHINE_OUTPUTS),
+                    "materialization": materialization,
                 },
                 "fx": {
                     "repository": lock.repository,
@@ -489,6 +518,34 @@ class UpstreamHarnessTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_upstream_evidence(evidence)
 
+    def test_rejects_substituted_toolchain_and_scratch_cache_paths(self) -> None:
+        mutations = (
+            lambda data: data["builds"][1]["environment"].__setitem__(
+                "CARGO_HOME", "/attacker/cargo"
+            ),
+            lambda data: data["builds"][1]["environment"].__setitem__(
+                "RUSTUP_HOME", "/attacker/rustup"
+            ),
+            lambda data: data["builds"][1]["environment"].__setitem__(
+                "CARGO_TARGET_DIR", "/attacker/target"
+            ),
+            lambda data: data["builds"][0]["environment"].__setitem__(
+                "ZIG_GLOBAL_CACHE_DIR", "/attacker/zig"
+            ),
+            lambda data: data["tool_environment"].__setitem__(
+                "CARGO_HOME", "/attacker/cargo"
+            ),
+            lambda data: data["source"]["machine_god"]["materialization"].__setitem__(
+                "source_dir", "/attacker/source"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
     def test_rejects_aggregate_not_derived_from_raw_samples(self) -> None:
         evidence = self.valid_upstream_evidence()
         evidence["workloads"][0]["implementations"][0]["p95_ns"] = 9
@@ -499,10 +556,18 @@ class UpstreamHarnessTest(unittest.TestCase):
         (ROOT / ".bench").mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT / ".bench") as directory:
             temporary = Path(directory)
+            machine_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip()
+            git_tree = subprocess.check_output(
+                ["git", "rev-parse", f"{machine_sha}^{{tree}}"], cwd=ROOT, text=True
+            ).strip()
             evidence = self.valid_upstream_evidence(
                 ROOT,
                 fx_root=temporary / "fx",
                 scratch=temporary / "scratch",
+                machine_sha=machine_sha,
+                git_tree=git_tree,
             )
             fx_binary = temporary / "fx/zig-out/bin/fx"
             machine_binary = temporary / "scratch/machine-target/release/machine-god"
@@ -515,6 +580,14 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "bytes": binary.stat().st_size,
                     "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 }
+            machine_source = temporary / "scratch/machine-source"
+            machine_source.mkdir(parents=True)
+            (machine_source / "source.txt").write_text("source", encoding="utf-8")
+            archive = temporary / "scratch/machine-source.tar"
+            archive.write_bytes(b"archive")
+            materialization = evidence["source"]["machine_god"]["materialization"]
+            materialization["source_tree_sha256"] = source_tree_sha256(machine_source)
+            materialization["archive_sha256"] = sha256_file(archive)
             evidence_path = temporary / "upstream.json"
             evidence_path.write_text(
                 json.dumps(evidence), encoding="utf-8"
@@ -524,7 +597,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                 str(ROOT / "benchmarks/check.py"),
                 str(evidence_path),
                 "--expected-git-sha",
-                "3" * 40,
+                machine_sha,
                 "--expected-runner-class",
                 "test-runner-x86_64",
                 "--fx-binary",
@@ -542,6 +615,69 @@ class UpstreamHarnessTest(unittest.TestCase):
             )
         self.assertNotEqual(tampered.returncode, 0)
 
+    def test_materialized_commit_isolated_from_worktree_mutation_during_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "test@example.test"],
+                check=True,
+            )
+            source_input = root / "input.txt"
+            source_input.write_text("recorded", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "input.txt"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "source"], check=True)
+            commit = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            scratch = root / ".bench"
+            scratch.mkdir()
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "d" * 32
+            environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+            environment["GIT_CONFIG_NOSYSTEM"] = "1"
+            environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+            environment["GIT_TERMINAL_PROMPT"] = "0"
+            materialization = materialize_machine_source(
+                root,
+                scratch / "machine-source",
+                scratch / "machine-source.tar",
+                commit,
+                "git",
+                environment=environment,
+                timeout_seconds=2.0,
+            )
+            mutator = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import pathlib,time; time.sleep(0.05); "
+                    f"pathlib.Path({str(source_input)!r}).write_text('hostile')",
+                ]
+            )
+            completed = run_process(
+                [
+                    sys.executable,
+                    "-c",
+                    "import pathlib,time; time.sleep(0.2); "
+                    "print(pathlib.Path('input.txt').read_text())",
+                ],
+                cwd=scratch / "machine-source",
+                environment=environment,
+                timeout_seconds=2.0,
+            )
+            mutator.wait(timeout=2)
+            self.assertEqual(completed.stdout.decode().strip(), "recorded")
+            self.assertEqual(
+                source_tree_sha256(scratch / "machine-source"),
+                materialization["source_tree_sha256"],
+            )
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "detached descendant containment is enforced by Linux /proc",
+    )
     def test_process_timeout_terminates_child_group(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "child-finished"
@@ -551,17 +687,50 @@ class UpstreamHarnessTest(unittest.TestCase):
             )
             parent = (
                 "import subprocess,sys,time; "
-                f"subprocess.Popen([sys.executable,'-c',{child!r}]); time.sleep(5)"
+                f"subprocess.Popen([sys.executable,'-c',{child!r}],start_new_session=True); "
+                "time.sleep(5)"
             )
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "b" * 32
             with self.assertRaises(ProcessTimeout):
                 run_process(
                     [sys.executable, "-c", parent],
                     cwd=Path(directory),
-                    environment=os.environ,
+                    environment=environment,
                     timeout_seconds=0.1,
                 )
             time.sleep(0.5)
             self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(os.name == "posix", "setsid regression requires POSIX")
+    def test_timeout_cleanup_is_bounded_when_detached_child_holds_pipe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pid_path = Path(directory) / "detached.pid"
+            child = (
+                "import os,pathlib,time; "
+                f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid())); time.sleep(5)"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable,'-c',{child!r}],start_new_session=True); "
+                "time.sleep(5)"
+            )
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "e" * 32
+            started = time.monotonic()
+            with self.assertRaises(ProcessTimeout):
+                run_process(
+                    [sys.executable, "-c", parent],
+                    cwd=Path(directory),
+                    environment=environment,
+                    timeout_seconds=0.3,
+                )
+            self.assertLess(time.monotonic() - started, 3.0)
+            if pid_path.exists():
+                try:
+                    os.kill(int(pid_path.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     def test_fresh_upstream_rejects_preexisting_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -598,6 +767,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             (root / "target").mkdir()
             (root / "target/output").write_text("ok", encoding="utf-8")
             environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "c" * 32
             check_machine_cleanliness(root, "git", environment, 2.0)
             (root / ".cargo").mkdir()
             (root / ".cargo/config.toml").write_text(

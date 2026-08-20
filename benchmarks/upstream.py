@@ -14,11 +14,13 @@ import math
 import os
 import platform
 import re
+import secrets
 import shutil
 import signal
 import statistics
 import subprocess
 import sys
+import tarfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,11 +31,21 @@ from typing import Any, Mapping, Sequence
 EXPECTED_RUST_VERSION = "1.94.1"
 EXPECTED_ZIG_VERSION = "0.16.0"
 HEX_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CONTAINMENT_ENVIRONMENT_KEY = "MACHINE_GOD_BENCHMARK_RUN_TOKEN"
 ALLOWED_MACHINE_OUTPUTS = (".bench", "benchmarks/results", "target")
-BASE_ENVIRONMENT_KEYS = {"HOME", "LANG", "LC_ALL", "NO_COLOR", "PATH", "TMPDIR"}
+BASE_ENVIRONMENT_KEYS = {
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    CONTAINMENT_ENVIRONMENT_KEY,
+    "NO_COLOR",
+    "PATH",
+    "TMPDIR",
+}
 GIT_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
+    "GIT_NO_REPLACE_OBJECTS",
     "GIT_TERMINAL_PROMPT",
 }
 FX_BUILD_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {
@@ -124,6 +136,8 @@ def git_prefix(git: str) -> list[str]:
         "protocol.file.allow=never",
         "-c",
         "protocol.ext.allow=never",
+        "-c",
+        "core.attributesFile=/dev/null",
     ]
 
 
@@ -237,6 +251,9 @@ def require_environment(
             raise ValueError(f"{field} contains unsafe ambient override {name}")
     if value["LANG"] != "C" or value["LC_ALL"] != "C" or value["NO_COLOR"] != "1":
         raise ValueError(f"{field} must pin locale and color behavior")
+    token = value[CONTAINMENT_ENVIRONMENT_KEY]
+    if len(token) != 32 or any(character not in "0123456789abcdef" for character in token):
+        raise ValueError(f"{field} has an invalid process-containment token")
     return value
 
 
@@ -354,6 +371,7 @@ def validate_upstream_evidence(
     expected_lock_sha256: str | None = None,
     expected_root: Path | None = None,
     expected_runner_class: str | None = None,
+    expected_machine_tree: str | None = None,
     expected_binaries: Mapping[str, Path] | None = None,
 ) -> None:
     """Validate provenance and forbid bootstrap evidence from claiming equivalence."""
@@ -484,6 +502,75 @@ def validate_upstream_evidence(
     }:
         raise ValueError("environment_policy must forbid ambient inheritance")
 
+    repository_root = Path(
+        require_text(machine_source.get("repository_root"), "source.machine_god.repository_root")
+    ).resolve()
+    if expected_root is not None and repository_root != expected_root.resolve():
+        raise ValueError("machine-god repository root is not canonical")
+    materialization = machine_source.get("materialization")
+    if not isinstance(materialization, dict) or materialization.get("method") != "git-archive":
+        raise ValueError("machine-god source must use git-archive materialization")
+    source_dir = Path(
+        require_text(
+            materialization.get("source_dir"),
+            "source.machine_god.materialization.source_dir",
+        )
+    ).resolve()
+    archive_path = Path(
+        require_text(
+            materialization.get("archive_path"),
+            "source.machine_god.materialization.archive_path",
+        )
+    ).resolve()
+    scratch_dir = source_dir.parent
+    if source_dir != scratch_dir / "machine-source":
+        raise ValueError("machine source path is not derived from the scratch directory")
+    if archive_path != scratch_dir / "machine-source.tar":
+        raise ValueError("machine source archive path is not derived from scratch")
+    for field in ("archive_sha256", "source_tree_sha256"):
+        checksum = require_text(
+            materialization.get(field), f"source.machine_god.materialization.{field}"
+        )
+        if len(checksum) != 64 or any(
+            character not in "0123456789abcdef" for character in checksum
+        ):
+            raise ValueError(f"source.machine_god.materialization.{field} is not SHA-256")
+    git_tree = require_text(
+        materialization.get("git_tree"), "source.machine_god.materialization.git_tree"
+    )
+    if not HEX_SHA_RE.fullmatch(git_tree):
+        raise ValueError("source.machine_god.materialization.git_tree is not a Git tree SHA")
+    if expected_machine_tree is not None and git_tree != expected_machine_tree:
+        raise ValueError("materialized machine source tree does not match recorded commit")
+    if Path(tool_environment["HOME"]).resolve() != scratch_dir / "home":
+        raise ValueError("tool HOME is not derived from the scratch directory")
+    if Path(tool_environment["TMPDIR"]).resolve() != scratch_dir / "tmp":
+        raise ValueError("tool TMPDIR is not derived from the scratch directory")
+    if Path(tool_environment["CARGO_HOME"]).resolve() != scratch_dir / "cargo-home":
+        raise ValueError("tool CARGO_HOME is not the isolated scratch cache")
+    materialization_command = validate_command_record(
+        materialization.get("command"),
+        "source.machine_god.materialization.command",
+        expected_command=machine_archive_command(
+            tools["git"]["executable"], machine_sha, archive_path
+        ),
+        expected_environment_keys=GIT_ENVIRONMENT_KEYS,
+        expected_timeout=timeouts["fetch"],
+    )
+    if Path(materialization_command["cwd"]).resolve() != repository_root:
+        raise ValueError("machine source archive command did not run from repository root")
+    materialization_environment = materialization_command["environment"]
+    if (
+        materialization_environment["GIT_CONFIG_GLOBAL"] != "/dev/null"
+        or materialization_environment["GIT_CONFIG_NOSYSTEM"] != "1"
+        or materialization_environment["GIT_NO_REPLACE_OBJECTS"] != "1"
+        or materialization_environment["GIT_TERMINAL_PROMPT"] != "0"
+    ):
+        raise ValueError("machine source archive Git environment is not isolated")
+    for key in BASE_ENVIRONMENT_KEYS:
+        if materialization_environment[key] != tool_environment[key]:
+            raise ValueError(f"machine source materialization changes canonical {key}")
+
     builds = data.get("builds")
     if not isinstance(builds, list) or len(builds) != 2:
         raise ValueError("exactly two build records are required")
@@ -497,8 +584,8 @@ def validate_upstream_evidence(
         raise ValueError("fx build profile must be ReleaseSafe")
     if machine_build.get("profile") != "release":
         raise ValueError("machine-god build profile must be release")
-    if expected_root is not None and Path(machine_build["cwd"]).resolve() != expected_root.resolve():
-        raise ValueError("machine-god build cwd is not the canonical repository root")
+    if Path(machine_build["cwd"]).resolve() != source_dir:
+        raise ValueError("machine-god build did not use the materialized source tree")
     fx_command = [tools["zig"]["executable"], "build", "-Doptimize=ReleaseSafe"]
     machine_command = [
         tools["cargo"]["executable"],
@@ -530,6 +617,18 @@ def validate_upstream_evidence(
             raise ValueError(f"machine-god build environment changes canonical {key}")
     if machine_build["environment"]["CARGO_INCREMENTAL"] != "0":
         raise ValueError("machine-god release build must disable incremental compilation")
+    if machine_build["environment"]["CARGO_HOME"] != tool_environment["CARGO_HOME"]:
+        raise ValueError("machine-god build CARGO_HOME differs from the verified tool environment")
+    if machine_build["environment"]["RUSTUP_HOME"] != tool_environment["RUSTUP_HOME"]:
+        raise ValueError("machine-god build RUSTUP_HOME differs from the verified tool environment")
+    if Path(machine_build["environment"]["CARGO_TARGET_DIR"]).resolve() != (
+        scratch_dir / "machine-target"
+    ):
+        raise ValueError("machine-god target path is not derived from scratch")
+    if Path(fx_build["environment"]["ZIG_GLOBAL_CACHE_DIR"]).resolve() != (
+        scratch_dir / "zig-global-cache"
+    ):
+        raise ValueError("fx global cache path is not derived from scratch")
     if Path(fx_build["environment"]["ZIG_LOCAL_CACHE_DIR"]).resolve() != (
         Path(fx_build["cwd"]) / ".zig-cache"
     ).resolve():
@@ -550,7 +649,7 @@ def validate_upstream_evidence(
     if not isinstance(preparation, list) or len(preparation) != 3:
         raise ValueError("fresh fx preparation must retain clone, fetch, and checkout")
     plan = command_plan(
-        Path(machine_build["cwd"]),
+        repository_root,
         Path(fx_build["cwd"]),
         UpstreamLock(repository, locked_commit, EXPECTED_ZIG_VERSION),
         git=tools["git"]["executable"],
@@ -569,14 +668,15 @@ def validate_upstream_evidence(
         if (
             environment["GIT_CONFIG_GLOBAL"] != "/dev/null"
             or environment["GIT_CONFIG_NOSYSTEM"] != "1"
+            or environment["GIT_NO_REPLACE_OBJECTS"] != "1"
             or environment["GIT_TERMINAL_PROMPT"] != "0"
         ):
             raise ValueError("source preparation Git environment is not isolated")
         for key in BASE_ENVIRONMENT_KEYS:
             if environment[key] != tool_environment[key]:
                 raise ValueError(f"source preparation changes canonical {key}")
-    if any(record["cwd"] != machine_build["cwd"] for record in preparation):
-        raise ValueError("source preparation commands must run from machine-god root")
+    if any(Path(record["cwd"]).resolve() != repository_root for record in preparation):
+        raise ValueError("source preparation commands must run from machine-god repository root")
 
     workloads = data.get("workloads")
     if not isinstance(workloads, list) or len(workloads) != 6:
@@ -630,8 +730,11 @@ def validate_upstream_evidence(
         for key in BASE_ENVIRONMENT_KEYS:
             if measurement["environment"][key] != tool_environment[key]:
                 raise ValueError(f"bootstrap measurement changes canonical {key}")
-    if fx_measurement["cwd"] != machine_build["cwd"] or machine_measurement["cwd"] != machine_build["cwd"]:
-        raise ValueError("bootstrap measurements must run from machine-god root")
+    if (
+        Path(fx_measurement["cwd"]).resolve() != source_dir
+        or Path(machine_measurement["cwd"]).resolve() != source_dir
+    ):
+        raise ValueError("bootstrap measurements must run from materialized machine-god source")
 
     local_commands = {
         "help": [fx_binary["path"], "help"],
@@ -676,26 +779,94 @@ def validate_upstream_evidence(
             expected_binaries["machine-god"],
             "builds[1].binary",
         )
+        if not archive_path.is_file() or sha256_file(archive_path) != materialization["archive_sha256"]:
+            raise ValueError("materialized machine source archive does not match evidence")
+        if not source_dir.is_dir() or source_tree_sha256(source_dir) != materialization["source_tree_sha256"]:
+            raise ValueError("materialized machine source tree does not match evidence")
 
 
-def terminate_process_group(process: subprocess.Popen[bytes], grace_seconds: float = 1.0) -> None:
-    if process.poll() is not None:
-        return
-    if os.name == "posix":
-        os.killpg(process.pid, signal.SIGTERM)
-    else:
-        process.terminate()
-    deadline = time.monotonic() + grace_seconds
-    while process.poll() is None and time.monotonic() < deadline:
-        time.sleep(0.01)
-    if os.name == "posix":
+def linux_processes_with_token(token: str) -> set[int]:
+    """Find same-user descendants even after they detach from the process group."""
+
+    proc = Path("/proc")
+    if not proc.is_dir() or not (proc / "self/environ").is_file():
+        raise RuntimeError("Linux /proc containment is unavailable")
+    expected = f"{CONTAINMENT_ENVIRONMENT_KEY}={token}".encode()
+    matches: set[int] = set()
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != os.getuid():
+                continue
+            environment = (entry / "environ").read_bytes().split(b"\0")
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if expected in environment:
+            matches.add(int(entry.name))
+    return matches
+
+
+def close_process_pipes(process: subprocess.Popen[bytes]) -> None:
+    for stream in (process.stdout, process.stderr):
+        if stream is not None and not stream.closed:
+            stream.close()
+
+
+def terminate_contained_process(
+    process: subprocess.Popen[bytes],
+    token: str,
+    cleanup_seconds: float = 2.0,
+) -> set[int]:
+    """Bounded cleanup for a process group and token-bearing detached descendants."""
+
+    deadline = time.monotonic() + cleanup_seconds
+    if sys.platform.startswith("linux"):
+        # The token is inherited across fork/exec and survives setsid/double-fork.
+        # Stop all visible members first so the set cannot keep expanding, then
+        # kill it. Re-scan until the bounded deadline to catch fork races.
+        while time.monotonic() < deadline:
+            matches = linux_processes_with_token(token)
+            if not matches:
+                break
+            for pid in matches:
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                except ProcessLookupError:
+                    pass
+            for pid in matches:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            time.sleep(0.01)
+    elif os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        while process.poll() is None and time.monotonic() < deadline - 0.25:
+            time.sleep(0.01)
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
     elif process.poll() is None:
         process.kill()
-    process.wait()
+
+    close_process_pipes(process)
+    remaining_wait = max(0.01, deadline - time.monotonic())
+    try:
+        process.wait(timeout=remaining_wait)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            pass
+    if sys.platform.startswith("linux"):
+        return linux_processes_with_token(token)
+    return {process.pid} if process.poll() is None else set()
 
 
 def run_process(
@@ -708,11 +879,20 @@ def run_process(
 ) -> ProcessResult:
     if not is_positive_number(timeout_seconds):
         raise ValueError("process timeout must be a positive finite number")
+    process_environment = dict(environment)
+    token = process_environment.get(CONTAINMENT_ENVIRONMENT_KEY)
+    if sys.platform.startswith("linux"):
+        if token is None:
+            raise RuntimeError("Linux subprocess execution requires a containment token")
+        # Refuse to launch if detached descendants cannot be discovered later.
+        linux_processes_with_token(token)
+    else:
+        token = token or "process-group-only"
     start = time.perf_counter_ns()
     process = subprocess.Popen(
         list(command),
         cwd=cwd,
-        env=dict(environment),
+        env=process_environment,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
         stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
@@ -721,11 +901,19 @@ def run_process(
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as error:
-        terminate_process_group(process)
-        process.communicate()
+        remaining = terminate_contained_process(process, token)
+        detail = f"; containment incomplete for PIDs {sorted(remaining)}" if remaining else ""
         raise ProcessTimeout(
-            f"command timed out after {timeout_seconds}s: {' '.join(command)}"
+            f"command timed out after {timeout_seconds}s: {' '.join(command)}{detail}"
         ) from error
+    if sys.platform.startswith("linux"):
+        leaked = linux_processes_with_token(token)
+        if leaked:
+            remaining = terminate_contained_process(process, token)
+            raise RuntimeError(
+                "command left detached descendants"
+                + (f" and containment is incomplete for PIDs {sorted(remaining)}" if remaining else "")
+            )
     return ProcessResult(
         returncode=process.returncode,
         stdout=stdout or b"",
@@ -904,6 +1092,103 @@ def check_machine_cleanliness(
         )
 
 
+def machine_archive_command(git: str, commit: str, archive_path: Path) -> list[str]:
+    return [
+        *git_prefix(git),
+        "archive",
+        "--format=tar",
+        "--output",
+        str(archive_path),
+        commit,
+    ]
+
+
+def extract_source_archive(archive_path: Path, source_dir: Path) -> None:
+    if source_dir.exists():
+        raise RuntimeError(f"fresh machine source path already exists: {source_dir}")
+    source_dir.mkdir(parents=True, mode=0o700)
+    with tarfile.open(archive_path, mode="r:") as archive:
+        for member in archive.getmembers():
+            relative = Path(member.name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise RuntimeError(f"unsafe path in machine source archive: {member.name}")
+            destination = source_dir / relative
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                raise RuntimeError(
+                    f"unsupported link or special file in machine source archive: {member.name}"
+                )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                raise RuntimeError(f"could not read machine source archive entry: {member.name}")
+            with destination.open("wb") as output:
+                shutil.copyfileobj(extracted, output)
+            destination.chmod(0o755 if member.mode & 0o111 else 0o644)
+
+
+def source_tree_sha256(source_dir: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(source_dir.rglob("*")):
+        relative = path.relative_to(source_dir).as_posix()
+        if path.is_symlink() or (not path.is_file() and not path.is_dir()):
+            raise RuntimeError(f"unsupported entry in materialized source: {relative}")
+        kind = b"d" if path.is_dir() else b"x" if os.access(path, os.X_OK) else b"f"
+        digest.update(kind)
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        if path.is_file():
+            digest.update(str(path.stat().st_size).encode("ascii"))
+            digest.update(b"\0")
+            with path.open("rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+    return digest.hexdigest()
+
+
+def materialize_machine_source(
+    root: Path,
+    source_dir: Path,
+    archive_path: Path,
+    commit: str,
+    git: str,
+    *,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+) -> dict[str, object]:
+    if source_dir.exists() or archive_path.exists():
+        raise RuntimeError("fresh machine source materialization paths already exist")
+    git_tree = git_output(
+        git,
+        root,
+        environment,
+        timeout_seconds,
+        "rev-parse",
+        f"{commit}^{{tree}}",
+    )
+    if not HEX_SHA_RE.fullmatch(git_tree):
+        raise RuntimeError(f"machine-god tree is not a full Git SHA: {git_tree}")
+    command = machine_archive_command(git, commit, archive_path)
+    record = run_record(
+        command,
+        root,
+        environment=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    extract_source_archive(archive_path, source_dir)
+    return {
+        "method": "git-archive",
+        "source_dir": str(source_dir),
+        "archive_path": str(archive_path),
+        "archive_sha256": sha256_file(archive_path),
+        "git_tree": git_tree,
+        "source_tree_sha256": source_tree_sha256(source_dir),
+        "command": record,
+    }
+
+
 def prepare_upstream(
     root: Path,
     upstream_dir: Path,
@@ -1076,7 +1361,7 @@ def unavailable_workloads(fx_binary: Path) -> list[dict[str, object]]:
     ]
 
 
-def base_environment(home: Path, temporary: Path) -> dict[str, str]:
+def base_environment(home: Path, temporary: Path, containment_token: str) -> dict[str, str]:
     path_value = os.environ.get("PATH")
     if not path_value:
         raise RuntimeError("PATH is required to resolve pinned build tools")
@@ -1084,6 +1369,7 @@ def base_environment(home: Path, temporary: Path) -> dict[str, str]:
         "HOME": str(home),
         "LANG": "C",
         "LC_ALL": "C",
+        CONTAINMENT_ENVIRONMENT_KEY: containment_token,
         "NO_COLOR": "1",
         "PATH": path_value,
         "TMPDIR": str(temporary),
@@ -1144,7 +1430,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
     temporary = scratch_dir / "tmp"
     home.mkdir(mode=0o700)
     temporary.mkdir(mode=0o700)
-    base_env = base_environment(home, temporary)
+    base_env = base_environment(home, temporary, secrets.token_hex(16))
     cargo_home = scratch_dir / "cargo-home"
     cargo_home.mkdir(mode=0o700)
     rustup_home = Path(os.environ.get("RUSTUP_HOME", Path.home() / ".rustup")).resolve()
@@ -1157,6 +1443,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
         **base_env,
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
         "GIT_TERMINAL_PROMPT": "0",
     }
 
@@ -1179,6 +1466,17 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
     )
     if not HEX_SHA_RE.fullmatch(machine_sha):
         raise RuntimeError(f"machine-god HEAD is not a full Git SHA: {machine_sha}")
+    machine_source_dir = scratch_dir / "machine-source"
+    machine_archive_path = scratch_dir / "machine-source.tar"
+    machine_materialization = materialize_machine_source(
+        root,
+        machine_source_dir,
+        machine_archive_path,
+        machine_sha,
+        git,
+        environment=git_env,
+        timeout_seconds=args.fetch_timeout,
+    )
 
     plan = command_plan(
         root,
@@ -1226,7 +1524,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
     )
     machine_build = run_record(
         plan["machine_god_build"],
-        root,
+        machine_source_dir,
         environment=machine_environment,
         timeout_seconds=args.build_timeout,
     )
@@ -1254,7 +1552,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             run_measurement(
                 "fx",
                 [str(fx_binary)],
-                root,
+                machine_source_dir,
                 fx_measurement_environment,
                 args.warmup,
                 args.runs,
@@ -1263,7 +1561,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             run_measurement(
                 "machine-god",
                 [str(machine_binary)],
-                root,
+                machine_source_dir,
                 base_env,
                 args.warmup,
                 args.runs,
@@ -1271,6 +1569,8 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             ),
         ],
     }
+    if source_tree_sha256(machine_source_dir) != machine_materialization["source_tree_sha256"]:
+        raise RuntimeError("materialized machine-god source changed during build or measurement")
 
     evidence = {
         "schema_version": 2,
@@ -1287,7 +1587,9 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             "machine_god": {
                 "git_sha": machine_sha,
                 "dirty": False,
+                "repository_root": str(root),
                 "allowed_output_directories": list(ALLOWED_MACHINE_OUTPUTS),
+                "materialization": machine_materialization,
             },
             "fx": {
                 "repository": lock.repository,
@@ -1325,6 +1627,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
         expected_lock_sha256=sha256_file(lock_path),
         expected_root=root,
         expected_runner_class=args.runner_class,
+        expected_machine_tree=str(machine_materialization["git_tree"]),
     )
     return evidence
 
