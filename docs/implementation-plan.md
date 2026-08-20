@@ -5,8 +5,10 @@ Status values: `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `COMPLETE`.
 ## Objective
 
 Build a high-performance Rust 1.94.1 coding-agent engine inspired by
-`vercel-labs/fx`. Local development follows the installed stable channel while
-CI pins the declared minimum toolchain exactly.
+`vercel-labs/fx`. Local development and CI use the declared minimum toolchain
+exactly. Local `+stable` is a narrowly scoped fallback for this checkout's
+damaged exact-toolchain installation and is valid only while both local Rust and
+Cargo report release 1.94.1 exactly.
 The embeddable asynchronous engine is the primary product; the CLI is its native
 reference host. Observable performance and compatibility claims require retained
 evidence against the pinned upstream revision.
@@ -17,7 +19,11 @@ Every feature uses `agent/mNN-feature-slug`, isolated subagent worktrees, local
 checks, three fresh adversarial reviewers, a pushed feature branch, remote CI for
 the exact SHA, and a fast-forward push to `main`. Confirmed review findings are
 fixed and rereviewed until none remain. Rejected findings are documented under
-`docs/reviews/`.
+`docs/reviews/`. CI executes third-party actions by reviewed immutable commit,
+keeps checkout credentials disabled, and grants the workflow read-only contents
+permission. Python `test_*.py` files are discovered repo-wide in deterministic
+order, excluding generated and checkout state under `.bench`, `.git`, and
+`target`.
 
 ## Milestones
 
@@ -33,8 +39,8 @@ fixed and rereviewed until none remain. Rejected findings are documented under
 
 ## Release gates
 
-- Formatting, Clippy with warnings denied, workspace tests, doc tests, dependency
-  policy, and vulnerability audit pass.
+- Formatting, Clippy with warnings denied, workspace tests, doc tests, repo-wide
+  Python unit tests, dependency policy, and vulnerability audit pass.
 - Deterministic end-to-end tests pass on Linux and macOS, x86_64 and aarch64.
 - Three equivalent local workloads beat pinned fx by at least 20%, no other
   equivalent workload regresses more than 5%, Linux local command startup is at
