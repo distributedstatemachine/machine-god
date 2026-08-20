@@ -169,3 +169,13 @@ path so established provider outcomes remain protected. Barrier-controlled
 regressions cover startup error and success plus nonterminal delivery success
 and error, while the existing pending provider-terminal delivery controls remain
 green.
+
+A final performance review of `330930d` found that `poll_delivery` refreshed a
+cancellation waiter even after a provider terminal outcome was established. If
+the terminal observer stayed pending and cancellation had already fired, each
+manual or executor poll registered against an already-cancelled token and
+immediately woke itself, creating an unbounded hot loop. Terminal delivery now
+deregisters any preterminal waiter and never refreshes it. Counting-waker
+regressions keep both a provider `Stop` and provider failure delivery permanently
+pending, cancel the turn, repeatedly poll, and require zero wake callbacks while
+the established terminal precedence remains unchanged.

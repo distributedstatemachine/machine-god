@@ -78,6 +78,10 @@ poller. Repeated polls, idle streams, and abandoned waiters therefore do not
 retain stale wakers. Waker clone, replacement drop, deregistration drop, and wake
 callbacks all execute outside the waiter-registry mutex, so a custom waker may
 reenter cancellation APIs without self-deadlocking.
+Once a provider terminal outcome is established, its pending observer delivery
+does not retain or refresh a cancellation waiter. Later cancellation cannot
+change that outcome and therefore cannot create a self-waking hot loop while
+the terminal observer remains backpressured.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
 Prompt creation reserves it through the configured store's optimistic revision

@@ -1876,6 +1876,64 @@ fn cancellation_during_provider_failure_delivery_preserves_failure() {
     assert!(!session.has_active_turn());
 }
 
+fn assert_cancellation_does_not_wake_pending_terminal_delivery(
+    provider_events: Vec<Result<ModelEvent, ProviderError>>,
+    session_id: &str,
+) {
+    let engine = Engine::builder()
+        .provider(StaticProvider {
+            events: provider_events,
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(PendingAfterStartedSink)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new(session_id).unwrap());
+    let mut turn = prompt(&session, "terminal");
+    let handle = turn.handle();
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+
+    let wake_counter = Arc::new(TurnWakeCounter::default());
+    let waker = Waker::from(Arc::clone(&wake_counter));
+    let mut context = Context::from_waker(&waker);
+    let mut next = Box::pin(turn.next());
+
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+    assert!(handle.cancel());
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+
+    for _ in 0..4 {
+        assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+        assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+    }
+}
+
+#[test]
+fn cancellation_does_not_self_wake_pending_stop_delivery() {
+    assert_cancellation_does_not_wake_pending_terminal_delivery(
+        vec![Ok(ModelEvent::Stop {
+            reason: StopReason::Completed,
+        })],
+        "cancel-pending-stop-no-self-wake",
+    );
+}
+
+#[test]
+fn cancellation_does_not_self_wake_pending_provider_failure_delivery() {
+    assert_cancellation_does_not_wake_pending_terminal_delivery(
+        vec![Err(ProviderError::new(
+            ProviderErrorKind::Unavailable,
+            "terminal_failure",
+            "provider failed",
+            true,
+        ))],
+        "cancel-pending-failure-no-self-wake",
+    );
+}
+
 #[test]
 fn pending_delivery_rebinds_cancellation_to_the_latest_poller() {
     let engine = Engine::builder()

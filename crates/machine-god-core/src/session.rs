@@ -576,7 +576,11 @@ impl Turn {
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<EngineEvent, EngineError>>> {
         let cancellation = self.cancellation.clone();
-        cancellation.register(&mut self.cancellation_waiter, context.waker());
+        if self.terminal_seen {
+            cancellation.deregister(&mut self.cancellation_waiter);
+        } else {
+            cancellation.register(&mut self.cancellation_waiter, context.waker());
+        }
         if let Some(event) = self.cancel_pending_delivery() {
             return Poll::Ready(Some(Ok(event)));
         }
