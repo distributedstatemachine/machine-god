@@ -40,6 +40,7 @@ from upstream import (  # noqa: E402
     parse_upstream_lock,
     parse_porcelain_v1_z,
     prepare_upstream,
+    run_measurement,
     run_process,
     sha256_file,
     source_tree_sha256,
@@ -405,6 +406,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "environment": environment,
                     "timeout_seconds": 1.0,
                     "warmup": 1,
+                    "discarded_pre_registration_exits": 0,
                     "samples": samples,
                     "median_ns": 5,
                     "p95_ns": 10,
@@ -652,6 +654,9 @@ class UpstreamHarnessTest(unittest.TestCase):
             lambda data: data["workloads"][0]["implementations"][0]["samples"][
                 0
             ].__setitem__("supervision_ns", True),
+            lambda data: data["workloads"][0]["implementations"][0].__setitem__(
+                "discarded_pre_registration_exits", -1
+            ),
         )
         for mutate in mutations:
             with self.subTest(mutate=mutate):
@@ -1170,6 +1175,65 @@ class UpstreamHarnessTest(unittest.TestCase):
         self.assertGreater(completed.supervision_ns, 190_000_000)
         self.assertGreater(completed.cleanup_ns, 190_000_000)
         self.assertGreater(wall_elapsed, 390_000_000)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux timing regression")
+    def test_delayed_observer_registration_is_discarded_and_retried(self) -> None:
+        linux_containment_preflight()
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "c" * 32
+        original_register = upstream.LinuxExitObserver._register_pidfd
+        registrations = 0
+
+        def delay_second_registration(
+            observer: upstream.LinuxExitObserver,
+            poller: object,
+            descriptor: int,
+        ) -> None:
+            nonlocal registrations
+            registrations += 1
+            if registrations == 2:
+                time.sleep(0.2)
+            original_register(observer, poller, descriptor)
+
+        with mock.patch.object(
+            upstream.LinuxExitObserver,
+            "_register_pidfd",
+            delay_second_registration,
+        ):
+            measurement = run_measurement(
+                "registration-race",
+                [sys.executable, "-c", "import time; time.sleep(0.02)"],
+                Path.cwd(),
+                environment,
+                warmup=1,
+                runs=1,
+                timeout_seconds=1.0,
+            )
+
+        self.assertEqual(registrations, 3)
+        self.assertEqual(measurement["discarded_pre_registration_exits"], 1)
+        self.assertEqual(len(measurement["samples"]), 1)
+        self.assertLess(measurement["samples"][0]["elapsed_ns"], 150_000_000)
+
+    def test_measurement_caps_contaminated_registration_retries(self) -> None:
+        with (
+            mock.patch.object(
+                upstream,
+                "run_process",
+                side_effect=upstream.MeasurementContaminated("injected race"),
+            ) as run,
+            self.assertRaisesRegex(RuntimeError, "after 10 attempts"),
+        ):
+            run_measurement(
+                "registration-race",
+                ["ignored"],
+                Path.cwd(),
+                {},
+                warmup=1,
+                runs=1,
+                timeout_seconds=1.0,
+            )
+        self.assertEqual(run.call_count, 10)
 
     @unittest.skipUnless(os.name == "posix", "executable symlink regression requires POSIX")
     def test_tool_identity_survives_symlink_swap_and_detects_target_change(self) -> None:

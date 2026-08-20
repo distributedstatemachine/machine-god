@@ -72,6 +72,7 @@ FORBIDDEN_ENVIRONMENT_NAMES = {
     "LD_PRELOAD",
     "RUSTFLAGS",
 }
+MAX_CONTAMINATED_MEASUREMENT_ATTEMPTS = 10
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,10 @@ class ProcessResult:
 
 class ProcessTimeout(RuntimeError):
     """A child process exceeded its declared wall-clock limit."""
+
+
+class MeasurementContaminated(RuntimeError):
+    """A process exited before its exit observer was ready."""
 
 
 @dataclass(frozen=True)
@@ -478,6 +483,11 @@ def validate_measurement(
     warmup = measurement.get("warmup")
     if not is_integer(warmup) or warmup < 1:
         raise ValueError(f"{field}.warmup must be a positive integer")
+    discarded = measurement.get("discarded_pre_registration_exits")
+    if not is_integer(discarded) or discarded < 0:
+        raise ValueError(
+            f"{field}.discarded_pre_registration_exits must be a nonnegative integer"
+        )
     samples = measurement.get("samples")
     if not isinstance(samples, list) or len(samples) < 10:
         raise ValueError(f"{field} needs at least 10 raw samples")
@@ -1262,9 +1272,11 @@ class LinuxExitObserver:
 
     def __init__(self) -> None:
         self._armed = threading.Event()
+        self._registered = threading.Event()
         self._finished = threading.Event()
         self._descriptor: int | None = None
         self._cancelled = False
+        self._contaminated = False
         self._error: BaseException | None = None
         self.end_ns: int | None = None
         self._thread = threading.Thread(target=self._observe, daemon=True)
@@ -1273,10 +1285,22 @@ class LinuxExitObserver:
     def arm(self, descriptor: int) -> None:
         self._descriptor = os.dup(descriptor)
         self._armed.set()
+        if not self._registered.wait(1.0):
+            raise RuntimeError("Linux exit observer registration timed out")
+        if self._error is not None:
+            raise RuntimeError("Linux exit observer registration failed") from self._error
+        if self._contaminated:
+            raise MeasurementContaminated(
+                "process exited before Linux exit observation was registered"
+            )
+
+    def _register_pidfd(self, poller: select.poll, descriptor: int) -> None:
+        poller.register(descriptor, select.POLLIN)
 
     def _observe(self) -> None:
         self._armed.wait()
         if self._cancelled:
+            self._registered.set()
             self._finished.set()
             return
         descriptor = self._descriptor
@@ -1286,12 +1310,17 @@ class LinuxExitObserver:
             return
         try:
             poller = select.poll()
-            poller.register(descriptor, select.POLLIN)
+            self._register_pidfd(poller, descriptor)
+            if poller.poll(0):
+                self._contaminated = True
+                return
+            self._registered.set()
             poller.poll()
             self.end_ns = time.perf_counter_ns()
         except BaseException as error:
             self._error = error
         finally:
+            self._registered.set()
             os.close(descriptor)
             self._descriptor = None
             self._finished.set()
@@ -2133,14 +2162,28 @@ def run_measurement(
     runs: int,
     timeout_seconds: float,
 ) -> dict[str, object]:
+    discarded_pre_registration_exits = 0
+
     def run_once() -> dict[str, int]:
-        completed = run_process(
-            command,
-            cwd=cwd,
-            environment=environment,
-            timeout_seconds=timeout_seconds,
-            capture_output=False,
-        )
+        nonlocal discarded_pre_registration_exits
+        completed: ProcessResult | None = None
+        for _ in range(MAX_CONTAMINATED_MEASUREMENT_ATTEMPTS):
+            try:
+                completed = run_process(
+                    command,
+                    cwd=cwd,
+                    environment=environment,
+                    timeout_seconds=timeout_seconds,
+                    capture_output=False,
+                )
+                break
+            except MeasurementContaminated:
+                discarded_pre_registration_exits += 1
+        if completed is None:
+            raise RuntimeError(
+                f"{project} could not collect an uncontaminated sample after "
+                f"{MAX_CONTAMINATED_MEASUREMENT_ATTEMPTS} attempts"
+            )
         return {
             "elapsed_ns": completed.elapsed_ns,
             "setup_ns": completed.setup_ns,
@@ -2166,6 +2209,7 @@ def run_measurement(
         "environment": dict(environment),
         "timeout_seconds": timeout_seconds,
         "warmup": warmup,
+        "discarded_pre_registration_exits": discarded_pre_registration_exits,
         "samples": samples,
         "median_ns": int(statistics.median(elapsed)),
         "p95_ns": percentile_95(elapsed),

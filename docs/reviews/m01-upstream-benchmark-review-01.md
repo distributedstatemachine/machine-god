@@ -81,6 +81,14 @@ findings and the branch resolves them as follows:
   timestamp. Setup, direct supervision, and cleanup durations are recorded
   separately. Injected 200 ms attachment and scan delays prove that neither
   changes `elapsed_ns`.
+- The pidfd exit observer was armed asynchronously without confirming its poll
+  registration. A fast child could exit before the observer thread ran, making
+  thread scheduling latency look like process runtime. Arming now waits for a
+  registration handshake and probes for an already-readable pidfd at that
+  boundary. Such an attempt is discarded and retried up to a fixed ten-attempt
+  cap, and evidence records the discard count. A regression delays the second
+  registration by 200 ms, proves that attempt is rejected, and accepts only the
+  clean retry sample.
 - Successful-command finalization ignored known zombies, allowing a short-lived
   detached grandchild to remain adopted after the run was accepted. A bounded
   settle pass now repeatedly discovers and reaps all known adopted children and
@@ -123,11 +131,11 @@ preexisting upstream checkouts, every scratch/cache/tool-state path, original
 worktree mutation after snapshotting, process-group and detached-descendant
 timeouts, Linux descendant containment without readable environments, delayed
 attachment and containment scans outside the timing boundary, Git export
-attributes and link modes, mutable tool paths, successful-command zombie
-reaping, injected lifecycle failures, PID reuse, NUL-porcelain path parsing,
-atomic-publication symlinks and collisions, and stale evidence preservation,
-including concurrent success/failure publication and a pre-existing output
-lock.
+attributes and link modes, delayed pidfd observer registration and capped retry,
+mutable tool paths, successful-command zombie reaping, injected lifecycle
+failures, PID reuse, NUL-porcelain path parsing, atomic-publication symlinks and
+collisions, and stale evidence preservation, including concurrent
+success/failure publication and a pre-existing output lock.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,

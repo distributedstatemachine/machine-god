@@ -86,11 +86,16 @@ after no supervised descendant PID remains. Linux measurement runs create their
 exit-observer thread and capture the baseline child set before the sample clock
 starts. Immediately after launch, the harness duplicates the root pidfd to that
 observer and attaches the immutable root identity with a direct, single-PID
-`/proc/<pid>/stat` lookup. There is no periodic process-table monitor. Pidfd
-readability timestamps root exit without reaping it, so synchronous attachment
-cannot move the end timestamp. Full descendant discovery, settling, and reaping
-begin only after that timestamp. Every process record stores the measured
-interval plus separate `setup_ns`, `supervision_ns`, and `cleanup_ns` durations.
+`/proc/<pid>/stat` lookup. The launch path waits for an explicit poll-registration
+handshake before continuing. If the pidfd is already readable when registration
+completes, the attempt is contaminated by observer scheduling and is discarded;
+measurement retries are capped at ten per accepted warmup or sample. Evidence
+records the total as `discarded_pre_registration_exits`. There is no periodic
+process-table monitor. Pidfd readability timestamps root exit without reaping
+it, so synchronous attachment cannot move the end timestamp. Full descendant
+discovery, settling, and reaping begin only after that timestamp. Every process
+record stores the measured interval plus separate `setup_ns`, `supervision_ns`,
+and `cleanup_ns` durations.
 The final JSON is written atomically only after validation. A full-run,
 per-output exclusive lock is acquired before collection starts and held through
 publication. Lock acquisition has a bounded wait, and a pre-existing lock is
