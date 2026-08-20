@@ -123,15 +123,37 @@ impl SessionState {
             .data
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if record.id != data.record.id {
+            return Err(EngineError::Protocol(format!(
+                "session store returned ID {} for requested ID {}",
+                record.id, data.record.id
+            )));
+        }
         if !data.persisted || record.revision > data.record.revision {
             data.record = record;
             data.persisted = true;
+        } else if record.revision < data.record.revision {
+            return Err(EngineError::Protocol(format!(
+                "session store returned stale revision {} behind canonical revision {}",
+                record.revision.0, data.record.revision.0
+            )));
         } else if record.revision == data.record.revision && record != data.record {
             return Err(EngineError::Protocol(
                 "session store returned different records at the same revision".to_owned(),
             ));
         }
         Ok(())
+    }
+
+    fn reconcile_saved(&self, record: &SessionRecord) {
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !data.persisted || data.record.revision <= record.revision {
+            data.record.clone_from(record);
+            data.persisted = true;
+        }
     }
 }
 
@@ -275,13 +297,7 @@ impl Session {
             {
                 Ok(revision) if revision > previous_revision => {
                     candidate.revision = revision;
-                    let mut data = self
-                        .state
-                        .data
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    data.record = candidate.clone();
-                    data.persisted = true;
+                    self.state.reconcile_saved(&candidate);
                     return Ok((turn_id, candidate));
                 }
                 Ok(_) => {
@@ -311,13 +327,7 @@ impl Session {
                             current.id
                         )));
                     }
-                    let mut data = self
-                        .state
-                        .data
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    data.record = current;
-                    data.persisted = true;
+                    self.state.reconcile_loaded(current)?;
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -509,6 +519,9 @@ impl Stream for Turn {
                             TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
                         ) {
                             self.finish();
+                        } else {
+                            let cancellation = self.cancellation.clone();
+                            cancellation.deregister(&mut self.cancellation_waiter);
                         }
                         return Poll::Ready(Some(Ok(event)));
                     }

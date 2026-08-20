@@ -36,4 +36,7 @@ turn flag; a live turn itself keeps the state alive if its originating session
 handle is dropped. Weak entries are pruned on later registry access. This is an
 in-process coordination boundary, not a distributed lease. Independent engines
 and processes coordinate durable turn-number allocation through the session
-store's optimistic revision contract.
+store's optimistic revision contract. Loaded records reconcile strictly and
+monotonically: corrupt sequences, stale revisions, and equal-revision divergence
+are protocol errors, and completion of an older in-flight save cannot replace a
+newer canonical record.

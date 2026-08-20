@@ -9,10 +9,11 @@ use machine_god_core::{
     ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
 };
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Wake, Waker};
 
 #[derive(Debug)]
 struct StaticProvider {
@@ -442,6 +443,225 @@ fn racing_load_and_create_converge_on_state_without_losing_persisted_record() {
     drop(turn);
 }
 
+#[derive(Clone, Debug, Default)]
+struct RecordingProvider {
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+}
+
+impl ModelProvider for RecordingProvider {
+    fn name(&self) -> &'static str {
+        "recording"
+    }
+
+    fn stream(
+        &self,
+        request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        self.requests.lock().unwrap().push(request);
+        Box::pin(async {
+            Ok(Box::pin(stream::iter([Ok(ModelEvent::Stop {
+                reason: StopReason::Completed,
+            })])) as ModelEventStream)
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InterleavedSaveStore {
+    loaded: Arc<Mutex<Option<SessionRecord>>>,
+    save_ready: Arc<AtomicBool>,
+}
+
+impl SessionStore for InterleavedSaveStore {
+    fn load(
+        &self,
+        _id: SessionId,
+    ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+        let record = self.loaded.lock().unwrap().clone();
+        Box::pin(async move { Ok(record) })
+    }
+
+    fn save(
+        &self,
+        _record: SessionRecord,
+        _expected_revision: Option<SessionRevision>,
+    ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+        let save_ready = Arc::clone(&self.save_ready);
+        Box::pin(std::future::poll_fn(move |_context| {
+            if save_ready.load(Ordering::Acquire) {
+                Poll::Ready(Ok(SessionRevision(2)))
+            } else {
+                Poll::Pending
+            }
+        }))
+    }
+}
+
+#[test]
+fn delayed_save_does_not_regress_a_newer_concurrent_load() {
+    let id = SessionId::new("save-load-interleaving").unwrap();
+    let store = InterleavedSaveStore {
+        loaded: Arc::new(Mutex::new(None)),
+        save_ready: Arc::new(AtomicBool::new(false)),
+    };
+    let provider = RecordingProvider::default();
+    let requests = Arc::clone(&provider.requests);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(id.clone());
+    let mut reserving = session.prompt("reserved against revision zero");
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    assert!(matches!(
+        reserving.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    let newer = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(3),
+        next_turn_sequence: 10,
+        messages: vec![machine_god_core::Message::text(Role::User, "newer")],
+        metadata: BTreeMap::new(),
+    };
+    *store.loaded.lock().unwrap() = Some(newer.clone());
+    let loaded = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.record(), newer);
+
+    store.save_ready.store(true, Ordering::Release);
+    let Poll::Ready(Ok(mut turn)) = reserving.as_mut().poll(&mut context) else {
+        panic!("delayed reservation did not complete");
+    };
+    assert_eq!(turn.id().as_str(), "turn-1");
+    assert_eq!(session.record(), newer);
+
+    let _started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    let _model_stop = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].messages.len(), 1);
+    assert_eq!(
+        requests[0].messages[0],
+        machine_god_core::Message::text(Role::User, "reserved against revision zero")
+    );
+}
+
+#[derive(Clone, Debug)]
+struct ConflictReloadStore {
+    loads: Arc<Mutex<VecDeque<SessionRecord>>>,
+}
+
+impl SessionStore for ConflictReloadStore {
+    fn load(
+        &self,
+        _id: SessionId,
+    ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+        let record = self.loads.lock().unwrap().pop_front();
+        Box::pin(async move { Ok(record) })
+    }
+
+    fn save(
+        &self,
+        _record: SessionRecord,
+        _expected_revision: Option<SessionRevision>,
+    ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+        Box::pin(async {
+            Err(SessionStoreError::new(
+                machine_god_core::SessionStoreErrorKind::Conflict,
+                "controlled_conflict",
+                "force conflict reload",
+                true,
+            ))
+        })
+    }
+}
+
+fn stored_record(
+    id: &SessionId,
+    revision: u64,
+    next_turn_sequence: u64,
+    text: &str,
+) -> SessionRecord {
+    SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(revision),
+        next_turn_sequence,
+        messages: vec![machine_god_core::Message::text(Role::User, text)],
+        metadata: BTreeMap::new(),
+    }
+}
+
+fn engine_with_conflict_loads(records: Vec<SessionRecord>) -> Engine {
+    Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(ConflictReloadStore {
+            loads: Arc::new(Mutex::new(records.into())),
+        })
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn conflict_reload_rejects_a_zero_turn_sequence() {
+    let id = SessionId::new("conflict-zero-sequence").unwrap();
+    let engine = engine_with_conflict_loads(vec![stored_record(&id, 1, 0, "corrupt")]);
+    let session = engine.create_session(id);
+
+    assert!(matches!(
+        futures_executor::block_on(session.prompt("reserve")),
+        Err(EngineError::Protocol(message))
+            if message.contains("turn sequence must be positive")
+    ));
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn conflict_reload_rejects_a_stale_revision() {
+    let id = SessionId::new("conflict-stale-revision").unwrap();
+    let current = stored_record(&id, 5, 6, "current");
+    let stale = stored_record(&id, 4, 5, "stale");
+    let engine = engine_with_conflict_loads(vec![current, stale]);
+    let session = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        futures_executor::block_on(session.prompt("reserve")),
+        Err(EngineError::Protocol(message)) if message.contains("stale revision")
+    ));
+    assert_eq!(session.record().revision, SessionRevision(5));
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn conflict_reload_rejects_equal_revision_divergence() {
+    let id = SessionId::new("conflict-equal-divergence").unwrap();
+    let current = stored_record(&id, 5, 6, "current");
+    let divergent = stored_record(&id, 5, 6, "divergent");
+    let engine = engine_with_conflict_loads(vec![current, divergent]);
+    let session = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        futures_executor::block_on(session.prompt("reserve")),
+        Err(EngineError::Protocol(message)) if message.contains("same revision")
+    ));
+    assert_eq!(
+        session.record().messages[0],
+        machine_god_core::Message::text(Role::User, "current")
+    );
+    assert!(!session.has_active_turn());
+}
+
 #[derive(Debug)]
 struct PendingProvider;
 
@@ -461,6 +681,43 @@ impl ModelProvider for PendingProvider {
             >()) as ModelEventStream)
         })
     }
+}
+
+#[derive(Debug, Default)]
+struct TurnWakeCounter(AtomicUsize);
+
+impl Wake for TurnWakeCounter {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn ready_nonterminal_event_does_not_retain_its_poller_waker() {
+    let session =
+        engine_with(PendingProvider).create_session(SessionId::new("idle-turn-waker").unwrap());
+    let mut turn = prompt(&session, "wait");
+    let handle = turn.handle();
+    let wake_counter = Arc::new(TurnWakeCounter::default());
+    let waker = Waker::from(Arc::clone(&wake_counter));
+    let mut context = Context::from_waker(&waker);
+    let mut next = Box::pin(turn.next());
+
+    assert!(matches!(
+        next.as_mut().poll(&mut context),
+        Poll::Ready(Some(Ok(EngineEvent {
+            payload: TurnEvent::Started,
+            ..
+        })))
+    ));
+    drop(next);
+    assert_eq!(Arc::strong_count(&wake_counter), 2);
+    assert!(handle.cancel());
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
 }
 
 #[test]

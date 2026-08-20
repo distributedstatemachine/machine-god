@@ -64,15 +64,21 @@ Cancellation is cooperative, wakes the turn stream without depending on an
 executor, and is idempotent: only the first `TurnHandle::cancel` returns `true`.
 Dropping a turn releases the session lease even if the provider has not stopped.
 Cancellation wait registrations are keyed per live future and removed when that
-future or turn is dropped, so repeated polls and abandoned waiters do not retain
-wakers.
+future or turn is dropped. A turn also removes its registration before yielding
+each nonterminal event, because no poll is outstanding while its consumer holds
+that event. Repeated polls, idle streams, and abandoned waiters therefore do not
+retain stale wakers.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
 Prompt creation reserves it through the configured store's optimistic revision
 before exposing the `Turn`; stale handles reload and retry within a fixed bound.
 Successful reservations therefore remain consumed across reloads and process
 restarts, while core remains deterministic and does not acquire clock or random
-authority.
+authority. Reconciliation fails closed if a conflict reload has a zero next-turn
+sequence, is older than the engine-canonical revision, or differs from the
+canonical record at the same revision. If a delayed successful reservation
+finishes after a newer load has already reconciled, its saved snapshot still
+drives that turn's model request but cannot rewind the canonical session record.
 
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:

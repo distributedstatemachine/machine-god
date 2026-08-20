@@ -30,3 +30,15 @@ The turn lease holds the state strongly, dead weak entries are pruned, and
 persisted records reconcile monotonically by revision. Tests cover every handle
 combination and registry cleanup. Documentation explicitly limits this live-turn
 invariant to one engine instance; no cross-process lease is claimed.
+
+A fresh review of `261a535` found three remaining interleaving and retention
+issues. A delayed successful save could overwrite state that a concurrent load
+had already advanced, conflict reloads bypassed the strict load reconciliation
+path, and a turn retained its last poller's waker after yielding a nonterminal
+event. Successful saves now update canonical state only when it is not newer,
+while the reserved snapshot continues to drive the already-created request.
+Conflict reloads reject zero sequences, stale revisions, and same-revision
+divergence through `SessionState::reconcile_loaded`. Nonterminal ready events
+deregister the turn waiter before returning. Controlled save/load interleaving,
+all three hostile conflict records, and turn-level waker retention have dedicated
+regression tests.
