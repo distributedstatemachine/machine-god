@@ -246,13 +246,9 @@ def source_mask(text: str, language: str) -> str:
     js_parentheses: list[bool] = []
     while index < len(text):
         following = text[index + 1] if index + 1 < len(text) else ""
-        line_start = max(text.rfind("\n", 0, index), text.rfind("\r", 0, index)) + 1
-        if (
-            language == "zig"
-            and text[index] == "\\"
-            and following == "\\"
-            and not text[line_start:index].strip()
-        ):
+        if language == "zig" and text[index] == "\\":
+            if following != "\\":
+                raise InventoryError("unsupported Zig backslash outside a literal")
             masked[index] = masked[index + 1] = " "
             index += 2
             while index < len(text) and text[index] not in "\r\n":
@@ -288,10 +284,26 @@ def source_mask(text: str, language: str) -> str:
                 raise InventoryError("unterminated block comment")
             continue
         if language == "zig" and text[index] == "@" and following == '"':
-            end = text.find('"', index + 2)
-            if end < 0:
+            index += 2
+            escaped = False
+            while index < len(text):
+                character = text[index]
+                if character in "\r\n":
+                    raise InventoryError("unterminated quoted Zig identifier")
+                if escaped:
+                    masked[index] = "x"
+                    escaped = False
+                elif character == "\\":
+                    masked[index] = "x"
+                    escaped = True
+                elif character == '"':
+                    index += 1
+                    break
+                else:
+                    masked[index] = "x"
+                index += 1
+            else:
                 raise InventoryError("unterminated quoted Zig identifier")
-            index = end + 1
             continue
         if text[index] in {'"', "'"}:
             quote = text[index]
@@ -626,7 +638,7 @@ def identifier_field(
         if required:
             raise InventoryError(f"registry entry is missing .{field}")
         return None
-    identifier = match.group("identifier")
+    identifier = block[match.start("identifier") : match.end("identifier")]
     require_field_terminator(mask, match.end("value"), field)
     return zig_identifier(identifier)
 

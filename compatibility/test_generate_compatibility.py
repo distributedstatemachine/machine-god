@@ -194,6 +194,33 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         with self.assertRaisesRegex(GENERATOR.InventoryError, "registry expression"):
             GENERATOR.extract_builtin_tools(text)
 
+    def test_quoted_zig_identifier_cannot_supply_a_fake_registry(self) -> None:
+        text = (
+            'const @"pub const all = [_]tool_dispatch.Tool{ fake, }" = 1;\n'
+            'pub const fake = ToolSpec{ .name = "fake" };\n'
+        )
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "cannot find upstream"):
+            GENERATOR.extract_builtin_tools(text)
+
+    def test_same_line_zig_multiline_string_cannot_supply_a_fake_registry(self) -> None:
+        text = (
+            "const decoy = \\\\pub const all = [_]tool_dispatch.Tool{ fake, }\n"
+            'pub const fake = ToolSpec{ .name = "fake" };\n'
+        )
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "cannot find upstream"):
+            GENERATOR.extract_builtin_tools(text)
+
+    def test_quoted_zig_identifiers_remain_extractable(self) -> None:
+        specs = 'pub const TopLevelKind = enum { @"help", };\n'
+        registry = (
+            "pub const top_level_specs = [_]TopLevelSpec{\n"
+            '    .{ .kind = .@"help", .token = "help", .usage = "help", '
+            '.summary = "Show help" },\n'
+            "};\n"
+        )
+        commands = GENERATOR.extract_top_level_commands(specs, registry)
+        self.assertEqual(commands[0]["kind"], "help")
+
     def test_unsupported_javascript_export_is_rejected(self) -> None:
         with self.assertRaisesRegex(GENERATOR.InventoryError, "export syntax"):
             GENERATOR.extract_js_exports('export * from "./other.js";\n')

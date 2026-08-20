@@ -70,3 +70,24 @@ paths:
   exported declarators.
 
 Rejected after rereview remediation: none.
+
+## Final security rereview
+
+Reviewed commit: `9bf6227eaf7c4cd449f370c0c25d688dfa970840`.
+
+The final security pass found two related Zig lexical gaps. Payload text inside
+quoted identifiers remained searchable, and multiline-string lines were masked
+only when their `\\` prefix was the first non-whitespace text on a line. Either
+form could hide a fake registry declaration that was accepted when the real
+registry was absent.
+
+Quoted-identifier payloads are now replaced by offset-preserving neutral
+characters while their delimiters remain available to structural parsing;
+identifier values are recovered from the original source only after the masked
+syntax matches the supported grammar. Every Zig multiline-string prefix is now
+recognized at any valid token position and blanked through end-of-line. A lone
+backslash outside an already-recognized literal fails closed. Hostile tests
+prove neither quoted identifiers nor same-line multiline strings can provide a
+replacement registry, while a supported quoted identifier remains extractable.
+
+Rejected after final security rereview remediation: none.
