@@ -56,17 +56,24 @@ def main() -> int:
             raise SystemExit("schema 2 validation requires --expected-git-sha")
         try:
             from upstream import (
+                canonical_git_entries_sha256,
+                executable_identity,
+                machine_tree_command,
                 parse_upstream_lock,
+                parse_git_tree_listing,
                 sha256_file,
                 validate_upstream_evidence,
+                verify_executable_identity,
             )
 
             canonical_lock_path = Path(__file__).resolve().parent / "upstream.lock"
             canonical_lock = parse_upstream_lock(canonical_lock_path)
             canonical_root = Path(__file__).resolve().parents[1]
-            git = shutil.which("git")
-            if git is None:
+            discovered_git = shutil.which("git")
+            if discovered_git is None:
                 raise ValueError("git is required to bind the machine source tree")
+            git = str(Path(discovered_git).resolve(strict=True))
+            git_identity = executable_identity(Path(git))
             git_environment = {
                 "GIT_CONFIG_GLOBAL": "/dev/null",
                 "GIT_CONFIG_NOSYSTEM": "1",
@@ -88,6 +95,17 @@ def main() -> int:
                 text=True,
                 timeout=10,
             ).strip()
+            verify_executable_identity(git_identity)
+            listing = subprocess.check_output(
+                machine_tree_command(git, args.expected_git_sha),
+                cwd=canonical_root,
+                env=git_environment,
+                timeout=10,
+            )
+            verify_executable_identity(git_identity)
+            expected_machine_manifest_sha256 = canonical_git_entries_sha256(
+                parse_git_tree_listing(listing)
+            )
             validate_upstream_evidence(
                 data,
                 expected_lock=canonical_lock,
@@ -96,6 +114,7 @@ def main() -> int:
                 expected_root=canonical_root,
                 expected_runner_class=args.expected_runner_class,
                 expected_machine_tree=expected_machine_tree,
+                expected_machine_manifest_sha256=expected_machine_manifest_sha256,
                 expected_binaries={
                     "fx": args.fx_binary,
                     "machine-god": args.machine_god_binary,

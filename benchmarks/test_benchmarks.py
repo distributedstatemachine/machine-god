@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,9 +21,15 @@ from upstream import (  # noqa: E402
     EXPECTED_ZIG_VERSION,
     ProcessTimeout,
     UpstreamLock,
+    canonical_git_entries_sha256,
+    canonical_manifest_sha256,
     check_machine_cleanliness,
     command_plan,
-    machine_archive_command,
+    executable_identity,
+    finalize_successful_process,
+    invocation_path,
+    linux_containment_preflight,
+    machine_tree_command,
     materialize_machine_source,
     parse_upstream_lock,
     prepare_upstream,
@@ -32,6 +39,7 @@ from upstream import (  # noqa: E402
     unavailable_workloads,
     validate_upstream_evidence,
 )
+import upstream  # noqa: E402
 
 
 class BenchmarkScriptsTest(unittest.TestCase):
@@ -192,7 +200,7 @@ class UpstreamHarnessTest(unittest.TestCase):
         fx_binary = fx_root / "zig-out/bin/fx"
         machine_binary = scratch / "machine-target/release/machine-god"
         machine_source = scratch / "machine-source"
-        machine_archive = scratch / "machine-source.tar"
+        machine_manifest = scratch / "machine-source-manifest.json"
         base = self.base_environment(scratch)
         git_environment = {
             **base,
@@ -222,23 +230,51 @@ class UpstreamHarnessTest(unittest.TestCase):
             "git": {
                 "command": ["/usr/bin/git", "--version"],
                 "executable": "/usr/bin/git",
+                "sha256": "a" * 64,
+                "bytes": 1,
+                "mode": 0o755,
+                "device": 1,
+                "inode": 1,
+                "mtime_ns": 1,
+                "ctime_ns": 1,
                 "version": "git version 2",
             },
             "zig": {
                 "command": ["/usr/bin/zig", "version"],
                 "executable": "/usr/bin/zig",
+                "sha256": "b" * 64,
+                "bytes": 1,
+                "mode": 0o755,
+                "device": 1,
+                "inode": 2,
+                "mtime_ns": 1,
+                "ctime_ns": 1,
                 "required_version": EXPECTED_ZIG_VERSION,
                 "version": EXPECTED_ZIG_VERSION,
             },
             "rustc": {
                 "command": ["/usr/bin/rustc", "+1.94.1", "--version"],
                 "executable": "/usr/bin/rustc",
+                "sha256": "c" * 64,
+                "bytes": 1,
+                "mode": 0o755,
+                "device": 1,
+                "inode": 3,
+                "mtime_ns": 1,
+                "ctime_ns": 1,
                 "required_version": EXPECTED_RUST_VERSION,
                 "version": "rustc 1.94.1 (test 2026-01-01)",
             },
             "cargo": {
                 "command": ["/usr/bin/cargo", "+1.94.1", "--version"],
                 "executable": "/usr/bin/cargo",
+                "sha256": "d" * 64,
+                "bytes": 1,
+                "mode": 0o755,
+                "device": 1,
+                "inode": 4,
+                "mtime_ns": 1,
+                "ctime_ns": 1,
                 "required_version": EXPECTED_RUST_VERSION,
                 "version": "cargo 1.94.1 (test 2026-01-01)",
             },
@@ -255,17 +291,26 @@ class UpstreamHarnessTest(unittest.TestCase):
             self.command_record(plan[name], git_environment, 5.0, root)
             for name in ("clone", "fetch", "checkout")
         ]
+        entries = [
+            {
+                "path": "source.txt",
+                "mode": "100644",
+                "object": "7" * 40,
+                "bytes": 6,
+                "sha256": "8" * 64,
+            }
+        ]
         materialization = {
-            "method": "git-archive",
+            "method": "git-ls-tree-cat-file",
             "source_dir": str(machine_source),
-            "archive_path": str(machine_archive),
-            "archive_sha256": "4" * 64,
+            "manifest_path": str(machine_manifest),
+            "manifest_sha256": canonical_manifest_sha256(entries),
+            "git_entries_sha256": canonical_git_entries_sha256(entries),
             "git_tree": git_tree,
-            "source_tree_sha256": "6" * 64,
-            "command": self.command_record(
-                machine_archive_command(
-                    tools["git"]["executable"], machine_sha, machine_archive
-                ),
+            "source_tree_sha256": canonical_manifest_sha256(entries),
+            "entries": entries,
+            "listing_command": self.command_record(
+                machine_tree_command(tools["git"]["executable"], machine_sha),
                 git_environment,
                 5.0,
                 root,
@@ -569,6 +614,48 @@ class UpstreamHarnessTest(unittest.TestCase):
                 machine_sha=machine_sha,
                 git_tree=git_tree,
             )
+            scratch = temporary / "scratch"
+            (scratch / "home").mkdir(parents=True)
+            (scratch / "tmp").mkdir()
+            git_environment = {
+                **self.base_environment(scratch),
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_TERMINAL_PROMPT": "0",
+            }
+            git = invocation_path("git", os.environ["PATH"])
+            python = str(Path(sys.executable).resolve())
+            identities = {
+                "git": executable_identity(Path(git)),
+                "zig": executable_identity(Path(python)),
+                "rustc": executable_identity(Path(python)),
+                "cargo": executable_identity(Path(python)),
+            }
+            version_commands = {
+                "git": [git, "--version"],
+                "zig": [python, "version"],
+                "rustc": [python, "+1.94.1", "--version"],
+                "cargo": [python, "+1.94.1", "--version"],
+            }
+            for name, identity in identities.items():
+                evidence["tools"][name].update(identity)
+                evidence["tools"][name]["command"] = version_commands[name]
+            lock = parse_upstream_lock(ROOT / "benchmarks/upstream.lock")
+            plan = command_plan(
+                ROOT,
+                temporary / "fx",
+                lock,
+                git=git,
+                zig=python,
+                cargo=python,
+            )
+            evidence["source"]["fx"]["preparation_commands"] = [
+                self.command_record(plan[name], git_environment, 5.0, ROOT)
+                for name in ("clone", "fetch", "checkout")
+            ]
+            evidence["builds"][0]["command"] = plan["fx_build"]
+            evidence["builds"][1]["command"] = plan["machine_god_build"]
             fx_binary = temporary / "fx/zig-out/bin/fx"
             machine_binary = temporary / "scratch/machine-target/release/machine-god"
             for binary, index in ((fx_binary, 0), (machine_binary, 1)):
@@ -580,14 +667,18 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "bytes": binary.stat().st_size,
                     "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 }
-            machine_source = temporary / "scratch/machine-source"
-            machine_source.mkdir(parents=True)
-            (machine_source / "source.txt").write_text("source", encoding="utf-8")
-            archive = temporary / "scratch/machine-source.tar"
-            archive.write_bytes(b"archive")
-            materialization = evidence["source"]["machine_god"]["materialization"]
-            materialization["source_tree_sha256"] = source_tree_sha256(machine_source)
-            materialization["archive_sha256"] = sha256_file(archive)
+            machine_source = scratch / "machine-source"
+            materialization = materialize_machine_source(
+                ROOT,
+                machine_source,
+                scratch / "machine-source-manifest.json",
+                machine_sha,
+                git,
+                environment=git_environment,
+                timeout_seconds=5.0,
+                expected_executable=identities["git"],
+            )
+            evidence["source"]["machine_god"]["materialization"] = materialization
             evidence_path = temporary / "upstream.json"
             evidence_path.write_text(
                 json.dumps(evidence), encoding="utf-8"
@@ -642,7 +733,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             materialization = materialize_machine_source(
                 root,
                 scratch / "machine-source",
-                scratch / "machine-source.tar",
+                scratch / "machine-source-manifest.json",
                 commit,
                 "git",
                 environment=environment,
@@ -674,6 +765,68 @@ class UpstreamHarnessTest(unittest.TestCase):
                 materialization["source_tree_sha256"],
             )
 
+    def test_materialization_ignores_export_attributes_and_rejects_links(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "test@example.test"],
+                check=True,
+            )
+            (root / ".gitattributes").write_text(
+                "ignored.txt export-ignore\nsubstituted.txt export-subst\n",
+                encoding="utf-8",
+            )
+            (root / "ignored.txt").write_text("must remain", encoding="utf-8")
+            substitution = "$Format:%H$\n"
+            (root / "substituted.txt").write_text(substitution, encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "attributes"], check=True)
+            commit = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            scratch = root / ".bench"
+            scratch.mkdir()
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "f" * 32
+            materialization = materialize_machine_source(
+                root,
+                scratch / "machine-source",
+                scratch / "machine-source-manifest.json",
+                commit,
+                "git",
+                environment=environment,
+                timeout_seconds=2.0,
+            )
+            self.assertEqual(
+                (scratch / "machine-source/ignored.txt").read_text(encoding="utf-8"),
+                "must remain",
+            )
+            self.assertEqual(
+                (scratch / "machine-source/substituted.txt").read_text(encoding="utf-8"),
+                substitution,
+            )
+            self.assertEqual(materialization["method"], "git-ls-tree-cat-file")
+
+            link = root / "link"
+            link.symlink_to("ignored.txt")
+            subprocess.run(["git", "-C", str(root), "add", "link"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "link"], check=True)
+            link_commit = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            with self.assertRaisesRegex(RuntimeError, "unsupported mode/type"):
+                materialize_machine_source(
+                    root,
+                    scratch / "linked-source",
+                    scratch / "linked-manifest.json",
+                    link_commit,
+                    "git",
+                    environment=environment,
+                    timeout_seconds=2.0,
+                )
+
     @unittest.skipUnless(
         sys.platform.startswith("linux"),
         "detached descendant containment is enforced by Linux /proc",
@@ -681,14 +834,21 @@ class UpstreamHarnessTest(unittest.TestCase):
     def test_process_timeout_terminates_child_group(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "child-finished"
-            child = (
-                "import pathlib,time; time.sleep(0.4); "
-                f"pathlib.Path({str(marker)!r}).write_text('bad')"
-            )
-            parent = (
-                "import subprocess,sys,time; "
-                f"subprocess.Popen([sys.executable,'-c',{child!r}],start_new_session=True); "
-                "time.sleep(5)"
+            parent = "\n".join(
+                (
+                    "import os, pathlib, time",
+                    "first = os.fork()",
+                    "if first == 0:",
+                    "    os.setsid()",
+                    "    second = os.fork()",
+                    "    if second == 0:",
+                    "        os.environ.clear()",
+                    "        time.sleep(0.4)",
+                    f"        pathlib.Path({str(marker)!r}).write_text('bad')",
+                    "        time.sleep(5)",
+                    "    os._exit(0)",
+                    "time.sleep(5)",
+                )
             )
             environment = os.environ.copy()
             environment[CONTAINMENT_ENVIRONMENT_KEY] = "b" * 32
@@ -701,6 +861,115 @@ class UpstreamHarnessTest(unittest.TestCase):
                 )
             time.sleep(0.5)
             self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
+    def test_linux_containment_does_not_read_descendant_environments(self) -> None:
+        linux_containment_preflight()
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "1" * 32
+        original_read_bytes = Path.read_bytes
+
+        def reject_environ(path: Path) -> bytes:
+            if path.name == "environ":
+                raise PermissionError("hostile proc mount")
+            return original_read_bytes(path)
+
+        with mock.patch.object(Path, "read_bytes", reject_environ):
+            completed = run_process(
+                [sys.executable, "-c", "pass"],
+                cwd=Path.cwd(),
+                environment=environment,
+                timeout_seconds=1.0,
+            )
+        self.assertEqual(completed.returncode, 0)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
+    def test_linux_containment_preflight_fails_closed_without_proc(self) -> None:
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "2" * 32
+        with (
+            mock.patch.object(upstream, "_LINUX_PREFLIGHT_COMPLETE", False),
+            mock.patch.object(
+                upstream,
+                "linux_process_table",
+                side_effect=RuntimeError("unreadable proc"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "unreadable proc"),
+        ):
+            run_process(
+                [sys.executable, "-c", "pass"],
+                cwd=Path.cwd(),
+                environment=environment,
+                timeout_seconds=1.0,
+            )
+
+    def test_elapsed_time_excludes_delayed_containment_scan(self) -> None:
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "3" * 32
+
+        def delayed_finalize(process: object, supervisor: object) -> None:
+            time.sleep(0.2)
+            finalize_successful_process(process, supervisor)
+
+        started = time.monotonic_ns()
+        with mock.patch.object(
+            upstream, "finalize_successful_process", side_effect=delayed_finalize
+        ):
+            completed = run_process(
+                [sys.executable, "-c", "pass"],
+                cwd=Path.cwd(),
+                environment=environment,
+                timeout_seconds=1.0,
+            )
+        wall_elapsed = time.monotonic_ns() - started
+        self.assertLess(completed.elapsed_ns, 150_000_000)
+        self.assertGreater(wall_elapsed, 190_000_000)
+
+    @unittest.skipUnless(os.name == "posix", "executable symlink regression requires POSIX")
+    def test_tool_identity_survives_symlink_swap_and_detects_target_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            good = temporary / "good-tool"
+            bad = temporary / "bad-tool"
+            link = temporary / "tool"
+            good.write_text("#!/bin/sh\nsleep 0.2\nprintf good\n", encoding="utf-8")
+            bad.write_text("#!/bin/sh\nprintf bad\n", encoding="utf-8")
+            good.chmod(0o755)
+            bad.chmod(0o755)
+            link.symlink_to(good)
+            resolved = invocation_path(str(link), os.environ.get("PATH", ""))
+            identity = executable_identity(Path(resolved))
+            link.unlink()
+            link.symlink_to(bad)
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "4" * 32
+            completed = run_process(
+                [resolved],
+                cwd=temporary,
+                environment=environment,
+                timeout_seconds=1.0,
+                expected_executable=identity,
+            )
+            self.assertEqual(completed.stdout, b"good")
+
+            identity = executable_identity(good)
+            mutator = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import pathlib,time; time.sleep(0.05); "
+                    f"pathlib.Path({str(good)!r}).write_text('#!/bin/sh\\nprintf changed\\n')",
+                ]
+            )
+            with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                run_process(
+                    [str(good)],
+                    cwd=temporary,
+                    environment=environment,
+                    timeout_seconds=1.0,
+                    expected_executable=identity,
+                )
+            mutator.wait(timeout=1)
 
     @unittest.skipUnless(os.name == "posix", "setsid regression requires POSIX")
     def test_timeout_cleanup_is_bounded_when_detached_child_holds_pipe(self) -> None:

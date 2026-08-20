@@ -1,7 +1,8 @@
 # Milestone 01 upstream benchmark review 01
 
-Reviewed candidates: `f487585e7bdbfb8c82edd7c18e7725d9f7a0e556`
-and `59bcdea81885895ea7c752563c31b88a4ac40422`.
+Reviewed candidates: `f487585e7bdbfb8c82edd7c18e7725d9f7a0e556`,
+`59bcdea81885895ea7c752563c31b88a4ac40422`, and
+`d5713d7ce40d7f809d9ca19d5bcffbdcda7dfd69`.
 
 Adversarial correctness, security, CI, and performance review confirmed these
 findings and the branch resolves them as follows:
@@ -31,23 +32,36 @@ findings and the branch resolves them as follows:
 - The schema did not completely bind build caches and Rust tool state. It now
   requires the machine build's `CARGO_HOME` and `RUSTUP_HOME` to equal the
   verified tool environment, and derives and validates every home, temporary,
-  source, archive, target, Cargo, and Zig cache path from the fresh scratch
+  source, manifest, target, Cargo, and Zig cache path from the fresh scratch
   directory. Hostile substitutions for each path are rejected.
 - The machine build still read its source from the developer worktree after the
   recorded revision was checked, leaving a time-of-check/time-of-use gap. The
-  harness now creates a fresh Git archive of the recorded object ID, safely
-  extracts it into scratch, records its Git tree, archive checksum, and canonical
-  source-tree checksum, and builds and measures only that immutable snapshot.
+  harness now materializes the recorded Git object tree into scratch, records a
+  canonical manifest and source-tree checksum, and builds and measures only that snapshot.
   Both the collector and checker re-hash the materialized source. A regression
   test mutates the original worktree during a build-like read and confirms that
   the recorded source remains the only input.
 - Timeout cleanup could wait forever when a detached descendant retained a
-  captured pipe. All cleanup waits and pipe closure are now bounded. Linux CI
-  gives each run a random inherited token, discovers same-user descendants via
-  `/proc` even after `setsid` or a double fork, stops and kills them, and fails
-  closed if that containment facility is unavailable or a supposedly successful
-  command leaks a descendant. Regressions cover both a detached pipe holder and
-  Linux token containment.
+  captured pipe. All cleanup waits and pipe closure are now bounded, and a
+  regression covers a detached pipe holder.
+- Environment-token discovery remained fail-open because a hostile child could
+  clear its environment or make `/proc/*/environ` unreadable. Linux containment
+  now combines unconditional original-process-group termination with a verified
+  child-subreaper, pidfds, parent-relationship tracking, and explicit reaping.
+  A hostile double-fork preflight must succeed before commands launch; it and the
+  regressions clear the token and do not read descendant environments.
+- Post-command containment scans were included in elapsed samples. The end
+  timestamp is now taken immediately after `communicate` returns; a deliberately
+  delayed scan regression proves the recorded sample excludes cleanup overhead.
+- Git archives honored committed export attributes, so the recorded Git tree did
+  not uniquely determine materialized inputs. Materialization now uses canonical
+  `ls-tree` and `cat-file` operations, rejects links and special modes, and binds
+  every file path, Git mode, object ID, byte count, and digest. Hostile
+  `export-ignore` and `export-subst` attributes cannot alter the snapshot.
+- Resolved tool paths could change after version checks. Each path is now fully
+  canonicalized and its content and filesystem identity are recorded and checked
+  before and after every use. Regressions swap a discovery symlink and mutate its
+  former target during execution.
 - Host provenance did not identify the processor or CI image class. Evidence now
   includes CPU model, runner architecture, CI image identity, and an explicit
   runner class that the validator binds consistently.
@@ -61,7 +75,9 @@ commands, binary/measurement path substitution, post-recording binary changes,
 ambient compiler flags, runner-class changes, ignored configuration inputs,
 preexisting upstream checkouts, every scratch/cache/tool-state path, original
 worktree mutation after snapshotting, process-group and detached-descendant
-timeouts, Linux descendant containment, and stale evidence.
+timeouts, Linux descendant containment without readable environments, delayed
+containment scans, Git export attributes and link modes, mutable tool paths, and
+stale evidence.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,
