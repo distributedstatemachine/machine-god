@@ -33,8 +33,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
-| 01 | Repository, docs, CI, workspace, upstream and benchmark baseline | IN PROGRESS |
-| 02 | Provider-neutral streaming engine and deterministic testkit | NOT STARTED |
+| 01 | Repository, docs, CI, workspace, upstream and benchmark baseline | COMPLETE |
+| 02 | Provider-neutral streaming engine and deterministic testkit | IN PROGRESS |
 | 03 | Providers, native tools, permissions, sessions, config, and CLI | NOT STARTED |
 | 04 | Security, lifecycle, concurrency, and persistence hardening | NOT STARTED |
 | 05 | Skills, MCP, ACP, and subagent extensibility | NOT STARTED |
