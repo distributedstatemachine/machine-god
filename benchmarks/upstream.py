@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Build and measure machine-god beside the exact pinned fx revision.
 
-This harness intentionally produces bootstrap infrastructure evidence, not a
-product performance claim.  The current machine-god CLI does not implement the
-fx local commands, so those workloads are retained as explicitly unimplemented
-comparison cases.
+Schema 2 is deliberately bootstrap infrastructure evidence.  It cannot be
+promoted into a product performance claim by changing a label in the JSON.
 """
 
 from __future__ import annotations
@@ -12,10 +10,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import re
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -29,6 +29,33 @@ from typing import Any, Mapping, Sequence
 EXPECTED_RUST_VERSION = "1.94.1"
 EXPECTED_ZIG_VERSION = "0.16.0"
 HEX_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+ALLOWED_MACHINE_OUTPUTS = (".bench", "benchmarks/results", "target")
+BASE_ENVIRONMENT_KEYS = {"HOME", "LANG", "LC_ALL", "NO_COLOR", "PATH", "TMPDIR"}
+GIT_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_TERMINAL_PROMPT",
+}
+FX_BUILD_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {
+    "ZIG_GLOBAL_CACHE_DIR",
+    "ZIG_LOCAL_CACHE_DIR",
+}
+MACHINE_BUILD_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {
+    "CARGO_HOME",
+    "CARGO_INCREMENTAL",
+    "CARGO_TARGET_DIR",
+    "RUSTUP_HOME",
+}
+TOOL_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {"CARGO_HOME", "RUSTUP_HOME"}
+FORBIDDEN_ENVIRONMENT_NAMES = {
+    "CARGO_BUILD_RUSTFLAGS",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "RUSTFLAGS",
+}
 
 
 @dataclass(frozen=True)
@@ -38,11 +65,25 @@ class UpstreamLock:
     zig: str
 
 
+@dataclass(frozen=True)
+class ProcessResult:
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    elapsed_ns: int
+
+
+class ProcessTimeout(RuntimeError):
+    """A child process exceeded its declared wall-clock limit."""
+
+
 def parse_upstream_lock(path: Path) -> UpstreamLock:
     """Parse the deliberately small key=value upstream lock format."""
 
     values: dict[str, str] = {}
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -62,6 +103,8 @@ def parse_upstream_lock(path: Path) -> UpstreamLock:
         raise ValueError(f"{path}: missing keys: {', '.join(missing)}")
     if unknown:
         raise ValueError(f"{path}: unknown keys: {', '.join(unknown)}")
+    if not values["repository"].startswith("https://"):
+        raise ValueError(f"{path}: repository must be an HTTPS URL")
     if not HEX_SHA_RE.fullmatch(values["commit"]):
         raise ValueError(f"{path}: commit must be a lowercase 40-character Git SHA")
     if values["zig"] != EXPECTED_ZIG_VERSION:
@@ -70,6 +113,18 @@ def parse_upstream_lock(path: Path) -> UpstreamLock:
             f"found {values['zig']}"
         )
     return UpstreamLock(**values)
+
+
+def git_prefix(git: str) -> list[str]:
+    return [
+        git,
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "protocol.file.allow=never",
+        "-c",
+        "protocol.ext.allow=never",
+    ]
 
 
 def command_plan(
@@ -81,19 +136,23 @@ def command_plan(
     zig: str = "zig",
     cargo: str = "cargo",
 ) -> dict[str, list[str]]:
-    """Return source and build commands without executing them."""
+    """Return hardened source and exact release build commands."""
 
+    del root  # The machine build runs at root but does not embed it in argv.
+    safe_git = git_prefix(git)
     return {
         "clone": [
-            git,
+            *safe_git,
             "clone",
+            "--config",
+            "core.hooksPath=/dev/null",
             "--filter=blob:none",
             "--no-checkout",
             lock.repository,
             str(upstream_dir),
         ],
         "fetch": [
-            git,
+            *safe_git,
             "-C",
             str(upstream_dir),
             "fetch",
@@ -103,7 +162,7 @@ def command_plan(
             lock.commit,
         ],
         "checkout": [
-            git,
+            *safe_git,
             "-C",
             str(upstream_dir),
             "checkout",
@@ -145,11 +204,39 @@ def is_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def is_positive_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
+
+
 def require_command(value: object, field: str) -> list[str]:
     if not isinstance(value, list) or not value:
         raise ValueError(f"{field} must be a non-empty list")
     for index, argument in enumerate(value):
         require_text(argument, f"{field}[{index}]")
+    return value
+
+
+def require_environment(
+    value: object, field: str, expected_keys: set[str]
+) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    if set(value) != expected_keys:
+        raise ValueError(
+            f"{field} keys must be exactly {', '.join(sorted(expected_keys))}"
+        )
+    for name, item in value.items():
+        if not isinstance(name, str) or not isinstance(item, str):
+            raise ValueError(f"{field} names and values must be strings")
+        if name in FORBIDDEN_ENVIRONMENT_NAMES or name.startswith("CARGO_PROFILE_"):
+            raise ValueError(f"{field} contains unsafe ambient override {name}")
+    if value["LANG"] != "C" or value["LC_ALL"] != "C" or value["NO_COLOR"] != "1":
+        raise ValueError(f"{field} must pin locale and color behavior")
     return value
 
 
@@ -159,174 +246,84 @@ def percentile_95(samples: Sequence[int]) -> int:
     return ordered[index]
 
 
-def validate_upstream_evidence(data: Mapping[str, Any]) -> None:
-    """Validate schema 2 upstream bootstrap evidence.
-
-    The claim-eligibility checks are intentional: changing a label alone cannot
-    turn this bootstrap harness into product comparison evidence.
-    """
-
-    if data.get("schema_version") != 2 or not is_integer(data.get("schema_version")):
-        raise ValueError("unsupported upstream benchmark schema")
-    if data.get("classification") != "bootstrap-infrastructure-only":
-        raise ValueError("upstream harness evidence must be bootstrap-only")
-    if data.get("claim_eligible") is not False:
-        raise ValueError("bootstrap evidence must not be claim eligible")
-    require_text(data.get("generated_at_utc"), "generated_at_utc")
-
-    source = data.get("source")
-    if not isinstance(source, dict):
-        raise ValueError("source provenance is missing")
-    machine_source = source.get("machine_god")
-    fx_source = source.get("fx")
-    if not isinstance(machine_source, dict) or not isinstance(fx_source, dict):
-        raise ValueError("both source revisions are required")
-    machine_sha = require_text(machine_source.get("git_sha"), "source.machine_god.git_sha")
-    if not HEX_SHA_RE.fullmatch(machine_sha):
-        raise ValueError("source.machine_god.git_sha must be a lowercase 40-character SHA")
-    if machine_source.get("dirty") is not False:
-        raise ValueError("machine-god source must be clean")
-    repository = require_text(fx_source.get("repository"), "source.fx.repository")
-    if not repository.startswith("https://"):
-        raise ValueError("source.fx.repository must be an HTTPS URL")
-    locked_commit = require_text(fx_source.get("locked_commit"), "source.fx.locked_commit")
-    verified_commit = require_text(
-        fx_source.get("verified_commit"), "source.fx.verified_commit"
-    )
-    if not HEX_SHA_RE.fullmatch(locked_commit) or verified_commit != locked_commit:
-        raise ValueError("the verified fx commit must equal the locked 40-character SHA")
-    preparation = fx_source.get("preparation_commands")
-    if not isinstance(preparation, list) or not preparation:
-        raise ValueError("source.fx.preparation_commands must be retained")
-    for index, record in enumerate(preparation):
-        validate_command_record(record, f"source.fx.preparation_commands[{index}]")
-
-    host = data.get("host")
-    if not isinstance(host, dict):
-        raise ValueError("host metadata is missing")
-    for field in ("system", "release", "machine", "python"):
-        require_text(host.get(field), f"host.{field}")
-    if not is_integer(host.get("cpu_count")) or host["cpu_count"] < 1:
-        raise ValueError("host.cpu_count must be a positive integer")
-
-    tools = data.get("tools")
-    if not isinstance(tools, dict):
-        raise ValueError("tool provenance is missing")
-    for name in ("git", "zig", "rustc", "cargo"):
-        tool = tools.get(name)
-        if not isinstance(tool, dict):
-            raise ValueError(f"tools.{name} is missing")
-        require_command(tool.get("command"), f"tools.{name}.command")
-        require_text(tool.get("executable"), f"tools.{name}.executable")
-        require_text(tool.get("version"), f"tools.{name}.version")
-    if tools["zig"].get("required_version") != EXPECTED_ZIG_VERSION:
-        raise ValueError("tools.zig.required_version is not pinned to 0.16.0")
-    if tools["zig"].get("version") != EXPECTED_ZIG_VERSION:
-        raise ValueError("evidence was not built with Zig 0.16.0")
-    for name in ("rustc", "cargo"):
-        if tools[name].get("required_version") != EXPECTED_RUST_VERSION:
-            raise ValueError(f"tools.{name}.required_version is not pinned to 1.94.1")
-        if not tools[name]["version"].startswith(f"{name} {EXPECTED_RUST_VERSION} "):
-            raise ValueError(f"evidence was not built with {name} {EXPECTED_RUST_VERSION}")
-
-    builds = data.get("builds")
-    if not isinstance(builds, list) or len(builds) != 2:
-        raise ValueError("exactly two build records are required")
-    projects: set[str] = set()
-    for index, build in enumerate(builds):
-        field = f"builds[{index}]"
-        if not isinstance(build, dict):
-            raise ValueError(f"{field} must be an object")
-        projects.add(require_text(build.get("project"), f"{field}.project"))
-        require_text(build.get("profile"), f"{field}.profile")
-        validate_command_record(build, field)
-        validate_binary(build.get("binary"), f"{field}.binary")
-    if projects != {"fx", "machine-god"}:
-        raise ValueError("build records must cover fx and machine-god")
-
-    workloads = data.get("workloads")
-    if not isinstance(workloads, list) or not workloads:
-        raise ValueError("at least one workload is required")
-    measured_projects: set[str] = set()
-    saw_explicit_gap = False
-    for index, workload in enumerate(workloads):
-        field = f"workloads[{index}]"
-        if not isinstance(workload, dict):
-            raise ValueError(f"{field} must be an object")
-        require_text(workload.get("id"), f"{field}.id")
-        require_text(workload.get("description"), f"{field}.description")
-        equivalence = workload.get("equivalence")
-        if equivalence not in {"non-equivalent", "unimplemented"}:
-            raise ValueError(f"{field}.equivalence makes an unsupported comparison claim")
-        saw_explicit_gap = True
-        if workload.get("claim_eligible") is not False:
-            raise ValueError(f"{field} must not be claim eligible")
-        require_text(workload.get("reason"), f"{field}.reason")
-        implementations = workload.get("implementations")
-        if not isinstance(implementations, list) or len(implementations) != 2:
-            raise ValueError(f"{field} must describe fx and machine-god")
-        implementation_projects: set[str] = set()
-        for impl_index, implementation in enumerate(implementations):
-            impl_field = f"{field}.implementations[{impl_index}]"
-            if not isinstance(implementation, dict):
-                raise ValueError(f"{impl_field} must be an object")
-            project = require_text(implementation.get("project"), f"{impl_field}.project")
-            implementation_projects.add(project)
-            status = implementation.get("status")
-            if status == "measured":
-                validate_measurement(implementation, impl_field)
-                measured_projects.add(project)
-            elif status in {"not-measured", "unimplemented"}:
-                if "samples" in implementation:
-                    raise ValueError(f"{impl_field} must not contain samples")
-                if status == "not-measured":
-                    require_command(implementation.get("command"), f"{impl_field}.command")
-                require_text(implementation.get("reason"), f"{impl_field}.reason")
-            else:
-                raise ValueError(f"{impl_field}.status is invalid")
-        if implementation_projects != {"fx", "machine-god"}:
-            raise ValueError(f"{field} must cover fx and machine-god")
-    if measured_projects != {"fx", "machine-god"}:
-        raise ValueError("bootstrap evidence must contain raw samples for both projects")
-    if not saw_explicit_gap:
-        raise ValueError("comparison gaps must be explicit")
-
-
-def validate_command_record(record: object, field: str) -> None:
-    if not isinstance(record, dict):
-        raise ValueError(f"{field} must be an object")
-    require_command(record.get("command"), f"{field}.command")
-    require_text(record.get("cwd"), f"{field}.cwd")
-    if not is_integer(record.get("elapsed_ns")) or record["elapsed_ns"] <= 0:
-        raise ValueError(f"{field}.elapsed_ns must be a positive integer")
-    if record.get("returncode") != 0 or not is_integer(record.get("returncode")):
-        raise ValueError(f"{field}.returncode must be integer zero")
-    for stream in ("stdout_sha256", "stderr_sha256"):
-        checksum = require_text(record.get(stream), f"{field}.{stream}")
-        if len(checksum) != 64 or any(character not in "0123456789abcdef" for character in checksum):
-            raise ValueError(f"{field}.{stream} must be a lowercase SHA-256 digest")
-
-
-def validate_binary(binary: object, field: str) -> None:
+def validate_binary(binary: object, field: str) -> dict[str, Any]:
     if not isinstance(binary, dict):
         raise ValueError(f"{field} must be an object")
     require_text(binary.get("path"), f"{field}.path")
     if not is_integer(binary.get("bytes")) or binary["bytes"] <= 0:
         raise ValueError(f"{field}.bytes must be a positive integer")
     checksum = require_text(binary.get("sha256"), f"{field}.sha256")
-    if len(checksum) != 64 or any(character not in "0123456789abcdef" for character in checksum):
+    if len(checksum) != 64 or any(
+        character not in "0123456789abcdef" for character in checksum
+    ):
         raise ValueError(f"{field}.sha256 must be a lowercase SHA-256 digest")
+    return binary
 
 
-def validate_measurement(measurement: Mapping[str, Any], field: str) -> None:
-    require_command(measurement.get("command"), f"{field}.command")
+def validate_binary_file(binary: Mapping[str, Any], actual: Path, field: str) -> None:
+    expected_path = Path(require_text(binary.get("path"), f"{field}.path")).resolve()
+    actual_path = actual.resolve()
+    if expected_path != actual_path:
+        raise ValueError(f"{field}.path does not match the supplied binary")
+    if not actual_path.is_file() or not os.access(actual_path, os.X_OK):
+        raise ValueError(f"supplied binary is not executable: {actual_path}")
+    if actual_path.stat().st_size != binary.get("bytes"):
+        raise ValueError(f"{field}.bytes does not match the supplied binary")
+    if sha256_file(actual_path) != binary.get("sha256"):
+        raise ValueError(f"{field}.sha256 does not match the supplied binary")
+
+
+def validate_command_record(
+    record: object,
+    field: str,
+    *,
+    expected_command: Sequence[str] | None = None,
+    expected_environment_keys: set[str],
+    expected_timeout: float,
+) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        raise ValueError(f"{field} must be an object")
+    command = require_command(record.get("command"), f"{field}.command")
+    if expected_command is not None and command != list(expected_command):
+        raise ValueError(f"{field}.command is not the exact expected command")
+    require_text(record.get("cwd"), f"{field}.cwd")
+    require_environment(
+        record.get("environment"), f"{field}.environment", expected_environment_keys
+    )
+    if record.get("timeout_seconds") != expected_timeout:
+        raise ValueError(f"{field}.timeout_seconds does not match the declared timeout")
+    if not is_integer(record.get("elapsed_ns")) or record["elapsed_ns"] <= 0:
+        raise ValueError(f"{field}.elapsed_ns must be a positive integer")
+    if record.get("returncode") != 0 or not is_integer(record.get("returncode")):
+        raise ValueError(f"{field}.returncode must be integer zero")
+    for stream in ("stdout_sha256", "stderr_sha256"):
+        checksum = require_text(record.get(stream), f"{field}.{stream}")
+        if len(checksum) != 64 or any(
+            character not in "0123456789abcdef" for character in checksum
+        ):
+            raise ValueError(f"{field}.{stream} must be a lowercase SHA-256 digest")
+    return record
+
+
+def validate_measurement(
+    measurement: Mapping[str, Any],
+    field: str,
+    *,
+    expected_command: Sequence[str],
+    expected_environment_keys: set[str],
+    expected_timeout: float,
+) -> None:
+    command = require_command(measurement.get("command"), f"{field}.command")
+    if command != list(expected_command):
+        raise ValueError(f"{field}.command is not bound to the built binary")
     require_text(measurement.get("cwd"), f"{field}.cwd")
-    overrides = measurement.get("environment_overrides")
-    if not isinstance(overrides, dict):
-        raise ValueError(f"{field}.environment_overrides must be an object")
-    for name, value in overrides.items():
-        require_text(name, f"{field}.environment_overrides key")
-        require_text(value, f"{field}.environment_overrides[{name!r}]")
+    require_environment(
+        measurement.get("environment"),
+        f"{field}.environment",
+        expected_environment_keys,
+    )
+    if measurement.get("timeout_seconds") != expected_timeout:
+        raise ValueError(f"{field}.timeout_seconds does not match the declared timeout")
     warmup = measurement.get("warmup")
     if not is_integer(warmup) or warmup < 1:
         raise ValueError(f"{field}.warmup must be a positive integer")
@@ -349,22 +346,426 @@ def validate_measurement(measurement: Mapping[str, Any], field: str) -> None:
         raise ValueError(f"{field}.p95_ns does not match raw samples")
 
 
-def resolved_executable(command: str) -> str:
-    executable = shutil.which(command)
+def validate_upstream_evidence(
+    data: Mapping[str, Any],
+    *,
+    expected_lock: UpstreamLock | None = None,
+    expected_lock_path: Path | None = None,
+    expected_lock_sha256: str | None = None,
+    expected_root: Path | None = None,
+    expected_runner_class: str | None = None,
+    expected_binaries: Mapping[str, Path] | None = None,
+) -> None:
+    """Validate provenance and forbid bootstrap evidence from claiming equivalence."""
+
+    if data.get("schema_version") != 2 or not is_integer(data.get("schema_version")):
+        raise ValueError("unsupported upstream benchmark schema")
+    if data.get("classification") != "bootstrap-infrastructure-only":
+        raise ValueError("upstream harness evidence must be bootstrap-only")
+    if data.get("claim_eligible") is not False:
+        raise ValueError("bootstrap evidence must not be claim eligible")
+    require_text(data.get("generated_at_utc"), "generated_at_utc")
+    runner_class = require_text(data.get("runner_class"), "runner_class")
+    if expected_runner_class is not None and runner_class != expected_runner_class:
+        raise ValueError("evidence runner class does not match the expected runner class")
+
+    timeouts = data.get("timeouts_seconds")
+    if not isinstance(timeouts, dict) or set(timeouts) != {"fetch", "build", "sample"}:
+        raise ValueError("timeouts_seconds must define fetch, build, and sample")
+    for name, value in timeouts.items():
+        if not is_positive_number(value):
+            raise ValueError(f"timeouts_seconds.{name} must be a positive finite number")
+
+    source = data.get("source")
+    if not isinstance(source, dict):
+        raise ValueError("source provenance is missing")
+    machine_source = source.get("machine_god")
+    fx_source = source.get("fx")
+    if not isinstance(machine_source, dict) or not isinstance(fx_source, dict):
+        raise ValueError("both source revisions are required")
+    machine_sha = require_text(machine_source.get("git_sha"), "source.machine_god.git_sha")
+    if not HEX_SHA_RE.fullmatch(machine_sha):
+        raise ValueError("source.machine_god.git_sha must be a lowercase 40-character SHA")
+    if machine_source.get("dirty") is not False:
+        raise ValueError("machine-god source must be clean")
+    if machine_source.get("allowed_output_directories") != list(ALLOWED_MACHINE_OUTPUTS):
+        raise ValueError("machine-god cleanliness exceptions are not canonical")
+
+    repository = require_text(fx_source.get("repository"), "source.fx.repository")
+    locked_commit = require_text(fx_source.get("locked_commit"), "source.fx.locked_commit")
+    verified_commit = require_text(
+        fx_source.get("verified_commit"), "source.fx.verified_commit"
+    )
+    if not HEX_SHA_RE.fullmatch(locked_commit) or verified_commit != locked_commit:
+        raise ValueError("the verified fx commit must equal the locked 40-character SHA")
+    if expected_lock is not None and (
+        repository != expected_lock.repository
+        or locked_commit != expected_lock.commit
+        or data.get("tools", {}).get("zig", {}).get("required_version")
+        != expected_lock.zig
+    ):
+        raise ValueError("evidence does not match the canonical upstream lock")
+    if fx_source.get("fresh_checkout") is not True:
+        raise ValueError("fx source must come from a fresh checkout")
+    if fx_source.get("hooks_disabled") is not True:
+        raise ValueError("fx Git hooks must be disabled")
+    recorded_lock_path = Path(
+        require_text(fx_source.get("lock_path"), "source.fx.lock_path")
+    ).resolve()
+    if expected_lock_path is not None and recorded_lock_path != expected_lock_path.resolve():
+        raise ValueError("evidence does not name the canonical upstream lock path")
+    lock_checksum = require_text(fx_source.get("lock_sha256"), "source.fx.lock_sha256")
+    if len(lock_checksum) != 64 or any(
+        character not in "0123456789abcdef" for character in lock_checksum
+    ):
+        raise ValueError("source.fx.lock_sha256 must be a lowercase SHA-256 digest")
+    if expected_lock_sha256 is not None and lock_checksum != expected_lock_sha256:
+        raise ValueError("evidence does not bind the canonical upstream lock bytes")
+
+    host = data.get("host")
+    if not isinstance(host, dict):
+        raise ValueError("host metadata is missing")
+    for field in ("system", "release", "machine", "python", "cpu_model"):
+        require_text(host.get(field), f"host.{field}")
+    if not is_integer(host.get("cpu_count")) or host["cpu_count"] < 1:
+        raise ValueError("host.cpu_count must be a positive integer")
+    runner = host.get("runner")
+    if not isinstance(runner, dict) or runner.get("class") != runner_class:
+        raise ValueError("host.runner.class must bind the evidence runner class")
+    for field in ("image_os", "image_version", "runner_os", "runner_arch"):
+        require_text(runner.get(field), f"host.runner.{field}")
+    if not isinstance(runner.get("github_actions"), bool):
+        raise ValueError("host.runner.github_actions must be boolean")
+
+    tools = data.get("tools")
+    if not isinstance(tools, dict):
+        raise ValueError("tool provenance is missing")
+    for name in ("git", "zig", "rustc", "cargo"):
+        tool = tools.get(name)
+        if not isinstance(tool, dict):
+            raise ValueError(f"tools.{name} is missing")
+        command = require_command(tool.get("command"), f"tools.{name}.command")
+        if command[0] != require_text(tool.get("executable"), f"tools.{name}.executable"):
+            raise ValueError(f"tools.{name}.command is not bound to its executable")
+        require_text(tool.get("version"), f"tools.{name}.version")
+    expected_tool_commands = {
+        "git": [tools["git"]["executable"], "--version"],
+        "zig": [tools["zig"]["executable"], "version"],
+        "rustc": [
+            tools["rustc"]["executable"],
+            f"+{EXPECTED_RUST_VERSION}",
+            "--version",
+        ],
+        "cargo": [
+            tools["cargo"]["executable"],
+            f"+{EXPECTED_RUST_VERSION}",
+            "--version",
+        ],
+    }
+    for name, command in expected_tool_commands.items():
+        if tools[name]["command"] != command:
+            raise ValueError(f"tools.{name}.command is not the exact version command")
+    if tools["zig"].get("required_version") != EXPECTED_ZIG_VERSION:
+        raise ValueError("tools.zig.required_version is not pinned to 0.16.0")
+    if tools["zig"].get("version") != EXPECTED_ZIG_VERSION:
+        raise ValueError("evidence was not built with Zig 0.16.0")
+    for name in ("rustc", "cargo"):
+        if tools[name].get("required_version") != EXPECTED_RUST_VERSION:
+            raise ValueError(f"tools.{name}.required_version is not pinned to 1.94.1")
+        if not tools[name]["version"].startswith(f"{name} {EXPECTED_RUST_VERSION} "):
+            raise ValueError(f"evidence was not built with {name} {EXPECTED_RUST_VERSION}")
+    tool_environment = require_environment(
+        data.get("tool_environment"), "tool_environment", TOOL_ENVIRONMENT_KEYS
+    )
+    policy = data.get("environment_policy")
+    if policy != {
+        "inherits_parent_environment": False,
+        "allowlisted_environment_only": True,
+    }:
+        raise ValueError("environment_policy must forbid ambient inheritance")
+
+    builds = data.get("builds")
+    if not isinstance(builds, list) or len(builds) != 2:
+        raise ValueError("exactly two build records are required")
+    if [build.get("project") for build in builds if isinstance(build, dict)] != [
+        "fx",
+        "machine-god",
+    ]:
+        raise ValueError("build records must be ordered as fx then machine-god")
+    fx_build, machine_build = builds
+    if fx_build.get("profile") != "ReleaseSafe":
+        raise ValueError("fx build profile must be ReleaseSafe")
+    if machine_build.get("profile") != "release":
+        raise ValueError("machine-god build profile must be release")
+    if expected_root is not None and Path(machine_build["cwd"]).resolve() != expected_root.resolve():
+        raise ValueError("machine-god build cwd is not the canonical repository root")
+    fx_command = [tools["zig"]["executable"], "build", "-Doptimize=ReleaseSafe"]
+    machine_command = [
+        tools["cargo"]["executable"],
+        f"+{EXPECTED_RUST_VERSION}",
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "machine-god-cli",
+    ]
+    validate_command_record(
+        fx_build,
+        "builds[0]",
+        expected_command=fx_command,
+        expected_environment_keys=FX_BUILD_ENVIRONMENT_KEYS,
+        expected_timeout=timeouts["build"],
+    )
+    validate_command_record(
+        machine_build,
+        "builds[1]",
+        expected_command=machine_command,
+        expected_environment_keys=MACHINE_BUILD_ENVIRONMENT_KEYS,
+        expected_timeout=timeouts["build"],
+    )
+    for key in BASE_ENVIRONMENT_KEYS:
+        if fx_build["environment"][key] != tool_environment[key]:
+            raise ValueError(f"fx build environment changes canonical {key}")
+        if machine_build["environment"][key] != tool_environment[key]:
+            raise ValueError(f"machine-god build environment changes canonical {key}")
+    if machine_build["environment"]["CARGO_INCREMENTAL"] != "0":
+        raise ValueError("machine-god release build must disable incremental compilation")
+    if Path(fx_build["environment"]["ZIG_LOCAL_CACHE_DIR"]).resolve() != (
+        Path(fx_build["cwd"]) / ".zig-cache"
+    ).resolve():
+        raise ValueError("fx local cache must be isolated inside the fresh checkout")
+    fx_binary = validate_binary(fx_build.get("binary"), "builds[0].binary")
+    machine_binary = validate_binary(machine_build.get("binary"), "builds[1].binary")
+    expected_fx_path = Path(fx_build["cwd"]) / "zig-out/bin/fx"
+    expected_machine_path = (
+        Path(machine_build["environment"]["CARGO_TARGET_DIR"])
+        / "release/machine-god"
+    )
+    if Path(fx_binary["path"]).resolve() != expected_fx_path.resolve():
+        raise ValueError("fx binary path does not match the exact build output")
+    if Path(machine_binary["path"]).resolve() != expected_machine_path.resolve():
+        raise ValueError("machine-god binary path does not match the exact build output")
+
+    preparation = fx_source.get("preparation_commands")
+    if not isinstance(preparation, list) or len(preparation) != 3:
+        raise ValueError("fresh fx preparation must retain clone, fetch, and checkout")
+    plan = command_plan(
+        Path(machine_build["cwd"]),
+        Path(fx_build["cwd"]),
+        UpstreamLock(repository, locked_commit, EXPECTED_ZIG_VERSION),
+        git=tools["git"]["executable"],
+        zig=tools["zig"]["executable"],
+        cargo=tools["cargo"]["executable"],
+    )
+    for index, name in enumerate(("clone", "fetch", "checkout")):
+        validate_command_record(
+            preparation[index],
+            f"source.fx.preparation_commands[{index}]",
+            expected_command=plan[name],
+            expected_environment_keys=GIT_ENVIRONMENT_KEYS,
+            expected_timeout=timeouts["fetch"],
+        )
+        environment = preparation[index]["environment"]
+        if (
+            environment["GIT_CONFIG_GLOBAL"] != "/dev/null"
+            or environment["GIT_CONFIG_NOSYSTEM"] != "1"
+            or environment["GIT_TERMINAL_PROMPT"] != "0"
+        ):
+            raise ValueError("source preparation Git environment is not isolated")
+        for key in BASE_ENVIRONMENT_KEYS:
+            if environment[key] != tool_environment[key]:
+                raise ValueError(f"source preparation changes canonical {key}")
+    if any(record["cwd"] != machine_build["cwd"] for record in preparation):
+        raise ValueError("source preparation commands must run from machine-god root")
+
+    workloads = data.get("workloads")
+    if not isinstance(workloads, list) or len(workloads) != 6:
+        raise ValueError("the canonical bootstrap workload inventory is incomplete")
+    expected_ids = [
+        "bootstrap-exit",
+        "help",
+        "status-json",
+        "doctor-json",
+        "sessions-json",
+        "background-json",
+    ]
+    if [workload.get("id") for workload in workloads if isinstance(workload, dict)] != expected_ids:
+        raise ValueError("workload identifiers or order are not canonical")
+    bootstrap = workloads[0]
+    require_text(bootstrap.get("description"), "workloads[0].description")
+    require_text(bootstrap.get("reason"), "workloads[0].reason")
+    if (
+        bootstrap.get("equivalence") != "non-equivalent"
+        or bootstrap.get("claim_eligible") is not False
+    ):
+        raise ValueError("bootstrap-exit must remain non-equivalent and claim-ineligible")
+    implementations = bootstrap.get("implementations")
+    if not isinstance(implementations, list) or len(implementations) != 2:
+        raise ValueError("bootstrap-exit must contain both measurements")
+    if [item.get("project") for item in implementations if isinstance(item, dict)] != [
+        "fx",
+        "machine-god",
+    ]:
+        raise ValueError("bootstrap measurements must be ordered as fx then machine-god")
+    fx_measurement, machine_measurement = implementations
+    if fx_measurement.get("status") != "measured" or machine_measurement.get("status") != "measured":
+        raise ValueError("both bootstrap implementations must be measured")
+    validate_measurement(
+        fx_measurement,
+        "workloads[0].implementations[0]",
+        expected_command=[fx_binary["path"]],
+        expected_environment_keys=BASE_ENVIRONMENT_KEYS | {"FX_BENCH"},
+        expected_timeout=timeouts["sample"],
+    )
+    validate_measurement(
+        machine_measurement,
+        "workloads[0].implementations[1]",
+        expected_command=[machine_binary["path"]],
+        expected_environment_keys=BASE_ENVIRONMENT_KEYS,
+        expected_timeout=timeouts["sample"],
+    )
+    if fx_measurement["environment"]["FX_BENCH"] != "1":
+        raise ValueError("fx bootstrap measurement must pin FX_BENCH=1")
+    for measurement in (fx_measurement, machine_measurement):
+        for key in BASE_ENVIRONMENT_KEYS:
+            if measurement["environment"][key] != tool_environment[key]:
+                raise ValueError(f"bootstrap measurement changes canonical {key}")
+    if fx_measurement["cwd"] != machine_build["cwd"] or machine_measurement["cwd"] != machine_build["cwd"]:
+        raise ValueError("bootstrap measurements must run from machine-god root")
+
+    local_commands = {
+        "help": [fx_binary["path"], "help"],
+        "status-json": [fx_binary["path"], "status", "--json"],
+        "doctor-json": [fx_binary["path"], "doctor", "--json"],
+        "sessions-json": [fx_binary["path"], "sessions", "--json"],
+        "background-json": [fx_binary["path"], "background", "--json"],
+    }
+    for index, workload in enumerate(workloads[1:], 1):
+        field = f"workloads[{index}]"
+        if (
+            workload.get("equivalence") != "unimplemented"
+            or workload.get("claim_eligible") is not False
+        ):
+            raise ValueError(f"{field} must remain unimplemented and claim-ineligible")
+        require_text(workload.get("description"), f"{field}.description")
+        require_text(workload.get("reason"), f"{field}.reason")
+        items = workload.get("implementations")
+        if not isinstance(items, list) or len(items) != 2:
+            raise ValueError(f"{field} must describe fx and machine-god")
+        fx_item, machine_item = items
+        if (
+            fx_item.get("project") != "fx"
+            or fx_item.get("status") != "not-measured"
+            or require_command(fx_item.get("command"), f"{field}.fx.command")
+            != local_commands[workload["id"]]
+        ):
+            raise ValueError(f"{field} fx command is not canonical")
+        if machine_item.get("project") != "machine-god" or machine_item.get("status") != "unimplemented":
+            raise ValueError(f"{field} machine-god gap is not explicit")
+        if "samples" in fx_item or "samples" in machine_item:
+            raise ValueError(f"{field} must not contain unpaired samples")
+        require_text(fx_item.get("reason"), f"{field}.fx.reason")
+        require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
+
+    if expected_binaries is not None:
+        if set(expected_binaries) != {"fx", "machine-god"}:
+            raise ValueError("both actual binaries are required")
+        validate_binary_file(fx_binary, expected_binaries["fx"], "builds[0].binary")
+        validate_binary_file(
+            machine_binary,
+            expected_binaries["machine-god"],
+            "builds[1].binary",
+        )
+
+
+def terminate_process_group(process: subprocess.Popen[bytes], grace_seconds: float = 1.0) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "posix":
+        os.killpg(process.pid, signal.SIGTERM)
+    else:
+        process.terminate()
+    deadline = time.monotonic() + grace_seconds
+    while process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    elif process.poll() is None:
+        process.kill()
+    process.wait()
+
+
+def run_process(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+    capture_output: bool = True,
+) -> ProcessResult:
+    if not is_positive_number(timeout_seconds):
+        raise ValueError("process timeout must be a positive finite number")
+    start = time.perf_counter_ns()
+    process = subprocess.Popen(
+        list(command),
+        cwd=cwd,
+        env=dict(environment),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+        stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        terminate_process_group(process)
+        process.communicate()
+        raise ProcessTimeout(
+            f"command timed out after {timeout_seconds}s: {' '.join(command)}"
+        ) from error
+    return ProcessResult(
+        returncode=process.returncode,
+        stdout=stdout or b"",
+        stderr=stderr or b"",
+        elapsed_ns=time.perf_counter_ns() - start,
+    )
+
+
+def invocation_path(command: str, path_value: str) -> str:
+    executable = shutil.which(command, path=path_value)
     if executable is None:
         raise RuntimeError(f"required executable was not found: {command}")
-    return str(Path(executable).resolve())
+    return str(Path(executable).absolute())
 
 
-def tool_record(command: list[str], required_version: str | None = None) -> dict[str, object]:
-    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+def tool_record(
+    command: list[str],
+    *,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+    required_version: str | None = None,
+) -> dict[str, object]:
+    completed = run_process(
+        command,
+        cwd=Path.cwd(),
+        environment=environment,
+        timeout_seconds=timeout_seconds,
+    )
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
+        detail = completed.stderr.decode(errors="replace").strip() or completed.stdout.decode(
+            errors="replace"
+        ).strip()
         raise RuntimeError(f"tool version command failed ({' '.join(command)}): {detail}")
-    version = completed.stdout.strip() or completed.stderr.strip()
+    version = (
+        completed.stdout.decode(errors="replace").strip()
+        or completed.stderr.decode(errors="replace").strip()
+    )
     record: dict[str, object] = {
         "command": command,
-        "executable": resolved_executable(command[0]),
+        "executable": command[0],
         "version": version,
     }
     if required_version is not None:
@@ -372,15 +773,38 @@ def tool_record(command: list[str], required_version: str | None = None) -> dict
     return record
 
 
-def verify_tool_versions(git: str, zig: str, rustc: str, cargo: str) -> dict[str, object]:
+def verify_tool_versions(
+    git: str,
+    zig: str,
+    rustc: str,
+    cargo: str,
+    *,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+) -> dict[str, object]:
     tools = {
-        "git": tool_record([git, "--version"]),
-        "zig": tool_record([zig, "version"], EXPECTED_ZIG_VERSION),
+        "git": tool_record(
+            [git, "--version"],
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+        ),
+        "zig": tool_record(
+            [zig, "version"],
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+            required_version=EXPECTED_ZIG_VERSION,
+        ),
         "rustc": tool_record(
-            [rustc, f"+{EXPECTED_RUST_VERSION}", "--version"], EXPECTED_RUST_VERSION
+            [rustc, f"+{EXPECTED_RUST_VERSION}", "--version"],
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+            required_version=EXPECTED_RUST_VERSION,
         ),
         "cargo": tool_record(
-            [cargo, f"+{EXPECTED_RUST_VERSION}", "--version"], EXPECTED_RUST_VERSION
+            [cargo, f"+{EXPECTED_RUST_VERSION}", "--version"],
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+            required_version=EXPECTED_RUST_VERSION,
         ),
     }
     if tools["zig"]["version"] != EXPECTED_ZIG_VERSION:
@@ -394,10 +818,19 @@ def verify_tool_versions(git: str, zig: str, rustc: str, cargo: str) -> dict[str
     return tools
 
 
-def run_record(command: list[str], cwd: Path) -> dict[str, object]:
-    start = time.perf_counter_ns()
-    completed = subprocess.run(command, cwd=cwd, check=False, capture_output=True)
-    elapsed_ns = time.perf_counter_ns() - start
+def run_record(
+    command: list[str],
+    cwd: Path,
+    *,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+) -> dict[str, object]:
+    completed = run_process(
+        command,
+        cwd=cwd,
+        environment=environment,
+        timeout_seconds=timeout_seconds,
+    )
     if completed.stdout:
         sys.stdout.buffer.write(completed.stdout)
         sys.stdout.buffer.flush()
@@ -407,7 +840,9 @@ def run_record(command: list[str], cwd: Path) -> dict[str, object]:
     record = {
         "command": command,
         "cwd": str(cwd),
-        "elapsed_ns": elapsed_ns,
+        "environment": dict(environment),
+        "timeout_seconds": timeout_seconds,
+        "elapsed_ns": completed.elapsed_ns,
         "returncode": completed.returncode,
         "stdout_sha256": sha256_bytes(completed.stdout),
         "stderr_sha256": sha256_bytes(completed.stderr),
@@ -417,8 +852,56 @@ def run_record(command: list[str], cwd: Path) -> dict[str, object]:
     return record
 
 
-def git_output(git: str, cwd: Path, *arguments: str) -> str:
-    return subprocess.check_output([git, *arguments], cwd=cwd, text=True).strip()
+def git_output(
+    git: str,
+    cwd: Path,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+    *arguments: str,
+) -> str:
+    completed = run_process(
+        [*git_prefix(git), *arguments],
+        cwd=cwd,
+        environment=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"Git command failed: {detail}")
+    return completed.stdout.decode(errors="strict").strip()
+
+
+def check_machine_cleanliness(
+    root: Path,
+    git: str,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+) -> None:
+    status = git_output(
+        git,
+        root,
+        environment,
+        timeout_seconds,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignored",
+    )
+    rejected: list[str] = []
+    for line in status.splitlines():
+        if len(line) < 4:
+            rejected.append(line)
+            continue
+        state = line[:2]
+        path = line[3:].split(" -> ")[-1].rstrip("/")
+        allowed = any(path == prefix or path.startswith(f"{prefix}/") for prefix in ALLOWED_MACHINE_OUTPUTS)
+        if state not in {"??", "!!"} or not allowed:
+            rejected.append(line)
+    if rejected:
+        raise RuntimeError(
+            "machine-god worktree contains non-output changes or untracked inputs: "
+            + "; ".join(rejected)
+        )
 
 
 def prepare_upstream(
@@ -427,29 +910,64 @@ def prepare_upstream(
     lock: UpstreamLock,
     plan: Mapping[str, list[str]],
     git: str,
+    *,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
 ) -> tuple[str, list[dict[str, object]]]:
-    records: list[dict[str, object]] = []
     if upstream_dir.exists():
-        if not (upstream_dir / ".git").exists():
-            raise RuntimeError(f"upstream path exists but is not a Git checkout: {upstream_dir}")
-        if git_output(git, upstream_dir, "status", "--porcelain"):
-            raise RuntimeError(f"upstream checkout is dirty: {upstream_dir}")
-        origin = git_output(git, upstream_dir, "remote", "get-url", "origin")
-        if origin != lock.repository:
-            raise RuntimeError(f"upstream origin is {origin!r}, expected {lock.repository!r}")
-    else:
-        upstream_dir.parent.mkdir(parents=True, exist_ok=True)
-        records.append(run_record(plan["clone"], root))
-
-    records.append(run_record(plan["fetch"], root))
-    records.append(run_record(plan["checkout"], root))
-    verified_commit = git_output(git, upstream_dir, "rev-parse", "HEAD")
+        raise RuntimeError(f"fresh upstream checkout path already exists: {upstream_dir}")
+    upstream_dir.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        run_record(
+            plan[name],
+            root,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+        )
+        for name in ("clone", "fetch", "checkout")
+    ]
+    hooks_path = git_output(
+        git,
+        upstream_dir,
+        environment,
+        timeout_seconds,
+        "config",
+        "--local",
+        "--get",
+        "core.hooksPath",
+    )
+    if hooks_path != "/dev/null":
+        raise RuntimeError("fresh upstream checkout did not disable Git hooks")
+    verified_commit = git_output(
+        git, upstream_dir, environment, timeout_seconds, "rev-parse", "HEAD"
+    )
     if verified_commit != lock.commit:
         raise RuntimeError(
             f"upstream checkout resolved to {verified_commit}, expected {lock.commit}"
         )
-    if git_output(git, upstream_dir, "status", "--porcelain"):
-        raise RuntimeError(f"upstream checkout is not clean after checkout: {upstream_dir}")
+    origin = git_output(
+        git,
+        upstream_dir,
+        environment,
+        timeout_seconds,
+        "remote",
+        "get-url",
+        "origin",
+    )
+    if origin != lock.repository:
+        raise RuntimeError(f"upstream origin is {origin!r}, expected {lock.repository!r}")
+    status = git_output(
+        git,
+        upstream_dir,
+        environment,
+        timeout_seconds,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignored",
+    )
+    if status:
+        raise RuntimeError(f"fresh upstream checkout contains unexpected files: {status}")
     return verified_commit, records
 
 
@@ -468,26 +986,21 @@ def run_measurement(
     project: str,
     command: list[str],
     cwd: Path,
-    environment_overrides: Mapping[str, str],
+    environment: Mapping[str, str],
     warmup: int,
     runs: int,
+    timeout_seconds: float,
 ) -> dict[str, object]:
-    environment = os.environ.copy()
-    environment.update(environment_overrides)
-
     def run_once() -> dict[str, int]:
-        start = time.perf_counter_ns()
-        completed = subprocess.run(
+        completed = run_process(
             command,
             cwd=cwd,
-            env=environment,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+            capture_output=False,
         )
         return {
-            "elapsed_ns": time.perf_counter_ns() - start,
+            "elapsed_ns": completed.elapsed_ns,
             "returncode": completed.returncode,
         }
 
@@ -505,7 +1018,8 @@ def run_measurement(
         "status": "measured",
         "command": command,
         "cwd": str(cwd),
-        "environment_overrides": dict(environment_overrides),
+        "environment": dict(environment),
+        "timeout_seconds": timeout_seconds,
         "warmup": warmup,
         "samples": samples,
         "median_ns": int(statistics.median(elapsed)),
@@ -537,62 +1051,172 @@ def unavailable_workloads(fx_binary: Path) -> list[dict[str, object]]:
             "machine-god has no background-task list command",
         ),
     )
-    workloads = []
-    for identifier, command, reason in definitions:
-        workloads.append(
-            {
-                "id": identifier,
-                "description": f"Pinned fx local command: {' '.join(command[1:])}",
-                "equivalence": "unimplemented",
-                "claim_eligible": False,
-                "reason": reason,
-                "implementations": [
-                    {
-                        "project": "fx",
-                        "status": "not-measured",
-                        "command": command,
-                        "reason": "an unpaired result would not be a comparison",
-                    },
-                    {
-                        "project": "machine-god",
-                        "status": "unimplemented",
-                        "reason": reason,
-                    },
-                ],
-            }
-        )
-    return workloads
+    return [
+        {
+            "id": identifier,
+            "description": f"Pinned fx local command: {' '.join(command[1:])}",
+            "equivalence": "unimplemented",
+            "claim_eligible": False,
+            "reason": reason,
+            "implementations": [
+                {
+                    "project": "fx",
+                    "status": "not-measured",
+                    "command": command,
+                    "reason": "an unpaired result would not be a comparison",
+                },
+                {
+                    "project": "machine-god",
+                    "status": "unimplemented",
+                    "reason": reason,
+                },
+            ],
+        }
+        for identifier, command, reason in definitions
+    ]
+
+
+def base_environment(home: Path, temporary: Path) -> dict[str, str]:
+    path_value = os.environ.get("PATH")
+    if not path_value:
+        raise RuntimeError("PATH is required to resolve pinned build tools")
+    return {
+        "HOME": str(home),
+        "LANG": "C",
+        "LC_ALL": "C",
+        "NO_COLOR": "1",
+        "PATH": path_value,
+        "TMPDIR": str(temporary),
+    }
+
+
+def cpu_model() -> str:
+    if platform.system() == "Linux":
+        try:
+            for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+        except OSError:
+            pass
+    if platform.system() == "Darwin":
+        for name in ("machdep.cpu.brand_string", "hw.model"):
+            try:
+                value = subprocess.check_output(
+                    ["sysctl", "-n", name], text=True, timeout=2
+                ).strip()
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if value:
+                return value
+    return platform.processor() or "unknown"
+
+
+def runner_record(runner_class: str) -> dict[str, object]:
+    return {
+        "class": runner_class,
+        "github_actions": os.environ.get("GITHUB_ACTIONS") == "true",
+        "image_os": os.environ.get("ImageOS", "local"),
+        "image_version": os.environ.get("ImageVersion", "local"),
+        "runner_os": os.environ.get("RUNNER_OS", platform.system()),
+        "runner_arch": os.environ.get("RUNNER_ARCH", platform.machine()),
+    }
 
 
 def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
     root = args.root.resolve()
     lock_path = args.lock.resolve()
     upstream_dir = args.upstream_dir.resolve()
+    scratch_dir = args.scratch_dir.resolve()
     lock = parse_upstream_lock(lock_path)
     if args.runs < 10 or args.warmup < 1:
         raise ValueError("runs must be >= 10 and warmup must be >= 1")
+    for name in ("fetch_timeout", "build_timeout", "sample_timeout"):
+        if not is_positive_number(getattr(args, name)):
+            raise ValueError(f"{name.replace('_', '-')} must be a positive finite number")
+    require_text(args.runner_class, "runner_class")
+    if upstream_dir.exists():
+        raise RuntimeError(f"fresh upstream checkout path already exists: {upstream_dir}")
+    if scratch_dir.exists():
+        raise RuntimeError(f"fresh scratch path already exists: {scratch_dir}")
 
-    tools = verify_tool_versions(args.git, args.zig, args.rustc, args.cargo)
-    machine_sha = git_output(args.git, root, "rev-parse", "HEAD")
+    scratch_dir.mkdir(parents=True, mode=0o700)
+    home = scratch_dir / "home"
+    temporary = scratch_dir / "tmp"
+    home.mkdir(mode=0o700)
+    temporary.mkdir(mode=0o700)
+    base_env = base_environment(home, temporary)
+    cargo_home = scratch_dir / "cargo-home"
+    cargo_home.mkdir(mode=0o700)
+    rustup_home = Path(os.environ.get("RUSTUP_HOME", Path.home() / ".rustup")).resolve()
+    tool_env = {
+        **base_env,
+        "CARGO_HOME": str(cargo_home),
+        "RUSTUP_HOME": str(rustup_home),
+    }
+    git_env = {
+        **base_env,
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+    path_value = base_env["PATH"]
+    git = invocation_path(args.git, path_value)
+    zig = invocation_path(args.zig, path_value)
+    rustc = invocation_path(args.rustc, path_value)
+    cargo = invocation_path(args.cargo, path_value)
+    tools = verify_tool_versions(
+        git,
+        zig,
+        rustc,
+        cargo,
+        environment=tool_env,
+        timeout_seconds=args.fetch_timeout,
+    )
+    check_machine_cleanliness(root, git, git_env, args.fetch_timeout)
+    machine_sha = git_output(
+        git, root, git_env, args.fetch_timeout, "rev-parse", "HEAD"
+    )
     if not HEX_SHA_RE.fullmatch(machine_sha):
         raise RuntimeError(f"machine-god HEAD is not a full Git SHA: {machine_sha}")
-    dirty = bool(git_output(args.git, root, "status", "--porcelain", "--untracked-files=no"))
-    if dirty:
-        raise RuntimeError("machine-god worktree is dirty; commit before collecting evidence")
 
     plan = command_plan(
         root,
         upstream_dir,
         lock,
-        git=args.git,
-        zig=args.zig,
-        cargo=args.cargo,
+        git=git,
+        zig=zig,
+        cargo=cargo,
     )
     verified_commit, preparation = prepare_upstream(
-        root, upstream_dir, lock, plan, args.git
+        root,
+        upstream_dir,
+        lock,
+        plan,
+        git,
+        environment=git_env,
+        timeout_seconds=args.fetch_timeout,
     )
 
-    fx_build = run_record(plan["fx_build"], upstream_dir)
+    fx_environment = {
+        **base_env,
+        "ZIG_GLOBAL_CACHE_DIR": str(scratch_dir / "zig-global-cache"),
+        "ZIG_LOCAL_CACHE_DIR": str(upstream_dir / ".zig-cache"),
+    }
+    machine_target = scratch_dir / "machine-target"
+    machine_environment = {
+        **base_env,
+        "CARGO_HOME": str(cargo_home),
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_TARGET_DIR": str(machine_target),
+        "RUSTUP_HOME": str(rustup_home),
+    }
+    fx_build = run_record(
+        plan["fx_build"],
+        upstream_dir,
+        environment=fx_environment,
+        timeout_seconds=args.build_timeout,
+    )
     fx_build.update(
         {
             "project": "fx",
@@ -600,20 +1224,23 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             "binary": binary_record(upstream_dir / "zig-out/bin/fx"),
         }
     )
-    machine_build = run_record(plan["machine_god_build"], root)
+    machine_build = run_record(
+        plan["machine_god_build"],
+        root,
+        environment=machine_environment,
+        timeout_seconds=args.build_timeout,
+    )
     machine_build.update(
         {
             "project": "machine-god",
             "profile": "release",
-            "binary": binary_record(root / "target/release/machine-god"),
+            "binary": binary_record(machine_target / "release/machine-god"),
         }
     )
 
-    fixture_home = args.fixture_home.resolve()
-    fixture_home.mkdir(parents=True, exist_ok=True)
-    common_environment = {"HOME": str(fixture_home), "LC_ALL": "C", "NO_COLOR": "1"}
     fx_binary = Path(str(fx_build["binary"]["path"]))
     machine_binary = Path(str(machine_build["binary"]["path"]))
+    fx_measurement_environment = {**base_env, "FX_BENCH": "1"}
     bootstrap = {
         "id": "bootstrap-exit",
         "description": "Launch each release binary through its current no-network bootstrap path",
@@ -628,17 +1255,19 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
                 "fx",
                 [str(fx_binary)],
                 root,
-                {**common_environment, "FX_BENCH": "1"},
+                fx_measurement_environment,
                 args.warmup,
                 args.runs,
+                args.sample_timeout,
             ),
             run_measurement(
                 "machine-god",
                 [str(machine_binary)],
                 root,
-                common_environment,
+                base_env,
                 args.warmup,
                 args.runs,
+                args.sample_timeout,
             ),
         ],
     }
@@ -648,13 +1277,26 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
         "classification": "bootstrap-infrastructure-only",
         "claim_eligible": False,
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "runner_class": args.runner_class,
+        "timeouts_seconds": {
+            "fetch": args.fetch_timeout,
+            "build": args.build_timeout,
+            "sample": args.sample_timeout,
+        },
         "source": {
-            "machine_god": {"git_sha": machine_sha, "dirty": False},
+            "machine_god": {
+                "git_sha": machine_sha,
+                "dirty": False,
+                "allowed_output_directories": list(ALLOWED_MACHINE_OUTPUTS),
+            },
             "fx": {
                 "repository": lock.repository,
                 "locked_commit": lock.commit,
                 "verified_commit": verified_commit,
                 "lock_path": str(lock_path),
+                "lock_sha256": sha256_file(lock_path),
+                "fresh_checkout": True,
+                "hooks_disabled": True,
                 "preparation_commands": preparation,
             },
         },
@@ -664,17 +1306,38 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             "machine": platform.machine(),
             "python": platform.python_version(),
             "cpu_count": os.cpu_count() or 1,
+            "cpu_model": cpu_model(),
+            "runner": runner_record(args.runner_class),
         },
         "tools": tools,
+        "tool_environment": tool_env,
         "builds": [fx_build, machine_build],
         "environment_policy": {
-            "inherits_parent_environment": True,
-            "evidence_records_only_non_secret_overrides": True,
+            "inherits_parent_environment": False,
+            "allowlisted_environment_only": True,
         },
         "workloads": [bootstrap, *unavailable_workloads(fx_binary)],
     }
-    validate_upstream_evidence(evidence)
+    validate_upstream_evidence(
+        evidence,
+        expected_lock=lock,
+        expected_lock_path=lock_path,
+        expected_lock_sha256=sha256_file(lock_path),
+        expected_root=root,
+        expected_runner_class=args.runner_class,
+    )
     return evidence
+
+
+def write_evidence_atomic(output: Path, evidence: Mapping[str, Any]) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.{os.getpid()}.partial")
+    try:
+        temporary.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, output)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def main() -> int:
@@ -683,27 +1346,33 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=default_root)
     parser.add_argument("--lock", type=Path, default=default_root / "benchmarks/upstream.lock")
     parser.add_argument("--upstream-dir", type=Path, default=default_root / ".bench/fx")
-    parser.add_argument("--fixture-home", type=Path, default=default_root / ".bench/home")
+    parser.add_argument("--scratch-dir", type=Path, default=default_root / ".bench/scratch")
     parser.add_argument(
         "--output",
         type=Path,
         default=default_root / "benchmarks/results/upstream-bootstrap.json",
     )
+    parser.add_argument("--runner-class", default=f"local-{platform.system()}-{platform.machine()}")
     parser.add_argument("--runs", type=int, default=30)
     parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--fetch-timeout", type=float, default=300.0)
+    parser.add_argument("--build-timeout", type=float, default=1200.0)
+    parser.add_argument("--sample-timeout", type=float, default=10.0)
     parser.add_argument("--git", default="git")
     parser.add_argument("--zig", default="zig")
     parser.add_argument("--rustc", default="rustc")
     parser.add_argument("--cargo", default="cargo")
     args = parser.parse_args()
 
+    output = args.output.resolve()
+    output.unlink(missing_ok=True)
     try:
         evidence = collect_evidence(args)
+        write_evidence_atomic(output, evidence)
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
+        output.unlink(missing_ok=True)
         parser.exit(1, f"error: {error}\n")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote validated bootstrap evidence to {args.output}")
+    print(f"wrote validated bootstrap evidence to {output}")
     return 0
 
 

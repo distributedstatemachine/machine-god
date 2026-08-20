@@ -3,7 +3,7 @@ name: Benchmark evidence
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: ["**"]
 
 permissions:
   contents: read
@@ -36,5 +36,43 @@ jobs:
         with:
           name: bootstrap-benchmark-${{ github.sha }}
           path: benchmarks/results/bootstrap.json
+          if-no-files-found: error
+          retention-days: 90
+
+  pinned-upstream-evidence:
+    name: Pinned upstream benchmark evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal
+      - name: Collect pinned upstream evidence
+        run: >-
+          python3 benchmarks/upstream.py
+          --upstream-dir "${RUNNER_TEMP}/fx-${GITHUB_SHA}"
+          --scratch-dir "${RUNNER_TEMP}/benchmark-scratch-${GITHUB_SHA}"
+          --output benchmarks/results/upstream-bootstrap.json
+          --runner-class github-ubuntu-24.04-x86_64
+          --fetch-timeout 300
+          --build-timeout 1200
+          --sample-timeout 10
+      - name: Validate pinned source, SHA, schema, and binaries
+        run: >-
+          python3 benchmarks/check.py benchmarks/results/upstream-bootstrap.json
+          --expected-git-sha "${GITHUB_SHA}"
+          --expected-runner-class github-ubuntu-24.04-x86_64
+          --fx-binary "${RUNNER_TEMP}/fx-${GITHUB_SHA}/zig-out/bin/fx"
+          --machine-god-binary
+          "${RUNNER_TEMP}/benchmark-scratch-${GITHUB_SHA}/machine-target/release/machine-god"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-benchmark-${{ github.sha }}-ubuntu-24.04-x86_64
+          path: benchmarks/results/upstream-bootstrap.json
           if-no-files-found: error
           retention-days: 90

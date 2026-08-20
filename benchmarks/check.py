@@ -34,6 +34,9 @@ def main() -> int:
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--expected-git-sha")
     parser.add_argument("--binary", type=Path)
+    parser.add_argument("--fx-binary", type=Path)
+    parser.add_argument("--machine-god-binary", type=Path)
+    parser.add_argument("--expected-runner-class")
     args = parser.parse_args()
     data = json.loads(args.evidence.read_text(encoding="utf-8"))
 
@@ -42,11 +45,32 @@ def main() -> int:
             raise SystemExit("schema 2 upstream evidence does not use --bootstrap")
         if args.binary:
             raise SystemExit("schema 2 evidence binds both binaries in its build records")
+        if not args.fx_binary or not args.machine_god_binary:
+            raise SystemExit("schema 2 validation requires both actual binaries")
+        if not args.expected_runner_class:
+            raise SystemExit("schema 2 validation requires --expected-runner-class")
         try:
-            from upstream import validate_upstream_evidence
+            from upstream import (
+                parse_upstream_lock,
+                sha256_file,
+                validate_upstream_evidence,
+            )
 
-            validate_upstream_evidence(data)
-        except ValueError as error:
+            canonical_lock_path = Path(__file__).resolve().parent / "upstream.lock"
+            canonical_lock = parse_upstream_lock(canonical_lock_path)
+            validate_upstream_evidence(
+                data,
+                expected_lock=canonical_lock,
+                expected_lock_path=canonical_lock_path,
+                expected_lock_sha256=sha256_file(canonical_lock_path),
+                expected_root=Path(__file__).resolve().parents[1],
+                expected_runner_class=args.expected_runner_class,
+                expected_binaries={
+                    "fx": args.fx_binary,
+                    "machine-god": args.machine_god_binary,
+                },
+            )
+        except (OSError, ValueError) as error:
             raise SystemExit(str(error)) from error
         if (
             args.expected_git_sha
@@ -58,6 +82,8 @@ def main() -> int:
 
     if not is_integer(data.get("schema_version")) or data["schema_version"] != 1:
         raise SystemExit("unsupported benchmark schema")
+    if args.fx_binary or args.machine_god_binary or args.expected_runner_class:
+        raise SystemExit("schema 1 bootstrap evidence accepts only --binary")
     git_sha = require_text(data.get("git_sha"), "git_sha")
     if len(git_sha) not in (40, 64) or any(character not in "0123456789abcdef" for character in git_sha.lower()):
         raise SystemExit("git_sha must be a hexadecimal Git object ID")
