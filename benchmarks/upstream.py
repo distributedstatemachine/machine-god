@@ -220,9 +220,12 @@ def sha256_file(path: Path) -> str:
 
 
 def executable_identity(path: Path) -> dict[str, object]:
-    """Return a stable identity for one canonical executable file."""
+    """Bind an invocation path and the canonical executable it dispatches to."""
 
-    canonical = path.resolve(strict=True)
+    invocation = path.absolute()
+    invocation_before = invocation.lstat()
+    link_target = os.readlink(invocation) if stat.S_ISLNK(invocation_before.st_mode) else ""
+    canonical = invocation.resolve(strict=True)
     descriptor = os.open(canonical, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
     try:
         before = os.fstat(descriptor)
@@ -234,6 +237,25 @@ def executable_identity(path: Path) -> dict[str, object]:
         after = os.fstat(descriptor)
     finally:
         os.close(descriptor)
+    invocation_after = invocation.lstat()
+    invocation_metadata_before = (
+        invocation_before.st_dev,
+        invocation_before.st_ino,
+        invocation_before.st_mode,
+        invocation_before.st_mtime_ns,
+        invocation_before.st_ctime_ns,
+        link_target,
+    )
+    invocation_metadata_after = (
+        invocation_after.st_dev,
+        invocation_after.st_ino,
+        invocation_after.st_mode,
+        invocation_after.st_mtime_ns,
+        invocation_after.st_ctime_ns,
+        os.readlink(invocation) if stat.S_ISLNK(invocation_after.st_mode) else "",
+    )
+    if invocation_metadata_before != invocation_metadata_after:
+        raise RuntimeError(f"tool invocation path changed while inspected: {invocation}")
     metadata_before = (
         before.st_dev,
         before.st_ino,
@@ -253,7 +275,8 @@ def executable_identity(path: Path) -> dict[str, object]:
     if metadata_before != metadata_after:
         raise RuntimeError(f"tool changed while its identity was read: {canonical}")
     return {
-        "executable": str(canonical),
+        "executable": str(invocation),
+        "canonical_executable": str(canonical),
         "sha256": digest.hexdigest(),
         "bytes": before.st_size,
         "mode": stat.S_IMODE(before.st_mode),
@@ -261,6 +284,12 @@ def executable_identity(path: Path) -> dict[str, object]:
         "inode": before.st_ino,
         "mtime_ns": before.st_mtime_ns,
         "ctime_ns": before.st_ctime_ns,
+        "invocation_mode": stat.S_IMODE(invocation_before.st_mode),
+        "invocation_device": invocation_before.st_dev,
+        "invocation_inode": invocation_before.st_ino,
+        "invocation_mtime_ns": invocation_before.st_mtime_ns,
+        "invocation_ctime_ns": invocation_before.st_ctime_ns,
+        "invocation_link_target": link_target,
     }
 
 
@@ -272,6 +301,7 @@ def verify_executable_identity(identity: Mapping[str, object]) -> None:
         raise RuntimeError(f"verified tool is unavailable: {executable}: {error}") from error
     for field in (
         "executable",
+        "canonical_executable",
         "sha256",
         "bytes",
         "mode",
@@ -279,6 +309,12 @@ def verify_executable_identity(identity: Mapping[str, object]) -> None:
         "inode",
         "mtime_ns",
         "ctime_ns",
+        "invocation_mode",
+        "invocation_device",
+        "invocation_inode",
+        "invocation_mtime_ns",
+        "invocation_ctime_ns",
+        "invocation_link_target",
     ):
         if actual[field] != identity.get(field):
             raise RuntimeError(f"verified tool identity changed: {executable} ({field})")
@@ -543,16 +579,39 @@ def validate_upstream_evidence(
         executable = require_text(tool.get("executable"), f"tools.{name}.executable")
         if command[0] != executable:
             raise ValueError(f"tools.{name}.command is not bound to its executable")
-        if not Path(executable).is_absolute() or Path(executable).resolve() != Path(executable):
-            raise ValueError(f"tools.{name}.executable must be a canonical absolute path")
+        canonical_executable = require_text(
+            tool.get("canonical_executable"), f"tools.{name}.canonical_executable"
+        )
+        if not Path(executable).is_absolute():
+            raise ValueError(f"tools.{name}.executable must be an absolute path")
+        if (
+            not Path(canonical_executable).is_absolute()
+            or Path(canonical_executable).resolve() != Path(canonical_executable)
+            or Path(executable).resolve() != Path(canonical_executable)
+        ):
+            raise ValueError(f"tools.{name}.canonical_executable is not canonical")
         checksum = require_text(tool.get("sha256"), f"tools.{name}.sha256")
         if len(checksum) != 64 or any(
             character not in "0123456789abcdef" for character in checksum
         ):
             raise ValueError(f"tools.{name}.sha256 must be a lowercase SHA-256 digest")
-        for field in ("bytes", "mode", "device", "inode", "mtime_ns", "ctime_ns"):
+        for field in (
+            "bytes",
+            "mode",
+            "device",
+            "inode",
+            "mtime_ns",
+            "ctime_ns",
+            "invocation_mode",
+            "invocation_device",
+            "invocation_inode",
+            "invocation_mtime_ns",
+            "invocation_ctime_ns",
+        ):
             if not is_integer(tool.get(field)) or tool[field] < 0:
                 raise ValueError(f"tools.{name}.{field} must be a non-negative integer")
+        if not isinstance(tool.get("invocation_link_target"), str):
+            raise ValueError(f"tools.{name}.invocation_link_target must be a string")
         if tool["bytes"] <= 0 or tool["mode"] & 0o111 == 0:
             raise ValueError(f"tools.{name} must identify a non-empty executable file")
         require_text(tool.get("version"), f"tools.{name}.version")
@@ -1292,7 +1351,9 @@ def invocation_path(command: str, path_value: str) -> str:
     executable = shutil.which(command, path=path_value)
     if executable is None:
         raise RuntimeError(f"required executable was not found: {command}")
-    return str(Path(executable).resolve(strict=True))
+    path = Path(executable).absolute()
+    path.resolve(strict=True)
+    return str(path)
 
 
 def tool_record(

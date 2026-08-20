@@ -230,6 +230,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             "git": {
                 "command": ["/usr/bin/git", "--version"],
                 "executable": "/usr/bin/git",
+                "canonical_executable": "/usr/bin/git",
                 "sha256": "a" * 64,
                 "bytes": 1,
                 "mode": 0o755,
@@ -237,11 +238,18 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "inode": 1,
                 "mtime_ns": 1,
                 "ctime_ns": 1,
+                "invocation_mode": 0o755,
+                "invocation_device": 1,
+                "invocation_inode": 1,
+                "invocation_mtime_ns": 1,
+                "invocation_ctime_ns": 1,
+                "invocation_link_target": "",
                 "version": "git version 2",
             },
             "zig": {
                 "command": ["/usr/bin/zig", "version"],
                 "executable": "/usr/bin/zig",
+                "canonical_executable": "/usr/bin/zig",
                 "sha256": "b" * 64,
                 "bytes": 1,
                 "mode": 0o755,
@@ -249,12 +257,19 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "inode": 2,
                 "mtime_ns": 1,
                 "ctime_ns": 1,
+                "invocation_mode": 0o755,
+                "invocation_device": 1,
+                "invocation_inode": 2,
+                "invocation_mtime_ns": 1,
+                "invocation_ctime_ns": 1,
+                "invocation_link_target": "",
                 "required_version": EXPECTED_ZIG_VERSION,
                 "version": EXPECTED_ZIG_VERSION,
             },
             "rustc": {
                 "command": ["/usr/bin/rustc", "+1.94.1", "--version"],
                 "executable": "/usr/bin/rustc",
+                "canonical_executable": "/usr/bin/rustc",
                 "sha256": "c" * 64,
                 "bytes": 1,
                 "mode": 0o755,
@@ -262,12 +277,19 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "inode": 3,
                 "mtime_ns": 1,
                 "ctime_ns": 1,
+                "invocation_mode": 0o755,
+                "invocation_device": 1,
+                "invocation_inode": 3,
+                "invocation_mtime_ns": 1,
+                "invocation_ctime_ns": 1,
+                "invocation_link_target": "",
                 "required_version": EXPECTED_RUST_VERSION,
                 "version": "rustc 1.94.1 (test 2026-01-01)",
             },
             "cargo": {
                 "command": ["/usr/bin/cargo", "+1.94.1", "--version"],
                 "executable": "/usr/bin/cargo",
+                "canonical_executable": "/usr/bin/cargo",
                 "sha256": "d" * 64,
                 "bytes": 1,
                 "mode": 0o755,
@@ -275,6 +297,12 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "inode": 4,
                 "mtime_ns": 1,
                 "ctime_ns": 1,
+                "invocation_mode": 0o755,
+                "invocation_device": 1,
+                "invocation_inode": 4,
+                "invocation_mtime_ns": 1,
+                "invocation_ctime_ns": 1,
+                "invocation_link_target": "",
                 "required_version": EXPECTED_RUST_VERSION,
                 "version": "cargo 1.94.1 (test 2026-01-01)",
             },
@@ -943,14 +971,14 @@ class UpstreamHarnessTest(unittest.TestCase):
             link.symlink_to(bad)
             environment = os.environ.copy()
             environment[CONTAINMENT_ENVIRONMENT_KEY] = "4" * 32
-            completed = run_process(
-                [resolved],
-                cwd=temporary,
-                environment=environment,
-                timeout_seconds=1.0,
-                expected_executable=identity,
-            )
-            self.assertEqual(completed.stdout, b"good")
+            with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                run_process(
+                    [resolved],
+                    cwd=temporary,
+                    environment=environment,
+                    timeout_seconds=1.0,
+                    expected_executable=identity,
+                )
 
             identity = executable_identity(good)
             mutator = subprocess.Popen(

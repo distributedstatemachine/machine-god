@@ -58,10 +58,11 @@ findings and the branch resolves them as follows:
   `ls-tree` and `cat-file` operations, rejects links and special modes, and binds
   every file path, Git mode, object ID, byte count, and digest. Hostile
   `export-ignore` and `export-subst` attributes cannot alter the snapshot.
-- Resolved tool paths could change after version checks. Each path is now fully
-  canonicalized and its content and filesystem identity are recorded and checked
-  before and after every use. Regressions swap a discovery symlink and mutate its
-  former target during execution.
+- Resolved tool paths could change after version checks. Each absolute invocation
+  path and its canonical target are now recorded, preserving Rustup proxy
+  dispatch while binding both filesystem identities and target content before
+  and after every use. Regressions swap a discovery symlink and mutate its former
+  target during execution.
 - Host provenance did not identify the processor or CI image class. Evidence now
   includes CPU model, runner architecture, CI image identity, and an explicit
   runner class that the validator binds consistently.

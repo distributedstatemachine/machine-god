@@ -96,11 +96,13 @@ verified tool environment. Home, temporary, Cargo cache, Cargo target, Zig
 caches, manifest, and materialized source paths are all derived from and checked
 against the fresh scratch directory.
 
-Each Git, Zig, rustc, and Cargo executable is resolved through symlinks to one
-canonical absolute path. Evidence records its SHA-256 digest, size, executable
-mode, device, inode, and modification/change timestamps. The identity is checked
-before and after its version command and every later harness use, including each
-release build; a swapped or modified tool fails the run.
+Each Git, Zig, rustc, and Cargo invocation is resolved to an absolute path while
+retaining proxy-symlink dispatch semantics, and is also bound to its canonical
+target. Evidence records the invocation symlink identity and target plus the
+target's SHA-256 digest, size, executable mode, device, inode, and
+modification/change timestamps. Both identities are checked before and after its
+version command and every later harness use, including each release build; a
+swapped or modified tool fails the run.
 
 The checker binds schema 2 evidence to the repository's canonical
 `benchmarks/upstream.lock`, the current machine-god SHA, both exact build
