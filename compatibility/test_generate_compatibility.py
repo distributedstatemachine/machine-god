@@ -126,6 +126,54 @@ class CompatibilityGeneratorTest(unittest.TestCase):
             commands_source["sha256"], hashlib.sha256(commands.read_bytes()).hexdigest()
         )
 
+    def test_commit_replacement_cannot_change_pinned_snapshot_bytes(self) -> None:
+        baseline = self.fixture_inventory()
+        module = self.upstream / "sdk/fx-sdk.js"
+        module.write_text(
+            module.read_text(encoding="utf-8")
+            + "\nexport const replacementCommitFake = true;\n",
+            encoding="utf-8",
+        )
+        replacement = self.commit_changes("hostile replacement commit")
+        self.git("checkout", "--quiet", "--detach", self.commit)
+        self.git("replace", self.commit, replacement)
+
+        ordinary_git = self.git("show", f"{self.commit}:sdk/fx-sdk.js").stdout
+        self.assertIn(b"replacementCommitFake", ordinary_git)
+        self.assertEqual(self.fixture_inventory(), baseline)
+
+    def test_blob_replacement_cannot_change_pinned_snapshot_bytes(self) -> None:
+        path = "sdk/node.js"
+        expected = (self.upstream / path).read_bytes()
+        original = self.git("rev-parse", f"{self.commit}:{path}").stdout.decode().strip()
+        replacement = self.git(
+            "hash-object",
+            "-w",
+            "--stdin",
+            input_bytes=b"export const replacementBlobFake = true;\n",
+        ).stdout.decode().strip()
+        self.git("replace", original, replacement)
+
+        self.assertIn(b"replacementBlobFake", self.git("cat-file", "blob", original).stdout)
+        mode, object_id, actual = self.source().blob(path)
+        self.assertEqual(mode, "100644")
+        self.assertEqual(object_id, original)
+        self.assertEqual(actual, expected)
+
+    def test_blob_bytes_must_hash_to_recorded_object_id(self) -> None:
+        source = self.source()
+        canonical_git = source._git
+
+        def tampered_git(*args: str) -> bytes:
+            result = canonical_git(*args)
+            if args[:2] == ("cat-file", "blob"):
+                return result + b"hostile mutation"
+            return result
+
+        source._git = tampered_git
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "expected Git blob"):
+            source.blob("sdk/node.js")
+
     def test_expected_source_symlink_mode_is_rejected(self) -> None:
         target = self.git("hash-object", "-w", "--stdin", input_bytes=b"fx-sdk.js").stdout
         object_id = target.decode().strip()
@@ -149,6 +197,101 @@ class CompatibilityGeneratorTest(unittest.TestCase):
     def test_unsupported_javascript_export_is_rejected(self) -> None:
         with self.assertRaisesRegex(GENERATOR.InventoryError, "export syntax"):
             GENERATOR.extract_js_exports('export * from "./other.js";\n')
+
+    def test_javascript_multi_declarators_are_all_exported(self) -> None:
+        exports = GENERATOR.extract_js_exports(
+            "export const first = 1, second = call(1, 2), third = { value: 3 };\n"
+            "export let fourth, fifth = 5;\n"
+        )
+        self.assertEqual(exports, ["first", "second", "third", "fourth", "fifth"])
+
+    def test_javascript_regex_literals_cannot_inject_exports(self) -> None:
+        exports = GENERATOR.extract_js_exports(
+            "const decoy = /export const regexFake = true/gi;\n"
+            "const ratio = total / divisor;\n"
+            "if (ready) /export function controlFake() {}/.test(value);\n"
+            "export const real = total / divisor, pattern = /a[/]b/gi;\n"
+        )
+        self.assertEqual(exports, ["real", "pattern"])
+
+    def test_ambiguous_javascript_regex_after_brace_fails_closed(self) -> None:
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "ambiguous JavaScript slash"):
+            GENERATOR.extract_js_exports(
+                "if (ready) { work(); }\n"
+                "/export const blockFake = true/.test(value);\n"
+                "export const real = 1;\n"
+            )
+
+    def test_known_optional_fields_reject_dynamic_values_and_duplicates(self) -> None:
+        specs = (
+            FIXTURE / "src/core/slash_commands/command_specs.zig"
+        ).read_text(encoding="utf-8")
+        commands = (FIXTURE / "src/builtins/commands.zig").read_text(encoding="utf-8")
+        cases = [
+            (
+                "dynamic aliases",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    '.aliases = &.{ "--help", "-h" },',
+                    ".aliases = buildAliases(),",
+                ),
+                r"unsupported \.aliases",
+            ),
+            (
+                "duplicate aliases",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    '.aliases = &.{ "--help", "-h" },',
+                    '.aliases = &.{ "--help", "-h" }, .aliases = &.{},',
+                ),
+                r"repeats \.aliases",
+            ),
+            (
+                "dynamic hidden flag",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    ".hidden_from_top_level_help = true,",
+                    ".hidden_from_top_level_help = isHidden(),",
+                ),
+                r"unsupported \.hidden_from_top_level_help",
+            ),
+            (
+                "duplicate hidden flag",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    ".hidden_from_top_level_help = true,",
+                    ".hidden_from_top_level_help = true, "
+                    ".hidden_from_top_level_help = false,",
+                ),
+                r"repeats \.hidden_from_top_level_help",
+            ),
+            (
+                "dynamic presentation category",
+                GENERATOR.extract_slash_commands,
+                commands.replace(
+                    ".presentation_category = .general",
+                    ".presentation_category = chooseCategory()",
+                    1,
+                ),
+                r"unsupported \.presentation_category",
+            ),
+            (
+                "duplicate presentation category",
+                GENERATOR.extract_slash_commands,
+                commands.replace(
+                    ".presentation_category = .general",
+                    ".presentation_category = .general, "
+                    ".presentation_category = .advanced",
+                    1,
+                ),
+                r"repeats \.presentation_category",
+            ),
+        ]
+        for label, extractor, mutated, error in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                GENERATOR.InventoryError, error
+            ):
+                extractor(specs, mutated)
 
     def test_e2e_owner_coverage_rejects_an_unclassified_file(self) -> None:
         (self.upstream / "tests/e2e/orphan.test.ts").write_text(

@@ -40,3 +40,33 @@ confirmed the following findings and resolutions:
   disabled, verifies detached `HEAD`, and runs the generator in `--check` mode.
 
 Rejected after remediation: none.
+
+## Rereview
+
+Reviewed commit: `865193b1d0e9393c2beecf42c0491a980ee63dae`.
+
+A second fresh adversarial review found and resolved four additional fail-open
+paths:
+
+- Git replacement refs could substitute a different commit or blob while the
+  recorded pin and object ID remained unchanged. Git plumbing now runs with
+  replacement objects disabled and a sanitized `GIT_*` environment, and every
+  returned blob is independently hashed using the repository object format.
+  Hostile commit-replacement, blob-replacement, and byte-substitution tests
+  prove the recorded identities and canonical bytes remain coupled.
+- Optional Zig registry fields were recognized only when their values matched
+  the supported grammar, so dynamic or repeated assignments could silently
+  degrade to defaults. Every known optional assignment is now found first at
+  top-level depth, then required to occur once at most and use its supported
+  literal form. Regression cases cover aliases, hidden-help flags, and
+  presentation categories.
+- Multi-declarator JavaScript exports recorded only their first binding.
+  Variable export declarations are now structurally split on top-level commas,
+  validate every declarator, and retain every exported identifier.
+- JavaScript regular-expression contents could be mistaken for export syntax.
+  The scanner now masks regular-expression literals with escape and character
+  class handling while preserving division operators; tests combine injected
+  fake exports, control-statement regexes, division, flags, and multiple
+  exported declarators.
+
+Rejected after rereview remediation: none.

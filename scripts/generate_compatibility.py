@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import re
 import subprocess
 import sys
@@ -82,6 +83,12 @@ class GitSnapshot:
         self.repository = repository.resolve()
         self.commit = commit
         self._blobs: dict[str, tuple[str, str, bytes]] = {}
+        object_format = self._git("rev-parse", "--show-object-format").decode(
+            "ascii", errors="strict"
+        ).strip()
+        if object_format not in {"sha1", "sha256"}:
+            raise InventoryError(f"unsupported Git object format {object_format!r}")
+        self.object_format = object_format
         resolved = self._git("rev-parse", "--verify", f"{commit}^{{commit}}").decode(
             "ascii", errors="strict"
         ).strip()
@@ -95,11 +102,24 @@ class GitSnapshot:
                 )
 
     def _git(self, *args: str) -> bytes:
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if not name.startswith("GIT_")
+        }
+        environment.update(
+            {
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_TERMINAL_PROMPT": "0",
+            }
+        )
         completed = subprocess.run(
-            ["git", "-C", str(self.repository), *args],
+            ["git", "--no-replace-objects", "-C", str(self.repository), *args],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=environment,
         )
         if completed.returncode != 0:
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
@@ -144,6 +164,14 @@ class GitSnapshot:
             raise InventoryError(f"Git tree returned {actual_path!r} for requested {path!r}")
         self._require_regular_blob(mode, object_type, path)
         data = self._git("cat-file", "blob", object_id)
+        digest = hashlib.new(self.object_format)
+        digest.update(f"blob {len(data)}\0".encode("ascii"))
+        digest.update(data)
+        if digest.hexdigest() != object_id:
+            raise InventoryError(
+                f"canonical bytes for {path} hash to {digest.hexdigest()}, "
+                f"expected Git blob {object_id}"
+            )
         cached = (mode, object_id, data)
         self._blobs[path] = cached
         return cached
@@ -213,6 +241,9 @@ def source_mask(text: str, language: str) -> str:
         raise InventoryError(f"unsupported source language {language}")
     masked = list(text)
     index = 0
+    js_expression_ended = False
+    js_pending_control_parenthesis = False
+    js_parentheses: list[bool] = []
     while index < len(text):
         following = text[index + 1] if index + 1 < len(text) else ""
         line_start = max(text.rfind("\n", 0, index), text.rfind("\r", 0, index)) + 1
@@ -281,6 +312,8 @@ def source_mask(text: str, language: str) -> str:
                 index += 1
             else:
                 raise InventoryError("unterminated string or character literal")
+            if language == "js":
+                js_expression_ended = True
             continue
         if language == "js" and text[index] == "`":
             masked[index] = " "
@@ -300,7 +333,106 @@ def source_mask(text: str, language: str) -> str:
                 index += 1
             else:
                 raise InventoryError("unterminated JavaScript template literal")
+            js_expression_ended = True
             continue
+        if language == "js" and text[index] == "/":
+            if js_expression_ended:
+                previous = index - 1
+                while previous >= 0 and masked[previous].isspace():
+                    previous -= 1
+                if previous >= 0 and masked[previous] == "}":
+                    raise InventoryError(
+                        "ambiguous JavaScript slash after a closing brace"
+                    )
+                js_expression_ended = False
+                index += 1
+                continue
+            masked[index] = " "
+            index += 1
+            escaped = False
+            in_character_class = False
+            while index < len(text):
+                character = text[index]
+                if character in "\r\n":
+                    raise InventoryError("unterminated JavaScript regular expression literal")
+                masked[index] = " "
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == "[":
+                    in_character_class = True
+                elif character == "]" and in_character_class:
+                    in_character_class = False
+                elif character == "/" and not in_character_class:
+                    index += 1
+                    while index < len(text) and (
+                        text[index].isascii() and text[index].isalpha()
+                    ):
+                        masked[index] = " "
+                        index += 1
+                    break
+                index += 1
+            else:
+                raise InventoryError("unterminated JavaScript regular expression literal")
+            js_expression_ended = True
+            continue
+        if language == "js" and (text[index].isalpha() or text[index] in "_$"):
+            end = index + 1
+            while end < len(text) and (
+                text[end].isalnum() or text[end] in "_$"
+            ):
+                end += 1
+            word = text[index:end]
+            js_pending_control_parenthesis = word in {
+                "catch",
+                "for",
+                "if",
+                "switch",
+                "while",
+                "with",
+            }
+            js_expression_ended = word not in {
+                "await",
+                "case",
+                "delete",
+                "do",
+                "else",
+                "in",
+                "instanceof",
+                "new",
+                "of",
+                "return",
+                "throw",
+                "typeof",
+                "void",
+                "yield",
+            } and not js_pending_control_parenthesis
+            index = end
+            continue
+        if language == "js" and text[index].isdigit():
+            end = index + 1
+            while end < len(text) and (text[end].isalnum() or text[end] in "._"):
+                end += 1
+            js_expression_ended = True
+            index = end
+            continue
+        if language == "js" and text[index] == "(":
+            js_parentheses.append(js_pending_control_parenthesis)
+            js_pending_control_parenthesis = False
+            js_expression_ended = False
+        elif language == "js" and text[index] == ")":
+            control_parenthesis = js_parentheses.pop() if js_parentheses else False
+            js_expression_ended = not control_parenthesis
+        elif language == "js" and text[index] in "]}":
+            js_expression_ended = True
+        elif language == "js" and text[index] in "[{,;:=!?&|+*-%^~<>.":
+            js_expression_ended = False
+            js_pending_control_parenthesis = False
+        elif language == "js" and not text[index].isspace():
+            raise InventoryError(
+                f"unsupported JavaScript token while scanning literals: {text[index]!r}"
+            )
         index += 1
     return "".join(masked)
 
@@ -414,14 +546,24 @@ def decode_zig_string(raw: str) -> str:
     return value
 
 
-def field_match(mask: str, field: str, value_pattern: str) -> re.Match[str] | None:
+def field_assignment(mask: str, field: str) -> re.Match[str] | None:
     candidates = re.finditer(
-        rf"\.{re.escape(field)}\s*=\s*(?P<value>{value_pattern})", mask
+        rf"\.{re.escape(field)}\s*=\s*", mask
     )
     matches = [match for match in candidates if structural_depth(mask, match.start()) == 0]
     if len(matches) > 1:
         raise InventoryError(f"registry entry repeats .{field}")
     return matches[0] if matches else None
+
+
+def field_match(mask: str, field: str, value_pattern: str) -> re.Match[str] | None:
+    assignment = field_assignment(mask, field)
+    if assignment is None:
+        return None
+    match = re.compile(rf"(?P<value>{value_pattern})").match(mask, assignment.end())
+    if match is None:
+        raise InventoryError(f"unsupported .{field} value expression")
+    return match
 
 
 def structural_depth(mask: str, end: int) -> int:
@@ -650,18 +792,91 @@ def extract_builtin_tools(text: str) -> list[dict[str, str]]:
     return tools
 
 
+def javascript_statement_end(mask: str, start: int) -> int:
+    depth = 0
+    for index in range(start, len(mask)):
+        character = mask[index]
+        if character in "{[(":
+            depth += 1
+        elif character in "}])":
+            depth -= 1
+            if depth < 0:
+                raise InventoryError("unbalanced JavaScript export declaration")
+        elif character == ";" and depth == 0:
+            return index
+    raise InventoryError("JavaScript variable export must end with a semicolon")
+
+
+def split_javascript_declarators(text: str, mask: str) -> list[tuple[str, str]]:
+    parts: list[tuple[str, str]] = []
+    depth = 0
+    start = 0
+    for index, character in enumerate(mask):
+        if character in "{[(":
+            depth += 1
+        elif character in "}])":
+            depth -= 1
+            if depth < 0:
+                raise InventoryError("unbalanced JavaScript variable export")
+        elif character == "," and depth == 0:
+            parts.append((text[start:index], mask[start:index]))
+            start = index + 1
+    if depth != 0:
+        raise InventoryError("unbalanced JavaScript variable export")
+    parts.append((text[start:], mask[start:]))
+    return parts
+
+
+def javascript_variable_exports(
+    text: str, mask: str, position: int
+) -> list[str] | None:
+    declaration = re.match(
+        r"export\s+(?P<kind>const|let|var)\s+", mask[position:]
+    )
+    if declaration is None:
+        return None
+    body_start = position + declaration.end()
+    body_end = javascript_statement_end(mask, body_start)
+    body = text[body_start:body_end]
+    body_mask = mask[body_start:body_end]
+    names: list[str] = []
+    for original, masked in split_javascript_declarators(body, body_mask):
+        declarator = re.fullmatch(
+            rf"\s*(?P<name>{JS_IDENTIFIER_PATTERN})(?![A-Za-z0-9_$])"
+            r"(?P<initializer>\s*=\s*[\s\S]+)?\s*",
+            masked,
+        )
+        if declarator is None or (
+            declaration.group("kind") == "const"
+            and declarator.group("initializer") is None
+        ):
+            raise InventoryError(
+                f"unsupported JavaScript variable export {original.strip()!r}"
+            )
+        names.append(declarator.group("name"))
+    if not names:
+        raise InventoryError("JavaScript variable export must declare a name")
+    return names
+
+
 def extract_js_exports(text: str) -> list[str]:
     mask = source_mask(text, "js")
     export_positions = [match.start() for match in re.finditer(r"\bexport\b", mask)]
     found: list[str] = []
     declaration_pattern = re.compile(
-        rf"export\s+(?:async\s+)?(?:function|class|const|let|var)\s+"
+        rf"export\s+(?:async\s+function|function|class)\s+"
         rf"(?P<name>{JS_IDENTIFIER_PATTERN})(?![A-Za-z0-9_$])"
     )
     for position in export_positions:
+        if structural_depth(mask, position) != 0:
+            raise InventoryError("JavaScript exports must be top-level declarations")
         declaration = declaration_pattern.match(mask, position)
         if declaration is not None:
             found.append(declaration.group("name"))
+            continue
+        variable_exports = javascript_variable_exports(text, mask, position)
+        if variable_exports is not None:
+            found.extend(variable_exports)
             continue
         list_start = re.match(r"export\s*\{", mask[position:])
         if list_start is None:
