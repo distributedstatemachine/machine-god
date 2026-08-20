@@ -722,6 +722,44 @@ impl ModelProvider for PendingProvider {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RetainedStream {
+    Pending,
+    Completed,
+}
+
+#[derive(Clone, Debug)]
+struct RetainingCancellationProvider {
+    cancellation: Arc<Mutex<Option<CancellationToken>>>,
+    stream: RetainedStream,
+}
+
+impl ModelProvider for RetainingCancellationProvider {
+    fn name(&self) -> &'static str {
+        "retaining-cancellation"
+    }
+
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        *self.cancellation.lock().unwrap() = Some(cancellation);
+        let stream = self.stream;
+        Box::pin(async move {
+            let stream: ModelEventStream = match stream {
+                RetainedStream::Pending => Box::pin(futures_util::stream::pending()),
+                RetainedStream::Completed => {
+                    Box::pin(futures_util::stream::iter([Ok(ModelEvent::Stop {
+                        reason: StopReason::Completed,
+                    })]))
+                }
+            };
+            Ok(stream)
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 struct TurnWakeCounter(AtomicUsize);
 
@@ -756,6 +794,79 @@ fn ready_nonterminal_event_does_not_retain_its_poller_waker() {
     drop(next);
     assert_eq!(Arc::strong_count(&wake_counter), 2);
     assert!(handle.cancel());
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn dropping_a_live_turn_cancels_provider_work_before_releasing_the_lease() {
+    let retained = Arc::new(Mutex::new(None));
+    let engine = Engine::builder()
+        .provider(RetainingCancellationProvider {
+            cancellation: Arc::clone(&retained),
+            stream: RetainedStream::Pending,
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("drop-cancels-provider").unwrap());
+    let mut turn = prompt(&session, "wait");
+    let handle = turn.handle();
+
+    let _started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    let mut pending = Box::pin(turn.next());
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(pending.as_mut().poll(&mut context), Poll::Pending));
+    drop(pending);
+
+    let provider_cancellation = retained.lock().unwrap().clone().unwrap();
+    assert!(!provider_cancellation.is_cancelled());
+    assert!(session.has_active_turn());
+    drop(turn);
+
+    assert!(provider_cancellation.is_cancelled());
+    assert!(!handle.cancel());
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn dropping_a_completed_turn_does_not_cancel_or_wake_again() {
+    let retained = Arc::new(Mutex::new(None));
+    let engine = Engine::builder()
+        .provider(RetainingCancellationProvider {
+            cancellation: Arc::clone(&retained),
+            stream: RetainedStream::Completed,
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("completed-drop-idempotent").unwrap());
+    let mut turn = prompt(&session, "complete");
+
+    let events = futures_executor::block_on(async {
+        let mut events = Vec::new();
+        while let Some(event) = turn.next().await {
+            events.push(event.unwrap());
+        }
+        events
+    });
+    assert_eq!(events.len(), 3);
+    assert!(!session.has_active_turn());
+
+    let provider_cancellation = retained.lock().unwrap().clone().unwrap();
+    let wake_counter = Arc::new(TurnWakeCounter::default());
+    let waker = Waker::from(Arc::clone(&wake_counter));
+    let mut context = Context::from_waker(&waker);
+    let mut cancelled = Box::pin(provider_cancellation.cancelled());
+    assert!(matches!(
+        cancelled.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+
+    drop(turn);
+    assert!(!provider_cancellation.is_cancelled());
     assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
 }
 

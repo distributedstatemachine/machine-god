@@ -207,9 +207,9 @@ impl Session {
     /// Reserves a durable turn ID and starts one provider stream. A session
     /// permits at most one live turn.
     ///
-    /// Dropping the returned stream releases the session immediately. Provider
-    /// and tool-loop orchestration will extend this foundation without changing
-    /// the public streaming shape.
+    /// Dropping a live returned stream requests provider cancellation before
+    /// releasing the session immediately. Provider and tool-loop orchestration
+    /// will extend this foundation without changing the public streaming shape.
     ///
     /// # Errors
     ///
@@ -624,6 +624,9 @@ impl Stream for Turn {
 
 impl Drop for Turn {
     fn drop(&mut self) {
-        self.cancellation.deregister(&mut self.cancellation_waiter);
+        if self.lease.is_some() {
+            let _ = self.cancellation.cancel();
+        }
+        self.finish();
     }
 }

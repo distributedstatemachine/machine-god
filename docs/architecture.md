@@ -30,6 +30,11 @@ component errors, optimistic session revisions, monotonic event sequences,
 one-live-turn session leases, and idempotent cancellation form the initial
 cross-component invariants.
 
+A live turn owns the session lease and provider cancellation signal as one
+lifecycle unit. Destruction signals cancellation before removing waiters and
+releasing the lease; terminal completion has already released that unit, so its
+later destructor is cleanup-only.
+
 Each `Engine` owns a weak session-state registry keyed by `SessionId`. All
 create/load races inside that engine converge on one in-memory record and active
 turn flag; a live turn itself keeps the state alive if its originating session

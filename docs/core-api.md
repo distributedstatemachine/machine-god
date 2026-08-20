@@ -62,7 +62,11 @@ IDs, but this milestone does not claim a cross-engine or distributed live-turn
 lease.
 Cancellation is cooperative, wakes the turn stream without depending on an
 executor, and is idempotent: only the first `TurnHandle::cancel` returns `true`.
-Dropping a turn releases the session lease even if the provider has not stopped.
+Dropping a live turn signals its shared cancellation token before releasing the
+session lease, so provider work that retained the token is not orphaned. A stale
+handle therefore observes cancellation and cannot request it a second time.
+Dropping an already completed turn only repeats waiter and lease cleanup; it
+does not synthesize a cancellation or wake completed work.
 Cancellation wait registrations are keyed per live future and removed when that
 future or turn is dropped. A turn also removes its registration before yielding
 each nonterminal event, because no poll is outstanding while its consumer holds

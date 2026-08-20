@@ -54,3 +54,13 @@ propagates divergence as `EngineError::Protocol`; newer canonical state remains
 untouched and a valid saved record still replaces an older canonical revision.
 Regression tests control both the W1/W2 cancellation sequence and the
 same-revision save/load interleaving.
+
+A fresh review of `1408119` found that dropping a live `Turn` released its
+in-process lease and waiter but did not signal the cancellation token already
+given to the provider. Providers that retained the token could therefore leave
+background work running without an owning turn. `Turn::drop` now cancels first
+when the live lease is still held, then uses the idempotent finish path to
+deregister and release. A retained-provider-token regression verifies that the
+token is cancelled and a stale `TurnHandle::cancel` returns false after drop. A
+separate completed-turn regression registers an external waiter and verifies
+that cleanup-only drop neither changes the completed token nor wakes it.
