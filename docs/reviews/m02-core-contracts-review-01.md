@@ -20,3 +20,13 @@ Three adversarial lifecycle findings were confirmed and resolved:
 Regression coverage includes a permanently pending sink, reload continuity,
 two stale session handles racing the same durable sequence, repeated waiter
 polling, dropped waiters, and selective wake delivery.
+
+A fresh review of `af90f8d` found that the active-turn flag was still owned by
+each independently created `SessionState`. Durable CAS prevented turn-ID reuse
+but did not prevent two loaded handles from streaming concurrently. The engine
+now owns a weak registry keyed by `SessionId`; create/create, load/load, and
+load/create races converge on one state and live-turn lease within that engine.
+The turn lease holds the state strongly, dead weak entries are pruned, and
+persisted records reconcile monotonically by revision. Tests cover every handle
+combination and registry cleanup. Documentation explicitly limits this live-turn
+invariant to one engine instance; no cross-process lease is claimed.

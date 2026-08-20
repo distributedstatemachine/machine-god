@@ -29,3 +29,11 @@ observation may use the authority-free no-op sink. Validated IDs, structured
 component errors, optimistic session revisions, monotonic event sequences,
 one-live-turn session leases, and idempotent cancellation form the initial
 cross-component invariants.
+
+Each `Engine` owns a weak session-state registry keyed by `SessionId`. All
+create/load races inside that engine converge on one in-memory record and active
+turn flag; a live turn itself keeps the state alive if its originating session
+handle is dropped. Weak entries are pruned on later registry access. This is an
+in-process coordination boundary, not a distributed lease. Independent engines
+and processes coordinate durable turn-number allocation through the session
+store's optimistic revision contract.

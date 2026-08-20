@@ -95,14 +95,44 @@ pub struct Session {
     state: Arc<SessionState>,
 }
 
-struct SessionState {
+pub(crate) struct SessionState {
     data: Mutex<SessionData>,
-    active_turn: Arc<AtomicBool>,
+    active_turn: AtomicBool,
 }
 
 struct SessionData {
     record: SessionRecord,
     persisted: bool,
+}
+
+impl SessionState {
+    pub(crate) fn new(record: SessionRecord, persisted: bool) -> Self {
+        Self {
+            data: Mutex::new(SessionData { record, persisted }),
+            active_turn: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn reconcile_loaded(&self, record: SessionRecord) -> Result<(), EngineError> {
+        if record.next_turn_sequence == 0 {
+            return Err(EngineError::Protocol(
+                "stored next turn sequence must be positive".to_owned(),
+            ));
+        }
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !data.persisted || record.revision > data.record.revision {
+            data.record = record;
+            data.persisted = true;
+        } else if record.revision == data.record.revision && record != data.record {
+            return Err(EngineError::Protocol(
+                "session store returned different records at the same revision".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Session {
@@ -116,18 +146,8 @@ impl fmt::Debug for Session {
 }
 
 impl Session {
-    pub(crate) fn from_record(
-        engine: Arc<EngineInner>,
-        record: SessionRecord,
-        persisted: bool,
-    ) -> Self {
-        Self {
-            engine,
-            state: Arc::new(SessionState {
-                data: Mutex::new(SessionData { record, persisted }),
-                active_turn: Arc::new(AtomicBool::new(false)),
-            }),
-        }
+    pub(crate) fn from_state(engine: Arc<EngineInner>, state: Arc<SessionState>) -> Self {
+        Self { engine, state }
     }
 
     #[must_use]
@@ -185,7 +205,7 @@ impl Session {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| EngineError::SessionBusy)?;
         let lease = TurnLease {
-            active: Arc::clone(&self.state.active_turn),
+            state: Arc::clone(&self.state),
         };
 
         let (turn_id, record) = self.reserve_turn_id().await?;
@@ -329,12 +349,12 @@ struct PendingDelivery {
 }
 
 struct TurnLease {
-    active: Arc<AtomicBool>,
+    state: Arc<SessionState>,
 }
 
 impl Drop for TurnLease {
     fn drop(&mut self) {
-        self.active.store(false, Ordering::Release);
+        self.state.active_turn.store(false, Ordering::Release);
     }
 }
 

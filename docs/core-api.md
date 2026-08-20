@@ -50,8 +50,16 @@ created -> started ---------------> model event(s) -> completed
 live turn -- drop / terminal event --> session lease released
 ```
 
-Exactly one turn may be live for a session, including across cloned session
-handles. A second prompt returns [`EngineError::SessionBusy`](crate::EngineError::SessionBusy).
+Exactly one turn may be live for a session within an [`Engine`](crate::Engine),
+including across separately created, separately loaded, and cloned session
+handles. A second prompt returns
+[`EngineError::SessionBusy`](crate::EngineError::SessionBusy). Engine instances
+keep a weak registry by session ID; handles and live turns share the canonical
+state, while dead entries are pruned without keeping abandoned sessions alive.
+This lease is deliberately process-local and scoped to one `Engine`. Separate
+engine instances or processes rely on optimistic store revisions for unique turn
+IDs, but this milestone does not claim a cross-engine or distributed live-turn
+lease.
 Cancellation is cooperative, wakes the turn stream without depending on an
 executor, and is idempotent: only the first `TurnHandle::cancel` returns `true`.
 Dropping a turn releases the session lease even if the provider has not stopped.

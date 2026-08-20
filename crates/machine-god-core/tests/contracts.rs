@@ -359,6 +359,89 @@ fn persisted_turn_ids_continue_across_reload_and_stale_handles() {
     assert_eq!(persisted.revision, SessionRevision(4));
 }
 
+#[test]
+fn independently_created_handles_share_one_live_turn_lease() {
+    let engine = engine_with(StaticProvider::completed());
+    let id = SessionId::new("create-create-lease").unwrap();
+    let first = engine.create_session(id.clone());
+    let second = engine.create_session(id);
+
+    let turn = prompt(&first, "first");
+    assert_eq!(
+        futures_executor::block_on(second.prompt("overlap")).unwrap_err(),
+        EngineError::SessionBusy
+    );
+    drop(turn);
+    assert!(futures_executor::block_on(second.prompt("after release")).is_ok());
+}
+
+#[test]
+fn independently_loaded_handles_share_one_live_turn_lease() {
+    let store = MemoryStore::default();
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store)
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let id = SessionId::new("load-load-lease").unwrap();
+    let seed = engine.create_session(id.clone());
+    drop(prompt(&seed, "persist"));
+    drop(seed);
+
+    let first = futures_executor::block_on(engine.load_session(id.clone()))
+        .unwrap()
+        .unwrap();
+    let second = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+    let turn = prompt(&first, "first");
+    assert_eq!(
+        futures_executor::block_on(second.prompt("overlap")).unwrap_err(),
+        EngineError::SessionBusy
+    );
+    drop(turn);
+}
+
+#[test]
+fn racing_load_and_create_converge_on_state_without_losing_persisted_record() {
+    let store = MemoryStore::default();
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store)
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let id = SessionId::new("load-create-lease").unwrap();
+    let seed = engine.create_session(id.clone());
+    drop(prompt(&seed, "persist"));
+    drop(seed);
+
+    let load = engine.load_session(id.clone());
+    let created_while_load_pending = engine.create_session(id);
+    let loaded = futures_executor::block_on(load).unwrap().unwrap();
+    assert_eq!(
+        created_while_load_pending.record().revision,
+        SessionRevision(1)
+    );
+    assert_eq!(created_while_load_pending.record().next_turn_sequence, 2);
+
+    let turn = prompt(&loaded, "loaded wins lease");
+    assert_eq!(
+        futures_executor::block_on(created_while_load_pending.prompt("overlap")).unwrap_err(),
+        EngineError::SessionBusy
+    );
+    drop(turn);
+
+    let created_after_load = engine.create_session(loaded.id());
+    let turn = prompt(&created_after_load, "create reuses loaded state");
+    assert_eq!(
+        futures_executor::block_on(loaded.prompt("overlap again")).unwrap_err(),
+        EngineError::SessionBusy
+    );
+    drop(turn);
+}
+
 #[derive(Debug)]
 struct PendingProvider;
 

@@ -4,7 +4,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 /// Builder requiring explicit authority-bearing components.
 #[derive(Default)]
@@ -135,6 +135,7 @@ impl EngineBuilder {
                 permission_handler,
                 event_sink: self.event_sink.unwrap_or_else(|| Arc::new(NoopEventSink)),
                 tools: self.tools,
+                sessions: Mutex::new(BTreeMap::new()),
             }),
         })
     }
@@ -152,6 +153,7 @@ pub(crate) struct EngineInner {
     pub(crate) permission_handler: Arc<dyn PermissionHandler>,
     pub(crate) event_sink: Arc<dyn EventSink>,
     tools: BTreeMap<ToolName, RegisteredTool>,
+    sessions: Mutex<BTreeMap<SessionId, Weak<crate::session::SessionState>>>,
 }
 
 struct RegisteredTool {
@@ -163,6 +165,29 @@ impl EngineInner {
     pub(crate) fn tool_specs(&self) -> Vec<ToolSpec> {
         self.tools.values().map(|tool| tool.spec.clone()).collect()
     }
+
+    fn session_state(
+        &self,
+        record: SessionRecord,
+        persisted: bool,
+    ) -> Arc<crate::session::SessionState> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        prune_dead_sessions(&mut sessions);
+        if let Some(state) = sessions.get(&record.id).and_then(Weak::upgrade) {
+            return state;
+        }
+        let id = record.id.clone();
+        let state = Arc::new(crate::session::SessionState::new(record, persisted));
+        sessions.insert(id, Arc::downgrade(&state));
+        state
+    }
+}
+
+fn prune_dead_sessions(sessions: &mut BTreeMap<SessionId, Weak<crate::session::SessionState>>) {
+    sessions.retain(|_, state| state.strong_count() > 0);
 }
 
 impl fmt::Debug for Engine {
@@ -181,11 +206,16 @@ impl Engine {
         EngineBuilder::new()
     }
 
-    /// Creates a new in-memory session handle. Persistence is explicit through
-    /// the configured store and later orchestration.
+    /// Returns the engine-canonical in-memory handle for `id`.
+    ///
+    /// If this engine already loaded or created the session, the returned
+    /// handle shares that state and its live-turn lease rather than replacing
+    /// it. Durable state is reconciled by [`Self::load_session`] and prompt
+    /// reservation.
     #[must_use]
     pub fn create_session(&self, id: SessionId) -> Session {
-        Session::from_record(Arc::clone(&self.inner), SessionRecord::empty(id), false)
+        let state = self.inner.session_state(SessionRecord::empty(id), false);
+        Session::from_state(Arc::clone(&self.inner), state)
     }
 
     /// Loads a stored session without blocking an executor thread.
@@ -205,7 +235,13 @@ impl Engine {
                     record.id
                 )));
             }
-            Ok(record.map(|record| Session::from_record(inner, record, true)))
+            record
+                .map(|record| {
+                    let state = inner.session_state(record.clone(), true);
+                    state.reconcile_loaded(record)?;
+                    Ok(Session::from_state(Arc::clone(&inner), state))
+                })
+                .transpose()
         })
     }
 
@@ -237,5 +273,26 @@ impl Engine {
     #[must_use]
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
         self.inner.tool_specs()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prune_dead_sessions;
+    use crate::{SessionId, SessionRecord};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn dead_weak_session_entries_are_prunable() {
+        let id = SessionId::new("prune-me").unwrap();
+        let state = Arc::new(crate::session::SessionState::new(
+            SessionRecord::empty(id.clone()),
+            false,
+        ));
+        let mut sessions = BTreeMap::from([(id, Arc::downgrade(&state))]);
+        drop(state);
+        prune_dead_sessions(&mut sessions);
+        assert!(sessions.is_empty());
     }
 }
