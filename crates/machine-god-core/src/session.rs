@@ -1,7 +1,7 @@
 use crate::{
     BoxFuture, CancellationToken, EngineError, EngineEvent, InferenceOptions, Message, ModelEvent,
-    ModelEventStream, ModelRequest, Role, SessionId, SessionStoreError, StopReason, TokenUsage,
-    TurnEvent, TurnId,
+    ModelEventStream, ModelRequest, Role, SessionId, SessionStoreError, SessionStoreErrorKind,
+    StopReason, TokenUsage, TurnEvent, TurnId,
 };
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -25,6 +25,9 @@ pub struct SessionRevision(pub u64);
 pub struct SessionRecord {
     pub id: SessionId,
     pub revision: SessionRevision,
+    /// First never-reserved turn sequence number.
+    #[serde(default = "initial_turn_sequence")]
+    pub next_turn_sequence: u64,
     pub messages: Vec<Message>,
     pub metadata: BTreeMap<String, Value>,
 }
@@ -35,10 +38,15 @@ impl SessionRecord {
         Self {
             id,
             revision: SessionRevision::default(),
+            next_turn_sequence: initial_turn_sequence(),
             messages: Vec::new(),
             metadata: BTreeMap::new(),
         }
     }
+}
+
+const fn initial_turn_sequence() -> u64 {
+    1
 }
 
 /// Object-safe persistence boundary with optimistic concurrency.
@@ -49,7 +57,8 @@ pub trait SessionStore: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>>;
 
     /// Persists `record` only if its currently stored revision equals
-    /// `expected_revision`. A new record uses `None`.
+    /// `expected_revision`. A new record uses `None`. A successful save must
+    /// return a revision strictly greater than the record's previous revision.
     fn save(
         &self,
         record: SessionRecord,
@@ -87,9 +96,13 @@ pub struct Session {
 }
 
 struct SessionState {
-    record: Mutex<SessionRecord>,
+    data: Mutex<SessionData>,
     active_turn: Arc<AtomicBool>,
-    next_turn: AtomicU64,
+}
+
+struct SessionData {
+    record: SessionRecord,
+    persisted: bool,
 }
 
 impl fmt::Debug for Session {
@@ -103,13 +116,16 @@ impl fmt::Debug for Session {
 }
 
 impl Session {
-    pub(crate) fn from_record(engine: Arc<EngineInner>, record: SessionRecord) -> Self {
+    pub(crate) fn from_record(
+        engine: Arc<EngineInner>,
+        record: SessionRecord,
+        persisted: bool,
+    ) -> Self {
         Self {
             engine,
             state: Arc::new(SessionState {
-                record: Mutex::new(record),
+                data: Mutex::new(SessionData { record, persisted }),
                 active_turn: Arc::new(AtomicBool::new(false)),
-                next_turn: AtomicU64::new(1),
             }),
         }
     }
@@ -117,9 +133,10 @@ impl Session {
     #[must_use]
     pub fn id(&self) -> SessionId {
         self.state
-            .record
+            .data
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record
             .id
             .clone()
     }
@@ -128,9 +145,10 @@ impl Session {
     #[must_use]
     pub fn record(&self) -> SessionRecord {
         self.state
-            .record
+            .data
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record
             .clone()
     }
 
@@ -139,7 +157,8 @@ impl Session {
         self.state.active_turn.load(Ordering::Acquire)
     }
 
-    /// Starts one provider stream. A session permits at most one live turn.
+    /// Reserves a durable turn ID and starts one provider stream. A session
+    /// permits at most one live turn.
     ///
     /// Dropping the returned stream releases the session immediately. Provider
     /// and tool-loop orchestration will extend this foundation without changing
@@ -148,8 +167,19 @@ impl Session {
     /// # Errors
     ///
     /// Returns [`EngineError::SessionBusy`] when this session, or any clone of
-    /// it, already owns a live turn.
-    pub fn prompt(&self, prompt: impl Into<Prompt>) -> Result<Turn, EngineError> {
+    /// it, already owns a live turn. Store errors are returned if the durable
+    /// turn sequence cannot be reserved.
+    #[must_use]
+    pub fn prompt(
+        &self,
+        prompt: impl Into<Prompt>,
+    ) -> BoxFuture<'static, Result<Turn, EngineError>> {
+        let session = self.clone();
+        let prompt = prompt.into();
+        Box::pin(async move { session.start_prompt(prompt).await })
+    }
+
+    async fn start_prompt(&self, prompt: Prompt) -> Result<Turn, EngineError> {
         self.state
             .active_turn
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -158,12 +188,9 @@ impl Session {
             active: Arc::clone(&self.state.active_turn),
         };
 
-        let turn_number = self.state.next_turn.fetch_add(1, Ordering::Relaxed);
-        let turn_id = TurnId::new(format!("turn-{turn_number}"))
-            .map_err(|error| EngineError::Protocol(error.to_string()))?;
-        let session_id = self.id();
-        let prompt = prompt.into();
-        let mut messages = self.record().messages;
+        let (turn_id, record) = self.reserve_turn_id().await?;
+        let session_id = record.id.clone();
+        let mut messages = record.messages;
         messages.push(Message::text(Role::User, prompt.text));
         let request = ModelRequest {
             session_id: session_id.clone(),
@@ -192,8 +219,96 @@ impl Session {
             sequence: 0,
             usage: TokenUsage::default(),
             terminal_seen: false,
+            cancellation_waiter: None,
             lease: Some(lease),
         })
+    }
+
+    async fn reserve_turn_id(&self) -> Result<(TurnId, SessionRecord), EngineError> {
+        const MAX_CONFLICT_RETRIES: usize = 32;
+
+        for _ in 0..MAX_CONFLICT_RETRIES {
+            let (mut candidate, expected_revision) = {
+                let data = self
+                    .state
+                    .data
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                (
+                    data.record.clone(),
+                    data.persisted.then_some(data.record.revision),
+                )
+            };
+            let turn_sequence = candidate.next_turn_sequence;
+            candidate.next_turn_sequence = turn_sequence.checked_add(1).ok_or_else(|| {
+                EngineError::Protocol("session turn sequence is exhausted".to_owned())
+            })?;
+            let turn_id = TurnId::new(format!("turn-{turn_sequence}"))
+                .map_err(|error| EngineError::Protocol(error.to_string()))?;
+            let previous_revision = candidate.revision;
+
+            match self
+                .engine
+                .session_store
+                .save(candidate.clone(), expected_revision)
+                .await
+            {
+                Ok(revision) if revision > previous_revision => {
+                    candidate.revision = revision;
+                    let mut data = self
+                        .state
+                        .data
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    data.record = candidate.clone();
+                    data.persisted = true;
+                    return Ok((turn_id, candidate));
+                }
+                Ok(_) => {
+                    return Err(EngineError::Protocol(
+                        "session store returned a non-increasing revision".to_owned(),
+                    ));
+                }
+                Err(error) if error.kind == SessionStoreErrorKind::Conflict => {
+                    let id = candidate.id.clone();
+                    let Some(current) = self.engine.session_store.load(id.clone()).await? else {
+                        let mut data = self
+                            .state
+                            .data
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if data.record.id != id {
+                            return Err(EngineError::Protocol(
+                                "session identity changed during turn reservation".to_owned(),
+                            ));
+                        }
+                        data.persisted = false;
+                        continue;
+                    };
+                    if current.id != id {
+                        return Err(EngineError::Protocol(format!(
+                            "session store returned ID {} for requested ID {id}",
+                            current.id
+                        )));
+                    }
+                    let mut data = self
+                        .state
+                        .data
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    data.record = current;
+                    data.persisted = true;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(SessionStoreError::new(
+            SessionStoreErrorKind::Conflict,
+            "turn_reservation_contended",
+            "turn ID reservation exceeded its conflict retry bound",
+            true,
+        )
+        .into())
     }
 }
 
@@ -260,6 +375,7 @@ pub struct Turn {
     sequence: u64,
     usage: TokenUsage,
     terminal_seen: bool,
+    cancellation_waiter: Option<u64>,
     lease: Option<TurnLease>,
 }
 
@@ -286,6 +402,7 @@ impl Turn {
     }
 
     fn finish(&mut self) {
+        self.cancellation.deregister(&mut self.cancellation_waiter);
         self.state = TurnState::Done;
         self.lease.take();
     }
@@ -315,6 +432,37 @@ impl Turn {
             retryable: error.retryable,
         });
     }
+
+    fn cancel_pending_delivery(&mut self) -> Option<EngineEvent> {
+        if !self.cancellation.is_cancelled() {
+            return None;
+        }
+        let pending = self.delivery.take()?;
+        let event = if matches!(
+            pending.event.payload,
+            TurnEvent::Completed {
+                reason: StopReason::Cancelled,
+                ..
+            }
+        ) {
+            pending.event
+        } else {
+            let event = EngineEvent {
+                session_id: self.session_id.clone(),
+                turn_id: self.id.clone(),
+                sequence: self.sequence,
+                payload: TurnEvent::Completed {
+                    reason: StopReason::Cancelled,
+                    usage: self.usage,
+                },
+            };
+            self.sequence = self.sequence.saturating_add(1);
+            event
+        };
+        self.terminal_seen = true;
+        self.finish();
+        Some(event)
+    }
 }
 
 impl Stream for Turn {
@@ -322,6 +470,9 @@ impl Stream for Turn {
 
     fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
+            if let Some(event) = self.cancel_pending_delivery() {
+                return Poll::Ready(Some(Ok(event)));
+            }
             if let Some(delivery) = &mut self.delivery {
                 match delivery.future.as_mut().poll(context) {
                     Poll::Pending => return Poll::Pending,
@@ -359,7 +510,8 @@ impl Stream for Turn {
                     usage: self.usage,
                 });
             } else if !self.terminal_seen {
-                self.cancellation.register(context.waker());
+                let cancellation = self.cancellation.clone();
+                cancellation.register(&mut self.cancellation_waiter, context.waker());
             }
 
             let state = core::mem::replace(&mut self.state, TurnState::Done);
@@ -411,5 +563,11 @@ impl Stream for Turn {
                 TurnState::Done => return Poll::Ready(None),
             }
         }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        self.cancellation.deregister(&mut self.cancellation_waiter);
     }
 }

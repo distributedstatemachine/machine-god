@@ -185,7 +185,7 @@ impl Engine {
     /// the configured store and later orchestration.
     #[must_use]
     pub fn create_session(&self, id: SessionId) -> Session {
-        Session::from_record(Arc::clone(&self.inner), SessionRecord::empty(id))
+        Session::from_record(Arc::clone(&self.inner), SessionRecord::empty(id), false)
     }
 
     /// Loads a stored session without blocking an executor thread.
@@ -205,7 +205,7 @@ impl Engine {
                     record.id
                 )));
             }
-            Ok(record.map(|record| Session::from_record(inner, record)))
+            Ok(record.map(|record| Session::from_record(inner, record, true)))
         })
     }
 

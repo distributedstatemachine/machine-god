@@ -34,9 +34,10 @@ to policy.
 
 ## Turn lifecycle
 
-[`Session::prompt`](crate::Session::prompt) returns a [`Turn`](crate::Turn), an
-asynchronous stream of ordered [`EngineEvent`](crate::EngineEvent) values. Every
-event carries a session ID, turn ID, and monotonic sequence number.
+Awaiting [`Session::prompt`](crate::Session::prompt) reserves a durable turn ID
+and returns a [`Turn`](crate::Turn), an asynchronous stream of ordered
+[`EngineEvent`](crate::EngineEvent) values. Every event carries a session ID,
+turn ID, and monotonic sequence number.
 
 ```text
                   provider stream
@@ -54,11 +55,25 @@ handles. A second prompt returns [`EngineError::SessionBusy`](crate::EngineError
 Cancellation is cooperative, wakes the turn stream without depending on an
 executor, and is idempotent: only the first `TurnHandle::cancel` returns `true`.
 Dropping a turn releases the session lease even if the provider has not stopped.
+Cancellation wait registrations are keyed per live future and removed when that
+future or turn is dropped, so repeated polls and abandoned waiters do not retain
+wakers.
+
+The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
+Prompt creation reserves it through the configured store's optimistic revision
+before exposing the `Turn`; stale handles reload and retry within a fixed bound.
+Successful reservations therefore remain consumed across reloads and process
+restarts, while core remains deterministic and does not acquire clock or random
+authority.
 
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:
 an event is yielded to the caller only after the configured event sink accepts
 the same event. Observer failure terminates the turn with `EngineError::EventSink`.
+Cancellation has priority over observer backpressure: if an observer future is
+pending, core drops that future and yields the terminal cancellation directly to
+the stream consumer before releasing the session lease. This exception prevents
+an optional observer from making cancellation or shutdown wait forever.
 
 The milestone-02 runtime layers tool execution, permission caching, durable
 message commits, and multi-round model/tool orchestration onto this lifecycle.
