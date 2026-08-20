@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate benchmark evidence before it is retained by CI."""
+"""Validate bootstrap or pinned-upstream evidence before retention."""
 
 from __future__ import annotations
 
@@ -36,6 +36,25 @@ def main() -> int:
     parser.add_argument("--binary", type=Path)
     args = parser.parse_args()
     data = json.loads(args.evidence.read_text(encoding="utf-8"))
+
+    if data.get("schema_version") == 2:
+        if args.bootstrap:
+            raise SystemExit("schema 2 upstream evidence does not use --bootstrap")
+        if args.binary:
+            raise SystemExit("schema 2 evidence binds both binaries in its build records")
+        try:
+            from upstream import validate_upstream_evidence
+
+            validate_upstream_evidence(data)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        if (
+            args.expected_git_sha
+            and data["source"]["machine_god"]["git_sha"] != args.expected_git_sha
+        ):
+            raise SystemExit("benchmark git_sha does not match the expected CI SHA")
+        print("upstream benchmark evidence is valid")
+        return 0
 
     if not is_integer(data.get("schema_version")) or data["schema_version"] != 1:
         raise SystemExit("unsupported benchmark schema")
