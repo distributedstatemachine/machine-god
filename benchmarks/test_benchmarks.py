@@ -187,6 +187,9 @@ class UpstreamHarnessTest(unittest.TestCase):
             "environment": environment,
             "timeout_seconds": timeout,
             "elapsed_ns": 10,
+            "setup_ns": 1,
+            "supervision_ns": 1,
+            "cleanup_ns": 1,
             "returncode": 0,
             "stdout_sha256": "0" * 64,
             "stderr_sha256": "1" * 64,
@@ -352,7 +355,16 @@ class UpstreamHarnessTest(unittest.TestCase):
                 root,
             ),
         }
-        samples = [{"elapsed_ns": value, "returncode": 0} for value in range(1, 11)]
+        samples = [
+            {
+                "elapsed_ns": value,
+                "setup_ns": 1,
+                "supervision_ns": 1,
+                "cleanup_ns": 1,
+                "returncode": 0,
+            }
+            for value in range(1, 11)
+        ]
         fx_build = self.command_record(plan["fx_build"], fx_environment, 10.0, fx_root)
         fx_build.update(
             {
@@ -632,6 +644,21 @@ class UpstreamHarnessTest(unittest.TestCase):
         evidence["workloads"][0]["implementations"][0]["p95_ns"] = 9
         with self.assertRaises(ValueError):
             validate_upstream_evidence(evidence)
+
+    def test_rejects_missing_or_invalid_outside_timing_durations(self) -> None:
+        mutations = (
+            lambda data: data["builds"][0].pop("setup_ns"),
+            lambda data: data["builds"][1].__setitem__("cleanup_ns", -1),
+            lambda data: data["workloads"][0]["implementations"][0]["samples"][
+                0
+            ].__setitem__("supervision_ns", True),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
 
     def test_schema_two_checker_binds_sha_and_both_actual_binaries(self) -> None:
         (ROOT / ".bench").mkdir(exist_ok=True)
@@ -981,9 +1008,9 @@ class UpstreamHarnessTest(unittest.TestCase):
             self.assertFalse(marker.exists())
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
-    def test_monitor_and_finalizer_failures_cleanup_detached_descendants(self) -> None:
+    def test_attach_and_finalizer_failures_cleanup_detached_descendants(self) -> None:
         linux_containment_preflight()
-        for failure in ("monitor", "finalizer"):
+        for failure in ("attach", "finalizer"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 marker = Path(directory) / "leaked"
                 command = "\n".join(
@@ -1006,20 +1033,25 @@ class UpstreamHarnessTest(unittest.TestCase):
                 environment = os.environ.copy()
                 environment[CONTAINMENT_ENVIRONMENT_KEY] = "8" * 32
 
-                def failed_monitor(supervisor: LinuxProcessSupervisor) -> None:
-                    supervisor._error = RuntimeError("injected monitor failure")
-                    supervisor._stop.set()
+                def failed_attach(
+                    supervisor: LinuxProcessSupervisor,
+                    root_pid: int,
+                    descriptor: int | None = None,
+                ) -> None:
+                    del supervisor, root_pid, descriptor
+                    time.sleep(0.1)
+                    raise RuntimeError("injected attach failure")
 
                 patcher = (
-                    mock.patch.object(LinuxProcessSupervisor, "_monitor", failed_monitor)
-                    if failure == "monitor"
+                    mock.patch.object(LinuxProcessSupervisor, "attach_root", failed_attach)
+                    if failure == "attach"
                     else mock.patch.object(
                         upstream,
                         "finalize_successful_process",
                         side_effect=RuntimeError("injected finalizer failure"),
                     )
                 )
-                expected_error = "supervision" if failure == "monitor" else "finalizer"
+                expected_error = "attach" if failure == "attach" else "finalizer"
                 with patcher, self.assertRaisesRegex(RuntimeError, expected_error):
                     run_process(
                         [sys.executable, "-c", command],
@@ -1093,6 +1125,51 @@ class UpstreamHarnessTest(unittest.TestCase):
         wall_elapsed = time.monotonic_ns() - started
         self.assertLess(completed.elapsed_ns, 150_000_000)
         self.assertGreater(wall_elapsed, 190_000_000)
+        self.assertGreater(completed.cleanup_ns, 190_000_000)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux timing regression")
+    def test_measurement_excludes_delayed_attach_and_descendant_scan(self) -> None:
+        linux_containment_preflight()
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "5" * 32
+        original_attach = LinuxProcessSupervisor.attach_root
+        original_settle = LinuxProcessSupervisor.settle_and_reap_adopted
+
+        def delayed_attach(
+            supervisor: LinuxProcessSupervisor,
+            root_pid: int,
+            descriptor: int | None = None,
+        ) -> None:
+            time.sleep(0.2)
+            original_attach(supervisor, root_pid, descriptor)
+
+        def delayed_settle(
+            supervisor: LinuxProcessSupervisor,
+            settle_seconds: float = 0.25,
+        ) -> set[int]:
+            time.sleep(0.2)
+            return original_settle(supervisor, settle_seconds)
+
+        started = time.monotonic_ns()
+        with (
+            mock.patch.object(LinuxProcessSupervisor, "attach_root", delayed_attach),
+            mock.patch.object(
+                LinuxProcessSupervisor, "settle_and_reap_adopted", delayed_settle
+            ),
+        ):
+            completed = run_process(
+                [sys.executable, "-c", "pass"],
+                cwd=Path.cwd(),
+                environment=environment,
+                timeout_seconds=1.0,
+                capture_output=False,
+            )
+        wall_elapsed = time.monotonic_ns() - started
+
+        self.assertLess(completed.elapsed_ns, 150_000_000)
+        self.assertGreater(completed.supervision_ns, 190_000_000)
+        self.assertGreater(completed.cleanup_ns, 190_000_000)
+        self.assertGreater(wall_elapsed, 390_000_000)
 
     @unittest.skipUnless(os.name == "posix", "executable symlink regression requires POSIX")
     def test_tool_identity_survives_symlink_swap_and_detects_target_change(self) -> None:

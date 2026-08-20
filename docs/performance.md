@@ -82,14 +82,20 @@ killed, and reaped. Execution fails closed if subreaper, pidfd, or process-table
 supervision is unavailable, or if a successful command leaks a descendant. The
 post-success path uses a bounded settle period to discover and `waitpid` every
 adopted child, including short-lived double-fork zombies, and accepts a run only
-after no supervised descendant PID remains. The recorded sample time stops
-immediately when the command's captured streams
-close, before any post-run containment scan. The final JSON is written atomically
-only after validation. A full-run, per-output exclusive lock is acquired before
-collection starts and held through publication. Lock acquisition has a bounded
-wait, and a pre-existing lock is never removed as stale. A failed invocation
-removes neither the last successfully published evidence nor another
-invocation's lock.
+after no supervised descendant PID remains. Linux measurement runs create their
+exit-observer thread and capture the baseline child set before the sample clock
+starts. Immediately after launch, the harness duplicates the root pidfd to that
+observer and attaches the immutable root identity with a direct, single-PID
+`/proc/<pid>/stat` lookup. There is no periodic process-table monitor. Pidfd
+readability timestamps root exit without reaping it, so synchronous attachment
+cannot move the end timestamp. Full descendant discovery, settling, and reaping
+begin only after that timestamp. Every process record stores the measured
+interval plus separate `setup_ns`, `supervision_ns`, and `cleanup_ns` durations.
+The final JSON is written atomically only after validation. A full-run,
+per-output exclusive lock is acquired before collection starts and held through
+publication. Lock acquisition has a bounded wait, and a pre-existing lock is
+never removed as stale. A failed invocation removes neither the last
+successfully published evidence nor another invocation's lock.
 Publication uses an exclusively created, randomly named temporary in the output
 directory. The harness writes through the retained descriptor, flushes and
 `fsync`s it, verifies the pathname still names the same regular-file inode,
@@ -101,13 +107,14 @@ created as needed, and the leaf output name is never resolved through a
 pre-existing symlink.
 
 The supervisor is initialized before a command can launch and attaches the root
-as an immutable `(PID, start_time)` identity. Every ancestry expansion requires
-the current `/proc` start time to match the identity already recorded, while all
-signals and adopted-child waits use pidfds. PID reuse therefore cannot seed or
-signal an unrelated process tree. Any exception after launch—including monitor,
-attachment, finalization, or reaping failures—enters the same non-throwing,
-bounded cleanup path, which kills the original group and known pidfds, closes
-pipes, reaps, and stops supervision before propagating the original failure.
+as an immutable `(PID, start_time)` identity using the already opened root pidfd.
+Every post-timing ancestry expansion requires the current `/proc` start time to
+match the identity already recorded, while all signals and adopted-child waits
+use pidfds. PID reuse therefore cannot seed or signal an unrelated process tree.
+Any exception after launch—including attachment, finalization, or reaping
+failures—enters the same non-throwing, bounded cleanup path, which kills the
+original group and known pidfds, closes pipes, reaps, and stops supervision
+before propagating the original failure.
 
 The schema 2 artifact records both source revisions, the verified fx origin and
 commit and lock checksum, clone/fetch/checkout command records, CPU model, CI

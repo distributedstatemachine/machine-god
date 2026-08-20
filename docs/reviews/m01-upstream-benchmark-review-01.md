@@ -72,9 +72,15 @@ findings and the branch resolves them as follows:
   child-subreaper, pidfds, parent-relationship tracking, and explicit reaping.
   A hostile double-fork preflight must succeed before commands launch; it and the
   regressions clear the token and do not read descendant environments.
-- Post-command containment scans were included in elapsed samples. The end
-  timestamp is now taken immediately after `communicate` returns; a deliberately
-  delayed scan regression proves the recorded sample excludes cleanup overhead.
+- Measurement timing still included a full `/proc` root-attachment scan and ran
+  a 5 ms process-table monitor concurrently with 1–2 ms bootstrap samples. Linux
+  measurement runs now prepare a pidfd exit observer before the clock starts,
+  arm it immediately after launch, attach the root with a direct O(1) identity
+  read, and perform no periodic scans. The observer timestamps pidfd readability
+  before reaping; all full descendant discovery and settling follows that
+  timestamp. Setup, direct supervision, and cleanup durations are recorded
+  separately. Injected 200 ms attachment and scan delays prove that neither
+  changes `elapsed_ns`.
 - Successful-command finalization ignored known zombies, allowing a short-lived
   detached grandchild to remain adopted after the run was accepted. A bounded
   settle pass now repeatedly discovers and reaps all known adopted children and
@@ -83,8 +89,8 @@ findings and the branch resolves them as follows:
 - Exceptions raised after `Popen`, including supervision and finalization
   failures, could bypass cleanup. The supervisor is now created before launch,
   and every later exception enters a non-throwing bounded cleanup that kills the
-  process group and known pidfds, closes pipes, reaps, and stops the monitor.
-  Injected constructor, monitor, and finalizer failures verify that no hostile
+  process group and known pidfds, closes pipes, reaps, and stops supervision.
+  Injected constructor, attachment, and finalizer failures verify that no hostile
   child survives.
 - Ancestry expansion seeded numeric PIDs from old records without rechecking
   process start time, so PID reuse could attach unrelated descendants. Root and
@@ -116,11 +122,12 @@ ambient compiler flags, runner-class changes, ignored configuration inputs,
 preexisting upstream checkouts, every scratch/cache/tool-state path, original
 worktree mutation after snapshotting, process-group and detached-descendant
 timeouts, Linux descendant containment without readable environments, delayed
-containment scans, Git export attributes and link modes, mutable tool paths, and
-successful-command zombie reaping, injected lifecycle failures, PID reuse,
-NUL-porcelain path parsing, atomic-publication symlinks and collisions, and stale
-evidence preservation, including concurrent success/failure publication and a
-pre-existing output lock.
+attachment and containment scans outside the timing boundary, Git export
+attributes and link modes, mutable tool paths, successful-command zombie
+reaping, injected lifecycle failures, PID reuse, NUL-porcelain path parsing,
+atomic-publication symlinks and collisions, and stale evidence preservation,
+including concurrent success/failure publication and a pre-existing output
+lock.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,
