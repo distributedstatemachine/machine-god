@@ -1,0 +1,31 @@
+[workspace]
+members = [
+    "crates/machine-god-core",
+    "crates/machine-god-native",
+    "crates/machine-god-cli",
+    "crates/machine-god-testkit",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "Apache-2.0"
+repository = "https://github.com/distributedstatemachine/machine-god"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+

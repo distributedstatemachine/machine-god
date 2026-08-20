@@ -1,0 +1,4 @@
+repository=https://github.com/vercel-labs/fx.git
+commit=b1774fbf6c7602b503026f96f6e960e946c692ef
+zig=0.16.0
+
