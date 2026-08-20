@@ -476,9 +476,15 @@ def initializer_body(
     label: str,
     *,
     masked_source: str | None = None,
+    source_depths: list[int] | None = None,
 ) -> tuple[str, str]:
     mask = masked_source if masked_source is not None else source_mask(text, language)
+    depths = source_depths if source_depths is not None else structural_depth_map(mask)
+    if len(depths) != len(mask) + 1:
+        raise InventoryError("internal parser error: invalid structural depth map")
     matches = list(re.finditer(declaration_pattern, mask))
+    if any(depths[match.start()] != 0 for match in matches):
+        raise InventoryError(f"upstream {label} must be declared at top level")
     if len(matches) > 1:
         raise InventoryError(f"multiple upstream declarations for {label}")
     match = matches[0] if matches else None
@@ -486,10 +492,12 @@ def initializer_body(
         raise InventoryError(f"cannot find upstream {label}")
     opening = mask.find("{", match.start(), match.end())
     if opening < 0:
-        opening = mask.find("{", match.end())
-    if opening < 0:
-        raise InventoryError(f"cannot find initializer for upstream {label}")
+        raise InventoryError(f"matched upstream {label} has no initializer")
+    if depths[opening] != 0:
+        raise InventoryError(f"upstream {label} initializer escaped top-level scope")
     closing = find_matching_brace(mask, opening)
+    if depths[closing] != 1:
+        raise InventoryError(f"upstream {label} initializer escaped top-level scope")
     return text[opening + 1 : closing], mask[opening + 1 : closing]
 
 
@@ -508,7 +516,11 @@ def root_struct_blocks(body: str, mask: str) -> list[tuple[str, str, list[int]]]
             excerpt = body[index : index + 40].splitlines()[0]
             raise InventoryError(f"unsupported registry entry syntax near {excerpt!r}")
         opening = index + 1
+        if depths[opening] != 0:
+            raise InventoryError("registry entry escaped its initializer scope")
         closing = find_matching_brace(mask, opening)
+        if depths[closing] != 1:
+            raise InventoryError("registry entry escaped its initializer scope")
         block_start = opening + 1
         base_depth = depths[block_start]
         block_depths = [
@@ -541,7 +553,11 @@ def zig_identifier(raw: str) -> str:
 
 
 def parse_enum(
-    text: str, name: str, *, masked_source: str | None = None
+    text: str,
+    name: str,
+    *,
+    masked_source: str | None = None,
+    source_depths: list[int] | None = None,
 ) -> list[str]:
     body, mask = initializer_body(
         text,
@@ -549,6 +565,7 @@ def parse_enum(
         rf"pub\s+const\s+{re.escape(name)}\s*=\s*enum\s*\{{",
         name,
         masked_source=masked_source,
+        source_depths=source_depths,
     )
     if mask.rstrip() and not mask.rstrip().endswith(","):
         raise InventoryError(f"{name} members must be comma-terminated")
@@ -605,16 +622,19 @@ def field_match(
 
 def structural_depth_map(mask: str) -> list[int]:
     depths = [0] * (len(mask) + 1)
-    depth = 0
+    stack: list[str] = []
+    matching = {"}": "{", "]": "[", ")": "("}
     for index, character in enumerate(mask):
-        depths[index] = depth
+        depths[index] = len(stack)
         if character in "{[(":
-            depth += 1
+            stack.append(character)
         elif character in "}])":
-            depth -= 1
-            if depth < 0:
+            if not stack or stack[-1] != matching[character]:
                 raise InventoryError("unbalanced registry initializer")
-    depths[len(mask)] = depth
+            stack.pop()
+    if stack:
+        raise InventoryError("unbalanced registry initializer")
+    depths[len(mask)] = 0
     return depths
 
 
@@ -744,9 +764,14 @@ def extract_top_level_commands(
     *,
     specs_masked: str | None = None,
     registry_masked: str | None = None,
+    specs_depths: list[int] | None = None,
+    registry_depths: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     enum_values = parse_enum(
-        specs_text, "TopLevelKind", masked_source=specs_masked
+        specs_text,
+        "TopLevelKind",
+        masked_source=specs_masked,
+        source_depths=specs_depths,
     )
     body, mask = initializer_body(
         registry_text,
@@ -754,6 +779,7 @@ def extract_top_level_commands(
         r"pub\s+const\s+top_level_specs\s*=\s*\[_\]TopLevelSpec\s*\{",
         "top-level command registry",
         masked_source=registry_masked,
+        source_depths=registry_depths,
     )
     commands: list[dict[str, Any]] = []
     for block, block_mask, depths in root_struct_blocks(body, mask):
@@ -793,14 +819,22 @@ def extract_slash_commands(
     *,
     specs_masked: str | None = None,
     registry_masked: str | None = None,
+    specs_depths: list[int] | None = None,
+    registry_depths: list[int] | None = None,
 ) -> list[dict[str, Any]]:
-    enum_values = parse_enum(specs_text, "SlashKind", masked_source=specs_masked)
+    enum_values = parse_enum(
+        specs_text,
+        "SlashKind",
+        masked_source=specs_masked,
+        source_depths=specs_depths,
+    )
     body, mask = initializer_body(
         registry_text,
         "zig",
         r"pub\s+const\s+slash_specs\s*=\s*\[_\]SlashSpec\s*\{",
         "slash command registry",
         masked_source=registry_masked,
+        source_depths=registry_depths,
     )
     commands: list[dict[str, Any]] = []
     for block, block_mask, depths in root_struct_blocks(body, mask):
@@ -867,7 +901,15 @@ def index_tool_spec_blocks(
         opening = mask.find("{", declaration.start(), declaration.end())
         if opening < 0:
             raise InventoryError(f"cannot find initializer for built-in tool {identifier}")
+        if depths[opening] != 0:
+            raise InventoryError(
+                f"built-in tool {identifier} initializer escaped top-level scope"
+            )
         closing = find_matching_brace(mask, opening)
+        if depths[closing] != 1:
+            raise InventoryError(
+                f"built-in tool {identifier} initializer escaped top-level scope"
+            )
         block_start = opening + 1
         base_depth = depths[block_start]
         blocks[identifier] = (
@@ -887,6 +929,7 @@ def extract_builtin_tools(text: str) -> list[dict[str, str]]:
         r"pub\s+const\s+all\s*=\s*\[_\]tool_dispatch\.Tool\s*\{",
         "built-in tool registry",
         masked_source=source_masked,
+        source_depths=source_depths,
     )
     if mask.rstrip() and not mask.rstrip().endswith(","):
         raise InventoryError("built-in tool registry entries must be comma-terminated")
@@ -1253,17 +1296,23 @@ def build_inventory(
     registry_text = read_text(source, COMMAND_REGISTRY)
     specs_masked = source_mask(specs_text, "zig")
     registry_masked = source_mask(registry_text, "zig")
+    specs_depths = structural_depth_map(specs_masked)
+    registry_depths = structural_depth_map(registry_masked)
     top_level = extract_top_level_commands(
         specs_text,
         registry_text,
         specs_masked=specs_masked,
         registry_masked=registry_masked,
+        specs_depths=specs_depths,
+        registry_depths=registry_depths,
     )
     slash = extract_slash_commands(
         specs_text,
         registry_text,
         specs_masked=specs_masked,
         registry_masked=registry_masked,
+        specs_depths=specs_depths,
+        registry_depths=registry_depths,
     )
     tools = extract_builtin_tools(read_text(source, TOOL_REGISTRY))
     sdk = extract_sdk_exports(source)

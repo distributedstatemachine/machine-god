@@ -114,3 +114,25 @@ mask and depth-map construction. All prior hostile fail-closed cases remain in
 the same focused suite.
 
 Rejected after final performance rereview remediation: none.
+
+## Final scope-security rereview
+
+Reviewed commit: `58ade4290d46ad3d85334ed1a10e1fc82cabd80b`.
+
+The final scope review confirmed that the generic Zig initializer lookup
+accepted matching declarations at any structural depth. A nested namespace
+could therefore provide `TopLevelKind`, a command registry, or the built-in
+tool registry even when the required production declaration was absent from
+file scope.
+
+Initializer lookup now reuses the full-source structural-depth map and requires
+every matching contract declaration and its opening initializer brace to be at
+depth zero. Its matching closing brace must return through exactly that scope;
+registry entries and indexed ToolSpec bodies apply the corresponding local and
+top-level scope checks. Structural depth calculation now uses a typed delimiter
+stack, so a mismatched bracket cannot manufacture an apparent depth-zero
+position. Nested enum, command-registry, and tool-registry decoys are covered by
+hostile regressions. Shared mask/depth maps and the linear scaling bounds remain
+intact.
+
+Rejected after final scope-security rereview remediation: none.

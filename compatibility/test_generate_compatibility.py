@@ -212,6 +212,44 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         with self.assertRaisesRegex(GENERATOR.InventoryError, "cannot find upstream"):
             GENERATOR.extract_builtin_tools(text)
 
+    def test_nested_zig_enum_cannot_replace_top_level_contract(self) -> None:
+        specs = (
+            "pub const Namespace = struct {\n"
+            "    pub const TopLevelKind = enum { help, };\n"
+            "};\n"
+        )
+        registry = (
+            "pub const top_level_specs = [_]TopLevelSpec{\n"
+            '    .{ .kind = .help, .token = "help", .usage = "help", '
+            '.summary = "Show help" },\n'
+            "};\n"
+        )
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "declared at top level"):
+            GENERATOR.extract_top_level_commands(specs, registry)
+
+    def test_nested_zig_command_registry_cannot_replace_top_level_registry(self) -> None:
+        specs = "pub const TopLevelKind = enum { help, };\n"
+        registry = (
+            "pub const Namespace = struct {\n"
+            "    pub const top_level_specs = [_]TopLevelSpec{\n"
+            '        .{ .kind = .help, .token = "help", .usage = "help", '
+            '.summary = "Show help" },\n'
+            "    };\n"
+            "};\n"
+        )
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "declared at top level"):
+            GENERATOR.extract_top_level_commands(specs, registry)
+
+    def test_nested_zig_tool_registry_cannot_replace_top_level_registry(self) -> None:
+        text = (
+            "pub const Namespace = struct {\n"
+            "    pub const all = [_]tool_dispatch.Tool{ fake, };\n"
+            '    pub const fake = ToolSpec{ .name = "fake" };\n'
+            "};\n"
+        )
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "declared at top level"):
+            GENERATOR.extract_builtin_tools(text)
+
     def test_quoted_zig_identifiers_remain_extractable(self) -> None:
         specs = 'pub const TopLevelKind = enum { @"help", };\n'
         registry = (
