@@ -36,6 +36,10 @@ releasing the lease; terminal completion has already released that unit, so its
 later destructor is cleanup-only. Out-of-band observer or delivery-state failure
 before a terminal provider outcome follows the same cancel-before-release rule,
 preventing dropped streams from orphaning retained provider work.
+Provider terminal establishment is the cancellation precedence boundary. A
+provider stop or failure retains its pending observer delivery and final reason
+even if cancellation races afterward; only cancellation established before that
+boundary may bypass observer backpressure.
 Cancellation treats wakers as user-controlled callback objects: cloning happens
 before locking, registry mutation only moves values, and superseded, removed, or
 drained wakers are dropped or invoked after unlocking.

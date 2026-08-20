@@ -516,14 +516,18 @@ impl Turn {
         if !self.cancellation.is_cancelled() {
             return None;
         }
-        let pending = self.delivery.take()?;
-        let event = if matches!(
-            pending.event.payload,
+        let delivers_cancellation = matches!(
+            &self.delivery.as_ref()?.event.payload,
             TurnEvent::Completed {
                 reason: StopReason::Cancelled,
                 ..
             }
-        ) {
+        );
+        if self.terminal_seen && !delivers_cancellation {
+            return None;
+        }
+        let pending = self.delivery.take()?;
+        let event = if delivers_cancellation {
             pending.event
         } else {
             let event = EngineEvent {

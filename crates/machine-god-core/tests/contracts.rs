@@ -1367,6 +1367,210 @@ impl EventSink for PendingSink {
     }
 }
 
+#[derive(Clone, Debug)]
+struct TerminalGateSink {
+    terminal_ready: Arc<AtomicBool>,
+}
+
+impl EventSink for TerminalGateSink {
+    fn emit(&self, event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
+        let terminal_ready = Arc::clone(&self.terminal_ready);
+        let is_provider_terminal = matches!(
+            event.payload,
+            TurnEvent::Model {
+                event: ModelEvent::Stop { .. }
+            } | TurnEvent::Failed { .. }
+        );
+        Box::pin(std::future::poll_fn(move |_context| {
+            if !is_provider_terminal || terminal_ready.load(Ordering::Acquire) {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct PendingAfterStartedSink;
+
+impl EventSink for PendingAfterStartedSink {
+    fn emit(&self, event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
+        let is_started = matches!(event.payload, TurnEvent::Started);
+        Box::pin(std::future::poll_fn(move |_context| {
+            if is_started {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        }))
+    }
+}
+
+#[test]
+fn staged_cancellation_still_bypasses_pending_observer_delivery() {
+    let engine = Engine::builder()
+        .provider(PendingProvider)
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(PendingAfterStartedSink)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("staged-cancel-delivery").unwrap());
+    let mut turn = prompt(&session, "cancel");
+    let handle = turn.handle();
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+
+    assert!(handle.cancel());
+    let cancelled = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(
+        cancelled.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn cancellation_after_a_delivered_stop_preserves_provider_completion() {
+    let provider = StaticProvider {
+        events: vec![Ok(ModelEvent::Stop {
+            reason: StopReason::Completed,
+        })],
+    };
+    let session = engine_with(provider).create_session(SessionId::new("stop-then-cancel").unwrap());
+    let mut turn = prompt(&session, "complete");
+    let handle = turn.handle();
+
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+    let stopped = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(
+        stopped.payload,
+        TurnEvent::Model {
+            event: ModelEvent::Stop {
+                reason: StopReason::Completed
+            }
+        }
+    ));
+    assert!(handle.cancel());
+
+    let completed = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(
+        completed.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Completed,
+            ..
+        }
+    ));
+    assert!(futures_executor::block_on(turn.next()).is_none());
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn cancellation_during_stop_delivery_preserves_provider_completion() {
+    let terminal_ready = Arc::new(AtomicBool::new(false));
+    let engine = Engine::builder()
+        .provider(StaticProvider {
+            events: vec![Ok(ModelEvent::Stop {
+                reason: StopReason::Completed,
+            })],
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(TerminalGateSink {
+            terminal_ready: Arc::clone(&terminal_ready),
+        })
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("cancel-pending-stop").unwrap());
+    let mut turn = prompt(&session, "complete");
+    let handle = turn.handle();
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+    let mut next = Box::pin(turn.next());
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    assert!(handle.cancel());
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    terminal_ready.store(true, Ordering::Release);
+    let Poll::Ready(Some(Ok(stopped))) = next.as_mut().poll(&mut context) else {
+        panic!("provider Stop was not preserved after cancellation");
+    };
+    assert!(matches!(
+        stopped.payload,
+        TurnEvent::Model {
+            event: ModelEvent::Stop {
+                reason: StopReason::Completed
+            }
+        }
+    ));
+    drop(next);
+
+    let completed = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(
+        completed.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Completed,
+            ..
+        }
+    ));
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn cancellation_during_provider_failure_delivery_preserves_failure() {
+    let terminal_ready = Arc::new(AtomicBool::new(false));
+    let engine = Engine::builder()
+        .provider(StaticProvider {
+            events: vec![Err(ProviderError::new(
+                ProviderErrorKind::RateLimited,
+                "rate_limited",
+                "try later",
+                true,
+            ))],
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(TerminalGateSink {
+            terminal_ready: Arc::clone(&terminal_ready),
+        })
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("cancel-pending-failure").unwrap());
+    let mut turn = prompt(&session, "fail");
+    let handle = turn.handle();
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+    let mut next = Box::pin(turn.next());
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    assert!(handle.cancel());
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    terminal_ready.store(true, Ordering::Release);
+    let Poll::Ready(Some(Ok(failed))) = next.as_mut().poll(&mut context) else {
+        panic!("provider failure was not preserved after cancellation");
+    };
+    assert!(matches!(
+        failed.payload,
+        TurnEvent::Failed {
+            ref code,
+            retryable: true,
+            ..
+        } if code == "rate_limited"
+    ));
+    drop(next);
+    assert!(futures_executor::block_on(turn.next()).is_none());
+    assert!(!session.has_active_turn());
+}
+
 #[test]
 fn pending_delivery_rebinds_cancellation_to_the_latest_poller() {
     let engine = Engine::builder()

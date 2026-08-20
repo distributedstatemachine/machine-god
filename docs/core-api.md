@@ -117,10 +117,13 @@ cancels the shared provider token before dropping the stream and releasing the
 lease; stale cancellation handles then observe that cleanup signal. Observer
 failure after an already-terminal provider outcome does not relabel completion
 as cancellation.
-Cancellation has priority over observer backpressure: if an observer future is
-pending, core drops that future and yields the terminal cancellation directly to
-the stream consumer before releasing the session lease. This exception prevents
-an optional observer from making cancellation or shutdown wait forever.
+Before a provider terminal outcome is established, cancellation has priority
+over observer backpressure: core drops a pending observer future and yields the
+terminal cancellation directly before releasing the session lease. Once a
+provider `Stop`, provider failure, or missing-stop failure is established, later
+cancellation cannot relabel or bypass its pending delivery or terminal result.
+An already-staged `Completed(Cancelled)` still bypasses observer delivery so an
+optional observer cannot make cancellation or shutdown wait forever.
 
 The milestone-02 runtime layers tool execution, permission caching, durable
 message commits, and multi-round model/tool orchestration onto this lifecycle.

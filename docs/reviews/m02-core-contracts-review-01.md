@@ -127,3 +127,13 @@ nondecreasing; equal revisions still require full record equality. Direct load,
 conflict reload, and delayed successful-save interleaving regressions cover the
 three paths, and the direct-load case also proves valid higher-revision
 message/metadata changes remain accepted.
+
+A fresh correctness review of `45a8fd9` found that cancellation always replaced
+a pending observer delivery, including a provider `Stop` or structured failure
+that had already established the turn's terminal outcome. Final reasons could
+therefore change with poll timing. Pending-delivery cancellation now respects
+the provider terminal boundary: an established stop or failure and its
+subsequent terminal event cannot be superseded. The existing direct path for an
+already-staged `Completed(Cancelled)` remains non-blocking. Regressions cancel
+after a delivered stop, while stop delivery is pending, and while provider
+failure delivery is pending, and separately preserve direct staged cancellation.
