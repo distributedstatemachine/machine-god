@@ -1,0 +1,1144 @@
+{
+  "intentional_differences": [
+    {
+      "id": "state_namespace",
+      "notes": "machine-god will not read or write upstream .fx profile or session state; migration requires a future explicit, versioned contract.",
+      "status": "intentional_difference",
+      "surface": "sessions and configuration"
+    },
+    {
+      "id": "cli_implementation_ownership",
+      "notes": "The CLI remains a thin native host; reusable product state and orchestration live in machine-god-core rather than the executable.",
+      "status": "intentional_difference",
+      "surface": "CLI and product state"
+    },
+    {
+      "id": "e2e_file_layout",
+      "notes": "Compatibility is judged by observable scenarios and retained evidence, not by reproducing upstream Bun, tmux, PGSO, or source-file ownership layouts.",
+      "status": "intentional_difference",
+      "surface": "E2E owners"
+    }
+  ],
+  "schema_version": 1,
+  "surfaces": {
+    "builtin_tool_names": {
+      "count": 26,
+      "items": [
+        {
+          "identifier": "list_files",
+          "name": "list_files"
+        },
+        {
+          "identifier": "glob_files",
+          "name": "glob_files"
+        },
+        {
+          "identifier": "grep_files",
+          "name": "grep_files"
+        },
+        {
+          "identifier": "read_file",
+          "name": "read_file"
+        },
+        {
+          "identifier": "write_file",
+          "name": "write_file"
+        },
+        {
+          "identifier": "edit_file",
+          "name": "edit_file"
+        },
+        {
+          "identifier": "delete_file",
+          "name": "delete_file"
+        },
+        {
+          "identifier": "rename_file",
+          "name": "rename_file"
+        },
+        {
+          "identifier": "copy_file",
+          "name": "copy_file"
+        },
+        {
+          "identifier": "create_folder",
+          "name": "create_folder"
+        },
+        {
+          "identifier": "file_info",
+          "name": "file_info"
+        },
+        {
+          "identifier": "memory",
+          "name": "memory"
+        },
+        {
+          "identifier": "semantic_search",
+          "name": "semantic_search"
+        },
+        {
+          "identifier": "open_file",
+          "name": "open_file"
+        },
+        {
+          "identifier": "web_fetch",
+          "name": "web_fetch"
+        },
+        {
+          "identifier": "web_search",
+          "name": "web_search"
+        },
+        {
+          "identifier": "terminal",
+          "name": "terminal"
+        },
+        {
+          "identifier": "skill",
+          "name": "skill"
+        },
+        {
+          "identifier": "install_skill",
+          "name": "install_skill"
+        },
+        {
+          "identifier": "subagent",
+          "name": "subagent"
+        },
+        {
+          "identifier": "mcp_search_tools",
+          "name": "mcp_search_tools"
+        },
+        {
+          "identifier": "mcp_select_tool",
+          "name": "mcp_select_tool"
+        },
+        {
+          "identifier": "mcp_features",
+          "name": "mcp_features"
+        },
+        {
+          "identifier": "ask_user_question",
+          "name": "ask_user_question"
+        },
+        {
+          "identifier": "vision",
+          "name": "vision"
+        },
+        {
+          "identifier": "read_tool_result",
+          "name": "read_tool_result"
+        }
+      ],
+      "milestone": "03-05",
+      "notes": "Implement equivalent permission-gated capabilities behind provider-neutral core contracts; extension tools follow milestone 05.",
+      "source": [
+        "src/builtins/tools.zig"
+      ],
+      "status": "planned"
+    },
+    "e2e_owners": {
+      "classification_counts": {
+        "intentional_exclusion": 12,
+        "training": 30,
+        "verification_only": 16
+      },
+      "count": 58,
+      "items": [
+        {
+          "classification": "training",
+          "file": "acp.test.ts",
+          "reason": null,
+          "scenario": "e2e-acp"
+        },
+        {
+          "classification": "training",
+          "file": "ask-presentation.test.ts",
+          "reason": null,
+          "scenario": "e2e-ask-presentation"
+        },
+        {
+          "classification": "training",
+          "file": "auth-refresh.test.ts",
+          "reason": null,
+          "scenario": "e2e-auth-refresh"
+        },
+        {
+          "classification": "verification_only",
+          "file": "auto-mode-reliability.test.ts",
+          "reason": null,
+          "scenario": "verify-auto-mode-reliability"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "ci-shards.test.ts",
+          "reason": "The suite validates the E2E shard planner rather than fx runtime behavior.",
+          "scenario": null
+        },
+        {
+          "classification": "training",
+          "file": "cli.test.ts",
+          "reason": null,
+          "scenario": "e2e-cli"
+        },
+        {
+          "classification": "training",
+          "file": "config-persistence.test.ts",
+          "reason": null,
+          "scenario": "e2e-config-persistence"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "context-limits-live.test.ts",
+          "reason": "The suite requires a real model credential and live provider responses.",
+          "scenario": null
+        },
+        {
+          "classification": "training",
+          "file": "file-tool-paths.test.ts",
+          "reason": null,
+          "scenario": "e2e-file-tool-paths"
+        },
+        {
+          "classification": "training",
+          "file": "file-tool-permissions.test.ts",
+          "reason": null,
+          "scenario": "e2e-file-tool-permissions"
+        },
+        {
+          "classification": "training",
+          "file": "gateway-stream-lifecycle.test.ts",
+          "reason": null,
+          "scenario": "e2e-gateway-stream-lifecycle"
+        },
+        {
+          "classification": "training",
+          "file": "mcp-auth.test.ts",
+          "reason": null,
+          "scenario": "e2e-mcp-auth"
+        },
+        {
+          "classification": "training",
+          "file": "mcp-http.test.ts",
+          "reason": null,
+          "scenario": "e2e-mcp-http"
+        },
+        {
+          "classification": "training",
+          "file": "mcp-legacy-remote.test.ts",
+          "reason": null,
+          "scenario": "e2e-mcp-legacy-remote"
+        },
+        {
+          "classification": "training",
+          "file": "mcp-stdio.test.ts",
+          "reason": null,
+          "scenario": "e2e-mcp-stdio"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "notifications.test.ts",
+          "reason": "Sound-related tests are prohibited on the production training host.",
+          "scenario": null
+        },
+        {
+          "classification": "training",
+          "file": "permission-errors.test.ts",
+          "reason": null,
+          "scenario": "e2e-permission-errors"
+        },
+        {
+          "classification": "training",
+          "file": "prompt-history.test.ts",
+          "reason": null,
+          "scenario": "e2e-prompt-history"
+        },
+        {
+          "classification": "training",
+          "file": "session-recovery.test.ts",
+          "reason": null,
+          "scenario": "e2e-session-recovery"
+        },
+        {
+          "classification": "training",
+          "file": "terminal-host.test.ts",
+          "reason": null,
+          "scenario": "e2e-terminal-host"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "tmux-helpers.test.ts",
+          "reason": "The suite validates E2E harness helpers rather than fx runtime behavior.",
+          "scenario": null
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "tui-agent.test.ts",
+          "reason": "The suite requires a real model credential and is not deterministic.",
+          "scenario": null
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-auth-source-selection.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-auth-source-selection"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "tui-command-permissions.test.ts",
+          "reason": "The file contains a sound scenario and cannot be run safely as a whole.",
+          "scenario": null
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-composer-edit-contracts.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-composer-edit-contracts"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-cost.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-cost"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-decision-prompts.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-decision-prompts"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "tui-direct-write-audit.test.ts",
+          "reason": "The suite validates a repository audit tool rather than the candidate runtime.",
+          "scenario": null
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-file-picker.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-file-picker"
+        },
+        {
+          "classification": "training",
+          "file": "tui-full-transcript-brutal.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-full-transcript-brutal"
+        },
+        {
+          "classification": "training",
+          "file": "tui-gateway-stream-lifecycle.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-gateway-stream-lifecycle"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-input-line-delete.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-input-line-delete"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-input-navigation.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-input-navigation"
+        },
+        {
+          "classification": "training",
+          "file": "tui-interrupt-recovery.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-interrupt-recovery"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "tui-keybindings.test.ts",
+          "reason": "The file-wide guard requires a real model credential.",
+          "scenario": null
+        },
+        {
+          "classification": "training",
+          "file": "tui-native-clear-recovery.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-native-clear-recovery"
+        },
+        {
+          "classification": "training",
+          "file": "tui-permissions.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-permissions"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "tui-render-lab.test.ts",
+          "reason": "The suite validates render-lab infrastructure and owns separate native opt-in scenarios.",
+          "scenario": null
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "tui-render-live-stress.test.ts",
+          "reason": "The suite requires a real model credential and explicit live stress opt-in.",
+          "scenario": null
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-render-replay.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-render-replay"
+        },
+        {
+          "classification": "training",
+          "file": "tui-render-stress.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-render-stress"
+        },
+        {
+          "classification": "training",
+          "file": "tui-resize.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-resize"
+        },
+        {
+          "classification": "training",
+          "file": "tui-resume-brutal.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-resume-brutal"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-resume.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-resume"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-slash-commands.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-slash-commands"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-slash-extra.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-slash-extra"
+        },
+        {
+          "classification": "verification_only",
+          "file": "tui-slash-menu.test.ts",
+          "reason": null,
+          "scenario": "verify-tui-slash-menu"
+        },
+        {
+          "classification": "training",
+          "file": "tui-startup.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-startup"
+        },
+        {
+          "classification": "training",
+          "file": "tui-subagent-manager.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-subagent-manager"
+        },
+        {
+          "classification": "training",
+          "file": "tui-terminal-tool.test.ts",
+          "reason": null,
+          "scenario": "e2e-tui-terminal-tool"
+        },
+        {
+          "classification": "training",
+          "file": "vision-route-fake-gateway.test.ts",
+          "reason": null,
+          "scenario": "e2e-vision-route-fake-gateway"
+        },
+        {
+          "classification": "training",
+          "file": "web-fetch-fake-network.test.ts",
+          "reason": null,
+          "scenario": "e2e-web-fetch-fake-network"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "web-fetch-live.test.ts",
+          "reason": "The suite requires explicit live-network opt-in.",
+          "scenario": null
+        },
+        {
+          "classification": "verification_only",
+          "file": "web-fetch-permission-progress.test.ts",
+          "reason": null,
+          "scenario": "verify-web-fetch-permission-progress"
+        },
+        {
+          "classification": "training",
+          "file": "web-search-fake-gateway.test.ts",
+          "reason": null,
+          "scenario": "e2e-web-search-fake-gateway"
+        },
+        {
+          "classification": "intentional_exclusion",
+          "file": "web-search-live.test.ts",
+          "reason": "The suite requires a real model credential and live provider responses.",
+          "scenario": null
+        },
+        {
+          "classification": "verification_only",
+          "file": "web-search-permission-progress.test.ts",
+          "reason": null,
+          "scenario": "verify-web-search-permission-progress"
+        },
+        {
+          "classification": "verification_only",
+          "file": "yolo-permission-mode.test.ts",
+          "reason": null,
+          "scenario": "verify-yolo-permission-mode"
+        }
+      ],
+      "milestone": "01-07",
+      "notes": "Retain upstream owners as behavioral coverage evidence, but use Rust-focused deterministic tests and benchmark workloads rather than file-for-file test parity.",
+      "source": [
+        "scripts/pgso/corpus.json",
+        "tests/e2e/*.test.ts"
+      ],
+      "status": "intentional_difference"
+    },
+    "sdk_exports": {
+      "entrypoints": [
+        {
+          "specifier": ".",
+          "targets": {
+            "browser": "./browser.js",
+            "default": "./browser.js",
+            "node": "./node.js"
+          }
+        },
+        {
+          "specifier": "./node",
+          "targets": {
+            "default": "./node.js"
+          }
+        },
+        {
+          "specifier": "./browser",
+          "targets": {
+            "default": "./browser.js"
+          }
+        },
+        {
+          "specifier": "./wasm",
+          "targets": {
+            "default": "./fx-sdk.js"
+          }
+        }
+      ],
+      "milestone": "06",
+      "modules": [
+        {
+          "exports": [
+            "fxSdkApiVersion",
+            "supportsJspi",
+            "encodeXtermKeyEvent",
+            "xtermAdapter",
+            "createFxTerminal",
+            "createFxAgent"
+          ],
+          "path": "sdk/fx-sdk.js"
+        },
+        {
+          "exports": [
+            "encodeXtermKeyEvent",
+            "fxSdkApiVersion",
+            "supportsJspi",
+            "xtermAdapter",
+            "libfxApiVersion",
+            "createFxAgent",
+            "createFxTerminal"
+          ],
+          "path": "sdk/node.js"
+        },
+        {
+          "exports": [
+            "encodeXtermKeyEvent",
+            "fxSdkApiVersion",
+            "supportsJspi",
+            "xtermAdapter",
+            "libfxApiVersion",
+            "createFxAgent",
+            "createFxTerminal"
+          ],
+          "path": "sdk/browser.js"
+        }
+      ],
+      "notes": "Rust embedding is primary; JavaScript, Node, and browser compatibility begins after the engine and native host stabilize.",
+      "package": "libfx",
+      "source": [
+        "sdk/package.json",
+        "sdk/fx-sdk.js",
+        "sdk/node.js",
+        "sdk/browser.js"
+      ],
+      "status": "deferred"
+    },
+    "slash_command_kinds": {
+      "count": 42,
+      "items": [
+        {
+          "aliases": [],
+          "command": "/help",
+          "has_arguments": false,
+          "kind": "help",
+          "presentation_category": "general"
+        },
+        {
+          "aliases": [],
+          "command": "/clear",
+          "has_arguments": false,
+          "kind": "clear_screen",
+          "presentation_category": "general"
+        },
+        {
+          "aliases": [],
+          "command": "/new",
+          "has_arguments": false,
+          "kind": "new_session",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/reset",
+          "has_arguments": false,
+          "kind": "reset_session",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/resume",
+          "has_arguments": false,
+          "kind": "resume_session",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/continue",
+          "has_arguments": false,
+          "kind": "continue_recovery",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/rename",
+          "has_arguments": true,
+          "kind": "rename_session",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/login",
+          "has_arguments": false,
+          "kind": "login",
+          "presentation_category": "account"
+        },
+        {
+          "aliases": [],
+          "command": "/logout",
+          "has_arguments": false,
+          "kind": "logout",
+          "presentation_category": "account"
+        },
+        {
+          "aliases": [],
+          "command": "/setup",
+          "has_arguments": false,
+          "kind": "setup",
+          "presentation_category": "account"
+        },
+        {
+          "aliases": [],
+          "command": "/stats",
+          "has_arguments": false,
+          "kind": "stats",
+          "presentation_category": "account"
+        },
+        {
+          "aliases": [
+            "/cost"
+          ],
+          "command": "/usage",
+          "has_arguments": false,
+          "kind": "usage",
+          "presentation_category": "account"
+        },
+        {
+          "aliases": [],
+          "command": "/status",
+          "has_arguments": false,
+          "kind": "status",
+          "presentation_category": "general"
+        },
+        {
+          "aliases": [],
+          "command": "/background",
+          "has_arguments": true,
+          "kind": "background",
+          "presentation_category": "agents"
+        },
+        {
+          "aliases": [],
+          "command": "/background stop",
+          "has_arguments": false,
+          "kind": "background_stop",
+          "presentation_category": null
+        },
+        {
+          "aliases": [],
+          "command": "/background open",
+          "has_arguments": false,
+          "kind": "background_open",
+          "presentation_category": null
+        },
+        {
+          "aliases": [],
+          "command": "/background logs",
+          "has_arguments": false,
+          "kind": "background_logs",
+          "presentation_category": null
+        },
+        {
+          "aliases": [
+            "/img"
+          ],
+          "command": "/image",
+          "has_arguments": true,
+          "kind": "image",
+          "presentation_category": "media"
+        },
+        {
+          "aliases": [],
+          "command": "/images",
+          "has_arguments": true,
+          "kind": "images",
+          "presentation_category": "media"
+        },
+        {
+          "aliases": [],
+          "command": "/model",
+          "has_arguments": true,
+          "kind": "model",
+          "presentation_category": "model"
+        },
+        {
+          "aliases": [],
+          "command": "/models",
+          "has_arguments": false,
+          "kind": "models",
+          "presentation_category": "model"
+        },
+        {
+          "aliases": [],
+          "command": "/permissions",
+          "has_arguments": true,
+          "kind": "permissions",
+          "presentation_category": "security"
+        },
+        {
+          "aliases": [],
+          "command": "/allowlist",
+          "has_arguments": true,
+          "kind": "allowlist",
+          "presentation_category": "security"
+        },
+        {
+          "aliases": [],
+          "command": "/undo",
+          "has_arguments": false,
+          "kind": "undo",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/mcp",
+          "has_arguments": true,
+          "kind": "mcp",
+          "presentation_category": "extensions"
+        },
+        {
+          "aliases": [],
+          "command": "/skills",
+          "has_arguments": true,
+          "kind": "skills",
+          "presentation_category": "extensions"
+        },
+        {
+          "aliases": [],
+          "command": "/copy",
+          "has_arguments": false,
+          "kind": "copy",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/feedback",
+          "has_arguments": false,
+          "kind": "feedback",
+          "presentation_category": "product"
+        },
+        {
+          "aliases": [],
+          "command": "/trace",
+          "has_arguments": false,
+          "kind": "trace",
+          "presentation_category": "product"
+        },
+        {
+          "aliases": [],
+          "command": "/compact",
+          "has_arguments": false,
+          "kind": "compact",
+          "presentation_category": "session"
+        },
+        {
+          "aliases": [],
+          "command": "/settings",
+          "has_arguments": true,
+          "kind": "settings",
+          "presentation_category": "appearance"
+        },
+        {
+          "aliases": [],
+          "command": "/alias",
+          "has_arguments": true,
+          "kind": "alias",
+          "presentation_category": "extensions"
+        },
+        {
+          "aliases": [
+            "/balance"
+          ],
+          "command": "/credits",
+          "has_arguments": false,
+          "kind": "credits",
+          "presentation_category": "account"
+        },
+        {
+          "aliases": [],
+          "command": "/paste",
+          "has_arguments": false,
+          "kind": "paste",
+          "presentation_category": "media"
+        },
+        {
+          "aliases": [],
+          "command": "/fast",
+          "has_arguments": false,
+          "kind": "fast",
+          "presentation_category": "model"
+        },
+        {
+          "aliases": [
+            "/input",
+            "/maxxing"
+          ],
+          "command": "/appearance",
+          "has_arguments": true,
+          "kind": "appearance",
+          "presentation_category": "appearance"
+        },
+        {
+          "aliases": [],
+          "command": "/sandbox",
+          "has_arguments": true,
+          "kind": "sandbox",
+          "presentation_category": "security"
+        },
+        {
+          "aliases": [],
+          "command": "/statusline",
+          "has_arguments": true,
+          "kind": "statusline",
+          "presentation_category": "appearance"
+        },
+        {
+          "aliases": [],
+          "command": "/sound",
+          "has_arguments": true,
+          "kind": "notifications",
+          "presentation_category": "appearance"
+        },
+        {
+          "aliases": [],
+          "command": "/workspace",
+          "has_arguments": true,
+          "kind": "workspace",
+          "presentation_category": "workspace"
+        },
+        {
+          "aliases": [],
+          "command": "/version",
+          "has_arguments": false,
+          "kind": "version",
+          "presentation_category": "general"
+        },
+        {
+          "aliases": [
+            "/exit"
+          ],
+          "command": "/quit",
+          "has_arguments": false,
+          "kind": "quit",
+          "presentation_category": "general"
+        }
+      ],
+      "milestone": "03-05",
+      "notes": "Core session and host commands arrive with the native CLI; extension commands follow their MCP, skills, and subagent owners.",
+      "source": [
+        "src/core/slash_commands/command_specs.zig",
+        "src/builtins/commands.zig"
+      ],
+      "status": "planned"
+    },
+    "top_level_cli_commands": {
+      "count": 22,
+      "items": [
+        {
+          "aliases": [
+            "--help",
+            "-h"
+          ],
+          "hidden_from_help": false,
+          "kind": "help",
+          "summary": "Show this help",
+          "token": "help",
+          "usage": "help"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "ask",
+          "summary": "Run one noninteractive request",
+          "token": "ask",
+          "usage": "ask [--auto|--yolo] [--image PATH] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "acp",
+          "summary": "Start an ACP server over stdio",
+          "token": "acp",
+          "usage": "acp [--model <id>] [--log-file <path>]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "pr",
+          "summary": "Draft or publish a pull request",
+          "token": "pr",
+          "usage": "pr [--auto] [--create] [context]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "issue",
+          "summary": "Draft or publish a GitHub issue",
+          "token": "issue",
+          "usage": "issue [--auto] [--create] [context]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "login",
+          "summary": "Sign in with Vercel",
+          "token": "login",
+          "usage": "login"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "logout",
+          "summary": "Sign out of the current Vercel session",
+          "token": "logout",
+          "usage": "logout"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "setup",
+          "summary": "Configure an AI Gateway API key",
+          "token": "setup",
+          "usage": "setup"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "status",
+          "summary": "Show configuration and runtime information",
+          "token": "status",
+          "usage": "status [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "permissions",
+          "summary": "Show the permission mode and rules",
+          "token": "permissions",
+          "usage": "permissions [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "models",
+          "summary": "List available models",
+          "token": "models",
+          "usage": "models [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "doctor",
+          "summary": "Run local health and preflight checks",
+          "token": "doctor",
+          "usage": "doctor [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "background",
+          "summary": "List or inspect background commands",
+          "token": "background",
+          "usage": "background [last|<id>] [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "teams",
+          "summary": "Choose the Vercel team used by AI Gateway",
+          "token": "teams",
+          "usage": "teams"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "session",
+          "summary": "Inspect, resume, migrate, or recover saved sessions",
+          "token": "session",
+          "usage": "session <last|id>|--id <id> [--json] | session resume [last|<id>] [--record] | session resume --id <id> [--record] | session migrate <id>|--id <id> [--allow-large] [--json] | session recover <id>|--id <id> [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "sessions",
+          "summary": "List saved sessions for the current workspace",
+          "token": "sessions",
+          "usage": "sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]"
+        },
+        {
+          "aliases": [
+            "--resume",
+            "--resume-last",
+            "--continue",
+            "-c",
+            "-r"
+          ],
+          "hidden_from_help": true,
+          "kind": "resume",
+          "summary": "Continue a saved interactive session",
+          "token": "resume",
+          "usage": "session resume [last|<id>] [--record] | session resume --id <id> [--record] | --resume [last|<id>] [--record] | resume [last|<id>] [--record] | resume --id <id> [--record] | --resume-last | --continue | -c | -r | --resume-<id>"
+        },
+        {
+          "aliases": [
+            "balance"
+          ],
+          "hidden_from_help": false,
+          "kind": "credits",
+          "summary": "Show the AI Gateway credit balance",
+          "token": "credits",
+          "usage": "credits [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "usage",
+          "summary": "Show local fx token usage and spend",
+          "token": "usage",
+          "usage": "usage [--period <24h|7d|30d>] [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "upgrade",
+          "summary": "Upgrade 𝒇x on the selected release channel",
+          "token": "upgrade",
+          "usage": "upgrade [--channel <stable|dev>] [--json]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "replay",
+          "summary": "Replay a recorded terminal session",
+          "token": "replay",
+          "usage": "replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]"
+        },
+        {
+          "aliases": [],
+          "hidden_from_help": false,
+          "kind": "workspace",
+          "summary": "Manage additional workspace directories",
+          "token": "workspace",
+          "usage": "workspace [list|add PATH|remove PATH|clear] [--json]"
+        }
+      ],
+      "milestone": "03",
+      "notes": "Match the provider-neutral user outcomes while keeping the machine-god CLI a thin host with its own naming where required.",
+      "source": [
+        "src/core/slash_commands/command_specs.zig",
+        "src/builtins/commands.zig"
+      ],
+      "status": "planned"
+    }
+  },
+  "upstream": {
+    "commit": "b1774fbf6c7602b503026f96f6e960e946c692ef",
+    "lock_path": "benchmarks/upstream.lock",
+    "repository": "https://github.com/vercel-labs/fx.git",
+    "source_files": [
+      {
+        "path": "src/core/slash_commands/command_specs.zig",
+        "sha256": "4ac60fb097cdec6cacde93da7796fb9c05a11ab031d1afdd219eda9c9f7d54c3"
+      },
+      {
+        "path": "src/builtins/commands.zig",
+        "sha256": "2679669e3e443e733e528ea2f7ea154bbbdceac63e3682e0e265dd52f6297328"
+      },
+      {
+        "path": "src/builtins/tools.zig",
+        "sha256": "f2a07edf458626c29d156069cb2f8abd32d160ad88a76ed057033dae3e51f035"
+      },
+      {
+        "path": "sdk/package.json",
+        "sha256": "608214ce18551e2daf7255c6ec18d85555c7b121a73cc1e15146269433ee0d4a"
+      },
+      {
+        "path": "sdk/fx-sdk.js",
+        "sha256": "c8a5255220d80713f5deec53866806405d49499062534301d92e2e5fee94c12b"
+      },
+      {
+        "path": "sdk/node.js",
+        "sha256": "e3607f3f9b493fa0e780970fb2be3a0b201f2c9f470265e3f93795cb4361a7da"
+      },
+      {
+        "path": "sdk/browser.js",
+        "sha256": "4228ae3a0e425f4b548364e7cc87eb78ec0b2e518924d2765a5f3ba591e4cb2c"
+      },
+      {
+        "path": "scripts/pgso/corpus.json",
+        "sha256": "1ef5abd584564ecaff18b1d9a40c7845410c55849fe90fef2f6c1148dd07c810"
+      }
+    ],
+    "source_sets": {
+      "e2e_owner_files": {
+        "member_count": 58,
+        "member_names_sha256": "8d4fdb0b051b0a17b5763a62171cf9133e0a02ece2d1123b5e8c75c4d2eca411",
+        "path_glob": "tests/e2e/*.test.ts"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "fixture-libfx",
+  "exports": {
+    ".": {
+      "node": "./node.js",
+      "browser": "./browser.js",
+      "default": "./browser.js"
+    },
+    "./node": "./node.js",
+    "./browser": "./browser.js",
+    "./wasm": "./fx-sdk.js"
+  }
+}

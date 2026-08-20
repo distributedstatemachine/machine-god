@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "surfaces": {
+    "top_level_cli_commands": {
+      "status": "planned",
+      "milestone": "03",
+      "notes": "Match the provider-neutral user outcomes while keeping the machine-god CLI a thin host with its own naming where required."
+    },
+    "slash_command_kinds": {
+      "status": "planned",
+      "milestone": "03-05",
+      "notes": "Core session and host commands arrive with the native CLI; extension commands follow their MCP, skills, and subagent owners."
+    },
+    "builtin_tool_names": {
+      "status": "planned",
+      "milestone": "03-05",
+      "notes": "Implement equivalent permission-gated capabilities behind provider-neutral core contracts; extension tools follow milestone 05."
+    },
+    "sdk_exports": {
+      "status": "deferred",
+      "milestone": "06",
+      "notes": "Rust embedding is primary; JavaScript, Node, and browser compatibility begins after the engine and native host stabilize."
+    },
+    "e2e_owners": {
+      "status": "intentional_difference",
+      "milestone": "01-07",
+      "notes": "Retain upstream owners as behavioral coverage evidence, but use Rust-focused deterministic tests and benchmark workloads rather than file-for-file test parity."
+    }
+  },
+  "intentional_differences": [
+    {
+      "id": "state_namespace",
+      "surface": "sessions and configuration",
+      "status": "intentional_difference",
+      "notes": "machine-god will not read or write upstream .fx profile or session state; migration requires a future explicit, versioned contract."
+    },
+    {
+      "id": "cli_implementation_ownership",
+      "surface": "CLI and product state",
+      "status": "intentional_difference",
+      "notes": "The CLI remains a thin native host; reusable product state and orchestration live in machine-god-core rather than the executable."
+    },
+    {
+      "id": "e2e_file_layout",
+      "surface": "E2E owners",
+      "status": "intentional_difference",
+      "notes": "Compatibility is judged by observable scenarios and retained evidence, not by reproducing upstream Bun, tmux, PGSO, or source-file ownership layouts."
+    }
+  ]
+}
