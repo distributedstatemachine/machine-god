@@ -33,6 +33,7 @@ pub struct EngineLimits {
     pub max_model_events_per_turn: NonZeroUsize,
     pub max_tool_calls_per_turn: NonZeroUsize,
     pub max_tool_calls_per_round: NonZeroUsize,
+    pub max_json_depth: NonZeroUsize,
     pub max_assistant_text_bytes: NonZeroUsize,
     pub max_reasoning_bytes: NonZeroUsize,
     pub max_stop_detail_bytes: NonZeroUsize,
@@ -55,6 +56,7 @@ impl Default for EngineLimits {
             max_model_events_per_turn: NonZeroUsize::new(4_096).expect("default is nonzero"),
             max_tool_calls_per_turn: NonZeroUsize::new(16).expect("default is nonzero"),
             max_tool_calls_per_round: NonZeroUsize::new(4).expect("default is nonzero"),
+            max_json_depth: NonZeroUsize::new(64).expect("default is nonzero"),
             max_assistant_text_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_reasoning_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_stop_detail_bytes: NonZeroUsize::new(1024).expect("default is nonzero"),
@@ -183,8 +185,8 @@ impl EngineBuilder {
     /// # Errors
     ///
     /// Returns [`BuildError`] when a required component is absent, two
-    /// registered tools have the same name, or the serialized tool catalog
-    /// exceeds its configured byte bound.
+    /// registered tools have the same name, or the tool catalog exceeds its
+    /// configured serialized-byte or JSON-depth bound.
     pub fn build(self) -> Result<Engine, BuildError> {
         if let Some(name) = self.duplicate_tool {
             return Err(BuildError::DuplicateTool(name.to_string()));
@@ -194,6 +196,14 @@ impl EngineBuilder {
         let permission_handler = self
             .permission_handler
             .ok_or(BuildError::MissingPermissionHandler)?;
+        if self.tools.values().any(|registered| {
+            !crate::session::json_depth_within_limit(
+                &registered.spec.input_schema,
+                self.limits.max_json_depth.get(),
+            )
+        }) {
+            return Err(BuildError::ToolCatalogJsonDepthExceeded);
+        }
         let tool_catalog_size = crate::session::serialized_json_size_bounded(
             &ToolCatalog(&self.tools),
             self.limits.max_tool_catalog_bytes.get(),

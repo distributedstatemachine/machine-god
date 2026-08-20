@@ -71,6 +71,15 @@ prevents its real result from replacing the conservative placeholder. The next
 model round is not requested until all placeholders in the current round have
 been replaced.
 
+Every reachable `serde_json::Value` in these boundaries also passes an iterative
+container-depth walk before recursive serialization or deep cloning. A scalar
+root is depth zero and a root container is depth one. The walk stores only the
+iterator for each active ancestor, never all pending siblings, making its
+auxiliary memory proportional to configured depth. Provider tool arguments are
+rejected before policy or execution. A tool result is checked after the effect
+but before serialization and durable replacement; an over-depth result leaves
+the precommitted unknown placeholder and terminates without replay.
+
 Canonical session state stores its record behind an immutable `Arc`. Reservation
 and transcript mutation capture only that cheap identity and persistence bit
 under the session mutex, then serialize and deep-clone outside the critical

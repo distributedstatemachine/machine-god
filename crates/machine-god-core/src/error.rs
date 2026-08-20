@@ -151,6 +151,7 @@ pub enum BuildError {
     MissingPermissionHandler,
     DuplicateTool(String),
     ToolCatalogTooLarge,
+    ToolCatalogJsonDepthExceeded,
 }
 
 impl fmt::Display for BuildError {
@@ -164,6 +165,9 @@ impl fmt::Display for BuildError {
             Self::DuplicateTool(name) => write!(formatter, "duplicate tool registration: {name}"),
             Self::ToolCatalogTooLarge => {
                 formatter.write_str("serialized tool catalog exceeds the configured byte limit")
+            }
+            Self::ToolCatalogJsonDepthExceeded => {
+                formatter.write_str("tool input schema exceeds the configured JSON depth limit")
             }
         }
     }

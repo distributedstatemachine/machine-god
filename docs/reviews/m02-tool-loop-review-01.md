@@ -1,14 +1,17 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-two findings remediated; awaiting fresh rereview of the
-second fix commit.
+Status: review-cycle-three finding remediated; awaiting fresh rereview of the
+third fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
 Cycle-one fix reviewed for cycle two:
 `53e9ef853444d34fa42e3f2c1866540d554df86f`.
 
-Cycle-two fix commit: populated after this remediation commit. Reviewers must
+Cycle-two fix reviewed for cycle three:
+`9d6bc784dddc022835139ce033aeb8c6d999a3d4`.
+
+Cycle-three fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -17,7 +20,7 @@ no findings.
 
 - Nonzero public engine limits and checked provider-controlled prompt,
   transcript, session-metadata, inference-option, tool-catalog, denial-reason,
-  event, stop-detail, byte, call, and round counters.
+  JSON-depth, event, stop-detail, byte, call, and round counters.
 - Durable user reservation, atomic assistant-plus-placeholder tool-call commits,
   exact in-place result replacement, prefix-checked CAS retries, and checked
   cross-round usage.
@@ -107,6 +110,23 @@ commit rather than this mutable working tree.
 The new SHA-256 dependency is registry-only RustCrypto `sha2`; dependency-policy
 and advisory gates are required for the final immutable cycle-two commit.
 
+## Review cycle 03 finding and remediation
+
+1. Serialized-byte limits did not prevent a hostile `serde_json::Value` from
+   creating enough container nesting to overflow recursive serialization or
+   cloning before its byte budget was enforced. A public nonzero JSON-depth
+   limit now defaults to 64 containers. A scalar root is depth zero, a root
+   array or object is depth one, and every nested container increments it. The
+   validator is iterative and holds one child-iterator frame per active
+   container, so auxiliary memory is O(depth), not O(total nodes). It runs before
+   catalog caching, prompt reservation, load publication, record
+   serialization/cloning, provider invocation, permission/tool execution, and
+   tool-result size counting/replacement wherever core controls the value.
+   Exact and boundary-plus-one regressions cover tool Schemas, inference
+   metadata with untouched provider/store, loaded record metadata and JSON
+   messages, provider arguments before authorization/execution, and tool output
+   after an effect while preserving the precommitted unknown-result placeholder.
+
 ## Honest limitations for review
 
 - `Stop` is trusted as the immediate end of a provider round. Core does not poll
@@ -122,9 +142,13 @@ and advisory gates are required for the final immutable cycle-two commit.
   unknown-result placeholder is replaced, M02 cannot prove whether the side
   effect completed. The placeholder prevents automatic replay, but M02 cannot
   recover the result or provide exactly-once external effects.
-- Provider-created `Value` and `String` allocations exist before core can count
-  them. Core prevents unbounded accumulation and additional work after the
-  configured limit, but cannot retroactively prevent the provider allocation.
+- Owned `Value` and `String` allocations exist before core can count or traverse
+  them when a caller constructs prompt options, a store decodes records, a tool
+  creates specifications or results, a provider creates event values, or a
+  policy creates decisions and reasons. Core prevents its controlled recursive
+  serialization/cloning and additional effects after the configured boundaries,
+  but cannot retroactively prevent those producer allocations. Each producer
+  needs complementary decode and construction limits.
 
 ## Required review evidence
 

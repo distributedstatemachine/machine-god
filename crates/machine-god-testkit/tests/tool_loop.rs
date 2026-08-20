@@ -59,6 +59,14 @@ fn unknown_result_size() -> usize {
     .len()
 }
 
+fn nested_array(container_depth: usize) -> Value {
+    let mut value = json!("leaf");
+    for _ in 0..container_depth {
+        value = Value::Array(vec![value]);
+    }
+    value
+}
+
 fn assert_unknown_result(message: &Message, expected_call: &str) {
     assert_eq!(message.role, Role::Tool);
     let ContentBlock::ToolResult { call_id, output } = &message.content[0] else {
@@ -477,6 +485,7 @@ fn with_limit(mut limits: EngineLimits, field: &str, value: usize) -> EngineLimi
         "events" => limits.max_model_events_per_turn = value,
         "calls_round" => limits.max_tool_calls_per_round = value,
         "calls_turn" => limits.max_tool_calls_per_turn = value,
+        "json_depth" => limits.max_json_depth = value,
         "text" => limits.max_assistant_text_bytes = value,
         "reasoning" => limits.max_reasoning_bytes = value,
         "stop_detail" => limits.max_stop_detail_bytes = value,
@@ -1700,6 +1709,314 @@ fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
             .build(),
         Err(BuildError::ToolCatalogTooLarge)
     ));
+}
+
+#[test]
+fn tool_catalog_json_depth_limit_enforces_exact_boundary() {
+    let mut exact_spec = spec("schema-exact");
+    exact_spec.input_schema = nested_array(2);
+    Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(ScriptedTool::new(exact_spec, []))
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+
+    let mut over_spec = spec("schema-over");
+    over_spec.input_schema = nested_array(3);
+    assert!(matches!(
+        Engine::builder()
+            .provider(ScriptedModelProvider::new("unused", []))
+            .session_store(InMemorySessionStore::new())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .tool(ScriptedTool::new(over_spec, []))
+            .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+            .build(),
+        Err(BuildError::ToolCatalogJsonDepthExceeded)
+    ));
+}
+
+#[test]
+fn inference_options_json_depth_fails_before_persistence_or_provider() {
+    let exact_options = InferenceOptions {
+        metadata: BTreeMap::from([("nested".to_owned(), nested_array(2))]),
+        ..InferenceOptions::default()
+    };
+    let provider = ScriptedModelProvider::new(
+        "options-depth-exact",
+        [events([ModelEvent::Stop {
+            reason: StopReason::Completed,
+        }])],
+    );
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store)
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("options-depth-exact").unwrap());
+    let observed = futures_executor::block_on(async {
+        session
+            .prompt(Prompt {
+                text: "go".to_owned(),
+                options: exact_options,
+            })
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+    });
+    assert!(matches!(
+        observed.last(),
+        Some(Ok(EngineEvent {
+            payload: TurnEvent::Completed { .. },
+            ..
+        }))
+    ));
+    assert_eq!(provider.requests().len(), 1);
+
+    let provider = ScriptedModelProvider::new("options-depth-over", []);
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("options-depth-over").unwrap());
+    assert!(matches!(
+        futures_executor::block_on(session.prompt(Prompt {
+            text: "go".to_owned(),
+            options: InferenceOptions {
+                metadata: BTreeMap::from([("nested".to_owned(), nested_array(3))]),
+                ..InferenceOptions::default()
+            },
+        })),
+        Err(EngineError::Protocol(message)) if message.contains("depth limit")
+    ));
+    assert!(store.calls().is_empty());
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn loaded_record_json_depth_checks_metadata_and_transcript_before_publication() {
+    let id = SessionId::new("loaded-depth-exact").unwrap();
+    let exact = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(1),
+        next_turn_sequence: 1,
+        messages: vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Json {
+                value: nested_array(2),
+            }],
+        }],
+        metadata: BTreeMap::from([("nested".to_owned(), nested_array(2))]),
+    };
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            id.clone(),
+            exact.clone(),
+        )])))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+    assert_eq!(
+        futures_executor::block_on(engine.load_session(id))
+            .unwrap()
+            .unwrap()
+            .record(),
+        exact
+    );
+
+    for (id_text, metadata, value) in [
+        (
+            "loaded-metadata-depth-over",
+            BTreeMap::from([("nested".to_owned(), nested_array(3))]),
+            json!(null),
+        ),
+        (
+            "loaded-transcript-depth-over",
+            BTreeMap::new(),
+            nested_array(3),
+        ),
+    ] {
+        let id = SessionId::new(id_text).unwrap();
+        let record = SessionRecord {
+            id: id.clone(),
+            revision: SessionRevision(1),
+            next_turn_sequence: 1,
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![ContentBlock::Json { value }],
+            }],
+            metadata,
+        };
+        let engine = Engine::builder()
+            .provider(ScriptedModelProvider::new("unused", []))
+            .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+                id.clone(),
+                record,
+            )])))
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+            .build()
+            .unwrap();
+        assert!(matches!(
+            futures_executor::block_on(engine.load_session(id.clone())),
+            Err(EngineError::Protocol(message)) if message.contains("depth limit")
+        ));
+        assert!(engine.create_session(id).record().messages.is_empty());
+    }
+}
+
+#[test]
+fn provider_argument_json_depth_fails_before_authorization_or_tool_execution() {
+    let exact_provider = ScriptedModelProvider::new(
+        "argument-depth-exact",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("exact", "known", nested_array(2)),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let exact_permissions = ScriptedPermissionHandler::new([allow()]);
+    let exact_tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success("done"))],
+    );
+    let engine = Engine::builder()
+        .provider(exact_provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(exact_permissions.clone())
+        .tool(exact_tool.clone())
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+    let observed = collect(&engine.create_session(SessionId::new("argument-depth-exact").unwrap()));
+    assert!(matches!(
+        observed.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(exact_permissions.requests().len(), 1);
+    assert_eq!(exact_tool.invocations().len(), 1);
+
+    let over_provider = ScriptedModelProvider::new(
+        "argument-depth-over",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("over", "known", nested_array(3)),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let over_permissions = ScriptedPermissionHandler::new([]);
+    let over_tool = ScriptedTool::new(spec("known"), []);
+    let engine = Engine::builder()
+        .provider(over_provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(over_permissions.clone())
+        .tool(over_tool.clone())
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+    let observed = collect(&engine.create_session(SessionId::new("argument-depth-over").unwrap()));
+    assert!(matches!(
+        &observed.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "json_depth_limit"
+    ));
+    assert!(over_permissions.requests().is_empty());
+    assert!(over_tool.invocations().is_empty());
+}
+
+#[test]
+fn tool_output_json_depth_exact_boundary_and_unknown_overflow_marker() {
+    let exact_provider = ScriptedModelProvider::new(
+        "output-depth-exact",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("exact", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let exact_tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success(nested_array(2)))],
+    );
+    let engine = Engine::builder()
+        .provider(exact_provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .tool(exact_tool.clone())
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+    let observed = collect(&engine.create_session(SessionId::new("output-depth-exact").unwrap()));
+    assert!(matches!(
+        observed.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(exact_tool.invocations().len(), 1);
+
+    let over_provider = ScriptedModelProvider::new(
+        "output-depth-over",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("over", "known", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let over_tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success(nested_array(3)))],
+    );
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(over_provider)
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .tool(over_tool.clone())
+        .limits(with_limit(EngineLimits::default(), "json_depth", 2))
+        .build()
+        .unwrap();
+    let id = SessionId::new("output-depth-over").unwrap();
+    let observed = collect(&engine.create_session(id.clone()));
+    assert!(matches!(
+        &observed.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "json_depth_limit"
+    ));
+    assert_eq!(over_tool.invocations().len(), 1);
+    let durable = store.record(&id).unwrap();
+    assert_eq!(durable.messages.len(), 3);
+    assert_unknown_result(&durable.messages[2], "over");
 }
 
 #[test]

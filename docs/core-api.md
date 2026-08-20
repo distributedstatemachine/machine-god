@@ -34,19 +34,27 @@ to policy.
 
 [`EngineLimits`](crate::EngineLimits) supplies nonzero resource bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
-assistant text and observer-visible reasoning, 4,096 model events, 1 KiB of
-provider stop detail, 256 KiB per user prompt, 256 KiB of serialized session
-metadata, 64 KiB of serialized inference options, 4,096 transcript messages,
-8 MiB of serialized transcript, 1 MiB for the aggregate cached tool catalog,
-64 KiB of serialized arguments per call, 64 KiB per serialized tool result,
-256 KiB of cumulative tool results, and 4 KiB for a host-facing permission
-denial reason. Hosts may replace the complete limits value through
-[`EngineBuilder::limits`](crate::EngineBuilder::limits). Counters use checked
-arithmetic and a limit failure occurs before another tool is authorized or
-executed. JSON byte sizes are counted through a serializer without allocating a
-second copy of the value. Engine construction rejects a tool catalog whose
-aggregate descriptions and recursive JSON Schemas exceed its bound before the
-catalog is cloned into the engine.
+assistant text and observer-visible reasoning, a JSON container depth of 64,
+4,096 model events, 1 KiB of provider stop detail, 256 KiB per user prompt,
+256 KiB of serialized session metadata, 64 KiB of serialized inference options,
+4,096 transcript messages, 8 MiB of serialized transcript, 1 MiB for the
+aggregate cached tool catalog, 64 KiB of serialized arguments per call, 64 KiB
+per serialized tool result, 256 KiB of cumulative tool results, and 4 KiB for a
+host-facing permission denial reason. Hosts may replace the complete limits
+value through [`EngineBuilder::limits`](crate::EngineBuilder::limits). Counters
+use checked arithmetic and a limit failure occurs before another tool is
+authorized or executed. JSON byte sizes are counted through a serializer
+without allocating a second copy of the value. Engine construction rejects a
+tool catalog whose aggregate descriptions and recursive JSON Schemas exceed its
+byte or depth bound before the catalog is cloned into the engine.
+
+JSON depth counts containers rather than scalar nodes: a scalar root has depth
+zero, a root array or object has depth one, and every array or object nested
+inside another container adds one. Validation is iterative and retains one
+child-iterator frame per active container, so auxiliary traversal memory is
+O(depth), not O(total nodes). It runs before core-controlled recursive
+serialization, deep cloning, provider/store calls, permission checks, or tool
+execution at each relevant boundary.
 
 ## Turn lifecycle
 
@@ -207,9 +215,11 @@ therefore leaves one result for every committed call: completed prefixes are
 known and the untouched suffix remains explicitly unknown. Resume never
 automatically replays those calls. If an executed tool returns an oversized
 result, core drops that value and terminates while retaining the precommitted
-unknown-result placeholder. The final assistant message is committed before its
-model `Stop` and `Completed` events are delivered. Token usage is the latest
-report within each round and is added across rounds with checked counters.
+unknown-result placeholder. An over-depth result is handled the same way after
+execution: the side effect is not replayed and the placeholder remains. The
+final assistant message is committed before its model `Stop` and `Completed`
+events are delivered. Token usage is the latest report within each round and is
+added across rounds with checked counters.
 
 Message commits retry optimistic conflicts at most 32 times. A retry is allowed
 only while the durable messages exactly match the captured transcript; newer
@@ -234,6 +244,10 @@ are checked before loading a record into the engine registry, before every
 provider request, and before every commit or replacement. Model events,
 including `Stop`, are counted across the whole turn; provider-specific
 `StopReason::Other` details are bounded before they are cloned or delivered.
+The JSON depth bound covers inference metadata, stored metadata, JSON message
+blocks, stored and provider tool arguments, tool-result content, and tool input
+Schemas. Provider arguments fail before authorization or execution. Tool output
+is checked immediately after execution and before serialization or replacement.
 Structured provider, policy, and store failures expose fixed component codes
 (`provider_failed`, `permission_failed`, and `store_failed`) plus the trusted
 retryability/category fields where applicable; hostile source codes and
@@ -241,6 +255,12 @@ messages are not forwarded. Tool failures likewise become a fixed generic
 model-visible result. Permission decisions are host-facing and may contain a
 bounded sensitive policy reason; event sinks and event consumers must therefore
 be treated as trusted components.
+
+Resource limits apply once an owned value crosses into core. They cannot undo
+allocations already performed by a caller constructing prompt options, a store
+loading a record, a tool publishing its specification or result, a provider
+creating model values, or a policy creating its decision and reason. Hosts must
+apply complementary limits while decoding or constructing those inputs.
 
 The live-turn lease remains process-local to one `Engine`. M02 does not claim
 cross-engine fencing. A crash after a tool side effect but before placeholder

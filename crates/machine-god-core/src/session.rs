@@ -924,6 +924,7 @@ async fn run_turn_inner(
                                 )
                                 .into());
                             }
+                            validate_json_value(&call.arguments, limits)?;
                             let argument_bytes = serialized_json_size_bounded(
                                 &call.arguments,
                                 limits.max_tool_argument_bytes.get(),
@@ -1166,6 +1167,12 @@ async fn run_turn_inner(
                 }
             };
 
+            if let Err(failure) = validate_json_value(&output.content, limits) {
+                drop(output);
+                emitter.establish_terminal();
+                return Err(failure.into());
+            }
+
             let result_bytes = serialized_json_size_bounded(
                 &output,
                 limits.max_serialized_tool_result_bytes.get(),
@@ -1301,6 +1308,82 @@ struct JsonByteCounter {
     exceeded: bool,
 }
 
+enum JsonChildren<'a> {
+    Array(std::slice::Iter<'a, Value>),
+    Object(serde_json::map::Values<'a>),
+}
+
+impl<'a> Iterator for JsonChildren<'a> {
+    type Item = &'a Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Array(children) => children.next(),
+            Self::Object(children) => children.next(),
+        }
+    }
+}
+
+struct JsonFrame<'a> {
+    container_depth: usize,
+    children: JsonChildren<'a>,
+}
+
+/// Returns whether every JSON container is within `max_container_depth`.
+///
+/// A scalar root has depth zero. A root array or object has container depth one,
+/// and each array or object nested inside another container increments the
+/// depth. The traversal retains one iterator frame per active container rather
+/// than recursively calling or queueing siblings.
+pub(crate) fn json_depth_within_limit(root: &Value, max_container_depth: usize) -> bool {
+    let mut frames = Vec::<JsonFrame<'_>>::new();
+    let mut current = Some((root, 0usize));
+
+    loop {
+        if let Some((value, parent_depth)) = current.take() {
+            let children = match value {
+                Value::Array(values) => Some(JsonChildren::Array(values.iter())),
+                Value::Object(values) => Some(JsonChildren::Object(values.values())),
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+            };
+            if let Some(children) = children {
+                let Some(container_depth) = parent_depth.checked_add(1) else {
+                    return false;
+                };
+                if container_depth > max_container_depth {
+                    return false;
+                }
+                frames.push(JsonFrame {
+                    container_depth,
+                    children,
+                });
+            }
+        }
+
+        loop {
+            let Some(frame) = frames.last_mut() else {
+                return true;
+            };
+            if let Some(child) = frame.children.next() {
+                current = Some((child, frame.container_depth));
+                break;
+            }
+            frames.pop();
+        }
+    }
+}
+
+fn validate_json_value(value: &Value, limits: crate::EngineLimits) -> Result<(), TurnFailure> {
+    if json_depth_within_limit(value, limits.max_json_depth.get()) {
+        Ok(())
+    } else {
+        Err(TurnFailure::limit(
+            "json_depth_limit",
+            "JSON value exceeded the configured container depth limit",
+        ))
+    }
+}
+
 impl Write for JsonByteCounter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         let next = self
@@ -1366,6 +1449,23 @@ fn validate_transcript(
 }
 
 fn validate_record(record: &SessionRecord, limits: crate::EngineLimits) -> Result<(), TurnFailure> {
+    for value in record.metadata.values() {
+        validate_json_value(value, limits)?;
+    }
+    for message in &record.messages {
+        for block in &message.content {
+            match block {
+                ContentBlock::Json { value } => validate_json_value(value, limits)?,
+                ContentBlock::ToolCall { call } => {
+                    validate_json_value(&call.arguments, limits)?;
+                }
+                ContentBlock::ToolResult { output, .. } => {
+                    validate_json_value(&output.content, limits)?;
+                }
+                ContentBlock::Text { .. } => {}
+            }
+        }
+    }
     validate_transcript(&record.messages, limits)?;
     let metadata_bytes =
         serialized_json_size_bounded(&record.metadata, limits.max_session_metadata_bytes.get())
@@ -1388,6 +1488,9 @@ fn validate_inference_options(
     options: &InferenceOptions,
     limits: crate::EngineLimits,
 ) -> Result<(), TurnFailure> {
+    for value in options.metadata.values() {
+        validate_json_value(value, limits)?;
+    }
     let bytes = serialized_json_size_bounded(options, limits.max_inference_options_bytes.get())
         .map_err(|_| {
             TurnFailure::protocol(
