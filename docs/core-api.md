@@ -1,0 +1,66 @@
+# Provider-neutral core API
+
+`machine-god-core` is an embeddable, executor-independent streaming engine. It
+contains no filesystem, process, environment, credential, clock, randomness, or
+network access. A host supplies every authority-bearing component explicitly
+through [`EngineBuilder`](crate::EngineBuilder).
+
+The traits use boxed standard futures and `futures-core::Stream`, so an embedding
+application may use Tokio, async-std, smol, a custom executor, or direct polling.
+All public extension traits are object-safe, `Send`, and `Sync`.
+
+```rust,no_run
+use machine_god_core::{Engine, SessionId};
+
+# fn configured_engine() -> Engine { unimplemented!() }
+let engine = configured_engine();
+let session = engine.create_session(SessionId::new("example").unwrap());
+assert_eq!(session.id().as_str(), "example");
+```
+
+## Composition and authority
+
+An engine cannot be built without a [`ModelProvider`](crate::ModelProvider),
+[`SessionStore`](crate::SessionStore), and
+[`PermissionHandler`](crate::PermissionHandler). There are no permissive hidden
+defaults. [`EventSink`](crate::EventSink) is observational and defaults to
+[`NoopEventSink`](crate::NoopEventSink). Tools are registered explicitly and are
+looked up by validated [`ToolName`](crate::ToolName).
+
+The permission decision is distinct from tool execution. A handler error never
+means approval. Native implementations must normalize paths, process arguments,
+and network destinations before presenting a [`Capability`](crate::Capability)
+to policy.
+
+## Turn lifecycle
+
+[`Session::prompt`](crate::Session::prompt) returns a [`Turn`](crate::Turn), an
+asynchronous stream of ordered [`EngineEvent`](crate::EngineEvent) values. Every
+event carries a session ID, turn ID, and monotonic sequence number.
+
+```text
+                  provider stream
+created -> started ---------------> model event(s) -> completed
+   |          |                            |              |
+   |          +---- provider failure ------+----------> failed
+   |                                       |
+   +---- handle.cancel() ------------------+---------> cancelled
+
+live turn -- drop / terminal event --> session lease released
+```
+
+Exactly one turn may be live for a session, including across cloned session
+handles. A second prompt returns [`EngineError::SessionBusy`](crate::EngineError::SessionBusy).
+Cancellation is cooperative, wakes the turn stream without depending on an
+executor, and is idempotent: only the first `TurnHandle::cancel` returns `true`.
+Dropping a turn releases the session lease even if the provider has not stopped.
+
+Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
+without it becomes a structured `failed` event. Observer backpressure is honored:
+an event is yielded to the caller only after the configured event sink accepts
+the same event. Observer failure terminates the turn with `EngineError::EventSink`.
+
+The milestone-02 runtime layers tool execution, permission caching, durable
+message commits, and multi-round model/tool orchestration onto this lifecycle.
+The contracts intentionally expose those boundaries now without granting core
+ambient native authority.

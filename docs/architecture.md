@@ -5,7 +5,27 @@ ambient operating-system authority. `machine-god-native` provides explicit nativ
 capabilities. `machine-god-cli` composes them. `machine-god-testkit` provides
 deterministic test doubles.
 
-Public contracts and lifecycle diagrams will be added with milestone 02. Public
-interfaces must keep network, storage, tool, permission, and event delivery behind
-object-safe traits.
+The milestone-02 public contracts are documented in
+[`core-api.md`](core-api.md). Public interfaces keep model access, storage,
+tools, permission policy, and event delivery behind object-safe traits. Core
+uses standard futures and `futures-core::Stream`; it does not select or require
+an async executor.
 
+```text
+                        machine-god-core
+ host ---------------------------------------------------------------+
+  |                                                                  |
+  +-> ModelProvider ----+                                             |
+  +-> SessionStore -----+-> Engine -> Session -> Turn event stream    |
+  +-> PermissionHandler +                  |                          |
+  +-> Tool(s) ----------+                  +-> TurnHandle/cancellation|
+  +-> EventSink (optional observer)                                   |
+                                                                     |
+ native filesystem / process / network authority remains outside ----+
+```
+
+An engine requires explicit provider, store, and permission components. Event
+observation may use the authority-free no-op sink. Validated IDs, structured
+component errors, optimistic session revisions, monotonic event sequences,
+one-live-turn session leases, and idempotent cancellation form the initial
+cross-component invariants.

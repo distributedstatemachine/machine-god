@@ -16,8 +16,11 @@ repository = "https://github.com/distributedstatemachine/machine-god"
 publish = false
 
 [workspace.dependencies]
+futures-core = "0.3.31"
 machine-god-core = { version = "0.1.0", path = "crates/machine-god-core" }
 machine-god-native = { version = "0.1.0", path = "crates/machine-god-native" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
