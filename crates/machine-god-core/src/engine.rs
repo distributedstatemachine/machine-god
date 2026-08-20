@@ -4,6 +4,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, Weak};
 
 #[cfg(test)]
@@ -20,6 +21,37 @@ pub struct EngineBuilder {
     event_sink: Option<Arc<dyn EventSink>>,
     tools: BTreeMap<ToolName, RegisteredTool>,
     duplicate_tool: Option<ToolName>,
+    limits: EngineLimits,
+}
+
+/// Nonzero resource bounds enforced by every turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EngineLimits {
+    pub max_model_rounds: NonZeroUsize,
+    pub max_tool_calls_per_turn: NonZeroUsize,
+    pub max_tool_calls_per_round: NonZeroUsize,
+    pub max_assistant_text_bytes: NonZeroUsize,
+    pub max_reasoning_bytes: NonZeroUsize,
+    pub max_tool_argument_bytes: NonZeroUsize,
+    pub max_serialized_tool_result_bytes: NonZeroUsize,
+    pub max_cumulative_tool_result_bytes: NonZeroUsize,
+}
+
+impl Default for EngineLimits {
+    fn default() -> Self {
+        Self {
+            max_model_rounds: NonZeroUsize::new(8).expect("default is nonzero"),
+            max_tool_calls_per_turn: NonZeroUsize::new(16).expect("default is nonzero"),
+            max_tool_calls_per_round: NonZeroUsize::new(4).expect("default is nonzero"),
+            max_assistant_text_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
+            max_reasoning_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
+            max_tool_argument_bytes: NonZeroUsize::new(64 * 1024).expect("default is nonzero"),
+            max_serialized_tool_result_bytes: NonZeroUsize::new(64 * 1024)
+                .expect("default is nonzero"),
+            max_cumulative_tool_result_bytes: NonZeroUsize::new(256 * 1024)
+                .expect("default is nonzero"),
+        }
+    }
 }
 
 impl fmt::Debug for EngineBuilder {
@@ -88,6 +120,13 @@ impl EngineBuilder {
         self
     }
 
+    /// Replaces the conservative default per-turn resource bounds.
+    #[must_use]
+    pub fn limits(mut self, limits: EngineLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     /// Registers a tool. Duplicate names make [`Self::build`] fail closed.
     #[must_use]
     pub fn tool(mut self, tool: impl Tool) -> Self {
@@ -133,6 +172,11 @@ impl EngineBuilder {
         let permission_handler = self
             .permission_handler
             .ok_or(BuildError::MissingPermissionHandler)?;
+        let tool_specs = self
+            .tools
+            .values()
+            .map(|registered| registered.spec.clone())
+            .collect();
         Ok(Engine {
             inner: Arc::new(EngineInner {
                 provider,
@@ -140,6 +184,8 @@ impl EngineBuilder {
                 permission_handler,
                 event_sink: self.event_sink.unwrap_or_else(|| Arc::new(NoopEventSink)),
                 tools: self.tools,
+                tool_specs,
+                limits: self.limits,
                 sessions: Arc::new(SessionRegistry::default()),
             }),
         })
@@ -158,6 +204,8 @@ pub(crate) struct EngineInner {
     pub(crate) permission_handler: Arc<dyn PermissionHandler>,
     pub(crate) event_sink: Arc<dyn EventSink>,
     tools: BTreeMap<ToolName, RegisteredTool>,
+    tool_specs: Vec<ToolSpec>,
+    pub(crate) limits: EngineLimits,
     sessions: Arc<SessionRegistry>,
 }
 
@@ -183,7 +231,13 @@ struct RegisteredTool {
 
 impl EngineInner {
     pub(crate) fn tool_specs(&self) -> Vec<ToolSpec> {
-        self.tools.values().map(|tool| tool.spec.clone()).collect()
+        self.tool_specs.clone()
+    }
+
+    pub(crate) fn tool(&self, name: &ToolName) -> Option<Arc<dyn Tool>> {
+        self.tools
+            .get(name)
+            .map(|registered| Arc::clone(&registered.tool))
     }
 
     fn session_state(
@@ -277,6 +331,12 @@ impl Engine {
     #[must_use]
     pub fn builder() -> EngineBuilder {
         EngineBuilder::new()
+    }
+
+    /// Returns the immutable resource bounds used by this engine.
+    #[must_use]
+    pub fn limits(&self) -> EngineLimits {
+        self.inner.limits
     }
 
     /// Returns the engine-canonical in-memory handle for `id`.

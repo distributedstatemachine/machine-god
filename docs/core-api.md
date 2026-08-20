@@ -32,20 +32,31 @@ means approval. Native implementations must normalize paths, process arguments,
 and network destinations before presenting a [`Capability`](crate::Capability)
 to policy.
 
+[`EngineLimits`](crate::EngineLimits) supplies nonzero per-turn bounds. Defaults
+allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
+assistant text and observer-visible reasoning, 64 KiB of serialized arguments
+per call, 64 KiB per serialized tool result, and 256 KiB of cumulative tool
+results. Hosts may replace the complete limits value through
+[`EngineBuilder::limits`](crate::EngineBuilder::limits). Counters use checked
+arithmetic and a limit failure occurs before another tool is authorized or
+executed. JSON byte sizes are counted through a serializer without allocating a
+second copy of the value.
+
 ## Turn lifecycle
 
-Awaiting [`Session::prompt`](crate::Session::prompt) reserves a durable turn ID
-and returns a [`Turn`](crate::Turn), an asynchronous stream of ordered
+Awaiting [`Session::prompt`](crate::Session::prompt) atomically reserves a
+durable turn ID and its user message, then returns a [`Turn`](crate::Turn), an
+asynchronous stream of ordered
 [`EngineEvent`](crate::EngineEvent) values. Every event carries a session ID,
 turn ID, and monotonic sequence number.
 
 ```text
-                  provider stream
-created -> started ---------------> model event(s) -> completed
-   |          |                            |              |
-   |          +---- provider failure ------+----------> failed
-   |                                       |
-   +---- handle.cancel() ------------------+---------> cancelled
+created -> started -> provider round -> final assistant commit -> completed
+                         |
+                         +-> tool-call stop -> assistant commit
+                                  -> permission -> tool -> result commit -+
+                         ^                                           |
+                         +------------- next provider round <--------+
 
 live turn -- drop / terminal event --> session lease released
 ```
@@ -84,8 +95,9 @@ change that outcome and therefore cannot create a self-waking hot loop while
 the terminal observer remains backpressured.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
-Prompt creation reserves it through the configured store's optimistic revision
-before exposing the `Turn`; stale handles reload and retry within a fixed bound.
+Prompt creation reserves it and appends the user message through the configured
+store's optimistic revision before exposing the `Turn` or calling the provider;
+stale handles reload and retry within a fixed bound.
 Successful reservations therefore remain consumed across reloads and process
 restarts, while core remains deterministic and does not acquire clock or random
 authority. Reconciliation fails closed if a conflict reload has a zero next-turn
@@ -138,7 +150,54 @@ its later observer delivery remains protected from cancellation.
 An already-staged `Completed(Cancelled)` still bypasses observer delivery so an
 optional observer cannot make cancellation or shutdown wait forever.
 
-The milestone-02 runtime layers tool execution, permission caching, durable
-message commits, and multi-round model/tool orchestration onto this lifecycle.
-The contracts intentionally expose those boundaries now without granting core
-ambient native authority.
+## Provider grammar and durable tool rounds
+
+A `Stop` ends a provider round immediately and core drops that stream rather
+than polling it for EOF. This keeps a valid `Stop` followed by a permanently
+pending stream live. Providers are contractually forbidden to emit after
+`Stop`; items produced lazily after that boundary cannot be observed by core.
+A round ending without `Stop` fails. A `ToolCalls` stop requires one or more
+calls, while any call paired with another stop reason fails. Calls are validated
+as they arrive for count, unique turn-wide ID, registered name, and serialized
+argument size. The complete round is valid before any permission request or tool
+execution begins. M02 advertises JSON Schema in `ToolSpec` but deliberately
+leaves schema enforcement to the tool implementation; it does not claim core
+JSON-Schema validation.
+
+Assistant text deltas are concatenated into one durable text block. Reasoning
+deltas remain observable model events but are never persisted. A valid
+tool-call assistant message is committed before permission handling. Calls run
+serially in provider order. Every invocation receives a fresh critical-risk
+`Capability::Tool` authorization request; core does not cache positive grant
+scopes. A host policy may implement its own identity-safe caching. Denial becomes
+a bounded error `ToolResult` without starting the tool. A tool implementation
+error likewise becomes a bounded model-visible result, allowing the next model
+round to recover. A policy infrastructure error fails the turn.
+
+Each tool result is committed before `ToolFinished` and before the next call or
+model round. If an executed tool returns an oversized result, core discards the
+value, commits a bounded error marker saying that execution occurred with an
+unknown result, and then fails the turn; it does not invite blind replay. The
+final assistant message is committed before its model `Stop` and `Completed`
+events are delivered. Token usage is the latest report within each round and is
+added across rounds with checked counters.
+
+Message commits retry optimistic conflicts at most 32 times. A retry is allowed
+only while the durable messages exactly match the captured transcript; newer
+turn-allocation state and metadata are preserved. A missing, stale, corrupt, or
+divergent record fails closed, so core never blindly merges or duplicates
+messages. Durable saving is authoritative: observer success events follow their
+related commit, and observer failure never replays a committed effect.
+
+A final non-tool `Stop` establishes the terminal provider outcome when polled.
+Cancellation observed earlier wins; cancellation requested during its required
+assistant commit or later observer delivery cannot relabel it. Store failure can
+still replace that outcome with a terminal durability failure. Intermediate
+`ToolCalls` stops are not turn-terminal, so cancellation may interrupt their
+assistant commit, permission request, tool work, result commit, or next-provider
+startup. All such futures are owned and polled inline by `Turn`; dropping the
+turn drops them rather than detaching work.
+
+The live-turn lease remains process-local to one `Engine`. M02 does not claim
+cross-engine fencing or crash-safe replay of non-idempotent native side effects;
+those require the M04 lifecycle and persistence design.

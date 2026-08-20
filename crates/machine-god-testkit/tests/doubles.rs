@@ -136,13 +136,22 @@ fn complete_engine_turn_is_deterministic_and_fully_inspectable() {
     assert_eq!(provider.remaining_steps(), 0);
 
     let stored = store.record(&session.id()).unwrap();
-    assert_eq!(stored.revision, SessionRevision(1));
+    assert_eq!(stored.revision, SessionRevision(2));
     assert_eq!(stored.next_turn_sequence, 2);
-    assert_eq!(store.calls().len(), 1);
+    assert_eq!(stored.messages.len(), 2);
+    assert_eq!(stored.messages[1].role, Role::Assistant);
+    assert_eq!(store.calls().len(), 2);
     assert!(matches!(
         &store.calls()[0],
         RecordedSessionStoreCall::Save {
             expected_revision: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &store.calls()[1],
+        RecordedSessionStoreCall::Save {
+            expected_revision: Some(SessionRevision(1)),
             ..
         }
     ));

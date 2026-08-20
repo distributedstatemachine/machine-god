@@ -40,6 +40,29 @@ component errors, optimistic session revisions, monotonic event sequences,
 one-live-turn session leases, and idempotent cancellation form the initial
 cross-component invariants.
 
+The multi-round turn loop is an executor-neutral future polled inline by the
+`Turn` stream. A one-event acknowledgement gate connects it to observer
+delivery: orchestration cannot advance past a nonterminal event until the sink
+accepts that event and the caller receives it. No task, channel, timer, or
+runtime-specific primitive is required. Provider, store, policy, and tool
+futures stay owned by that orchestration frame, so cancellation or drop tears
+down the in-flight phase without detached work. Immutable tool specifications
+are cached in deterministic name order when the engine is built and cloned into
+each provider request.
+
+Durability divides each loop into explicit phases:
+
+```text
+user+turn reservation -> model
+model tool calls -> assistant commit -> permission/tool -> result commit -> model
+model final answer -> assistant commit -> terminal events
+```
+
+The transcript prefix is the optimistic-merge boundary. Allocator and metadata
+changes may advance across a retry while messages remain identical; any message
+change is divergence and fails closed. This preserves external allocator work
+without guessing how concurrent conversation suffixes should be ordered.
+
 A live turn owns the session lease and provider cancellation signal as one
 lifecycle unit. Destruction signals cancellation before removing waiters and
 releasing the lease; terminal completion has already released that unit, so its
