@@ -156,3 +156,29 @@ regression proves duplicate detection for every known registry field. All
 scope, literal-injection, and linear-scaling regressions remain active.
 
 Rejected after quoted-field security rereview remediation: none.
+
+## Escaped-field and offline-source rereview
+
+Reviewed commit: `0f31d6c8570e6f7f151efc837a46d384e8865d62`.
+
+The next security pass found that escape-bearing quoted Zig identifiers could
+decode to a known field while remaining neutralized in the structural mask. For
+example, `.@"alia\\x73es"` bypassed the canonical `aliases` occurrence set.
+Because the inventory intentionally supports only a narrow identifier grammar,
+all escape-bearing quoted Zig identifiers now fail closed. Table-driven hostile
+cases exercise dynamic and mixed duplicate spellings for every known registry
+field, while simple quoted identifiers and declaration-payload masking retain
+their prior behavior.
+
+Git object reads also needed a stronger offline boundary for partial clones.
+Plumbing now receives an allowlisted environment rather than inherited ambient
+state, removing SSH agents, tokens, askpass programs, credentials, and proxy
+variables. Global and system configuration, credential helpers, HTTP proxy and
+extra-header settings, replacement objects, and every transport protocol are
+neutralized; `GIT_NO_LAZY_FETCH=1` prevents a missing promisor object from
+starting an implicit fetch. A blobless promisor-clone regression proves the
+missing blob remains absent and extraction fails, while credential-environment
+tests inspect every Git invocation. Canonical object-format discovery and blob
+rehashing continue through the same isolated plumbing path.
+
+Rejected after escaped-field and offline-source rereview remediation: none.

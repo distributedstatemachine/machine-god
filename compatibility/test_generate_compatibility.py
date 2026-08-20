@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -175,6 +176,107 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         source._git = tampered_git
         with self.assertRaisesRegex(GENERATOR.InventoryError, "expected Git blob"):
             source.blob("sdk/node.js")
+
+    def test_git_plumbing_strips_credentials_and_disables_transport(self) -> None:
+        hostile_environment = {
+            "ALL_PROXY": "http://proxy.invalid",
+            "GH_TOKEN": "gh-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "GIT_ASKPASS": "/hostile/askpass",
+            "GIT_CONFIG_GLOBAL": "/hostile/gitconfig",
+            "HTTP_PROXY": "http://proxy.invalid",
+            "HTTPS_PROXY": "http://proxy.invalid",
+            "SSH_ASKPASS": "/hostile/ssh-askpass",
+            "SSH_AUTH_SOCK": "/hostile/agent.sock",
+            "UPSTREAM_ACCESS_TOKEN": "upstream-secret",
+        }
+        with (
+            mock.patch.dict(os.environ, hostile_environment, clear=False),
+            mock.patch(
+                "subprocess.run", wraps=subprocess.run
+            ) as run,
+        ):
+            self.source().text("sdk/node.js")
+
+        forbidden = set(hostile_environment) - {"GIT_CONFIG_GLOBAL"}
+        for call in run.call_args_list:
+            environment = call.kwargs["env"]
+            self.assertTrue(forbidden.isdisjoint(environment))
+            self.assertEqual(environment["GIT_CONFIG_GLOBAL"], os.devnull)
+            self.assertEqual(environment["GIT_NO_LAZY_FETCH"], "1")
+            self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+            command = call.args[0]
+            self.assertIn("credential.helper=", command)
+            self.assertIn("http.extraHeader=", command)
+            self.assertIn("http.proxy=", command)
+            self.assertIn("protocol.allow=never", command)
+
+    def test_missing_promisor_blob_fails_without_lazy_fetch(self) -> None:
+        remote = self.temporary / "remote.git"
+        promisor = self.temporary / "promisor"
+        subprocess.run(
+            ["git", "clone", "--quiet", "--bare", str(self.upstream), str(remote)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(remote), "config", "uploadpack.allowFilter", "true"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--quiet",
+                "--filter=blob:none",
+                "--no-checkout",
+                remote.as_uri(),
+                str(promisor),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        object_id = self.git(
+            "rev-parse", f"{self.commit}:sdk/node.js"
+        ).stdout.decode().strip()
+        missing = subprocess.run(
+            [
+                "git",
+                "--no-lazy-fetch",
+                "-C",
+                str(promisor),
+                "rev-list",
+                "--objects",
+                "--missing=print",
+                self.commit,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        self.assertIn(f"?{object_id}", missing)
+
+        source = GENERATOR.GitSnapshot(promisor, self.commit)
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "cat-file blob"):
+            source.blob("sdk/node.js")
+
+        missing_after = subprocess.run(
+            [
+                "git",
+                "--no-lazy-fetch",
+                "-C",
+                str(promisor),
+                "rev-list",
+                "--objects",
+                "--missing=print",
+                self.commit,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        self.assertIn(f"?{object_id}", missing_after)
 
     def test_expected_source_symlink_mode_is_rejected(self) -> None:
         target = self.git("hash-object", "-w", "--stdin", input_bytes=b"fx-sdk.js").stdout
@@ -519,6 +621,18 @@ class CompatibilityGeneratorTest(unittest.TestCase):
                 GENERATOR.field_match(
                     dynamic_mask, dynamic_depths, field, r"true|false"
                 )
+
+            escaped_field = f"{field[:-1]}\\x{ord(field[-1]):02x}"
+            for expression in (
+                f'.@"{escaped_field}" = dynamicValue(),',
+                f'.{field} = true, .@"{escaped_field}" = false,',
+            ):
+                with self.subTest(
+                    field=field, expression=expression
+                ), self.assertRaisesRegex(
+                    GENERATOR.InventoryError, "escape-bearing quoted Zig identifier"
+                ):
+                    GENERATOR.source_mask(expression, "zig")
 
     def test_e2e_owner_coverage_rejects_an_unclassified_file(self) -> None:
         (self.upstream / "tests/e2e/orphan.test.ts").write_text(

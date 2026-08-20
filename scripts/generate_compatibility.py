@@ -106,19 +106,36 @@ class GitSnapshot:
 
     def _git(self, *args: str) -> bytes:
         environment = {
-            name: value
-            for name, value in os.environ.items()
-            if not name.startswith("GIT_")
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "HOME": os.devnull,
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": os.environ.get("PATH", os.defpath),
+            "XDG_CONFIG_HOME": os.devnull,
         }
-        environment.update(
-            {
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_NO_REPLACE_OBJECTS": "1",
-                "GIT_TERMINAL_PROMPT": "0",
-            }
-        )
         completed = subprocess.run(
-            ["git", "--no-replace-objects", "-C", str(self.repository), *args],
+            [
+                "git",
+                "--no-replace-objects",
+                "-c",
+                "core.askPass=",
+                "-c",
+                "credential.helper=",
+                "-c",
+                "http.extraHeader=",
+                "-c",
+                "http.proxy=",
+                "-c",
+                "protocol.allow=never",
+                "-C",
+                str(self.repository),
+                *args,
+            ],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -289,18 +306,15 @@ def source_mask(text: str, language: str) -> str:
         if language == "zig" and text[index] == "@" and following == '"':
             index += 2
             payload_start = index
-            escaped = False
             while index < len(text):
                 character = text[index]
                 if character in "\r\n":
                     raise InventoryError("unterminated quoted Zig identifier")
-                if escaped:
-                    masked[index] = "x"
-                    escaped = False
-                elif character == "\\":
-                    masked[index] = "x"
-                    escaped = True
-                elif character == '"':
+                if character == "\\":
+                    raise InventoryError(
+                        "escape-bearing quoted Zig identifiers are unsupported"
+                    )
+                if character == '"':
                     payload = text[payload_start:index]
                     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", payload):
                         masked[payload_start:index] = list(payload)
