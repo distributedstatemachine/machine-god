@@ -33,7 +33,9 @@ cross-component invariants.
 A live turn owns the session lease and provider cancellation signal as one
 lifecycle unit. Destruction signals cancellation before removing waiters and
 releasing the lease; terminal completion has already released that unit, so its
-later destructor is cleanup-only.
+later destructor is cleanup-only. Out-of-band observer or delivery-state failure
+before a terminal provider outcome follows the same cancel-before-release rule,
+preventing dropped streams from orphaning retained provider work.
 
 Each `Engine` owns a weak session-state registry keyed by `SessionId`. All
 create/load races inside that engine converge on one in-memory record and active

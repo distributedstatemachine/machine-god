@@ -854,6 +854,7 @@ impl ModelProvider for PendingProvider {
 enum RetainedStream {
     Pending,
     Completed,
+    TextThenPending,
 }
 
 #[derive(Clone, Debug)]
@@ -882,6 +883,12 @@ impl ModelProvider for RetainingCancellationProvider {
                         reason: StopReason::Completed,
                     })]))
                 }
+                RetainedStream::TextThenPending => Box::pin(
+                    futures_util::stream::iter([Ok(ModelEvent::TextDelta {
+                        text: "partial".to_owned(),
+                    })])
+                    .chain(futures_util::stream::pending()),
+                ),
             };
             Ok(stream)
         })
@@ -1068,6 +1075,27 @@ impl EventSink for RejectingSink {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct RejectFirstModelSink {
+    deliveries: Arc<AtomicUsize>,
+}
+
+impl EventSink for RejectFirstModelSink {
+    fn emit(&self, _event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
+        let delivery = self.deliveries.fetch_add(1, Ordering::Relaxed);
+        Box::pin(async move {
+            if delivery == 0 {
+                Ok(())
+            } else {
+                Err(EventSinkError::new(
+                    "model_event_rejected",
+                    "observer rejected the first model event",
+                ))
+            }
+        })
+    }
+}
+
 #[derive(Debug)]
 struct PendingSink;
 
@@ -1174,6 +1202,38 @@ fn observer_failure_terminates_and_releases_turn() {
     assert!(matches!(result, Err(EngineError::EventSink(_))));
     assert!(futures_executor::block_on(turn.next()).is_none());
     assert!(!session.has_active_turn());
+}
+
+#[test]
+fn nonterminal_observer_failure_cancels_retained_provider_work() {
+    let retained = Arc::new(Mutex::new(None));
+    let sink = RejectFirstModelSink::default();
+    let deliveries = Arc::clone(&sink.deliveries);
+    let engine = Engine::builder()
+        .provider(RetainingCancellationProvider {
+            cancellation: Arc::clone(&retained),
+            stream: RetainedStream::TextThenPending,
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(sink)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("sink-failure-cancels").unwrap());
+    let mut turn = prompt(&session, "go");
+    let handle = turn.handle();
+
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+    let result = futures_executor::block_on(turn.next()).unwrap();
+    assert!(matches!(result, Err(EngineError::EventSink(_))));
+    assert_eq!(deliveries.load(Ordering::Relaxed), 2);
+
+    let provider_cancellation = retained.lock().unwrap().clone().unwrap();
+    assert!(provider_cancellation.is_cancelled());
+    assert!(!handle.cancel());
+    assert!(!session.has_active_turn());
+    assert!(futures_executor::block_on(turn.next()).is_none());
 }
 
 // Compile-time assertion that the turn is a sendable stream and can move

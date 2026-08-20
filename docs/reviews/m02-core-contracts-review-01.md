@@ -83,3 +83,13 @@ publication and on conflict reload, while `SessionRecord::empty` retains zero
 until its first successful save returns a positive revision. Direct-load,
 conflict-reload, and normal initial create/save regressions cover all three
 paths.
+
+A fresh correctness review of `bb4ebc6` found that nonterminal `EventSink`
+failure dropped the provider stream and released its lease without cancelling
+the shared token. A provider retaining that token could continue background work
+after the turn returned `EngineError::EventSink`. All premature observer and
+delivery-state failure exits now cancel before the common finish path and mark
+the out-of-band failure terminal, while already-terminal provider behavior is
+unchanged. A retained-provider regression accepts `Started`, rejects the first
+model event, and verifies the sink error, cancelled token, false stale-handle
+cancel result, exhausted turn stream, and released lease.

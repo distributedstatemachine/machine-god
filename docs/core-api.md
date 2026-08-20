@@ -99,6 +99,11 @@ Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:
 an event is yielded to the caller only after the configured event sink accepts
 the same event. Observer failure terminates the turn with `EngineError::EventSink`.
+If that failure occurs before the provider reaches a terminal outcome, core
+cancels the shared provider token before dropping the stream and releasing the
+lease; stale cancellation handles then observe that cleanup signal. Observer
+failure after an already-terminal provider outcome does not relabel completion
+as cancellation.
 Cancellation has priority over observer backpressure: if an observer future is
 pending, core drops that future and yields the terminal cancellation directly to
 the stream consumer before releasing the session lease. This exception prevents

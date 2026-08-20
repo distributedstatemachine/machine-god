@@ -454,6 +454,14 @@ impl Turn {
         self.lease.take();
     }
 
+    fn fail_before_terminal(&mut self) {
+        if !self.terminal_seen {
+            let _ = self.cancellation.cancel();
+        }
+        self.terminal_seen = true;
+        self.finish();
+    }
+
     fn stage(&mut self, payload: TurnEvent) {
         let event = EngineEvent {
             session_id: self.session_id.clone(),
@@ -521,7 +529,7 @@ impl Turn {
             return Poll::Ready(Some(Ok(event)));
         }
         let Some(delivery) = &mut self.delivery else {
-            self.finish();
+            self.fail_before_terminal();
             return Poll::Ready(Some(Err(EngineError::Protocol(
                 "event delivery state was lost".to_owned(),
             ))));
@@ -530,7 +538,7 @@ impl Turn {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => {
                 let Some(delivery) = self.delivery.take() else {
-                    self.finish();
+                    self.fail_before_terminal();
                     return Poll::Ready(Some(Err(EngineError::Protocol(
                         "event delivery state was lost".to_owned(),
                     ))));
@@ -549,7 +557,7 @@ impl Turn {
             }
             Poll::Ready(Err(error)) => {
                 self.delivery = None;
-                self.finish();
+                self.fail_before_terminal();
                 Poll::Ready(Some(Err(EngineError::EventSink(error))))
             }
         }
