@@ -100,6 +100,13 @@ class LinuxProcessInfo:
     start_time: int
 
 
+@dataclass(frozen=True)
+class MachineStatusEntry:
+    state: str
+    path: bytes
+    original_path: bytes | None
+
+
 def parse_upstream_lock(path: Path) -> UpstreamLock:
     """Parse the deliberately small key=value upstream lock format."""
 
@@ -1628,32 +1635,73 @@ def check_machine_cleanliness(
     timeout_seconds: float,
     expected_executable: Mapping[str, object] | None = None,
 ) -> None:
-    status = git_output(
-        git,
-        root,
-        environment,
-        timeout_seconds,
-        "status",
-        "--porcelain=v1",
-        "--untracked-files=all",
-        "--ignored",
+    completed = run_process(
+        [
+            *git_prefix(git),
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignored",
+        ],
+        cwd=root,
+        environment=environment,
+        timeout_seconds=timeout_seconds,
         expected_executable=expected_executable,
     )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"Git status command failed: {detail}")
     rejected: list[str] = []
-    for line in status.splitlines():
-        if len(line) < 4:
-            rejected.append(line)
-            continue
-        state = line[:2]
-        path = line[3:].split(" -> ")[-1].rstrip("/")
-        allowed = any(path == prefix or path.startswith(f"{prefix}/") for prefix in ALLOWED_MACHINE_OUTPUTS)
-        if state not in {"??", "!!"} or not allowed:
-            rejected.append(line)
+    allowed_prefixes = tuple(prefix.encode() for prefix in ALLOWED_MACHINE_OUTPUTS)
+    for entry in parse_porcelain_v1_z(completed.stdout):
+        path = entry.path[:-1] if entry.path.endswith(b"/") else entry.path
+        allowed = any(
+            path == prefix or path.startswith(prefix + b"/")
+            for prefix in allowed_prefixes
+        )
+        if entry.state not in {"??", "!!"} or entry.original_path is not None or not allowed:
+            description = f"{entry.state} {os.fsdecode(entry.path)!r}"
+            if entry.original_path is not None:
+                description += f" from {os.fsdecode(entry.original_path)!r}"
+            rejected.append(description)
     if rejected:
         raise RuntimeError(
             "machine-god worktree contains non-output changes or untracked inputs: "
             + "; ".join(rejected)
         )
+
+
+def parse_porcelain_v1_z(status: bytes) -> list[MachineStatusEntry]:
+    """Parse byte-exact `git status --porcelain=v1 -z` output."""
+
+    if not status:
+        return []
+    if not status.endswith(b"\0"):
+        raise RuntimeError("Git status -z output is not NUL terminated")
+    records = status.split(b"\0")[:-1]
+    entries: list[MachineStatusEntry] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if len(record) < 4 or record[2:3] != b" ":
+            raise RuntimeError("Git status -z output contains a malformed record")
+        try:
+            state = record[:2].decode("ascii", errors="strict")
+        except UnicodeDecodeError as error:
+            raise RuntimeError("Git status -z output contains a malformed state") from error
+        path = record[3:]
+        if not path:
+            raise RuntimeError("Git status -z output contains an empty path")
+        original_path: bytes | None = None
+        if "R" in state or "C" in state:
+            if index >= len(records) or not records[index]:
+                raise RuntimeError("Git status -z rename/copy record is incomplete")
+            original_path = records[index]
+            index += 1
+        entries.append(MachineStatusEntry(state, path, original_path))
+    return entries
 
 
 def machine_tree_command(git: str, commit: str) -> list[str]:

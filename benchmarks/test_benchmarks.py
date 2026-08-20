@@ -21,6 +21,7 @@ from upstream import (  # noqa: E402
     EXPECTED_ZIG_VERSION,
     LinuxProcessInfo,
     LinuxProcessSupervisor,
+    MachineStatusEntry,
     ProcessTimeout,
     UpstreamLock,
     canonical_git_entries_sha256,
@@ -34,6 +35,7 @@ from upstream import (  # noqa: E402
     machine_tree_command,
     materialize_machine_source,
     parse_upstream_lock,
+    parse_porcelain_v1_z,
     prepare_upstream,
     run_process,
     sha256_file,
@@ -1205,6 +1207,76 @@ class UpstreamHarnessTest(unittest.TestCase):
             (root / ".cargo/config.toml").write_text(
                 "[build]\nrustflags=['-Ctarget-cpu=native']\n", encoding="utf-8"
             )
+            with self.assertRaises(RuntimeError):
+                check_machine_cleanliness(root, "git", environment, 2.0)
+
+    def test_parses_porcelain_z_rename_copy_and_literal_paths(self) -> None:
+        status = (
+            b"?? outside -> target/input\0"
+            b"!! outside\n -> target/ignored\0"
+            b"R  target/renamed\0tracked-old\0"
+            b"C  target/copied\0tracked-source\0"
+        )
+        self.assertEqual(
+            parse_porcelain_v1_z(status),
+            [
+                MachineStatusEntry("??", b"outside -> target/input", None),
+                MachineStatusEntry("!!", b"outside\n -> target/ignored", None),
+                MachineStatusEntry("R ", b"target/renamed", b"tracked-old"),
+                MachineStatusEntry("C ", b"target/copied", b"tracked-source"),
+            ],
+        )
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            parse_porcelain_v1_z(b"R  target/renamed\0")
+
+    def test_machine_cleanliness_rejects_hostile_literal_names_and_renames(self) -> None:
+        hostile_cases = (
+            ("untracked-arrow", "outside -> target/input", False),
+            ("ignored-arrow", "ignored -> target/input", True),
+            ("untracked-newline", "outside\n -> target/input", False),
+        )
+        for label, relative, ignored in hostile_cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                subprocess.run(
+                    ["git", "-C", str(root), "config", "user.name", "Test"], check=True
+                )
+                subprocess.run(
+                    ["git", "-C", str(root), "config", "user.email", "test@example.test"],
+                    check=True,
+                )
+                ignore = f"/{relative.split('/', 1)[0]}/\n" if ignored else ""
+                (root / ".gitignore").write_text(ignore, encoding="utf-8")
+                (root / "tracked").write_text("tracked", encoding="utf-8")
+                subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+                subprocess.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True)
+                hostile = root / relative
+                hostile.parent.mkdir(parents=True)
+                hostile.write_text("hostile", encoding="utf-8")
+                environment = os.environ.copy()
+                environment[CONTAINMENT_ENVIRONMENT_KEY] = "9" * 32
+                with self.assertRaises(RuntimeError):
+                    check_machine_cleanliness(root, "git", environment, 2.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "test@example.test"],
+                check=True,
+            )
+            (root / "tracked-old").write_text("tracked", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "tracked-old"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True)
+            (root / "target").mkdir()
+            subprocess.run(
+                ["git", "-C", str(root), "mv", "tracked-old", "target/renamed"],
+                check=True,
+            )
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "0" * 32
             with self.assertRaises(RuntimeError):
                 check_machine_cleanliness(root, "git", environment, 2.0)
 

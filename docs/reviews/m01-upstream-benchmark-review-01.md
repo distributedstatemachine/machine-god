@@ -21,6 +21,13 @@ findings and the branch resolves them as follows:
 - Machine-god's cleanliness check ignored untracked inputs. It now inspects
   tracked, untracked, and ignored state and permits only the `.bench`,
   `benchmarks/results`, and `target` output trees.
+- The cleanliness parser consumed line-oriented porcelain and split literal
+  filenames on ` -> `, so a path such as `outside -> target/input` could be
+  mistaken for an allowed target artifact. It now uses porcelain v1 `-z`, parses
+  raw NUL-delimited records and rename/copy pairs structurally, and compares the
+  untouched path bytes to the narrow allowlist. Regressions cover literal arrows,
+  newlines, tracked renames, synthetic copies, and both ignored and untracked
+  hostile names.
 - External commands had no wall-clock bounds. Fetch/tool, build, and per-sample
   timeouts are explicit, configurable, recorded, and terminate the spawned
   process group. Evidence is written atomically only after validation, and a
@@ -96,7 +103,7 @@ worktree mutation after snapshotting, process-group and detached-descendant
 timeouts, Linux descendant containment without readable environments, delayed
 containment scans, Git export attributes and link modes, mutable tool paths, and
 successful-command zombie reaping, injected lifecycle failures, PID reuse, and
-stale evidence.
+NUL-porcelain path parsing, and stale evidence.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,

@@ -43,6 +43,10 @@ authentication, and local or `ext` transports. Before cloning, the harness also
 checks tracked, untracked, and ignored machine-god files. Only `.bench`,
 `benchmarks/results`, and `target` are accepted as output directories; an
 untracked configuration or other possible build input fails the run. It then
+parses byte-exact NUL-terminated porcelain records, including the separate
+source path for rename/copy entries. Literal arrows, newlines, and other unusual
+filename bytes are never interpreted as display syntax and cannot redirect an
+outside path into the output allowlist. It then
 lists the recorded machine-god commit with `git ls-tree` and reads every accepted
 regular blob with `git cat-file`. Symlinks, gitlinks, special modes, unsafe
 paths, and non-UTF-8 paths fail the run. This deliberately avoids `git archive`,
