@@ -6,6 +6,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, Weak};
 
+#[cfg(test)]
+use std::sync::Barrier;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 /// Builder requiring explicit authority-bearing components.
 #[derive(Default)]
 pub struct EngineBuilder {
@@ -135,7 +140,7 @@ impl EngineBuilder {
                 permission_handler,
                 event_sink: self.event_sink.unwrap_or_else(|| Arc::new(NoopEventSink)),
                 tools: self.tools,
-                sessions: Mutex::new(BTreeMap::new()),
+                sessions: Arc::new(SessionRegistry::default()),
             }),
         })
     }
@@ -153,7 +158,22 @@ pub(crate) struct EngineInner {
     pub(crate) permission_handler: Arc<dyn PermissionHandler>,
     pub(crate) event_sink: Arc<dyn EventSink>,
     tools: BTreeMap<ToolName, RegisteredTool>,
-    sessions: Mutex<BTreeMap<SessionId, Weak<crate::session::SessionState>>>,
+    sessions: Arc<SessionRegistry>,
+}
+
+#[derive(Default)]
+pub(crate) struct SessionRegistry {
+    entries: Mutex<BTreeMap<SessionId, Weak<crate::session::SessionState>>>,
+    #[cfg(test)]
+    entry_checks: AtomicUsize,
+    #[cfg(test)]
+    before_remove: Mutex<Option<Arc<Barrier>>>,
+}
+
+pub(crate) struct SessionRegistration {
+    registry: Weak<SessionRegistry>,
+    id: SessionId,
+    state: Weak<crate::session::SessionState>,
 }
 
 struct RegisteredTool {
@@ -171,23 +191,76 @@ impl EngineInner {
         record: SessionRecord,
         persisted: bool,
     ) -> Arc<crate::session::SessionState> {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        prune_dead_sessions(&mut sessions);
-        if let Some(state) = sessions.get(&record.id).and_then(Weak::upgrade) {
-            return state;
-        }
-        let id = record.id.clone();
-        let state = Arc::new(crate::session::SessionState::new(record, persisted));
-        sessions.insert(id, Arc::downgrade(&state));
-        state
+        self.sessions.session_state(record, persisted)
     }
 }
 
-fn prune_dead_sessions(sessions: &mut BTreeMap<SessionId, Weak<crate::session::SessionState>>) {
-    sessions.retain(|_, state| state.strong_count() > 0);
+impl SessionRegistry {
+    fn session_state(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        persisted: bool,
+    ) -> Arc<crate::session::SessionState> {
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        #[cfg(test)]
+        self.entry_checks.fetch_add(1, Ordering::Relaxed);
+        if let Some(state) = entries.get(&record.id).and_then(Weak::upgrade) {
+            return state;
+        }
+        let id = record.id.clone();
+        let state =
+            crate::session::SessionState::new_registered(record, persisted, Arc::downgrade(self));
+        entries.insert(id, Arc::downgrade(&state));
+        state
+    }
+
+    fn remove_if_matches(&self, id: &SessionId, state: &Weak<crate::session::SessionState>) {
+        #[cfg(test)]
+        if let Some(barrier) = self
+            .before_remove
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            barrier.wait();
+            barrier.wait();
+        }
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if entries
+            .get(id)
+            .is_some_and(|registered| Weak::ptr_eq(registered, state))
+        {
+            entries.remove(id);
+        }
+    }
+}
+
+impl SessionRegistration {
+    pub(crate) fn new(
+        registry: Weak<SessionRegistry>,
+        id: SessionId,
+        state: Weak<crate::session::SessionState>,
+    ) -> Self {
+        Self {
+            registry,
+            id,
+            state,
+        }
+    }
+}
+
+impl Drop for SessionRegistration {
+    fn drop(&mut self) {
+        if let Some(registry) = self.registry.upgrade() {
+            registry.remove_if_matches(&self.id, &self.state);
+        }
+    }
 }
 
 impl fmt::Debug for Engine {
@@ -281,27 +354,13 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-    use super::prune_dead_sessions;
     use crate::{
         BoxFuture, CancellationToken, ModelEventStream, ModelProvider, ModelRequest,
         PermissionDecision, PermissionError, PermissionHandler, PermissionRequest, ProviderError,
         SessionId, SessionRecord, SessionRevision, SessionStore, SessionStoreError,
     };
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
-
-    #[test]
-    fn dead_weak_session_entries_are_prunable() {
-        let id = SessionId::new("prune-me").unwrap();
-        let state = Arc::new(crate::session::SessionState::new(
-            SessionRecord::empty(id.clone()),
-            false,
-        ));
-        let mut sessions = BTreeMap::from([(id, Arc::downgrade(&state))]);
-        drop(state);
-        prune_dead_sessions(&mut sessions);
-        assert!(sessions.is_empty());
-    }
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Barrier};
 
     #[derive(Debug)]
     struct UnusedProvider;
@@ -357,6 +416,104 @@ mod tests {
         }
     }
 
+    fn test_engine() -> super::Engine {
+        super::Engine::builder()
+            .provider(UnusedProvider)
+            .session_store(CorruptStore(SessionRecord::empty(
+                SessionId::new("unused-store-record").unwrap(),
+            )))
+            .permission_handler(DenyPermissions)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn many_live_sessions_use_one_targeted_registry_check_per_request() {
+        const SESSION_COUNT: usize = 4_096;
+
+        let engine = test_engine();
+        let mut live = Vec::with_capacity(SESSION_COUNT);
+        for index in 0..SESSION_COUNT {
+            let id = SessionId::new(format!("scaling-{index:04}")).unwrap();
+            live.push(engine.create_session(id));
+        }
+        assert_eq!(
+            engine.inner.sessions.entry_checks.load(Ordering::Relaxed),
+            SESSION_COUNT
+        );
+        assert_eq!(
+            engine.inner.sessions.entries.lock().unwrap().len(),
+            SESSION_COUNT
+        );
+
+        for session in &live {
+            drop(engine.create_session(session.id()));
+        }
+        assert_eq!(
+            engine.inner.sessions.entry_checks.load(Ordering::Relaxed),
+            SESSION_COUNT * 2
+        );
+        assert_eq!(
+            engine.inner.sessions.entries.lock().unwrap().len(),
+            SESSION_COUNT
+        );
+    }
+
+    #[test]
+    fn dropping_the_last_session_handle_reclaims_its_registry_key() {
+        let engine = test_engine();
+        let id = SessionId::new("drop-reclaims-key").unwrap();
+        let session = engine.create_session(id.clone());
+        assert!(
+            engine
+                .inner
+                .sessions
+                .entries
+                .lock()
+                .unwrap()
+                .contains_key(&id)
+        );
+
+        drop(session);
+
+        assert!(
+            !engine
+                .inner
+                .sessions
+                .entries
+                .lock()
+                .unwrap()
+                .contains_key(&id)
+        );
+    }
+
+    #[test]
+    fn delayed_old_state_drop_cannot_remove_a_concurrent_replacement() {
+        let engine = test_engine();
+        let registry = Arc::clone(&engine.inner.sessions);
+        let id = SessionId::new("replacement-race").unwrap();
+        let original = engine.create_session(id.clone());
+        let barrier = Arc::new(Barrier::new(2));
+        *registry.before_remove.lock().unwrap() = Some(Arc::clone(&barrier));
+
+        let dropping = std::thread::spawn(move || drop(original));
+        barrier.wait();
+        let replacement = engine.create_session(id.clone());
+        barrier.wait();
+        dropping.join().unwrap();
+        *registry.before_remove.lock().unwrap() = None;
+
+        let registered = registry.entries.lock().unwrap().get(&id).cloned().unwrap();
+        assert_eq!(registered.strong_count(), 1);
+        let converged = engine.create_session(id.clone());
+        assert_eq!(registered.strong_count(), 2);
+
+        drop(replacement);
+        assert!(registry.entries.lock().unwrap().contains_key(&id));
+        drop(converged);
+        assert!(!registry.entries.lock().unwrap().contains_key(&id));
+    }
+
     #[test]
     fn corrupt_load_is_rejected_before_registry_publication() {
         let id = SessionId::new("reject-before-publication").unwrap();
@@ -371,7 +528,7 @@ mod tests {
             .unwrap();
 
         assert!(futures_executor::block_on(engine.load_session(id.clone())).is_err());
-        assert!(engine.inner.sessions.lock().unwrap().is_empty());
+        assert!(engine.inner.sessions.entries.lock().unwrap().is_empty());
 
         let created = engine.create_session(id);
         assert_eq!(created.record().next_turn_sequence, 1);

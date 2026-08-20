@@ -47,10 +47,14 @@ drained wakers are dropped or invoked after unlocking.
 Each `Engine` owns a weak session-state registry keyed by `SessionId`. All
 create/load races inside that engine converge on one in-memory record and active
 turn flag; a live turn itself keeps the state alive if its originating session
-handle is dropped. Weak entries are pruned on later registry access. This is an
-in-process coordination boundary, not a distributed lease. Independent engines
-and processes coordinate durable turn-number allocation through the session
-store's optimistic revision contract. Loaded records reconcile strictly and
+handle is dropped. This is an in-process coordination boundary, not a
+distributed lease. Registry access uses one requested-ID `BTreeMap` lookup
+rather than scanning all live sessions. The
+last owner removes its weak entry during state destruction only when pointer
+identity still matches, so dead keys are reclaimed without an old destructor
+removing a concurrently installed replacement. Independent engines and
+processes coordinate durable turn-number allocation through the session store's
+optimistic revision contract. Loaded records reconcile strictly and
 monotonically: corrupt sequences, stale revisions, and equal-revision divergence
 are protocol errors, and completion of an older in-flight save cannot replace a
 newer canonical record. Successful-save reconciliation also rejects divergent

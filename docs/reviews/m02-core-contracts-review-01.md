@@ -137,3 +137,13 @@ subsequent terminal event cannot be superseded. The existing direct path for an
 already-staged `Completed(Cancelled)` remains non-blocking. Regressions cancel
 after a delivered stop, while stop delivery is pending, and while provider
 failure delivery is pending, and separately preserve direct staged cancellation.
+
+A performance review of `443aee0` confirmed that every create or load retained
+the entire weak session registry while holding its mutex. Creating N live
+sessions therefore performed quadratic entry checks. The hot path now performs
+one ordered lookup for only the requested ID. Each registered state carries a
+weak membership that removes its key when the last owner drops, guarded by weak
+pointer identity so delayed cleanup cannot erase a replacement. Deterministic
+tests count one targeted probe per request across 4,096 live sessions, verify
+immediate last-owner reclamation, and pause old-state cleanup while a concurrent
+replacement is installed and then reused canonically.

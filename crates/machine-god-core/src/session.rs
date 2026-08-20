@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use crate::engine::EngineInner;
+use crate::engine::{EngineInner, SessionRegistration, SessionRegistry};
 
 /// Optimistic-concurrency revision assigned by a [`SessionStore`]. Zero is the
 /// unsaved in-memory sentinel and is invalid in records returned by a store.
@@ -101,6 +101,7 @@ pub struct Session {
 pub(crate) struct SessionState {
     data: Mutex<SessionData>,
     active_turn: AtomicBool,
+    _registry_membership: SessionRegistration,
 }
 
 struct SessionData {
@@ -109,11 +110,17 @@ struct SessionData {
 }
 
 impl SessionState {
-    pub(crate) fn new(record: SessionRecord, persisted: bool) -> Self {
-        Self {
+    pub(crate) fn new_registered(
+        record: SessionRecord,
+        persisted: bool,
+        registry: std::sync::Weak<SessionRegistry>,
+    ) -> Arc<Self> {
+        let id = record.id.clone();
+        Arc::new_cyclic(move |state| Self {
             data: Mutex::new(SessionData { record, persisted }),
             active_turn: AtomicBool::new(false),
-        }
+            _registry_membership: SessionRegistration::new(registry, id, state.clone()),
+        })
     }
 
     pub(crate) fn validate_loaded(record: &SessionRecord) -> Result<(), EngineError> {

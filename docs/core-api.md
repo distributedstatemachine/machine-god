@@ -54,8 +54,10 @@ Exactly one turn may be live for a session within an [`Engine`](crate::Engine),
 including across separately created, separately loaded, and cloned session
 handles. A second prompt returns
 [`EngineError::SessionBusy`](crate::EngineError::SessionBusy). Engine instances
-keep a weak registry by session ID; handles and live turns share the canonical
-state, while dead entries are pruned without keeping abandoned sessions alive.
+keep a weak ordered registry by session ID; handles and live turns share the
+canonical state. Create and load perform only a targeted logarithmic lookup,
+while the last state owner reclaims its own key with an identity check so a
+delayed destructor cannot remove a concurrent replacement.
 This lease is deliberately process-local and scoped to one `Engine`. Separate
 engine instances or processes rely on optimistic store revisions for unique turn
 IDs, but this milestone does not claim a cross-engine or distributed live-turn
