@@ -32,6 +32,15 @@ findings and the branch resolves them as follows:
   timeouts are explicit, configurable, recorded, and terminate the spawned
   process group. Evidence is written atomically only after validation, and a
   failed run removes stale output at the requested path.
+- Atomic evidence output used a predictable PID-based temporary and
+  `write_text`, which followed a pre-created symlink and could overwrite its
+  victim before promoting the symlink as evidence. Publication now uses an
+  exclusive random same-directory temporary, retains and verifies its regular
+  file descriptor/inode, flushes and syncs the file, atomically replaces the
+  destination, and syncs the parent directory. Cleanup is identity-checked, and
+  the output leaf is not resolved through symlinks. Regressions cover hostile
+  destination symlinks and files, the former predictable name, forced random-name
+  collisions, failure cleanup, and missing output directories.
 - Builds and measurements inherited ambient flags, configuration, loader
   injection, and caches. They now receive recorded allowlisted environments,
   fresh Cargo and Zig build caches, a fresh home and temporary directory, and no
@@ -102,8 +111,9 @@ preexisting upstream checkouts, every scratch/cache/tool-state path, original
 worktree mutation after snapshotting, process-group and detached-descendant
 timeouts, Linux descendant containment without readable environments, delayed
 containment scans, Git export attributes and link modes, mutable tool paths, and
-successful-command zombie reaping, injected lifecycle failures, PID reuse, and
-NUL-porcelain path parsing, and stale evidence.
+successful-command zombie reaping, injected lifecycle failures, PID reuse,
+NUL-porcelain path parsing, atomic-publication symlinks and collisions, and stale
+evidence.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,

@@ -2400,13 +2400,55 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
 
 def write_evidence_atomic(output: Path, evidence: Mapping[str, Any]) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.{os.getpid()}.partial")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.",
+        suffix=".partial",
+        dir=output.parent,
+    )
+    temporary = Path(temporary_name)
+    created = os.fstat(descriptor)
+    published = False
     try:
-        temporary.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        if not stat.S_ISREG(created.st_mode) or created.st_nlink != 1:
+            raise RuntimeError("exclusive evidence temporary is not a regular file")
+        with os.fdopen(os.dup(descriptor), "w", encoding="utf-8") as destination:
+            destination.write(json.dumps(evidence, indent=2) + "\n")
+            destination.flush()
+            os.fsync(destination.fileno())
+        current = os.stat(temporary, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or current.st_dev != created.st_dev
+            or current.st_ino != created.st_ino
+            or current.st_nlink != 1
+        ):
+            raise RuntimeError("exclusive evidence temporary identity changed")
         os.replace(temporary, output)
+        published = True
+        installed = os.stat(output, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(installed.st_mode)
+            or installed.st_dev != created.st_dev
+            or installed.st_ino != created.st_ino
+        ):
+            raise RuntimeError("published evidence is not the verified regular file")
+        directory_descriptor = os.open(
+            output.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        os.close(descriptor)
+        if not published:
+            try:
+                leftover = os.stat(temporary, follow_symlinks=False)
+                if leftover.st_dev == created.st_dev and leftover.st_ino == created.st_ino:
+                    temporary.unlink()
+            except OSError:
+                pass
 
 
 def main() -> int:
@@ -2433,7 +2475,8 @@ def main() -> int:
     parser.add_argument("--cargo", default="cargo")
     args = parser.parse_args()
 
-    output = args.output.resolve()
+    requested_output = args.output.absolute()
+    output = requested_output.parent.resolve() / requested_output.name
     output.unlink(missing_ok=True)
     try:
         evidence = collect_evidence(args)

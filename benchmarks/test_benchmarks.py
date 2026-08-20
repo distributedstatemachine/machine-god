@@ -42,6 +42,7 @@ from upstream import (  # noqa: E402
     source_tree_sha256,
     unavailable_workloads,
     validate_upstream_evidence,
+    write_evidence_atomic,
 )
 import upstream  # noqa: E402
 
@@ -1306,6 +1307,74 @@ class UpstreamHarnessTest(unittest.TestCase):
             )
         self.assertNotEqual(completed.returncode, 0)
         self.assertFalse(evidence_path.exists())
+
+    def test_atomic_evidence_resists_symlinks_files_and_temp_collisions(self) -> None:
+        evidence = {"schema_version": 2, "value": "new"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            victim = root / "victim"
+            victim.write_text("do not overwrite", encoding="utf-8")
+            output = root / "evidence.json"
+            output.symlink_to(victim)
+            predictable = root / f".{output.name}.{os.getpid()}.partial"
+            predictable.symlink_to(victim)
+
+            write_evidence_atomic(output, evidence)
+
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite")
+            self.assertFalse(output.is_symlink())
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), evidence)
+            self.assertTrue(predictable.is_symlink())
+
+            output.write_text("stale regular file", encoding="utf-8")
+            write_evidence_atomic(output, evidence)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), evidence)
+
+            collision = root / f".{output.name}.collision.partial"
+            collision.write_text("attacker file", encoding="utf-8")
+            with mock.patch.object(
+                upstream.tempfile,
+                "_get_candidate_names",
+                return_value=iter(("collision", "exclusive")),
+            ):
+                write_evidence_atomic(output, evidence)
+            self.assertEqual(collision.read_text(encoding="utf-8"), "attacker file")
+            self.assertFalse(root.joinpath(f".{output.name}.exclusive.partial").exists())
+
+    def test_atomic_evidence_creates_output_directory_and_preserves_symlink_victim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "nested/results/evidence.json"
+            write_evidence_atomic(output, {"ok": True})
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {"ok": True})
+            self.assertEqual(list(output.parent.glob(f".{output.name}.*.partial")), [])
+
+            victim = root / "victim"
+            victim.write_text("safe", encoding="utf-8")
+            output.unlink()
+            output.symlink_to(victim)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "benchmarks/upstream.py"),
+                    "--output",
+                    str(output),
+                    "--upstream-dir",
+                    str(root / "fx"),
+                    "--scratch-dir",
+                    str(root / "scratch"),
+                    "--zig",
+                    "definitely-not-zig",
+                    "--fetch-timeout",
+                    "0.1",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "safe")
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

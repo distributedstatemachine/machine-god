@@ -87,6 +87,13 @@ immediately when the command's captured streams
 close, before any post-run containment scan. The final JSON is written atomically
 only after validation; failure removes the named evidence output rather than
 leaving a partial or stale artifact.
+Publication uses an exclusively created, randomly named temporary in the output
+directory. The harness writes through the retained descriptor, flushes and
+`fsync`s it, verifies the pathname still names the same regular-file inode,
+atomically replaces the destination without following a destination symlink,
+and `fsync`s the parent directory. Cleanup unlinks only the temporary identity
+the harness created. Output parent directories are created as needed, and the
+leaf output name is never resolved through a pre-existing symlink.
 
 The supervisor is initialized before a command can launch and attaches the root
 as an immutable `(PID, start_time)` identity. Every ancestry expansion requires
