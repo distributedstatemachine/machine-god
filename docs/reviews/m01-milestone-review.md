@@ -110,3 +110,14 @@ external immutable-SHA gate above and consistently calls the Milestone 01 output
 a benchmark harness with non-product bootstrap evidence. These are resolutions
 of findings against `19ca28e`; this record makes no claim about final review of
 the follow-up commit that contains it.
+
+An operability rereview of
+`a7545c9d3ff9ebe92bfb7e8a3ba1a6e1c9a10224` found that the direct download had
+retry counts but no connection, transfer, or low-speed deadline. A connected
+server could therefore stall until the 45-minute job timeout and prevent the
+benchmark from running. The download now bounds connection setup to 30 seconds
+and each attempt to 300 seconds, treats less than 1,024 bytes per second for 60
+seconds as a stalled attempt, permits three retries within a 900-second retry
+window, and emits only HTTP status, redirect count, timing, byte-count, and
+transfer-rate diagnostics. This paragraph records the resolution of the finding
+against `a7545c9`; it does not attest final review of its own commit.

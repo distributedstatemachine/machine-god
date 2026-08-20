@@ -75,9 +75,16 @@ jobs:
             --location \
             --proto '=https' \
             --tlsv1.2 \
-            --retry 5 \
+            --connect-timeout 30 \
+            --max-time 300 \
+            --speed-limit 1024 \
+            --speed-time 60 \
+            --retry 3 \
             --retry-all-errors \
             --retry-delay 2 \
+            --retry-max-time 900 \
+            --write-out \
+            'zig_download_http=%{http_code} redirects=%{num_redirects} connect_s=%{time_connect} starttransfer_s=%{time_starttransfer} total_s=%{time_total} bytes=%{size_download} speed_Bps=%{speed_download}\n' \
             --output "${zig_archive}" \
             "${ZIG_URL}"
           printf '%s  %s\n' "${ZIG_SHA256}" "${zig_archive}" \
