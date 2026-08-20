@@ -1,13 +1,14 @@
 use futures_core::Stream;
 use futures_util::StreamExt;
 use machine_god_core::{
-    BoxFuture, ContentBlock, Engine, EngineEvent, EngineLimits, Message, ModelEvent,
-    PermissionDecision, PermissionGrantScope, Role, SessionId, SessionRecord, SessionRevision,
-    SessionStore, SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, ToolCall,
-    ToolCallId, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
+    BoxFuture, CancellationToken, ContentBlock, Engine, EngineError, EngineEvent, EngineLimits,
+    Message, ModelEvent, PermissionDecision, PermissionError, PermissionGrantScope, ProviderError,
+    ProviderErrorKind, Role, SessionId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
+    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
 };
 use machine_god_testkit::{
-    InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
+    EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
     ScriptedModelProvider, ScriptedPermissionHandler, ScriptedTool, SessionStoreScript,
     SessionStoreStep, ToolStep,
 };
@@ -43,6 +44,28 @@ fn allow() -> PermissionStep {
     PermissionStep::Decision(PermissionDecision::Allow {
         scope: PermissionGrantScope::Once,
     })
+}
+
+fn unknown_result_size() -> usize {
+    serde_json::to_vec(&ToolOutput {
+        content: json!({
+            "code": "tool_result_unknown",
+            "message": "tool result status is unknown",
+        }),
+        is_error: true,
+    })
+    .unwrap()
+    .len()
+}
+
+fn assert_unknown_result(message: &Message, expected_call: &str) {
+    assert_eq!(message.role, Role::Tool);
+    let ContentBlock::ToolResult { call_id, output } = &message.content[0] else {
+        panic!("expected tool result placeholder")
+    };
+    assert_eq!(call_id.as_str(), expected_call);
+    assert!(output.is_error);
+    assert_eq!(output.content["code"], "tool_result_unknown");
 }
 
 fn events(step: impl IntoIterator<Item = ModelEvent>) -> ModelProviderStep {
@@ -450,10 +473,15 @@ fn with_limit(mut limits: EngineLimits, field: &str, value: usize) -> EngineLimi
     let value = NonZeroUsize::new(value).unwrap();
     match field {
         "rounds" => limits.max_model_rounds = value,
+        "events" => limits.max_model_events_per_turn = value,
         "calls_round" => limits.max_tool_calls_per_round = value,
         "calls_turn" => limits.max_tool_calls_per_turn = value,
         "text" => limits.max_assistant_text_bytes = value,
         "reasoning" => limits.max_reasoning_bytes = value,
+        "stop_detail" => limits.max_stop_detail_bytes = value,
+        "prompt" => limits.max_prompt_bytes = value,
+        "transcript_messages" => limits.max_transcript_messages = value,
+        "transcript_bytes" => limits.max_transcript_bytes = value,
         "arguments" => limits.max_tool_argument_bytes = value,
         "result" => limits.max_serialized_tool_result_bytes = value,
         "cumulative" => limits.max_cumulative_tool_result_bytes = value,
@@ -583,7 +611,7 @@ fn oversized_executed_result_leaves_a_durable_unknown_result_marker() {
     );
     let tool = ScriptedTool::new(
         spec("large"),
-        [ToolStep::Output(ToolOutput::success("a large result"))],
+        [ToolStep::Output(ToolOutput::success("x".repeat(4_096)))],
     );
     let store = InMemorySessionStore::new();
     let engine = Engine::builder()
@@ -591,7 +619,11 @@ fn oversized_executed_result_leaves_a_durable_unknown_result_marker() {
         .session_store(store.clone())
         .permission_handler(ScriptedPermissionHandler::new([allow()]))
         .tool(tool.clone())
-        .limits(with_limit(EngineLimits::default(), "result", 8))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "result",
+            unknown_result_size(),
+        ))
         .build()
         .unwrap();
     let id = SessionId::new("large-result").unwrap();
@@ -608,7 +640,7 @@ fn oversized_executed_result_leaves_a_durable_unknown_result_marker() {
         panic!("expected durable marker")
     };
     assert!(output.is_error);
-    assert_eq!(output.content["code"], "tool_result_discarded");
+    assert_eq!(output.content["code"], "tool_result_unknown");
 }
 
 #[test]
@@ -715,6 +747,7 @@ fn model_round_and_turn_call_budgets_stop_before_additional_work() {
 fn exact_result_boundary_is_allowed_and_cumulative_boundary_is_checked() {
     let output_value = ToolOutput::success(json!({"value": 1}));
     let exact = serde_json::to_vec(&output_value).unwrap().len();
+    let result_limit = exact.max(unknown_result_size());
     let provider = ScriptedModelProvider::new(
         "exact-result",
         [
@@ -732,8 +765,8 @@ fn exact_result_boundary_is_allowed_and_cumulative_boundary_is_checked() {
         ],
     );
     let tool = ScriptedTool::new(spec("known"), [ToolStep::Output(output_value.clone())]);
-    let mut limits = with_limit(EngineLimits::default(), "result", exact);
-    limits = with_limit(limits, "cumulative", exact);
+    let mut limits = with_limit(EngineLimits::default(), "result", result_limit);
+    limits = with_limit(limits, "cumulative", unknown_result_size());
     let engine = Engine::builder()
         .provider(provider)
         .session_store(InMemorySessionStore::new())
@@ -748,6 +781,8 @@ fn exact_result_boundary_is_allowed_and_cumulative_boundary_is_checked() {
         TurnEvent::Completed { .. }
     ));
 
+    let cumulative_value = ToolOutput::success("z".repeat(unknown_result_size()));
+    let cumulative_size = serde_json::to_vec(&cumulative_value).unwrap().len();
     let provider = ScriptedModelProvider::new(
         "cumulative-result",
         [events([
@@ -765,13 +800,13 @@ fn exact_result_boundary_is_allowed_and_cumulative_boundary_is_checked() {
     let tool = ScriptedTool::new(
         spec("known"),
         [
-            ToolStep::Output(output_value.clone()),
-            ToolStep::Output(output_value),
+            ToolStep::Output(cumulative_value.clone()),
+            ToolStep::Output(cumulative_value),
         ],
     );
     let store = InMemorySessionStore::new();
-    let mut limits = with_limit(EngineLimits::default(), "result", exact);
-    limits = with_limit(limits, "cumulative", exact * 2 - 1);
+    let mut limits = with_limit(EngineLimits::default(), "result", cumulative_size);
+    limits = with_limit(limits, "cumulative", cumulative_size * 2 - 1);
     let engine = Engine::builder()
         .provider(provider)
         .session_store(store.clone())
@@ -792,7 +827,7 @@ fn exact_result_boundary_is_allowed_and_cumulative_boundary_is_checked() {
     let ContentBlock::ToolResult { output, .. } = &durable.messages[3].content[0] else {
         panic!("expected marker")
     };
-    assert_eq!(output.content["code"], "tool_result_discarded");
+    assert_eq!(output.content["code"], "tool_result_unknown");
 }
 
 #[test]
@@ -1186,7 +1221,7 @@ impl SessionStore for GatedFinalStore {
 }
 
 #[test]
-fn final_stop_survives_cancellation_and_completion_follows_durable_commit() {
+fn pending_final_commit_is_cancellable_and_releases_the_lease() {
     let provider = ScriptedModelProvider::new(
         "final-commit",
         [events([ModelEvent::Stop {
@@ -1212,25 +1247,15 @@ fn final_stop_survives_cancellation_and_completion_follows_durable_commit() {
     poll_pending(&mut turn);
     assert_eq!(inner.record(&id).unwrap().messages.len(), 1);
     assert!(turn.handle().cancel());
-    poll_pending(&mut turn);
-    store.final_ready.store(true, Ordering::Release);
-    let model_stop = next(&mut turn);
-    assert!(matches!(
-        model_stop.payload,
-        TurnEvent::Model {
-            event: ModelEvent::Stop {
-                reason: StopReason::Completed
-            }
-        }
-    ));
-    assert_eq!(inner.record(&id).unwrap().messages.len(), 2);
     assert!(matches!(
         next(&mut turn).payload,
         TurnEvent::Completed {
-            reason: StopReason::Completed,
+            reason: StopReason::Cancelled,
             ..
         }
     ));
+    assert_eq!(inner.record(&id).unwrap().messages.len(), 1);
+    assert!(!session.has_active_turn());
 }
 
 #[derive(Clone, Debug)]
@@ -1293,4 +1318,675 @@ fn nonincreasing_store_revision_fails_without_claiming_completion() {
             .any(|event| matches!(event.payload, TurnEvent::Completed { .. }))
     );
     assert_eq!(inner.record(&id).unwrap().messages.len(), 1);
+}
+
+#[test]
+fn provider_originated_cancelled_completion_cannot_bypass_pending_sink() {
+    let provider = ScriptedModelProvider::new(
+        "provider-cancelled",
+        [events([ModelEvent::Stop {
+            reason: StopReason::Cancelled,
+        }])],
+    );
+    let sink = RecordingEventSink::scripted([
+        EventSinkStep::Accept,
+        EventSinkStep::Accept,
+        EventSinkStep::Pending,
+    ]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .event_sink(sink.clone())
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("provider-cancelled").unwrap());
+    let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
+    assert!(matches!(next(&mut turn).payload, TurnEvent::Started));
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Model {
+            event: ModelEvent::Stop {
+                reason: StopReason::Cancelled
+            }
+        }
+    ));
+    poll_pending(&mut turn);
+    assert!(turn.handle().cancel());
+    poll_pending(&mut turn);
+    assert!(session.has_active_turn());
+    assert!(matches!(
+        sink.events()[2].payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    drop(turn);
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn model_event_and_stop_detail_limits_enforce_exact_boundaries() {
+    for (id, event_limit, completes) in [("event-boundary", 3, true), ("event-over", 2, false)] {
+        let provider = ScriptedModelProvider::new(
+            id,
+            [events([
+                ModelEvent::TextDelta {
+                    text: String::new(),
+                },
+                ModelEvent::Usage {
+                    usage: TokenUsage::default(),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::Completed,
+                },
+            ])],
+        );
+        let engine = Engine::builder()
+            .provider(provider)
+            .session_store(InMemorySessionStore::new())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .limits(with_limit(EngineLimits::default(), "events", event_limit))
+            .build()
+            .unwrap();
+        let session = engine.create_session(SessionId::new(id).unwrap());
+        let output = collect(&session);
+        if completes {
+            assert!(matches!(
+                output.last().unwrap().payload,
+                TurnEvent::Completed { .. }
+            ));
+        } else {
+            assert!(matches!(
+                &output.last().unwrap().payload,
+                TurnEvent::Failed { code, .. } if code == "model_event_limit"
+            ));
+        }
+        assert!(!session.has_active_turn());
+    }
+
+    for (id, detail, completes) in [
+        ("stop-detail-boundary", "1234", true),
+        ("stop-detail-over", "12345", false),
+    ] {
+        let provider = ScriptedModelProvider::new(
+            id,
+            [events([ModelEvent::Stop {
+                reason: StopReason::Other(detail.to_owned()),
+            }])],
+        );
+        let engine = Engine::builder()
+            .provider(provider)
+            .session_store(InMemorySessionStore::new())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .limits(with_limit(EngineLimits::default(), "stop_detail", 4))
+            .build()
+            .unwrap();
+        let output = collect(&engine.create_session(SessionId::new(id).unwrap()));
+        assert_eq!(
+            matches!(output.last().unwrap().payload, TurnEvent::Completed { .. }),
+            completes
+        );
+    }
+}
+
+#[test]
+fn prompt_and_transcript_limits_fail_before_unbounded_cloning_or_persistence() {
+    let provider = ScriptedModelProvider::new("prompt-limit", []);
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(EngineLimits::default(), "prompt", 4))
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("prompt-limit").unwrap());
+    assert!(matches!(
+        futures_executor::block_on(session.prompt("12345")),
+        Err(EngineError::Protocol(message)) if message.contains("prompt")
+    ));
+    assert!(provider.requests().is_empty());
+    assert!(store.calls().is_empty());
+    assert!(!session.has_active_turn());
+
+    let id = SessionId::new("hostile-history").unwrap();
+    let hostile = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(1),
+        next_turn_sequence: 2,
+        messages: vec![
+            Message::text(Role::User, "one"),
+            Message::text(Role::Assistant, "two"),
+        ],
+        metadata: BTreeMap::new(),
+    };
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            id.clone(),
+            hostile,
+        )])))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "transcript_messages",
+            1,
+        ))
+        .build()
+        .unwrap();
+    assert!(matches!(
+        futures_executor::block_on(engine.load_session(id)),
+        Err(EngineError::Protocol(message)) if message.contains("message limit")
+    ));
+
+    let id = SessionId::new("hostile-history-bytes").unwrap();
+    let hostile = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(1),
+        next_turn_sequence: 2,
+        messages: vec![Message::text(Role::User, "larger than four bytes")],
+        metadata: BTreeMap::new(),
+    };
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            id.clone(),
+            hostile,
+        )])))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(EngineLimits::default(), "transcript_bytes", 4))
+        .build()
+        .unwrap();
+    assert!(matches!(
+        futures_executor::block_on(engine.load_session(id)),
+        Err(EngineError::Protocol(message)) if message.contains("serialized byte limit")
+    ));
+
+    let provider = ScriptedModelProvider::new(
+        "growing-history",
+        [events([ModelEvent::Stop {
+            reason: StopReason::Completed,
+        }])],
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "transcript_messages",
+            1,
+        ))
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("growing-history").unwrap());
+    let output = collect(&session);
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "transcript_message_limit"
+    ));
+    assert_eq!(provider.requests().len(), 1);
+}
+
+#[test]
+fn placeholder_budgets_fail_before_committing_calls_or_requesting_permission() {
+    let provider = ScriptedModelProvider::new(
+        "placeholder-budget",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("call", "known", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let permissions = ScriptedPermissionHandler::new([]);
+    let store = InMemorySessionStore::new();
+    let tool = ScriptedTool::new(spec("known"), []);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .limits(with_limit(EngineLimits::default(), "result", 1))
+        .build()
+        .unwrap();
+    let id = SessionId::new("placeholder-budget").unwrap();
+    let output = collect(&engine.create_session(id.clone()));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "tool_result_size_limit"
+    ));
+    assert_eq!(store.record(&id).unwrap().messages.len(), 1);
+    assert!(permissions.requests().is_empty());
+    assert!(tool.invocations().is_empty());
+}
+
+#[test]
+fn denial_reason_is_host_only_and_permission_ids_include_turn_identity() {
+    let secret = "SENTINEL_POLICY_SECRET";
+    let provider = ScriptedModelProvider::new(
+        "permission-identity",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("first-call", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("second-call", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = ScriptedPermissionHandler::new([
+        PermissionStep::Decision(PermissionDecision::Deny {
+            reason: secret.to_owned(),
+        }),
+        PermissionStep::Decision(PermissionDecision::Deny {
+            reason: "second denial".to_owned(),
+        }),
+    ]);
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(permissions.clone())
+        .tool(ScriptedTool::new(spec("known"), []))
+        .build()
+        .unwrap();
+    let id = SessionId::new("permission-identity").unwrap();
+    let session = engine.create_session(id.clone());
+    let first_events = collect(&session);
+    let _second_events = collect(&session);
+
+    let ids = permissions
+        .requests()
+        .into_iter()
+        .map(|request| request.id.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["turn-1:permission-1", "turn-2:permission-1"]);
+    assert!(first_events.iter().any(|event| matches!(
+        &event.payload,
+        TurnEvent::PermissionResolved {
+            decision: PermissionDecision::Deny { reason },
+            ..
+        } if reason == secret
+    )));
+    assert!(
+        !serde_json::to_string(&store.record(&id).unwrap())
+            .unwrap()
+            .contains(secret)
+    );
+    assert!(
+        !serde_json::to_string(&provider.requests()[1].request.messages)
+            .unwrap()
+            .contains(secret)
+    );
+}
+
+#[test]
+fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
+    let secret = "SENTINEL_COMPONENT_SECRET";
+    let provider = ScriptedModelProvider::new(
+        "provider-secret",
+        [ModelProviderStep::StartError(ProviderError::new(
+            ProviderErrorKind::Other,
+            "provider_code",
+            secret,
+            false,
+        ))],
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let output = collect(&engine.create_session(SessionId::new("provider-secret").unwrap()));
+    assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
+
+    let provider = ScriptedModelProvider::new(
+        "permission-secret",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("call", "known", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([PermissionStep::Error(
+            PermissionError::new("policy_code", secret),
+        )]))
+        .tool(ScriptedTool::new(spec("known"), []))
+        .build()
+        .unwrap();
+    let id = SessionId::new("permission-secret").unwrap();
+    let output = collect(&engine.create_session(id.clone()));
+    assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "call");
+
+    let provider = ScriptedModelProvider::new(
+        "store-secret",
+        [events([ModelEvent::Stop {
+            reason: StopReason::Completed,
+        }])],
+    );
+    let store = InMemorySessionStore::configured(
+        BTreeMap::new(),
+        SessionStoreScript {
+            loads: None,
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Error(SessionStoreError::new(
+                    SessionStoreErrorKind::Other,
+                    "store_code",
+                    secret,
+                    false,
+                )),
+            ]),
+        },
+        16,
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store)
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let output = collect(&engine.create_session(SessionId::new("store-secret").unwrap()));
+    assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
+
+    let store = InMemorySessionStore::configured(
+        BTreeMap::new(),
+        SessionStoreScript {
+            loads: None,
+            saves: Some(vec![SessionStoreStep::Error(SessionStoreError::new(
+                SessionStoreErrorKind::Unavailable,
+                "initial_store_code",
+                secret,
+                true,
+            ))]),
+        },
+        8,
+    );
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(store)
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("initial-store-secret").unwrap());
+    let error = futures_executor::block_on(session.prompt("go")).unwrap_err();
+    assert!(!error.to_string().contains(secret));
+}
+
+#[test]
+fn permission_sink_and_replacement_save_failures_leave_placeholders() {
+    let requested = call("call", "known", json!({}));
+    let provider = ScriptedModelProvider::new(
+        "sink-placeholder",
+        [events([
+            ModelEvent::ToolCall {
+                call: requested.clone(),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let sink = RecordingEventSink::scripted([
+        EventSinkStep::Accept,
+        EventSinkStep::Accept,
+        EventSinkStep::Accept,
+        EventSinkStep::Error(machine_god_core::EventSinkError::new(
+            "sink_failure",
+            "expected",
+        )),
+    ]);
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .event_sink(sink)
+        .tool(ScriptedTool::new(spec("known"), []))
+        .build()
+        .unwrap();
+    let id = SessionId::new("sink-placeholder").unwrap();
+    let session = engine.create_session(id.clone());
+    let turn = futures_executor::block_on(session.prompt("go")).unwrap();
+    let result = futures_executor::block_on(turn.collect::<Vec<_>>());
+    assert!(matches!(
+        result.last(),
+        Some(Err(EngineError::EventSink(_)))
+    ));
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "call");
+
+    let provider = ScriptedModelProvider::new(
+        "save-placeholder",
+        [events([
+            ModelEvent::ToolCall { call: requested },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let store = InMemorySessionStore::configured(
+        BTreeMap::new(),
+        SessionStoreScript {
+            loads: None,
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Error(SessionStoreError::new(
+                    SessionStoreErrorKind::Unavailable,
+                    "replace_failed",
+                    "secret replacement detail",
+                    true,
+                )),
+            ]),
+        },
+        32,
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .tool(ScriptedTool::new(
+            spec("known"),
+            [ToolStep::Output(ToolOutput::success("done"))],
+        ))
+        .build()
+        .unwrap();
+    let id = SessionId::new("save-placeholder").unwrap();
+    let output = collect(&engine.create_session(id.clone()));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { component, .. } if component == "store"
+    ));
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "call");
+}
+
+#[derive(Clone, Debug)]
+struct CancelBeforeReadyTool {
+    invoked: Arc<AtomicBool>,
+}
+
+impl Tool for CancelBeforeReadyTool {
+    fn spec(&self) -> ToolSpec {
+        spec("cancel-ready")
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        self.invoked.store(true, Ordering::Release);
+        cancellation.cancel();
+        Box::pin(async { Ok(ToolOutput::success("must be discarded")) })
+    }
+}
+
+#[test]
+fn cancellation_ready_race_keeps_placeholder_and_next_prompt_never_replays() {
+    let provider = ScriptedModelProvider::new(
+        "cancel-ready",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("race", "cancel-ready", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let invoked = Arc::new(AtomicBool::new(false));
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .tool(CancelBeforeReadyTool {
+            invoked: Arc::clone(&invoked),
+        })
+        .build()
+        .unwrap();
+    let id = SessionId::new("cancel-ready").unwrap();
+    let session = engine.create_session(id.clone());
+    let first = collect(&session);
+    assert!(matches!(
+        first.last().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(invoked.load(Ordering::Acquire));
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "race");
+
+    let second = collect(&session);
+    assert!(matches!(
+        second.last().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Completed,
+            ..
+        }
+    ));
+    assert_eq!(provider.requests().len(), 2);
+    assert_unknown_result(&provider.requests()[1].request.messages[2], "race");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn multi_call_cancellation_preserves_known_prefix_and_unknown_suffix_for_resume() {
+    let provider = ScriptedModelProvider::new(
+        "multi-resume",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("first", "known", json!({})),
+                },
+                ModelEvent::ToolCall {
+                    call: call("second", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let store = InMemorySessionStore::new();
+    let tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success("first-result"))],
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([
+            allow(),
+            PermissionStep::Pending,
+        ]))
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let id = SessionId::new("multi-resume").unwrap();
+    let session = engine.create_session(id.clone());
+    let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
+    let mut saw_second_request = false;
+    for _ in 0..20 {
+        let event = next(&mut turn);
+        if matches!(
+            event.payload,
+            TurnEvent::PermissionRequested {
+                request: machine_god_core::PermissionRequest {
+                    capability: machine_god_core::Capability::Tool { ref call_id, .. },
+                    ..
+                }
+            } if call_id.as_str() == "second"
+        ) {
+            saw_second_request = true;
+            break;
+        }
+    }
+    assert!(saw_second_request);
+    poll_pending(&mut turn);
+    assert!(turn.handle().cancel());
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    let durable = store.record(&id).unwrap();
+    assert_eq!(durable.messages.len(), 4);
+    let ContentBlock::ToolResult { output, .. } = &durable.messages[2].content[0] else {
+        panic!("expected first result")
+    };
+    assert_eq!(output.content, "first-result");
+    assert_unknown_result(&durable.messages[3], "second");
+    assert_eq!(tool.invocations().len(), 1);
+
+    let resumed = collect(&session);
+    assert!(matches!(
+        resumed.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    let resume_request = &provider.requests()[1].request.messages;
+    assert_unknown_result(&resume_request[3], "second");
+    assert_eq!(tool.invocations().len(), 1);
 }

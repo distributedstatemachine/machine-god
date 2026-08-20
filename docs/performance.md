@@ -174,3 +174,14 @@ as `unimplemented` for machine-god and are not timed on fx in isolation. Once
 both products expose matching semantics and fixtures, a later milestone must
 introduce a claim-eligible schema and reviewed workload definition rather than
 relabel this bootstrap evidence.
+
+## Milestone 02 orchestration note
+
+The durable tool loop checks the complete transcript before each provider
+request and optimistic store mutation. That work is linear in the current
+serialized transcript size, and a compare-and-save retry repeats it. Message and
+serialized-byte limits cap the work; the serializer aborts at the byte limit and
+does not allocate a second JSON buffer. Tests exercise a growing transcript and
+its enforced boundary, but M02 makes no throughput or latency claim for this
+path. A future representative session-replay benchmark should measure increasing
+history sizes and conflict rates before an optimization claim is made.

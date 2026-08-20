@@ -34,9 +34,11 @@ to policy.
 
 [`EngineLimits`](crate::EngineLimits) supplies nonzero per-turn bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
-assistant text and observer-visible reasoning, 64 KiB of serialized arguments
-per call, 64 KiB per serialized tool result, and 256 KiB of cumulative tool
-results. Hosts may replace the complete limits value through
+assistant text and observer-visible reasoning, 4,096 model events, 1 KiB of
+provider stop detail, 256 KiB per user prompt, 4,096 transcript messages, 8 MiB
+of serialized transcript, 64 KiB of serialized arguments per call, 64 KiB per
+serialized tool result, and 256 KiB of cumulative tool results. Hosts may
+replace the complete limits value through
 [`EngineBuilder::limits`](crate::EngineBuilder::limits). Counters use checked
 arithmetic and a limit failure occurs before another tool is authorized or
 executed. JSON byte sizes are counted through a serializer without allocating a
@@ -53,8 +55,10 @@ turn ID, and monotonic sequence number.
 ```text
 created -> started -> provider round -> final assistant commit -> completed
                          |
-                         +-> tool-call stop -> assistant commit
-                                  -> permission -> tool -> result commit -+
+                         +-> tool-call stop -> atomic assistant +
+                                  unknown-result placeholders commit
+                                  -> permission -> tool
+                                  -> in-place result replacement -----+
                          ^                                           |
                          +------------- next provider round <--------+
 
@@ -89,10 +93,12 @@ poller. Repeated polls, idle streams, and abandoned waiters therefore do not
 retain stale wakers. Waker clone, replacement drop, deregistration drop, and wake
 callbacks all execute outside the waiter-registry mutex, so a custom waker may
 reenter cancellation APIs without self-deadlocking.
-Once a provider terminal outcome is established, its pending observer delivery
-does not retain or refresh a cancellation waiter. Later cancellation cannot
-change that outcome and therefore cannot create a self-waking hot loop while
-the terminal observer remains backpressured.
+Once a terminal outcome is established, its pending observer delivery does not
+retain or refresh a cancellation waiter. Later cancellation cannot change that
+outcome and therefore cannot create a self-waking hot loop while the terminal
+observer remains backpressured. A final provider `Stop` is not established as
+the turn outcome until its assistant message has been saved. Its save therefore
+remains cancellable and a pending store cannot prevent shutdown.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
 Prompt creation reserves it and appends the user message through the configured
@@ -135,20 +141,23 @@ cancels the shared provider token before dropping the stream and releasing the
 lease; stale cancellation handles then observe that cleanup signal. Observer
 failure after an already-terminal provider outcome does not relabel completion
 as cancellation.
-Before a provider terminal outcome is established, cancellation has priority
-over observer backpressure: core drops a pending observer future and yields the
-terminal cancellation directly before releasing the session lease. Once a
-provider `Stop`, provider failure, or missing-stop failure is established, later
-cancellation cannot relabel or bypass its pending delivery or terminal result.
-Core rechecks cancellation immediately after provider startup, provider-stream,
-and observer-delivery polls and before interpreting their results. Before a
-provider terminal outcome exists, cancellation observed at one of those
-boundaries wins over a simultaneously returned startup error, stream event,
-stream error, EOF, observer success, or observer failure. If cancellation is not
-observed there, a returned provider terminal outcome establishes precedence;
-its later observer delivery remains protected from cancellation.
-An already-staged `Completed(Cancelled)` still bypasses observer delivery so an
-optional observer cannot make cancellation or shutdown wait forever.
+Before a terminal outcome is established, cancellation has priority over
+observer backpressure: core drops a pending observer future and yields the local
+terminal cancellation directly before releasing the session lease. Core
+rechecks cancellation immediately after provider startup, provider-stream,
+store, policy, tool, and observer-delivery polls and before interpreting their
+results. Cancellation observed at one of those boundaries wins while the turn
+is still preterminal. A provider failure or missing-stop failure establishes
+precedence when accepted; a final `Stop` establishes precedence only after its
+required durable commit succeeds. Later cancellation cannot relabel or bypass
+their pending delivery or terminal result.
+
+Cancellation provenance is explicit. Only `Completed(Cancelled)` synthesized by
+the local cancellation token bypasses an optional observer, so observer
+backpressure cannot prevent shutdown. A provider-originated
+`StopReason::Cancelled` is an ordinary provider result: it must complete its
+durable save and observer delivery, and an external cancellation request cannot
+misclassify it as locally synthesized cancellation.
 
 ## Provider grammar and durable tool rounds
 
@@ -165,22 +174,34 @@ leaves schema enforcement to the tool implementation; it does not claim core
 JSON-Schema validation.
 
 Assistant text deltas are concatenated into one durable text block. Reasoning
-deltas remain observable model events but are never persisted. A valid
-tool-call assistant message is committed before permission handling. Calls run
-serially in provider order. Every invocation receives a fresh critical-risk
-`Capability::Tool` authorization request; core does not cache positive grant
-scopes. A host policy may implement its own identity-safe caching. Denial becomes
-a bounded error `ToolResult` without starting the tool. A tool implementation
-error likewise becomes a bounded model-visible result, allowing the next model
-round to recover. A policy infrastructure error fails the turn.
+deltas remain observable model events but are never persisted. After a valid
+tool-call `Stop` is delivered, core atomically commits the assistant message and
+exactly one conservative unknown-result placeholder for every call before any
+permission request or tool execution. Placeholder sizes count against both the
+per-result and cumulative budgets; a budget that cannot hold all placeholders
+fails before that commit and before external work. Calls then run serially in
+provider order.
 
-Each tool result is committed before `ToolFinished` and before the next call or
-model round. If an executed tool returns an oversized result, core discards the
-value, commits a bounded error marker saying that execution occurred with an
-unknown result, and then fails the turn; it does not invite blind replay. The
-final assistant message is committed before its model `Stop` and `Completed`
-events are delivered. Token usage is the latest report within each round and is
-added across rounds with checked counters.
+Every invocation receives a fresh critical-risk `Capability::Tool`
+authorization request whose ID contains its turn identity and ordinal; core does
+not cache positive grant scopes. A host policy may implement its own
+identity-safe caching. Denial becomes a fixed generic error `ToolResult` without
+starting the tool. The detailed policy reason remains available only in the
+host-facing `PermissionResolved` event. A tool implementation error likewise
+becomes a fixed generic model-visible result, allowing the next model round to
+recover without copying tool-specific diagnostics into the transcript. A policy
+infrastructure error fails the turn.
+
+Each completed result replaces its matching placeholder in place with an exact
+transcript-prefix compare-and-save before `ToolFinished`, the next call, or the
+next model round. Cancellation or a policy, tool, observer, or store failure
+therefore leaves one result for every committed call: completed prefixes are
+known and the untouched suffix remains explicitly unknown. Resume never
+automatically replays those calls. If an executed tool returns an oversized
+result, core drops that value and terminates while retaining the precommitted
+unknown-result placeholder. The final assistant message is committed before its
+model `Stop` and `Completed` events are delivered. Token usage is the latest
+report within each round and is added across rounds with checked counters.
 
 Message commits retry optimistic conflicts at most 32 times. A retry is allowed
 only while the durable messages exactly match the captured transcript; newer
@@ -189,15 +210,28 @@ divergent record fails closed, so core never blindly merges or duplicates
 messages. Durable saving is authoritative: observer success events follow their
 related commit, and observer failure never replays a committed effect.
 
-A final non-tool `Stop` establishes the terminal provider outcome when polled.
-Cancellation observed earlier wins; cancellation requested during its required
-assistant commit or later observer delivery cannot relabel it. Store failure can
-still replace that outcome with a terminal durability failure. Intermediate
-`ToolCalls` stops are not turn-terminal, so cancellation may interrupt their
-assistant commit, permission request, tool work, result commit, or next-provider
+A final non-tool `Stop` remains preterminal during its required assistant
+commit. Cancellation can interrupt that save and release the live-turn lease;
+store failure becomes a terminal durability failure. After a successful commit,
+the provider result is established and cancellation cannot relabel its model
+`Stop`, observer delivery, or `Completed` event. Intermediate `ToolCalls` stops
+are not turn-terminal, so cancellation may interrupt their atomic placeholder
+commit, permission request, tool work, result replacement, or next-provider
 startup. All such futures are owned and polled inline by `Turn`; dropping the
 turn drops them rather than detaching work.
 
+Prompt bytes are checked before persistence. Transcript message count and
+serialized bytes are checked before loading a record into the engine registry,
+before every provider request, and before every commit or replacement. Model
+events, including `Stop`, are counted across the whole turn; provider-specific
+`StopReason::Other` details are bounded before they are cloned or delivered.
+Structured provider, policy, store, and tool diagnostics are converted to
+bounded generic host errors or model-visible results. Permission decisions are
+host-facing and may contain sensitive policy reasons; event sinks and event
+consumers must therefore be treated as trusted components.
+
 The live-turn lease remains process-local to one `Engine`. M02 does not claim
-cross-engine fencing or crash-safe replay of non-idempotent native side effects;
-those require the M04 lifecycle and persistence design.
+cross-engine fencing. A crash after a tool side effect but before placeholder
+replacement leaves an explicit unknown result, which prevents automatic replay
+but cannot establish whether the external side effect completed; stronger
+exactly-once recovery requires the M04 lifecycle and persistence design.

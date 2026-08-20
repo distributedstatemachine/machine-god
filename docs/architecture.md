@@ -54,7 +54,8 @@ Durability divides each loop into explicit phases:
 
 ```text
 user+turn reservation -> model
-model tool calls -> assistant commit -> permission/tool -> result commit -> model
+model tool calls -> atomic assistant + N unknown placeholders commit
+                 -> permission/tool -> exact in-place result replacement -> model
 model final answer -> assistant commit -> terminal events
 ```
 
@@ -62,6 +63,12 @@ The transcript prefix is the optimistic-merge boundary. Allocator and metadata
 changes may advance across a retry while messages remain identical; any message
 change is divergence and fails closed. This preserves external allocator work
 without guessing how concurrent conversation suffixes should be ordered.
+Prompt and complete-transcript message/serialized-byte limits are checked before
+the corresponding store or model boundary. Every committed call therefore has
+exactly one result message even if cancellation, an infrastructure error, or a
+process interruption prevents its real result from replacing the conservative
+placeholder. The next model round is not requested until all placeholders in
+the current round have been replaced.
 
 A live turn owns the session lease and provider cancellation signal as one
 lifecycle unit. Destruction signals cancellation before removing waiters and
@@ -69,16 +76,18 @@ releasing the lease; terminal completion has already released that unit, so its
 later destructor is cleanup-only. Out-of-band observer or delivery-state failure
 before a terminal provider outcome follows the same cancel-before-release rule,
 preventing dropped streams from orphaning retained provider work.
-Provider terminal establishment is the cancellation precedence boundary. A
-provider stop or failure retains its pending observer delivery and final reason
-even if cancellation races afterward; only cancellation established before that
-boundary may bypass observer backpressure.
-Provider startup, stream, and observer delivery polls each include a post-poll
-cancellation observation before their result is interpreted. Cancellation
-observed there establishes the terminal outcome first while the turn remains
-preterminal; otherwise a returned stop, provider error, or EOF establishes
-provider precedence before its delivery is staged. The same observation cannot
-override an already-established provider terminal outcome.
+Terminal establishment is the cancellation precedence boundary. A final model
+stop remains preterminal through its assistant-message save so cancellation can
+wake and release a turn blocked on persistence. After that save, the stop
+retains its pending observer delivery and final reason even if cancellation
+races afterward. Provider failures and missing stops establish their terminal
+outcome when accepted because they have no final assistant commit.
+Provider startup, stream, persistence, policy, tool, and observer delivery polls
+include a post-poll cancellation observation before their result is
+interpreted. Cancellation observed there establishes the terminal outcome first
+while the turn remains preterminal. Only a locally synthesized cancellation
+bypasses observer delivery; a provider-originated cancelled stop follows normal
+durability and observer ordering.
 Cancellation treats wakers as user-controlled callback objects: cloning happens
 before locking, registry mutation only moves values, and superseded, removed, or
 drained wakers are dropped or invoked after unlocking.

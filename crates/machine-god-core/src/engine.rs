@@ -28,10 +28,15 @@ pub struct EngineBuilder {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EngineLimits {
     pub max_model_rounds: NonZeroUsize,
+    pub max_model_events_per_turn: NonZeroUsize,
     pub max_tool_calls_per_turn: NonZeroUsize,
     pub max_tool_calls_per_round: NonZeroUsize,
     pub max_assistant_text_bytes: NonZeroUsize,
     pub max_reasoning_bytes: NonZeroUsize,
+    pub max_stop_detail_bytes: NonZeroUsize,
+    pub max_prompt_bytes: NonZeroUsize,
+    pub max_transcript_messages: NonZeroUsize,
+    pub max_transcript_bytes: NonZeroUsize,
     pub max_tool_argument_bytes: NonZeroUsize,
     pub max_serialized_tool_result_bytes: NonZeroUsize,
     pub max_cumulative_tool_result_bytes: NonZeroUsize,
@@ -41,10 +46,15 @@ impl Default for EngineLimits {
     fn default() -> Self {
         Self {
             max_model_rounds: NonZeroUsize::new(8).expect("default is nonzero"),
+            max_model_events_per_turn: NonZeroUsize::new(4_096).expect("default is nonzero"),
             max_tool_calls_per_turn: NonZeroUsize::new(16).expect("default is nonzero"),
             max_tool_calls_per_round: NonZeroUsize::new(4).expect("default is nonzero"),
             max_assistant_text_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_reasoning_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
+            max_stop_detail_bytes: NonZeroUsize::new(1024).expect("default is nonzero"),
+            max_prompt_bytes: NonZeroUsize::new(256 * 1024).expect("default is nonzero"),
+            max_transcript_messages: NonZeroUsize::new(4_096).expect("default is nonzero"),
+            max_transcript_bytes: NonZeroUsize::new(8 * 1024 * 1024).expect("default is nonzero"),
             max_tool_argument_bytes: NonZeroUsize::new(64 * 1024).expect("default is nonzero"),
             max_serialized_tool_result_bytes: NonZeroUsize::new(64 * 1024)
                 .expect("default is nonzero"),
@@ -359,7 +369,11 @@ impl Engine {
     ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
-            let record = inner.session_store.load(id.clone()).await?;
+            let record = inner
+                .session_store
+                .load(id.clone())
+                .await
+                .map_err(crate::session::redact_store_error)?;
             if let Some(record) = &record
                 && record.id != id
             {
@@ -370,6 +384,7 @@ impl Engine {
             }
             if let Some(record) = &record {
                 crate::session::SessionState::validate_loaded(record)?;
+                crate::session::validate_record_limits(record, inner.limits)?;
             }
             record
                 .map(|record| {

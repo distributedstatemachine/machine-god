@@ -51,6 +51,29 @@ impl SessionRecord {
     }
 }
 
+pub(crate) fn validate_record_limits(
+    record: &SessionRecord,
+    limits: crate::EngineLimits,
+) -> Result<(), EngineError> {
+    validate_transcript(&record.messages, limits)
+        .map_err(|failure| EngineError::Protocol(failure.message))
+}
+
+pub(crate) fn redact_store_error(error: SessionStoreError) -> SessionStoreError {
+    let SessionStoreError {
+        kind,
+        code,
+        message: _,
+        retryable,
+    } = error;
+    SessionStoreError::new(
+        kind,
+        bounded_text(&code, 128),
+        "session store failed",
+        retryable,
+    )
+}
+
 const fn initial_turn_sequence() -> u64 {
     1
 }
@@ -271,6 +294,11 @@ impl Session {
     }
 
     async fn start_prompt(&self, prompt: Prompt) -> Result<Turn, EngineError> {
+        if prompt.text.len() > self.engine.limits.max_prompt_bytes.get() {
+            return Err(EngineError::Protocol(
+                "prompt exceeded the configured byte limit".to_owned(),
+            ));
+        }
         self.state
             .active_turn
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -309,6 +337,7 @@ impl Session {
             sequence: 0,
             usage: TokenUsage::default(),
             terminal_seen: false,
+            locally_synthesized_cancellation: false,
             cancellation_waiter: None,
             lease: Some(lease),
         })
@@ -327,6 +356,7 @@ impl Session {
                     .data
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
+                validate_record_limits(&data.record, self.engine.limits)?;
                 (
                     data.record.clone(),
                     data.persisted.then_some(data.record.revision),
@@ -342,6 +372,7 @@ impl Session {
             candidate
                 .messages
                 .push(Message::text(Role::User, &prompt_text));
+            validate_record_limits(&candidate, self.engine.limits)?;
             let previous_revision = candidate.revision;
 
             match self
@@ -362,7 +393,13 @@ impl Session {
                 }
                 Err(error) if error.kind == SessionStoreErrorKind::Conflict => {
                     let id = candidate.id.clone();
-                    let Some(current) = self.engine.session_store.load(id.clone()).await? else {
+                    let Some(current) = self
+                        .engine
+                        .session_store
+                        .load(id.clone())
+                        .await
+                        .map_err(redact_store_error)?
+                    else {
                         let mut data = self
                             .state
                             .data
@@ -385,9 +422,10 @@ impl Session {
                             current.id
                         )));
                     }
+                    validate_record_limits(&current, self.engine.limits)?;
                     self.state.reconcile_loaded(current)?;
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(redact_store_error(error).into()),
             }
         }
         Err(SessionStoreError::new(
@@ -445,11 +483,11 @@ impl TurnFailure {
         }
     }
 
-    fn provider(error: crate::ProviderError) -> Self {
+    fn provider(error: &crate::ProviderError) -> Self {
         Self {
             component: "provider".to_owned(),
-            code: error.code,
-            message: error.message,
+            code: bounded_text(&error.code, 128),
+            message: "model provider failed".to_owned(),
             retryable: error.retryable,
         }
     }
@@ -463,20 +501,20 @@ impl TurnFailure {
         }
     }
 
-    fn store(error: SessionStoreError) -> Self {
+    fn store(error: &SessionStoreError) -> Self {
         Self {
             component: "store".to_owned(),
-            code: error.code,
-            message: error.message,
+            code: bounded_text(&error.code, 128),
+            message: "session store failed".to_owned(),
             retryable: error.retryable,
         }
     }
 
-    fn permission(error: crate::PermissionError) -> Self {
+    fn permission(error: &crate::PermissionError) -> Self {
         Self {
             component: "permission".to_owned(),
-            code: error.code,
-            message: error.message,
+            code: bounded_text(&error.code, 128),
+            message: "permission policy failed".to_owned(),
             retryable: false,
         }
     }
@@ -705,6 +743,7 @@ async fn run_turn_inner(
 
     let limits = engine.limits;
     let mut model_rounds = 0usize;
+    let mut model_events = 0usize;
     let mut tool_calls = 0usize;
     let mut cumulative_tool_result_bytes = 0usize;
     let mut seen_call_ids = BTreeSet::new();
@@ -725,6 +764,7 @@ async fn run_turn_inner(
             .into());
         }
 
+        validate_transcript(&record.messages, limits)?;
         let request = ModelRequest {
             session_id: session_id.clone(),
             turn_id: turn_id.clone(),
@@ -736,7 +776,7 @@ async fn run_turn_inner(
         let provider_start = engine.provider.stream(request, cancellation.clone());
         let mut stream = await_cancellable(provider_start, &cancellation)
             .await?
-            .map_err(TurnFailure::provider)?;
+            .map_err(|error| TurnFailure::provider(&error))?;
 
         let mut assistant_text = String::new();
         let mut calls = Vec::new();
@@ -744,8 +784,23 @@ async fn run_turn_inner(
         let mut round_usage = TokenUsage::default();
         let stop_reason = loop {
             let item = next_model_item(&mut stream, &cancellation).await?;
+            if item.is_some() {
+                model_events = model_events.checked_add(1).ok_or_else(|| {
+                    TurnFailure::limit("model_event_limit", "model event count overflowed")
+                })?;
+                if model_events > limits.max_model_events_per_turn.get() {
+                    return Err(TurnFailure::limit(
+                        "model_event_limit",
+                        "turn exceeded the configured model event limit",
+                    )
+                    .into());
+                }
+            }
             match item {
-                Some(Ok(ModelEvent::Stop { reason })) => break reason,
+                Some(Ok(ModelEvent::Stop { reason })) => {
+                    validate_stop_reason(&reason, limits)?;
+                    break reason;
+                }
                 Some(Ok(event)) => {
                     match &event {
                         ModelEvent::TextDelta { text } => {
@@ -852,7 +907,7 @@ async fn run_turn_inner(
                     }
                     emitter.emit(TurnEvent::Model { event }).await;
                 }
-                Some(Err(error)) => return Err(TurnFailure::provider(error).into()),
+                Some(Err(error)) => return Err(TurnFailure::provider(&error).into()),
                 None => {
                     return Err(TurnFailure::missing_stop().into());
                 }
@@ -863,7 +918,6 @@ async fn run_turn_inner(
         validate_round_stop(&calls, &stop_reason)?;
 
         if calls.is_empty() {
-            emitter.establish_terminal();
             let assistant = Message {
                 role: Role::Assistant,
                 content: assistant_message_content(&assistant_text, &calls),
@@ -874,9 +928,10 @@ async fn run_turn_inner(
                 &record,
                 assistant,
                 &cancellation,
-                false,
+                true,
             )
             .await?;
+            emitter.establish_terminal();
             emitter
                 .emit_established_terminal(TurnEvent::Model {
                     event: ModelEvent::Stop {
@@ -904,6 +959,46 @@ async fn run_turn_inner(
             seen_call_ids.insert(call.id.clone());
         }
 
+        let placeholder = unknown_tool_result();
+        let Some(placeholder_bytes) = serialized_json_size_bounded(
+            &placeholder,
+            limits.max_serialized_tool_result_bytes.get(),
+        )
+        .map_err(|_| {
+            TurnFailure::protocol(
+                "tool_result_serialization",
+                "tool result placeholder could not be serialized",
+            )
+        })?
+        else {
+            return Err(TurnFailure::limit(
+                "tool_result_size_limit",
+                "configured result limit cannot hold the required result placeholder",
+            )
+            .into());
+        };
+        let placeholder_total = placeholder_bytes.checked_mul(calls.len()).ok_or_else(|| {
+            TurnFailure::limit(
+                "cumulative_tool_result_size_limit",
+                "placeholder result byte count overflowed",
+            )
+        })?;
+        let placeholder_cumulative = cumulative_tool_result_bytes
+            .checked_add(placeholder_total)
+            .ok_or_else(|| {
+                TurnFailure::limit(
+                    "cumulative_tool_result_size_limit",
+                    "cumulative placeholder result byte count overflowed",
+                )
+            })?;
+        if placeholder_cumulative > limits.max_cumulative_tool_result_bytes.get() {
+            return Err(TurnFailure::limit(
+                "cumulative_tool_result_size_limit",
+                "configured cumulative result limit cannot hold required result placeholders",
+            )
+            .into());
+        }
+
         emitter
             .emit(TurnEvent::Model {
                 event: ModelEvent::Stop {
@@ -911,18 +1006,32 @@ async fn run_turn_inner(
                 },
             })
             .await;
-        record = commit_message(
+        let placeholder_start = record.messages.len().checked_add(1).ok_or_else(|| {
+            TurnFailure::limit(
+                "transcript_message_limit",
+                "placeholder message index overflowed",
+            )
+        })?;
+        let mut round_messages = Vec::with_capacity(calls.len().saturating_add(1));
+        round_messages.push(Message {
+            role: Role::Assistant,
+            content: assistant_message_content(&assistant_text, &calls),
+        });
+        round_messages.extend(
+            calls
+                .iter()
+                .map(|call| tool_result_message(call.id.clone(), placeholder.clone())),
+        );
+        record = commit_messages(
             &engine,
             &session_state,
             &record,
-            Message {
-                role: Role::Assistant,
-                content: assistant_message_content(&assistant_text, &calls),
-            },
+            round_messages,
             &cancellation,
             true,
         )
         .await?;
+        cumulative_tool_result_bytes = placeholder_cumulative;
 
         for (round_index, call) in calls.into_iter().enumerate() {
             check_cancelled(&cancellation)?;
@@ -932,7 +1041,7 @@ async fn run_turn_inner(
                 .ok_or_else(|| {
                     TurnFailure::limit("tool_call_limit", "tool call count overflowed")
                 })?;
-            let permission_id = PermissionRequestId::new(format!("permission-{ordinal}"))
+            let permission_id = PermissionRequestId::new(format!("{turn_id}:permission-{ordinal}"))
                 .map_err(|error| TurnFailure::protocol("permission_id", error.to_string()))?;
             let request = PermissionRequest {
                 id: permission_id.clone(),
@@ -954,7 +1063,7 @@ async fn run_turn_inner(
             let authorization = engine.permission_handler.authorize(request);
             let decision = await_cancellable(authorization, &cancellation)
                 .await?
-                .map_err(TurnFailure::permission)?;
+                .map_err(|error| TurnFailure::permission(&error))?;
             emitter
                 .emit(TurnEvent::PermissionResolved {
                     request_id: permission_id,
@@ -963,11 +1072,11 @@ async fn run_turn_inner(
                 .await;
 
             let (output, emit_finished) = match decision {
-                PermissionDecision::Deny { reason } => (
+                PermissionDecision::Deny { .. } => (
                     ToolOutput {
                         content: json!({
                             "code": "permission_denied",
-                            "message": bounded_text(&reason, 1_024),
+                            "message": "tool execution was denied by policy",
                         }),
                         is_error: true,
                     },
@@ -997,8 +1106,8 @@ async fn run_turn_inner(
                         Ok(output) => output,
                         Err(error) => ToolOutput {
                             content: json!({
-                                "code": bounded_text(&error.code, 256),
-                                "message": bounded_text(&error.message, 1_024),
+                                "code": "tool_error",
+                                "message": "tool execution failed",
                                 "retryable": error.retryable,
                             }),
                             is_error: true,
@@ -1023,59 +1132,39 @@ async fn run_turn_inner(
                     "tool_result_size_limit",
                     "tool result exceeded the configured serialized size limit",
                 )),
-                Some(result_bytes) => {
-                    match cumulative_tool_result_bytes.checked_add(result_bytes) {
-                        Some(total) if total <= limits.max_cumulative_tool_result_bytes.get() => {
-                            cumulative_tool_result_bytes = total;
-                            None
-                        }
-                        _ => Some(TurnFailure::limit(
-                            "cumulative_tool_result_size_limit",
-                            "turn exceeded the cumulative tool result size limit",
-                        )),
+                Some(result_bytes) => match cumulative_tool_result_bytes
+                    .checked_sub(placeholder_bytes)
+                    .and_then(|without_placeholder| without_placeholder.checked_add(result_bytes))
+                {
+                    Some(total) if total <= limits.max_cumulative_tool_result_bytes.get() => {
+                        cumulative_tool_result_bytes = total;
+                        None
                     }
-                }
+                    _ => Some(TurnFailure::limit(
+                        "cumulative_tool_result_size_limit",
+                        "turn exceeded the cumulative tool result size limit",
+                    )),
+                },
             };
             if let Some(failure) = size_failure {
-                if emit_finished {
-                    emitter.establish_terminal();
-                    let marker = ToolOutput {
-                        content: json!({
-                            "code": "tool_result_discarded",
-                            "message": "tool executed but its result exceeded a configured size bound",
-                        }),
-                        is_error: true,
-                    };
-                    let _committed = commit_message(
-                        &engine,
-                        &session_state,
-                        &record,
-                        Message {
-                            role: Role::Tool,
-                            content: vec![ContentBlock::ToolResult {
-                                call_id: call.id.clone(),
-                                output: marker,
-                            }],
-                        },
-                        &cancellation,
-                        false,
-                    )
-                    .await?;
-                }
+                drop(output);
+                emitter.establish_terminal();
                 return Err(failure.into());
             }
 
-            record = commit_message(
+            let placeholder_index =
+                placeholder_start.checked_add(round_index).ok_or_else(|| {
+                    TurnFailure::limit(
+                        "transcript_message_limit",
+                        "placeholder message index overflowed",
+                    )
+                })?;
+            record = replace_message(
                 &engine,
                 &session_state,
                 &record,
-                Message {
-                    role: Role::Tool,
-                    content: vec![ContentBlock::ToolResult {
-                        call_id: call.id.clone(),
-                        output: output.clone(),
-                    }],
-                },
+                placeholder_index,
+                tool_result_message(call.id.clone(), output.clone()),
                 &cancellation,
                 true,
             )
@@ -1090,6 +1179,23 @@ async fn run_turn_inner(
             }
         }
         tool_calls = new_total;
+    }
+}
+
+fn unknown_tool_result() -> ToolOutput {
+    ToolOutput {
+        content: json!({
+            "code": "tool_result_unknown",
+            "message": "tool result status is unknown",
+        }),
+        is_error: true,
+    }
+}
+
+fn tool_result_message(call_id: crate::ToolCallId, output: ToolOutput) -> Message {
+    Message {
+        role: Role::Tool,
+        content: vec![ContentBlock::ToolResult { call_id, output }],
     }
 }
 
@@ -1134,8 +1240,8 @@ impl Write for JsonByteCounter {
     }
 }
 
-fn serialized_json_size_bounded(
-    value: &impl Serialize,
+fn serialized_json_size_bounded<T: Serialize + ?Sized>(
+    value: &T,
     limit: usize,
 ) -> Result<Option<usize>, serde_json::Error> {
     let mut counter = JsonByteCounter {
@@ -1152,6 +1258,33 @@ fn serialized_json_size_bounded(
     }
 }
 
+fn validate_transcript(
+    messages: &[Message],
+    limits: crate::EngineLimits,
+) -> Result<(), TurnFailure> {
+    if messages.len() > limits.max_transcript_messages.get() {
+        return Err(TurnFailure::limit(
+            "transcript_message_limit",
+            "transcript exceeded the configured message limit",
+        ));
+    }
+    let bytes = serialized_json_size_bounded(messages, limits.max_transcript_bytes.get()).map_err(
+        |_| {
+            TurnFailure::protocol(
+                "transcript_serialization",
+                "transcript could not be serialized",
+            )
+        },
+    )?;
+    if bytes.is_none() {
+        return Err(TurnFailure::limit(
+            "transcript_size_limit",
+            "transcript exceeded the configured serialized byte limit",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_round_stop(calls: &[ToolCall], stop_reason: &StopReason) -> Result<(), WorkflowAbort> {
     if calls.is_empty() && *stop_reason == StopReason::ToolCalls {
         return Err(TurnFailure::protocol(
@@ -1164,6 +1297,22 @@ fn validate_round_stop(calls: &[ToolCall], stop_reason: &StopReason) -> Result<(
         return Err(TurnFailure::protocol(
             "calls_with_incompatible_stop",
             "tool calls require a tool-calls stop reason",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_stop_reason(
+    reason: &StopReason,
+    limits: crate::EngineLimits,
+) -> Result<(), WorkflowAbort> {
+    if let StopReason::Other(detail) = reason
+        && detail.len() > limits.max_stop_detail_bytes.get()
+    {
+        return Err(TurnFailure::limit(
+            "stop_detail_size_limit",
+            "provider stop detail exceeded the configured byte limit",
         )
         .into());
     }
@@ -1268,6 +1417,26 @@ async fn commit_message(
     cancellation: &CancellationToken,
     honor_cancellation: bool,
 ) -> Result<SessionRecord, WorkflowAbort> {
+    commit_messages(
+        engine,
+        state,
+        base,
+        vec![message],
+        cancellation,
+        honor_cancellation,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_lines)]
+async fn commit_messages(
+    engine: &Arc<EngineInner>,
+    state: &Arc<SessionState>,
+    base: &SessionRecord,
+    messages: Vec<Message>,
+    cancellation: &CancellationToken,
+    honor_cancellation: bool,
+) -> Result<SessionRecord, WorkflowAbort> {
     const MAX_CONFLICT_RETRIES: usize = 32;
 
     for _ in 0..MAX_CONFLICT_RETRIES {
@@ -1293,13 +1462,15 @@ async fn commit_message(
                 )
                 .into());
             }
+            validate_transcript(&data.record.messages, engine.limits)?;
             (
                 data.record.clone(),
                 data.persisted.then_some(data.record.revision),
             )
         };
         let mut candidate = snapshot;
-        candidate.messages.push(message.clone());
+        candidate.messages.extend(messages.iter().cloned());
+        validate_transcript(&candidate.messages, engine.limits)?;
         let previous_revision = candidate.revision;
         let save = engine
             .session_store
@@ -1323,7 +1494,7 @@ async fn commit_message(
                 let load = engine.session_store.load(base.id.clone());
                 let Some(current) = await_operation(load, cancellation, honor_cancellation)
                     .await?
-                    .map_err(TurnFailure::store)?
+                    .map_err(|error| TurnFailure::store(&error))?
                 else {
                     return Err(TurnFailure::protocol(
                         "transcript_missing_after_conflict",
@@ -1344,6 +1515,7 @@ async fn commit_message(
                 SessionState::validate_loaded(&current).map_err(|error| {
                     TurnFailure::protocol("invalid_conflict_record", error.to_string())
                 })?;
+                validate_transcript(&current.messages, engine.limits)?;
                 if current.messages != base.messages {
                     return Err(TurnFailure::protocol(
                         "transcript_diverged",
@@ -1355,16 +1527,132 @@ async fn commit_message(
                     TurnFailure::protocol("conflict_reconciliation", error.to_string())
                 })?;
             }
-            Err(error) => return Err(TurnFailure::store(error).into()),
+            Err(error) => return Err(TurnFailure::store(&error).into()),
         }
     }
-    Err(TurnFailure::store(SessionStoreError::new(
+    let error = SessionStoreError::new(
         SessionStoreErrorKind::Conflict,
         "message_commit_contended",
         "message commit exceeded its conflict retry bound",
         true,
-    ))
-    .into())
+    );
+    Err(TurnFailure::store(&error).into())
+}
+
+#[allow(clippy::too_many_lines)]
+async fn replace_message(
+    engine: &Arc<EngineInner>,
+    state: &Arc<SessionState>,
+    base: &SessionRecord,
+    index: usize,
+    replacement: Message,
+    cancellation: &CancellationToken,
+    honor_cancellation: bool,
+) -> Result<SessionRecord, WorkflowAbort> {
+    const MAX_CONFLICT_RETRIES: usize = 32;
+
+    for _ in 0..MAX_CONFLICT_RETRIES {
+        if honor_cancellation {
+            check_cancelled(cancellation)?;
+        }
+        let (snapshot, expected_revision) = {
+            let data = state
+                .data
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if data.record.id != base.id {
+                return Err(TurnFailure::protocol(
+                    "session_identity_changed",
+                    "session identity changed during result replacement",
+                )
+                .into());
+            }
+            if data.record.messages != base.messages {
+                return Err(TurnFailure::protocol(
+                    "transcript_diverged",
+                    "durable transcript diverged before result replacement",
+                )
+                .into());
+            }
+            validate_transcript(&data.record.messages, engine.limits)?;
+            (
+                data.record.clone(),
+                data.persisted.then_some(data.record.revision),
+            )
+        };
+        let mut candidate = snapshot;
+        let Some(message) = candidate.messages.get_mut(index) else {
+            return Err(TurnFailure::protocol(
+                "placeholder_missing",
+                "tool result placeholder index was missing",
+            )
+            .into());
+        };
+        *message = replacement.clone();
+        validate_transcript(&candidate.messages, engine.limits)?;
+        let previous_revision = candidate.revision;
+        let save = engine
+            .session_store
+            .save(candidate.clone(), expected_revision);
+        match await_operation(save, cancellation, honor_cancellation).await? {
+            Ok(revision) if revision > previous_revision => {
+                candidate.revision = revision;
+                state.reconcile_saved(&candidate).map_err(|error| {
+                    TurnFailure::protocol("save_reconciliation", error.to_string())
+                })?;
+                return Ok(candidate);
+            }
+            Ok(_) => {
+                return Err(TurnFailure::protocol(
+                    "non_increasing_revision",
+                    "session store returned a non-increasing revision",
+                )
+                .into());
+            }
+            Err(error) if error.kind == SessionStoreErrorKind::Conflict => {
+                let load = engine.session_store.load(base.id.clone());
+                let Some(current) = await_operation(load, cancellation, honor_cancellation)
+                    .await?
+                    .map_err(|error| TurnFailure::store(&error))?
+                else {
+                    return Err(TurnFailure::protocol(
+                        "transcript_missing_after_conflict",
+                        "durable transcript disappeared after a result conflict",
+                    )
+                    .into());
+                };
+                if current.id != base.id {
+                    return Err(TurnFailure::protocol(
+                        "session_identity_changed",
+                        "session store returned a different session during result replacement",
+                    )
+                    .into());
+                }
+                SessionState::validate_loaded(&current).map_err(|error| {
+                    TurnFailure::protocol("invalid_conflict_record", error.to_string())
+                })?;
+                validate_transcript(&current.messages, engine.limits)?;
+                if current.messages != base.messages {
+                    return Err(TurnFailure::protocol(
+                        "transcript_diverged",
+                        "durable transcript diverged during result replacement",
+                    )
+                    .into());
+                }
+                state.reconcile_loaded(current).map_err(|error| {
+                    TurnFailure::protocol("conflict_reconciliation", error.to_string())
+                })?;
+            }
+            Err(error) => return Err(TurnFailure::store(&error).into()),
+        }
+    }
+    let error = SessionStoreError::new(
+        SessionStoreErrorKind::Conflict,
+        "message_replace_contended",
+        "message replacement exceeded its conflict retry bound",
+        true,
+    );
+    Err(TurnFailure::store(&error).into())
 }
 
 struct PendingDelivery {
@@ -1420,6 +1708,7 @@ pub struct Turn {
     sequence: u64,
     usage: TokenUsage,
     terminal_seen: bool,
+    locally_synthesized_cancellation: bool,
     cancellation_waiter: Option<u64>,
     lease: Option<TurnLease>,
 }
@@ -1479,6 +1768,7 @@ impl Turn {
 
     fn establish_cancellation(&mut self) {
         self.terminal_seen = true;
+        self.locally_synthesized_cancellation = true;
         self.state = TurnState::EmitTerminal(TurnEvent::Completed {
             reason: StopReason::Cancelled,
             usage: self.usage,
@@ -1498,13 +1788,14 @@ impl Turn {
         if !self.cancellation.is_cancelled() {
             return None;
         }
-        let delivers_cancellation = matches!(
-            &self.delivery.as_ref()?.event.payload,
-            TurnEvent::Completed {
-                reason: StopReason::Cancelled,
-                ..
-            }
-        );
+        let delivers_cancellation = self.locally_synthesized_cancellation
+            && matches!(
+                &self.delivery.as_ref()?.event.payload,
+                TurnEvent::Completed {
+                    reason: StopReason::Cancelled,
+                    ..
+                }
+            );
         if self.terminal_seen && !delivers_cancellation {
             return None;
         }
@@ -1512,6 +1803,7 @@ impl Turn {
         let event = if delivers_cancellation {
             pending.event
         } else {
+            self.locally_synthesized_cancellation = true;
             let event = EngineEvent {
                 session_id: self.session_id.clone(),
                 turn_id: self.id.clone(),
