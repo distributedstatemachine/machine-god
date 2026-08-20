@@ -65,6 +65,78 @@ jobs:
               check=True,
           )
           PY
+      - name: Check pinned upstream compatibility inventory
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          from scripts.generate_compatibility import parse_lock
+
+          lock = parse_lock(Path("benchmarks/upstream.lock"))
+          upstream = Path(
+              tempfile.mkdtemp(prefix="fx-compatibility-", dir=os.environ["RUNNER_TEMP"])
+          )
+          git_environment = os.environ.copy()
+          for name in ("GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK"):
+              git_environment.pop(name, None)
+          git_environment["GIT_ASKPASS"] = "/bin/false"
+          git_environment["GIT_TERMINAL_PROMPT"] = "0"
+          git = [
+              "git",
+              "-c",
+              "credential.helper=",
+              "-c",
+              "core.askPass=/bin/false",
+              "-c",
+              "http.extraHeader=",
+              "-C",
+              str(upstream),
+          ]
+
+          subprocess.run(["git", "init", "--quiet", str(upstream)], check=True, env=git_environment)
+          subprocess.run(
+              [*git, "remote", "add", "origin", lock["repository"]],
+              check=True,
+              env=git_environment,
+          )
+          subprocess.run(
+              [*git, "fetch", "--depth=1", "origin", lock["commit"]],
+              check=True,
+              env=git_environment,
+          )
+          subprocess.run(
+              [*git, "checkout", "--quiet", "--detach", lock["commit"]],
+              check=True,
+              env=git_environment,
+          )
+          head = subprocess.run(
+              [*git, "rev-parse", "HEAD"],
+              check=True,
+              capture_output=True,
+              text=True,
+              env=git_environment,
+          ).stdout.strip()
+          if head != lock["commit"]:
+              raise SystemExit(f"upstream checkout is {head}, expected {lock['commit']}")
+          subprocess.run(
+              [
+                  sys.executable,
+                  "scripts/generate_compatibility.py",
+                  "--upstream",
+                  str(upstream),
+                  "--check",
+              ],
+              check=True,
+              env=git_environment,
+          )
+          PY
       - name: Release smoke test
         run: |
           cargo +"${RUST_TOOLCHAIN}" build --locked --release -p machine-god-cli

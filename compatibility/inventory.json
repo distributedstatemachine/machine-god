@@ -1101,34 +1101,50 @@
     "repository": "https://github.com/vercel-labs/fx.git",
     "source_files": [
       {
+        "git_blob": "2fe50624b55cf4b11f94a900c701f5ee8676bc53",
+        "mode": "100644",
         "path": "src/core/slash_commands/command_specs.zig",
         "sha256": "4ac60fb097cdec6cacde93da7796fb9c05a11ab031d1afdd219eda9c9f7d54c3"
       },
       {
+        "git_blob": "e389e77f4c3ea4c461a9f66143fd2b48654d0238",
+        "mode": "100644",
         "path": "src/builtins/commands.zig",
         "sha256": "2679669e3e443e733e528ea2f7ea154bbbdceac63e3682e0e265dd52f6297328"
       },
       {
+        "git_blob": "28ce8e6f56efe1a013d89f96ef648d6331bbcb5d",
+        "mode": "100644",
         "path": "src/builtins/tools.zig",
         "sha256": "f2a07edf458626c29d156069cb2f8abd32d160ad88a76ed057033dae3e51f035"
       },
       {
+        "git_blob": "884963171ac66c8bc3299a9a4d5d7db687f62440",
+        "mode": "100644",
         "path": "sdk/package.json",
         "sha256": "608214ce18551e2daf7255c6ec18d85555c7b121a73cc1e15146269433ee0d4a"
       },
       {
+        "git_blob": "eb7ac909123b68c4f7b0631b50db96d964f51638",
+        "mode": "100644",
         "path": "sdk/fx-sdk.js",
         "sha256": "c8a5255220d80713f5deec53866806405d49499062534301d92e2e5fee94c12b"
       },
       {
+        "git_blob": "187da93f0559c0ce877ac7b001f71d771b67a00e",
+        "mode": "100644",
         "path": "sdk/node.js",
         "sha256": "e3607f3f9b493fa0e780970fb2be3a0b201f2c9f470265e3f93795cb4361a7da"
       },
       {
+        "git_blob": "355b5ca9b0e3133321067b88806b9e4352570492",
+        "mode": "100644",
         "path": "sdk/browser.js",
         "sha256": "4228ae3a0e425f4b548364e7cc87eb78ec0b2e518924d2765a5f3ba591e4cb2c"
       },
       {
+        "git_blob": "4383450c763b72c4afb198594926576c5bb3dea9",
+        "mode": "100644",
         "path": "scripts/pgso/corpus.json",
         "sha256": "1ef5abd584564ecaff18b1d9a40c7845410c55849fe90fef2f6c1148dd07c810"
       }

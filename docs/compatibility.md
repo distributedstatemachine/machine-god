@@ -21,11 +21,11 @@ machine-readable artifact.
 
 | Surface | Status | Milestone | Notes |
 | --- | --- | --- | --- |
-| Top-level CLI commands | planned | 03 | Match the provider-neutral user outcomes while keeping the machine-god CLI a thin host with its own naming where required. |
-| Slash command kinds | planned | 03-05 | Core session and host commands arrive with the native CLI; extension commands follow their MCP, skills, and subagent owners. |
-| Built-in tool names | planned | 03-05 | Implement equivalent permission-gated capabilities behind provider-neutral core contracts; extension tools follow milestone 05. |
-| SDK exports | deferred | 06 | Rust embedding is primary; JavaScript, Node, and browser compatibility begins after the engine and native host stabilize. |
-| E2E owners | intentional difference | 01-07 | Retain upstream owners as behavioral coverage evidence, but use Rust-focused deterministic tests and benchmark workloads rather than file-for-file test parity. |
+| Top\-level CLI commands | planned | 03 | Match the provider\-neutral user outcomes while keeping the machine\-god CLI a thin host with its own naming where required\. |
+| Slash command kinds | planned | 03\-05 | Core session and host commands arrive with the native CLI; extension commands follow their MCP, skills, and subagent owners\. |
+| Built\-in tool names | planned | 03\-05 | Implement equivalent permission\-gated capabilities behind provider\-neutral core contracts; extension tools follow milestone 05\. |
+| SDK exports | deferred | 06 | Rust embedding is primary; JavaScript, Node, and browser compatibility begins after the engine and native host stabilize\. |
+| E2E owners | intentional difference | 01\-07 | Retain upstream owners as behavioral coverage evidence, but use Rust\-focused deterministic tests and benchmark workloads rather than file\-for\-file test parity\. |
 
 ## Top-level CLI commands
 
@@ -138,75 +138,77 @@ Counts: 30 training, 16 verification-only, and 12 intentional exclusions (58 tot
 
 | Owner file | Upstream classification | Scenario or exclusion reason |
 | --- | --- | --- |
-| `acp.test.ts` | training | e2e-acp |
-| `ask-presentation.test.ts` | training | e2e-ask-presentation |
-| `auth-refresh.test.ts` | training | e2e-auth-refresh |
-| `auto-mode-reliability.test.ts` | verification-only | verify-auto-mode-reliability |
-| `ci-shards.test.ts` | intentional-exclusion | The suite validates the E2E shard planner rather than fx runtime behavior. |
-| `cli.test.ts` | training | e2e-cli |
-| `config-persistence.test.ts` | training | e2e-config-persistence |
-| `context-limits-live.test.ts` | intentional-exclusion | The suite requires a real model credential and live provider responses. |
-| `file-tool-paths.test.ts` | training | e2e-file-tool-paths |
-| `file-tool-permissions.test.ts` | training | e2e-file-tool-permissions |
-| `gateway-stream-lifecycle.test.ts` | training | e2e-gateway-stream-lifecycle |
-| `mcp-auth.test.ts` | training | e2e-mcp-auth |
-| `mcp-http.test.ts` | training | e2e-mcp-http |
-| `mcp-legacy-remote.test.ts` | training | e2e-mcp-legacy-remote |
-| `mcp-stdio.test.ts` | training | e2e-mcp-stdio |
-| `notifications.test.ts` | intentional-exclusion | Sound-related tests are prohibited on the production training host. |
-| `permission-errors.test.ts` | training | e2e-permission-errors |
-| `prompt-history.test.ts` | training | e2e-prompt-history |
-| `session-recovery.test.ts` | training | e2e-session-recovery |
-| `terminal-host.test.ts` | training | e2e-terminal-host |
-| `tmux-helpers.test.ts` | intentional-exclusion | The suite validates E2E harness helpers rather than fx runtime behavior. |
-| `tui-agent.test.ts` | intentional-exclusion | The suite requires a real model credential and is not deterministic. |
-| `tui-auth-source-selection.test.ts` | verification-only | verify-tui-auth-source-selection |
-| `tui-command-permissions.test.ts` | intentional-exclusion | The file contains a sound scenario and cannot be run safely as a whole. |
-| `tui-composer-edit-contracts.test.ts` | verification-only | verify-tui-composer-edit-contracts |
-| `tui-cost.test.ts` | verification-only | verify-tui-cost |
-| `tui-decision-prompts.test.ts` | verification-only | verify-tui-decision-prompts |
-| `tui-direct-write-audit.test.ts` | intentional-exclusion | The suite validates a repository audit tool rather than the candidate runtime. |
-| `tui-file-picker.test.ts` | verification-only | verify-tui-file-picker |
-| `tui-full-transcript-brutal.test.ts` | training | e2e-tui-full-transcript-brutal |
-| `tui-gateway-stream-lifecycle.test.ts` | training | e2e-tui-gateway-stream-lifecycle |
-| `tui-input-line-delete.test.ts` | verification-only | verify-tui-input-line-delete |
-| `tui-input-navigation.test.ts` | verification-only | verify-tui-input-navigation |
-| `tui-interrupt-recovery.test.ts` | training | e2e-tui-interrupt-recovery |
-| `tui-keybindings.test.ts` | intentional-exclusion | The file-wide guard requires a real model credential. |
-| `tui-native-clear-recovery.test.ts` | training | e2e-tui-native-clear-recovery |
-| `tui-permissions.test.ts` | training | e2e-tui-permissions |
-| `tui-render-lab.test.ts` | intentional-exclusion | The suite validates render-lab infrastructure and owns separate native opt-in scenarios. |
-| `tui-render-live-stress.test.ts` | intentional-exclusion | The suite requires a real model credential and explicit live stress opt-in. |
-| `tui-render-replay.test.ts` | verification-only | verify-tui-render-replay |
-| `tui-render-stress.test.ts` | training | e2e-tui-render-stress |
-| `tui-resize.test.ts` | training | e2e-tui-resize |
-| `tui-resume-brutal.test.ts` | training | e2e-tui-resume-brutal |
-| `tui-resume.test.ts` | verification-only | verify-tui-resume |
-| `tui-slash-commands.test.ts` | verification-only | verify-tui-slash-commands |
-| `tui-slash-extra.test.ts` | verification-only | verify-tui-slash-extra |
-| `tui-slash-menu.test.ts` | verification-only | verify-tui-slash-menu |
-| `tui-startup.test.ts` | training | e2e-tui-startup |
-| `tui-subagent-manager.test.ts` | training | e2e-tui-subagent-manager |
-| `tui-terminal-tool.test.ts` | training | e2e-tui-terminal-tool |
-| `vision-route-fake-gateway.test.ts` | training | e2e-vision-route-fake-gateway |
-| `web-fetch-fake-network.test.ts` | training | e2e-web-fetch-fake-network |
-| `web-fetch-live.test.ts` | intentional-exclusion | The suite requires explicit live-network opt-in. |
-| `web-fetch-permission-progress.test.ts` | verification-only | verify-web-fetch-permission-progress |
-| `web-search-fake-gateway.test.ts` | training | e2e-web-search-fake-gateway |
-| `web-search-live.test.ts` | intentional-exclusion | The suite requires a real model credential and live provider responses. |
-| `web-search-permission-progress.test.ts` | verification-only | verify-web-search-permission-progress |
-| `yolo-permission-mode.test.ts` | verification-only | verify-yolo-permission-mode |
+| `acp.test.ts` | training | e2e\-acp |
+| `ask-presentation.test.ts` | training | e2e\-ask\-presentation |
+| `auth-refresh.test.ts` | training | e2e\-auth\-refresh |
+| `auto-mode-reliability.test.ts` | verification\-only | verify\-auto\-mode\-reliability |
+| `ci-shards.test.ts` | intentional\-exclusion | The suite validates the E2E shard planner rather than fx runtime behavior\. |
+| `cli.test.ts` | training | e2e\-cli |
+| `config-persistence.test.ts` | training | e2e\-config\-persistence |
+| `context-limits-live.test.ts` | intentional\-exclusion | The suite requires a real model credential and live provider responses\. |
+| `file-tool-paths.test.ts` | training | e2e\-file\-tool\-paths |
+| `file-tool-permissions.test.ts` | training | e2e\-file\-tool\-permissions |
+| `gateway-stream-lifecycle.test.ts` | training | e2e\-gateway\-stream\-lifecycle |
+| `mcp-auth.test.ts` | training | e2e\-mcp\-auth |
+| `mcp-http.test.ts` | training | e2e\-mcp\-http |
+| `mcp-legacy-remote.test.ts` | training | e2e\-mcp\-legacy\-remote |
+| `mcp-stdio.test.ts` | training | e2e\-mcp\-stdio |
+| `notifications.test.ts` | intentional\-exclusion | Sound\-related tests are prohibited on the production training host\. |
+| `permission-errors.test.ts` | training | e2e\-permission\-errors |
+| `prompt-history.test.ts` | training | e2e\-prompt\-history |
+| `session-recovery.test.ts` | training | e2e\-session\-recovery |
+| `terminal-host.test.ts` | training | e2e\-terminal\-host |
+| `tmux-helpers.test.ts` | intentional\-exclusion | The suite validates E2E harness helpers rather than fx runtime behavior\. |
+| `tui-agent.test.ts` | intentional\-exclusion | The suite requires a real model credential and is not deterministic\. |
+| `tui-auth-source-selection.test.ts` | verification\-only | verify\-tui\-auth\-source\-selection |
+| `tui-command-permissions.test.ts` | intentional\-exclusion | The file contains a sound scenario and cannot be run safely as a whole\. |
+| `tui-composer-edit-contracts.test.ts` | verification\-only | verify\-tui\-composer\-edit\-contracts |
+| `tui-cost.test.ts` | verification\-only | verify\-tui\-cost |
+| `tui-decision-prompts.test.ts` | verification\-only | verify\-tui\-decision\-prompts |
+| `tui-direct-write-audit.test.ts` | intentional\-exclusion | The suite validates a repository audit tool rather than the candidate runtime\. |
+| `tui-file-picker.test.ts` | verification\-only | verify\-tui\-file\-picker |
+| `tui-full-transcript-brutal.test.ts` | training | e2e\-tui\-full\-transcript\-brutal |
+| `tui-gateway-stream-lifecycle.test.ts` | training | e2e\-tui\-gateway\-stream\-lifecycle |
+| `tui-input-line-delete.test.ts` | verification\-only | verify\-tui\-input\-line\-delete |
+| `tui-input-navigation.test.ts` | verification\-only | verify\-tui\-input\-navigation |
+| `tui-interrupt-recovery.test.ts` | training | e2e\-tui\-interrupt\-recovery |
+| `tui-keybindings.test.ts` | intentional\-exclusion | The file\-wide guard requires a real model credential\. |
+| `tui-native-clear-recovery.test.ts` | training | e2e\-tui\-native\-clear\-recovery |
+| `tui-permissions.test.ts` | training | e2e\-tui\-permissions |
+| `tui-render-lab.test.ts` | intentional\-exclusion | The suite validates render\-lab infrastructure and owns separate native opt\-in scenarios\. |
+| `tui-render-live-stress.test.ts` | intentional\-exclusion | The suite requires a real model credential and explicit live stress opt\-in\. |
+| `tui-render-replay.test.ts` | verification\-only | verify\-tui\-render\-replay |
+| `tui-render-stress.test.ts` | training | e2e\-tui\-render\-stress |
+| `tui-resize.test.ts` | training | e2e\-tui\-resize |
+| `tui-resume-brutal.test.ts` | training | e2e\-tui\-resume\-brutal |
+| `tui-resume.test.ts` | verification\-only | verify\-tui\-resume |
+| `tui-slash-commands.test.ts` | verification\-only | verify\-tui\-slash\-commands |
+| `tui-slash-extra.test.ts` | verification\-only | verify\-tui\-slash\-extra |
+| `tui-slash-menu.test.ts` | verification\-only | verify\-tui\-slash\-menu |
+| `tui-startup.test.ts` | training | e2e\-tui\-startup |
+| `tui-subagent-manager.test.ts` | training | e2e\-tui\-subagent\-manager |
+| `tui-terminal-tool.test.ts` | training | e2e\-tui\-terminal\-tool |
+| `vision-route-fake-gateway.test.ts` | training | e2e\-vision\-route\-fake\-gateway |
+| `web-fetch-fake-network.test.ts` | training | e2e\-web\-fetch\-fake\-network |
+| `web-fetch-live.test.ts` | intentional\-exclusion | The suite requires explicit live\-network opt\-in\. |
+| `web-fetch-permission-progress.test.ts` | verification\-only | verify\-web\-fetch\-permission\-progress |
+| `web-search-fake-gateway.test.ts` | training | e2e\-web\-search\-fake\-gateway |
+| `web-search-live.test.ts` | intentional\-exclusion | The suite requires a real model credential and live provider responses\. |
+| `web-search-permission-progress.test.ts` | verification\-only | verify\-web\-search\-permission\-progress |
+| `yolo-permission-mode.test.ts` | verification\-only | verify\-yolo\-permission\-mode |
 
 ## Intentional differences
 
-- `state_namespace` (sessions and configuration): machine-god will not read or write upstream .fx profile or session state; migration requires a future explicit, versioned contract.
-- `cli_implementation_ownership` (CLI and product state): The CLI remains a thin native host; reusable product state and orchestration live in machine-god-core rather than the executable.
-- `e2e_file_layout` (E2E owners): Compatibility is judged by observable scenarios and retained evidence, not by reproducing upstream Bun, tmux, PGSO, or source-file ownership layouts.
+- `state_namespace` (sessions and configuration): machine\-god will not read or write upstream \.fx profile or session state; migration requires a future explicit, versioned contract\.
+- `cli_implementation_ownership` (CLI and product state): The CLI remains a thin native host; reusable product state and orchestration live in machine\-god\-core rather than the executable\.
+- `e2e_file_layout` (E2E owners): Compatibility is judged by observable scenarios and retained evidence, not by reproducing upstream Bun, tmux, PGSO, or source\-file ownership layouts\.
 
 ## Regeneration and drift check
 
-The generator performs no network access. Point it at a clean checkout of the pinned
-commit; it verifies `HEAD` and the relevant worktree paths before reading sources.
+The generator performs no network access. Point it at a Git checkout whose `HEAD` is
+the pinned commit. It reads and hashes canonical regular-blob bytes from that commit
+with Git object plumbing; worktree changes, symlinks, and line-ending filters cannot
+change the inventory.
 
 ```sh
 git clone https://github.com/vercel-labs/fx.git /tmp/fx-compatibility

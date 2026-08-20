@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import re
 import subprocess
@@ -45,6 +46,19 @@ SURFACE_NAMES = (
     "e2e_owners",
 )
 ALLOWED_STATUSES = {"planned", "deferred", "intentional_difference"}
+REGULAR_BLOB_MODES = {"100644", "100755"}
+ZIG_IDENTIFIER_PATTERN = r'(?:@"[A-Za-z_][A-Za-z0-9_]*"|[A-Za-z_][A-Za-z0-9_]*)'
+JS_IDENTIFIER_PATTERN = r"[A-Za-z_$][A-Za-z0-9_$]*"
+CLI_TOKEN = re.compile(r"[a-z][a-z0-9-]*")
+CLI_ALIAS = re.compile(r"(?:-{1,2})?[A-Za-z0-9][A-Za-z0-9-]*")
+SLASH_COMMAND = re.compile(r"/[a-z0-9][a-z0-9_-]*(?: [a-z0-9][a-z0-9_-]*)*")
+TOOL_NAME = re.compile(r"[a-z][a-z0-9_]*")
+E2E_FILE = re.compile(r"[a-z0-9][a-z0-9-]*\.test\.ts")
+SCENARIO_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+PACKAGE_NAME = re.compile(r"(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*")
+PACKAGE_SPECIFIER = re.compile(r"\.|\./[A-Za-z0-9][A-Za-z0-9._/-]*")
+PACKAGE_CONDITION = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+PACKAGE_TARGET = re.compile(r"\./[A-Za-z0-9][A-Za-z0-9._/-]*\.js")
 
 
 class InventoryError(RuntimeError):
@@ -55,16 +69,114 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def sha256_file(path: Path) -> str:
-    return sha256_bytes(path.read_bytes())
+def require_pattern(value: str, pattern: re.Pattern[str], label: str) -> str:
+    if pattern.fullmatch(value) is None:
+        raise InventoryError(f"unsupported {label} {value!r}")
+    return value
 
 
-def read_text(root: Path, relative: str) -> str:
-    path = root / relative
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
-        raise InventoryError(f"cannot read upstream source {relative}: {error}") from error
+class GitSnapshot:
+    """Canonical bytes and tree metadata from one immutable Git commit."""
+
+    def __init__(self, repository: Path, commit: str, *, require_head: bool = True) -> None:
+        self.repository = repository.resolve()
+        self.commit = commit
+        self._blobs: dict[str, tuple[str, str, bytes]] = {}
+        resolved = self._git("rev-parse", "--verify", f"{commit}^{{commit}}").decode(
+            "ascii", errors="strict"
+        ).strip()
+        if resolved != commit:
+            raise InventoryError(f"pinned object resolves to {resolved}, expected {commit}")
+        if require_head:
+            head = self._git("rev-parse", "HEAD").decode("ascii", errors="strict").strip()
+            if head != commit:
+                raise InventoryError(
+                    f"upstream checkout HEAD is {head}, expected pinned commit {commit}"
+                )
+
+    def _git(self, *args: str) -> bytes:
+        completed = subprocess.run(
+            ["git", "-C", str(self.repository), *args],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise InventoryError(
+                f"git {' '.join(args)} failed for {self.repository}: {detail}"
+            )
+        return completed.stdout
+
+    @staticmethod
+    def _parse_tree_record(record: bytes) -> tuple[str, str, str, str]:
+        try:
+            metadata, raw_path = record.split(b"\t", 1)
+            mode, object_type, object_id = metadata.decode("ascii").split(" ")
+            path = raw_path.decode("utf-8", errors="strict")
+        except (UnicodeError, ValueError) as error:
+            raise InventoryError("unsupported Git tree record") from error
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", object_id) is None:
+            raise InventoryError(f"invalid Git object ID for {path}")
+        return mode, object_type, object_id, path
+
+    @staticmethod
+    def _require_regular_blob(mode: str, object_type: str, path: str) -> None:
+        if object_type != "blob" or mode not in REGULAR_BLOB_MODES:
+            raise InventoryError(
+                f"upstream source {path} must be a regular blob, found mode={mode} "
+                f"type={object_type}"
+            )
+
+    def blob(self, path: str) -> tuple[str, str, bytes]:
+        cached = self._blobs.get(path)
+        if cached is not None:
+            return cached
+        output = self._git("ls-tree", "-z", "--full-tree", self.commit, "--", path)
+        records = [record for record in output.split(b"\0") if record]
+        if len(records) != 1:
+            raise InventoryError(
+                f"upstream commit must contain exactly one tree entry for {path}, "
+                f"found {len(records)}"
+            )
+        mode, object_type, object_id, actual_path = self._parse_tree_record(records[0])
+        if actual_path != path:
+            raise InventoryError(f"Git tree returned {actual_path!r} for requested {path!r}")
+        self._require_regular_blob(mode, object_type, path)
+        data = self._git("cat-file", "blob", object_id)
+        cached = (mode, object_id, data)
+        self._blobs[path] = cached
+        return cached
+
+    def text(self, path: str) -> str:
+        try:
+            return self.blob(path)[2].decode("utf-8", errors="strict")
+        except UnicodeError as error:
+            raise InventoryError(f"upstream source {path} is not valid UTF-8") from error
+
+    def root_files(self, directory: str, suffix: str) -> list[str]:
+        output = self._git(
+            "ls-tree", "-r", "-z", "--full-tree", self.commit, "--", directory
+        )
+        prefix = f"{directory.rstrip('/')}/"
+        names: list[str] = []
+        for raw_record in output.split(b"\0"):
+            if not raw_record:
+                continue
+            mode, object_type, _, path = self._parse_tree_record(raw_record)
+            if not path.startswith(prefix):
+                raise InventoryError(f"Git tree path escaped requested directory: {path}")
+            relative = path[len(prefix) :]
+            if "/" in relative or not relative.endswith(suffix):
+                continue
+            self._require_regular_blob(mode, object_type, path)
+            names.append(relative)
+        require_unique(names, f"{directory} tree member")
+        return sorted(names)
+
+
+def read_text(source: GitSnapshot, relative: str) -> str:
+    return source.text(relative)
 
 
 def parse_lock(path: Path) -> dict[str, str]:
@@ -87,85 +199,119 @@ def parse_lock(path: Path) -> dict[str, str]:
         values[key] = value
     repository = values.get("repository", "")
     commit = values.get("commit", "")
-    if not repository.startswith("https://github.com/") or not repository.endswith(".git"):
-        raise InventoryError("upstream repository must be a canonical HTTPS GitHub .git URL")
+    if repository != "https://github.com/vercel-labs/fx.git":
+        raise InventoryError("upstream repository must be canonical vercel-labs/fx HTTPS URL")
     if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit):
         raise InventoryError("upstream commit must be a lowercase full Git object ID")
     return values
 
 
-def git_output(checkout: Path, *args: str) -> str:
-    completed = subprocess.run(
-        ["git", "-C", str(checkout), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise InventoryError(f"git {' '.join(args)} failed for {checkout}: {detail}")
-    return completed.stdout.strip()
+def source_mask(text: str, language: str) -> str:
+    """Blank comments and literal contents while preserving offsets and newlines."""
+
+    if language not in {"zig", "js"}:
+        raise InventoryError(f"unsupported source language {language}")
+    masked = list(text)
+    index = 0
+    while index < len(text):
+        following = text[index + 1] if index + 1 < len(text) else ""
+        line_start = max(text.rfind("\n", 0, index), text.rfind("\r", 0, index)) + 1
+        if (
+            language == "zig"
+            and text[index] == "\\"
+            and following == "\\"
+            and not text[line_start:index].strip()
+        ):
+            masked[index] = masked[index + 1] = " "
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                masked[index] = " "
+                index += 1
+            continue
+        if text[index] == "/" and following == "/":
+            masked[index] = masked[index + 1] = " "
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                masked[index] = " "
+                index += 1
+            continue
+        if text[index] == "/" and following == "*":
+            depth = 1
+            masked[index] = masked[index + 1] = " "
+            index += 2
+            while index < len(text) and depth:
+                following = text[index + 1] if index + 1 < len(text) else ""
+                if text[index] == "/" and following == "*":
+                    depth += 1
+                    masked[index] = masked[index + 1] = " "
+                    index += 2
+                elif text[index] == "*" and following == "/":
+                    depth -= 1
+                    masked[index] = masked[index + 1] = " "
+                    index += 2
+                else:
+                    if text[index] not in "\r\n":
+                        masked[index] = " "
+                    index += 1
+            if depth:
+                raise InventoryError("unterminated block comment")
+            continue
+        if language == "zig" and text[index] == "@" and following == '"':
+            end = text.find('"', index + 2)
+            if end < 0:
+                raise InventoryError("unterminated quoted Zig identifier")
+            index = end + 1
+            continue
+        if text[index] in {'"', "'"}:
+            quote = text[index]
+            index += 1
+            escaped = False
+            while index < len(text):
+                character = text[index]
+                if character not in "\r\n":
+                    masked[index] = " "
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == quote:
+                    masked[index] = quote
+                    index += 1
+                    break
+                index += 1
+            else:
+                raise InventoryError("unterminated string or character literal")
+            continue
+        if language == "js" and text[index] == "`":
+            masked[index] = " "
+            index += 1
+            escaped = False
+            while index < len(text):
+                character = text[index]
+                if character not in "\r\n":
+                    masked[index] = " "
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == "`":
+                    index += 1
+                    break
+                index += 1
+            else:
+                raise InventoryError("unterminated JavaScript template literal")
+            continue
+        index += 1
+    return "".join(masked)
 
 
-def verify_checkout(checkout: Path, commit: str) -> None:
-    actual = git_output(checkout, "rev-parse", "HEAD")
-    if actual != commit:
-        raise InventoryError(f"upstream checkout HEAD is {actual}, expected pinned commit {commit}")
-    e2e_paths = [
-        path.relative_to(checkout).as_posix()
-        for path in (checkout / "tests/e2e").glob("*.test.ts")
-    ]
-    relevant_paths = [*SOURCE_FILES, *e2e_paths]
-    dirty = git_output(
-        checkout,
-        "status",
-        "--porcelain",
-        "--untracked-files=all",
-        "--",
-        *relevant_paths,
-    )
-    if dirty:
-        raise InventoryError(f"upstream compatibility sources have local changes:\n{dirty}")
-
-
-def find_matching_brace(text: str, opening: int) -> int:
-    if opening >= len(text) or text[opening] != "{":
+def find_matching_brace(mask: str, opening: int) -> int:
+    if opening >= len(mask) or mask[opening] != "{":
         raise InventoryError("internal parser error: expected opening brace")
     depth = 0
-    in_string = False
-    escaped = False
-    line_comment = False
-    block_comment_depth = 0
-    index = opening
-    while index < len(text):
-        character = text[index]
-        following = text[index + 1] if index + 1 < len(text) else ""
-        if line_comment:
-            if character == "\n":
-                line_comment = False
-        elif block_comment_depth:
-            if character == "/" and following == "*":
-                block_comment_depth += 1
-                index += 1
-            elif character == "*" and following == "/":
-                block_comment_depth -= 1
-                index += 1
-        elif in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
-        elif character == "/" and following == "/":
-            line_comment = True
-            index += 1
-        elif character == "/" and following == "*":
-            block_comment_depth = 1
-            index += 1
-        elif character == '"':
-            in_string = True
-        elif character == "{":
+    for index in range(opening, len(mask)):
+        character = mask[index]
+        if character == "{":
             depth += 1
         elif character == "}":
             depth -= 1
@@ -173,29 +319,48 @@ def find_matching_brace(text: str, opening: int) -> int:
                 return index
             if depth < 0:
                 break
-        index += 1
     raise InventoryError("unterminated Zig initializer")
 
 
-def initializer_body(text: str, declaration_pattern: str, label: str) -> str:
-    match = re.search(declaration_pattern, text)
+def initializer_body(
+    text: str, language: str, declaration_pattern: str, label: str
+) -> tuple[str, str]:
+    mask = source_mask(text, language)
+    matches = list(re.finditer(declaration_pattern, mask))
+    if len(matches) > 1:
+        raise InventoryError(f"multiple upstream declarations for {label}")
+    match = matches[0] if matches else None
     if match is None:
         raise InventoryError(f"cannot find upstream {label}")
-    opening = text.find("{", match.start(), match.end())
+    opening = mask.find("{", match.start(), match.end())
     if opening < 0:
-        opening = text.find("{", match.end())
+        opening = mask.find("{", match.end())
     if opening < 0:
         raise InventoryError(f"cannot find initializer for upstream {label}")
-    closing = find_matching_brace(text, opening)
-    return text[opening + 1 : closing]
+    closing = find_matching_brace(mask, opening)
+    return text[opening + 1 : closing], mask[opening + 1 : closing]
 
 
-def root_struct_blocks(body: str) -> list[str]:
-    blocks: list[str] = []
-    for match in re.finditer(r"(?m)^    \.\{", body):
-        opening = match.end() - 1
-        closing = find_matching_brace(body, opening)
-        blocks.append(body[opening + 1 : closing])
+def skip_space(mask: str, index: int) -> int:
+    while index < len(mask) and mask[index].isspace():
+        index += 1
+    return index
+
+
+def root_struct_blocks(body: str, mask: str) -> list[tuple[str, str]]:
+    blocks: list[tuple[str, str]] = []
+    index = skip_space(mask, 0)
+    while index < len(mask):
+        if not mask.startswith(".{", index):
+            excerpt = body[index : index + 40].splitlines()[0]
+            raise InventoryError(f"unsupported registry entry syntax near {excerpt!r}")
+        opening = index + 1
+        closing = find_matching_brace(mask, opening)
+        blocks.append((body[opening + 1 : closing], mask[opening + 1 : closing]))
+        index = skip_space(mask, closing + 1)
+        if index >= len(mask) or mask[index] != ",":
+            raise InventoryError("registry entries must be comma-terminated struct literals")
+        index = skip_space(mask, index + 1)
     if not blocks:
         raise InventoryError("upstream registry contains no root struct entries")
     return blocks
@@ -212,15 +377,27 @@ def zig_identifier(raw: str) -> str:
 
 
 def parse_enum(text: str, name: str) -> list[str]:
-    body = initializer_body(text, rf"pub\s+const\s+{re.escape(name)}\s*=\s*enum\s*\{{", name)
+    body, mask = initializer_body(
+        text,
+        "zig",
+        rf"pub\s+const\s+{re.escape(name)}\s*=\s*enum\s*\{{",
+        name,
+    )
+    if mask.rstrip() and not mask.rstrip().endswith(","):
+        raise InventoryError(f"{name} members must be comma-terminated")
     values: list[str] = []
-    for raw_line in body.splitlines():
-        line = raw_line.split("//", 1)[0].strip()
-        if not line:
+    offset = 0
+    for masked_part in mask.split(","):
+        original_part = body[offset : offset + len(masked_part)]
+        offset += len(masked_part) + 1
+        if not masked_part.strip():
             continue
-        if not line.endswith(","):
-            raise InventoryError(f"unsupported {name} member syntax: {line}")
-        values.append(zig_identifier(line[:-1]))
+        stripped = masked_part.strip()
+        start = len(masked_part) - len(masked_part.lstrip())
+        raw_value = original_part[start : start + len(stripped)]
+        if re.fullmatch(ZIG_IDENTIFIER_PATTERN, stripped) is None:
+            raise InventoryError(f"unsupported {name} member syntax: {raw_value}")
+        values.append(zig_identifier(raw_value))
     require_unique(values, name)
     if not values:
         raise InventoryError(f"{name} is empty")
@@ -237,35 +414,117 @@ def decode_zig_string(raw: str) -> str:
     return value
 
 
-def string_field(block: str, field: str, required: bool = True) -> str | None:
-    match = re.search(rf"\.{re.escape(field)}\s*=\s*\"((?:\\.|[^\"\\])*)\"", block)
+def field_match(mask: str, field: str, value_pattern: str) -> re.Match[str] | None:
+    candidates = re.finditer(
+        rf"\.{re.escape(field)}\s*=\s*(?P<value>{value_pattern})", mask
+    )
+    matches = [match for match in candidates if structural_depth(mask, match.start()) == 0]
+    if len(matches) > 1:
+        raise InventoryError(f"registry entry repeats .{field}")
+    return matches[0] if matches else None
+
+
+def structural_depth(mask: str, end: int) -> int:
+    depth = 0
+    for character in mask[:end]:
+        if character in "{[(":
+            depth += 1
+        elif character in "}])":
+            depth -= 1
+            if depth < 0:
+                raise InventoryError("unbalanced registry initializer")
+    return depth
+
+
+def parse_string_at(text: str, opening: int) -> tuple[str, int]:
+    if opening >= len(text) or text[opening] != '"':
+        raise InventoryError("internal parser error: expected string literal")
+    index = opening + 1
+    escaped = False
+    while index < len(text):
+        character = text[index]
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == '"':
+            return decode_zig_string(text[opening + 1 : index]), index + 1
+        index += 1
+    raise InventoryError("unterminated Zig string literal")
+
+
+def require_field_terminator(mask: str, index: int, field: str) -> None:
+    cursor = skip_space(mask, index)
+    if cursor < len(mask) and mask[cursor] != ",":
+        raise InventoryError(f"unsupported .{field} value expression")
+
+
+def string_field(
+    block: str, mask: str, field: str, required: bool = True
+) -> str | None:
+    match = field_match(mask, field, r'"')
     if match is None:
         if required:
             raise InventoryError(f"registry entry is missing .{field}")
         return None
-    return decode_zig_string(match.group(1))
+    value, end = parse_string_at(block, match.start("value"))
+    require_field_terminator(mask, end, field)
+    return value
 
 
-def identifier_field(block: str, field: str, required: bool = True) -> str | None:
-    match = re.search(
-        rf"\.{re.escape(field)}\s*=\s*\.(?P<value>@\"[A-Za-z_][A-Za-z0-9_]*\"|[A-Za-z_][A-Za-z0-9_]*)",
-        block,
+def identifier_field(
+    block: str, mask: str, field: str, required: bool = True
+) -> str | None:
+    match = field_match(
+        mask,
+        field,
+        rf"\.(?P<identifier>{ZIG_IDENTIFIER_PATTERN})(?![A-Za-z0-9_])",
     )
     if match is None:
         if required:
             raise InventoryError(f"registry entry is missing .{field}")
         return None
-    return zig_identifier(match.group("value"))
+    identifier = match.group("identifier")
+    require_field_terminator(mask, match.end("value"), field)
+    return zig_identifier(identifier)
 
 
-def string_list_field(block: str, field: str) -> list[str]:
-    match = re.search(rf"\.{re.escape(field)}\s*=\s*&\.\{{(?P<body>.*?)\}}", block, re.DOTALL)
+def string_list_field(block: str, mask: str, field: str) -> list[str]:
+    match = field_match(mask, field, r"&\.\{")
     if match is None:
         return []
-    return [
-        decode_zig_string(raw)
-        for raw in re.findall(r'"((?:\\.|[^"\\])*)"', match.group("body"))
-    ]
+    opening = match.end("value") - 1
+    closing = find_matching_brace(mask, opening)
+    require_field_terminator(mask, closing + 1, field)
+    list_body = block[opening + 1 : closing]
+    list_mask = mask[opening + 1 : closing]
+    parts = list_mask.split(",")
+    originals = []
+    offset = 0
+    for part in parts:
+        originals.append(list_body[offset : offset + len(part)])
+        offset += len(part) + 1
+    values: list[str] = []
+    for original_part, masked_part in zip(originals, parts, strict=True):
+        stripped = masked_part.strip()
+        if not stripped:
+            continue
+        if re.fullmatch(r'"\s*"', stripped) is None:
+            raise InventoryError(f"unsupported .{field} list expression")
+        leading = len(masked_part) - len(masked_part.lstrip())
+        value, end = parse_string_at(original_part, leading)
+        if masked_part[end:].strip():
+            raise InventoryError(f"unsupported .{field} list expression")
+        values.append(value)
+    return values
+
+
+def boolean_field(block: str, mask: str, field: str, default: bool = False) -> bool:
+    match = field_match(mask, field, r"true|false")
+    if match is None:
+        return default
+    require_field_terminator(mask, match.end("value"), field)
+    return match.group("value") == "true"
 
 
 def require_unique(values: list[str], label: str) -> None:
@@ -276,22 +535,29 @@ def require_unique(values: list[str], label: str) -> None:
 
 def extract_top_level_commands(specs_text: str, registry_text: str) -> list[dict[str, Any]]:
     enum_values = parse_enum(specs_text, "TopLevelKind")
-    body = initializer_body(
+    body, mask = initializer_body(
         registry_text,
+        "zig",
         r"pub\s+const\s+top_level_specs\s*=\s*\[_\]TopLevelSpec\s*\{",
         "top-level command registry",
     )
     commands: list[dict[str, Any]] = []
-    for block in root_struct_blocks(body):
+    for block, block_mask in root_struct_blocks(body, mask):
+        kind = str(identifier_field(block, block_mask, "kind"))
+        token = str(string_field(block, block_mask, "token"))
+        aliases = string_list_field(block, block_mask, "aliases")
+        require_pattern(token, CLI_TOKEN, "top-level command token")
+        for alias in aliases:
+            require_pattern(alias, CLI_ALIAS, "top-level command alias")
         commands.append(
             {
-                "kind": identifier_field(block, "kind"),
-                "token": string_field(block, "token"),
-                "aliases": string_list_field(block, "aliases"),
-                "usage": string_field(block, "usage"),
-                "summary": string_field(block, "summary"),
-                "hidden_from_help": bool(
-                    re.search(r"\.hidden_from_top_level_help\s*=\s*true", block)
+                "kind": kind,
+                "token": token,
+                "aliases": aliases,
+                "usage": string_field(block, block_mask, "usage"),
+                "summary": string_field(block, block_mask, "summary"),
+                "hidden_from_help": boolean_field(
+                    block, block_mask, "hidden_from_top_level_help"
                 ),
             }
         )
@@ -309,22 +575,29 @@ def extract_top_level_commands(specs_text: str, registry_text: str) -> list[dict
 
 def extract_slash_commands(specs_text: str, registry_text: str) -> list[dict[str, Any]]:
     enum_values = parse_enum(specs_text, "SlashKind")
-    body = initializer_body(
+    body, mask = initializer_body(
         registry_text,
+        "zig",
         r"pub\s+const\s+slash_specs\s*=\s*\[_\]SlashSpec\s*\{",
         "slash command registry",
     )
     commands: list[dict[str, Any]] = []
-    for block in root_struct_blocks(body):
+    for block, block_mask in root_struct_blocks(body, mask):
+        kind = str(identifier_field(block, block_mask, "kind"))
+        command = str(string_field(block, block_mask, "command"))
+        aliases = string_list_field(block, block_mask, "aliases")
+        require_pattern(command, SLASH_COMMAND, "slash command")
+        for alias in aliases:
+            require_pattern(alias, SLASH_COMMAND, "slash command alias")
         commands.append(
             {
-                "kind": identifier_field(block, "kind"),
-                "command": string_field(block, "command"),
-                "aliases": string_list_field(block, "aliases"),
+                "kind": kind,
+                "command": command,
+                "aliases": aliases,
                 "presentation_category": identifier_field(
-                    block, "presentation_category", required=False
+                    block, block_mask, "presentation_category", required=False
                 ),
-                "has_arguments": bool(re.search(r"\.has_args\s*=\s*true", block)),
+                "has_arguments": boolean_field(block, block_mask, "has_args"),
             }
         )
     kinds = [str(command["kind"]) for command in commands]
@@ -338,47 +611,101 @@ def extract_slash_commands(specs_text: str, registry_text: str) -> list[dict[str
 
 
 def extract_builtin_tools(text: str) -> list[dict[str, str]]:
-    body = initializer_body(
+    body, mask = initializer_body(
         text,
+        "zig",
         r"pub\s+const\s+all\s*=\s*\[_\]tool_dispatch\.Tool\s*\{",
         "built-in tool registry",
     )
-    identifiers = re.findall(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*$", body)
+    if mask.rstrip() and not mask.rstrip().endswith(","):
+        raise InventoryError("built-in tool registry entries must be comma-terminated")
+    identifiers: list[str] = []
+    offset = 0
+    for masked_part in mask.split(","):
+        original_part = body[offset : offset + len(masked_part)]
+        offset += len(masked_part) + 1
+        if not masked_part.strip():
+            continue
+        expression = masked_part.strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expression) is None:
+            raise InventoryError(
+                f"unsupported built-in tool registry expression {original_part.strip()!r}"
+            )
+        identifiers.append(expression)
     require_unique(identifiers, "built-in tool registry identifier")
     if not identifiers:
         raise InventoryError("built-in tool registry is empty")
     tools: list[dict[str, str]] = []
     for identifier in identifiers:
-        tool_body = initializer_body(
+        tool_body, tool_mask = initializer_body(
             text,
+            "zig",
             rf"pub\s+const\s+{re.escape(identifier)}\s*=\s*ToolSpec\s*\{{",
             f"built-in tool {identifier}",
         )
-        tools.append({"identifier": identifier, "name": str(string_field(tool_body, "name"))})
+        name = str(string_field(tool_body, tool_mask, "name"))
+        require_pattern(name, TOOL_NAME, "built-in tool name")
+        tools.append({"identifier": identifier, "name": name})
     require_unique([tool["name"] for tool in tools], "built-in tool name")
     return tools
 
 
 def extract_js_exports(text: str) -> list[str]:
-    found: list[tuple[int, str]] = []
-    declaration = re.compile(
-        r"\bexport\s+(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)"
+    mask = source_mask(text, "js")
+    export_positions = [match.start() for match in re.finditer(r"\bexport\b", mask)]
+    found: list[str] = []
+    declaration_pattern = re.compile(
+        rf"export\s+(?:async\s+)?(?:function|class|const|let|var)\s+"
+        rf"(?P<name>{JS_IDENTIFIER_PATTERN})(?![A-Za-z0-9_$])"
     )
-    for match in declaration.finditer(text):
-        found.append((match.start(), match.group(1)))
-    for match in re.finditer(r"\bexport\s*\{(?P<body>.*?)\}\s*;", text, re.DOTALL):
-        for entry in match.group("body").split(","):
-            cleaned = re.sub(r"/\*.*?\*/|//[^\n]*", "", entry, flags=re.DOTALL).strip()
+    for position in export_positions:
+        declaration = declaration_pattern.match(mask, position)
+        if declaration is not None:
+            found.append(declaration.group("name"))
+            continue
+        list_start = re.match(r"export\s*\{", mask[position:])
+        if list_start is None:
+            excerpt = text[position : position + 60].splitlines()[0]
+            raise InventoryError(f"unsupported JavaScript export syntax near {excerpt!r}")
+        opening = position + list_start.end() - 1
+        closing = find_matching_brace(mask, opening)
+        body = text[opening + 1 : closing]
+        body_mask = mask[opening + 1 : closing]
+        offset = 0
+        list_exports: list[str] = []
+        for masked_part in body_mask.split(","):
+            original_part = body[offset : offset + len(masked_part)]
+            offset += len(masked_part) + 1
+            cleaned = masked_part.strip()
             if not cleaned:
                 continue
-            parts = re.split(r"\s+as\s+", cleaned)
-            exported = parts[-1].strip()
-            if not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", exported):
-                raise InventoryError(f"unsupported JavaScript export entry {cleaned!r}")
-            found.append((match.start(), exported))
-    found.sort(key=lambda item: item[0])
+            entry = re.fullmatch(
+                rf"(?P<local>{JS_IDENTIFIER_PATTERN})(?:\s+as\s+"
+                rf"(?P<exported>{JS_IDENTIFIER_PATTERN}))?",
+                cleaned,
+            )
+            if entry is None:
+                raise InventoryError(
+                    f"unsupported JavaScript export entry {original_part.strip()!r}"
+                )
+            list_exports.append(entry.group("exported") or entry.group("local"))
+        if not list_exports:
+            raise InventoryError("JavaScript export list must not be empty")
+        cursor = skip_space(mask, closing + 1)
+        from_match = re.match(r'from\s*(?P<quote>")', mask[cursor:])
+        if from_match is not None:
+            quote = cursor + from_match.start("quote")
+            module, cursor = parse_string_at(text, quote)
+            if re.fullmatch(r"\./[A-Za-z0-9][A-Za-z0-9._/-]*\.js", module) is None:
+                raise InventoryError(f"unsupported JavaScript re-export module {module!r}")
+            cursor = skip_space(mask, cursor)
+        if cursor >= len(mask) or mask[cursor] != ";":
+            raise InventoryError("JavaScript export list must end with a semicolon")
+        found.extend(list_exports)
     exports: list[str] = []
-    for _, name in found:
+    for name in found:
+        if re.fullmatch(JS_IDENTIFIER_PATTERN, name) is None:
+            raise InventoryError(f"unsupported JavaScript export identifier {name!r}")
         if name not in exports:
             exports.append(name)
     if not exports:
@@ -394,6 +721,7 @@ def package_entrypoints(package: dict[str, Any]) -> list[dict[str, Any]]:
     for specifier, target in raw_exports.items():
         if not isinstance(specifier, str):
             raise InventoryError("SDK export specifier must be text")
+        require_pattern(specifier, PACKAGE_SPECIFIER, "SDK package specifier")
         targets: dict[str, str]
         if isinstance(target, str):
             targets = {"default": target}
@@ -404,20 +732,28 @@ def package_entrypoints(package: dict[str, Any]) -> list[dict[str, Any]]:
             targets = dict(target)
         else:
             raise InventoryError(f"unsupported SDK exports map for {specifier}")
+        for condition, value in targets.items():
+            require_pattern(condition, PACKAGE_CONDITION, "SDK export condition")
+            require_pattern(value, PACKAGE_TARGET, "SDK module target")
         entrypoints.append({"specifier": specifier, "targets": targets})
     return entrypoints
 
 
-def extract_sdk_exports(upstream: Path) -> dict[str, Any]:
+def extract_sdk_exports(source: GitSnapshot) -> dict[str, Any]:
     try:
-        package = json.loads(read_text(upstream, SDK_PACKAGE))
+        package = json.loads(read_text(source, SDK_PACKAGE))
     except json.JSONDecodeError as error:
         raise InventoryError(f"invalid {SDK_PACKAGE}: {error}") from error
     if not isinstance(package, dict):
         raise InventoryError(f"{SDK_PACKAGE} root must be an object")
     modules = []
     for relative in SDK_MODULES:
-        modules.append({"path": relative, "exports": extract_js_exports(read_text(upstream, relative))})
+        modules.append(
+            {
+                "path": relative,
+                "exports": extract_js_exports(read_text(source, relative)),
+            }
+        )
     known_modules = {module["path"] for module in modules}
     for entrypoint in package_entrypoints(package):
         for target in entrypoint["targets"].values():
@@ -427,6 +763,7 @@ def extract_sdk_exports(upstream: Path) -> dict[str, Any]:
     name = package.get("name")
     if not isinstance(name, str) or not name:
         raise InventoryError("SDK package name must be non-empty text")
+    require_pattern(name, PACKAGE_NAME, "SDK package name")
     return {
         "package": name,
         "entrypoints": package_entrypoints(package),
@@ -447,6 +784,8 @@ def scenario_owner_map(entries: Any, classification: str) -> dict[str, dict[str,
         name = entry.get("name")
         if not isinstance(test_file, str) or not isinstance(name, str):
             raise InventoryError(f"PGSO {classification} scenario has invalid owner metadata")
+        require_pattern(test_file, E2E_FILE, "E2E owner file")
+        require_pattern(name, SCENARIO_NAME, "PGSO scenario name")
         if test_file in owners:
             raise InventoryError(f"duplicate PGSO {classification} owner {test_file}")
         owners[test_file] = {
@@ -458,9 +797,9 @@ def scenario_owner_map(entries: Any, classification: str) -> dict[str, dict[str,
     return owners
 
 
-def extract_e2e_owners(upstream: Path) -> list[dict[str, Any]]:
+def extract_e2e_owners(source: GitSnapshot) -> list[dict[str, Any]]:
     try:
-        corpus = json.loads(read_text(upstream, E2E_CORPUS))
+        corpus = json.loads(read_text(source, E2E_CORPUS))
     except json.JSONDecodeError as error:
         raise InventoryError(f"invalid {E2E_CORPUS}: {error}") from error
     if not isinstance(corpus, dict):
@@ -476,6 +815,7 @@ def extract_e2e_owners(upstream: Path) -> list[dict[str, Any]]:
     for test_file, reason in exclusions.items():
         if not isinstance(test_file, str) or not isinstance(reason, str) or not reason:
             raise InventoryError("PGSO intentional exclusion must have a non-empty reason")
+        require_pattern(test_file, E2E_FILE, "E2E owner file")
         excluded[test_file] = {
             "file": test_file,
             "classification": "intentional_exclusion",
@@ -487,9 +827,11 @@ def extract_e2e_owners(upstream: Path) -> list[dict[str, Any]]:
     for mapping in owner_maps:
         overlap = sorted(set(combined).intersection(mapping))
         if overlap:
-            raise InventoryError(f"E2E owners have multiple PGSO classifications: {', '.join(overlap)}")
+            raise InventoryError(
+                f"E2E owners have multiple PGSO classifications: {', '.join(overlap)}"
+            )
         combined.update(mapping)
-    actual = sorted(path.name for path in (upstream / "tests/e2e").glob("*.test.ts"))
+    actual = source.root_files("tests/e2e", ".test.ts")
     classified = sorted(combined)
     if actual != classified:
         missing = sorted(set(actual) - set(classified))
@@ -523,17 +865,32 @@ def load_policy(path: Path) -> dict[str, Any]:
     if not isinstance(differences, list) or not differences:
         raise InventoryError("compatibility policy needs intentional_differences")
     for difference in differences:
-        if not isinstance(difference, dict) or difference.get("status") != "intentional_difference":
-            raise InventoryError("every intentional difference must use intentional_difference status")
+        if (
+            not isinstance(difference, dict)
+            or difference.get("status") != "intentional_difference"
+        ):
+            raise InventoryError(
+                "every intentional difference must use intentional_difference status"
+            )
         for field in ("id", "surface", "notes"):
             if not isinstance(difference.get(field), str) or not difference[field]:
                 raise InventoryError(f"intentional difference needs non-empty {field}")
     return policy
 
 
-def source_provenance(upstream: Path) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    sources = [{"path": relative, "sha256": sha256_file(upstream / relative)} for relative in SOURCE_FILES]
-    e2e_files = sorted(path.name for path in (upstream / "tests/e2e").glob("*.test.ts"))
+def source_provenance(source: GitSnapshot) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    sources = []
+    for relative in SOURCE_FILES:
+        mode, object_id, data = source.blob(relative)
+        sources.append(
+            {
+                "path": relative,
+                "mode": mode,
+                "git_blob": object_id,
+                "sha256": sha256_bytes(data),
+            }
+        )
+    e2e_files = source.root_files("tests/e2e", ".test.ts")
     e2e_digest = sha256_bytes(("\n".join(e2e_files) + "\n").encode())
     return sources, {
         "path_glob": "tests/e2e/*.test.ts",
@@ -543,20 +900,20 @@ def source_provenance(upstream: Path) -> tuple[list[dict[str, str]], dict[str, A
 
 
 def build_inventory(
-    upstream: Path,
+    source: GitSnapshot,
     lock: dict[str, str],
     policy: dict[str, Any],
     *,
     lock_path: str = "benchmarks/upstream.lock",
 ) -> dict[str, Any]:
-    specs_text = read_text(upstream, COMMAND_SPECS)
-    registry_text = read_text(upstream, COMMAND_REGISTRY)
+    specs_text = read_text(source, COMMAND_SPECS)
+    registry_text = read_text(source, COMMAND_REGISTRY)
     top_level = extract_top_level_commands(specs_text, registry_text)
     slash = extract_slash_commands(specs_text, registry_text)
-    tools = extract_builtin_tools(read_text(upstream, TOOL_REGISTRY))
-    sdk = extract_sdk_exports(upstream)
-    e2e = extract_e2e_owners(upstream)
-    source_files, source_set = source_provenance(upstream)
+    tools = extract_builtin_tools(read_text(source, TOOL_REGISTRY))
+    sdk = extract_sdk_exports(source)
+    e2e = extract_e2e_owners(source)
+    source_files, source_set = source_provenance(source)
     surface_policy = policy["surfaces"]
     return {
         "schema_version": 1,
@@ -612,12 +969,25 @@ def build_inventory(
     }
 
 
-def markdown_cell(value: object) -> str:
-    return str(value).replace("|", "\\|").replace("\n", " ")
+def markdown_text(value: object) -> str:
+    escaped = html.escape(str(value), quote=False).replace("\r", " ").replace("\n", " ")
+    for character in "\\`*_{}[]()#+-.!|":
+        escaped = escaped.replace(character, f"\\{character}")
+    return escaped
+
+
+def markdown_code(value: object) -> str:
+    escaped = html.escape(str(value), quote=False).replace("\r", " ").replace("\n", " ")
+    escaped = escaped.replace("|", "&#124;")
+    longest_run = max((len(run) for run in re.findall(r"`+", escaped)), default=0)
+    delimiter = "`" * (longest_run + 1)
+    if escaped.startswith(("`", " ")) or escaped.endswith(("`", " ")):
+        escaped = f" {escaped} "
+    return f"{delimiter}{escaped}{delimiter}"
 
 
 def code_list(values: list[str]) -> str:
-    return ", ".join(f"`{value}`" for value in values) if values else "—"
+    return ", ".join(markdown_code(value) for value in values) if values else "—"
 
 
 def render_docs(inventory: dict[str, Any]) -> str:
@@ -630,8 +1000,9 @@ def render_docs(inventory: dict[str, Any]) -> str:
         "",
         "# Compatibility",
         "",
-        f"Comparison target: [`vercel-labs/fx` commit `{commit}`]({repository_page}/commit/{commit}),",
-        f"pinned by `{upstream['lock_path']}`.",
+        f"Comparison target: [{markdown_code('vercel-labs/fx')} commit "
+        f"{markdown_code(commit)}]({repository_page}/commit/{commit}),",
+        f"pinned by {markdown_code(upstream['lock_path'])}.",
         "",
         "The inventory records upstream names and ownership boundaries; it is not a claim that",
         "machine-god already implements them. `compatibility/inventory.json` is the canonical",
@@ -642,8 +1013,10 @@ def render_docs(inventory: dict[str, Any]) -> str:
         "| Status | Meaning |",
         "| --- | --- |",
         "| planned | Compatibility work is expected in the named milestone. |",
-        "| deferred | The surface is intentionally scheduled after the core engine and native host. |",
-        "| intentional difference | The upstream behavior or implementation shape is explicitly not a compatibility target. |",
+        "| deferred | The surface is intentionally scheduled after the core engine and "
+        "native host. |",
+        "| intentional difference | The upstream behavior or implementation shape is "
+        "explicitly not a compatibility target. |",
         "",
         "## Surface plan",
         "",
@@ -665,8 +1038,9 @@ def render_docs(inventory: dict[str, Any]) -> str:
     for name in SURFACE_NAMES:
         surface = surfaces[name]
         lines.append(
-            f"| {labels[name]} | {status_labels[surface['status']]} | "
-            f"{markdown_cell(surface['milestone'])} | {markdown_cell(surface['notes'])} |"
+            f"| {markdown_text(labels[name])} | "
+            f"{markdown_text(status_labels[surface['status']])} | "
+            f"{markdown_text(surface['milestone'])} | {markdown_text(surface['notes'])} |"
         )
 
     lines.extend(
@@ -674,7 +1048,8 @@ def render_docs(inventory: dict[str, Any]) -> str:
             "",
             "## Top-level CLI commands",
             "",
-            f"Source: `{COMMAND_SPECS}` and `{COMMAND_REGISTRY}` ({surfaces['top_level_cli_commands']['count']} commands).",
+            f"Source: {markdown_code(COMMAND_SPECS)} and {markdown_code(COMMAND_REGISTRY)} "
+            f"({markdown_text(surfaces['top_level_cli_commands']['count'])} commands).",
             "",
             "| Kind | Token | Aliases | Hidden from help |",
             "| --- | --- | --- | --- |",
@@ -682,7 +1057,8 @@ def render_docs(inventory: dict[str, Any]) -> str:
     )
     for command in surfaces["top_level_cli_commands"]["items"]:
         lines.append(
-            f"| `{command['kind']}` | `{command['token']}` | {code_list(command['aliases'])} | "
+            f"| {markdown_code(command['kind'])} | {markdown_code(command['token'])} | "
+            f"{code_list(command['aliases'])} | "
             f"{'yes' if command['hidden_from_help'] else 'no'} |"
         )
 
@@ -691,7 +1067,8 @@ def render_docs(inventory: dict[str, Any]) -> str:
             "",
             "## Slash command kinds",
             "",
-            f"Source: `{COMMAND_SPECS}` and `{COMMAND_REGISTRY}` ({surfaces['slash_command_kinds']['count']} kinds).",
+            f"Source: {markdown_code(COMMAND_SPECS)} and {markdown_code(COMMAND_REGISTRY)} "
+            f"({markdown_text(surfaces['slash_command_kinds']['count'])} kinds).",
             "",
             "| Kind | Command | Aliases | Presentation category | Accepts arguments |",
             "| --- | --- | --- | --- | --- |",
@@ -700,8 +1077,9 @@ def render_docs(inventory: dict[str, Any]) -> str:
     for command in surfaces["slash_command_kinds"]["items"]:
         category = command["presentation_category"]
         lines.append(
-            f"| `{command['kind']}` | `{command['command']}` | {code_list(command['aliases'])} | "
-            f"{f'`{category}`' if category else 'internal subcommand'} | "
+            f"| {markdown_code(command['kind'])} | {markdown_code(command['command'])} | "
+            f"{code_list(command['aliases'])} | "
+            f"{markdown_code(category) if category else 'internal subcommand'} | "
             f"{'yes' if command['has_arguments'] else 'no'} |"
         )
 
@@ -711,13 +1089,15 @@ def render_docs(inventory: dict[str, Any]) -> str:
             "",
             "## Built-in tools",
             "",
-            f"Source: `{TOOL_REGISTRY}` ({tool_surface['count']} production registry entries).",
+            f"Source: {markdown_code(TOOL_REGISTRY)} "
+            f"({markdown_text(tool_surface['count'])} production registry entries).",
             "",
             code_list([tool["name"] for tool in tool_surface["items"]]) + ".",
             "",
             "## SDK exports",
             "",
-            f"Package: `{surfaces['sdk_exports']['package']}`. Source: `{SDK_PACKAGE}` and the mapped modules.",
+            f"Package: {markdown_code(surfaces['sdk_exports']['package'])}. Source: "
+            f"{markdown_code(SDK_PACKAGE)} and the mapped modules.",
             "",
             "| Package entrypoint | Conditions and modules |",
             "| --- | --- |",
@@ -725,12 +1105,13 @@ def render_docs(inventory: dict[str, Any]) -> str:
     )
     for entrypoint in surfaces["sdk_exports"]["entrypoints"]:
         targets = ", ".join(
-            f"`{condition}` → `{target}`" for condition, target in entrypoint["targets"].items()
+            f"{markdown_code(condition)} → {markdown_code(target)}"
+            for condition, target in entrypoint["targets"].items()
         )
-        lines.append(f"| `{entrypoint['specifier']}` | {targets} |")
+        lines.append(f"| {markdown_code(entrypoint['specifier'])} | {targets} |")
     lines.extend(["", "| Module | Named exports |", "| --- | --- |"])
     for module in surfaces["sdk_exports"]["modules"]:
-        lines.append(f"| `{module['path']}` | {code_list(module['exports'])} |")
+        lines.append(f"| {markdown_code(module['path'])} | {code_list(module['exports'])} |")
 
     e2e_surface = surfaces["e2e_owners"]
     counts = e2e_surface["classification_counts"]
@@ -743,8 +1124,10 @@ def render_docs(inventory: dict[str, Any]) -> str:
             "owner in its PGSO corpus. The inventory validates that every file has exactly one",
             "classification and that the corpus has no stale owners.",
             "",
-            f"Counts: {counts['training']} training, {counts['verification_only']} verification-only, "
-            f"and {counts['intentional_exclusion']} intentional exclusions ({e2e_surface['count']} total).",
+            f"Counts: {markdown_text(counts['training'])} training, "
+            f"{markdown_text(counts['verification_only'])} verification-only, "
+            f"and {markdown_text(counts['intentional_exclusion'])} intentional exclusions "
+            f"({markdown_text(e2e_surface['count'])} total).",
             "",
             "| Owner file | Upstream classification | Scenario or exclusion reason |",
             "| --- | --- | --- |",
@@ -754,13 +1137,15 @@ def render_docs(inventory: dict[str, Any]) -> str:
         detail = owner["scenario"] if owner["scenario"] is not None else owner["reason"]
         classification = owner["classification"].replace("_", "-")
         lines.append(
-            f"| `{owner['file']}` | {classification} | {markdown_cell(detail)} |"
+            f"| {markdown_code(owner['file'])} | {markdown_text(classification)} | "
+            f"{markdown_text(detail)} |"
         )
 
     lines.extend(["", "## Intentional differences", ""])
     for difference in inventory["intentional_differences"]:
         lines.append(
-            f"- `{difference['id']}` ({difference['surface']}): {difference['notes']}"
+            f"- {markdown_code(difference['id'])} ({markdown_text(difference['surface'])}): "
+            f"{markdown_text(difference['notes'])}"
         )
 
     lines.extend(
@@ -768,8 +1153,10 @@ def render_docs(inventory: dict[str, Any]) -> str:
             "",
             "## Regeneration and drift check",
             "",
-            "The generator performs no network access. Point it at a clean checkout of the pinned",
-            "commit; it verifies `HEAD` and the relevant worktree paths before reading sources.",
+            "The generator performs no network access. Point it at a Git checkout whose `HEAD` is",
+            "the pinned commit. It reads and hashes canonical regular-blob bytes from that commit",
+            "with Git object plumbing; worktree changes, symlinks, and line-ending filters cannot",
+            "change the inventory.",
             "",
             "```sh",
             f"git clone {upstream['repository']} /tmp/fx-compatibility",
@@ -815,13 +1202,13 @@ def main(argv: list[str] | None = None) -> int:
         lock = parse_lock(args.lock)
         policy = load_policy(args.policy)
         upstream = args.upstream.resolve()
-        verify_checkout(upstream, lock["commit"])
+        source = GitSnapshot(upstream, lock["commit"])
         lock_display = (
             "benchmarks/upstream.lock"
             if args.lock.resolve() == DEFAULT_LOCK
             else args.lock.name
         )
-        inventory = build_inventory(upstream, lock, policy, lock_path=lock_display)
+        inventory = build_inventory(source, lock, policy, lock_path=lock_display)
         inventory_text = json_document(inventory)
         docs_text = render_docs(inventory)
         if args.check:
