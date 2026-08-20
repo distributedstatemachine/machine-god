@@ -113,12 +113,17 @@ impl SessionState {
         }
     }
 
-    pub(crate) fn reconcile_loaded(&self, record: SessionRecord) -> Result<(), EngineError> {
+    pub(crate) fn validate_loaded(record: &SessionRecord) -> Result<(), EngineError> {
         if record.next_turn_sequence == 0 {
             return Err(EngineError::Protocol(
                 "stored next turn sequence must be positive".to_owned(),
             ));
         }
+        Ok(())
+    }
+
+    pub(crate) fn reconcile_loaded(&self, record: SessionRecord) -> Result<(), EngineError> {
+        Self::validate_loaded(&record)?;
         let mut data = self
             .data
             .lock()

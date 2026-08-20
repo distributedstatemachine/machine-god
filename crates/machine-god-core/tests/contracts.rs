@@ -473,6 +473,75 @@ struct InterleavedSaveStore {
     save_ready: Arc<AtomicBool>,
 }
 
+#[derive(Clone, Debug)]
+struct GatedCorruptLoadStore {
+    corrupt: SessionRecord,
+    load_ready: Arc<AtomicBool>,
+}
+
+impl SessionStore for GatedCorruptLoadStore {
+    fn load(
+        &self,
+        _id: SessionId,
+    ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+        let load_ready = Arc::clone(&self.load_ready);
+        let corrupt = self.corrupt.clone();
+        Box::pin(std::future::poll_fn(move |_context| {
+            if load_ready.load(Ordering::Acquire) {
+                Poll::Ready(Ok(Some(corrupt.clone())))
+            } else {
+                Poll::Pending
+            }
+        }))
+    }
+
+    fn save(
+        &self,
+        _record: SessionRecord,
+        _expected_revision: Option<SessionRevision>,
+    ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+        Box::pin(async { Ok(SessionRevision(1)) })
+    }
+}
+
+#[test]
+fn corrupt_load_cannot_poison_a_create_racing_the_load() {
+    let id = SessionId::new("corrupt-load-create").unwrap();
+    let store = GatedCorruptLoadStore {
+        corrupt: SessionRecord {
+            id: id.clone(),
+            revision: SessionRevision(7),
+            next_turn_sequence: 0,
+            messages: vec![machine_god_core::Message::text(Role::User, "corrupt")],
+            metadata: BTreeMap::new(),
+        },
+        load_ready: Arc::new(AtomicBool::new(false)),
+    };
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store.clone())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let mut loading = engine.load_session(id.clone());
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    assert!(matches!(loading.as_mut().poll(&mut context), Poll::Pending));
+    let created = engine.create_session(id);
+    store.load_ready.store(true, Ordering::Release);
+    assert!(matches!(
+        loading.as_mut().poll(&mut context),
+        Poll::Ready(Err(EngineError::Protocol(message)))
+            if message.contains("turn sequence must be positive")
+    ));
+
+    assert_eq!(created.record().revision, SessionRevision(0));
+    assert_eq!(created.record().next_turn_sequence, 1);
+    let turn = prompt(&created, "first safe turn");
+    assert_eq!(turn.id().as_str(), "turn-1");
+}
+
 impl SessionStore for InterleavedSaveStore {
     fn load(
         &self,

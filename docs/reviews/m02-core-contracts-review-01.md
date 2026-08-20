@@ -64,3 +64,13 @@ deregister and release. A retained-provider-token regression verifies that the
 token is cancelled and a stale `TurnHandle::cancel` returns false after drop. A
 separate completed-turn regression registers an external waiter and verifies
 that cleanup-only drop neither changes the completed token nor wakes it.
+
+A fresh review of `b35d203` found that `Engine::load_session` published a newly
+loaded state into the weak registry before `reconcile_loaded` rejected an
+intrinsically invalid zero turn sequence. A concurrent create in that narrow
+window could retain the corrupt state after the load returned its error.
+Intrinsic persisted-record validation now runs before any registry access, and
+the same validation remains in reconciliation for existing state. Regression
+coverage checks the registry boundary directly and coordinates a pending corrupt
+load with a create, then proves the surviving handle remains revision zero with
+sequence one and reserves `turn-1` rather than poisoned `turn-0` state.

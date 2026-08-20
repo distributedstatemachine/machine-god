@@ -87,7 +87,10 @@ finishes after a newer load has already reconciled, its saved snapshot still
 drives that turn's model request but cannot rewind the canonical session record.
 An equal-revision save result is accepted only when it is identical to the
 canonical record; divergence is a protocol error rather than an ambiguous
-overwrite.
+overwrite. Intrinsic stored-record validation happens before a loaded record can
+enter the engine's shared registry, so a rejected record cannot be retained by a
+concurrent create or load handle. Existing canonical state is validated again
+during reconciliation.
 
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:

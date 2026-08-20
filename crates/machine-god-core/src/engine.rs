@@ -235,6 +235,9 @@ impl Engine {
                     record.id
                 )));
             }
+            if let Some(record) = &record {
+                crate::session::SessionState::validate_loaded(record)?;
+            }
             record
                 .map(|record| {
                     let state = inner.session_state(record.clone(), true);
@@ -279,7 +282,11 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::prune_dead_sessions;
-    use crate::{SessionId, SessionRecord};
+    use crate::{
+        BoxFuture, CancellationToken, ModelEventStream, ModelProvider, ModelRequest,
+        PermissionDecision, PermissionError, PermissionHandler, PermissionRequest, ProviderError,
+        SessionId, SessionRecord, SessionRevision, SessionStore, SessionStoreError,
+    };
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -294,5 +301,81 @@ mod tests {
         drop(state);
         prune_dead_sessions(&mut sessions);
         assert!(sessions.is_empty());
+    }
+
+    #[derive(Debug)]
+    struct UnusedProvider;
+
+    impl ModelProvider for UnusedProvider {
+        fn name(&self) -> &'static str {
+            "unused"
+        }
+
+        fn stream(
+            &self,
+            _request: ModelRequest,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+            Box::pin(async { unreachable!("turn stream is not polled") })
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct CorruptStore(SessionRecord);
+
+    impl SessionStore for CorruptStore {
+        fn load(
+            &self,
+            _id: SessionId,
+        ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+            let record = self.0.clone();
+            Box::pin(async move { Ok(Some(record)) })
+        }
+
+        fn save(
+            &self,
+            _record: SessionRecord,
+            _expected_revision: Option<SessionRevision>,
+        ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+            Box::pin(async { Ok(SessionRevision(1)) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct DenyPermissions;
+
+    impl PermissionHandler for DenyPermissions {
+        fn authorize(
+            &self,
+            _request: PermissionRequest,
+        ) -> BoxFuture<'_, Result<PermissionDecision, PermissionError>> {
+            Box::pin(async {
+                Ok(PermissionDecision::Deny {
+                    reason: "unused".to_owned(),
+                })
+            })
+        }
+    }
+
+    #[test]
+    fn corrupt_load_is_rejected_before_registry_publication() {
+        let id = SessionId::new("reject-before-publication").unwrap();
+        let mut corrupt = SessionRecord::empty(id.clone());
+        corrupt.revision = SessionRevision(9);
+        corrupt.next_turn_sequence = 0;
+        let engine = super::Engine::builder()
+            .provider(UnusedProvider)
+            .session_store(CorruptStore(corrupt))
+            .permission_handler(DenyPermissions)
+            .build()
+            .unwrap();
+
+        assert!(futures_executor::block_on(engine.load_session(id.clone())).is_err());
+        assert!(engine.inner.sessions.lock().unwrap().is_empty());
+
+        let created = engine.create_session(id);
+        assert_eq!(created.record().next_turn_sequence, 1);
+        let turn = futures_executor::block_on(created.prompt("safe first turn")).unwrap();
+        assert_eq!(turn.id().as_str(), "turn-1");
     }
 }

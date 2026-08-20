@@ -45,4 +45,6 @@ store's optimistic revision contract. Loaded records reconcile strictly and
 monotonically: corrupt sequences, stale revisions, and equal-revision divergence
 are protocol errors, and completion of an older in-flight save cannot replace a
 newer canonical record. Successful-save reconciliation also rejects divergent
-records at the same revision.
+records at the same revision. Intrinsic load validation precedes registry
+publication, preventing a concurrent handle from retaining invalid persisted
+state even when the originating load returns an error.
