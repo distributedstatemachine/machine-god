@@ -913,7 +913,9 @@ async fn run_turn_inner(
         let mut round_call_ids = BTreeSet::new();
         let mut round_usage = TokenUsage::default();
         let stop_reason = loop {
-            let item = next_model_item(&mut stream, &cancellation).await?;
+            let item = next_model_item(&mut stream, &cancellation)
+                .await?
+                .map(|result| result.map(JsonOwnerGuard::new));
             if item.is_some() {
                 model_events = model_events.checked_add(1).ok_or_else(|| {
                     TurnFailure::limit("model_event_limit", "model event count overflowed")
@@ -927,12 +929,14 @@ async fn run_turn_inner(
                 }
             }
             match item {
-                Some(Ok(ModelEvent::Stop { reason })) => {
+                Some(Ok(event)) if matches!(event.get(), ModelEvent::Stop { .. }) => {
+                    let ModelEvent::Stop { reason } = event.into_inner() else {
+                        unreachable!("stop event guard changed variant")
+                    };
                     validate_stop_reason(&reason, limits)?;
                     break reason;
                 }
                 Some(Ok(event)) => {
-                    let event = JsonOwnerGuard::new(event);
                     match event.get() {
                         ModelEvent::TextDelta { text } => {
                             assistant_bytes =

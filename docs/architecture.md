@@ -91,6 +91,8 @@ and build errors; dropped unpolled prompts; direct and conflict record loads;
 mutation candidates; yielded provider calls; and tool output after an effect.
 Cancellation-aware poll boundaries drain a just-ready yielded provider event,
 conflict-loaded record, or tool output before honoring cancellation.
+Normally yielded provider events are guarded before model-event counting, so a
+limit or counter failure also drains their arguments iteratively.
 Reclamation is O(actual nodes) time with O(actual depth) auxiliary memory and
 does not leak rejected trees. An item still queued inside a provider's stream
 has not crossed the core ownership boundary, so stack-safe destruction of that

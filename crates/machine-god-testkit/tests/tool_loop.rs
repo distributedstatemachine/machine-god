@@ -2481,6 +2481,7 @@ fn deep_owned_json_rejections_are_stack_safe_in_subprocesses() {
         "loaded_transcript",
         "provider_arguments",
         "provider_cancel_ready",
+        "provider_event_limit",
         "tool_output",
         "tool_cancel_ready",
     ] {
@@ -2664,6 +2665,40 @@ fn deep_owned_json_rejection_child() {
                 }
             ));
             assert!(permissions.requests().is_empty());
+        }
+        "provider_event_limit" => {
+            let permissions = ScriptedPermissionHandler::new([]);
+            let tool = ScriptedTool::new(spec("known"), []);
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new(
+                    "deep-provider-event-limit",
+                    [events([
+                        ModelEvent::TextDelta {
+                            text: String::new(),
+                        },
+                        ModelEvent::ToolCall {
+                            call: call("deep", "known", nested_array(DEEP_JSON_DEPTH)),
+                        },
+                        ModelEvent::Stop {
+                            reason: StopReason::ToolCalls,
+                        },
+                    ])],
+                ))
+                .session_store(InMemorySessionStore::new())
+                .permission_handler(permissions.clone())
+                .tool(tool.clone())
+                .limits(with_limit(EngineLimits::default(), "events", 1))
+                .build()
+                .unwrap();
+            let output = collect(
+                &engine.create_session(SessionId::new("deep-provider-event-limit").unwrap()),
+            );
+            assert!(matches!(
+                &output.last().unwrap().payload,
+                TurnEvent::Failed { code, .. } if code == "model_event_limit"
+            ));
+            assert!(permissions.requests().is_empty());
+            assert!(tool.invocations().is_empty());
         }
         "tool_output" => {
             let store = InMemorySessionStore::new();

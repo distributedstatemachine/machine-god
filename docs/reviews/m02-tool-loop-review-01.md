@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-four findings remediated; awaiting fresh rereview of the
-fourth fix commit.
+Status: review-cycle-five finding remediated; awaiting fresh rereview of the
+fifth fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -14,7 +14,10 @@ Cycle-two fix reviewed for cycle three:
 Cycle-three fix reviewed for cycle four:
 `f952febb87de8224df1af09e69c1e80c7ea563f9`.
 
-Cycle-four fix commit: populated after this remediation commit. Reviewers must
+Cycle-four fix reviewed for cycle five:
+`83b465cd02a143b116e9e3ac21663363f35f4fba`.
+
+Cycle-five fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -157,6 +160,23 @@ and advisory gates are required for the final immutable cycle-two commit.
    plus-one tests cover catalogs, inference metadata, stored records, provider
    arguments before authorization/execution, and post-effect tool output with
    its durable unknown-result placeholder.
+
+## Review cycle 05 finding and remediation
+
+1. A yielded provider event crossed into core, but the model-event counter was
+   incremented and checked before its JSON ownership guard was armed. A deep
+   tool-call event at event limit plus one could therefore take the early limit
+   return and run recursive `Value::drop`. Core now wraps every successful
+   provider event in the first expression after `next_model_item` completes,
+   before presence, overflow, limit, stop, or variant handling. A twelfth
+   50,000-level subprocess case sends one benign event followed by the deep
+   tool call under an event limit of one; it terminates with
+   `model_event_limit`, performs no permission or tool work, and does not abort.
+   The corresponding audit found no other raw JSON-bearing post-await value
+   with an early return before its guard: ready tool output and cancellable
+   conflict loads are guarded inside their poll wrappers, while direct loads,
+   prompt values, builder Schemas, and mutation candidates arm guards before
+   validation or fallible branching.
 
 ## Honest limitations for review
 

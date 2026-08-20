@@ -263,6 +263,8 @@ iterator per active container, avoiding recursive `Value::drop`.
 The same guard is armed within cancellation-aware polling when a provider event,
 conflict-loaded record, or tool output becomes ready in the poll that first
 observes cancellation.
+Every normally yielded provider event is also guarded immediately after the
+stream poll, before event-count accounting or any other early-return gate.
 Structured provider, policy, and store failures expose fixed component codes
 (`provider_failed`, `permission_failed`, and `store_failed`) plus the trusted
 retryability/category fields where applicable; hostile source codes and
