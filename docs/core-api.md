@@ -90,7 +90,10 @@ canonical record; divergence is a protocol error rather than an ambiguous
 overwrite. Intrinsic stored-record validation happens before a loaded record can
 enter the engine's shared registry, so a rejected record cannot be retained by a
 concurrent create or load handle. Existing canonical state is validated again
-during reconciliation.
+during reconciliation. Revision zero is reserved for an unsaved
+`SessionRecord::empty`; every record returned by a store must have a positive
+revision, including conflict reloads. The first successful save replaces the
+zero sentinel with a positive revision.
 
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:

@@ -262,6 +262,26 @@ fn load_session_rejects_a_mismatched_store_record() {
 }
 
 #[test]
+fn load_session_rejects_a_zero_persisted_revision() {
+    let id = SessionId::new("stored-zero-revision").unwrap();
+    let store = MemoryStore {
+        record: Arc::new(Mutex::new(Some(SessionRecord::empty(id.clone())))),
+    };
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store)
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+
+    assert!(matches!(
+        futures_executor::block_on(engine.load_session(id)),
+        Err(EngineError::Protocol(message))
+            if message.contains("stored session revision must be positive")
+    ));
+}
+
+#[test]
 fn turn_events_are_ordered_and_release_session_at_terminal_event() {
     let session =
         engine_with(StaticProvider::completed()).create_session(SessionId::new("ordered").unwrap());
@@ -358,6 +378,26 @@ fn persisted_turn_ids_continue_across_reload_and_stale_handles() {
     let persisted = store.record.lock().unwrap().clone().unwrap();
     assert_eq!(persisted.next_turn_sequence, 5);
     assert_eq!(persisted.revision, SessionRevision(4));
+}
+
+#[test]
+fn initial_create_saves_the_zero_sentinel_as_a_positive_revision() {
+    let store = MemoryStore::default();
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store.clone())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("initial-save").unwrap());
+    assert_eq!(session.record().revision, SessionRevision(0));
+
+    let turn = prompt(&session, "first");
+    assert_eq!(turn.id().as_str(), "turn-1");
+    assert_eq!(session.record().revision, SessionRevision(1));
+    let stored = store.record.lock().unwrap().clone().unwrap();
+    assert_eq!(stored.revision, SessionRevision(1));
+    assert_eq!(stored.next_turn_sequence, 2);
 }
 
 #[test]
@@ -728,6 +768,25 @@ fn conflict_reload_rejects_a_zero_turn_sequence() {
         Err(EngineError::Protocol(message))
             if message.contains("turn sequence must be positive")
     ));
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn conflict_reload_rejects_a_zero_persisted_revision() {
+    let id = SessionId::new("conflict-zero-revision").unwrap();
+    let current = stored_record(&id, 5, 6, "current");
+    let zero_revision = stored_record(&id, 0, 7, "invalid persisted sentinel");
+    let engine = engine_with_conflict_loads(vec![current, zero_revision]);
+    let session = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        futures_executor::block_on(session.prompt("reserve")),
+        Err(EngineError::Protocol(message))
+            if message.contains("stored session revision must be positive")
+    ));
+    assert_eq!(session.record().revision, SessionRevision(5));
     assert!(!session.has_active_turn());
 }
 

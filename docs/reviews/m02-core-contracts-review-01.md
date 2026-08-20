@@ -74,3 +74,12 @@ the same validation remains in reconciliation for existing state. Regression
 coverage checks the registry boundary directly and coordinates a pending corrupt
 load with a create, then proves the surviving handle remains revision zero with
 sequence one and reserves `turn-1` rather than poisoned `turn-0` state.
+
+A security and robustness review of `c9815f1` found that persisted revision zero
+was accepted even though core uses it as the unsaved sentinel. That converted a
+loaded record into `Some(SessionRevision(0))` CAS semantics and blurred the
+new-record boundary. Persisted-record validation now rejects revision zero before
+publication and on conflict reload, while `SessionRecord::empty` retains zero
+until its first successful save returns a positive revision. Direct-load,
+conflict-reload, and normal initial create/save regressions cover all three
+paths.

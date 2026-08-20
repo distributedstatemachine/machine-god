@@ -15,7 +15,8 @@ use std::task::{Context, Poll};
 
 use crate::engine::EngineInner;
 
-/// Optimistic-concurrency revision assigned by a [`SessionStore`].
+/// Optimistic-concurrency revision assigned by a [`SessionStore`]. Zero is the
+/// unsaved in-memory sentinel and is invalid in records returned by a store.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct SessionRevision(pub u64);
@@ -58,7 +59,8 @@ pub trait SessionStore: Send + Sync + 'static {
 
     /// Persists `record` only if its currently stored revision equals
     /// `expected_revision`. A new record uses `None`. A successful save must
-    /// return a revision strictly greater than the record's previous revision.
+    /// return a nonzero revision strictly greater than the record's previous
+    /// revision.
     fn save(
         &self,
         record: SessionRecord,
@@ -114,6 +116,11 @@ impl SessionState {
     }
 
     pub(crate) fn validate_loaded(record: &SessionRecord) -> Result<(), EngineError> {
+        if record.revision == SessionRevision(0) {
+            return Err(EngineError::Protocol(
+                "stored session revision must be positive".to_owned(),
+            ));
+        }
         if record.next_turn_sequence == 0 {
             return Err(EngineError::Protocol(
                 "stored next turn sequence must be positive".to_owned(),
