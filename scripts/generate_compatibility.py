@@ -283,24 +283,21 @@ def source_mask(text: str, language: str) -> str:
                 index += 1
             continue
         if text[index] == "/" and following == "*":
-            depth = 1
+            if language == "zig":
+                raise InventoryError("Zig does not support block comments")
             masked[index] = masked[index + 1] = " "
             index += 2
-            while index < len(text) and depth:
+            while index < len(text):
                 following = text[index + 1] if index + 1 < len(text) else ""
-                if text[index] == "/" and following == "*":
-                    depth += 1
+                if text[index] == "*" and following == "/":
                     masked[index] = masked[index + 1] = " "
                     index += 2
-                elif text[index] == "*" and following == "/":
-                    depth -= 1
-                    masked[index] = masked[index + 1] = " "
-                    index += 2
+                    break
                 else:
                     if text[index] not in "\r\n":
                         masked[index] = " "
                     index += 1
-            if depth:
+            else:
                 raise InventoryError("unterminated block comment")
             continue
         if language == "zig" and text[index] == "@" and following == '"':

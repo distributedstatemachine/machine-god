@@ -433,6 +433,31 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         )
         self.assertEqual(exports, ["real", "pattern"])
 
+    def test_javascript_block_comment_ends_at_first_closer(self) -> None:
+        exports = GENERATOR.extract_js_exports(
+            "/* outer /* */ export const hidden = 1; // */\n"
+            "export const visible = 2;\n"
+        )
+        self.assertEqual(exports, ["hidden", "visible"])
+
+    def test_javascript_mixed_comments_do_not_inject_exports(self) -> None:
+        exports = GENERATOR.extract_js_exports(
+            "/* // export const blockFake = 1; */\n"
+            "// /* export const lineFake = 1; */\n"
+            "export const real = 1; /* trailing // text */\n"
+        )
+        self.assertEqual(exports, ["real"])
+
+    def test_unterminated_javascript_block_comment_is_rejected(self) -> None:
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "unterminated block comment"):
+            GENERATOR.extract_js_exports(
+                "export const visible = 1; /* export const hidden = 2;\n"
+            )
+
+    def test_zig_block_comment_syntax_is_rejected(self) -> None:
+        with self.assertRaisesRegex(GENERATOR.InventoryError, "does not support block"):
+            GENERATOR.source_mask("/* not valid Zig */\n", "zig")
+
     def test_ambiguous_javascript_regex_after_brace_fails_closed(self) -> None:
         with self.assertRaisesRegex(GENERATOR.InventoryError, "ambiguous JavaScript slash"):
             GENERATOR.extract_js_exports(

@@ -5,7 +5,7 @@ const declaration_multiline =
 ;
 
 pub const TopLevelKind = enum {
-    /* The public help command. */
+    // The public help command.
     help,
     ask,
 };

@@ -182,3 +182,22 @@ tests inspect every Git invocation. Canonical object-format discovery and blob
 rehashing continue through the same isolated plumbing path.
 
 Rejected after escaped-field and offline-source rereview remediation: none.
+
+## JavaScript comment-grammar rereview
+
+Reviewed commit: `090037b939ba8673e671ca407074a159ef77c027`.
+
+The final parser review found that block comments used one nesting algorithm for
+both source languages. ECMAScript block comments end at the first `*/`, so a
+nested-looking opener could make the inventory mask real exports that execute
+after that first closer. JavaScript block comments are now scanned linearly to
+their first closer; nested-looking, mixed line/block, trailing, and unterminated
+comment regressions pin the behavior.
+
+The Zig 0.16 language reference explicitly states that Zig has no multiline
+comments. Zig `/*` input now fails closed instead of applying an invented nested
+comment grammar, and the canonical fixture uses valid line comments for its
+decoys. All literal-injection, scope, offline-source, and scaling regressions
+remain active.
+
+Rejected after JavaScript comment-grammar rereview remediation: none.

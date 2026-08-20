@@ -1,8 +1,6 @@
-/*
-pub const top_level_specs = [_]TopLevelSpec{
-    .{ .kind = .fake, .token = "fake", .usage = "fake", .summary = "fake" },
-};
-*/
+// pub const top_level_specs = [_]TopLevelSpec{
+//     .{ .kind = .fake, .token = "fake", .usage = "fake", .summary = "fake" },
+// };
 
 pub const top_level_specs = [_]TopLevelSpec{
     .{
