@@ -114,6 +114,88 @@ impl From<&str> for Prompt {
     }
 }
 
+pub(crate) trait DrainJsonValues {
+    fn drain_json_values(&mut self);
+}
+
+pub(crate) struct JsonOwnerGuard<T: DrainJsonValues> {
+    value: Option<T>,
+}
+
+impl<T: DrainJsonValues> JsonOwnerGuard<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self { value: Some(value) }
+    }
+
+    pub(crate) fn get(&self) -> &T {
+        self.value.as_ref().expect("JSON owner guard is armed")
+    }
+
+    pub(crate) fn into_inner(mut self) -> T {
+        self.value.take().expect("JSON owner guard is armed")
+    }
+}
+
+impl<T: DrainJsonValues> Drop for JsonOwnerGuard<T> {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.as_mut() {
+            value.drain_json_values();
+        }
+    }
+}
+
+impl DrainJsonValues for InferenceOptions {
+    fn drain_json_values(&mut self) {
+        for value in std::mem::take(&mut self.metadata).into_values() {
+            drop_json_value_iterative(value);
+        }
+    }
+}
+
+impl DrainJsonValues for Prompt {
+    fn drain_json_values(&mut self) {
+        self.options.drain_json_values();
+    }
+}
+
+impl DrainJsonValues for SessionRecord {
+    fn drain_json_values(&mut self) {
+        for value in std::mem::take(&mut self.metadata).into_values() {
+            drop_json_value_iterative(value);
+        }
+        for message in &mut self.messages {
+            for block in &mut message.content {
+                match block {
+                    ContentBlock::Json { value } => {
+                        drop_json_value_iterative(std::mem::take(value));
+                    }
+                    ContentBlock::ToolCall { call } => {
+                        drop_json_value_iterative(std::mem::take(&mut call.arguments));
+                    }
+                    ContentBlock::ToolResult { output, .. } => {
+                        drop_json_value_iterative(std::mem::take(&mut output.content));
+                    }
+                    ContentBlock::Text { .. } => {}
+                }
+            }
+        }
+    }
+}
+
+impl DrainJsonValues for ModelEvent {
+    fn drain_json_values(&mut self) {
+        if let ModelEvent::ToolCall { call } = self {
+            drop_json_value_iterative(std::mem::take(&mut call.arguments));
+        }
+    }
+}
+
+impl DrainJsonValues for ToolOutput {
+    fn drain_json_values(&mut self) {
+        drop_json_value_iterative(std::mem::take(&mut self.content));
+    }
+}
+
 /// A clonable handle to a provider-neutral session.
 #[derive(Clone)]
 pub struct Session {
@@ -343,17 +425,17 @@ impl Session {
         prompt: impl Into<Prompt>,
     ) -> BoxFuture<'static, Result<Turn, EngineError>> {
         let session = self.clone();
-        let prompt = prompt.into();
+        let prompt = JsonOwnerGuard::new(prompt.into());
         Box::pin(async move { session.start_prompt(prompt).await })
     }
 
-    async fn start_prompt(&self, prompt: Prompt) -> Result<Turn, EngineError> {
-        if prompt.text.len() > self.engine.limits.max_prompt_bytes.get() {
+    async fn start_prompt(&self, prompt: JsonOwnerGuard<Prompt>) -> Result<Turn, EngineError> {
+        if prompt.get().text.len() > self.engine.limits.max_prompt_bytes.get() {
             return Err(EngineError::Protocol(
                 "prompt exceeded the configured byte limit".to_owned(),
             ));
         }
-        validate_inference_options(&prompt.options, self.engine.limits)
+        validate_inference_options(&prompt.get().options, self.engine.limits)
             .map_err(|failure| EngineError::Protocol(failure.message))?;
         self.state
             .active_turn
@@ -363,6 +445,7 @@ impl Session {
             state: Arc::clone(&self.state),
         };
 
+        let prompt = prompt.into_inner();
         let (turn_id, record) = self.reserve_turn_and_prompt(prompt.text).await?;
         let session_id = record.id.clone();
         let cancellation = CancellationToken::new();
@@ -419,10 +502,12 @@ impl Session {
             candidate
                 .messages
                 .push(Message::text(Role::User, &prompt_text));
-            validate_record_limits(&candidate, self.engine.limits)?;
+            let candidate = JsonOwnerGuard::new(candidate);
+            validate_record_limits(candidate.get(), self.engine.limits)?;
             if !self.state.snapshot_is_current(&snapshot, persisted) {
                 continue;
             }
+            let mut candidate = candidate.into_inner();
             let previous_revision = candidate.revision;
 
             match self
@@ -459,14 +544,15 @@ impl Session {
                         self.state.mark_missing_if_current(&snapshot, persisted);
                         continue;
                     };
-                    if current.id != id {
+                    let current = JsonOwnerGuard::new(current);
+                    if current.get().id != id {
                         return Err(EngineError::Protocol(format!(
                             "session store returned ID {} for requested ID {id}",
-                            current.id
+                            current.get().id
                         )));
                     }
-                    validate_record_limits(&current, self.engine.limits)?;
-                    self.state.reconcile_loaded(current)?;
+                    validate_record_limits(current.get(), self.engine.limits)?;
+                    self.state.reconcile_loaded(current.into_inner())?;
                 }
                 Err(error) => return Err(redact_store_error(error).into()),
             }
@@ -846,7 +932,8 @@ async fn run_turn_inner(
                     break reason;
                 }
                 Some(Ok(event)) => {
-                    match &event {
+                    let event = JsonOwnerGuard::new(event);
+                    match event.get() {
                         ModelEvent::TextDelta { text } => {
                             assistant_bytes =
                                 assistant_bytes.checked_add(text.len()).ok_or_else(|| {
@@ -950,7 +1037,11 @@ async fn run_turn_inner(
                         }
                         ModelEvent::Stop { .. } => unreachable!("stop handled above"),
                     }
-                    emitter.emit(TurnEvent::Model { event }).await;
+                    emitter
+                        .emit(TurnEvent::Model {
+                            event: event.into_inner(),
+                        })
+                        .await;
                 }
                 Some(Err(error)) => return Err(TurnFailure::provider(&error).into()),
                 None => {
@@ -1151,7 +1242,7 @@ async fn run_turn_inner(
                         call.arguments.clone(),
                         cancellation.clone(),
                     );
-                    let result = await_cancellable(execution, &cancellation).await?;
+                    let result = await_tool_output(execution, &cancellation).await?;
                     let output = match result {
                         Ok(output) => output,
                         Err(error) => ToolOutput {
@@ -1166,15 +1257,15 @@ async fn run_turn_inner(
                     (output, true)
                 }
             };
+            let output = JsonOwnerGuard::new(output);
 
-            if let Err(failure) = validate_json_value(&output.content, limits) {
-                drop(output);
+            if let Err(failure) = validate_json_value(&output.get().content, limits) {
                 emitter.establish_terminal();
                 return Err(failure.into());
             }
 
             let result_bytes = serialized_json_size_bounded(
-                &output,
+                output.get(),
                 limits.max_serialized_tool_result_bytes.get(),
             )
             .map_err(|error| {
@@ -1203,7 +1294,6 @@ async fn run_turn_inner(
                 },
             };
             if let Some(failure) = size_failure {
-                drop(output);
                 emitter.establish_terminal();
                 return Err(failure.into());
             }
@@ -1220,7 +1310,7 @@ async fn run_turn_inner(
                 &session_state,
                 &record,
                 placeholder_index,
-                tool_result_message(call.id.clone(), output.clone()),
+                tool_result_message(call.id.clone(), output.get().clone()),
                 &cancellation,
                 true,
             )
@@ -1229,7 +1319,7 @@ async fn run_turn_inner(
                 emitter
                     .emit(TurnEvent::ToolFinished {
                         call_id: call.id,
-                        output,
+                        output: output.into_inner(),
                     })
                     .await;
             }
@@ -1329,43 +1419,120 @@ struct JsonFrame<'a> {
     children: JsonChildren<'a>,
 }
 
-/// Returns whether every JSON container is within `max_container_depth`.
-///
-/// A scalar root has depth zero. A root array or object has container depth one,
-/// and each array or object nested inside another container increments the
-/// depth. The traversal retains one iterator frame per active container rather
-/// than recursively calling or queueing siblings.
-pub(crate) fn json_depth_within_limit(root: &Value, max_container_depth: usize) -> bool {
-    let mut frames = Vec::<JsonFrame<'_>>::new();
-    let mut current = Some((root, 0usize));
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum JsonLimitViolation {
+    Depth,
+    Nodes,
+}
+
+struct JsonValidationBudget {
+    nodes: usize,
+    max_nodes: usize,
+    max_container_depth: usize,
+}
+
+impl JsonValidationBudget {
+    fn new(limits: crate::EngineLimits) -> Self {
+        Self {
+            nodes: 0,
+            max_nodes: limits.max_json_nodes.get(),
+            max_container_depth: limits.max_json_depth.get(),
+        }
+    }
+
+    fn validate(&mut self, root: &Value) -> Result<(), JsonLimitViolation> {
+        let mut frames = Vec::<JsonFrame<'_>>::new();
+        let mut current = Some((root, 0usize));
+
+        loop {
+            if let Some((value, parent_depth)) = current.take() {
+                self.nodes = self.nodes.checked_add(1).ok_or(JsonLimitViolation::Nodes)?;
+                if self.nodes > self.max_nodes {
+                    return Err(JsonLimitViolation::Nodes);
+                }
+
+                let children = match value {
+                    Value::Array(values) => Some(JsonChildren::Array(values.iter())),
+                    Value::Object(values) => Some(JsonChildren::Object(values.values())),
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+                };
+                if let Some(children) = children {
+                    let container_depth = parent_depth
+                        .checked_add(1)
+                        .ok_or(JsonLimitViolation::Depth)?;
+                    if container_depth > self.max_container_depth {
+                        return Err(JsonLimitViolation::Depth);
+                    }
+                    frames.push(JsonFrame {
+                        container_depth,
+                        children,
+                    });
+                }
+            }
+
+            loop {
+                let Some(frame) = frames.last_mut() else {
+                    return Ok(());
+                };
+                if let Some(child) = frame.children.next() {
+                    current = Some((child, frame.container_depth));
+                    break;
+                }
+                frames.pop();
+            }
+        }
+    }
+}
+
+pub(crate) fn validate_json_roots<'a>(
+    roots: impl IntoIterator<Item = &'a Value>,
+    limits: crate::EngineLimits,
+) -> Result<(), JsonLimitViolation> {
+    let mut budget = JsonValidationBudget::new(limits);
+    for root in roots {
+        budget.validate(root)?;
+    }
+    Ok(())
+}
+
+enum OwnedJsonChildren {
+    Array(std::vec::IntoIter<Value>),
+    Object(serde_json::map::IntoValues),
+}
+
+impl Iterator for OwnedJsonChildren {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Array(children) => children.next(),
+            Self::Object(children) => children.next(),
+        }
+    }
+}
+
+/// Reclaims a JSON tree without recursive `Value::drop` calls.
+pub(crate) fn drop_json_value_iterative(root: Value) {
+    let mut frames = Vec::<OwnedJsonChildren>::new();
+    let mut current = Some(root);
 
     loop {
-        if let Some((value, parent_depth)) = current.take() {
-            let children = match value {
-                Value::Array(values) => Some(JsonChildren::Array(values.iter())),
-                Value::Object(values) => Some(JsonChildren::Object(values.values())),
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-            };
-            if let Some(children) = children {
-                let Some(container_depth) = parent_depth.checked_add(1) else {
-                    return false;
-                };
-                if container_depth > max_container_depth {
-                    return false;
+        if let Some(value) = current.take() {
+            match value {
+                Value::Array(values) => frames.push(OwnedJsonChildren::Array(values.into_iter())),
+                Value::Object(values) => {
+                    frames.push(OwnedJsonChildren::Object(values.into_values()));
                 }
-                frames.push(JsonFrame {
-                    container_depth,
-                    children,
-                });
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
             }
         }
 
         loop {
             let Some(frame) = frames.last_mut() else {
-                return true;
+                return;
             };
-            if let Some(child) = frame.children.next() {
-                current = Some((child, frame.container_depth));
+            if let Some(child) = frame.next() {
+                current = Some(child);
                 break;
             }
             frames.pop();
@@ -1373,15 +1540,21 @@ pub(crate) fn json_depth_within_limit(root: &Value, max_container_depth: usize) 
     }
 }
 
-fn validate_json_value(value: &Value, limits: crate::EngineLimits) -> Result<(), TurnFailure> {
-    if json_depth_within_limit(value, limits.max_json_depth.get()) {
-        Ok(())
-    } else {
-        Err(TurnFailure::limit(
+fn json_limit_failure(violation: JsonLimitViolation) -> TurnFailure {
+    match violation {
+        JsonLimitViolation::Depth => TurnFailure::limit(
             "json_depth_limit",
             "JSON value exceeded the configured container depth limit",
-        ))
+        ),
+        JsonLimitViolation::Nodes => TurnFailure::limit(
+            "json_node_limit",
+            "JSON values exceeded the configured node limit",
+        ),
     }
+}
+
+fn validate_json_value(value: &Value, limits: crate::EngineLimits) -> Result<(), TurnFailure> {
+    validate_json_roots(std::iter::once(value), limits).map_err(json_limit_failure)
 }
 
 impl Write for JsonByteCounter {
@@ -1449,18 +1622,25 @@ fn validate_transcript(
 }
 
 fn validate_record(record: &SessionRecord, limits: crate::EngineLimits) -> Result<(), TurnFailure> {
+    let mut json_budget = JsonValidationBudget::new(limits);
     for value in record.metadata.values() {
-        validate_json_value(value, limits)?;
+        json_budget.validate(value).map_err(json_limit_failure)?;
     }
     for message in &record.messages {
         for block in &message.content {
             match block {
-                ContentBlock::Json { value } => validate_json_value(value, limits)?,
+                ContentBlock::Json { value } => {
+                    json_budget.validate(value).map_err(json_limit_failure)?;
+                }
                 ContentBlock::ToolCall { call } => {
-                    validate_json_value(&call.arguments, limits)?;
+                    json_budget
+                        .validate(&call.arguments)
+                        .map_err(json_limit_failure)?;
                 }
                 ContentBlock::ToolResult { output, .. } => {
-                    validate_json_value(&output.content, limits)?;
+                    json_budget
+                        .validate(&output.content)
+                        .map_err(json_limit_failure)?;
                 }
                 ContentBlock::Text { .. } => {}
             }
@@ -1488,8 +1668,9 @@ fn validate_inference_options(
     options: &InferenceOptions,
     limits: crate::EngineLimits,
 ) -> Result<(), TurnFailure> {
+    let mut json_budget = JsonValidationBudget::new(limits);
     for value in options.metadata.values() {
-        validate_json_value(value, limits)?;
+        json_budget.validate(value).map_err(json_limit_failure)?;
     }
     let bytes = serialized_json_size_bounded(options, limits.max_inference_options_bytes.get())
         .map_err(|_| {
@@ -1601,6 +1782,27 @@ async fn await_cancellable<T>(
     .await
 }
 
+async fn await_tool_output(
+    mut future: BoxFuture<'_, Result<ToolOutput, crate::ToolError>>,
+    cancellation: &CancellationToken,
+) -> Result<Result<ToolOutput, crate::ToolError>, WorkflowAbort> {
+    poll_fn(|context| {
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(WorkflowAbort::Cancelled));
+        }
+        let result = future.as_mut().poll(context);
+        if cancellation.is_cancelled() {
+            if let Poll::Ready(Ok(mut output)) = result {
+                output.drain_json_values();
+            }
+            Poll::Ready(Err(WorkflowAbort::Cancelled))
+        } else {
+            result.map(Ok)
+        }
+    })
+    .await
+}
+
 async fn await_operation<T>(
     future: BoxFuture<'_, T>,
     cancellation: &CancellationToken,
@@ -1613,6 +1815,31 @@ async fn await_operation<T>(
     }
 }
 
+async fn await_record_load(
+    mut future: BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>>,
+    cancellation: &CancellationToken,
+    honor_cancellation: bool,
+) -> Result<Result<Option<SessionRecord>, SessionStoreError>, WorkflowAbort> {
+    if !honor_cancellation {
+        return Ok(future.await);
+    }
+    poll_fn(|context| {
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(WorkflowAbort::Cancelled));
+        }
+        let result = future.as_mut().poll(context);
+        if cancellation.is_cancelled() {
+            if let Poll::Ready(Ok(Some(mut record))) = result {
+                record.drain_json_values();
+            }
+            Poll::Ready(Err(WorkflowAbort::Cancelled))
+        } else {
+            result.map(Ok)
+        }
+    })
+    .await
+}
+
 async fn next_model_item(
     stream: &mut ModelEventStream,
     cancellation: &CancellationToken,
@@ -1623,6 +1850,9 @@ async fn next_model_item(
         }
         let result = stream.as_mut().poll_next(context);
         if cancellation.is_cancelled() {
+            if let Poll::Ready(Some(Ok(mut event))) = result {
+                event.drain_json_values();
+            }
             Poll::Ready(Err(WorkflowAbort::Cancelled))
         } else {
             result.map(Ok)
@@ -1684,10 +1914,12 @@ async fn commit_messages(
         let expected_revision = persisted.then_some(snapshot.revision);
         let mut candidate = (*snapshot).clone();
         candidate.messages.extend(messages.iter().cloned());
-        validate_record(&candidate, engine.limits)?;
+        let candidate = JsonOwnerGuard::new(candidate);
+        validate_record(candidate.get(), engine.limits)?;
         if !state.snapshot_is_current(&snapshot, persisted) {
             continue;
         }
+        let mut candidate = candidate.into_inner();
         let previous_revision = candidate.revision;
         let save = engine
             .session_store
@@ -1712,7 +1944,7 @@ async fn commit_messages(
             }
             Err(error) if error.kind == SessionStoreErrorKind::Conflict => {
                 let load = engine.session_store.load(base.id.clone());
-                let Some(current) = await_operation(load, cancellation, honor_cancellation)
+                let Some(current) = await_record_load(load, cancellation, honor_cancellation)
                     .await?
                     .map_err(|error| TurnFailure::store(&error))?
                 else {
@@ -1722,30 +1954,34 @@ async fn commit_messages(
                     )
                     .into());
                 };
-                if current.id != base.id {
+                let current = JsonOwnerGuard::new(current);
+                if current.get().id != base.id {
                     return Err(TurnFailure::protocol(
                         "session_identity_changed",
                         format!(
                             "session store returned ID {} for requested ID {}",
-                            current.id, base.id
+                            current.get().id,
+                            base.id
                         ),
                     )
                     .into());
                 }
-                SessionState::validate_loaded(&current).map_err(|error| {
+                SessionState::validate_loaded(current.get()).map_err(|error| {
                     TurnFailure::protocol("invalid_conflict_record", error.to_string())
                 })?;
-                validate_record(&current, engine.limits)?;
-                if current.messages != base.messages {
+                validate_record(current.get(), engine.limits)?;
+                if current.get().messages != base.messages {
                     return Err(TurnFailure::protocol(
                         "transcript_diverged",
                         "durable transcript diverged during message commit",
                     )
                     .into());
                 }
-                state.reconcile_loaded(current).map_err(|error| {
-                    TurnFailure::protocol("conflict_reconciliation", error.to_string())
-                })?;
+                state
+                    .reconcile_loaded(current.into_inner())
+                    .map_err(|error| {
+                        TurnFailure::protocol("conflict_reconciliation", error.to_string())
+                    })?;
             }
             Err(error) => return Err(TurnFailure::store(&error).into()),
         }
@@ -1801,10 +2037,12 @@ async fn replace_message(
             .into());
         };
         *message = replacement.clone();
-        validate_record(&candidate, engine.limits)?;
+        let candidate = JsonOwnerGuard::new(candidate);
+        validate_record(candidate.get(), engine.limits)?;
         if !state.snapshot_is_current(&snapshot, persisted) {
             continue;
         }
+        let mut candidate = candidate.into_inner();
         let previous_revision = candidate.revision;
         let save = engine
             .session_store
@@ -1829,7 +2067,7 @@ async fn replace_message(
             }
             Err(error) if error.kind == SessionStoreErrorKind::Conflict => {
                 let load = engine.session_store.load(base.id.clone());
-                let Some(current) = await_operation(load, cancellation, honor_cancellation)
+                let Some(current) = await_record_load(load, cancellation, honor_cancellation)
                     .await?
                     .map_err(|error| TurnFailure::store(&error))?
                 else {
@@ -1839,27 +2077,30 @@ async fn replace_message(
                     )
                     .into());
                 };
-                if current.id != base.id {
+                let current = JsonOwnerGuard::new(current);
+                if current.get().id != base.id {
                     return Err(TurnFailure::protocol(
                         "session_identity_changed",
                         "session store returned a different session during result replacement",
                     )
                     .into());
                 }
-                SessionState::validate_loaded(&current).map_err(|error| {
+                SessionState::validate_loaded(current.get()).map_err(|error| {
                     TurnFailure::protocol("invalid_conflict_record", error.to_string())
                 })?;
-                validate_record(&current, engine.limits)?;
-                if current.messages != base.messages {
+                validate_record(current.get(), engine.limits)?;
+                if current.get().messages != base.messages {
                     return Err(TurnFailure::protocol(
                         "transcript_diverged",
                         "durable transcript diverged during result replacement",
                     )
                     .into());
                 }
-                state.reconcile_loaded(current).map_err(|error| {
-                    TurnFailure::protocol("conflict_reconciliation", error.to_string())
-                })?;
+                state
+                    .reconcile_loaded(current.into_inner())
+                    .map_err(|error| {
+                        TurnFailure::protocol("conflict_reconciliation", error.to_string())
+                    })?;
             }
             Err(error) => return Err(TurnFailure::store(&error).into()),
         }

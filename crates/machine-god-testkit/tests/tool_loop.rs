@@ -2,11 +2,12 @@ use futures_core::Stream;
 use futures_util::StreamExt;
 use machine_god_core::{
     BoxFuture, BuildError, CancellationToken, ContentBlock, Engine, EngineError, EngineEvent,
-    EngineLimits, InferenceOptions, Message, ModelEvent, PermissionDecision, PermissionError,
-    PermissionGrantScope, PermissionHandler, PermissionRequest, Prompt, ProviderError,
-    ProviderErrorKind, Role, SessionId, SessionRecord, SessionRevision, SessionStore,
-    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
-    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
+    EngineLimits, InferenceOptions, Message, ModelEvent, ModelEventStream, ModelProvider,
+    ModelRequest, PermissionDecision, PermissionError, PermissionGrantScope, PermissionHandler,
+    PermissionRequest, Prompt, ProviderError, ProviderErrorKind, Role, SessionId, SessionRecord,
+    SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind, StopReason,
+    TokenUsage, Tool, ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName,
+    ToolOutput, ToolSpec, Turn, TurnEvent,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
@@ -65,6 +66,11 @@ fn nested_array(container_depth: usize) -> Value {
         value = Value::Array(vec![value]);
     }
     value
+}
+
+fn flat_array_nodes(total_nodes: usize) -> Value {
+    assert!(total_nodes > 0);
+    Value::Array(vec![Value::Null; total_nodes - 1])
 }
 
 fn assert_unknown_result(message: &Message, expected_call: &str) {
@@ -486,6 +492,7 @@ fn with_limit(mut limits: EngineLimits, field: &str, value: usize) -> EngineLimi
         "calls_round" => limits.max_tool_calls_per_round = value,
         "calls_turn" => limits.max_tool_calls_per_turn = value,
         "json_depth" => limits.max_json_depth = value,
+        "json_nodes" => limits.max_json_nodes = value,
         "text" => limits.max_assistant_text_bytes = value,
         "reasoning" => limits.max_reasoning_bytes = value,
         "stop_detail" => limits.max_stop_detail_bytes = value,
@@ -1711,6 +1718,142 @@ fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
     ));
 }
 
+#[derive(Debug)]
+struct OneShotSpecTool {
+    spec: Mutex<Option<ToolSpec>>,
+}
+
+impl OneShotSpecTool {
+    fn new(spec: ToolSpec) -> Self {
+        Self {
+            spec: Mutex::new(Some(spec)),
+        }
+    }
+}
+
+impl Tool for OneShotSpecTool {
+    fn spec(&self) -> ToolSpec {
+        self.spec
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .expect("one-shot tool spec was requested more than once")
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async {
+            Err(ToolError::new(
+                ToolErrorKind::Other,
+                "unused_one_shot_tool",
+                "one-shot schema fixture cannot execute",
+                false,
+            ))
+        })
+    }
+}
+
+fn one_shot_schema_tool(name: &str, schema: Value) -> OneShotSpecTool {
+    OneShotSpecTool::new(ToolSpec {
+        name: tool_name(name),
+        description: "one-shot schema fixture".to_owned(),
+        input_schema: schema,
+    })
+}
+
+#[derive(Clone, Debug)]
+struct OneShotLoadStore {
+    record: Arc<Mutex<Option<SessionRecord>>>,
+}
+
+impl OneShotLoadStore {
+    fn new(record: SessionRecord) -> Self {
+        Self {
+            record: Arc::new(Mutex::new(Some(record))),
+        }
+    }
+}
+
+impl SessionStore for OneShotLoadStore {
+    fn load(
+        &self,
+        _id: SessionId,
+    ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+        let record = self
+            .record
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        Box::pin(async move { Ok(record) })
+    }
+
+    fn save(
+        &self,
+        _record: SessionRecord,
+        _expected_revision: Option<SessionRevision>,
+    ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+        Box::pin(async {
+            Err(SessionStoreError::new(
+                SessionStoreErrorKind::Other,
+                "unused_one_shot_store",
+                "one-shot load fixture cannot save",
+                false,
+            ))
+        })
+    }
+}
+
+#[derive(Debug)]
+struct CancelReadyDeepProvider;
+
+impl ModelProvider for CancelReadyDeepProvider {
+    fn name(&self) -> &'static str {
+        "cancel-ready-deep"
+    }
+
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        let mut event = Some(ModelEvent::ToolCall {
+            call: call("cancel-ready-deep", "known", nested_array(DEEP_JSON_DEPTH)),
+        });
+        Box::pin(async move {
+            Ok(Box::pin(futures_util::stream::poll_fn(move |_| {
+                cancellation.cancel();
+                Poll::Ready(event.take().map(Ok))
+            })) as ModelEventStream)
+        })
+    }
+}
+
+#[derive(Debug)]
+struct CancelReadyDeepTool;
+
+impl Tool for CancelReadyDeepTool {
+    fn spec(&self) -> ToolSpec {
+        spec("cancel-ready-deep")
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        let mut output = Some(ToolOutput::success(nested_array(DEEP_JSON_DEPTH)));
+        Box::pin(std::future::poll_fn(move |_| {
+            cancellation.cancel();
+            Poll::Ready(Ok(output.take().expect("tool output polled after ready")))
+        }))
+    }
+}
+
 #[test]
 fn tool_catalog_json_depth_limit_enforces_exact_boundary() {
     let mut exact_spec = spec("schema-exact");
@@ -2017,6 +2160,577 @@ fn tool_output_json_depth_exact_boundary_and_unknown_overflow_marker() {
     let durable = store.record(&id).unwrap();
     assert_eq!(durable.messages.len(), 3);
     assert_unknown_result(&durable.messages[2], "over");
+}
+
+#[test]
+fn tool_catalog_json_node_budget_is_aggregate_and_enforces_plus_one() {
+    let limits = with_limit(EngineLimits::default(), "json_nodes", 2);
+    Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(one_shot_schema_tool("one", Value::Null))
+        .tool(one_shot_schema_tool("two", Value::Null))
+        .limits(limits)
+        .build()
+        .unwrap();
+
+    assert!(matches!(
+        Engine::builder()
+            .provider(ScriptedModelProvider::new("unused", []))
+            .session_store(InMemorySessionStore::new())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .tool(one_shot_schema_tool("one", Value::Null))
+            .tool(one_shot_schema_tool("two", Value::Null))
+            .tool(one_shot_schema_tool("three", Value::Null))
+            .limits(limits)
+            .build(),
+        Err(BuildError::ToolCatalogJsonNodeLimitExceeded)
+    ));
+}
+
+#[test]
+fn inference_metadata_json_node_budget_enforces_exact_and_plus_one_before_effects() {
+    let limits = with_limit(EngineLimits::default(), "json_nodes", 2);
+    let provider = ScriptedModelProvider::new(
+        "options-nodes-exact",
+        [events([ModelEvent::Stop {
+            reason: StopReason::Completed,
+        }])],
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(limits)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("options-nodes-exact").unwrap());
+    let output = futures_executor::block_on(async {
+        session
+            .prompt(Prompt {
+                text: "go".to_owned(),
+                options: InferenceOptions {
+                    metadata: BTreeMap::from([
+                        ("one".to_owned(), Value::Null),
+                        ("two".to_owned(), Value::Null),
+                    ]),
+                    ..InferenceOptions::default()
+                },
+            })
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+    });
+    assert!(matches!(
+        output.last(),
+        Some(Ok(EngineEvent {
+            payload: TurnEvent::Completed { .. },
+            ..
+        }))
+    ));
+    assert_eq!(provider.requests().len(), 1);
+
+    let provider = ScriptedModelProvider::new("options-nodes-over", []);
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(limits)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("options-nodes-over").unwrap());
+    assert!(matches!(
+        futures_executor::block_on(session.prompt(Prompt {
+            text: "go".to_owned(),
+            options: InferenceOptions {
+                metadata: BTreeMap::from([
+                    ("one".to_owned(), Value::Null),
+                    ("two".to_owned(), Value::Null),
+                    ("three".to_owned(), Value::Null),
+                ]),
+                ..InferenceOptions::default()
+            },
+        })),
+        Err(EngineError::Protocol(message)) if message.contains("node limit")
+    ));
+    assert!(store.calls().is_empty());
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn loaded_record_json_node_budget_is_aggregate_across_metadata_and_messages() {
+    let limits = with_limit(EngineLimits::default(), "json_nodes", 2);
+    let id = SessionId::new("record-nodes-exact").unwrap();
+    let exact = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(1),
+        next_turn_sequence: 1,
+        messages: vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Json { value: Value::Null }],
+        }],
+        metadata: BTreeMap::from([("one".to_owned(), Value::Null)]),
+    };
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            id.clone(),
+            exact,
+        )])))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(limits)
+        .build()
+        .unwrap();
+    assert!(
+        futures_executor::block_on(engine.load_session(id))
+            .unwrap()
+            .is_some()
+    );
+
+    let id = SessionId::new("record-nodes-over").unwrap();
+    let over = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(1),
+        next_turn_sequence: 1,
+        messages: vec![Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::Json { value: Value::Null },
+                ContentBlock::ToolCall {
+                    call: call("three", "known", Value::Null),
+                },
+            ],
+        }],
+        metadata: BTreeMap::from([("one".to_owned(), Value::Null)]),
+    };
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            id.clone(),
+            over,
+        )])))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(limits)
+        .build()
+        .unwrap();
+    assert!(matches!(
+        futures_executor::block_on(engine.load_session(id.clone())),
+        Err(EngineError::Protocol(message)) if message.contains("node limit")
+    ));
+    assert!(engine.create_session(id).record().messages.is_empty());
+}
+
+#[test]
+fn provider_argument_json_node_limit_precedes_authorization_and_execution() {
+    let limits = with_limit(EngineLimits::default(), "json_nodes", 7);
+    let provider = ScriptedModelProvider::new(
+        "argument-nodes-exact-record",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("exact", "known", flat_array_nodes(4)),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = ScriptedPermissionHandler::new([allow()]);
+    let tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success(Value::Null))],
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .limits(limits)
+        .build()
+        .unwrap();
+    let output =
+        collect(&engine.create_session(SessionId::new("argument-nodes-exact-record").unwrap()));
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(permissions.requests().len(), 1);
+    assert_eq!(tool.invocations().len(), 1);
+
+    let permissions = ScriptedPermissionHandler::new([]);
+    let tool = ScriptedTool::new(spec("known"), []);
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new(
+            "argument-nodes-over",
+            [events([
+                ModelEvent::ToolCall {
+                    call: call("over", "known", flat_array_nodes(8)),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ])],
+        ))
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .limits(limits)
+        .build()
+        .unwrap();
+    let output = collect(&engine.create_session(SessionId::new("argument-nodes-over").unwrap()));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "json_node_limit"
+    ));
+    assert!(permissions.requests().is_empty());
+    assert!(tool.invocations().is_empty());
+}
+
+#[test]
+fn tool_output_json_node_limit_keeps_post_effect_placeholder() {
+    let limits = with_limit(EngineLimits::default(), "json_nodes", 7);
+    let provider = ScriptedModelProvider::new(
+        "output-nodes-exact-record",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("exact", "known", Value::Null),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success(flat_array_nodes(6)))],
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .tool(tool.clone())
+        .limits(limits)
+        .build()
+        .unwrap();
+    let output =
+        collect(&engine.create_session(SessionId::new("output-nodes-exact-record").unwrap()));
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(tool.invocations().len(), 1);
+
+    let provider = ScriptedModelProvider::new(
+        "output-nodes-over",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("over", "known", Value::Null),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success(flat_array_nodes(8)))],
+    );
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .tool(tool.clone())
+        .limits(limits)
+        .build()
+        .unwrap();
+    let id = SessionId::new("output-nodes-over").unwrap();
+    let output = collect(&engine.create_session(id.clone()));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "json_node_limit"
+    ));
+    assert_eq!(tool.invocations().len(), 1);
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "over");
+}
+
+const DEEP_JSON_CASE_ENV: &str = "MACHINE_GOD_DEEP_JSON_CASE";
+const DEEP_JSON_DEPTH: usize = 50_000;
+
+#[test]
+fn deep_owned_json_rejections_are_stack_safe_in_subprocesses() {
+    for case in [
+        "builder_abandon",
+        "builder_duplicate",
+        "catalog_build",
+        "unpolled_prompt",
+        "prompt_options",
+        "loaded_metadata",
+        "loaded_transcript",
+        "provider_arguments",
+        "provider_cancel_ready",
+        "tool_output",
+        "tool_cancel_ready",
+    ] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "deep_owned_json_rejection_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(DEEP_JSON_CASE_ENV, case)
+            .status()
+            .unwrap();
+        assert!(status.success(), "deep JSON subprocess failed: {case}");
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn deep_owned_json_rejection_child() {
+    let Ok(case) = std::env::var(DEEP_JSON_CASE_ENV) else {
+        return;
+    };
+
+    match case.as_str() {
+        "builder_abandon" => {
+            let builder = Engine::builder().tool(one_shot_schema_tool(
+                "deep-abandon",
+                nested_array(DEEP_JSON_DEPTH),
+            ));
+            drop(builder);
+        }
+        "builder_duplicate" => {
+            let builder = Engine::builder()
+                .tool(one_shot_schema_tool(
+                    "deep-duplicate",
+                    nested_array(DEEP_JSON_DEPTH),
+                ))
+                .tool(ScriptedTool::new(spec("deep-duplicate"), []));
+            drop(builder);
+        }
+        "catalog_build" => {
+            let result = Engine::builder()
+                .provider(ScriptedModelProvider::new("unused", []))
+                .session_store(InMemorySessionStore::new())
+                .permission_handler(ScriptedPermissionHandler::new([]))
+                .tool(one_shot_schema_tool(
+                    "deep-catalog",
+                    nested_array(DEEP_JSON_DEPTH),
+                ))
+                .build();
+            assert!(matches!(
+                result,
+                Err(BuildError::ToolCatalogJsonDepthExceeded)
+            ));
+        }
+        "unpolled_prompt" => {
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new("unused", []))
+                .session_store(InMemorySessionStore::new())
+                .permission_handler(ScriptedPermissionHandler::new([]))
+                .build()
+                .unwrap();
+            let session = engine.create_session(SessionId::new("deep-unpolled").unwrap());
+            let future = session.prompt(Prompt {
+                text: "go".to_owned(),
+                options: InferenceOptions {
+                    metadata: BTreeMap::from([("deep".to_owned(), nested_array(DEEP_JSON_DEPTH))]),
+                    ..InferenceOptions::default()
+                },
+            });
+            drop(future);
+        }
+        "prompt_options" => {
+            let provider = ScriptedModelProvider::new("unused", []);
+            let store = InMemorySessionStore::new();
+            let engine = Engine::builder()
+                .provider(provider.clone())
+                .session_store(store.clone())
+                .permission_handler(ScriptedPermissionHandler::new([]))
+                .build()
+                .unwrap();
+            let session = engine.create_session(SessionId::new("deep-options").unwrap());
+            let result = futures_executor::block_on(session.prompt(Prompt {
+                text: "go".to_owned(),
+                options: InferenceOptions {
+                    metadata: BTreeMap::from([("deep".to_owned(), nested_array(DEEP_JSON_DEPTH))]),
+                    ..InferenceOptions::default()
+                },
+            }));
+            assert!(matches!(
+                result,
+                Err(EngineError::Protocol(message)) if message.contains("depth limit")
+            ));
+            assert!(provider.requests().is_empty());
+            assert!(store.calls().is_empty());
+        }
+        "loaded_metadata" | "loaded_transcript" => {
+            let id = SessionId::new(case.as_str()).unwrap();
+            let (metadata, messages) = if case == "loaded_metadata" {
+                (
+                    BTreeMap::from([("deep".to_owned(), nested_array(DEEP_JSON_DEPTH))]),
+                    Vec::new(),
+                )
+            } else {
+                (
+                    BTreeMap::new(),
+                    vec![Message {
+                        role: Role::User,
+                        content: vec![ContentBlock::Json {
+                            value: nested_array(DEEP_JSON_DEPTH),
+                        }],
+                    }],
+                )
+            };
+            let store = OneShotLoadStore::new(SessionRecord {
+                id: id.clone(),
+                revision: SessionRevision(1),
+                next_turn_sequence: 1,
+                messages,
+                metadata,
+            });
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new("unused", []))
+                .session_store(store)
+                .permission_handler(ScriptedPermissionHandler::new([]))
+                .build()
+                .unwrap();
+            assert!(matches!(
+                futures_executor::block_on(engine.load_session(id.clone())),
+                Err(EngineError::Protocol(message)) if message.contains("depth limit")
+            ));
+            assert!(engine.create_session(id).record().messages.is_empty());
+        }
+        "provider_arguments" => {
+            let permissions = ScriptedPermissionHandler::new([]);
+            let tool = ScriptedTool::new(spec("known"), []);
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new(
+                    "deep-provider-arguments",
+                    [events([
+                        ModelEvent::ToolCall {
+                            call: call("deep", "known", nested_array(DEEP_JSON_DEPTH)),
+                        },
+                        ModelEvent::Stop {
+                            reason: StopReason::ToolCalls,
+                        },
+                    ])],
+                ))
+                .session_store(InMemorySessionStore::new())
+                .permission_handler(permissions.clone())
+                .tool(tool.clone())
+                .build()
+                .unwrap();
+            let output =
+                collect(&engine.create_session(SessionId::new("deep-provider-arguments").unwrap()));
+            assert!(matches!(
+                &output.last().unwrap().payload,
+                TurnEvent::Failed { code, .. } if code == "json_depth_limit"
+            ));
+            assert!(permissions.requests().is_empty());
+            assert!(tool.invocations().is_empty());
+        }
+        "provider_cancel_ready" => {
+            let permissions = ScriptedPermissionHandler::new([]);
+            let engine = Engine::builder()
+                .provider(CancelReadyDeepProvider)
+                .session_store(InMemorySessionStore::new())
+                .permission_handler(permissions.clone())
+                .tool(ScriptedTool::new(spec("known"), []))
+                .build()
+                .unwrap();
+            let output = collect(
+                &engine.create_session(SessionId::new("deep-provider-cancel-ready").unwrap()),
+            );
+            assert!(matches!(
+                &output.last().unwrap().payload,
+                TurnEvent::Completed {
+                    reason: StopReason::Cancelled,
+                    ..
+                }
+            ));
+            assert!(permissions.requests().is_empty());
+        }
+        "tool_output" => {
+            let store = InMemorySessionStore::new();
+            let tool = ScriptedTool::new(
+                spec("known"),
+                [ToolStep::Output(ToolOutput::success(nested_array(
+                    DEEP_JSON_DEPTH,
+                )))],
+            );
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new(
+                    "deep-tool-output",
+                    [events([
+                        ModelEvent::ToolCall {
+                            call: call("deep", "known", Value::Null),
+                        },
+                        ModelEvent::Stop {
+                            reason: StopReason::ToolCalls,
+                        },
+                    ])],
+                ))
+                .session_store(store.clone())
+                .permission_handler(ScriptedPermissionHandler::new([allow()]))
+                .tool(tool.clone())
+                .build()
+                .unwrap();
+            let id = SessionId::new("deep-tool-output").unwrap();
+            let output = collect(&engine.create_session(id.clone()));
+            assert!(matches!(
+                &output.last().unwrap().payload,
+                TurnEvent::Failed { code, .. } if code == "json_depth_limit"
+            ));
+            assert_eq!(tool.invocations().len(), 1);
+            assert_unknown_result(&store.record(&id).unwrap().messages[2], "deep");
+        }
+        "tool_cancel_ready" => {
+            let store = InMemorySessionStore::new();
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new(
+                    "deep-tool-cancel-ready",
+                    [events([
+                        ModelEvent::ToolCall {
+                            call: call("deep", "cancel-ready-deep", Value::Null),
+                        },
+                        ModelEvent::Stop {
+                            reason: StopReason::ToolCalls,
+                        },
+                    ])],
+                ))
+                .session_store(store.clone())
+                .permission_handler(ScriptedPermissionHandler::new([allow()]))
+                .tool(CancelReadyDeepTool)
+                .build()
+                .unwrap();
+            let id = SessionId::new("deep-tool-cancel-ready").unwrap();
+            let output = collect(&engine.create_session(id.clone()));
+            assert!(matches!(
+                &output.last().unwrap().payload,
+                TurnEvent::Completed {
+                    reason: StopReason::Cancelled,
+                    ..
+                }
+            ));
+            assert_unknown_result(&store.record(&id).unwrap().messages[2], "deep");
+        }
+        other => panic!("unknown deep JSON subprocess case: {other}"),
+    }
 }
 
 #[test]

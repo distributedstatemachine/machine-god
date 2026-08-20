@@ -191,11 +191,21 @@ enforced boundary, but M02 makes no throughput or latency claim for this path. A
 future representative session-replay benchmark should measure increasing
 history sizes and conflict rates before an optimization claim is made.
 
-JSON container depth is validated with an explicit iterator-frame stack. The
-walk is linear in visited nodes and uses O(depth) auxiliary memory rather than
-recursion or a work queue proportional to all siblings. It precedes recursive
-serialization and cloning wherever core controls the boundary. The limit cannot
-recover allocation already performed while a caller built options, a store
-decoded a record, a tool built a specification or result, a provider built an
-event value, or a policy built its decision; those producers require their own
-decode/allocation bounds.
+JSON container depth and node count are validated with an explicit
+iterator-frame stack. The walk is linear in visited nodes, stops at node limit
+plus one on rejection, and uses O(depth) auxiliary memory rather than recursion
+or a work queue proportional to all siblings. Aggregate validation reuses one
+counter for a complete schema catalog, inference-metadata collection, or stored
+record; individual provider arguments and results each start one counter. It
+precedes recursive serialization and cloning wherever core controls the
+boundary.
+
+Rejected owned values are reclaimed by consuming their arrays and maps through
+the same shape of iterator stack. This costs O(actual nodes), not merely the
+validation prefix, and O(actual depth) auxiliary memory; it prevents both a
+recursive destructor overflow and a leak. Values still queued inside a provider
+stream remain provider-owned and require a stack-safe stream destructor. These
+limits also cannot recover allocation already performed while a caller built
+options, a store decoded a record, a tool built a specification or result, a
+provider built an event value, or a policy built its decision; those producers
+require their own decode/allocation bounds.

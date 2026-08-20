@@ -34,6 +34,7 @@ pub struct EngineLimits {
     pub max_tool_calls_per_turn: NonZeroUsize,
     pub max_tool_calls_per_round: NonZeroUsize,
     pub max_json_depth: NonZeroUsize,
+    pub max_json_nodes: NonZeroUsize,
     pub max_assistant_text_bytes: NonZeroUsize,
     pub max_reasoning_bytes: NonZeroUsize,
     pub max_stop_detail_bytes: NonZeroUsize,
@@ -57,6 +58,7 @@ impl Default for EngineLimits {
             max_tool_calls_per_turn: NonZeroUsize::new(16).expect("default is nonzero"),
             max_tool_calls_per_round: NonZeroUsize::new(4).expect("default is nonzero"),
             max_json_depth: NonZeroUsize::new(64).expect("default is nonzero"),
+            max_json_nodes: NonZeroUsize::new(65_536).expect("default is nonzero"),
             max_assistant_text_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_reasoning_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_stop_detail_bytes: NonZeroUsize::new(1024).expect("default is nonzero"),
@@ -86,6 +88,16 @@ impl fmt::Debug for EngineBuilder {
             .field("has_permission_handler", &self.permission_handler.is_some())
             .field("tool_count", &self.tools.len())
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for EngineBuilder {
+    fn drop(&mut self) {
+        for registered in self.tools.values_mut() {
+            crate::session::drop_json_value_iterative(std::mem::take(
+                &mut registered.spec.input_schema,
+            ));
+        }
     }
 }
 
@@ -156,11 +168,13 @@ impl EngineBuilder {
         let tool = Arc::new(tool);
         let spec = tool.spec();
         let name = spec.name.clone();
-        if self
+        if let Some(mut previous) = self
             .tools
             .insert(name.clone(), RegisteredTool { spec, tool })
-            .is_some()
         {
+            crate::session::drop_json_value_iterative(std::mem::take(
+                &mut previous.spec.input_schema,
+            ));
             self.duplicate_tool = Some(name);
         }
         self
@@ -170,11 +184,13 @@ impl EngineBuilder {
     pub fn shared_tool(mut self, tool: Arc<dyn Tool>) -> Self {
         let spec = tool.spec();
         let name = spec.name.clone();
-        if self
+        if let Some(mut previous) = self
             .tools
             .insert(name.clone(), RegisteredTool { spec, tool })
-            .is_some()
         {
+            crate::session::drop_json_value_iterative(std::mem::take(
+                &mut previous.spec.input_schema,
+            ));
             self.duplicate_tool = Some(name);
         }
         self
@@ -186,34 +202,46 @@ impl EngineBuilder {
     ///
     /// Returns [`BuildError`] when a required component is absent, two
     /// registered tools have the same name, or the tool catalog exceeds its
-    /// configured serialized-byte or JSON-depth bound.
-    pub fn build(self) -> Result<Engine, BuildError> {
-        if let Some(name) = self.duplicate_tool {
+    /// configured serialized-byte, JSON-depth, or aggregate JSON-node bound.
+    pub fn build(mut self) -> Result<Engine, BuildError> {
+        let tools = ToolMapGuard::new(std::mem::take(&mut self.tools));
+        if let Some(name) = self.duplicate_tool.take() {
             return Err(BuildError::DuplicateTool(name.to_string()));
         }
-        let provider = self.provider.ok_or(BuildError::MissingProvider)?;
-        let session_store = self.session_store.ok_or(BuildError::MissingSessionStore)?;
+        let provider = self.provider.take().ok_or(BuildError::MissingProvider)?;
+        let session_store = self
+            .session_store
+            .take()
+            .ok_or(BuildError::MissingSessionStore)?;
         let permission_handler = self
             .permission_handler
+            .take()
             .ok_or(BuildError::MissingPermissionHandler)?;
-        if self.tools.values().any(|registered| {
-            !crate::session::json_depth_within_limit(
-                &registered.spec.input_schema,
-                self.limits.max_json_depth.get(),
-            )
-        }) {
-            return Err(BuildError::ToolCatalogJsonDepthExceeded);
+        match crate::session::validate_json_roots(
+            tools
+                .as_ref()
+                .values()
+                .map(|registered| &registered.spec.input_schema),
+            self.limits,
+        ) {
+            Ok(()) => {}
+            Err(crate::session::JsonLimitViolation::Depth) => {
+                return Err(BuildError::ToolCatalogJsonDepthExceeded);
+            }
+            Err(crate::session::JsonLimitViolation::Nodes) => {
+                return Err(BuildError::ToolCatalogJsonNodeLimitExceeded);
+            }
         }
         let tool_catalog_size = crate::session::serialized_json_size_bounded(
-            &ToolCatalog(&self.tools),
+            &ToolCatalog(tools.as_ref()),
             self.limits.max_tool_catalog_bytes.get(),
         )
         .map_err(|_| BuildError::ToolCatalogTooLarge)?;
         if tool_catalog_size.is_none() {
             return Err(BuildError::ToolCatalogTooLarge);
         }
-        let tool_specs = self
-            .tools
+        let tool_specs = tools
+            .as_ref()
             .values()
             .map(|registered| registered.spec.clone())
             .collect();
@@ -222,8 +250,11 @@ impl EngineBuilder {
                 provider,
                 session_store,
                 permission_handler,
-                event_sink: self.event_sink.unwrap_or_else(|| Arc::new(NoopEventSink)),
-                tools: self.tools,
+                event_sink: self
+                    .event_sink
+                    .take()
+                    .unwrap_or_else(|| Arc::new(NoopEventSink)),
+                tools: tools.into_inner(),
                 tool_specs,
                 limits: self.limits,
                 sessions: Arc::new(SessionRegistry::default()),
@@ -267,6 +298,34 @@ pub(crate) struct SessionRegistration {
 struct RegisteredTool {
     spec: ToolSpec,
     tool: Arc<dyn Tool>,
+}
+
+struct ToolMapGuard(Option<BTreeMap<ToolName, RegisteredTool>>);
+
+impl ToolMapGuard {
+    fn new(tools: BTreeMap<ToolName, RegisteredTool>) -> Self {
+        Self(Some(tools))
+    }
+
+    fn as_ref(&self) -> &BTreeMap<ToolName, RegisteredTool> {
+        self.0.as_ref().expect("tool map guard is armed")
+    }
+
+    fn into_inner(mut self) -> BTreeMap<ToolName, RegisteredTool> {
+        self.0.take().expect("tool map guard is armed")
+    }
+}
+
+impl Drop for ToolMapGuard {
+    fn drop(&mut self) {
+        if let Some(tools) = self.0.as_mut() {
+            for registered in tools.values_mut() {
+                crate::session::drop_json_value_iterative(std::mem::take(
+                    &mut registered.spec.input_schema,
+                ));
+            }
+        }
+    }
 }
 
 struct ToolCatalog<'a>(&'a BTreeMap<ToolName, RegisteredTool>);
@@ -419,20 +478,22 @@ impl Engine {
                 .load(id.clone())
                 .await
                 .map_err(crate::session::redact_store_error)?;
+            let record = record.map(crate::session::JsonOwnerGuard::new);
             if let Some(record) = &record
-                && record.id != id
+                && record.get().id != id
             {
                 return Err(EngineError::Protocol(format!(
                     "session store returned ID {} for requested ID {id}",
-                    record.id
+                    record.get().id
                 )));
             }
             if let Some(record) = &record {
-                crate::session::SessionState::validate_loaded(record)?;
-                crate::session::validate_record_limits(record, inner.limits)?;
+                crate::session::SessionState::validate_loaded(record.get())?;
+                crate::session::validate_record_limits(record.get(), inner.limits)?;
             }
             record
                 .map(|record| {
+                    let record = record.into_inner();
                     let state = inner.session_state(record.clone(), true);
                     state.reconcile_loaded(record)?;
                     Ok(Session::from_state(Arc::clone(&inner), state))

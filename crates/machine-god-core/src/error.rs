@@ -152,6 +152,7 @@ pub enum BuildError {
     DuplicateTool(String),
     ToolCatalogTooLarge,
     ToolCatalogJsonDepthExceeded,
+    ToolCatalogJsonNodeLimitExceeded,
 }
 
 impl fmt::Display for BuildError {
@@ -168,6 +169,9 @@ impl fmt::Display for BuildError {
             }
             Self::ToolCatalogJsonDepthExceeded => {
                 formatter.write_str("tool input schema exceeds the configured JSON depth limit")
+            }
+            Self::ToolCatalogJsonNodeLimitExceeded => {
+                formatter.write_str("tool input schemas exceed the configured JSON node limit")
             }
         }
     }

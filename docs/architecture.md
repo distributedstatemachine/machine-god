@@ -72,13 +72,29 @@ model round is not requested until all placeholders in the current round have
 been replaced.
 
 Every reachable `serde_json::Value` in these boundaries also passes an iterative
-container-depth walk before recursive serialization or deep cloning. A scalar
-root is depth zero and a root container is depth one. The walk stores only the
-iterator for each active ancestor, never all pending siblings, making its
-auxiliary memory proportional to configured depth. Provider tool arguments are
-rejected before policy or execution. A tool result is checked after the effect
-but before serialization and durable replacement; an over-depth result leaves
+container-depth and node-count walk before recursive serialization or deep
+cloning. A scalar root is depth zero and a root container is depth one; every
+root, scalar, and container counts as one node. One node budget aggregates the
+entire tool-schema catalog, all inference metadata, or all record metadata and
+message JSON. Provider arguments and tool results are independently bounded.
+The walk stores only the iterator for each active ancestor, never all pending
+siblings, making its auxiliary memory proportional to configured depth and
+stopping at node limit plus one. Provider tool arguments are rejected before
+policy or execution. A tool result is checked after the effect but before
+serialization and durable replacement; an over-depth or over-node result leaves
 the precommitted unknown placeholder and terminates without replay.
+
+Owned rejection paths replace each hostile `Value` with `Null` and consume the
+original through an iterative child-iterator stack before the surrounding
+object is dropped. This applies to builder abandonment, duplicate replacement
+and build errors; dropped unpolled prompts; direct and conflict record loads;
+mutation candidates; yielded provider calls; and tool output after an effect.
+Cancellation-aware poll boundaries drain a just-ready yielded provider event,
+conflict-loaded record, or tool output before honoring cancellation.
+Reclamation is O(actual nodes) time with O(actual depth) auxiliary memory and
+does not leak rejected trees. An item still queued inside a provider's stream
+has not crossed the core ownership boundary, so stack-safe destruction of that
+internal queue remains the provider's responsibility.
 
 Canonical session state stores its record behind an immutable `Arc`. Reservation
 and transcript mutation capture only that cheap identity and persistence bit

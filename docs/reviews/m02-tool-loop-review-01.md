@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-three finding remediated; awaiting fresh rereview of the
-third fix commit.
+Status: review-cycle-four findings remediated; awaiting fresh rereview of the
+fourth fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -11,7 +11,10 @@ Cycle-one fix reviewed for cycle two:
 Cycle-two fix reviewed for cycle three:
 `9d6bc784dddc022835139ce033aeb8c6d999a3d4`.
 
-Cycle-three fix commit: populated after this remediation commit. Reviewers must
+Cycle-three fix reviewed for cycle four:
+`f952febb87de8224df1af09e69c1e80c7ea563f9`.
+
+Cycle-four fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -20,7 +23,7 @@ no findings.
 
 - Nonzero public engine limits and checked provider-controlled prompt,
   transcript, session-metadata, inference-option, tool-catalog, denial-reason,
-  JSON-depth, event, stop-detail, byte, call, and round counters.
+  JSON-depth, JSON-node, event, stop-detail, byte, call, and round counters.
 - Durable user reservation, atomic assistant-plus-placeholder tool-call commits,
   exact in-place result replacement, prefix-checked CAS retries, and checked
   cross-round usage.
@@ -127,6 +130,34 @@ and advisory gates are required for the final immutable cycle-two commit.
    messages, provider arguments before authorization/execution, and tool output
    after an effect while preserving the precommitted unknown-result placeholder.
 
+## Review cycle 04 findings and remediations
+
+1. Iterative depth validation prevented recursive serialization, but rejecting
+   or abandoning a tens-of-thousands-deep owned `serde_json::Value` still ran
+   its recursive destructor and could abort the process. Every core-owned
+   rejection ingress now arms an ownership guard before validation or another
+   fallible step. The guard replaces embedded values with `Null` and consumes
+   the original arrays/maps iteratively, reclaiming all nodes in O(actual nodes)
+   time and O(actual depth) auxiliary memory without a leak. Coverage includes
+   builder abandonment, duplicate replacement and build errors; unpolled and
+   rejected prompts; direct and conflict record loads; mutation candidates;
+   yielded provider tool calls; and post-effect tool output. Eleven subprocess
+   cases construct 50,000 nested arrays iteratively and prove controlled errors
+   or safe abandonment without stack aborts, including cancellation observed in
+   the same poll that yields a provider event or tool output. Internally queued
+   stream items that have not been yielded remain provider-owned and require a
+   stack-safe provider stream destructor.
+2. Depth alone did not cap shallow, extremely wide JSON trees. A new public
+   nonzero `max_json_nodes` limit defaults to 65,536. Every root, scalar, and
+   container counts once. A single counter aggregates all tool Schemas, all
+   inference metadata, or every metadata/message JSON value in one record;
+   provider arguments and tool output are each bounded individually. The
+   iterative walker stops after visiting limit plus one and retains only active
+   ancestor iterators, never a queue of siblings. Exact aggregate-boundary and
+   plus-one tests cover catalogs, inference metadata, stored records, provider
+   arguments before authorization/execution, and post-effect tool output with
+   its durable unknown-result placeholder.
+
 ## Honest limitations for review
 
 - `Stop` is trusted as the immediate end of a provider round. Core does not poll
@@ -149,6 +180,10 @@ and advisory gates are required for the final immutable cycle-two commit.
   serialization/cloning and additional effects after the configured boundaries,
   but cannot retroactively prevent those producer allocations. Each producer
   needs complementary decode and construction limits.
+- Core can iteratively reclaim a provider event only after `poll_next` yields
+  ownership of it. If a turn stops early, any values retained in the provider
+  stream's private queue are destroyed by that provider's `Drop` implementation,
+  which must itself be stack-safe or bounded during decoding/construction.
 
 ## Required review evidence
 

@@ -35,7 +35,8 @@ to policy.
 [`EngineLimits`](crate::EngineLimits) supplies nonzero resource bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
 assistant text and observer-visible reasoning, a JSON container depth of 64,
-4,096 model events, 1 KiB of provider stop detail, 256 KiB per user prompt,
+65,536 JSON nodes, 4,096 model events, 1 KiB of provider stop detail, 256 KiB
+per user prompt,
 256 KiB of serialized session metadata, 64 KiB of serialized inference options,
 4,096 transcript messages, 8 MiB of serialized transcript, 1 MiB for the
 aggregate cached tool catalog, 64 KiB of serialized arguments per call, 64 KiB
@@ -46,7 +47,7 @@ use checked arithmetic and a limit failure occurs before another tool is
 authorized or executed. JSON byte sizes are counted through a serializer
 without allocating a second copy of the value. Engine construction rejects a
 tool catalog whose aggregate descriptions and recursive JSON Schemas exceed its
-byte or depth bound before the catalog is cloned into the engine.
+byte, depth, or node bound before the catalog is cloned into the engine.
 
 JSON depth counts containers rather than scalar nodes: a scalar root has depth
 zero, a root array or object has depth one, and every array or object nested
@@ -54,7 +55,12 @@ inside another container adds one. Validation is iterative and retains one
 child-iterator frame per active container, so auxiliary traversal memory is
 O(depth), not O(total nodes). It runs before core-controlled recursive
 serialization, deep cloning, provider/store calls, permission checks, or tool
-execution at each relevant boundary.
+execution at each relevant boundary. Every scalar and container root counts as
+one node. Node budgets are aggregate across all inference-metadata values, all
+stored metadata and message values, and the complete tool-schema catalog;
+provider arguments and tool outputs each receive their own complete budget.
+Traversal stops after visiting the configured limit plus one and never queues
+unvisited siblings.
 
 ## Turn lifecycle
 
@@ -215,8 +221,9 @@ therefore leaves one result for every committed call: completed prefixes are
 known and the untouched suffix remains explicitly unknown. Resume never
 automatically replays those calls. If an executed tool returns an oversized
 result, core drops that value and terminates while retaining the precommitted
-unknown-result placeholder. An over-depth result is handled the same way after
-execution: the side effect is not replayed and the placeholder remains. The
+unknown-result placeholder. An over-depth or over-node result is handled the
+same way after execution: the side effect is not replayed and the placeholder
+remains. The
 final assistant message is committed before its model `Stop` and `Completed`
 events are delivered. Token usage is the latest report within each round and is
 added across rounds with checked counters.
@@ -244,10 +251,18 @@ are checked before loading a record into the engine registry, before every
 provider request, and before every commit or replacement. Model events,
 including `Stop`, are counted across the whole turn; provider-specific
 `StopReason::Other` details are bounded before they are cloned or delivered.
-The JSON depth bound covers inference metadata, stored metadata, JSON message
-blocks, stored and provider tool arguments, tool-result content, and tool input
-Schemas. Provider arguments fail before authorization or execution. Tool output
-is checked immediately after execution and before serialization or replacement.
+The JSON depth and node bounds cover inference metadata, stored metadata, JSON
+message blocks, stored and provider tool arguments, tool-result content, and
+tool input Schemas. Provider arguments fail before authorization or execution.
+Tool output is checked immediately after execution and before serialization or
+replacement. Core iteratively drains every owned rejected JSON tree at these
+ingresses, including abandoned/replaced builders, unpolled prompt futures,
+failed direct or conflict loads, rejected mutation candidates, provider events,
+and post-effect tool results. Reclamation visits every owned node and holds one
+iterator per active container, avoiding recursive `Value::drop`.
+The same guard is armed within cancellation-aware polling when a provider event,
+conflict-loaded record, or tool output becomes ready in the poll that first
+observes cancellation.
 Structured provider, policy, and store failures expose fixed component codes
 (`provider_failed`, `permission_failed`, and `store_failed`) plus the trusted
 retryability/category fields where applicable; hostile source codes and
@@ -261,6 +276,10 @@ allocations already performed by a caller constructing prompt options, a store
 loading a record, a tool publishing its specification or result, a provider
 creating model values, or a policy creating its decision and reason. Hosts must
 apply complementary limits while decoding or constructing those inputs.
+Once a provider event is yielded from `poll_next`, core owns and safely drains
+it. Values still queued inside a provider stream that core never receives
+remain the provider's responsibility; its stream destructor must be stack-safe
+or its decoder/construction limits must keep those values safe to drop.
 
 The live-turn lease remains process-local to one `Engine`. M02 does not claim
 cross-engine fencing. A crash after a tool side effect but before placeholder
