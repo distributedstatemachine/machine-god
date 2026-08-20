@@ -1126,6 +1126,21 @@ class LinuxProcessSupervisor:
                 and info.state != "Z"
             }
 
+    def adopted_pids(self, *, include_zombies: bool) -> set[int]:
+        """Return every still-present known descendant, including adopted zombies."""
+
+        table = self.refresh()
+        self.check_error()
+        with self._lock:
+            return {
+                pid
+                for pid, start_time in self._known
+                if pid != self.root_pid
+                and (info := table.get(pid)) is not None
+                and info.start_time == start_time
+                and (include_zombies or info.state != "Z")
+            }
+
     def signal_known(self, signal_number: int) -> None:
         with self._lock:
             descriptors = list(self._known.values())
@@ -1143,6 +1158,24 @@ class LinuxProcessSupervisor:
                 os.waitpid(pid, os.WNOHANG)
             except (ChildProcessError, ProcessLookupError):
                 pass
+
+    def settle_and_reap_adopted(self, settle_seconds: float = 0.25) -> set[int]:
+        """Bounded post-exit wait that leaves no known adopted child or zombie."""
+
+        deadline = time.monotonic() + settle_seconds
+        clean_scans = 0
+        while time.monotonic() < deadline:
+            self.reap_adopted()
+            remaining = self.adopted_pids(include_zombies=True)
+            if not remaining:
+                clean_scans += 1
+                if clean_scans >= 2:
+                    return set()
+            else:
+                clean_scans = 0
+            time.sleep(0.01)
+        self.reap_adopted()
+        return self.adopted_pids(include_zombies=True)
 
     def stop(self) -> None:
         self._stop.set()
@@ -1246,7 +1279,10 @@ def terminate_contained_process(
             kill_process_group(process.pid, signal.SIGKILL)
             supervisor.signal_known(signal.SIGKILL)
             supervisor.reap_adopted()
-            if not supervisor.live_pids():
+            if (
+                process.poll() is not None
+                and not supervisor.adopted_pids(include_zombies=True)
+            ):
                 break
             time.sleep(0.01)
     elif os.name == "posix":
@@ -1268,7 +1304,9 @@ def terminate_contained_process(
             pass
     if sys.platform.startswith("linux"):
         assert supervisor is not None
-        remaining = supervisor.live_pids()
+        remaining = supervisor.settle_and_reap_adopted(
+            max(0.01, deadline - time.monotonic())
+        )
         supervisor.stop()
         return remaining
     return {process.pid} if process.poll() is None else set()
@@ -1283,7 +1321,7 @@ def finalize_successful_process(
     if supervisor is None:
         return
     supervisor.check_error()
-    leaked = supervisor.live_pids()
+    leaked = supervisor.settle_and_reap_adopted()
     if leaked:
         remaining = terminate_contained_process(process, supervisor)
         raise RuntimeError(

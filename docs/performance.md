@@ -76,7 +76,10 @@ parent relationships. A one-time hostile preflight must prove that a child which
 clears its environment, calls `setsid`, and double-forks can still be discovered,
 killed, and reaped. Execution fails closed if subreaper, pidfd, or process-table
 supervision is unavailable, or if a successful command leaks a descendant. The
-recorded sample time stops immediately when the command's captured streams
+post-success path uses a bounded settle period to discover and `waitpid` every
+adopted child, including short-lived double-fork zombies, and accepts a run only
+after no supervised descendant PID remains. The recorded sample time stops
+immediately when the command's captured streams
 close, before any post-run containment scan. The final JSON is written atomically
 only after validation; failure removes the named evidence output rather than
 leaving a partial or stale artifact.

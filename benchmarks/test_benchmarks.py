@@ -912,6 +912,40 @@ class UpstreamHarnessTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
+    def test_success_reaps_short_lived_detached_grandchild(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "grandchild.pid"
+            command = "\n".join(
+                (
+                    "import os, pathlib",
+                    "first = os.fork()",
+                    "if first == 0:",
+                    "    os.setsid()",
+                    "    second = os.fork()",
+                    "    if second == 0:",
+                    f"        pathlib.Path({str(marker)!r}).write_text(str(os.getpid()))",
+                    "        os.close(1)",
+                    "        os.close(2)",
+                    "        os._exit(0)",
+                    "    os._exit(0)",
+                    "os._exit(0)",
+                )
+            )
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "6" * 32
+            completed = run_process(
+                [sys.executable, "-c", command],
+                cwd=Path(directory),
+                environment=environment,
+                timeout_seconds=1.0,
+            )
+            self.assertEqual(completed.returncode, 0)
+            adopted_pid = int(marker.read_text(encoding="utf-8"))
+            self.assertFalse(Path(f"/proc/{adopted_pid}").exists())
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(adopted_pid, os.WNOHANG)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
     def test_linux_containment_preflight_fails_closed_without_proc(self) -> None:
         environment = os.environ.copy()
         environment[CONTAINMENT_ENVIRONMENT_KEY] = "2" * 32

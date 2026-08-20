@@ -53,6 +53,11 @@ findings and the branch resolves them as follows:
 - Post-command containment scans were included in elapsed samples. The end
   timestamp is now taken immediately after `communicate` returns; a deliberately
   delayed scan regression proves the recorded sample excludes cleanup overhead.
+- Successful-command finalization ignored known zombies, allowing a short-lived
+  detached grandchild to remain adopted after the run was accepted. A bounded
+  settle pass now repeatedly discovers and reaps all known adopted children and
+  asserts that no descendant PID or zombie remains, without moving the timing
+  boundary. A Linux-only close-pipes/double-fork regression exercises this path.
 - Git archives honored committed export attributes, so the recorded Git tree did
   not uniquely determine materialized inputs. Materialization now uses canonical
   `ls-tree` and `cat-file` operations, rejects links and special modes, and binds
@@ -78,7 +83,7 @@ preexisting upstream checkouts, every scratch/cache/tool-state path, original
 worktree mutation after snapshotting, process-group and detached-descendant
 timeouts, Linux descendant containment without readable environments, delayed
 containment scans, Git export attributes and link modes, mutable tool paths, and
-stale evidence.
+successful-command zombie reaping, and stale evidence.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,
