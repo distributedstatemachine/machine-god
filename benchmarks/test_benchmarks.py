@@ -76,6 +76,14 @@ class BenchmarkScriptsTest(unittest.TestCase):
         completed = self.run_checker(evidence)
         self.assertNotEqual(completed.returncode, 0)
 
+    def test_checker_rejects_non_integer_schema_version(self) -> None:
+        for invalid in (True, 1.0):
+            with self.subTest(invalid=invalid):
+                evidence = self.valid_evidence()
+                evidence["schema_version"] = invalid
+                completed = self.run_checker(evidence)
+                self.assertNotEqual(completed.returncode, 0)
+
     def test_checker_rejects_command_binary_mismatch(self) -> None:
         evidence = self.valid_evidence()
         evidence["command"] = ["different-binary"]

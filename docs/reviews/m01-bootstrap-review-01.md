@@ -32,6 +32,8 @@ performance/CI. Confirmed findings and resolutions:
   supplied binary, size, and checksum must all describe the same file.
 - Benchmark workflow concurrency is keyed by commit SHA so a newer push cannot
   cancel an older exact-SHA evidence run.
+- The final strictness pass found loose JSON equality on `schema_version`; it now
+  requires a non-boolean integer and rejects boolean and floating-point aliases.
 
 Rejected after remediation:
 

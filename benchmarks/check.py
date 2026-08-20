@@ -37,7 +37,7 @@ def main() -> int:
     args = parser.parse_args()
     data = json.loads(args.evidence.read_text(encoding="utf-8"))
 
-    if data.get("schema_version") != 1:
+    if not is_integer(data.get("schema_version")) or data["schema_version"] != 1:
         raise SystemExit("unsupported benchmark schema")
     git_sha = require_text(data.get("git_sha"), "git_sha")
     if len(git_sha) not in (40, 64) or any(character not in "0123456789abcdef" for character in git_sha.lower()):
