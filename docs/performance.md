@@ -84,6 +84,15 @@ close, before any post-run containment scan. The final JSON is written atomicall
 only after validation; failure removes the named evidence output rather than
 leaving a partial or stale artifact.
 
+The supervisor is initialized before a command can launch and attaches the root
+as an immutable `(PID, start_time)` identity. Every ancestry expansion requires
+the current `/proc` start time to match the identity already recorded, while all
+signals and adopted-child waits use pidfds. PID reuse therefore cannot seed or
+signal an unrelated process tree. Any exception after launch—including monitor,
+attachment, finalization, or reaping failures—enters the same non-throwing,
+bounded cleanup path, which kills the original group and known pidfds, closes
+pipes, reaps, and stops supervision before propagating the original failure.
+
 The schema 2 artifact records both source revisions, the verified fx origin and
 commit and lock checksum, clone/fetch/checkout command records, CPU model, CI
 image identity and runner class, resolved tools and versions, exact build

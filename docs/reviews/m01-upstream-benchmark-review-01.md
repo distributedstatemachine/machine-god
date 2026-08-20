@@ -58,6 +58,18 @@ findings and the branch resolves them as follows:
   settle pass now repeatedly discovers and reaps all known adopted children and
   asserts that no descendant PID or zombie remains, without moving the timing
   boundary. A Linux-only close-pipes/double-fork regression exercises this path.
+- Exceptions raised after `Popen`, including supervision and finalization
+  failures, could bypass cleanup. The supervisor is now created before launch,
+  and every later exception enters a non-throwing bounded cleanup that kills the
+  process group and known pidfds, closes pipes, reaps, and stops the monitor.
+  Injected constructor, monitor, and finalizer failures verify that no hostile
+  child survives.
+- Ancestry expansion seeded numeric PIDs from old records without rechecking
+  process start time, so PID reuse could attach unrelated descendants. Root and
+  discovered identities are immutable `(PID, start_time)` pairs, expansion uses
+  only currently matching pairs, and signaling/reaping uses pidfds. A synthetic
+  reuse regression confirms that neither a recycled root nor parent seeds a
+  child.
 - Git archives honored committed export attributes, so the recorded Git tree did
   not uniquely determine materialized inputs. Materialization now uses canonical
   `ls-tree` and `cat-file` operations, rejects links and special modes, and binds
@@ -83,7 +95,8 @@ preexisting upstream checkouts, every scratch/cache/tool-state path, original
 worktree mutation after snapshotting, process-group and detached-descendant
 timeouts, Linux descendant containment without readable environments, delayed
 containment scans, Git export attributes and link modes, mutable tool paths, and
-successful-command zombie reaping, and stale evidence.
+successful-command zombie reaping, injected lifecycle failures, PID reuse, and
+stale evidence.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,

@@ -1040,10 +1040,10 @@ class LinuxProcessSupervisor:
 
     def __init__(
         self,
-        root_pid: int,
         baseline_children: set[tuple[int, int]],
     ) -> None:
-        self.root_pid = root_pid
+        self.root_pid: int | None = None
+        self.root_identity: tuple[int, int] | None = None
         self.owner_pid = os.getpid()
         self.baseline_children = baseline_children
         self._known: dict[tuple[int, int], int] = {}
@@ -1051,8 +1051,14 @@ class LinuxProcessSupervisor:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._monitor, daemon=True)
-        self.refresh()
-        self._thread.start()
+        self._thread_started = False
+        try:
+            self.refresh()
+            self._thread.start()
+            self._thread_started = True
+        except BaseException:
+            self.stop()
+            raise
 
     @staticmethod
     def capture_baseline() -> set[tuple[int, int]]:
@@ -1077,14 +1083,31 @@ class LinuxProcessSupervisor:
             return
         self._known[identity] = descriptor
 
+    def attach_root(self, root_pid: int) -> None:
+        table = linux_process_table()
+        root = table.get(root_pid)
+        if root is None:
+            raise RuntimeError("launched process disappeared before supervision attached")
+        self.root_pid = root_pid
+        self.root_identity = (root.pid, root.start_time)
+        with self._lock:
+            self._open_pidfd(root)
+
     def refresh(self) -> dict[int, LinuxProcessInfo]:
         table = linux_process_table()
         with self._lock:
-            known_pids = {pid for pid, _ in self._known}
-            root = table.get(self.root_pid)
-            if root is not None:
-                self._open_pidfd(root)
-                known_pids.add(root.pid)
+            known_pids = {
+                pid
+                for pid, start_time in self._known
+                if (current := table.get(pid)) is not None
+                and current.start_time == start_time
+            }
+            if self.root_identity is not None:
+                root_pid, root_start_time = self.root_identity
+                root = table.get(root_pid)
+                if root is not None and root.start_time == root_start_time:
+                    self._open_pidfd(root)
+                    known_pids.add(root.pid)
             changed = True
             while changed:
                 changed = False
@@ -1152,12 +1175,32 @@ class LinuxProcessSupervisor:
 
     def reap_adopted(self) -> None:
         with self._lock:
-            pids = [pid for pid, _ in self._known if pid != self.root_pid]
-        for pid in pids:
+            descriptors = [
+                descriptor
+                for (pid, _), descriptor in self._known.items()
+                if pid != self.root_pid
+            ]
+        for descriptor in descriptors:
             try:
-                os.waitpid(pid, os.WNOHANG)
+                os.waitid(os.P_PIDFD, descriptor, os.WEXITED | os.WNOHANG)
             except (ChildProcessError, ProcessLookupError):
                 pass
+
+    def known_present_pids(self) -> set[int]:
+        """Query immutable pidfds without expanding ancestry or trusting numeric PIDs."""
+
+        with self._lock:
+            identities = list(self._known.items())
+        present: set[int] = set()
+        for (pid, _), descriptor in identities:
+            if pid == self.root_pid:
+                continue
+            try:
+                signal.pidfd_send_signal(descriptor, 0)
+            except ProcessLookupError:
+                continue
+            present.add(pid)
+        return present
 
     def settle_and_reap_adopted(self, settle_seconds: float = 0.25) -> set[int]:
         """Bounded post-exit wait that leaves no known adopted child or zombie."""
@@ -1179,7 +1222,9 @@ class LinuxProcessSupervisor:
 
     def stop(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=0.2)
+        if self._thread_started:
+            self._thread.join(timeout=0.2)
+            self._thread_started = False
         with self._lock:
             descriptors = list(self._known.values())
             self._known.clear()
@@ -1192,7 +1237,7 @@ def kill_process_group(pid: int, signal_number: int) -> None:
         return
     try:
         os.killpg(pid, signal_number)
-    except ProcessLookupError:
+    except OSError:
         pass
 
 
@@ -1205,7 +1250,11 @@ def linux_containment_preflight() -> None:
     with _LINUX_PREFLIGHT_LOCK:
         if _LINUX_PREFLIGHT_COMPLETE:
             return
-        if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        if (
+            not hasattr(os, "pidfd_open")
+            or not hasattr(os, "P_PIDFD")
+            or not hasattr(signal, "pidfd_send_signal")
+        ):
             raise RuntimeError("Linux containment requires pidfd support")
         enable_linux_subreaper()
         baseline = LinuxProcessSupervisor.capture_baseline()
@@ -1221,15 +1270,17 @@ def linux_containment_preflight() -> None:
                 f"pathlib.Path({str(marker)!r}).write_text(str(os.getpid())); "
                 "time.sleep(30)"
             )
-            process = subprocess.Popen(
-                [sys.executable, "-c", script],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            supervisor = LinuxProcessSupervisor(process.pid, baseline)
+            supervisor = LinuxProcessSupervisor(baseline)
+            process: subprocess.Popen[bytes] | None = None
             try:
+                process = subprocess.Popen(
+                    [sys.executable, "-c", script],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                supervisor.attach_root(process.pid)
                 deadline = time.monotonic() + 2.0
                 while not marker.exists() and time.monotonic() < deadline:
                     supervisor.check_error()
@@ -1245,14 +1296,10 @@ def linux_containment_preflight() -> None:
                         f"Linux containment could not kill hostile PIDs {sorted(remaining)}"
                     )
             finally:
-                kill_process_group(process.pid, signal.SIGKILL)
-                if process.poll() is None:
-                    process.kill()
-                try:
-                    process.wait(timeout=0.2)
-                except subprocess.TimeoutExpired:
-                    pass
-                supervisor.stop()
+                if process is not None:
+                    terminate_contained_process(process, supervisor)
+                else:
+                    supervisor.stop()
         _LINUX_PREFLIGHT_COMPLETE = True
 
 
@@ -1267,49 +1314,66 @@ def terminate_contained_process(
     supervisor: LinuxProcessSupervisor | None,
     cleanup_seconds: float = 2.0,
 ) -> set[int]:
-    """Bounded cleanup for the original group and all supervised descendants."""
+    """Non-throwing bounded cleanup for every path after a process launches."""
 
     deadline = time.monotonic() + cleanup_seconds
-    kill_process_group(process.pid, signal.SIGTERM)
-    if sys.platform.startswith("linux"):
-        if supervisor is None:
-            raise RuntimeError("Linux process supervisor is missing")
+    remaining: set[int] = set()
+    try:
+        kill_process_group(process.pid, signal.SIGTERM)
+        close_process_pipes(process)
         while time.monotonic() < deadline:
-            supervisor.signal_known(signal.SIGSTOP)
             kill_process_group(process.pid, signal.SIGKILL)
-            supervisor.signal_known(signal.SIGKILL)
-            supervisor.reap_adopted()
-            if (
-                process.poll() is not None
-                and not supervisor.adopted_pids(include_zombies=True)
-            ):
+            try:
+                if process.poll() is None:
+                    process.kill()
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if supervisor is not None:
+                try:
+                    supervisor.refresh()
+                except BaseException:
+                    pass
+                try:
+                    supervisor.signal_known(signal.SIGKILL)
+                except BaseException:
+                    pass
+                try:
+                    supervisor.reap_adopted()
+                except BaseException:
+                    pass
+                try:
+                    remaining = supervisor.known_present_pids()
+                except BaseException:
+                    remaining = set()
+            try:
+                root_finished = process.poll() is not None
+            except BaseException:
+                root_finished = False
+            if root_finished and not remaining:
                 break
             time.sleep(0.01)
-    elif os.name == "posix":
-        while process.poll() is None and time.monotonic() < deadline - 0.25:
-            time.sleep(0.01)
-        kill_process_group(process.pid, signal.SIGKILL)
-    elif process.poll() is None:
-        process.kill()
-
-    close_process_pipes(process)
-    remaining_wait = max(0.01, deadline - time.monotonic())
-    try:
-        process.wait(timeout=remaining_wait)
-    except subprocess.TimeoutExpired:
-        process.kill()
         try:
-            process.wait(timeout=0.1)
-        except subprocess.TimeoutExpired:
+            process.wait(timeout=max(0.01, deadline - time.monotonic()))
+        except (OSError, subprocess.SubprocessError):
             pass
-    if sys.platform.startswith("linux"):
-        assert supervisor is not None
-        remaining = supervisor.settle_and_reap_adopted(
-            max(0.01, deadline - time.monotonic())
-        )
-        supervisor.stop()
-        return remaining
-    return {process.pid} if process.poll() is None else set()
+        if supervisor is not None:
+            try:
+                supervisor.reap_adopted()
+                remaining = supervisor.known_present_pids()
+            except BaseException:
+                pass
+    finally:
+        if supervisor is not None:
+            try:
+                supervisor.stop()
+            except BaseException:
+                pass
+    try:
+        if process.poll() is None:
+            remaining.add(process.pid)
+    except BaseException:
+        remaining.add(process.pid)
+    return remaining
 
 
 def finalize_successful_process(
@@ -1320,8 +1384,12 @@ def finalize_successful_process(
 
     if supervisor is None:
         return
-    supervisor.check_error()
-    leaked = supervisor.settle_and_reap_adopted()
+    try:
+        supervisor.check_error()
+        leaked = supervisor.settle_and_reap_adopted()
+    except BaseException:
+        terminate_contained_process(process, supervisor)
+        raise
     if leaked:
         remaining = terminate_contained_process(process, supervisor)
         raise RuntimeError(
@@ -1349,40 +1417,53 @@ def run_process(
             raise RuntimeError("Linux subprocess execution requires a containment token")
         linux_containment_preflight()
         baseline_children = LinuxProcessSupervisor.capture_baseline()
+        supervisor = LinuxProcessSupervisor(baseline_children)
     if expected_executable is not None:
         verify_executable_identity(expected_executable)
     start = time.perf_counter_ns()
-    process = subprocess.Popen(
-        list(command),
-        cwd=cwd,
-        env=process_environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-        stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    if sys.platform.startswith("linux"):
-        supervisor = LinuxProcessSupervisor(process.pid, baseline_children)
+    process: subprocess.Popen[bytes] | None = None
     try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as error:
-        remaining = terminate_contained_process(process, supervisor)
+        process = subprocess.Popen(
+            list(command),
+            cwd=cwd,
+            env=process_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        if supervisor is not None:
+            supervisor.attach_root(process.pid)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            remaining = terminate_contained_process(process, supervisor)
+            if expected_executable is not None:
+                verify_executable_identity(expected_executable)
+            detail = (
+                f"; containment incomplete for PIDs {sorted(remaining)}"
+                if remaining
+                else ""
+            )
+            raise ProcessTimeout(
+                f"command timed out after {timeout_seconds}s: {' '.join(command)}{detail}"
+            ) from error
+        end = time.perf_counter_ns()
+        finalize_successful_process(process, supervisor)
         if expected_executable is not None:
             verify_executable_identity(expected_executable)
-        detail = f"; containment incomplete for PIDs {sorted(remaining)}" if remaining else ""
-        raise ProcessTimeout(
-            f"command timed out after {timeout_seconds}s: {' '.join(command)}{detail}"
-        ) from error
-    end = time.perf_counter_ns()
-    finalize_successful_process(process, supervisor)
-    if expected_executable is not None:
-        verify_executable_identity(expected_executable)
-    return ProcessResult(
-        returncode=process.returncode,
-        stdout=stdout or b"",
-        stderr=stderr or b"",
-        elapsed_ns=end - start,
-    )
+        return ProcessResult(
+            returncode=process.returncode,
+            stdout=stdout or b"",
+            stderr=stderr or b"",
+            elapsed_ns=end - start,
+        )
+    except BaseException:
+        if process is not None:
+            terminate_contained_process(process, supervisor)
+        elif supervisor is not None:
+            supervisor.stop()
+        raise
 
 
 def invocation_path(command: str, path_value: str) -> str:

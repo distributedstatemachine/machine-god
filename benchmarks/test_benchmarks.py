@@ -19,6 +19,8 @@ from upstream import (  # noqa: E402
     CONTAINMENT_ENVIRONMENT_KEY,
     EXPECTED_RUST_VERSION,
     EXPECTED_ZIG_VERSION,
+    LinuxProcessInfo,
+    LinuxProcessSupervisor,
     ProcessTimeout,
     UpstreamLock,
     canonical_git_entries_sha256,
@@ -944,6 +946,105 @@ class UpstreamHarnessTest(unittest.TestCase):
             self.assertFalse(Path(f"/proc/{adopted_pid}").exists())
             with self.assertRaises(ChildProcessError):
                 os.waitpid(adopted_pid, os.WNOHANG)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
+    def test_supervisor_constructor_failure_launches_no_process(self) -> None:
+        linux_containment_preflight()
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "launched"
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "7" * 32
+            with (
+                mock.patch.object(
+                    LinuxProcessSupervisor,
+                    "__init__",
+                    side_effect=RuntimeError("injected constructor failure"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "constructor failure"),
+            ):
+                run_process(
+                    [
+                        sys.executable,
+                        "-c",
+                        f"import pathlib; pathlib.Path({str(marker)!r}).write_text('bad')",
+                    ],
+                    cwd=Path(directory),
+                    environment=environment,
+                    timeout_seconds=1.0,
+                )
+            self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
+    def test_monitor_and_finalizer_failures_cleanup_detached_descendants(self) -> None:
+        linux_containment_preflight()
+        for failure in ("monitor", "finalizer"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                marker = Path(directory) / "leaked"
+                command = "\n".join(
+                    (
+                        "import os, pathlib, time",
+                        "first = os.fork()",
+                        "if first == 0:",
+                        "    os.setsid()",
+                        "    second = os.fork()",
+                        "    if second == 0:",
+                        "        os.close(1)",
+                        "        os.close(2)",
+                        "        time.sleep(0.4)",
+                        f"        pathlib.Path({str(marker)!r}).write_text('bad')",
+                        "        os._exit(0)",
+                        "    os._exit(0)",
+                        "time.sleep(0.05)",
+                    )
+                )
+                environment = os.environ.copy()
+                environment[CONTAINMENT_ENVIRONMENT_KEY] = "8" * 32
+
+                def failed_monitor(supervisor: LinuxProcessSupervisor) -> None:
+                    supervisor._error = RuntimeError("injected monitor failure")
+                    supervisor._stop.set()
+
+                patcher = (
+                    mock.patch.object(LinuxProcessSupervisor, "_monitor", failed_monitor)
+                    if failure == "monitor"
+                    else mock.patch.object(
+                        upstream,
+                        "finalize_successful_process",
+                        side_effect=RuntimeError("injected finalizer failure"),
+                    )
+                )
+                expected_error = "supervision" if failure == "monitor" else "finalizer"
+                with patcher, self.assertRaisesRegex(RuntimeError, expected_error):
+                    run_process(
+                        [sys.executable, "-c", command],
+                        cwd=Path(directory),
+                        environment=environment,
+                        timeout_seconds=1.0,
+                    )
+                time.sleep(0.5)
+                self.assertFalse(marker.exists())
+
+    def test_pid_reuse_does_not_expand_recorded_ancestry(self) -> None:
+        supervisor = object.__new__(LinuxProcessSupervisor)
+        supervisor.root_pid = 100
+        supervisor.root_identity = (100, 10)
+        supervisor.owner_pid = 999
+        supervisor.baseline_children = set()
+        supervisor._known = {(100, 10): 1, (200, 20): 2}
+        supervisor._lock = upstream.threading.Lock()
+        table = {
+            100: LinuxProcessInfo(100, 1, "S", 11),
+            101: LinuxProcessInfo(101, 100, "S", 30),
+            200: LinuxProcessInfo(200, 1, "S", 21),
+            201: LinuxProcessInfo(201, 200, "S", 40),
+        }
+        with (
+            mock.patch.object(upstream, "linux_process_table", return_value=table),
+            mock.patch.object(supervisor, "_open_pidfd") as open_pidfd,
+        ):
+            supervisor.refresh()
+        open_pidfd.assert_not_called()
+        self.assertEqual(set(supervisor._known), {(100, 10), (200, 20)})
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
     def test_linux_containment_preflight_fails_closed_without_proc(self) -> None:
