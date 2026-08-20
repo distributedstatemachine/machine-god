@@ -24,6 +24,10 @@ def require_text(value: object, field: str) -> str:
     return value
 
 
+def is_integer(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence", type=Path)
@@ -56,28 +60,35 @@ def main() -> int:
     samples = data.get("samples_ns")
     if not isinstance(samples, list) or len(samples) < 10:
         raise SystemExit("benchmark evidence needs at least 10 samples")
-    if any(not isinstance(value, int) or value <= 0 for value in samples):
+    if any(not is_integer(value) or value <= 0 for value in samples):
         raise SystemExit("benchmark samples must be positive integer nanoseconds")
     ordered = sorted(samples)
     expected_median = int(statistics.median(samples))
     p95_index = min(len(ordered) - 1, (len(ordered) * 95 + 99) // 100 - 1)
-    if data.get("median_ns") != expected_median:
+    median_ns = data.get("median_ns")
+    p95_ns = data.get("p95_ns")
+    if not is_integer(median_ns) or median_ns != expected_median:
         raise SystemExit("median_ns does not match samples")
-    if data.get("p95_ns") != ordered[p95_index]:
+    if not is_integer(p95_ns) or p95_ns != ordered[p95_index]:
         raise SystemExit("p95_ns does not match samples")
     if args.bootstrap and data.get("classification") != "bootstrap-infrastructure-only":
         raise SystemExit("bootstrap evidence must not claim product performance")
     binary = data.get("binary", {})
-    if not isinstance(binary.get("bytes"), int) or binary["bytes"] <= 0:
+    if not is_integer(binary.get("bytes")) or binary["bytes"] <= 0:
         raise SystemExit("binary size is missing")
     checksum = binary.get("sha256")
     if not isinstance(checksum, str) or len(checksum) != 64 or any(
         character not in "0123456789abcdef" for character in checksum.lower()
     ):
         raise SystemExit("binary checksum is missing")
-    require_text(binary.get("path"), "binary.path")
+    recorded_binary = Path(require_text(binary.get("path"), "binary.path")).resolve()
+    recorded_command = Path(command[0]).resolve()
+    if recorded_command != recorded_binary:
+        raise SystemExit("command executable does not match binary.path")
     if args.binary:
         actual_binary = args.binary.resolve()
+        if recorded_binary != actual_binary:
+            raise SystemExit("recorded binary path does not match supplied binary")
         if actual_binary.stat().st_size != binary["bytes"]:
             raise SystemExit("binary size does not match evidence")
         if file_sha256(actual_binary) != checksum:

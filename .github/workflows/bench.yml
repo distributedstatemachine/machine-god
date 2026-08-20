@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: benchmark-${{ github.ref }}
-  cancel-in-progress: true
+  group: benchmark-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   bootstrap-evidence:

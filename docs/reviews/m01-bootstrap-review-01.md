@@ -27,6 +27,11 @@ performance/CI. Confirmed findings and resolutions:
   unverified scanner: both scanners now install exact locked crates verified by
   the Cargo registry, and checkout credentials are not persisted.
 - Cross-target checks now cover every target and feature.
+- Final rereview found boolean numeric coercion and an unbound timed command:
+  numeric fields now reject booleans and the recorded command, recorded binary,
+  supplied binary, size, and checksum must all describe the same file.
+- Benchmark workflow concurrency is keyed by commit SHA so a newer push cannot
+  cancel an older exact-SHA evidence run.
 
 Rejected after remediation:
 

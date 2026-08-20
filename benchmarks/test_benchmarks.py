@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import sys
@@ -66,6 +67,51 @@ class BenchmarkScriptsTest(unittest.TestCase):
         evidence["binary"] = {"path": "test-binary", "bytes": 1, "sha256": "z" * 64}
         completed = self.run_checker(evidence)
         self.assertNotEqual(completed.returncode, 0)
+
+    def test_checker_rejects_boolean_numbers(self) -> None:
+        evidence = self.valid_evidence()
+        evidence["samples_ns"] = [True] * 10
+        evidence["median_ns"] = True
+        evidence["p95_ns"] = True
+        completed = self.run_checker(evidence)
+        self.assertNotEqual(completed.returncode, 0)
+
+    def test_checker_rejects_command_binary_mismatch(self) -> None:
+        evidence = self.valid_evidence()
+        evidence["command"] = ["different-binary"]
+        completed = self.run_checker(evidence)
+        self.assertNotEqual(completed.returncode, 0)
+
+    def test_checker_binds_binary_and_expected_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "test-binary"
+            binary.write_bytes(b"test executable")
+            evidence = self.valid_evidence()
+            evidence["command"] = [str(binary)]
+            evidence["binary"] = {
+                "path": str(binary),
+                "bytes": binary.stat().st_size,
+                "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+            }
+            path = root / "evidence.json"
+            path.write_text(json.dumps(evidence), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "benchmarks/check.py"),
+                    str(path),
+                    "--bootstrap",
+                    "--expected-git-sha",
+                    "1" * 40,
+                    "--binary",
+                    str(binary),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 if __name__ == "__main__":
