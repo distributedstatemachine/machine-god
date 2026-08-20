@@ -85,15 +85,20 @@ adopted child, including short-lived double-fork zombies, and accepts a run only
 after no supervised descendant PID remains. The recorded sample time stops
 immediately when the command's captured streams
 close, before any post-run containment scan. The final JSON is written atomically
-only after validation; failure removes the named evidence output rather than
-leaving a partial or stale artifact.
+only after validation. A full-run, per-output exclusive lock is acquired before
+collection starts and held through publication. Lock acquisition has a bounded
+wait, and a pre-existing lock is never removed as stale. A failed invocation
+removes neither the last successfully published evidence nor another
+invocation's lock.
 Publication uses an exclusively created, randomly named temporary in the output
 directory. The harness writes through the retained descriptor, flushes and
 `fsync`s it, verifies the pathname still names the same regular-file inode,
 atomically replaces the destination without following a destination symlink,
 and `fsync`s the parent directory. Cleanup unlinks only the temporary identity
-the harness created. Output parent directories are created as needed, and the
-leaf output name is never resolved through a pre-existing symlink.
+the harness created. The full-run lock is also released only when its pathname
+still names the inode created by that invocation. Output parent directories are
+created as needed, and the leaf output name is never resolved through a
+pre-existing symlink.
 
 The supervisor is initialized before a command can launch and attaches the root
 as an immutable `(PID, start_time)` identity. Every ancestry expansion requires

@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -24,10 +25,12 @@ from upstream import (  # noqa: E402
     MachineStatusEntry,
     ProcessTimeout,
     UpstreamLock,
+    acquire_output_lock,
     canonical_git_entries_sha256,
     canonical_manifest_sha256,
     check_machine_cleanliness,
     command_plan,
+    collect_and_publish_evidence,
     executable_identity,
     finalize_successful_process,
     invocation_path,
@@ -1281,7 +1284,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 check_machine_cleanliness(root, "git", environment, 2.0)
 
-    def test_failed_harness_removes_stale_evidence(self) -> None:
+    def test_failed_harness_preserves_existing_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
             evidence_path = temporary / "evidence.json"
@@ -1305,8 +1308,76 @@ class UpstreamHarnessTest(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertFalse(evidence_path.exists())
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertEqual(evidence_path.read_text(encoding="utf-8"), "stale")
+
+    def test_concurrent_failure_does_not_remove_successful_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence.json"
+            success_started = threading.Event()
+            producer_order: list[str] = []
+            failures: list[tuple[str, BaseException]] = []
+
+            def successful_producer() -> dict[str, object]:
+                producer_order.append("success")
+                success_started.set()
+                time.sleep(0.15)
+                return {"writer": "success"}
+
+            def delayed_failure() -> dict[str, object]:
+                producer_order.append("failure")
+                time.sleep(0.05)
+                raise RuntimeError("delayed failure")
+
+            def publish_success() -> None:
+                try:
+                    collect_and_publish_evidence(
+                        output, successful_producer, lock_timeout_seconds=1.0
+                    )
+                except BaseException as error:
+                    failures.append(("success", error))
+
+            def publish_failure() -> None:
+                try:
+                    collect_and_publish_evidence(
+                        output, delayed_failure, lock_timeout_seconds=1.0
+                    )
+                except BaseException as error:
+                    failures.append(("failure", error))
+
+            successful_thread = threading.Thread(target=publish_success)
+            failing_thread = threading.Thread(target=publish_failure)
+            successful_thread.start()
+            self.assertTrue(success_started.wait(1.0))
+            failing_thread.start()
+            successful_thread.join(2.0)
+            failing_thread.join(2.0)
+
+            self.assertFalse(successful_thread.is_alive())
+            self.assertFalse(failing_thread.is_alive())
+            self.assertEqual(producer_order, ["success", "failure"])
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(failures[0][0], "failure")
+            self.assertIsInstance(failures[0][1], RuntimeError)
+            self.assertEqual(str(failures[0][1]), "delayed failure")
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                {"writer": "success"},
+            )
+            self.assertFalse(output.with_name(f".{output.name}.lock").exists())
+
+    def test_output_lock_fails_bounded_without_deleting_preexisting_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence.json"
+            lock_path = output.with_name(f".{output.name}.lock")
+            lock_path.write_text("not ours", encoding="utf-8")
+
+            started = time.monotonic()
+            with self.assertRaisesRegex(RuntimeError, "locked by another invocation"):
+                acquire_output_lock(output, timeout_seconds=0.05)
+
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), "not ours")
 
     def test_atomic_evidence_resists_symlinks_files_and_temp_collisions(self) -> None:
         evidence = {"schema_version": 2, "value": "new"}
@@ -1374,7 +1445,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             )
             self.assertNotEqual(completed.returncode, 0)
             self.assertEqual(victim.read_text(encoding="utf-8"), "safe")
-            self.assertFalse(output.exists())
+            self.assertTrue(output.is_symlink())
 
 
 if __name__ == "__main__":

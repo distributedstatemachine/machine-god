@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 
 EXPECTED_RUST_VERSION = "1.94.1"
@@ -105,6 +105,14 @@ class MachineStatusEntry:
     state: str
     path: bytes
     original_path: bytes | None
+
+
+@dataclass(frozen=True)
+class OutputLock:
+    path: Path
+    descriptor: int
+    device: int
+    inode: int
 
 
 def parse_upstream_lock(path: Path) -> UpstreamLock:
@@ -2451,6 +2459,100 @@ def write_evidence_atomic(output: Path, evidence: Mapping[str, Any]) -> None:
                 pass
 
 
+def acquire_output_lock(output: Path, timeout_seconds: float = 1.0) -> OutputLock:
+    """Acquire a bounded, exclusive full-run lock without deleting stale locks."""
+
+    if not is_positive_number(timeout_seconds):
+        raise ValueError("output lock timeout must be a positive finite number")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = output.with_name(f".{output.name}.lock")
+    deadline = time.monotonic() + timeout_seconds
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    while True:
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+            break
+        except FileExistsError as error:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"evidence output is locked by another invocation: {lock_path}"
+                ) from error
+            time.sleep(min(0.05, remaining))
+    created = os.fstat(descriptor)
+    try:
+        current = os.stat(lock_path, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(created.st_mode)
+            or created.st_nlink != 1
+            or not stat.S_ISREG(current.st_mode)
+            or current.st_dev != created.st_dev
+            or current.st_ino != created.st_ino
+        ):
+            raise RuntimeError("exclusive evidence lock identity is invalid")
+        with os.fdopen(os.dup(descriptor), "w", encoding="utf-8") as lock_file:
+            lock_file.write(
+                json.dumps(
+                    {"pid": os.getpid(), "token": secrets.token_hex(16)},
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            lock_file.flush()
+            os.fsync(lock_file.fileno())
+        return OutputLock(lock_path, descriptor, created.st_dev, created.st_ino)
+    except BaseException:
+        os.close(descriptor)
+        try:
+            leftover = os.stat(lock_path, follow_symlinks=False)
+            if leftover.st_dev == created.st_dev and leftover.st_ino == created.st_ino:
+                lock_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def release_output_lock(lock: OutputLock) -> None:
+    """Release only the lock inode created by this invocation."""
+
+    try:
+        try:
+            current = os.stat(lock.path, follow_symlinks=False)
+            if current.st_dev == lock.device and current.st_ino == lock.inode:
+                lock.path.unlink()
+                directory_descriptor = os.open(
+                    lock.path.parent,
+                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                )
+                try:
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
+        except OSError:
+            pass
+    finally:
+        os.close(lock.descriptor)
+
+
+def collect_and_publish_evidence(
+    output: Path,
+    producer: Callable[[], Mapping[str, Any]],
+    *,
+    lock_timeout_seconds: float = 1.0,
+) -> None:
+    lock = acquire_output_lock(output, lock_timeout_seconds)
+    try:
+        write_evidence_atomic(output, producer())
+    finally:
+        release_output_lock(lock)
+
+
 def main() -> int:
     default_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -2477,12 +2579,9 @@ def main() -> int:
 
     requested_output = args.output.absolute()
     output = requested_output.parent.resolve() / requested_output.name
-    output.unlink(missing_ok=True)
     try:
-        evidence = collect_evidence(args)
-        write_evidence_atomic(output, evidence)
+        collect_and_publish_evidence(output, lambda: collect_evidence(args))
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
-        output.unlink(missing_ok=True)
         parser.exit(1, f"error: {error}\n")
     print(f"wrote validated bootstrap evidence to {output}")
     return 0

@@ -30,8 +30,14 @@ findings and the branch resolves them as follows:
   hostile names.
 - External commands had no wall-clock bounds. Fetch/tool, build, and per-sample
   timeouts are explicit, configurable, recorded, and terminate the spawned
-  process group. Evidence is written atomically only after validation, and a
-  failed run removes stale output at the requested path.
+  process group. Evidence is written atomically only after validation.
+- Evidence cleanup unconditionally removed the requested output before a run
+  and after any failure, so a delayed failing invocation could delete evidence
+  just published by a concurrent successful invocation. Collection and
+  publication now hold an exclusive per-output lock with a bounded acquisition
+  wait. A contender never deletes a pre-existing lock, and failure preserves
+  previously published evidence. A two-writer regression serializes one success
+  and one delayed failure and proves that the successful artifact survives.
 - Atomic evidence output used a predictable PID-based temporary and
   `write_text`, which followed a pre-created symlink and could overwrite its
   victim before promoting the symlink as evidence. Publication now uses an
@@ -113,7 +119,8 @@ timeouts, Linux descendant containment without readable environments, delayed
 containment scans, Git export attributes and link modes, mutable tool paths, and
 successful-command zombie reaping, injected lifecycle failures, PID reuse,
 NUL-porcelain path parsing, atomic-publication symlinks and collisions, and stale
-evidence.
+evidence preservation, including concurrent success/failure publication and a
+pre-existing output lock.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64
 toolchain and a new isolated checkout. Clone, exact detached checkout, origin,
