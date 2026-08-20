@@ -136,3 +136,23 @@ hostile regressions. Shared mask/depth maps and the linear scaling bounds remain
 intact.
 
 Rejected after final scope-security rereview remediation: none.
+
+## Quoted-field security rereview
+
+Reviewed commit: `73e031d9c4870d80605a75b65d218ad3424e3011`.
+
+The subsequent Zig syntax review found that field lookup recognized only the
+ordinary `.field = value` spelling. Zig's equivalent `.@"field" = value`
+spelling could therefore bypass known-field validation: dynamic optional values
+silently became defaults, and a quoted/unquoted pair evaded duplicate checks.
+
+Simple quoted identifiers are now retained in the structural mask because they
+cannot contain declaration syntax; complex quoted payloads remain neutralized.
+Known-field lookup canonicalizes ordinary and quoted spellings into one
+occurrence set before validating the value. Dynamic quoted aliases, hidden-help
+flags, presentation categories, and argument flags now fail closed. Hostile
+mixed-spelling duplicate tests cover those optional fields, and a table-driven
+regression proves duplicate detection for every known registry field. All
+scope, literal-injection, and linear-scaling regressions remain active.
+
+Rejected after quoted-field security rereview remediation: none.

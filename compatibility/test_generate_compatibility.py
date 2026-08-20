@@ -254,8 +254,8 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         specs = 'pub const TopLevelKind = enum { @"help", };\n'
         registry = (
             "pub const top_level_specs = [_]TopLevelSpec{\n"
-            '    .{ .kind = .@"help", .token = "help", .usage = "help", '
-            '.summary = "Show help" },\n'
+            '    .{ .@"kind" = .@"help", .@"token" = "help", '
+            '.@"usage" = "help", .@"summary" = "Show help" },\n'
             "};\n"
         )
         commands = GENERATOR.extract_top_level_commands(specs, registry)
@@ -364,6 +364,24 @@ class CompatibilityGeneratorTest(unittest.TestCase):
                 r"repeats \.aliases",
             ),
             (
+                "dynamic quoted aliases",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    '.aliases = &.{ "--help", "-h" },',
+                    '.@"aliases" = buildAliases(),',
+                ),
+                r"unsupported \.aliases",
+            ),
+            (
+                "mixed duplicate aliases",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    '.aliases = &.{ "--help", "-h" },',
+                    '.aliases = &.{ "--help", "-h" }, .@"aliases" = &.{},',
+                ),
+                r"repeats \.aliases",
+            ),
+            (
                 "dynamic hidden flag",
                 GENERATOR.extract_top_level_commands,
                 commands.replace(
@@ -379,6 +397,25 @@ class CompatibilityGeneratorTest(unittest.TestCase):
                     ".hidden_from_top_level_help = true,",
                     ".hidden_from_top_level_help = true, "
                     ".hidden_from_top_level_help = false,",
+                ),
+                r"repeats \.hidden_from_top_level_help",
+            ),
+            (
+                "dynamic quoted hidden flag",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    ".hidden_from_top_level_help = true,",
+                    '.@"hidden_from_top_level_help" = isHidden(),',
+                ),
+                r"unsupported \.hidden_from_top_level_help",
+            ),
+            (
+                "mixed duplicate hidden flag",
+                GENERATOR.extract_top_level_commands,
+                commands.replace(
+                    ".hidden_from_top_level_help = true,",
+                    '.hidden_from_top_level_help = true, '
+                    '.@"hidden_from_top_level_help" = false,',
                 ),
                 r"repeats \.hidden_from_top_level_help",
             ),
@@ -403,12 +440,85 @@ class CompatibilityGeneratorTest(unittest.TestCase):
                 ),
                 r"repeats \.presentation_category",
             ),
+            (
+                "dynamic quoted presentation category",
+                GENERATOR.extract_slash_commands,
+                commands.replace(
+                    ".presentation_category = .general",
+                    '.@"presentation_category" = chooseCategory()',
+                    1,
+                ),
+                r"unsupported \.presentation_category",
+            ),
+            (
+                "mixed duplicate presentation category",
+                GENERATOR.extract_slash_commands,
+                commands.replace(
+                    ".presentation_category = .general",
+                    '.presentation_category = .general, '
+                    '.@"presentation_category" = .advanced',
+                    1,
+                ),
+                r"repeats \.presentation_category",
+            ),
+            (
+                "dynamic quoted argument flag",
+                GENERATOR.extract_slash_commands,
+                commands.replace(
+                    ".presentation_category = .general }",
+                    '.presentation_category = .general, '
+                    '.@"has_args" = determineArgs() }',
+                    1,
+                ),
+                r"unsupported \.has_args",
+            ),
+            (
+                "mixed duplicate argument flag",
+                GENERATOR.extract_slash_commands,
+                commands.replace(
+                    ".presentation_category = .general }",
+                    ".presentation_category = .general, .has_args = true, "
+                    '.@"has_args" = false }',
+                    1,
+                ),
+                r"repeats \.has_args",
+            ),
         ]
         for label, extractor, mutated, error in cases:
             with self.subTest(label=label), self.assertRaisesRegex(
                 GENERATOR.InventoryError, error
             ):
                 extractor(specs, mutated)
+
+    def test_quoted_and_unquoted_known_fields_share_duplicate_detection(self) -> None:
+        known_fields = (
+            "kind",
+            "token",
+            "aliases",
+            "usage",
+            "summary",
+            "hidden_from_top_level_help",
+            "command",
+            "presentation_category",
+            "has_args",
+            "name",
+        )
+        for field in known_fields:
+            duplicate_mask = f'.{field} = true, .@"{field}" = false,'
+            duplicate_depths = GENERATOR.structural_depth_map(duplicate_mask)
+            with self.subTest(field=field), self.assertRaisesRegex(
+                GENERATOR.InventoryError, rf"repeats \.{field}"
+            ):
+                GENERATOR.field_assignment(duplicate_mask, duplicate_depths, field)
+
+            dynamic_mask = f'.@"{field}" = dynamicValue(),'
+            dynamic_depths = GENERATOR.structural_depth_map(dynamic_mask)
+            with self.subTest(field=field), self.assertRaisesRegex(
+                GENERATOR.InventoryError, rf"unsupported \.{field}"
+            ):
+                GENERATOR.field_match(
+                    dynamic_mask, dynamic_depths, field, r"true|false"
+                )
 
     def test_e2e_owner_coverage_rejects_an_unclassified_file(self) -> None:
         (self.upstream / "tests/e2e/orphan.test.ts").write_text(

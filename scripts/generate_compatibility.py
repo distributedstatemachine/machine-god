@@ -288,6 +288,7 @@ def source_mask(text: str, language: str) -> str:
             continue
         if language == "zig" and text[index] == "@" and following == '"':
             index += 2
+            payload_start = index
             escaped = False
             while index < len(text):
                 character = text[index]
@@ -300,6 +301,9 @@ def source_mask(text: str, language: str) -> str:
                     masked[index] = "x"
                     escaped = True
                 elif character == '"':
+                    payload = text[payload_start:index]
+                    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", payload):
+                        masked[payload_start:index] = list(payload)
                     index += 1
                     break
                 else:
@@ -601,7 +605,8 @@ def decode_zig_string(raw: str) -> str:
 def field_assignment(
     mask: str, depths: list[int], field: str
 ) -> re.Match[str] | None:
-    candidates = re.finditer(rf"\.{re.escape(field)}\s*=\s*", mask)
+    escaped = re.escape(field)
+    candidates = re.finditer(rf'(?:\.{escaped}|\.@"{escaped}")\s*=\s*', mask)
     matches = [match for match in candidates if depths[match.start()] == 0]
     if len(matches) > 1:
         raise InventoryError(f"registry entry repeats .{field}")
