@@ -2,6 +2,8 @@ use crate::{
     BoxFuture, BuildError, EngineError, EventSink, ModelProvider, NoopEventSink, PermissionHandler,
     Session, SessionId, SessionRecord, SessionStore, Tool, ToolName, ToolSpec,
 };
+use serde::ser::SerializeSeq;
+use serde::{Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -35,11 +37,15 @@ pub struct EngineLimits {
     pub max_reasoning_bytes: NonZeroUsize,
     pub max_stop_detail_bytes: NonZeroUsize,
     pub max_prompt_bytes: NonZeroUsize,
+    pub max_session_metadata_bytes: NonZeroUsize,
+    pub max_inference_options_bytes: NonZeroUsize,
     pub max_transcript_messages: NonZeroUsize,
     pub max_transcript_bytes: NonZeroUsize,
+    pub max_tool_catalog_bytes: NonZeroUsize,
     pub max_tool_argument_bytes: NonZeroUsize,
     pub max_serialized_tool_result_bytes: NonZeroUsize,
     pub max_cumulative_tool_result_bytes: NonZeroUsize,
+    pub max_permission_denial_reason_bytes: NonZeroUsize,
 }
 
 impl Default for EngineLimits {
@@ -53,12 +59,17 @@ impl Default for EngineLimits {
             max_reasoning_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_stop_detail_bytes: NonZeroUsize::new(1024).expect("default is nonzero"),
             max_prompt_bytes: NonZeroUsize::new(256 * 1024).expect("default is nonzero"),
+            max_session_metadata_bytes: NonZeroUsize::new(256 * 1024).expect("default is nonzero"),
+            max_inference_options_bytes: NonZeroUsize::new(64 * 1024).expect("default is nonzero"),
             max_transcript_messages: NonZeroUsize::new(4_096).expect("default is nonzero"),
             max_transcript_bytes: NonZeroUsize::new(8 * 1024 * 1024).expect("default is nonzero"),
+            max_tool_catalog_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_tool_argument_bytes: NonZeroUsize::new(64 * 1024).expect("default is nonzero"),
             max_serialized_tool_result_bytes: NonZeroUsize::new(64 * 1024)
                 .expect("default is nonzero"),
             max_cumulative_tool_result_bytes: NonZeroUsize::new(256 * 1024)
+                .expect("default is nonzero"),
+            max_permission_denial_reason_bytes: NonZeroUsize::new(4 * 1024)
                 .expect("default is nonzero"),
         }
     }
@@ -171,8 +182,9 @@ impl EngineBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`BuildError`] when a required component is absent or when two
-    /// registered tools have the same name.
+    /// Returns [`BuildError`] when a required component is absent, two
+    /// registered tools have the same name, or the serialized tool catalog
+    /// exceeds its configured byte bound.
     pub fn build(self) -> Result<Engine, BuildError> {
         if let Some(name) = self.duplicate_tool {
             return Err(BuildError::DuplicateTool(name.to_string()));
@@ -182,6 +194,14 @@ impl EngineBuilder {
         let permission_handler = self
             .permission_handler
             .ok_or(BuildError::MissingPermissionHandler)?;
+        let tool_catalog_size = crate::session::serialized_json_size_bounded(
+            &ToolCatalog(&self.tools),
+            self.limits.max_tool_catalog_bytes.get(),
+        )
+        .map_err(|_| BuildError::ToolCatalogTooLarge)?;
+        if tool_catalog_size.is_none() {
+            return Err(BuildError::ToolCatalogTooLarge);
+        }
         let tool_specs = self
             .tools
             .values()
@@ -237,6 +257,21 @@ pub(crate) struct SessionRegistration {
 struct RegisteredTool {
     spec: ToolSpec,
     tool: Arc<dyn Tool>,
+}
+
+struct ToolCatalog<'a>(&'a BTreeMap<ToolName, RegisteredTool>);
+
+impl Serialize for ToolCatalog<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for registered in self.0.values() {
+            sequence.serialize_element(&registered.spec)?;
+        }
+        sequence.end()
+    }
 }
 
 impl EngineInner {

@@ -150,6 +150,7 @@ pub enum BuildError {
     MissingSessionStore,
     MissingPermissionHandler,
     DuplicateTool(String),
+    ToolCatalogTooLarge,
 }
 
 impl fmt::Display for BuildError {
@@ -161,6 +162,9 @@ impl fmt::Display for BuildError {
                 formatter.write_str("a permission handler is required")
             }
             Self::DuplicateTool(name) => write!(formatter, "duplicate tool registration: {name}"),
+            Self::ToolCatalogTooLarge => {
+                formatter.write_str("serialized tool catalog exceeds the configured byte limit")
+            }
         }
     }
 }

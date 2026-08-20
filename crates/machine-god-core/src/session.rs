@@ -8,6 +8,7 @@ use crate::{
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::future::{Future, poll_fn};
@@ -55,23 +56,18 @@ pub(crate) fn validate_record_limits(
     record: &SessionRecord,
     limits: crate::EngineLimits,
 ) -> Result<(), EngineError> {
-    validate_transcript(&record.messages, limits)
-        .map_err(|failure| EngineError::Protocol(failure.message))
+    validate_record(record, limits).map_err(|failure| EngineError::Protocol(failure.message))
 }
 
 pub(crate) fn redact_store_error(error: SessionStoreError) -> SessionStoreError {
     let SessionStoreError {
         kind,
         code,
-        message: _,
+        message,
         retryable,
     } = error;
-    SessionStoreError::new(
-        kind,
-        bounded_text(&code, 128),
-        "session store failed",
-        retryable,
-    )
+    drop((code, message));
+    SessionStoreError::new(kind, "store_failed", "session store failed", retryable)
 }
 
 const fn initial_turn_sequence() -> u64 {
@@ -132,7 +128,7 @@ pub(crate) struct SessionState {
 }
 
 struct SessionData {
-    record: SessionRecord,
+    record: Arc<SessionRecord>,
     persisted: bool,
 }
 
@@ -144,7 +140,10 @@ impl SessionState {
     ) -> Arc<Self> {
         let id = record.id.clone();
         Arc::new_cyclic(move |state| Self {
-            data: Mutex::new(SessionData { record, persisted }),
+            data: Mutex::new(SessionData {
+                record: Arc::new(record),
+                persisted,
+            }),
             active_turn: AtomicBool::new(false),
             _registry_membership: SessionRegistration::new(registry, id, state.clone()),
         })
@@ -165,53 +164,112 @@ impl SessionState {
     }
 
     pub(crate) fn reconcile_loaded(&self, record: SessionRecord) -> Result<(), EngineError> {
+        const MAX_RECONCILE_RETRIES: usize = 32;
+
         Self::validate_loaded(&record)?;
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if record.id != data.record.id {
-            return Err(EngineError::Protocol(format!(
-                "session store returned ID {} for requested ID {}",
-                record.id, data.record.id
-            )));
-        }
-        Self::validate_sequence_progress(&data.record, &record)?;
-        if record.revision > data.record.revision {
-            data.record = record;
+        let record = Arc::new(record);
+        for _ in 0..MAX_RECONCILE_RETRIES {
+            let (canonical, _) = self.snapshot();
+            if record.id != canonical.id {
+                return Err(EngineError::Protocol(format!(
+                    "session store returned ID {} for requested ID {}",
+                    record.id, canonical.id
+                )));
+            }
+            Self::validate_sequence_progress(&canonical, &record)?;
+            if record.revision < canonical.revision {
+                return Err(EngineError::Protocol(format!(
+                    "session store returned stale revision {} behind canonical revision {}",
+                    record.revision.0, canonical.revision.0
+                )));
+            }
+            let equal_revision_diverged =
+                record.revision == canonical.revision && *record != *canonical;
+            if equal_revision_diverged {
+                return Err(EngineError::Protocol(
+                    "session store returned different records at the same revision".to_owned(),
+                ));
+            }
+
+            let mut data = self
+                .data
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !Arc::ptr_eq(&data.record, &canonical) {
+                drop(data);
+                continue;
+            }
+            if record.revision > canonical.revision {
+                data.record = Arc::clone(&record);
+            }
             data.persisted = true;
-        } else if record.revision < data.record.revision {
-            return Err(EngineError::Protocol(format!(
-                "session store returned stale revision {} behind canonical revision {}",
-                record.revision.0, data.record.revision.0
-            )));
-        } else if record.revision == data.record.revision && record != data.record {
-            return Err(EngineError::Protocol(
-                "session store returned different records at the same revision".to_owned(),
-            ));
-        } else {
-            data.persisted = true;
+            return Ok(());
         }
-        Ok(())
+        Err(EngineError::Protocol(
+            "session load reconciliation exceeded its retry bound".to_owned(),
+        ))
     }
 
-    fn reconcile_saved(&self, record: &SessionRecord) -> Result<(), EngineError> {
+    fn reconcile_saved(&self, record: Arc<SessionRecord>) -> Result<(), EngineError> {
+        const MAX_RECONCILE_RETRIES: usize = 32;
+
+        for _ in 0..MAX_RECONCILE_RETRIES {
+            let (canonical, _) = self.snapshot();
+            Self::validate_sequence_progress(&canonical, &record)?;
+            let equal_revision_diverged =
+                canonical.revision == record.revision && *canonical != *record;
+            if equal_revision_diverged {
+                return Err(EngineError::Protocol(
+                    "successful save diverged from canonical record at the same revision"
+                        .to_owned(),
+                ));
+            }
+
+            let mut data = self
+                .data
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !Arc::ptr_eq(&data.record, &canonical) {
+                drop(data);
+                continue;
+            }
+            if canonical.revision < record.revision {
+                data.record = record;
+                data.persisted = true;
+            } else if canonical.revision == record.revision {
+                data.persisted = true;
+            }
+            return Ok(());
+        }
+        Err(EngineError::Protocol(
+            "session save reconciliation exceeded its retry bound".to_owned(),
+        ))
+    }
+
+    fn snapshot(&self) -> (Arc<SessionRecord>, bool) {
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (Arc::clone(&data.record), data.persisted)
+    }
+
+    fn snapshot_is_current(&self, record: &Arc<SessionRecord>, persisted: bool) -> bool {
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Arc::ptr_eq(&data.record, record) && data.persisted == persisted
+    }
+
+    fn mark_missing_if_current(&self, record: &Arc<SessionRecord>, persisted: bool) {
         let mut data = self
             .data
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Self::validate_sequence_progress(&data.record, record)?;
-        if data.record.revision < record.revision {
-            data.record.clone_from(record);
-            data.persisted = true;
-        } else if data.record.revision == record.revision && data.record != *record {
-            return Err(EngineError::Protocol(
-                "successful save diverged from canonical record at the same revision".to_owned(),
-            ));
-        } else if data.record.revision == record.revision {
-            data.persisted = true;
+        if Arc::ptr_eq(&data.record, record) && data.persisted == persisted {
+            data.persisted = false;
         }
-        Ok(())
     }
 
     fn validate_sequence_progress(
@@ -257,12 +315,8 @@ impl Session {
     /// Returns a consistent snapshot of in-memory session state.
     #[must_use]
     pub fn record(&self) -> SessionRecord {
-        self.state
-            .data
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .record
-            .clone()
+        let (record, _) = self.state.snapshot();
+        (*record).clone()
     }
 
     #[must_use]
@@ -299,6 +353,8 @@ impl Session {
                 "prompt exceeded the configured byte limit".to_owned(),
             ));
         }
+        validate_inference_options(&prompt.options, self.engine.limits)
+            .map_err(|failure| EngineError::Protocol(failure.message))?;
         self.state
             .active_turn
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -350,19 +406,10 @@ impl Session {
         const MAX_CONFLICT_RETRIES: usize = 32;
 
         for _ in 0..MAX_CONFLICT_RETRIES {
-            let (snapshot, expected_revision) = {
-                let data = self
-                    .state
-                    .data
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                validate_record_limits(&data.record, self.engine.limits)?;
-                (
-                    data.record.clone(),
-                    data.persisted.then_some(data.record.revision),
-                )
-            };
-            let mut candidate = snapshot.clone();
+            let (snapshot, persisted) = self.state.snapshot();
+            validate_record_limits(&snapshot, self.engine.limits)?;
+            let expected_revision = persisted.then_some(snapshot.revision);
+            let mut candidate = (*snapshot).clone();
             let turn_sequence = candidate.next_turn_sequence;
             candidate.next_turn_sequence = turn_sequence.checked_add(1).ok_or_else(|| {
                 EngineError::Protocol("session turn sequence is exhausted".to_owned())
@@ -373,6 +420,9 @@ impl Session {
                 .messages
                 .push(Message::text(Role::User, &prompt_text));
             validate_record_limits(&candidate, self.engine.limits)?;
+            if !self.state.snapshot_is_current(&snapshot, persisted) {
+                continue;
+            }
             let previous_revision = candidate.revision;
 
             match self
@@ -383,8 +433,9 @@ impl Session {
             {
                 Ok(revision) if revision > previous_revision => {
                     candidate.revision = revision;
-                    self.state.reconcile_saved(&candidate)?;
-                    return Ok((turn_id, candidate));
+                    let candidate = Arc::new(candidate);
+                    self.state.reconcile_saved(Arc::clone(&candidate))?;
+                    return Ok((turn_id, (*candidate).clone()));
                 }
                 Ok(_) => {
                     return Err(EngineError::Protocol(
@@ -400,20 +451,12 @@ impl Session {
                         .await
                         .map_err(redact_store_error)?
                     else {
-                        let mut data = self
-                            .state
-                            .data
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if data.record.id != id {
+                        if snapshot.id != id {
                             return Err(EngineError::Protocol(
                                 "session identity changed during turn reservation".to_owned(),
                             ));
                         }
-                        if data.record == snapshot && data.persisted == expected_revision.is_some()
-                        {
-                            data.persisted = false;
-                        }
+                        self.state.mark_missing_if_current(&snapshot, persisted);
                         continue;
                     };
                     if current.id != id {
@@ -486,7 +529,7 @@ impl TurnFailure {
     fn provider(error: &crate::ProviderError) -> Self {
         Self {
             component: "provider".to_owned(),
-            code: bounded_text(&error.code, 128),
+            code: "provider_failed".to_owned(),
             message: "model provider failed".to_owned(),
             retryable: error.retryable,
         }
@@ -504,16 +547,16 @@ impl TurnFailure {
     fn store(error: &SessionStoreError) -> Self {
         Self {
             component: "store".to_owned(),
-            code: bounded_text(&error.code, 128),
+            code: "store_failed".to_owned(),
             message: "session store failed".to_owned(),
             retryable: error.retryable,
         }
     }
 
-    fn permission(error: &crate::PermissionError) -> Self {
+    fn permission(_error: &crate::PermissionError) -> Self {
         Self {
             component: "permission".to_owned(),
-            code: bounded_text(&error.code, 128),
+            code: "permission_failed".to_owned(),
             message: "permission policy failed".to_owned(),
             retryable: false,
         }
@@ -764,7 +807,8 @@ async fn run_turn_inner(
             .into());
         }
 
-        validate_transcript(&record.messages, limits)?;
+        validate_record(&record, limits)?;
+        validate_inference_options(&options, limits)?;
         let request = ModelRequest {
             session_id: session_id.clone(),
             turn_id: turn_id.clone(),
@@ -1041,8 +1085,7 @@ async fn run_turn_inner(
                 .ok_or_else(|| {
                     TurnFailure::limit("tool_call_limit", "tool call count overflowed")
                 })?;
-            let permission_id = PermissionRequestId::new(format!("{turn_id}:permission-{ordinal}"))
-                .map_err(|error| TurnFailure::protocol("permission_id", error.to_string()))?;
+            let permission_id = permission_request_id(&session_id, &turn_id, ordinal)?;
             let request = PermissionRequest {
                 id: permission_id.clone(),
                 session_id: session_id.clone(),
@@ -1064,6 +1107,12 @@ async fn run_turn_inner(
             let decision = await_cancellable(authorization, &cancellation)
                 .await?
                 .map_err(|error| TurnFailure::permission(&error))?;
+            let decision = match decision {
+                PermissionDecision::Allow { scope } => PermissionDecision::Allow { scope },
+                PermissionDecision::Deny { reason } => PermissionDecision::Deny {
+                    reason: bounded_text(&reason, limits.max_permission_denial_reason_bytes.get()),
+                },
+            };
             emitter
                 .emit(TurnEvent::PermissionResolved {
                     request_id: permission_id,
@@ -1199,6 +1248,37 @@ fn tool_result_message(call_id: crate::ToolCallId, output: ToolOutput) -> Messag
     }
 }
 
+fn permission_request_id(
+    session_id: &SessionId,
+    turn_id: &TurnId,
+    ordinal: usize,
+) -> Result<PermissionRequestId, WorkflowAbort> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"machine-god:permission-request:v1\0");
+    for component in [session_id.as_str(), turn_id.as_str()] {
+        let length = u64::try_from(component.len()).map_err(|_| {
+            TurnFailure::protocol("permission_id", "permission identity length overflowed")
+        })?;
+        hasher.update(length.to_be_bytes());
+        hasher.update(component.as_bytes());
+    }
+    let ordinal = u64::try_from(ordinal)
+        .map_err(|_| TurnFailure::protocol("permission_id", "permission ordinal overflowed"))?;
+    hasher.update(ordinal.to_be_bytes());
+
+    let digest = hasher.finalize();
+    let mut value = String::with_capacity("permission-sha256-".len() + digest.len() * 2);
+    value.push_str("permission-sha256-");
+    for byte in digest {
+        value.push(char::from(HEX[usize::from(byte >> 4)]));
+        value.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    PermissionRequestId::new(value)
+        .map_err(|error| TurnFailure::protocol("permission_id", error.to_string()).into())
+}
+
 fn assistant_message_content(text: &str, calls: &[ToolCall]) -> Vec<ContentBlock> {
     let mut content = Vec::with_capacity(usize::from(!text.is_empty()) + calls.len());
     if !text.is_empty() {
@@ -1240,7 +1320,7 @@ impl Write for JsonByteCounter {
     }
 }
 
-fn serialized_json_size_bounded<T: Serialize + ?Sized>(
+pub(crate) fn serialized_json_size_bounded<T: Serialize + ?Sized>(
     value: &T,
     limit: usize,
 ) -> Result<Option<usize>, serde_json::Error> {
@@ -1280,6 +1360,45 @@ fn validate_transcript(
         return Err(TurnFailure::limit(
             "transcript_size_limit",
             "transcript exceeded the configured serialized byte limit",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_record(record: &SessionRecord, limits: crate::EngineLimits) -> Result<(), TurnFailure> {
+    validate_transcript(&record.messages, limits)?;
+    let metadata_bytes =
+        serialized_json_size_bounded(&record.metadata, limits.max_session_metadata_bytes.get())
+            .map_err(|_| {
+                TurnFailure::protocol(
+                    "session_metadata_serialization",
+                    "session metadata could not be serialized",
+                )
+            })?;
+    if metadata_bytes.is_none() {
+        return Err(TurnFailure::limit(
+            "session_metadata_size_limit",
+            "session metadata exceeded the configured serialized byte limit",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_inference_options(
+    options: &InferenceOptions,
+    limits: crate::EngineLimits,
+) -> Result<(), TurnFailure> {
+    let bytes = serialized_json_size_bounded(options, limits.max_inference_options_bytes.get())
+        .map_err(|_| {
+            TurnFailure::protocol(
+                "inference_options_serialization",
+                "inference options could not be serialized",
+            )
+        })?;
+    if bytes.is_none() {
+        return Err(TurnFailure::limit(
+            "inference_options_size_limit",
+            "inference options exceeded the configured serialized byte limit",
         ));
     }
     Ok(())
@@ -1443,34 +1562,29 @@ async fn commit_messages(
         if honor_cancellation {
             check_cancelled(cancellation)?;
         }
-        let (snapshot, expected_revision) = {
-            let data = state
-                .data
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if data.record.id != base.id {
-                return Err(TurnFailure::protocol(
-                    "session_identity_changed",
-                    "session identity changed during transcript commit",
-                )
-                .into());
-            }
-            if data.record.messages != base.messages {
-                return Err(TurnFailure::protocol(
-                    "transcript_diverged",
-                    "durable transcript diverged before message commit",
-                )
-                .into());
-            }
-            validate_transcript(&data.record.messages, engine.limits)?;
-            (
-                data.record.clone(),
-                data.persisted.then_some(data.record.revision),
+        let (snapshot, persisted) = state.snapshot();
+        if snapshot.id != base.id {
+            return Err(TurnFailure::protocol(
+                "session_identity_changed",
+                "session identity changed during transcript commit",
             )
-        };
-        let mut candidate = snapshot;
+            .into());
+        }
+        if snapshot.messages != base.messages {
+            return Err(TurnFailure::protocol(
+                "transcript_diverged",
+                "durable transcript diverged before message commit",
+            )
+            .into());
+        }
+        validate_record(&snapshot, engine.limits)?;
+        let expected_revision = persisted.then_some(snapshot.revision);
+        let mut candidate = (*snapshot).clone();
         candidate.messages.extend(messages.iter().cloned());
-        validate_transcript(&candidate.messages, engine.limits)?;
+        validate_record(&candidate, engine.limits)?;
+        if !state.snapshot_is_current(&snapshot, persisted) {
+            continue;
+        }
         let previous_revision = candidate.revision;
         let save = engine
             .session_store
@@ -1478,10 +1592,13 @@ async fn commit_messages(
         match await_operation(save, cancellation, honor_cancellation).await? {
             Ok(revision) if revision > previous_revision => {
                 candidate.revision = revision;
-                state.reconcile_saved(&candidate).map_err(|error| {
-                    TurnFailure::protocol("save_reconciliation", error.to_string())
-                })?;
-                return Ok(candidate);
+                let candidate = Arc::new(candidate);
+                state
+                    .reconcile_saved(Arc::clone(&candidate))
+                    .map_err(|error| {
+                        TurnFailure::protocol("save_reconciliation", error.to_string())
+                    })?;
+                return Ok((*candidate).clone());
             }
             Ok(_) => {
                 return Err(TurnFailure::protocol(
@@ -1515,7 +1632,7 @@ async fn commit_messages(
                 SessionState::validate_loaded(&current).map_err(|error| {
                     TurnFailure::protocol("invalid_conflict_record", error.to_string())
                 })?;
-                validate_transcript(&current.messages, engine.limits)?;
+                validate_record(&current, engine.limits)?;
                 if current.messages != base.messages {
                     return Err(TurnFailure::protocol(
                         "transcript_diverged",
@@ -1555,32 +1672,24 @@ async fn replace_message(
         if honor_cancellation {
             check_cancelled(cancellation)?;
         }
-        let (snapshot, expected_revision) = {
-            let data = state
-                .data
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if data.record.id != base.id {
-                return Err(TurnFailure::protocol(
-                    "session_identity_changed",
-                    "session identity changed during result replacement",
-                )
-                .into());
-            }
-            if data.record.messages != base.messages {
-                return Err(TurnFailure::protocol(
-                    "transcript_diverged",
-                    "durable transcript diverged before result replacement",
-                )
-                .into());
-            }
-            validate_transcript(&data.record.messages, engine.limits)?;
-            (
-                data.record.clone(),
-                data.persisted.then_some(data.record.revision),
+        let (snapshot, persisted) = state.snapshot();
+        if snapshot.id != base.id {
+            return Err(TurnFailure::protocol(
+                "session_identity_changed",
+                "session identity changed during result replacement",
             )
-        };
-        let mut candidate = snapshot;
+            .into());
+        }
+        if snapshot.messages != base.messages {
+            return Err(TurnFailure::protocol(
+                "transcript_diverged",
+                "durable transcript diverged before result replacement",
+            )
+            .into());
+        }
+        validate_record(&snapshot, engine.limits)?;
+        let expected_revision = persisted.then_some(snapshot.revision);
+        let mut candidate = (*snapshot).clone();
         let Some(message) = candidate.messages.get_mut(index) else {
             return Err(TurnFailure::protocol(
                 "placeholder_missing",
@@ -1589,7 +1698,10 @@ async fn replace_message(
             .into());
         };
         *message = replacement.clone();
-        validate_transcript(&candidate.messages, engine.limits)?;
+        validate_record(&candidate, engine.limits)?;
+        if !state.snapshot_is_current(&snapshot, persisted) {
+            continue;
+        }
         let previous_revision = candidate.revision;
         let save = engine
             .session_store
@@ -1597,10 +1709,13 @@ async fn replace_message(
         match await_operation(save, cancellation, honor_cancellation).await? {
             Ok(revision) if revision > previous_revision => {
                 candidate.revision = revision;
-                state.reconcile_saved(&candidate).map_err(|error| {
-                    TurnFailure::protocol("save_reconciliation", error.to_string())
-                })?;
-                return Ok(candidate);
+                let candidate = Arc::new(candidate);
+                state
+                    .reconcile_saved(Arc::clone(&candidate))
+                    .map_err(|error| {
+                        TurnFailure::protocol("save_reconciliation", error.to_string())
+                    })?;
+                return Ok((*candidate).clone());
             }
             Ok(_) => {
                 return Err(TurnFailure::protocol(
@@ -1631,7 +1746,7 @@ async fn replace_message(
                 SessionState::validate_loaded(&current).map_err(|error| {
                     TurnFailure::protocol("invalid_conflict_record", error.to_string())
                 })?;
-                validate_transcript(&current.messages, engine.limits)?;
+                validate_record(&current, engine.limits)?;
                 if current.messages != base.messages {
                     return Err(TurnFailure::protocol(
                         "transcript_diverged",

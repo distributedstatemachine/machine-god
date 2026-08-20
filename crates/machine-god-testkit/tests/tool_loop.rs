@@ -1,8 +1,9 @@
 use futures_core::Stream;
 use futures_util::StreamExt;
 use machine_god_core::{
-    BoxFuture, CancellationToken, ContentBlock, Engine, EngineError, EngineEvent, EngineLimits,
-    Message, ModelEvent, PermissionDecision, PermissionError, PermissionGrantScope, ProviderError,
+    BoxFuture, BuildError, CancellationToken, ContentBlock, Engine, EngineError, EngineEvent,
+    EngineLimits, InferenceOptions, Message, ModelEvent, PermissionDecision, PermissionError,
+    PermissionGrantScope, PermissionHandler, PermissionRequest, Prompt, ProviderError,
     ProviderErrorKind, Role, SessionId, SessionRecord, SessionRevision, SessionStore,
     SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
@@ -480,11 +481,15 @@ fn with_limit(mut limits: EngineLimits, field: &str, value: usize) -> EngineLimi
         "reasoning" => limits.max_reasoning_bytes = value,
         "stop_detail" => limits.max_stop_detail_bytes = value,
         "prompt" => limits.max_prompt_bytes = value,
+        "session_metadata" => limits.max_session_metadata_bytes = value,
+        "inference_options" => limits.max_inference_options_bytes = value,
         "transcript_messages" => limits.max_transcript_messages = value,
         "transcript_bytes" => limits.max_transcript_bytes = value,
+        "tool_catalog" => limits.max_tool_catalog_bytes = value,
         "arguments" => limits.max_tool_argument_bytes = value,
         "result" => limits.max_serialized_tool_result_bytes = value,
         "cumulative" => limits.max_cumulative_tool_result_bytes = value,
+        "denial_reason" => limits.max_permission_denial_reason_bytes = value,
         _ => panic!("unknown limit"),
     }
     limits
@@ -1531,6 +1536,173 @@ fn prompt_and_transcript_limits_fail_before_unbounded_cloning_or_persistence() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
+    let metadata = BTreeMap::from([(
+        "nested".to_owned(),
+        json!({"values": ["one", {"two": "three"}]}),
+    )]);
+    let metadata_size = serde_json::to_vec(&metadata).unwrap().len();
+    let id = SessionId::new("metadata-boundary").unwrap();
+    let record = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(1),
+        next_turn_sequence: 1,
+        messages: Vec::new(),
+        metadata: metadata.clone(),
+    };
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            id.clone(),
+            record,
+        )])))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "session_metadata",
+            metadata_size,
+        ))
+        .build()
+        .unwrap();
+    assert_eq!(
+        futures_executor::block_on(engine.load_session(id))
+            .unwrap()
+            .unwrap()
+            .record()
+            .metadata,
+        metadata
+    );
+
+    let id = SessionId::new("metadata-over").unwrap();
+    let record = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(1),
+        next_turn_sequence: 1,
+        messages: Vec::new(),
+        metadata: metadata.clone(),
+    };
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::from_records(BTreeMap::from([(
+            id.clone(),
+            record,
+        )])))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "session_metadata",
+            metadata_size - 1,
+        ))
+        .build()
+        .unwrap();
+    assert!(matches!(
+        futures_executor::block_on(engine.load_session(id.clone())),
+        Err(EngineError::Protocol(message)) if message.contains("metadata")
+    ));
+    assert!(engine.create_session(id).record().metadata.is_empty());
+
+    let options = InferenceOptions {
+        model: Some("model-with-a-name".to_owned()),
+        max_output_tokens: Some(42),
+        temperature: Some(0.5),
+        metadata: BTreeMap::from([("nested".to_owned(), json!({"secret": [1, 2, 3]}))]),
+    };
+    let options_size = serde_json::to_vec(&options).unwrap().len();
+    let provider = ScriptedModelProvider::new(
+        "options-boundary",
+        [events([ModelEvent::Stop {
+            reason: StopReason::Completed,
+        }])],
+    );
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store)
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "inference_options",
+            options_size,
+        ))
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("options-boundary").unwrap());
+    let output = futures_executor::block_on(async {
+        session
+            .prompt(Prompt {
+                text: "go".to_owned(),
+                options: options.clone(),
+            })
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+    });
+    assert!(matches!(
+        output.last(),
+        Some(Ok(EngineEvent {
+            payload: TurnEvent::Completed { .. },
+            ..
+        }))
+    ));
+    assert_eq!(provider.requests()[0].request.options, options);
+
+    let provider = ScriptedModelProvider::new("options-over", []);
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "inference_options",
+            options_size - 1,
+        ))
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("options-over").unwrap());
+    assert!(matches!(
+        futures_executor::block_on(session.prompt(Prompt {
+            text: "go".to_owned(),
+            options,
+        })),
+        Err(EngineError::Protocol(message)) if message.contains("inference options")
+    ));
+    assert!(store.calls().is_empty());
+    assert!(provider.requests().is_empty());
+
+    let tool_spec = spec("catalog-boundary");
+    let catalog_size = serde_json::to_vec(&vec![tool_spec.clone()]).unwrap().len();
+    Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(ScriptedTool::new(tool_spec.clone(), []))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "tool_catalog",
+            catalog_size,
+        ))
+        .build()
+        .unwrap();
+    assert!(matches!(
+        Engine::builder()
+            .provider(ScriptedModelProvider::new("unused", []))
+            .session_store(InMemorySessionStore::new())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .tool(ScriptedTool::new(tool_spec, []))
+            .limits(with_limit(
+                EngineLimits::default(),
+                "tool_catalog",
+                catalog_size - 1,
+            ))
+            .build(),
+        Err(BuildError::ToolCatalogTooLarge)
+    ));
+}
+
+#[test]
 fn placeholder_budgets_fail_before_committing_calls_or_requesting_permission() {
     let provider = ScriptedModelProvider::new(
         "placeholder-budget",
@@ -1567,7 +1739,7 @@ fn placeholder_budgets_fail_before_committing_calls_or_requesting_permission() {
 
 #[test]
 fn denial_reason_is_host_only_and_permission_ids_include_turn_identity() {
-    let secret = "SENTINEL_POLICY_SECRET";
+    let secret = "éééSENTINEL_POLICY_SECRET";
     let provider = ScriptedModelProvider::new(
         "permission-identity",
         [
@@ -1609,6 +1781,7 @@ fn denial_reason_is_host_only_and_permission_ids_include_turn_identity() {
         .session_store(store.clone())
         .permission_handler(permissions.clone())
         .tool(ScriptedTool::new(spec("known"), []))
+        .limits(with_limit(EngineLimits::default(), "denial_reason", 5))
         .build()
         .unwrap();
     let id = SessionId::new("permission-identity").unwrap();
@@ -1621,13 +1794,21 @@ fn denial_reason_is_host_only_and_permission_ids_include_turn_identity() {
         .into_iter()
         .map(|request| request.id.to_string())
         .collect::<Vec<_>>();
-    assert_eq!(ids, ["turn-1:permission-1", "turn-2:permission-1"]);
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+    assert!(ids.iter().all(|id| {
+        id.len() == 82
+            && id.starts_with("permission-sha256-")
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    }));
     assert!(first_events.iter().any(|event| matches!(
         &event.payload,
         TurnEvent::PermissionResolved {
             decision: PermissionDecision::Deny { reason },
             ..
-        } if reason == secret
+        } if reason == "éé"
     )));
     assert!(
         !serde_json::to_string(&store.record(&id).unwrap())
@@ -1635,20 +1816,192 @@ fn denial_reason_is_host_only_and_permission_ids_include_turn_identity() {
             .contains(secret)
     );
     assert!(
+        !serde_json::to_string(&store.record(&id).unwrap())
+            .unwrap()
+            .contains("SENTINEL_POLICY_SECRET")
+    );
+    assert!(
         !serde_json::to_string(&provider.requests()[1].request.messages)
             .unwrap()
             .contains(secret)
     );
+    assert!(
+        !serde_json::to_string(&provider.requests()[1].request.messages)
+            .unwrap()
+            .contains("SENTINEL_POLICY_SECRET")
+    );
 }
 
 #[test]
+fn permission_request_ids_are_distinct_across_sessions() {
+    let provider = ScriptedModelProvider::new(
+        "session-scoped-permission-ids",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("first", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("second", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = ScriptedPermissionHandler::new([
+        PermissionStep::Decision(PermissionDecision::Deny {
+            reason: "first".to_owned(),
+        }),
+        PermissionStep::Decision(PermissionDecision::Deny {
+            reason: "second".to_owned(),
+        }),
+    ]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(ScriptedTool::new(spec("known"), []))
+        .build()
+        .unwrap();
+    collect(&engine.create_session(SessionId::new("permission-session-one").unwrap()));
+    collect(&engine.create_session(SessionId::new("permission-session-two").unwrap()));
+
+    let requests = permissions.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].turn_id, requests[1].turn_id);
+    assert_ne!(requests[0].session_id, requests[1].session_id);
+    assert_eq!(
+        requests[0].id.as_str(),
+        "permission-sha256-e0587c0d089e3b55553560e7d014b8684db1d83eb9d8e3f19ccb635e7e3cc5ca"
+    );
+    assert_ne!(requests[0].id, requests[1].id);
+}
+
+#[derive(Clone, Debug, Default)]
+struct IdCachingPermissionHandler {
+    state: Arc<Mutex<IdCachingPermissionState>>,
+}
+
+#[derive(Debug, Default)]
+struct IdCachingPermissionState {
+    allowed_id: Option<String>,
+    requests: Vec<PermissionRequest>,
+}
+
+impl IdCachingPermissionHandler {
+    fn requests(&self) -> Vec<PermissionRequest> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .requests
+            .clone()
+    }
+}
+
+impl PermissionHandler for IdCachingPermissionHandler {
+    fn authorize(
+        &self,
+        request: PermissionRequest,
+    ) -> BoxFuture<'_, Result<PermissionDecision, PermissionError>> {
+        let decision = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let request_id = request.id.to_string();
+            state.requests.push(request);
+            match &state.allowed_id {
+                Some(allowed_id) if *allowed_id == request_id => PermissionDecision::Allow {
+                    scope: PermissionGrantScope::Session,
+                },
+                Some(_) => PermissionDecision::Deny {
+                    reason: "separate session requires a fresh decision".to_owned(),
+                },
+                None => {
+                    state.allowed_id = Some(request_id);
+                    PermissionDecision::Allow {
+                        scope: PermissionGrantScope::Session,
+                    }
+                }
+            }
+        };
+        Box::pin(async move { Ok(decision) })
+    }
+}
+
+#[test]
+fn permission_id_cache_cannot_reuse_allow_across_sessions() {
+    let provider = ScriptedModelProvider::new(
+        "permission-cache-isolation",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("first", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("second", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = IdCachingPermissionHandler::default();
+    let tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success("first allowed"))],
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+
+    collect(&engine.create_session(SessionId::new("cache-session-one").unwrap()));
+    collect(&engine.create_session(SessionId::new("cache-session-two").unwrap()));
+
+    let requests = permissions.requests();
+    assert_eq!(requests.len(), 2);
+    assert_ne!(requests[0].id, requests[1].id);
+    assert_eq!(tool.invocations().len(), 1);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
 fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
     let secret = "SENTINEL_COMPONENT_SECRET";
     let provider = ScriptedModelProvider::new(
         "provider-secret",
         [ModelProviderStep::StartError(ProviderError::new(
             ProviderErrorKind::Other,
-            "provider_code",
+            format!("provider_code\n{secret}"),
             secret,
             false,
         ))],
@@ -1661,6 +2014,10 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
         .unwrap();
     let output = collect(&engine.create_session(SessionId::new("provider-secret").unwrap()));
     assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "provider_failed"
+    ));
 
     let provider = ScriptedModelProvider::new(
         "permission-secret",
@@ -1678,7 +2035,7 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
         .provider(provider)
         .session_store(store.clone())
         .permission_handler(ScriptedPermissionHandler::new([PermissionStep::Error(
-            PermissionError::new("policy_code", secret),
+            PermissionError::new(format!("policy_code\n{secret}"), secret),
         )]))
         .tool(ScriptedTool::new(spec("known"), []))
         .build()
@@ -1686,6 +2043,10 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
     let id = SessionId::new("permission-secret").unwrap();
     let output = collect(&engine.create_session(id.clone()));
     assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "permission_failed"
+    ));
     assert_unknown_result(&store.record(&id).unwrap().messages[2], "call");
 
     let provider = ScriptedModelProvider::new(
@@ -1702,7 +2063,7 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
                 SessionStoreStep::Pass,
                 SessionStoreStep::Error(SessionStoreError::new(
                     SessionStoreErrorKind::Other,
-                    "store_code",
+                    format!("store_code\n{secret}"),
                     secret,
                     false,
                 )),
@@ -1718,6 +2079,10 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
         .unwrap();
     let output = collect(&engine.create_session(SessionId::new("store-secret").unwrap()));
     assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "store_failed"
+    ));
 
     let store = InMemorySessionStore::configured(
         BTreeMap::new(),
@@ -1725,7 +2090,7 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
             loads: None,
             saves: Some(vec![SessionStoreStep::Error(SessionStoreError::new(
                 SessionStoreErrorKind::Unavailable,
-                "initial_store_code",
+                format!("initial_store_code\n{secret}"),
                 secret,
                 true,
             ))]),
@@ -1741,6 +2106,49 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
     let session = engine.create_session(SessionId::new("initial-store-secret").unwrap());
     let error = futures_executor::block_on(session.prompt("go")).unwrap_err();
     assert!(!error.to_string().contains(secret));
+    assert!(matches!(
+        error,
+        EngineError::Store(SessionStoreError {
+            code,
+            kind: SessionStoreErrorKind::Unavailable,
+            retryable: true,
+            ..
+        }) if code == "store_failed"
+    ));
+
+    let store = InMemorySessionStore::configured(
+        BTreeMap::new(),
+        SessionStoreScript {
+            loads: Some(vec![SessionStoreStep::Error(SessionStoreError::new(
+                SessionStoreErrorKind::Corrupt,
+                format!("load_code\n{secret}"),
+                secret,
+                false,
+            ))]),
+            saves: None,
+        },
+        8,
+    );
+    let engine = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(store)
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let error = futures_executor::block_on(
+        engine.load_session(SessionId::new("load-store-secret").unwrap()),
+    )
+    .unwrap_err();
+    assert!(!error.to_string().contains(secret));
+    assert!(matches!(
+        error,
+        EngineError::Store(SessionStoreError {
+            code,
+            kind: SessionStoreErrorKind::Corrupt,
+            retryable: false,
+            ..
+        }) if code == "store_failed"
+    ));
 }
 
 #[test]

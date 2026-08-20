@@ -63,12 +63,23 @@ The transcript prefix is the optimistic-merge boundary. Allocator and metadata
 changes may advance across a retry while messages remain identical; any message
 change is divergence and fails closed. This preserves external allocator work
 without guessing how concurrent conversation suffixes should be ordered.
-Prompt and complete-transcript message/serialized-byte limits are checked before
-the corresponding store or model boundary. Every committed call therefore has
-exactly one result message even if cancellation, an infrastructure error, or a
-process interruption prevents its real result from replacing the conservative
-placeholder. The next model round is not requested until all placeholders in
-the current round have been replaced.
+Prompt, inference-option, session-metadata, tool-catalog, and complete-transcript
+message/serialized-byte limits are checked before their corresponding build,
+store, or model boundary. Every committed call therefore has exactly one result
+message even if cancellation, an infrastructure error, or a process interruption
+prevents its real result from replacing the conservative placeholder. The next
+model round is not requested until all placeholders in the current round have
+been replaced.
+
+Canonical session state stores its record behind an immutable `Arc`. Reservation
+and transcript mutation capture only that cheap identity and persistence bit
+under the session mutex, then serialize and deep-clone outside the critical
+section. Immediately before starting a store compare-and-save, core reacquires
+the mutex and requires the exact record identity and persistence bit to match;
+otherwise it retries from the new snapshot. A state change after that recheck is
+still caught by the durable revision CAS. Reconciliation similarly performs
+whole-record comparisons outside the mutex and uses pointer identity to recheck
+before a constant-time state update.
 
 A live turn owns the session lease and provider cancellation signal as one
 lifecycle unit. Destruction signals cancellation before removing waiters and

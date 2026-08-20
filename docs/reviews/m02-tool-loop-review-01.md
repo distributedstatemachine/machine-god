@@ -1,18 +1,23 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-one findings remediated; awaiting fresh rereview of the fix
-commit.
+Status: review-cycle-two findings remediated; awaiting fresh rereview of the
+second fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
-Fix commit: populated after this remediation commit. Reviewers must review that
-exact immutable commit and replace this status only after correctness/API,
-security/abuse, and performance/concurrency rereviews all report no findings.
+Cycle-one fix reviewed for cycle two:
+`53e9ef853444d34fa42e3f2c1866540d554df86f`.
+
+Cycle-two fix commit: populated after this remediation commit. Reviewers must
+review that exact immutable commit and replace this status only after
+correctness/API, security/abuse, and performance/concurrency rereviews all report
+no findings.
 
 ## Candidate scope
 
 - Nonzero public engine limits and checked provider-controlled prompt,
-  transcript, event, stop-detail, byte, call, and round counters.
+  transcript, session-metadata, inference-option, tool-catalog, denial-reason,
+  event, stop-detail, byte, call, and round counters.
 - Durable user reservation, atomic assistant-plus-placeholder tool-call commits,
   exact in-place result replacement, prefix-checked CAS retries, and checked
   cross-round usage.
@@ -63,6 +68,44 @@ security/abuse, and performance/concurrency rereviews all report no findings.
 All focused post-remediation tests pass at this document's candidate state; the
 required whole-workspace gates and adversarial rereview must target the final fix
 commit rather than this mutable working tree.
+
+## Review cycle 02 findings and remediations
+
+1. Permission request IDs used only turn identity and ordinal. Two sessions both
+   issuing `turn-1` could therefore collide and an ID-keyed policy cache could
+   reuse a positive decision across sessions. IDs now use RustCrypto SHA-256
+   over a domain tag plus length-delimited session ID, turn ID, and ordinal,
+   encoded as a fixed lowercase hexadecimal portable ID. A known-vector test,
+   two-session regression, and deliberately ID-caching policy verify stable
+   identity and no cross-session allow reuse.
+2. Recursive session metadata, inference options, and the cached aggregate tool
+   catalog were not bounded at their trust boundaries. Public nonzero limits now
+   cover all three serialized values. Session metadata is checked before load
+   publication, requests, and mutations; options are checked before prompt
+   reservation and provider invocation; catalog descriptions and Schemas are
+   checked during engine construction before caching. Exact-boundary and
+   boundary-plus-one tests prove rejection before persistence or provider work.
+3. Although denial reasons were kept out of the model transcript, an unbounded
+   reason was cloned into the host-facing `PermissionResolved` event. Core now
+   consumes and truncates it on a UTF-8 boundary before cloning or staging it,
+   using a public default 4 KiB bound. The durable/model denial remains fixed and
+   generic; a Unicode secret-bearing regression verifies both boundaries.
+4. Provider, store, and permission messages were generic, but their hostile
+   component-defined codes were still forwarded. These failures now expose only
+   `provider_failed`, `store_failed`, or `permission_failed`, while retaining
+   trusted store/provider kind and retryability behavior. Newline and secret
+   codes are tested for provider, permission, turn-store, prompt-reservation
+   store, and load-store paths.
+5. Reservation and transcript mutation serialized and deep-cloned records while
+   holding the shared session mutex, potentially repeating work up to the 8 MiB
+   transcript limit across conflicts. Canonical records now use immutable `Arc`
+   snapshots. The mutex protects only pointer/persistence capture and exact
+   identity rechecks; validation, serialization, equality, and cloning occur
+   outside it. Durable revision CAS still closes a race after the local recheck,
+   and reconciliation retains monotonic and equal-revision-divergence rules.
+
+The new SHA-256 dependency is registry-only RustCrypto `sha2`; dependency-policy
+and advisory gates are required for the final immutable cycle-two commit.
 
 ## Honest limitations for review
 

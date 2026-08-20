@@ -186,7 +186,7 @@ fn provider_start_errors_become_structured_terminal_turn_events() {
             code,
             retryable: true,
             ..
-        } if component == "provider" && code == "offline"
+        } if component == "provider" && code == "provider_failed"
     ));
 }
 
@@ -539,7 +539,7 @@ fn strict_empty_provider_script_surfaces_through_the_engine() {
     assert!(events.iter().all(Result::is_ok));
     assert!(matches!(
         &events[1].as_ref().unwrap().payload,
-        TurnEvent::Failed { code, .. } if code == "testkit_script_exhausted"
+        TurnEvent::Failed { code, .. } if code == "provider_failed"
     ));
 }
 

@@ -1591,7 +1591,7 @@ fn provider_errors_remain_structured_in_band() {
     let events = futures_executor::block_on(prompt(&session, "go").collect::<Vec<_>>());
     assert!(matches!(
         &events.last().unwrap().as_ref().unwrap().payload,
-        TurnEvent::Failed { code, retryable: true, .. } if code == "rate_limited"
+        TurnEvent::Failed { code, retryable: true, .. } if code == "provider_failed"
     ));
 }
 
@@ -1915,7 +1915,7 @@ fn cancellation_during_provider_failure_delivery_preserves_failure() {
             ref code,
             retryable: true,
             ..
-        } if code == "rate_limited"
+        } if code == "provider_failed"
     ));
     drop(next);
     assert!(futures_executor::block_on(turn.next()).is_none());

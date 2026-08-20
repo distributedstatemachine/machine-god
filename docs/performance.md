@@ -181,7 +181,12 @@ The durable tool loop checks the complete transcript before each provider
 request and optimistic store mutation. That work is linear in the current
 serialized transcript size, and a compare-and-save retry repeats it. Message and
 serialized-byte limits cap the work; the serializer aborts at the byte limit and
-does not allocate a second JSON buffer. Tests exercise a growing transcript and
-its enforced boundary, but M02 makes no throughput or latency claim for this
-path. A future representative session-replay benchmark should measure increasing
+does not allocate a second JSON buffer. The canonical record is held behind an
+immutable `Arc`: mutex-protected work copies only the record identity and small
+persistence state, while full validation, serialization, equality, and deep
+cloning happen after the mutex is released. An identity recheck precedes the
+store CAS, retaining divergence safety without holding the session lock for up
+to the 8 MiB transcript bound. Tests exercise a growing transcript and its
+enforced boundary, but M02 makes no throughput or latency claim for this path. A
+future representative session-replay benchmark should measure increasing
 history sizes and conflict rates before an optimization claim is made.

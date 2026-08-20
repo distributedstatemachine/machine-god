@@ -32,17 +32,21 @@ means approval. Native implementations must normalize paths, process arguments,
 and network destinations before presenting a [`Capability`](crate::Capability)
 to policy.
 
-[`EngineLimits`](crate::EngineLimits) supplies nonzero per-turn bounds. Defaults
+[`EngineLimits`](crate::EngineLimits) supplies nonzero resource bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
 assistant text and observer-visible reasoning, 4,096 model events, 1 KiB of
-provider stop detail, 256 KiB per user prompt, 4,096 transcript messages, 8 MiB
-of serialized transcript, 64 KiB of serialized arguments per call, 64 KiB per
-serialized tool result, and 256 KiB of cumulative tool results. Hosts may
-replace the complete limits value through
+provider stop detail, 256 KiB per user prompt, 256 KiB of serialized session
+metadata, 64 KiB of serialized inference options, 4,096 transcript messages,
+8 MiB of serialized transcript, 1 MiB for the aggregate cached tool catalog,
+64 KiB of serialized arguments per call, 64 KiB per serialized tool result,
+256 KiB of cumulative tool results, and 4 KiB for a host-facing permission
+denial reason. Hosts may replace the complete limits value through
 [`EngineBuilder::limits`](crate::EngineBuilder::limits). Counters use checked
 arithmetic and a limit failure occurs before another tool is authorized or
 executed. JSON byte sizes are counted through a serializer without allocating a
-second copy of the value.
+second copy of the value. Engine construction rejects a tool catalog whose
+aggregate descriptions and recursive JSON Schemas exceed its bound before the
+catalog is cloned into the engine.
 
 ## Turn lifecycle
 
@@ -183,14 +187,18 @@ fails before that commit and before external work. Calls then run serially in
 provider order.
 
 Every invocation receives a fresh critical-risk `Capability::Tool`
-authorization request whose ID contains its turn identity and ordinal; core does
-not cache positive grant scopes. A host policy may implement its own
-identity-safe caching. Denial becomes a fixed generic error `ToolResult` without
-starting the tool. The detailed policy reason remains available only in the
-host-facing `PermissionResolved` event. A tool implementation error likewise
-becomes a fixed generic model-visible result, allowing the next model round to
-recover without copying tool-specific diagnostics into the transcript. A policy
-infrastructure error fails the turn.
+authorization request whose deterministic ID is a domain-separated SHA-256
+digest of length-delimited session ID, turn ID, and ordinal. The fixed lowercase
+hex encoding is portable ASCII and remains below the 128-byte public ID limit.
+Core does not cache positive grant scopes. A host policy may implement its own
+identity-safe caching without reusing an allow across sessions. Denial becomes a
+fixed generic error `ToolResult` without starting the tool. The detailed policy
+reason remains available only in the host-facing `PermissionResolved` event and
+is truncated on a UTF-8 boundary to its configured limit before it is cloned or
+staged. A tool implementation error likewise becomes a fixed generic
+model-visible result, allowing the next model round to recover without copying
+tool-specific diagnostics into the transcript. A policy infrastructure error
+fails the turn.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the
@@ -220,15 +228,19 @@ commit, permission request, tool work, result replacement, or next-provider
 startup. All such futures are owned and polled inline by `Turn`; dropping the
 turn drops them rather than detaching work.
 
-Prompt bytes are checked before persistence. Transcript message count and
-serialized bytes are checked before loading a record into the engine registry,
-before every provider request, and before every commit or replacement. Model
-events, including `Stop`, are counted across the whole turn; provider-specific
+Prompt and serialized inference-option bytes are checked before persistence.
+Transcript message count, transcript bytes, and recursive session-metadata bytes
+are checked before loading a record into the engine registry, before every
+provider request, and before every commit or replacement. Model events,
+including `Stop`, are counted across the whole turn; provider-specific
 `StopReason::Other` details are bounded before they are cloned or delivered.
-Structured provider, policy, store, and tool diagnostics are converted to
-bounded generic host errors or model-visible results. Permission decisions are
-host-facing and may contain sensitive policy reasons; event sinks and event
-consumers must therefore be treated as trusted components.
+Structured provider, policy, and store failures expose fixed component codes
+(`provider_failed`, `permission_failed`, and `store_failed`) plus the trusted
+retryability/category fields where applicable; hostile source codes and
+messages are not forwarded. Tool failures likewise become a fixed generic
+model-visible result. Permission decisions are host-facing and may contain a
+bounded sensitive policy reason; event sinks and event consumers must therefore
+be treated as trusted components.
 
 The live-turn lease remains process-local to one `Engine`. M02 does not claim
 cross-engine fencing. A crash after a tool side effect but before placeholder
