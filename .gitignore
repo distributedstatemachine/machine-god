@@ -3,5 +3,6 @@
 /benchmarks/results/
 *.profraw
 *.profdata
+__pycache__/
+*.py[cod]
 .DS_Store
-

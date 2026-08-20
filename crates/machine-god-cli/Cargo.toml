@@ -5,15 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "machine-god"
 path = "src/main.rs"
 
 [dependencies]
-machine-god-core = { path = "../machine-god-core" }
-machine-god-native = { path = "../machine-god-native" }
+machine-god-core.workspace = true
+machine-god-native.workspace = true
 
 [lints]
 workspace = true
-

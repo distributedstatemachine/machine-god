@@ -5,10 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [dependencies]
-machine-god-core = { path = "../machine-god-core" }
+machine-god-core.workspace = true
 
 [lints]
 workspace = true
-

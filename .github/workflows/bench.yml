@@ -1,0 +1,35 @@
+name: Benchmark evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap-evidence:
+    name: Bootstrap benchmark evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal
+      - name: Build release binary
+        run: cargo +1.94.1 build --locked --release -p machine-god-cli
+      - name: Collect bootstrap evidence
+        run: python3 benchmarks/run.py --binary target/release/machine-god --output benchmarks/results/bootstrap.json
+      - name: Validate evidence
+        run: python3 benchmarks/check.py benchmarks/results/bootstrap.json --bootstrap
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bootstrap-benchmark-${{ github.sha }}
+          path: benchmarks/results/bootstrap.json
+          if-no-files-found: error
+          retention-days: 90
+
