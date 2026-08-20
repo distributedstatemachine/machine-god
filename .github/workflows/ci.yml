@@ -79,35 +79,41 @@ jobs:
           persist-credentials: false
       - name: Install exact Rust toolchain
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-      - name: Install exact security tools
+      - name: Install exact cargo-deny
+        if: ${{ !cancelled() }}
         working-directory: ${{ runner.temp }}
         env:
           CARGO_INSTALL_ROOT: ${{ runner.temp }}/security-tools
           CARGO_TARGET_DIR: ${{ runner.temp }}/security-tool-build
-        run: |
-          cargo +"${RUST_TOOLCHAIN}" install cargo-deny --locked --version 0.20.2
-          cargo +"${RUST_TOOLCHAIN}" install cargo-audit --locked --version 0.22.2
-          echo "${CARGO_INSTALL_ROOT}/bin" >> "$GITHUB_PATH"
+        run: cargo +"${RUST_TOOLCHAIN}" install cargo-deny --locked --version 0.20.2
+      - name: Install exact cargo-audit
+        if: ${{ !cancelled() }}
+        working-directory: ${{ runner.temp }}
+        env:
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/security-tools
+          CARGO_TARGET_DIR: ${{ runner.temp }}/security-tool-build
+        run: cargo +"${RUST_TOOLCHAIN}" install cargo-audit --locked --version 0.22.2
       - name: Check dependency policy
-        run: cargo deny check
+        if: ${{ !cancelled() }}
+        run: '"${RUNNER_TEMP}/security-tools/bin/cargo-deny" check'
       - name: Audit lockfile
         if: ${{ !cancelled() }}
-        run: cargo audit
+        run: '"${RUNNER_TEMP}/security-tools/bin/cargo-audit" audit'
 
-  target-check:
-    name: Target check (${{ matrix.target }})
+  native-target-tests:
+    name: Native tests (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - runner: macos-latest
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
-          - runner: macos-latest
+          - runner: macos-15
             target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,5 +121,5 @@ jobs:
           persist-credentials: false
       - name: Install exact Rust target
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
-      - name: Check target
-        run: cargo +"${RUST_TOOLCHAIN}" check --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"
+      - name: Test target natively
+        run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"

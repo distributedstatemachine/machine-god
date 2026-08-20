@@ -39,17 +39,32 @@ manifests declare `runs.using: node24`. Every checkout retains
 contents.
 
 Dependency policy and vulnerability audit run in one security job, still
-isolated from the quality and target-check jobs. The job installs exact locked
-versions of both tools with Rust 1.94.1 from the runner temporary directory. A
-shared temporary Cargo target lets the second install reuse compatible registry
-and build artifacts; no executable cache crosses jobs or workflow runs. The
-audit step runs after a dependency-policy failure unless the job is cancelled,
-so both findings remain visible.
+isolated from the quality and native-target test jobs. The job installs exact
+locked versions of both tools with Rust 1.94.1 from the runner temporary
+directory. Each install and scan is a separate step conditioned to run unless
+the job is cancelled, so a failure from either tool does not suppress diagnostics
+from the other and still fails the job. A shared temporary Cargo target lets the
+second install reuse compatible registry and build artifacts; no executable
+cache crosses jobs or workflow runs. Scans invoke binaries by absolute path
+under `RUNNER_TEMP`, rather than through `cargo deny` or `cargo audit`, so a
+repository-owned Cargo alias cannot replace the reviewed scanner.
+
+The target matrix runs all workspace targets and features natively with Rust
+1.94.1 on `ubuntu-24.04` x86_64, `ubuntu-24.04-arm` aarch64,
+`macos-15-intel` x86_64, and `macos-15` aarch64. Each runner installs its exact
+host target explicitly before executing tests.
 
 The quality job finds repo-owned `test_*.py` files in deterministic path order
 without requiring package directories. It prunes `.git`, `.bench`, and `target`
 so checkout metadata, benchmark scratch space, and build output cannot add tests
 to the gate.
+
+Bootstrap benchmark JSON is retained as a workflow artifact for 90 days. That
+artifact tests evidence collection and is explicitly non-product evidence, so
+its expiry does not support or invalidate a performance claim. Product
+performance and compatibility claims require committed, reviewed summaries with
+input and result digests; those durable records do not depend on workflow
+artifact retention.
 
 ## Alternatives considered
 
@@ -72,6 +87,6 @@ and this table together.
 
 Workflow changes are checked with a YAML parser. Local verification records the
 effective Rust and Cargo versions, runs deterministic Python discovery, and runs
-the required formatting, Clippy, workspace-test, and doc-test gates. Remote CI
-for the exact commit remains required before the milestone or feature is called
-complete.
+the required formatting, Clippy, workspace-test, and doc-test gates. The four
+native matrix legs and their exact runner labels are verified by remote CI for
+the exact commit before the milestone or feature is called complete.

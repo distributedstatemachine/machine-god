@@ -11,7 +11,10 @@ damaged exact-toolchain installation and is valid only while both local Rust and
 Cargo report release 1.94.1 exactly.
 The embeddable asynchronous engine is the primary product; the CLI is its native
 reference host. Observable performance and compatibility claims require retained
-evidence against the pinned upstream revision.
+evidence against the pinned upstream revision. Product claims use committed,
+reviewed summaries with input and result digests. The 90-day bootstrap workflow
+artifact is non-product evidence of the collection path and may expire without
+weakening those durable claim records.
 
 ## Delivery workflow
 
@@ -23,7 +26,8 @@ fixed and rereviewed until none remain. Rejected findings are documented under
 keeps checkout credentials disabled, and grants the workflow read-only contents
 permission. Python `test_*.py` files are discovered repo-wide in deterministic
 order, excluding generated and checkout state under `.bench`, `.git`, and
-`target`.
+`target`. Workspace tests execute natively on pinned Linux and macOS x86_64 and
+aarch64 runner labels rather than relying on cross-compilation alone.
 
 ## Milestones
 
@@ -39,8 +43,9 @@ order, excluding generated and checkout state under `.bench`, `.git`, and
 
 ## Release gates
 
-- Formatting, Clippy with warnings denied, workspace tests, doc tests, repo-wide
-  Python unit tests, dependency policy, and vulnerability audit pass.
+- Formatting, Clippy with warnings denied, workspace tests on all four native
+  target runners, doc tests, repo-wide Python unit tests, dependency policy, and
+  vulnerability audit pass.
 - Deterministic end-to-end tests pass on Linux and macOS, x86_64 and aarch64.
 - Three equivalent local workloads beat pinned fx by at least 20%, no other
   equivalent workload regresses more than 5%, Linux local command startup is at
