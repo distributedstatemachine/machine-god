@@ -674,7 +674,10 @@ impl Stream for Turn {
                             }
                             Poll::Ready(Some(Ok(event))) => {
                                 match &event {
-                                    ModelEvent::Usage { usage } => self.usage = *usage,
+                                    ModelEvent::Usage { usage } => {
+                                        self.usage = *usage;
+                                        self.state = TurnState::Streaming(stream);
+                                    }
                                     ModelEvent::Stop { reason } => {
                                         self.terminal_seen = true;
                                         self.state =

@@ -2,6 +2,7 @@
 
 - [Implementation plan](implementation-plan.md)
 - [Architecture](architecture.md)
+- [Deterministic testkit](testkit.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

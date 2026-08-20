@@ -179,3 +179,11 @@ deregisters any preterminal waiter and never refreshes it. Counting-waker
 regressions keep both a provider `Stop` and provider failure delivery permanently
 pending, cancel the turn, repeatedly poll, and require zero wake callbacks while
 the established terminal precedence remains unchanged.
+
+The deterministic-testkit integration pass later exposed an uncovered stream
+transition: handling `ModelEvent::Usage` updated the accumulated counters but
+left the taken turn state as `Done`. The next provider event and terminal stop
+were never polled. The usage arm now restores `TurnState::Streaming`, matching
+other nonterminal model events. A focused contract regression requires ordered
+usage and stop delivery, completion with the latest counters, exhaustion of the
+turn stream, lease release, and the ability to start the next turn.

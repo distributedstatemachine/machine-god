@@ -5,8 +5,8 @@ use machine_god_core::{
     EventSink, EventSinkError, ModelEvent, ModelEventStream, ModelProvider, ModelRequest,
     PermissionDecision, PermissionError, PermissionGrantScope, PermissionHandler,
     PermissionRequest, ProviderError, ProviderErrorKind, Role, SessionId, SessionRecord,
-    SessionRevision, SessionStore, SessionStoreError, StopReason, Tool, ToolContext, ToolError,
-    ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
+    SessionRevision, SessionStore, SessionStoreError, StopReason, TokenUsage, Tool, ToolContext,
+    ToolError, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
@@ -375,6 +375,52 @@ fn turn_events_are_ordered_and_release_session_at_terminal_event() {
             .collect::<Vec<_>>(),
         [0, 1, 2, 3]
     );
+    assert!(!session.has_active_turn());
+    assert!(futures_executor::block_on(session.prompt("next")).is_ok());
+}
+
+#[test]
+fn usage_preserves_stream_state_and_reaches_terminal_completion() {
+    let usage = TokenUsage {
+        input_tokens: 13,
+        output_tokens: 5,
+        cached_input_tokens: 8,
+    };
+    let provider = StaticProvider {
+        events: vec![
+            Ok(ModelEvent::Usage { usage }),
+            Ok(ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }),
+        ],
+    };
+    let session = engine_with(provider).create_session(SessionId::new("usage-then-stop").unwrap());
+    let turn = prompt(&session, "measure");
+    let events = futures_executor::block_on(turn.collect::<Vec<_>>());
+    let events: Vec<_> = events.into_iter().collect::<Result<_, _>>().unwrap();
+
+    assert_eq!(events.len(), 4);
+    assert!(matches!(
+        events[1].payload,
+        TurnEvent::Model {
+            event: ModelEvent::Usage { usage: observed }
+        } if observed == usage
+    ));
+    assert!(matches!(
+        events[2].payload,
+        TurnEvent::Model {
+            event: ModelEvent::Stop {
+                reason: StopReason::Completed
+            }
+        }
+    ));
+    assert!(matches!(
+        events[3].payload,
+        TurnEvent::Completed {
+            reason: StopReason::Completed,
+            usage: observed,
+        } if observed == usage
+    ));
     assert!(!session.has_active_turn());
     assert!(futures_executor::block_on(session.prompt("next")).is_ok());
 }

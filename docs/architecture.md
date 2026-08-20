@@ -5,6 +5,16 @@ ambient operating-system authority. `machine-god-native` provides explicit nativ
 capabilities. `machine-god-cli` composes them. `machine-god-testkit` provides
 deterministic test doubles.
 
+The testkit's concrete boundary doubles are documented in
+[`testkit.md`](testkit.md). They are executor-neutral like core: finite scripts,
+cancel-driven pending provider/tool work, and permanently pending observer or
+policy steps support precise manual polling without clocks. Each double owns a
+single mutex per related script-and-record state so concurrent call ordering is
+linearizable and inspection returns a consistent snapshot. The in-memory store
+executes comparison and mutation inside that same critical section, making its
+optimistic revision behavior atomic rather than merely convenient for
+single-threaded tests.
+
 The milestone-02 public contracts are documented in
 [`core-api.md`](core-api.md). Public interfaces keep model access, storage,
 tools, permission policy, and event delivery behind object-safe traits. Core

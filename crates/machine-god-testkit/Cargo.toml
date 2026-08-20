@@ -8,7 +8,13 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+futures-core.workspace = true
 machine-god-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+futures-executor = "0.3.31"
+futures-util = "0.3.31"
 
 [lints]
 workspace = true
