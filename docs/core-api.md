@@ -102,6 +102,11 @@ the exact snapshot used by the failed save. A concurrent newer load is therefore
 preserved, and the retry uses its positive revision. Revision comparisons remain
 monotonic even after a legitimate missing-record result; the persistence flag
 cannot make an older load or save eligible to replace newer canonical state.
+The next-turn allocator is independently monotonic: no load, conflict reload, or
+successful-save result may reduce `next_turn_sequence`, even when it carries a
+higher revision. Such a result is a protocol error and leaves canonical state
+unchanged. A valid higher revision may otherwise replace messages and metadata;
+an equal revision continues to require equality of the entire record.
 
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:

@@ -116,3 +116,14 @@ tests cover clone, replacement drop, deregistration drop, and wake callbacks.
 The audited unsafe fixture required to exercise raw clone/drop callbacks is an
 excluded dev-only helper described by ADR 0002; production and workspace crates
 remain under the original `unsafe_code = "forbid"` policy.
+
+A fresh correctness review of `dc192a1` found that reconciliation treated a
+higher revision as sufficient to replace canonical state even when its
+`next_turn_sequence` moved backward, allowing later `TurnId` reuse. Loaded and
+successful-save reconciliation now reject every allocator regression before
+revision or persistence handling and leave canonical state unchanged. Higher
+revisions may still update messages and metadata when their sequence is
+nondecreasing; equal revisions still require full record equality. Direct load,
+conflict reload, and delayed successful-save interleaving regressions cover the
+three paths, and the direct-load case also proves valid higher-revision
+message/metadata changes remain accepted.

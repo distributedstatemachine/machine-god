@@ -57,3 +57,7 @@ in-memory unsaved sentinel only; persisted loads and conflict reloads require a
 positive optimistic-concurrency revision. Missing conflict reloads may change
 persistence status only with an exact snapshot comparison under the session-state
 lock, while record revisions stay monotonic independently of that status flag.
+The durable turn allocator is monotonic independently of both fields: a higher
+revision cannot authorize a lower `next_turn_sequence`. Higher revisions may
+advance conversation messages and metadata only after passing that allocator
+guard, while equal revisions require whole-record identity.

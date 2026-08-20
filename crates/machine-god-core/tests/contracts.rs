@@ -282,6 +282,60 @@ fn load_session_rejects_a_zero_persisted_revision() {
 }
 
 #[test]
+fn load_session_rejects_a_higher_revision_with_a_lower_turn_sequence() {
+    let id = SessionId::new("load-sequence-regression").unwrap();
+    let store = MemoryStore {
+        record: Arc::new(Mutex::new(Some(SessionRecord {
+            id: id.clone(),
+            revision: SessionRevision(5),
+            next_turn_sequence: 10,
+            messages: vec![machine_god_core::Message::text(Role::User, "current")],
+            metadata: BTreeMap::new(),
+        }))),
+    };
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store.clone())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = futures_executor::block_on(engine.load_session(id.clone()))
+        .unwrap()
+        .unwrap();
+    let regressed = SessionRecord {
+        id: id.clone(),
+        revision: SessionRevision(6),
+        next_turn_sequence: 9,
+        messages: vec![machine_god_core::Message::text(
+            Role::User,
+            "newer metadata",
+        )],
+        metadata: BTreeMap::from([("version".to_owned(), json!(6))]),
+    };
+    *store.record.lock().unwrap() = Some(regressed);
+
+    assert!(matches!(
+        futures_executor::block_on(engine.load_session(id)),
+        Err(EngineError::Protocol(message)) if message.contains("turn sequence regressed")
+    ));
+    assert_eq!(session.record().revision, SessionRevision(5));
+    assert_eq!(session.record().next_turn_sequence, 10);
+
+    let advanced = SessionRecord {
+        id: session.id(),
+        revision: SessionRevision(7),
+        next_turn_sequence: 10,
+        messages: vec![machine_god_core::Message::text(Role::Assistant, "changed")],
+        metadata: BTreeMap::from([("version".to_owned(), json!(7))]),
+    };
+    *store.record.lock().unwrap() = Some(advanced.clone());
+    let loaded = futures_executor::block_on(engine.load_session(session.id()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.record(), advanced);
+}
+
+#[test]
 fn turn_events_are_ordered_and_release_session_at_terminal_event() {
     let session =
         engine_with(StaticProvider::completed()).create_session(SessionId::new("ordered").unwrap());
@@ -511,6 +565,7 @@ impl ModelProvider for RecordingProvider {
 struct InterleavedSaveStore {
     loaded: Arc<Mutex<Option<SessionRecord>>>,
     save_ready: Arc<AtomicBool>,
+    save_revision: SessionRevision,
 }
 
 #[derive(Clone, Debug)]
@@ -597,9 +652,10 @@ impl SessionStore for InterleavedSaveStore {
         _expected_revision: Option<SessionRevision>,
     ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
         let save_ready = Arc::clone(&self.save_ready);
+        let save_revision = self.save_revision;
         Box::pin(std::future::poll_fn(move |_context| {
             if save_ready.load(Ordering::Acquire) {
-                Poll::Ready(Ok(SessionRevision(2)))
+                Poll::Ready(Ok(save_revision))
             } else {
                 Poll::Pending
             }
@@ -613,6 +669,7 @@ fn delayed_save_does_not_regress_a_newer_concurrent_load() {
     let store = InterleavedSaveStore {
         loaded: Arc::new(Mutex::new(None)),
         save_ready: Arc::new(AtomicBool::new(false)),
+        save_revision: SessionRevision(2),
     };
     let provider = RecordingProvider::default();
     let requests = Arc::clone(&provider.requests);
@@ -634,7 +691,7 @@ fn delayed_save_does_not_regress_a_newer_concurrent_load() {
     let newer = SessionRecord {
         id: id.clone(),
         revision: SessionRevision(3),
-        next_turn_sequence: 10,
+        next_turn_sequence: 2,
         messages: vec![machine_god_core::Message::text(Role::User, "newer")],
         metadata: BTreeMap::new(),
     };
@@ -668,6 +725,7 @@ fn delayed_save_rejects_equal_revision_divergence_from_a_concurrent_load() {
     let store = InterleavedSaveStore {
         loaded: Arc::new(Mutex::new(None)),
         save_ready: Arc::new(AtomicBool::new(false)),
+        save_revision: SessionRevision(2),
     };
     let engine = Engine::builder()
         .provider(StaticProvider::completed())
@@ -684,7 +742,7 @@ fn delayed_save_rejects_equal_revision_divergence_from_a_concurrent_load() {
         reserving.as_mut().poll(&mut context),
         Poll::Pending
     ));
-    let divergent = stored_record(&id, 2, 10, "concurrent load");
+    let divergent = stored_record(&id, 2, 2, "concurrent load");
     *store.loaded.lock().unwrap() = Some(divergent.clone());
     let loaded = futures_executor::block_on(engine.load_session(id))
         .unwrap()
@@ -698,6 +756,46 @@ fn delayed_save_rejects_equal_revision_divergence_from_a_concurrent_load() {
             if message.contains("save diverged") && message.contains("same revision")
     ));
     assert_eq!(session.record(), divergent);
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn delayed_higher_revision_save_rejects_turn_sequence_regression() {
+    let id = SessionId::new("save-sequence-regression").unwrap();
+    let store = InterleavedSaveStore {
+        loaded: Arc::new(Mutex::new(None)),
+        save_ready: Arc::new(AtomicBool::new(false)),
+        save_revision: SessionRevision(7),
+    };
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store.clone())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(id.clone());
+    let mut reserving = session.prompt("reserve low sequence");
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    assert!(matches!(
+        reserving.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    let canonical = stored_record(&id, 6, 10, "concurrent canonical state");
+    *store.loaded.lock().unwrap() = Some(canonical.clone());
+    let loaded = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.record(), canonical);
+
+    store.save_ready.store(true, Ordering::Release);
+    assert!(matches!(
+        reserving.as_mut().poll(&mut context),
+        Poll::Ready(Err(EngineError::Protocol(message)))
+            if message.contains("turn sequence regressed")
+    ));
+    assert_eq!(session.record(), canonical);
     assert!(!session.has_active_turn());
 }
 
@@ -814,7 +912,7 @@ fn missing_conflict_load_cannot_clear_a_newer_concurrent_revision() {
     let expected_revisions = Arc::new(Mutex::new(Vec::new()));
     let current = stored_record(&id, 5, 6, "current");
     let newer = stored_record(&id, 6, 7, "newer");
-    let stale = current.clone();
+    let stale = stored_record(&id, 5, 7, "stale");
     let store = ScriptedConflictStore {
         loads: Arc::new(Mutex::new(
             vec![
@@ -868,7 +966,7 @@ fn stale_reload_cannot_regress_a_positive_record_after_missing_conflict_load() {
     let id = SessionId::new("missing-conflict-stale-reload").unwrap();
     let expected_revisions = Arc::new(Mutex::new(Vec::new()));
     let current = stored_record(&id, 5, 6, "current");
-    let stale = stored_record(&id, 4, 5, "stale");
+    let stale = stored_record(&id, 4, 6, "stale");
     let store = ScriptedConflictStore {
         loads: Arc::new(Mutex::new(
             vec![
@@ -936,10 +1034,29 @@ fn conflict_reload_rejects_a_zero_persisted_revision() {
 }
 
 #[test]
+fn conflict_reload_rejects_a_higher_revision_with_a_lower_turn_sequence() {
+    let id = SessionId::new("conflict-sequence-regression").unwrap();
+    let current = stored_record(&id, 5, 10, "current");
+    let regressed = stored_record(&id, 6, 9, "higher revision");
+    let engine = engine_with_conflict_loads(vec![current, regressed]);
+    let session = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        futures_executor::block_on(session.prompt("reserve")),
+        Err(EngineError::Protocol(message)) if message.contains("turn sequence regressed")
+    ));
+    assert_eq!(session.record().revision, SessionRevision(5));
+    assert_eq!(session.record().next_turn_sequence, 10);
+    assert!(!session.has_active_turn());
+}
+
+#[test]
 fn conflict_reload_rejects_a_stale_revision() {
     let id = SessionId::new("conflict-stale-revision").unwrap();
     let current = stored_record(&id, 5, 6, "current");
-    let stale = stored_record(&id, 4, 5, "stale");
+    let stale = stored_record(&id, 4, 6, "stale");
     let engine = engine_with_conflict_loads(vec![current, stale]);
     let session = futures_executor::block_on(engine.load_session(id))
         .unwrap()

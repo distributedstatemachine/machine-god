@@ -26,7 +26,8 @@ pub struct SessionRevision(pub u64);
 pub struct SessionRecord {
     pub id: SessionId,
     pub revision: SessionRevision,
-    /// First never-reserved turn sequence number.
+    /// First never-reserved turn sequence number. Reconciliation never permits
+    /// this allocator position to decrease.
     #[serde(default = "initial_turn_sequence")]
     pub next_turn_sequence: u64,
     pub messages: Vec<Message>,
@@ -141,6 +142,7 @@ impl SessionState {
                 record.id, data.record.id
             )));
         }
+        Self::validate_sequence_progress(&data.record, &record)?;
         if record.revision > data.record.revision {
             data.record = record;
             data.persisted = true;
@@ -164,6 +166,7 @@ impl SessionState {
             .data
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::validate_sequence_progress(&data.record, record)?;
         if data.record.revision < record.revision {
             data.record.clone_from(record);
             data.persisted = true;
@@ -173,6 +176,19 @@ impl SessionState {
             ));
         } else if data.record.revision == record.revision {
             data.persisted = true;
+        }
+        Ok(())
+    }
+
+    fn validate_sequence_progress(
+        canonical: &SessionRecord,
+        candidate: &SessionRecord,
+    ) -> Result<(), EngineError> {
+        if candidate.next_turn_sequence < canonical.next_turn_sequence {
+            return Err(EngineError::Protocol(format!(
+                "session turn sequence regressed from {} to {}",
+                canonical.next_turn_sequence, candidate.next_turn_sequence
+            )));
         }
         Ok(())
     }
