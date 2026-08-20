@@ -104,3 +104,15 @@ still match under lock. Load and successful-save reconciliation compare revision
 monotonically regardless of persistence status. Controlled tests cover a blocked
 missing reload followed by a concurrent N+1 load and `Some(N+1)` retry, plus a
 legitimate missing-record clear followed by a rejected stale reload.
+
+A security review of `c565046` found that waiter registration cloned and
+replaced wakers, and deregistration removed and dropped them, while holding the
+registry mutex. Custom `RawWaker` clone/drop callbacks can reenter cancellation
+and deadlock that non-reentrant mutex. Registration now clones before locking,
+performs only map moves inside a tight guard scope, and drops unused or
+superseded wakers afterward. Deregistration likewise drops the removed value
+after unlocking; cancellation already drains before waking. Bounded reentrant
+tests cover clone, replacement drop, deregistration drop, and wake callbacks.
+The audited unsafe fixture required to exercise raw clone/drop callbacks is an
+excluded dev-only helper described by ADR 0002; production and workspace crates
+remain under the original `unsafe_code = "forbid"` policy.

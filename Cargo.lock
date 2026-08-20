@@ -70,6 +70,7 @@ dependencies = [
  "futures-core",
  "futures-executor",
  "futures-util",
+ "machine-god-reentrant-waker-test",
  "serde",
  "serde_json",
 ]
@@ -80,6 +81,10 @@ version = "0.1.0"
 dependencies = [
  "machine-god-core",
 ]
+
+[[package]]
+name = "machine-god-reentrant-waker-test"
+version = "0.0.0"
 
 [[package]]
 name = "machine-god-testkit"

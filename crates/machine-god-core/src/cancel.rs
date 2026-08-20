@@ -94,26 +94,36 @@ impl CancellationToken {
             waker.wake_by_ref();
             return;
         }
-        let mut registry = self
-            .inner
-            .waiters
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let id = if let Some(id) = *waiter_id {
-            id
-        } else {
-            let id = registry.vacant_id();
-            *waiter_id = Some(id);
-            id
-        };
-        match registry.waiters.get_mut(&id) {
-            Some(existing) if existing.will_wake(waker) => {}
-            Some(existing) => existing.clone_from(waker),
-            None => {
-                registry.waiters.insert(id, waker.clone());
+        let mut incoming = Some(waker.clone());
+        let superseded = {
+            let mut registry = self
+                .inner
+                .waiters
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let id = if let Some(id) = *waiter_id {
+                id
+            } else {
+                let id = registry.vacant_id();
+                *waiter_id = Some(id);
+                id
+            };
+            match registry.waiters.get_mut(&id) {
+                Some(existing) if existing.will_wake(waker) => None,
+                Some(existing) => Some(core::mem::replace(
+                    existing,
+                    incoming.take().expect("incoming waker is available"),
+                )),
+                None => {
+                    registry
+                        .waiters
+                        .insert(id, incoming.take().expect("incoming waker is available"));
+                    None
+                }
             }
-        }
-        drop(registry);
+        };
+        drop(superseded);
+        drop(incoming);
         if self.is_cancelled() {
             self.deregister(waiter_id);
             waker.wake_by_ref();
@@ -124,12 +134,15 @@ impl CancellationToken {
         let Some(id) = waiter_id.take() else {
             return;
         };
-        self.inner
-            .waiters
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .waiters
-            .remove(&id);
+        let removed = {
+            let mut registry = self
+                .inner
+                .waiters
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            registry.waiters.remove(&id)
+        };
+        drop(removed);
     }
 
     #[cfg(test)]
@@ -186,8 +199,10 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use core::task::{Context, Poll, Waker};
     use futures_executor::block_on;
-    use std::sync::Arc;
+    use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
+    use std::sync::{Arc, mpsc};
     use std::task::Wake;
+    use std::time::Duration;
 
     #[test]
     fn cancellation_is_idempotent_and_awaitable() {
@@ -210,6 +225,85 @@ mod tests {
         fn wake_by_ref(self: &Arc<Self>) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    fn assert_completes(operation: impl FnOnce() + Send + 'static) {
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            operation();
+            completed_tx.send(()).unwrap();
+        });
+        completed_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("reentrant waker operation deadlocked");
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn waker_clone_reentrancy_occurs_before_registry_lock() {
+        let token = CancellationToken::new();
+        let reentrant_token = token.clone();
+        let (waker, state) = reentrant_waker(Callback::Clone, move || {
+            let _ = reentrant_token.waiter_count();
+        });
+
+        assert_completes(move || {
+            let mut waiter_id = None;
+            token.register(&mut waiter_id, &waker);
+            token.deregister(&mut waiter_id);
+        });
+        assert_eq!(state.calls(), 1);
+    }
+
+    #[test]
+    fn replacement_drops_superseded_waker_after_registry_unlock() {
+        let token = CancellationToken::new();
+        let reentrant_token = token.clone();
+        let (waker, state) = reentrant_waker(Callback::Drop, move || {
+            let _ = reentrant_token.waiter_count();
+        });
+        let mut waiter_id = None;
+        token.register(&mut waiter_id, &waker);
+        drop(waker);
+        let calls_before_replacement = state.calls();
+
+        assert_completes(move || {
+            let replacement = futures_util::task::noop_waker();
+            token.register(&mut waiter_id, &replacement);
+            token.deregister(&mut waiter_id);
+        });
+        assert_eq!(state.calls(), calls_before_replacement + 1);
+    }
+
+    #[test]
+    fn deregistration_drops_removed_waker_after_registry_unlock() {
+        let token = CancellationToken::new();
+        let reentrant_token = token.clone();
+        let (waker, state) = reentrant_waker(Callback::Drop, move || {
+            let _ = reentrant_token.waiter_count();
+        });
+        let mut waiter_id = None;
+        token.register(&mut waiter_id, &waker);
+        drop(waker);
+        let calls_before_deregister = state.calls();
+
+        assert_completes(move || token.deregister(&mut waiter_id));
+        assert_eq!(state.calls(), calls_before_deregister + 1);
+    }
+
+    #[test]
+    fn cancellation_wakes_reentrant_waker_after_registry_unlock() {
+        let token = CancellationToken::new();
+        let reentrant_token = token.clone();
+        let (waker, state) = reentrant_waker(Callback::Wake, move || {
+            let _ = reentrant_token.waiter_count();
+        });
+        let mut waiter_id = None;
+        token.register(&mut waiter_id, &waker);
+        drop(waker);
+
+        assert_completes(move || assert!(token.cancel()));
+        assert_eq!(state.calls(), 1);
     }
 
     #[test]

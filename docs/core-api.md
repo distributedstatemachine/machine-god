@@ -73,7 +73,9 @@ each nonterminal event, because no poll is outstanding while its consumer holds
 that event. While observer delivery is pending, each poll refreshes the keyed
 registration with that poll's waker, so cancellation wakes only the current
 poller. Repeated polls, idle streams, and abandoned waiters therefore do not
-retain stale wakers.
+retain stale wakers. Waker clone, replacement drop, deregistration drop, and wake
+callbacks all execute outside the waiter-registry mutex, so a custom waker may
+reenter cancellation APIs without self-deadlocking.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
 Prompt creation reserves it through the configured store's optimistic revision

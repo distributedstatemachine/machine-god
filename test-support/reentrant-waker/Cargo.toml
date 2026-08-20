@@ -1,0 +1,17 @@
+[package]
+name = "machine-god-reentrant-waker-test"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }

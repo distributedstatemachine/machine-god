@@ -5,6 +5,7 @@ members = [
     "crates/machine-god-cli",
     "crates/machine-god-testkit",
 ]
+exclude = ["test-support/reentrant-waker"]
 resolver = "3"
 
 [workspace.package]
