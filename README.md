@@ -7,8 +7,9 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestone 01's repository, documentation, CI, compatibility inventory, and
-pinned upstream benchmark baseline are complete. Milestone 02's
-provider-neutral engine is in progress; the project is not yet production-ready.
+pinned upstream benchmark harness with non-product bootstrap evidence are
+complete. Milestone 02's provider-neutral engine is in progress; the project is
+not yet production-ready.
 
 ## Development
 

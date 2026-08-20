@@ -156,9 +156,14 @@ The checker binds schema 2 evidence to the repository's canonical
 commands and profiles, and both actual executable files. It recomputes each
 binary's size and SHA-256 digest and verifies that the measured command names the
 same path. Evidence from different `runner_class` values remains explicitly
-segregated. CI uses the immutable pinned Zig setup action for 0.16.0 and the
-fixed `github-ubuntu-24.04-x86_64` runner class, then retains the validated
-artifact for the exact workflow SHA.
+segregated. Linux CI downloads the official
+[`zig-x86_64-linux-0.16.0.tar.xz`](https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz)
+archive directly into a fresh fixed directory under `RUNNER_TEMP`, verifies its
+official SHA-256 digest
+`70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00`
+before extraction, and requires `zig version` to report exactly `0.16.0`. It
+uses the fixed `github-ubuntu-24.04-x86_64` runner class and retains the
+validated artifact for the exact workflow SHA.
 
 The current `bootstrap-exit` workload is deliberately labeled
 `non-equivalent`: fx uses its upstream-only `FX_BENCH=1` fast path, whereas the

@@ -47,9 +47,49 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: 0.16.0
+      - name: Install checksum-pinned Zig
+        shell: bash
+        env:
+          ZIG_VERSION: 0.16.0
+          ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+          ZIG_URL: https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+        run: |
+          set -euo pipefail
+
+          zig_install_dir="${RUNNER_TEMP}/zig-${ZIG_VERSION}-x86_64-linux"
+          zig_archive="${RUNNER_TEMP}/zig-${ZIG_VERSION}-x86_64-linux.tar.xz"
+          if [[ -e "${zig_install_dir}" || -L "${zig_install_dir}" ]]; then
+            echo "refusing pre-existing Zig install path: ${zig_install_dir}" >&2
+            exit 1
+          fi
+          if [[ -e "${zig_archive}" || -L "${zig_archive}" ]]; then
+            echo "refusing pre-existing Zig archive path: ${zig_archive}" >&2
+            exit 1
+          fi
+
+          mkdir --mode=0700 "${zig_install_dir}"
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --location \
+            --proto '=https' \
+            --tlsv1.2 \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 2 \
+            --output "${zig_archive}" \
+            "${ZIG_URL}"
+          printf '%s  %s\n' "${ZIG_SHA256}" "${zig_archive}" \
+            | sha256sum --check --strict -
+          tar \
+            --extract \
+            --xz \
+            --file "${zig_archive}" \
+            --directory "${zig_install_dir}" \
+            --strip-components=1
+          [[ "$("${zig_install_dir}/zig" version)" == "${ZIG_VERSION}" ]]
+          printf '%s\n' "${zig_install_dir}" >> "${GITHUB_PATH}"
       - name: Install exact Rust toolchain
         run: rustup toolchain install 1.94.1 --profile minimal
       - name: Collect pinned upstream evidence

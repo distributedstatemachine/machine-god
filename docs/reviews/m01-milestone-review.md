@@ -2,8 +2,9 @@
 
 Milestone 01's deliverables are complete at
 `b766188999468d281da9bb02e2494c9f187c4ae2`. This document records the
-integrated feature commits and their retained remote checks. It is a completion
-candidate, not a completed milestone adversarial-review report.
+integrated feature commits and their retained remote checks. `COMPLETE` is the
+status of the milestone deliverables; it does not waive the delivery workflow's
+review and exact-SHA CI gates for a later documentation or integration commit.
 
 ## Scope and outcomes
 
@@ -70,17 +71,42 @@ cover `b766188999468d281da9bb02e2494c9f187c4ae2`.
   committed, reviewed summaries with input and result digests.
 - Zig 0.16.0 is used only to build the pinned upstream fx reference. The
   machine-god product and workspace are written in Rust.
+- Benchmark CI downloads Zig from the official
+  [`zig-x86_64-linux-0.16.0.tar.xz`](https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz)
+  archive and verifies official SHA-256 digest
+  `70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00`
+  before extraction. It does not depend on a third-party Zig setup action.
 - Package publication and GitHub releases remain outside the authorized scope.
 
 ## Milestone review gate
 
-Fresh correctness/API, security/abuse, and performance/concurrency reviewers
-must review the exact completion commit after this document is committed.
-Confirmed findings must be fixed and all three disciplines rerun until they
-report no findings. The exact feature-branch CI SHA must then pass before a
-fast-forward merge, followed by successful CI and benchmark-evidence workflows
-on the resulting exact `main` SHA.
+Review and CI attest immutable commits from outside the commit they attest. A
+candidate cannot append its own exact-SHA results without changing that SHA and
+invalidating the results. The coordinator therefore records fresh
+correctness/API, security/abuse, and performance/concurrency review results in
+the orchestration record, requires remote feature-branch checks for that same
+immutable SHA, and merges only after all gates pass. Evidence-only documents
+such as this one cite earlier reviewed SHAs and retained workflow runs; they do
+not claim to attest their own commit. The resulting exact `main` SHA receives
+fresh CI and benchmark-evidence runs after the fast-forward push.
 
-That milestone-level adversarial review and its completion-branch/main remote
-checks are pending. They must be appended here by the coordinator; this
-candidate does not claim that gate is green.
+## Completion-candidate operability review
+
+An operability review of
+`19ca28e85655614c5756cd3a680b78b5cc8fa5ca` found three issues:
+
+- benchmark CI used a third-party Node-based Zig setup action instead of binding
+  the official compiler archive directly;
+- the documented instruction to append exact review and CI results to the
+  reviewed commit was self-invalidating because the append changes its SHA; and
+- “benchmark baseline” overstated evidence that is explicitly non-product
+  bootstrap evidence.
+
+This follow-up replaces the action with a direct official Zig 0.16.0 HTTPS
+download, verifies SHA-256 digest
+`70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00`
+before extraction, and asserts the exact installed version. It also defines the
+external immutable-SHA gate above and consistently calls the Milestone 01 output
+a benchmark harness with non-product bootstrap evidence. These are resolutions
+of findings against `19ca28e`; this record makes no claim about final review of
+the follow-up commit that contains it.

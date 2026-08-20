@@ -128,9 +128,11 @@ findings and the branch resolves them as follows:
   includes CPU model, runner architecture, CI image identity, and an explicit
   runner class that the validator binds consistently.
 - The pinned-upstream harness was not exercised by CI. The benchmark workflow
-  now runs on feature branches and main, installs Zig 0.16.0 through an immutable
-  action commit, checks the exact workflow SHA and both binaries, and retains the
-  schema 2 artifact under a runner-specific name.
+  now runs on feature branches and main, installs Zig 0.16.0 from the official
+  HTTPS archive after checking its official SHA-256 digest
+  `70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00`,
+  checks the exact workflow SHA and both binaries, and retains the schema 2
+  artifact under a runner-specific name.
 
 Hostile tests cover lock/revision substitution, altered build profiles and
 commands, binary/measurement path substitution, post-recording binary changes,
