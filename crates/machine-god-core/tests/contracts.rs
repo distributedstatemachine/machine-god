@@ -553,6 +553,45 @@ fn delayed_save_does_not_regress_a_newer_concurrent_load() {
     );
 }
 
+#[test]
+fn delayed_save_rejects_equal_revision_divergence_from_a_concurrent_load() {
+    let id = SessionId::new("save-load-equal-divergence").unwrap();
+    let store = InterleavedSaveStore {
+        loaded: Arc::new(Mutex::new(None)),
+        save_ready: Arc::new(AtomicBool::new(false)),
+    };
+    let engine = Engine::builder()
+        .provider(StaticProvider::completed())
+        .session_store(store.clone())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(id.clone());
+    let mut reserving = session.prompt("reserved against revision zero");
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    assert!(matches!(
+        reserving.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    let divergent = stored_record(&id, 2, 10, "concurrent load");
+    *store.loaded.lock().unwrap() = Some(divergent.clone());
+    let loaded = futures_executor::block_on(engine.load_session(id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.record(), divergent);
+
+    store.save_ready.store(true, Ordering::Release);
+    assert!(matches!(
+        reserving.as_mut().poll(&mut context),
+        Poll::Ready(Err(EngineError::Protocol(message)))
+            if message.contains("save diverged") && message.contains("same revision")
+    ));
+    assert_eq!(session.record(), divergent);
+    assert!(!session.has_active_turn());
+}
+
 #[derive(Clone, Debug)]
 struct ConflictReloadStore {
     loads: Arc<Mutex<VecDeque<SessionRecord>>>,
@@ -797,6 +836,54 @@ impl EventSink for PendingSink {
     fn emit(&self, _event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
         Box::pin(std::future::pending())
     }
+}
+
+#[test]
+fn pending_delivery_rebinds_cancellation_to_the_latest_poller() {
+    let engine = Engine::builder()
+        .provider(PendingProvider)
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(PendingSink)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new("pending-sink-repoll").unwrap());
+    let mut turn = prompt(&session, "wait");
+    let handle = turn.handle();
+    let first_counter = Arc::new(TurnWakeCounter::default());
+    let second_counter = Arc::new(TurnWakeCounter::default());
+    let first_waker = Waker::from(Arc::clone(&first_counter));
+    let second_waker = Waker::from(Arc::clone(&second_counter));
+    let mut first_context = Context::from_waker(&first_waker);
+    let mut second_context = Context::from_waker(&second_waker);
+    let mut next = Box::pin(turn.next());
+
+    assert!(matches!(
+        next.as_mut().poll(&mut first_context),
+        Poll::Pending
+    ));
+    assert!(matches!(
+        next.as_mut().poll(&mut second_context),
+        Poll::Pending
+    ));
+    assert_eq!(Arc::strong_count(&first_counter), 2);
+    assert_eq!(Arc::strong_count(&second_counter), 3);
+
+    assert!(handle.cancel());
+    assert_eq!(first_counter.0.load(Ordering::Relaxed), 0);
+    assert_eq!(second_counter.0.load(Ordering::Relaxed), 1);
+    assert!(matches!(
+        next.as_mut().poll(&mut second_context),
+        Poll::Ready(Some(Ok(EngineEvent {
+            payload: TurnEvent::Completed {
+                reason: StopReason::Cancelled,
+                ..
+            },
+            ..
+        })))
+    ));
+    drop(next);
+    assert!(!session.has_active_turn());
 }
 
 #[test]

@@ -66,7 +66,9 @@ Dropping a turn releases the session lease even if the provider has not stopped.
 Cancellation wait registrations are keyed per live future and removed when that
 future or turn is dropped. A turn also removes its registration before yielding
 each nonterminal event, because no poll is outstanding while its consumer holds
-that event. Repeated polls, idle streams, and abandoned waiters therefore do not
+that event. While observer delivery is pending, each poll refreshes the keyed
+registration with that poll's waker, so cancellation wakes only the current
+poller. Repeated polls, idle streams, and abandoned waiters therefore do not
 retain stale wakers.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
@@ -79,6 +81,9 @@ sequence, is older than the engine-canonical revision, or differs from the
 canonical record at the same revision. If a delayed successful reservation
 finishes after a newer load has already reconciled, its saved snapshot still
 drives that turn's model request but cannot rewind the canonical session record.
+An equal-revision save result is accepted only when it is identical to the
+canonical record; divergence is a protocol error rather than an ambiguous
+overwrite.
 
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:

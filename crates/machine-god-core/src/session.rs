@@ -145,15 +145,20 @@ impl SessionState {
         Ok(())
     }
 
-    fn reconcile_saved(&self, record: &SessionRecord) {
+    fn reconcile_saved(&self, record: &SessionRecord) -> Result<(), EngineError> {
         let mut data = self
             .data
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !data.persisted || data.record.revision <= record.revision {
+        if !data.persisted || data.record.revision < record.revision {
             data.record.clone_from(record);
             data.persisted = true;
+        } else if data.record.revision == record.revision && data.record != *record {
+            return Err(EngineError::Protocol(
+                "successful save diverged from canonical record at the same revision".to_owned(),
+            ));
         }
+        Ok(())
     }
 }
 
@@ -297,7 +302,7 @@ impl Session {
             {
                 Ok(revision) if revision > previous_revision => {
                     candidate.revision = revision;
-                    self.state.reconcile_saved(&candidate);
+                    self.state.reconcile_saved(&candidate)?;
                     return Ok((turn_id, candidate));
                 }
                 Ok(_) => {
@@ -493,6 +498,50 @@ impl Turn {
         self.finish();
         Some(event)
     }
+
+    fn poll_delivery(
+        &mut self,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<EngineEvent, EngineError>>> {
+        let cancellation = self.cancellation.clone();
+        cancellation.register(&mut self.cancellation_waiter, context.waker());
+        if let Some(event) = self.cancel_pending_delivery() {
+            return Poll::Ready(Some(Ok(event)));
+        }
+        let Some(delivery) = &mut self.delivery else {
+            self.finish();
+            return Poll::Ready(Some(Err(EngineError::Protocol(
+                "event delivery state was lost".to_owned(),
+            ))));
+        };
+        match delivery.future.as_mut().poll(context) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(())) => {
+                let Some(delivery) = self.delivery.take() else {
+                    self.finish();
+                    return Poll::Ready(Some(Err(EngineError::Protocol(
+                        "event delivery state was lost".to_owned(),
+                    ))));
+                };
+                let event = delivery.event;
+                if matches!(
+                    event.payload,
+                    TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
+                ) {
+                    self.finish();
+                } else {
+                    let cancellation = self.cancellation.clone();
+                    cancellation.deregister(&mut self.cancellation_waiter);
+                }
+                Poll::Ready(Some(Ok(event)))
+            }
+            Poll::Ready(Err(error)) => {
+                self.delivery = None;
+                self.finish();
+                Poll::Ready(Some(Err(EngineError::EventSink(error))))
+            }
+        }
+    }
 }
 
 impl Stream for Turn {
@@ -503,34 +552,8 @@ impl Stream for Turn {
             if let Some(event) = self.cancel_pending_delivery() {
                 return Poll::Ready(Some(Ok(event)));
             }
-            if let Some(delivery) = &mut self.delivery {
-                match delivery.future.as_mut().poll(context) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(())) => {
-                        let Some(delivery) = self.delivery.take() else {
-                            self.finish();
-                            return Poll::Ready(Some(Err(EngineError::Protocol(
-                                "event delivery state was lost".to_owned(),
-                            ))));
-                        };
-                        let event = delivery.event;
-                        if matches!(
-                            event.payload,
-                            TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
-                        ) {
-                            self.finish();
-                        } else {
-                            let cancellation = self.cancellation.clone();
-                            cancellation.deregister(&mut self.cancellation_waiter);
-                        }
-                        return Poll::Ready(Some(Ok(event)));
-                    }
-                    Poll::Ready(Err(error)) => {
-                        self.delivery = None;
-                        self.finish();
-                        return Poll::Ready(Some(Err(EngineError::EventSink(error))));
-                    }
-                }
+            if self.delivery.is_some() {
+                return self.poll_delivery(context);
             }
 
             if self.cancellation.is_cancelled()

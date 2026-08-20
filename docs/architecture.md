@@ -39,4 +39,5 @@ and processes coordinate durable turn-number allocation through the session
 store's optimistic revision contract. Loaded records reconcile strictly and
 monotonically: corrupt sequences, stale revisions, and equal-revision divergence
 are protocol errors, and completion of an older in-flight save cannot replace a
-newer canonical record.
+newer canonical record. Successful-save reconciliation also rejects divergent
+records at the same revision.

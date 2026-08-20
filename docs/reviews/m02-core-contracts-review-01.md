@@ -42,3 +42,15 @@ divergence through `SessionState::reconcile_loaded`. Nonterminal ready events
 deregister the turn waiter before returning. Controlled save/load interleaving,
 all three hostile conflict records, and turn-level waker retention have dedicated
 regression tests.
+
+A fresh review of `66d14d3` found that a pending observer future skipped the
+cancellation-registration refresh on later polls, so cancellation could wake W1
+after W2 had taken over polling. It also found that successful-save
+reconciliation treated an equal revision as installable even when a concurrent
+load had installed different contents. Pending delivery now refreshes its keyed
+waiter before every observer poll and rechecks cancellation before continuing.
+Save reconciliation accepts equal revisions only for identical records and
+propagates divergence as `EngineError::Protocol`; newer canonical state remains
+untouched and a valid saved record still replaces an older canonical revision.
+Regression tests control both the W1/W2 cancellation sequence and the
+same-revision save/load interleaving.
