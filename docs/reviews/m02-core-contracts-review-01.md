@@ -147,3 +147,13 @@ pointer identity so delayed cleanup cannot erase a replacement. Deterministic
 tests count one targeted probe per request across 4,096 live sessions, verify
 immediate last-owner reclamation, and pause old-state cleanup while a concurrent
 replacement is installed and then reused canonically.
+
+A fresh correctness review of `3036d0f` found a cancellation/provider race
+inside a single stream poll. Core checked cancellation before calling the
+provider, but a cross-thread cancellation completed during that call could be
+overtaken when the same poll returned `Stop`, an error, or EOF and immediately
+established provider terminal precedence. Core now rechecks the token after the
+provider poll and before matching or staging any result while no terminal is
+established. Barrier-controlled cross-thread regressions cover all three return
+forms and require `Completed(Cancelled)`; established-provider-terminal tests
+continue to prove that later cancellation cannot change the outcome.

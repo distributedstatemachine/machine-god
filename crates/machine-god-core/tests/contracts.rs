@@ -12,7 +12,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 
 #[derive(Debug)]
@@ -1112,6 +1112,70 @@ impl ModelProvider for PendingProvider {
     }
 }
 
+#[derive(Clone, Debug)]
+enum BarrierPollOutcome {
+    Stop,
+    Error,
+    End,
+}
+
+#[derive(Clone, Debug)]
+struct BarrierPollProvider {
+    barrier: Arc<Barrier>,
+    outcome: BarrierPollOutcome,
+}
+
+impl ModelProvider for BarrierPollProvider {
+    fn name(&self) -> &'static str {
+        "barrier-poll"
+    }
+
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        let stream = BarrierPollStream {
+            barrier: Arc::clone(&self.barrier),
+            outcome: Some(self.outcome.clone()),
+        };
+        Box::pin(async move { Ok(Box::pin(stream) as ModelEventStream) })
+    }
+}
+
+#[derive(Debug)]
+struct BarrierPollStream {
+    barrier: Arc<Barrier>,
+    outcome: Option<BarrierPollOutcome>,
+}
+
+impl Stream for BarrierPollStream {
+    type Item = Result<ModelEvent, ProviderError>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let Some(outcome) = self.outcome.take() else {
+            return Poll::Ready(None);
+        };
+        self.barrier.wait();
+        self.barrier.wait();
+        match outcome {
+            BarrierPollOutcome::Stop => Poll::Ready(Some(Ok(ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }))),
+            BarrierPollOutcome::Error => Poll::Ready(Some(Err(ProviderError::new(
+                ProviderErrorKind::Unavailable,
+                "racing_error",
+                "provider failed while cancellation raced",
+                true,
+            )))),
+            BarrierPollOutcome::End => Poll::Ready(None),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum RetainedStream {
     Pending,
@@ -1168,6 +1232,66 @@ impl Wake for TurnWakeCounter {
     fn wake_by_ref(self: &Arc<Self>) {
         self.0.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+fn assert_cancellation_during_provider_poll_wins(outcome: BarrierPollOutcome, session_id: &str) {
+    let barrier = Arc::new(Barrier::new(2));
+    let engine = Engine::builder()
+        .provider(BarrierPollProvider {
+            barrier: Arc::clone(&barrier),
+            outcome,
+        })
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .build()
+        .unwrap();
+    let session = engine.create_session(SessionId::new(session_id).unwrap());
+    let mut turn = prompt(&session, "race");
+    let handle = turn.handle();
+    let started = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(started.payload, TurnEvent::Started));
+
+    let cancelling = std::thread::spawn(move || {
+        barrier.wait();
+        assert!(handle.cancel());
+        barrier.wait();
+    });
+    let completed = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    cancelling.join().unwrap();
+
+    assert!(matches!(
+        completed.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(futures_executor::block_on(turn.next()).is_none());
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn cancellation_observed_before_stop_poll_result_wins() {
+    assert_cancellation_during_provider_poll_wins(
+        BarrierPollOutcome::Stop,
+        "cancel-before-stop-result",
+    );
+}
+
+#[test]
+fn cancellation_observed_before_error_poll_result_wins() {
+    assert_cancellation_during_provider_poll_wins(
+        BarrierPollOutcome::Error,
+        "cancel-before-error-result",
+    );
+}
+
+#[test]
+fn cancellation_observed_before_end_poll_result_wins() {
+    assert_cancellation_during_provider_poll_wins(
+        BarrierPollOutcome::End,
+        "cancel-before-end-result",
+    );
 }
 
 #[test]

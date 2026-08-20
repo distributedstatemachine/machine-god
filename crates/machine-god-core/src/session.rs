@@ -519,6 +519,14 @@ impl Turn {
         });
     }
 
+    fn establish_cancellation(&mut self) {
+        self.terminal_seen = true;
+        self.state = TurnState::EmitTerminal(TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            usage: self.usage,
+        });
+    }
+
     fn cancel_pending_delivery(&mut self) -> Option<EngineEvent> {
         if !self.cancellation.is_cancelled() {
             return None;
@@ -615,11 +623,7 @@ impl Stream for Turn {
                 && !self.terminal_seen
                 && !matches!(self.state, TurnState::EmitStarted(_))
             {
-                self.terminal_seen = true;
-                self.state = TurnState::EmitTerminal(TurnEvent::Completed {
-                    reason: StopReason::Cancelled,
-                    usage: self.usage,
-                });
+                self.establish_cancellation();
             } else if !self.terminal_seen {
                 let cancellation = self.cancellation.clone();
                 cancellation.register(&mut self.cancellation_waiter, context.waker());
@@ -640,36 +644,45 @@ impl Stream for Turn {
                     Poll::Ready(Ok(stream)) => self.state = TurnState::Streaming(stream),
                     Poll::Ready(Err(error)) => self.fail_provider(error),
                 },
-                TurnState::Streaming(mut stream) => match stream.as_mut().poll_next(context) {
-                    Poll::Pending => {
-                        self.state = TurnState::Streaming(stream);
-                        return Poll::Pending;
-                    }
-                    Poll::Ready(Some(Ok(event))) => {
-                        match &event {
-                            ModelEvent::Usage { usage } => self.usage = *usage,
-                            ModelEvent::Stop { reason } => {
+                TurnState::Streaming(mut stream) => {
+                    let result = stream.as_mut().poll_next(context);
+                    if self.cancellation.is_cancelled() && !self.terminal_seen {
+                        self.establish_cancellation();
+                    } else {
+                        match result {
+                            Poll::Pending => {
+                                self.state = TurnState::Streaming(stream);
+                                return Poll::Pending;
+                            }
+                            Poll::Ready(Some(Ok(event))) => {
+                                match &event {
+                                    ModelEvent::Usage { usage } => self.usage = *usage,
+                                    ModelEvent::Stop { reason } => {
+                                        self.terminal_seen = true;
+                                        self.state =
+                                            TurnState::EmitTerminal(TurnEvent::Completed {
+                                                reason: reason.clone(),
+                                                usage: self.usage,
+                                            });
+                                    }
+                                    _ => self.state = TurnState::Streaming(stream),
+                                }
+                                self.stage(TurnEvent::Model { event });
+                            }
+                            Poll::Ready(Some(Err(error))) => self.fail_provider(error),
+                            Poll::Ready(None) => {
                                 self.terminal_seen = true;
-                                self.state = TurnState::EmitTerminal(TurnEvent::Completed {
-                                    reason: reason.clone(),
-                                    usage: self.usage,
+                                self.state = TurnState::EmitTerminal(TurnEvent::Failed {
+                                    component: "provider".to_owned(),
+                                    code: "missing_stop".to_owned(),
+                                    message: "provider stream ended without a terminal stop"
+                                        .to_owned(),
+                                    retryable: false,
                                 });
                             }
-                            _ => self.state = TurnState::Streaming(stream),
                         }
-                        self.stage(TurnEvent::Model { event });
                     }
-                    Poll::Ready(Some(Err(error))) => self.fail_provider(error),
-                    Poll::Ready(None) => {
-                        self.terminal_seen = true;
-                        self.state = TurnState::EmitTerminal(TurnEvent::Failed {
-                            component: "provider".to_owned(),
-                            code: "missing_stop".to_owned(),
-                            message: "provider stream ended without a terminal stop".to_owned(),
-                            retryable: false,
-                        });
-                    }
-                },
+                }
                 TurnState::EmitTerminal(event) => self.stage(event),
                 TurnState::Done => return Poll::Ready(None),
             }
