@@ -20,9 +20,15 @@ performance/CI. Confirmed findings and resolutions:
 - Benchmark evidence was not executable or retained: added a versioned
   collector, checker, tests, exact-SHA CI artifacts, and explicit non-product
   classification.
+- Rereview found incomplete provenance validation: the checker now requires host,
+  command, warmup, exact Git SHA, recomputed aggregates, hexadecimal checksum,
+  and an exact retained binary hash and size.
+- Rereview found an invalid vulnerability-action SHA and an action that fetched an
+  unverified scanner: both scanners now install exact locked crates verified by
+  the Cargo registry, and checkout credentials are not persisted.
+- Cross-target checks now cover every target and feature.
 
 Rejected after remediation:
 
 - Package archives omit root license/notice: crates are deliberately
   `publish = false`; packaging is outside the authorized and supported surface.
-

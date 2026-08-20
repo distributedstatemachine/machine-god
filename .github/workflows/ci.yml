@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Install exact Rust toolchain
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
       - name: Formatting
@@ -44,18 +46,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
         with:
-          command: check
+          persist-credentials: false
+      - name: Install exact cargo-deny
+        run: cargo install cargo-deny --locked --version 0.20.2
+      - name: Check dependency policy
+        run: cargo deny check
 
   vulnerability-audit:
     name: Vulnerability audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: rustsec/audit-check@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+      - name: Install exact cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: Audit lockfile
+        run: cargo audit
 
   target-check:
     name: Target check (${{ matrix.target }})
@@ -74,7 +82,9 @@ jobs:
             target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Install exact Rust target
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
       - name: Check target
-        run: cargo +${RUST_TOOLCHAIN} check --locked --workspace --target "${{ matrix.target }}"
+        run: cargo +${RUST_TOOLCHAIN} check --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"
