@@ -81,14 +81,22 @@ findings and the branch resolves them as follows:
   timestamp. Setup, direct supervision, and cleanup durations are recorded
   separately. Injected 200 ms attachment and scan delays prove that neither
   changes `elapsed_ns`.
-- The pidfd exit observer was armed asynchronously without confirming its poll
-  registration. A fast child could exit before the observer thread ran, making
-  thread scheduling latency look like process runtime. Arming now waits for a
-  registration handshake and probes for an already-readable pidfd at that
-  boundary. Such an attempt is discarded and retried up to a fixed ten-attempt
-  cap, and evidence records the discard count. A regression delays the second
-  registration by 200 ms, proves that attempt is rejected, and accepts only the
-  clean retry sample.
+- Rejecting and retrying processes that exited before pidfd poll registration
+  censored the fastest samples and biased the retained distribution upward.
+  Linux now forks the measurement child behind a private close-on-exec gate,
+  registers pidfd observation and containment while the child is blocked, then
+  starts the clock and releases exec. No duration-dependent attempt is discarded.
+  A regression delays every observer registration while measuring ten `true`
+  executions and proves all ten requested sub-millisecond paths are retained
+  without including the delay.
+- Measurements executed a mutable pathname without binding each sample to the
+  binary identity accepted by the checker. Collection now records the complete
+  executable identity, copies the verified bytes into a sealed memfd on Linux,
+  uses descriptor-based exec for every sample, and verifies both the source and
+  pinned identities around every run. Other POSIX hosts use a private copy with
+  the same surrounding checks. The checker binds measurement identities to the
+  supplied binaries. A pathname-replacement regression proves the pinned bytes
+  execute while the identity change prevents evidence acceptance.
 - Successful-command finalization ignored known zombies, allowing a short-lived
   detached grandchild to remain adopted after the run was accepted. A bounded
   settle pass now repeatedly discovers and reaps all known adopted children and
@@ -131,10 +139,10 @@ preexisting upstream checkouts, every scratch/cache/tool-state path, original
 worktree mutation after snapshotting, process-group and detached-descendant
 timeouts, Linux descendant containment without readable environments, delayed
 attachment and containment scans outside the timing boundary, Git export
-attributes and link modes, delayed pidfd observer registration and capped retry,
-mutable tool paths, successful-command zombie reaping, injected lifecycle
-failures, PID reuse, NUL-porcelain path parsing, atomic-publication symlinks and
-collisions, and stale evidence preservation, including concurrent
+attributes and link modes, gated pidfd observer registration, measured-binary
+replacement, mutable tool paths, successful-command zombie reaping, injected
+lifecycle failures, PID reuse, NUL-porcelain path parsing, atomic-publication
+symlinks and collisions, and stale evidence preservation, including concurrent
 success/failure publication and a pre-existing output lock.
 
 Local end-to-end validation used the checksum-verified Zig 0.16.0 macOS aarch64

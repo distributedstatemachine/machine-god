@@ -82,20 +82,27 @@ killed, and reaped. Execution fails closed if subreaper, pidfd, or process-table
 supervision is unavailable, or if a successful command leaks a descendant. The
 post-success path uses a bounded settle period to discover and `waitpid` every
 adopted child, including short-lived double-fork zombies, and accepts a run only
-after no supervised descendant PID remains. Linux measurement runs create their
-exit-observer thread and capture the baseline child set before the sample clock
-starts. Immediately after launch, the harness duplicates the root pidfd to that
-observer and attaches the immutable root identity with a direct, single-PID
-`/proc/<pid>/stat` lookup. The launch path waits for an explicit poll-registration
-handshake before continuing. If the pidfd is already readable when registration
-completes, the attempt is contaminated by observer scheduling and is discarded;
-measurement retries are capped at ten per accepted warmup or sample. Evidence
-records the total as `discarded_pre_registration_exits`. There is no periodic
-process-table monitor. Pidfd readability timestamps root exit without reaping
-it, so synchronous attachment cannot move the end timestamp. Full descendant
+after no supervised descendant PID remains. Linux measurement runs fork a child
+which creates its process group and blocks on a private close-on-exec gate before
+executing the target. While it is blocked, the parent opens the root pidfd,
+registers the exit observer, and attaches the immutable root identity with a
+direct, single-PID `/proc/<pid>/stat` lookup. Only then does it start the sample
+clock and release the gate. Thus even sub-millisecond exits are observed from
+before exec, every requested run is retained, and no duration-dependent retry or
+discard can bias the distribution. There is no periodic process-table monitor.
+Pidfd readability timestamps root exit without reaping it. Full descendant
 discovery, settling, and reaping begin only after that timestamp. Every process
 record stores the measured interval plus separate `setup_ns`, `supervision_ns`,
 and `cleanup_ns` durations.
+
+Each built benchmark binary is identified by path, canonical path, SHA-256,
+size, mode, device, inode, and timestamps before measurement. On Linux its bytes
+are copied once to a sealed executable memfd and every gated child uses
+descriptor-based `execve`; pathname replacement cannot change the executed
+bytes. Other POSIX hosts use a private executable copy. The source identity and
+pinned descriptor identity are verified before and after every warmup and
+sample. Evidence records both identities, and the checker compares the recorded
+source identity with each supplied built binary.
 The final JSON is written atomically only after validation. A full-run,
 per-output exclusive lock is acquired before collection starts and held through
 publication. Lock acquisition has a bounded wait, and a pre-existing lock is

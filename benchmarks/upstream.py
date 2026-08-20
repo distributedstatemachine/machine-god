@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import fcntl
 import hashlib
 import json
 import math
@@ -72,7 +73,6 @@ FORBIDDEN_ENVIRONMENT_NAMES = {
     "LD_PRELOAD",
     "RUSTFLAGS",
 }
-MAX_CONTAMINATED_MEASUREMENT_ATTEMPTS = 10
 
 
 @dataclass(frozen=True)
@@ -95,10 +95,6 @@ class ProcessResult:
 
 class ProcessTimeout(RuntimeError):
     """A child process exceeded its declared wall-clock limit."""
-
-
-class MeasurementContaminated(RuntimeError):
-    """A process exited before its exit observer was ready."""
 
 
 @dataclass(frozen=True)
@@ -344,6 +340,44 @@ def verify_executable_identity(identity: Mapping[str, object]) -> None:
             raise RuntimeError(f"verified tool identity changed: {executable} ({field})")
 
 
+def validate_executable_identity_record(
+    value: object, field: str
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    executable = require_text(value.get("executable"), f"{field}.executable")
+    canonical = require_text(
+        value.get("canonical_executable"), f"{field}.canonical_executable"
+    )
+    if not Path(executable).is_absolute() or not Path(canonical).is_absolute():
+        raise ValueError(f"{field} paths must be absolute")
+    checksum = require_text(value.get("sha256"), f"{field}.sha256")
+    if len(checksum) != 64 or any(
+        character not in "0123456789abcdef" for character in checksum
+    ):
+        raise ValueError(f"{field}.sha256 must be a lowercase SHA-256 digest")
+    for name in (
+        "bytes",
+        "mode",
+        "device",
+        "inode",
+        "mtime_ns",
+        "ctime_ns",
+        "invocation_mode",
+        "invocation_device",
+        "invocation_inode",
+        "invocation_mtime_ns",
+        "invocation_ctime_ns",
+    ):
+        if not is_integer(value.get(name)) or value[name] < 0:
+            raise ValueError(f"{field}.{name} must be a nonnegative integer")
+    if value["bytes"] <= 0 or value["mode"] & 0o111 == 0:
+        raise ValueError(f"{field} must identify a non-empty executable")
+    if not isinstance(value.get("invocation_link_target"), str):
+        raise ValueError(f"{field}.invocation_link_target must be a string")
+    return value
+
+
 def require_text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must be a non-empty string")
@@ -466,6 +500,7 @@ def validate_measurement(
     field: str,
     *,
     expected_command: Sequence[str],
+    expected_binary: Mapping[str, Any],
     expected_environment_keys: set[str],
     expected_timeout: float,
 ) -> None:
@@ -480,14 +515,36 @@ def validate_measurement(
     )
     if measurement.get("timeout_seconds") != expected_timeout:
         raise ValueError(f"{field}.timeout_seconds does not match the declared timeout")
+    identity = validate_executable_identity_record(
+        measurement.get("executable_identity"), f"{field}.executable_identity"
+    )
+    if (
+        identity["executable"] != expected_binary["path"]
+        or identity["bytes"] != expected_binary["bytes"]
+        or identity["sha256"] != expected_binary["sha256"]
+    ):
+        raise ValueError(f"{field}.executable_identity does not bind the build binary")
+    pinned = measurement.get("pinned_executable")
+    if not isinstance(pinned, dict):
+        raise ValueError(f"{field}.pinned_executable must be an object")
+    if pinned.get("method") not in {"linux-sealed-memfd-fexecve", "private-copy"}:
+        raise ValueError(f"{field}.pinned_executable.method is unsupported")
+    for name in ("bytes", "mode", "device", "inode", "seals"):
+        if not is_integer(pinned.get(name)) or pinned[name] < 0:
+            raise ValueError(f"{field}.pinned_executable.{name} must be nonnegative")
+    if (
+        pinned["bytes"] != expected_binary["bytes"]
+        or pinned.get("sha256") != expected_binary["sha256"]
+        or pinned["mode"] & 0o111 == 0
+        or (
+            pinned["method"] == "linux-sealed-memfd-fexecve"
+            and pinned["seals"] == 0
+        )
+    ):
+        raise ValueError(f"{field}.pinned_executable does not bind immutable bytes")
     warmup = measurement.get("warmup")
     if not is_integer(warmup) or warmup < 1:
         raise ValueError(f"{field}.warmup must be a positive integer")
-    discarded = measurement.get("discarded_pre_registration_exits")
-    if not is_integer(discarded) or discarded < 0:
-        raise ValueError(
-            f"{field}.discarded_pre_registration_exits must be a nonnegative integer"
-        )
     samples = measurement.get("samples")
     if not isinstance(samples, list) or len(samples) < 10:
         raise ValueError(f"{field} needs at least 10 raw samples")
@@ -920,6 +977,7 @@ def validate_upstream_evidence(
         fx_measurement,
         "workloads[0].implementations[0]",
         expected_command=[fx_binary["path"]],
+        expected_binary=fx_binary,
         expected_environment_keys=BASE_ENVIRONMENT_KEYS | {"FX_BENCH"},
         expected_timeout=timeouts["sample"],
     )
@@ -927,6 +985,7 @@ def validate_upstream_evidence(
         machine_measurement,
         "workloads[0].implementations[1]",
         expected_command=[machine_binary["path"]],
+        expected_binary=machine_binary,
         expected_environment_keys=BASE_ENVIRONMENT_KEYS,
         expected_timeout=timeouts["sample"],
     )
@@ -985,6 +1044,18 @@ def validate_upstream_evidence(
             expected_binaries["machine-god"],
             "builds[1].binary",
         )
+        for name, measurement, actual_path in (
+            ("fx", fx_measurement, expected_binaries["fx"]),
+            ("machine-god", machine_measurement, expected_binaries["machine-god"]),
+        ):
+            try:
+                actual_identity = executable_identity(actual_path)
+            except OSError as error:
+                raise ValueError(f"{name} executable identity is unreadable") from error
+            if measurement["executable_identity"] != actual_identity:
+                raise ValueError(
+                    f"{name} measured executable identity does not match the supplied binary"
+                )
         for tool in tools.values():
             try:
                 verify_executable_identity(tool)
@@ -1276,7 +1347,7 @@ class LinuxExitObserver:
         self._finished = threading.Event()
         self._descriptor: int | None = None
         self._cancelled = False
-        self._contaminated = False
+        self._already_readable = False
         self._error: BaseException | None = None
         self.end_ns: int | None = None
         self._thread = threading.Thread(target=self._observe, daemon=True)
@@ -1289,9 +1360,9 @@ class LinuxExitObserver:
             raise RuntimeError("Linux exit observer registration timed out")
         if self._error is not None:
             raise RuntimeError("Linux exit observer registration failed") from self._error
-        if self._contaminated:
-            raise MeasurementContaminated(
-                "process exited before Linux exit observation was registered"
+        if self._already_readable:
+            raise RuntimeError(
+                "gated process exited before measurement observation was ready"
             )
 
     def _register_pidfd(self, poller: select.poll, descriptor: int) -> None:
@@ -1312,7 +1383,7 @@ class LinuxExitObserver:
             poller = select.poll()
             self._register_pidfd(poller, descriptor)
             if poller.poll(0):
-                self._contaminated = True
+                self._already_readable = True
                 return
             self._registered.set()
             poller.poll()
@@ -1340,6 +1411,133 @@ class LinuxExitObserver:
             self._cancelled = True
             self._armed.set()
         self._thread.join(timeout=0.5)
+
+
+class GatedProcess:
+    """Minimal Popen-compatible handle for a forked child blocked before exec."""
+
+    stdout = None
+    stderr = None
+
+    def __init__(self, pid: int, gate_descriptor: int, command: Sequence[str]) -> None:
+        self.pid = pid
+        self.gate_descriptor: int | None = gate_descriptor
+        self.command = list(command)
+        self.returncode: int | None = None
+
+    def release(self) -> None:
+        descriptor = self.gate_descriptor
+        if descriptor is None:
+            raise RuntimeError("measurement gate was already released")
+        try:
+            os.write(descriptor, b"\x01")
+        finally:
+            os.close(descriptor)
+            self.gate_descriptor = None
+
+    def close_gate(self) -> None:
+        if self.gate_descriptor is not None:
+            os.close(self.gate_descriptor)
+            self.gate_descriptor = None
+
+    def _record_status(self, status: int) -> int:
+        self.returncode = os.waitstatus_to_exitcode(status)
+        self.close_gate()
+        return self.returncode
+
+    def poll(self) -> int | None:
+        if self.returncode is not None:
+            return self.returncode
+        waited_pid, status = os.waitpid(self.pid, os.WNOHANG)
+        if waited_pid == 0:
+            return None
+        return self._record_status(status)
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.returncode is not None:
+            return self.returncode
+        if timeout is None:
+            _, status = os.waitpid(self.pid, 0)
+            return self._record_status(status)
+        deadline = time.monotonic() + timeout
+        while True:
+            result = self.poll()
+            if result is not None:
+                return result
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(self.command, timeout)
+            time.sleep(0.005)
+
+    def kill(self) -> None:
+        self.close_gate()
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def launch_gated_process(
+    command: Sequence[str],
+    cwd: Path,
+    environment: Mapping[str, str],
+    executable_descriptor: int | None,
+) -> GatedProcess:
+    """Fork a new process group whose target exec waits behind a private gate."""
+
+    if executable_descriptor is not None and os.execve not in os.supports_fd:
+        raise RuntimeError("Linux measurement requires descriptor-based execve")
+    pipe_flags = getattr(os, "O_CLOEXEC", 0)
+    gate_read, gate_write = os.pipe2(pipe_flags)
+    ready_read, ready_write = os.pipe2(pipe_flags)
+    try:
+        pid = os.fork()
+    except BaseException:
+        os.close(gate_read)
+        os.close(gate_write)
+        os.close(ready_read)
+        os.close(ready_write)
+        raise
+    if pid == 0:
+        try:
+            os.close(gate_write)
+            os.close(ready_read)
+            os.setsid()
+            os.chdir(cwd)
+            devnull = os.open(os.devnull, os.O_RDWR)
+            try:
+                for descriptor in (0, 1, 2):
+                    os.dup2(devnull, descriptor)
+            finally:
+                if devnull > 2:
+                    os.close(devnull)
+            os.write(ready_write, b"\x01")
+            os.close(ready_write)
+            released = os.read(gate_read, 1)
+            os.close(gate_read)
+            if released != b"\x01":
+                os._exit(126)
+            arguments = list(command)
+            child_environment = dict(environment)
+            if executable_descriptor is None:
+                os.execve(arguments[0], arguments, child_environment)
+            os.execve(executable_descriptor, arguments, child_environment)
+        except BaseException:
+            os._exit(127)
+    os.close(gate_read)
+    os.close(ready_write)
+    poller = select.poll()
+    poller.register(ready_read, select.POLLIN | select.POLLHUP)
+    ready = bool(poller.poll(1000)) and os.read(ready_read, 1) == b"\x01"
+    os.close(ready_read)
+    if not ready:
+        os.close(gate_write)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.waitpid(pid, 0)
+        raise RuntimeError("gated measurement child did not reach the exec barrier")
+    return GatedProcess(pid, gate_write, command)
 
 
 def kill_process_group(pid: int, signal_number: int) -> None:
@@ -1413,14 +1611,14 @@ def linux_containment_preflight() -> None:
         _LINUX_PREFLIGHT_COMPLETE = True
 
 
-def close_process_pipes(process: subprocess.Popen[bytes]) -> None:
+def close_process_pipes(process: subprocess.Popen[bytes] | GatedProcess) -> None:
     for stream in (process.stdout, process.stderr):
         if stream is not None and not stream.closed:
             stream.close()
 
 
 def terminate_contained_process(
-    process: subprocess.Popen[bytes],
+    process: subprocess.Popen[bytes] | GatedProcess,
     supervisor: LinuxProcessSupervisor | None,
     cleanup_seconds: float = 2.0,
 ) -> set[int]:
@@ -1487,7 +1685,7 @@ def terminate_contained_process(
 
 
 def finalize_successful_process(
-    process: subprocess.Popen[bytes],
+    process: subprocess.Popen[bytes] | GatedProcess,
     supervisor: LinuxProcessSupervisor | None,
 ) -> None:
     """Check containment after timing has ended and reject leaked descendants."""
@@ -1516,6 +1714,8 @@ def run_process(
     timeout_seconds: float,
     capture_output: bool = True,
     expected_executable: Mapping[str, object] | None = None,
+    executable_descriptor: int | None = None,
+    executable_path: Path | None = None,
 ) -> ProcessResult:
     setup_started = time.perf_counter_ns()
     if not is_positive_number(timeout_seconds):
@@ -1523,32 +1723,48 @@ def run_process(
     process_environment = dict(environment)
     supervisor: LinuxProcessSupervisor | None = None
     exit_observer: LinuxExitObserver | None = None
-    if sys.platform.startswith("linux"):
+    linux = sys.platform.startswith("linux")
+    gated_measurement = linux and not capture_output
+    if linux:
         if CONTAINMENT_ENVIRONMENT_KEY not in process_environment:
             raise RuntimeError("Linux subprocess execution requires a containment token")
         linux_containment_preflight()
         baseline_children = LinuxProcessSupervisor.capture_baseline()
         supervisor = LinuxProcessSupervisor(baseline_children)
-        if not capture_output:
-            exit_observer = LinuxExitObserver()
+    elif executable_descriptor is not None:
+        raise RuntimeError("descriptor-based measurement execution requires Linux")
     if expected_executable is not None:
         verify_executable_identity(expected_executable)
-    setup_ns = time.perf_counter_ns() - setup_started
-    start = time.perf_counter_ns()
-    deadline_ns = start + int(timeout_seconds * 1_000_000_000)
-    process: subprocess.Popen[bytes] | None = None
+    process: subprocess.Popen[bytes] | GatedProcess | None = None
     root_descriptor: int | None = None
     supervision_ns = 0
+    setup_ns = 0
+    start = 0
+    deadline_ns = 0
+    if not gated_measurement:
+        setup_ns = time.perf_counter_ns() - setup_started
+        start = time.perf_counter_ns()
+        deadline_ns = start + int(timeout_seconds * 1_000_000_000)
     try:
-        process = subprocess.Popen(
-            list(command),
-            cwd=cwd,
-            env=process_environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-            stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        if gated_measurement:
+            process = launch_gated_process(
+                command,
+                cwd,
+                process_environment,
+                executable_descriptor,
+            )
+            exit_observer = LinuxExitObserver()
+        else:
+            process = subprocess.Popen(
+                list(command),
+                cwd=cwd,
+                env=process_environment,
+                executable=str(executable_path) if executable_path is not None else None,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+                stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+                start_new_session=True,
+            )
         if supervisor is not None:
             supervision_started = time.perf_counter_ns()
             root_descriptor = os.pidfd_open(process.pid, 0)
@@ -1557,6 +1773,11 @@ def run_process(
             supervisor.attach_root(process.pid, root_descriptor)
             root_descriptor = None
             supervision_ns = time.perf_counter_ns() - supervision_started
+        if isinstance(process, GatedProcess):
+            setup_ns = time.perf_counter_ns() - setup_started
+            start = time.perf_counter_ns()
+            deadline_ns = start + int(timeout_seconds * 1_000_000_000)
+            process.release()
         try:
             if exit_observer is not None:
                 end = exit_observer.wait(deadline_ns)
@@ -2153,6 +2374,150 @@ def binary_record(path: Path) -> dict[str, object]:
     }
 
 
+def sha256_descriptor(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    offset = 0
+    while chunk := os.pread(descriptor, 1024 * 1024, offset):
+        digest.update(chunk)
+        offset += len(chunk)
+    return digest.hexdigest()
+
+
+@dataclass
+class PinnedExecutable:
+    descriptor: int
+    method: str
+    record: dict[str, object]
+    execution_path: Path | None = None
+    temporary_directory: tempfile.TemporaryDirectory[str] | None = None
+
+    def verify(self) -> None:
+        metadata = os.fstat(self.descriptor)
+        for field, actual in (
+            ("bytes", metadata.st_size),
+            ("mode", stat.S_IMODE(metadata.st_mode)),
+            ("device", metadata.st_dev),
+            ("inode", metadata.st_ino),
+        ):
+            if self.record[field] != actual:
+                raise RuntimeError(f"pinned executable {field} changed")
+        if sha256_descriptor(self.descriptor) != self.record["sha256"]:
+            raise RuntimeError("pinned executable content changed")
+        if self.method == "linux-sealed-memfd-fexecve":
+            expected_seals = int(self.record["seals"])
+            if fcntl.fcntl(self.descriptor, fcntl.F_GET_SEALS) != expected_seals:
+                raise RuntimeError("pinned executable seals changed")
+        elif self.execution_path is not None:
+            current = self.execution_path.stat(follow_symlinks=False)
+            if (
+                current.st_dev != metadata.st_dev
+                or current.st_ino != metadata.st_ino
+                or not stat.S_ISREG(current.st_mode)
+            ):
+                raise RuntimeError("private executable copy identity changed")
+
+    def close(self) -> None:
+        os.close(self.descriptor)
+        if self.temporary_directory is not None:
+            self.temporary_directory.cleanup()
+
+
+def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
+    """Copy a verified executable into an immutable per-measurement identity."""
+
+    verify_executable_identity(identity)
+    canonical = Path(require_text(identity.get("canonical_executable"), "binary.canonical"))
+    source = os.open(canonical, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        source_metadata = os.fstat(source)
+        for field, actual in (
+            ("bytes", source_metadata.st_size),
+            ("mode", stat.S_IMODE(source_metadata.st_mode)),
+            ("device", source_metadata.st_dev),
+            ("inode", source_metadata.st_ino),
+        ):
+            if identity.get(field) != actual:
+                raise RuntimeError(f"binary identity changed before pinning ({field})")
+        if sha256_descriptor(source) != identity.get("sha256"):
+            raise RuntimeError("binary content changed before pinning")
+
+        temporary: tempfile.TemporaryDirectory[str] | None = None
+        execution_path: Path | None = None
+        if sys.platform.startswith("linux"):
+            required = (
+                "memfd_create",
+                "MFD_ALLOW_SEALING",
+                "MFD_CLOEXEC",
+            )
+            if any(not hasattr(os, name) for name in required) or os.execve not in os.supports_fd:
+                raise RuntimeError("Linux measurement requires sealed memfd execution")
+            descriptor = os.memfd_create(
+                "machine-god-benchmark-executable",
+                os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC,
+            )
+            method = "linux-sealed-memfd-fexecve"
+        else:
+            temporary = tempfile.TemporaryDirectory(prefix="machine-god-pinned-")
+            execution_path = Path(temporary.name) / "executable"
+            write_descriptor = os.open(
+                execution_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+                0o700,
+            )
+            os.close(write_descriptor)
+            descriptor = os.open(
+                execution_path,
+                os.O_RDWR | getattr(os, "O_CLOEXEC", 0),
+            )
+            method = "private-copy"
+        try:
+            offset = 0
+            while chunk := os.pread(source, 1024 * 1024, offset):
+                view = memoryview(chunk)
+                while view:
+                    written = os.write(descriptor, view)
+                    view = view[written:]
+                offset += len(chunk)
+            os.fchmod(descriptor, 0o500)
+            os.fsync(descriptor)
+            seals = 0
+            if method == "linux-sealed-memfd-fexecve":
+                seals = (
+                    fcntl.F_SEAL_SEAL
+                    | fcntl.F_SEAL_SHRINK
+                    | fcntl.F_SEAL_GROW
+                    | fcntl.F_SEAL_WRITE
+                )
+                fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
+            metadata = os.fstat(descriptor)
+            record: dict[str, object] = {
+                "method": method,
+                "sha256": sha256_descriptor(descriptor),
+                "bytes": metadata.st_size,
+                "mode": stat.S_IMODE(metadata.st_mode),
+                "device": metadata.st_dev,
+                "inode": metadata.st_ino,
+                "seals": seals,
+            }
+            pinned = PinnedExecutable(
+                descriptor,
+                method,
+                record,
+                execution_path,
+                temporary,
+            )
+            pinned.verify()
+        except BaseException:
+            os.close(descriptor)
+            if temporary is not None:
+                temporary.cleanup()
+            raise
+    finally:
+        os.close(source)
+    verify_executable_identity(identity)
+    return pinned
+
+
 def run_measurement(
     project: str,
     command: list[str],
@@ -2161,29 +2526,26 @@ def run_measurement(
     warmup: int,
     runs: int,
     timeout_seconds: float,
+    expected_executable: Mapping[str, object],
 ) -> dict[str, object]:
-    discarded_pre_registration_exits = 0
-
     def run_once() -> dict[str, int]:
-        nonlocal discarded_pre_registration_exits
-        completed: ProcessResult | None = None
-        for _ in range(MAX_CONTAMINATED_MEASUREMENT_ATTEMPTS):
-            try:
-                completed = run_process(
-                    command,
-                    cwd=cwd,
-                    environment=environment,
-                    timeout_seconds=timeout_seconds,
-                    capture_output=False,
-                )
-                break
-            except MeasurementContaminated:
-                discarded_pre_registration_exits += 1
-        if completed is None:
-            raise RuntimeError(
-                f"{project} could not collect an uncontaminated sample after "
-                f"{MAX_CONTAMINATED_MEASUREMENT_ATTEMPTS} attempts"
+        verify_executable_identity(expected_executable)
+        pinned.verify()
+        try:
+            completed = run_process(
+                command,
+                cwd=cwd,
+                environment=environment,
+                timeout_seconds=timeout_seconds,
+                capture_output=False,
+                executable_descriptor=(
+                    pinned.descriptor if sys.platform.startswith("linux") else None
+                ),
+                executable_path=pinned.execution_path,
             )
+        finally:
+            pinned.verify()
+            verify_executable_identity(expected_executable)
         return {
             "elapsed_ns": completed.elapsed_ns,
             "setup_ns": completed.setup_ns,
@@ -2192,28 +2554,33 @@ def run_measurement(
             "returncode": completed.returncode,
         }
 
-    for _ in range(warmup):
-        sample = run_once()
-        if sample["returncode"] != 0:
-            raise RuntimeError(f"{project} warmup exited {sample['returncode']}")
-    samples = [run_once() for _ in range(runs)]
-    failed = [sample for sample in samples if sample["returncode"] != 0]
-    if failed:
-        raise RuntimeError(f"{project} measured run exited {failed[0]['returncode']}")
-    elapsed = [sample["elapsed_ns"] for sample in samples]
-    return {
-        "project": project,
-        "status": "measured",
-        "command": command,
-        "cwd": str(cwd),
-        "environment": dict(environment),
-        "timeout_seconds": timeout_seconds,
-        "warmup": warmup,
-        "discarded_pre_registration_exits": discarded_pre_registration_exits,
-        "samples": samples,
-        "median_ns": int(statistics.median(elapsed)),
-        "p95_ns": percentile_95(elapsed),
-    }
+    pinned = pin_executable(expected_executable)
+    try:
+        for _ in range(warmup):
+            sample = run_once()
+            if sample["returncode"] != 0:
+                raise RuntimeError(f"{project} warmup exited {sample['returncode']}")
+        samples = [run_once() for _ in range(runs)]
+        failed = [sample for sample in samples if sample["returncode"] != 0]
+        if failed:
+            raise RuntimeError(f"{project} measured run exited {failed[0]['returncode']}")
+        elapsed = [sample["elapsed_ns"] for sample in samples]
+        return {
+            "project": project,
+            "status": "measured",
+            "command": command,
+            "cwd": str(cwd),
+            "environment": dict(environment),
+            "timeout_seconds": timeout_seconds,
+            "warmup": warmup,
+            "executable_identity": dict(expected_executable),
+            "pinned_executable": dict(pinned.record),
+            "samples": samples,
+            "median_ns": int(statistics.median(elapsed)),
+            "p95_ns": percentile_95(elapsed),
+        }
+    finally:
+        pinned.close()
 
 
 def unavailable_workloads(fx_binary: Path) -> list[dict[str, object]]:
@@ -2459,6 +2826,8 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
 
     fx_binary = Path(str(fx_build["binary"]["path"]))
     machine_binary = Path(str(machine_build["binary"]["path"]))
+    fx_executable_identity = executable_identity(fx_binary)
+    machine_executable_identity = executable_identity(machine_binary)
     fx_measurement_environment = {**base_env, "FX_BENCH": "1"}
     bootstrap = {
         "id": "bootstrap-exit",
@@ -2478,6 +2847,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
                 args.warmup,
                 args.runs,
                 args.sample_timeout,
+                fx_executable_identity,
             ),
             run_measurement(
                 "machine-god",
@@ -2487,6 +2857,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
                 args.warmup,
                 args.runs,
                 args.sample_timeout,
+                machine_executable_identity,
             ),
         ],
     }

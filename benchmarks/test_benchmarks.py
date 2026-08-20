@@ -196,6 +196,27 @@ class UpstreamHarnessTest(unittest.TestCase):
             "stderr_sha256": "1" * 64,
         }
 
+    def executable_record(
+        self, path: Path, byte_count: int, checksum: str
+    ) -> dict[str, object]:
+        return {
+            "executable": str(path),
+            "canonical_executable": str(path),
+            "sha256": checksum,
+            "bytes": byte_count,
+            "mode": 0o755,
+            "device": 1,
+            "inode": 2,
+            "mtime_ns": 3,
+            "ctime_ns": 4,
+            "invocation_mode": 0o755,
+            "invocation_device": 1,
+            "invocation_inode": 2,
+            "invocation_mtime_ns": 3,
+            "invocation_ctime_ns": 4,
+            "invocation_link_target": "",
+        }
+
     def valid_upstream_evidence(
         self,
         root: Path = Path("/checkout"),
@@ -397,6 +418,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             ("fx", fx_binary, {**base, "FX_BENCH": "1"}),
             ("machine-god", machine_binary, base),
         ):
+            checksum = "2" * 64 if project == "fx" else "3" * 64
             implementations.append(
                 {
                     "project": project,
@@ -406,7 +428,16 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "environment": environment,
                     "timeout_seconds": 1.0,
                     "warmup": 1,
-                    "discarded_pre_registration_exits": 0,
+                    "executable_identity": self.executable_record(binary, 1, checksum),
+                    "pinned_executable": {
+                        "method": "private-copy",
+                        "sha256": checksum,
+                        "bytes": 1,
+                        "mode": 0o500,
+                        "device": 5,
+                        "inode": 6,
+                        "seals": 0,
+                    },
                     "samples": samples,
                     "median_ns": 5,
                     "p95_ns": 10,
@@ -654,9 +685,9 @@ class UpstreamHarnessTest(unittest.TestCase):
             lambda data: data["workloads"][0]["implementations"][0]["samples"][
                 0
             ].__setitem__("supervision_ns", True),
-            lambda data: data["workloads"][0]["implementations"][0].__setitem__(
-                "discarded_pre_registration_exits", -1
-            ),
+            lambda data: data["workloads"][0]["implementations"][0][
+                "pinned_executable"
+            ].__setitem__("sha256", "f" * 64),
         )
         for mutate in mutations:
             with self.subTest(mutate=mutate):
@@ -735,6 +766,15 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "bytes": binary.stat().st_size,
                     "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 }
+                identity = executable_identity(binary)
+                measurement = evidence["workloads"][0]["implementations"][index]
+                measurement["executable_identity"] = identity
+                measurement["pinned_executable"].update(
+                    {
+                        "sha256": identity["sha256"],
+                        "bytes": identity["bytes"],
+                    }
+                )
             machine_source = scratch / "machine-source"
             materialization = materialize_machine_source(
                 ROOT,
@@ -794,6 +834,8 @@ class UpstreamHarnessTest(unittest.TestCase):
             scratch.mkdir()
             environment = os.environ.copy()
             environment[CONTAINMENT_ENVIRONMENT_KEY] = "d" * 32
+            if sys.platform.startswith("linux"):
+                linux_containment_preflight()
             environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
             environment["GIT_CONFIG_NOSYSTEM"] = "1"
             environment["GIT_NO_REPLACE_OBJECTS"] = "1"
@@ -1177,63 +1219,104 @@ class UpstreamHarnessTest(unittest.TestCase):
         self.assertGreater(wall_elapsed, 390_000_000)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux timing regression")
-    def test_delayed_observer_registration_is_discarded_and_retried(self) -> None:
+    def test_gated_submillisecond_samples_wait_for_observer_registration(self) -> None:
         linux_containment_preflight()
         environment = os.environ.copy()
         environment[CONTAINMENT_ENVIRONMENT_KEY] = "c" * 32
         original_register = upstream.LinuxExitObserver._register_pidfd
         registrations = 0
 
-        def delay_second_registration(
+        def delayed_registration(
             observer: upstream.LinuxExitObserver,
             poller: object,
             descriptor: int,
         ) -> None:
             nonlocal registrations
             registrations += 1
-            if registrations == 2:
-                time.sleep(0.2)
+            time.sleep(0.05)
             original_register(observer, poller, descriptor)
 
+        executable = invocation_path("true", os.environ["PATH"])
+        identity = executable_identity(Path(executable))
         with mock.patch.object(
             upstream.LinuxExitObserver,
             "_register_pidfd",
-            delay_second_registration,
+            delayed_registration,
         ):
             measurement = run_measurement(
-                "registration-race",
-                [sys.executable, "-c", "import time; time.sleep(0.02)"],
+                "prearmed-true",
+                [executable],
                 Path.cwd(),
                 environment,
                 warmup=1,
-                runs=1,
+                runs=10,
                 timeout_seconds=1.0,
+                expected_executable=identity,
             )
 
-        self.assertEqual(registrations, 3)
-        self.assertEqual(measurement["discarded_pre_registration_exits"], 1)
-        self.assertEqual(len(measurement["samples"]), 1)
-        self.assertLess(measurement["samples"][0]["elapsed_ns"], 150_000_000)
+        self.assertEqual(registrations, 11)
+        self.assertEqual(len(measurement["samples"]), 10)
+        self.assertNotIn("discarded_pre_registration_exits", measurement)
+        self.assertLess(
+            max(sample["elapsed_ns"] for sample in measurement["samples"]),
+            50_000_000,
+        )
 
-    def test_measurement_caps_contaminated_registration_retries(self) -> None:
-        with (
-            mock.patch.object(
-                upstream,
-                "run_process",
-                side_effect=upstream.MeasurementContaminated("injected race"),
-            ) as run,
-            self.assertRaisesRegex(RuntimeError, "after 10 attempts"),
-        ):
-            run_measurement(
-                "registration-race",
-                ["ignored"],
-                Path.cwd(),
-                {},
-                warmup=1,
-                runs=1,
-                timeout_seconds=1.0,
-            )
-        self.assertEqual(run.call_count, 10)
+    @unittest.skipUnless(os.name == "posix", "pinned executable regression requires POSIX")
+    def test_replacement_during_sample_cannot_change_executed_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            marker = temporary / "result"
+            invocation = temporary / "measured-tool"
+            if sys.platform.startswith("linux"):
+                original = Path(invocation_path("sh", os.environ["PATH"])).resolve()
+                replacement = Path(
+                    invocation_path("false", os.environ["PATH"])
+                ).resolve()
+                command = [
+                    str(invocation),
+                    "-c",
+                    f"sleep 0.2; printf good > {marker}",
+                ]
+            else:
+                original = temporary / "original"
+                replacement = temporary / "replacement"
+                original.write_text(
+                    f"#!/bin/sh\nsleep 0.2\nprintf good > {marker}\n",
+                    encoding="utf-8",
+                )
+                replacement.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+                original.chmod(0o755)
+                replacement.chmod(0o755)
+                command = [str(invocation)]
+            invocation.symlink_to(original)
+            identity = executable_identity(invocation)
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "d" * 32
+
+            def replace_invocation() -> None:
+                time.sleep(0.05)
+                invocation.unlink()
+                invocation.symlink_to(replacement)
+
+            replacer = threading.Thread(target=replace_invocation)
+            replacer.start()
+            try:
+                with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                    run_measurement(
+                        "identity-swap",
+                        command,
+                        temporary,
+                        environment,
+                        warmup=0,
+                        runs=1,
+                        timeout_seconds=1.0,
+                        expected_executable=identity,
+                    )
+            finally:
+                replacer.join(1.0)
+            self.assertFalse(replacer.is_alive())
+            self.assertEqual(marker.read_text(encoding="utf-8"), "good")
 
     @unittest.skipUnless(os.name == "posix", "executable symlink regression requires POSIX")
     def test_tool_identity_survives_symlink_swap_and_detects_target_change(self) -> None:
