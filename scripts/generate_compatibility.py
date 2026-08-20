@@ -50,6 +50,9 @@ ALLOWED_STATUSES = {"planned", "deferred", "intentional_difference"}
 REGULAR_BLOB_MODES = {"100644", "100755"}
 ZIG_IDENTIFIER_PATTERN = r'(?:@"[A-Za-z_][A-Za-z0-9_]*"|[A-Za-z_][A-Za-z0-9_]*)'
 JS_IDENTIFIER_PATTERN = r"[A-Za-z_$][A-Za-z0-9_$]*"
+JS_VARIABLE_EXPORT = re.compile(r"export\s+(?P<kind>const|let|var)\s+")
+JS_EXPORT_LIST_START = re.compile(r"export\s*\{")
+JS_EXPORT_FROM = re.compile(r'from\s*(?P<quote>")')
 CLI_TOKEN = re.compile(r"[a-z][a-z0-9-]*")
 CLI_ALIAS = re.compile(r"(?:-{1,2})?[A-Za-z0-9][A-Za-z0-9-]*")
 SLASH_COMMAND = re.compile(r"/[a-z0-9][a-z0-9_-]*(?: [a-z0-9][a-z0-9_-]*)*")
@@ -467,9 +470,14 @@ def find_matching_brace(mask: str, opening: int) -> int:
 
 
 def initializer_body(
-    text: str, language: str, declaration_pattern: str, label: str
+    text: str,
+    language: str,
+    declaration_pattern: str,
+    label: str,
+    *,
+    masked_source: str | None = None,
 ) -> tuple[str, str]:
-    mask = source_mask(text, language)
+    mask = masked_source if masked_source is not None else source_mask(text, language)
     matches = list(re.finditer(declaration_pattern, mask))
     if len(matches) > 1:
         raise InventoryError(f"multiple upstream declarations for {label}")
@@ -491,8 +499,9 @@ def skip_space(mask: str, index: int) -> int:
     return index
 
 
-def root_struct_blocks(body: str, mask: str) -> list[tuple[str, str]]:
-    blocks: list[tuple[str, str]] = []
+def root_struct_blocks(body: str, mask: str) -> list[tuple[str, str, list[int]]]:
+    depths = structural_depth_map(mask)
+    blocks: list[tuple[str, str, list[int]]] = []
     index = skip_space(mask, 0)
     while index < len(mask):
         if not mask.startswith(".{", index):
@@ -500,7 +509,18 @@ def root_struct_blocks(body: str, mask: str) -> list[tuple[str, str]]:
             raise InventoryError(f"unsupported registry entry syntax near {excerpt!r}")
         opening = index + 1
         closing = find_matching_brace(mask, opening)
-        blocks.append((body[opening + 1 : closing], mask[opening + 1 : closing]))
+        block_start = opening + 1
+        base_depth = depths[block_start]
+        block_depths = [
+            depth - base_depth for depth in depths[block_start : closing + 1]
+        ]
+        blocks.append(
+            (
+                body[block_start:closing],
+                mask[block_start:closing],
+                block_depths,
+            )
+        )
         index = skip_space(mask, closing + 1)
         if index >= len(mask) or mask[index] != ",":
             raise InventoryError("registry entries must be comma-terminated struct literals")
@@ -520,12 +540,15 @@ def zig_identifier(raw: str) -> str:
     return value
 
 
-def parse_enum(text: str, name: str) -> list[str]:
+def parse_enum(
+    text: str, name: str, *, masked_source: str | None = None
+) -> list[str]:
     body, mask = initializer_body(
         text,
         "zig",
         rf"pub\s+const\s+{re.escape(name)}\s*=\s*enum\s*\{{",
         name,
+        masked_source=masked_source,
     )
     if mask.rstrip() and not mask.rstrip().endswith(","):
         raise InventoryError(f"{name} members must be comma-terminated")
@@ -558,18 +581,20 @@ def decode_zig_string(raw: str) -> str:
     return value
 
 
-def field_assignment(mask: str, field: str) -> re.Match[str] | None:
-    candidates = re.finditer(
-        rf"\.{re.escape(field)}\s*=\s*", mask
-    )
-    matches = [match for match in candidates if structural_depth(mask, match.start()) == 0]
+def field_assignment(
+    mask: str, depths: list[int], field: str
+) -> re.Match[str] | None:
+    candidates = re.finditer(rf"\.{re.escape(field)}\s*=\s*", mask)
+    matches = [match for match in candidates if depths[match.start()] == 0]
     if len(matches) > 1:
         raise InventoryError(f"registry entry repeats .{field}")
     return matches[0] if matches else None
 
 
-def field_match(mask: str, field: str, value_pattern: str) -> re.Match[str] | None:
-    assignment = field_assignment(mask, field)
+def field_match(
+    mask: str, depths: list[int], field: str, value_pattern: str
+) -> re.Match[str] | None:
+    assignment = field_assignment(mask, depths, field)
     if assignment is None:
         return None
     match = re.compile(rf"(?P<value>{value_pattern})").match(mask, assignment.end())
@@ -578,16 +603,19 @@ def field_match(mask: str, field: str, value_pattern: str) -> re.Match[str] | No
     return match
 
 
-def structural_depth(mask: str, end: int) -> int:
+def structural_depth_map(mask: str) -> list[int]:
+    depths = [0] * (len(mask) + 1)
     depth = 0
-    for character in mask[:end]:
+    for index, character in enumerate(mask):
+        depths[index] = depth
         if character in "{[(":
             depth += 1
         elif character in "}])":
             depth -= 1
             if depth < 0:
                 raise InventoryError("unbalanced registry initializer")
-    return depth
+    depths[len(mask)] = depth
+    return depths
 
 
 def parse_string_at(text: str, opening: int) -> tuple[str, int]:
@@ -614,9 +642,13 @@ def require_field_terminator(mask: str, index: int, field: str) -> None:
 
 
 def string_field(
-    block: str, mask: str, field: str, required: bool = True
+    block: str,
+    mask: str,
+    depths: list[int],
+    field: str,
+    required: bool = True,
 ) -> str | None:
-    match = field_match(mask, field, r'"')
+    match = field_match(mask, depths, field, r'"')
     if match is None:
         if required:
             raise InventoryError(f"registry entry is missing .{field}")
@@ -627,10 +659,15 @@ def string_field(
 
 
 def identifier_field(
-    block: str, mask: str, field: str, required: bool = True
+    block: str,
+    mask: str,
+    depths: list[int],
+    field: str,
+    required: bool = True,
 ) -> str | None:
     match = field_match(
         mask,
+        depths,
         field,
         rf"\.(?P<identifier>{ZIG_IDENTIFIER_PATTERN})(?![A-Za-z0-9_])",
     )
@@ -643,8 +680,10 @@ def identifier_field(
     return zig_identifier(identifier)
 
 
-def string_list_field(block: str, mask: str, field: str) -> list[str]:
-    match = field_match(mask, field, r"&\.\{")
+def string_list_field(
+    block: str, mask: str, depths: list[int], field: str
+) -> list[str]:
+    match = field_match(mask, depths, field, r"&\.\{")
     if match is None:
         return []
     opening = match.end("value") - 1
@@ -673,8 +712,14 @@ def string_list_field(block: str, mask: str, field: str) -> list[str]:
     return values
 
 
-def boolean_field(block: str, mask: str, field: str, default: bool = False) -> bool:
-    match = field_match(mask, field, r"true|false")
+def boolean_field(
+    block: str,
+    mask: str,
+    depths: list[int],
+    field: str,
+    default: bool = False,
+) -> bool:
+    match = field_match(mask, depths, field, r"true|false")
     if match is None:
         return default
     require_field_terminator(mask, match.end("value"), field)
@@ -682,24 +727,39 @@ def boolean_field(block: str, mask: str, field: str, default: bool = False) -> b
 
 
 def require_unique(values: list[str], label: str) -> None:
-    duplicates = sorted({value for value in values if values.count(value) > 1})
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        if value in seen:
+            duplicates.add(value)
+        else:
+            seen.add(value)
     if duplicates:
-        raise InventoryError(f"duplicate {label}: {', '.join(duplicates)}")
+        raise InventoryError(f"duplicate {label}: {', '.join(sorted(duplicates))}")
 
 
-def extract_top_level_commands(specs_text: str, registry_text: str) -> list[dict[str, Any]]:
-    enum_values = parse_enum(specs_text, "TopLevelKind")
+def extract_top_level_commands(
+    specs_text: str,
+    registry_text: str,
+    *,
+    specs_masked: str | None = None,
+    registry_masked: str | None = None,
+) -> list[dict[str, Any]]:
+    enum_values = parse_enum(
+        specs_text, "TopLevelKind", masked_source=specs_masked
+    )
     body, mask = initializer_body(
         registry_text,
         "zig",
         r"pub\s+const\s+top_level_specs\s*=\s*\[_\]TopLevelSpec\s*\{",
         "top-level command registry",
+        masked_source=registry_masked,
     )
     commands: list[dict[str, Any]] = []
-    for block, block_mask in root_struct_blocks(body, mask):
-        kind = str(identifier_field(block, block_mask, "kind"))
-        token = str(string_field(block, block_mask, "token"))
-        aliases = string_list_field(block, block_mask, "aliases")
+    for block, block_mask, depths in root_struct_blocks(body, mask):
+        kind = str(identifier_field(block, block_mask, depths, "kind"))
+        token = str(string_field(block, block_mask, depths, "token"))
+        aliases = string_list_field(block, block_mask, depths, "aliases")
         require_pattern(token, CLI_TOKEN, "top-level command token")
         for alias in aliases:
             require_pattern(alias, CLI_ALIAS, "top-level command alias")
@@ -708,10 +768,10 @@ def extract_top_level_commands(specs_text: str, registry_text: str) -> list[dict
                 "kind": kind,
                 "token": token,
                 "aliases": aliases,
-                "usage": string_field(block, block_mask, "usage"),
-                "summary": string_field(block, block_mask, "summary"),
+                "usage": string_field(block, block_mask, depths, "usage"),
+                "summary": string_field(block, block_mask, depths, "summary"),
                 "hidden_from_help": boolean_field(
-                    block, block_mask, "hidden_from_top_level_help"
+                    block, block_mask, depths, "hidden_from_top_level_help"
                 ),
             }
         )
@@ -727,19 +787,26 @@ def extract_top_level_commands(specs_text: str, registry_text: str) -> list[dict
     return commands
 
 
-def extract_slash_commands(specs_text: str, registry_text: str) -> list[dict[str, Any]]:
-    enum_values = parse_enum(specs_text, "SlashKind")
+def extract_slash_commands(
+    specs_text: str,
+    registry_text: str,
+    *,
+    specs_masked: str | None = None,
+    registry_masked: str | None = None,
+) -> list[dict[str, Any]]:
+    enum_values = parse_enum(specs_text, "SlashKind", masked_source=specs_masked)
     body, mask = initializer_body(
         registry_text,
         "zig",
         r"pub\s+const\s+slash_specs\s*=\s*\[_\]SlashSpec\s*\{",
         "slash command registry",
+        masked_source=registry_masked,
     )
     commands: list[dict[str, Any]] = []
-    for block, block_mask in root_struct_blocks(body, mask):
-        kind = str(identifier_field(block, block_mask, "kind"))
-        command = str(string_field(block, block_mask, "command"))
-        aliases = string_list_field(block, block_mask, "aliases")
+    for block, block_mask, depths in root_struct_blocks(body, mask):
+        kind = str(identifier_field(block, block_mask, depths, "kind"))
+        command = str(string_field(block, block_mask, depths, "command"))
+        aliases = string_list_field(block, block_mask, depths, "aliases")
         require_pattern(command, SLASH_COMMAND, "slash command")
         for alias in aliases:
             require_pattern(alias, SLASH_COMMAND, "slash command alias")
@@ -749,9 +816,15 @@ def extract_slash_commands(specs_text: str, registry_text: str) -> list[dict[str
                 "command": command,
                 "aliases": aliases,
                 "presentation_category": identifier_field(
-                    block, block_mask, "presentation_category", required=False
+                    block,
+                    block_mask,
+                    depths,
+                    "presentation_category",
+                    required=False,
                 ),
-                "has_arguments": boolean_field(block, block_mask, "has_args"),
+                "has_arguments": boolean_field(
+                    block, block_mask, depths, "has_args"
+                ),
             }
         )
     kinds = [str(command["kind"]) for command in commands]
@@ -764,12 +837,56 @@ def extract_slash_commands(specs_text: str, registry_text: str) -> list[dict[str
     return commands
 
 
+def index_tool_spec_blocks(
+    text: str,
+    mask: str,
+    depths: list[int],
+    identifiers: list[str],
+) -> dict[str, tuple[str, str, list[int]]]:
+    wanted = set(identifiers)
+    matches: dict[str, list[re.Match[str]]] = {identifier: [] for identifier in wanted}
+    declaration_pattern = re.compile(
+        r"pub\s+const\s+(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+        r"ToolSpec\s*\{"
+    )
+    for match in declaration_pattern.finditer(mask):
+        identifier = match.group("identifier")
+        if identifier in wanted:
+            matches[identifier].append(match)
+
+    blocks: dict[str, tuple[str, str, list[int]]] = {}
+    for identifier in identifiers:
+        candidates = matches[identifier]
+        if len(candidates) > 1:
+            raise InventoryError(f"multiple upstream declarations for built-in tool {identifier}")
+        if not candidates:
+            raise InventoryError(f"cannot find upstream built-in tool {identifier}")
+        declaration = candidates[0]
+        if depths[declaration.start()] != 0:
+            raise InventoryError(f"built-in tool {identifier} must be declared at top level")
+        opening = mask.find("{", declaration.start(), declaration.end())
+        if opening < 0:
+            raise InventoryError(f"cannot find initializer for built-in tool {identifier}")
+        closing = find_matching_brace(mask, opening)
+        block_start = opening + 1
+        base_depth = depths[block_start]
+        blocks[identifier] = (
+            text[block_start:closing],
+            mask[block_start:closing],
+            [depth - base_depth for depth in depths[block_start : closing + 1]],
+        )
+    return blocks
+
+
 def extract_builtin_tools(text: str) -> list[dict[str, str]]:
+    source_masked = source_mask(text, "zig")
+    source_depths = structural_depth_map(source_masked)
     body, mask = initializer_body(
         text,
         "zig",
         r"pub\s+const\s+all\s*=\s*\[_\]tool_dispatch\.Tool\s*\{",
         "built-in tool registry",
+        masked_source=source_masked,
     )
     if mask.rstrip() and not mask.rstrip().endswith(","):
         raise InventoryError("built-in tool registry entries must be comma-terminated")
@@ -789,15 +906,13 @@ def extract_builtin_tools(text: str) -> list[dict[str, str]]:
     require_unique(identifiers, "built-in tool registry identifier")
     if not identifiers:
         raise InventoryError("built-in tool registry is empty")
+    tool_blocks = index_tool_spec_blocks(
+        text, source_masked, source_depths, identifiers
+    )
     tools: list[dict[str, str]] = []
     for identifier in identifiers:
-        tool_body, tool_mask = initializer_body(
-            text,
-            "zig",
-            rf"pub\s+const\s+{re.escape(identifier)}\s*=\s*ToolSpec\s*\{{",
-            f"built-in tool {identifier}",
-        )
-        name = str(string_field(tool_body, tool_mask, "name"))
+        tool_body, tool_mask, tool_depths = tool_blocks[identifier]
+        name = str(string_field(tool_body, tool_mask, tool_depths, "name"))
         require_pattern(name, TOOL_NAME, "built-in tool name")
         tools.append({"identifier": identifier, "name": name})
     require_unique([tool["name"] for tool in tools], "built-in tool name")
@@ -842,12 +957,10 @@ def split_javascript_declarators(text: str, mask: str) -> list[tuple[str, str]]:
 def javascript_variable_exports(
     text: str, mask: str, position: int
 ) -> list[str] | None:
-    declaration = re.match(
-        r"export\s+(?P<kind>const|let|var)\s+", mask[position:]
-    )
+    declaration = JS_VARIABLE_EXPORT.match(mask, position)
     if declaration is None:
         return None
-    body_start = position + declaration.end()
+    body_start = declaration.end()
     body_end = javascript_statement_end(mask, body_start)
     body = text[body_start:body_end]
     body_mask = mask[body_start:body_end]
@@ -873,6 +986,7 @@ def javascript_variable_exports(
 
 def extract_js_exports(text: str) -> list[str]:
     mask = source_mask(text, "js")
+    depths = structural_depth_map(mask)
     export_positions = [match.start() for match in re.finditer(r"\bexport\b", mask)]
     found: list[str] = []
     declaration_pattern = re.compile(
@@ -880,7 +994,7 @@ def extract_js_exports(text: str) -> list[str]:
         rf"(?P<name>{JS_IDENTIFIER_PATTERN})(?![A-Za-z0-9_$])"
     )
     for position in export_positions:
-        if structural_depth(mask, position) != 0:
+        if depths[position] != 0:
             raise InventoryError("JavaScript exports must be top-level declarations")
         declaration = declaration_pattern.match(mask, position)
         if declaration is not None:
@@ -890,11 +1004,11 @@ def extract_js_exports(text: str) -> list[str]:
         if variable_exports is not None:
             found.extend(variable_exports)
             continue
-        list_start = re.match(r"export\s*\{", mask[position:])
+        list_start = JS_EXPORT_LIST_START.match(mask, position)
         if list_start is None:
             excerpt = text[position : position + 60].splitlines()[0]
             raise InventoryError(f"unsupported JavaScript export syntax near {excerpt!r}")
-        opening = position + list_start.end() - 1
+        opening = list_start.end() - 1
         closing = find_matching_brace(mask, opening)
         body = text[opening + 1 : closing]
         body_mask = mask[opening + 1 : closing]
@@ -919,9 +1033,9 @@ def extract_js_exports(text: str) -> list[str]:
         if not list_exports:
             raise InventoryError("JavaScript export list must not be empty")
         cursor = skip_space(mask, closing + 1)
-        from_match = re.match(r'from\s*(?P<quote>")', mask[cursor:])
+        from_match = JS_EXPORT_FROM.match(mask, cursor)
         if from_match is not None:
-            quote = cursor + from_match.start("quote")
+            quote = from_match.start("quote")
             module, cursor = parse_string_at(text, quote)
             if re.fullmatch(r"\./[A-Za-z0-9][A-Za-z0-9._/-]*\.js", module) is None:
                 raise InventoryError(f"unsupported JavaScript re-export module {module!r}")
@@ -930,10 +1044,12 @@ def extract_js_exports(text: str) -> list[str]:
             raise InventoryError("JavaScript export list must end with a semicolon")
         found.extend(list_exports)
     exports: list[str] = []
+    seen: set[str] = set()
     for name in found:
         if re.fullmatch(JS_IDENTIFIER_PATTERN, name) is None:
             raise InventoryError(f"unsupported JavaScript export identifier {name!r}")
-        if name not in exports:
+        if name not in seen:
+            seen.add(name)
             exports.append(name)
     if not exports:
         raise InventoryError("SDK module has no named exports")
@@ -1135,8 +1251,20 @@ def build_inventory(
 ) -> dict[str, Any]:
     specs_text = read_text(source, COMMAND_SPECS)
     registry_text = read_text(source, COMMAND_REGISTRY)
-    top_level = extract_top_level_commands(specs_text, registry_text)
-    slash = extract_slash_commands(specs_text, registry_text)
+    specs_masked = source_mask(specs_text, "zig")
+    registry_masked = source_mask(registry_text, "zig")
+    top_level = extract_top_level_commands(
+        specs_text,
+        registry_text,
+        specs_masked=specs_masked,
+        registry_masked=registry_masked,
+    )
+    slash = extract_slash_commands(
+        specs_text,
+        registry_text,
+        specs_masked=specs_masked,
+        registry_masked=registry_masked,
+    )
     tools = extract_builtin_tools(read_text(source, TOOL_REGISTRY))
     sdk = extract_sdk_exports(source)
     e2e = extract_e2e_owners(source)

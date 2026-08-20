@@ -91,3 +91,26 @@ prove neither quoted identifiers nor same-line multiline strings can provide a
 replacement registry, while a supported quoted identifier remains extractable.
 
 Rejected after final security rereview remediation: none.
+
+## Final performance rereview
+
+Reviewed commit: `613ed0a639adc8e10452b72a26e592bb584ce38b`.
+
+The performance pass confirmed superlinear behavior on synthetic registries.
+Built-in tool extraction rebuilt the complete Zig source mask and rescanned the
+complete file for every registered tool. JavaScript extraction rescanned the
+mask prefix to calculate structural depth for every export and allocated a
+suffix copy for several positional matches. Duplicate checks also used repeated
+linear list searches.
+
+Each source is now masked once and receives one shared structural-depth map.
+ToolSpec declarations are indexed in a single pass over that shared Zig mask,
+and their non-overlapping bodies reuse slices of the shared depth map.
+JavaScript export patterns match against absolute positions, and top-level
+depth checks are constant-time lookups. Uniqueness and ordered export
+deduplication now use sets. A bounded scaling regression covers 2,000
+JavaScript exports, while a 500-tool regression asserts exactly one full-source
+mask and depth-map construction. All prior hostile fail-closed cases remain in
+the same focused suite.
+
+Rejected after final performance rereview remediation: none.

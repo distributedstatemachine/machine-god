@@ -7,8 +7,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,6 +222,56 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         )
         commands = GENERATOR.extract_top_level_commands(specs, registry)
         self.assertEqual(commands[0]["kind"], "help")
+
+    def test_large_tool_registry_masks_and_indexes_source_once(self) -> None:
+        count = 500
+        registry = ",\n".join(f"tool_{index}" for index in range(count)) + ","
+        declarations = "\n".join(
+            f'pub const tool_{index} = ToolSpec{{ .name = "tool_{index}" }};'
+            for index in range(count)
+        )
+        text = (
+            "pub const all = [_]tool_dispatch.Tool{\n"
+            f"{registry}\n"
+            "};\n"
+            f"{declarations}\n"
+        )
+        with (
+            mock.patch.object(
+                GENERATOR, "source_mask", wraps=GENERATOR.source_mask
+            ) as masks,
+            mock.patch.object(
+                GENERATOR,
+                "structural_depth_map",
+                wraps=GENERATOR.structural_depth_map,
+            ) as depth_maps,
+        ):
+            tools = GENERATOR.extract_builtin_tools(text)
+        self.assertEqual(len(tools), count)
+        self.assertEqual(masks.call_count, 1)
+        self.assertEqual(depth_maps.call_count, 1)
+
+    def test_large_javascript_export_extraction_scales_with_input(self) -> None:
+        def javascript_exports(count: int) -> str:
+            return "\n".join(
+                f"export const value{index} = {index};" for index in range(count)
+            )
+
+        def fastest_elapsed(text: str) -> float:
+            elapsed = []
+            for _ in range(3):
+                started = time.perf_counter()
+                GENERATOR.extract_js_exports(text)
+                elapsed.append(time.perf_counter() - started)
+            return min(elapsed)
+
+        small = javascript_exports(500)
+        large = javascript_exports(2_000)
+        small_elapsed = fastest_elapsed(small)
+        large_elapsed = fastest_elapsed(large)
+        self.assertEqual(len(GENERATOR.extract_js_exports(large)), 2_000)
+        self.assertLess(large_elapsed, 2.0)
+        self.assertLess(large_elapsed, small_elapsed * 8 + 0.05)
 
     def test_unsupported_javascript_export_is_rejected(self) -> None:
         with self.assertRaisesRegex(GENERATOR.InventoryError, "export syntax"):
