@@ -1,11 +1,12 @@
 # Milestone 03 confined native `read_file` review 01
 
-Status: **ADVERSARIAL GREEN — exact remote CI pending**
+Status: **ADVERSARIAL GREEN — integrated exact remote rerun pending**
 
 ## Candidate
 
 - Base: `8c4840dd829688a3755fe6b6f23ab92dbc2ade84`
 - Adversarially green implementation: `3378d2b5c87980c1cbe8f6f352c754d7fd98a462`
+- Integrated CI remediation: `4bd039750d792e3c30cbc4d3c1909c644edfb673`
 - Branch: `agent/m03-read-file-reviewed`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 
@@ -146,10 +147,16 @@ a product performance claim.
 
 ## Remaining gates and scope
 
-The feature branch and its eventual fast-forwarded `main` SHA must still pass
-their exact remote CI and benchmark-evidence workflows. The benchmark workflow
-continues to use Zig only to build the pinned upstream fx comparison target;
-machine-god remains a Rust product.
+The first sealed feature SHA, `5bf772fa271c348ff0b3d36cac81c5240c6645c1`,
+passed its exact benchmark-evidence workflow but exposed a Linux-only empty PID
+marker race in the repository's Python benchmark harness during CI. The
+`read_file` implementation and all Rust/native jobs passed. The bounded harness
+fix, deterministic regression isolation, and fresh adversarial review are
+recorded in the [containment marker remediation review](m03-benchmark-containment-marker-review-01.md).
+The integrated branch and its eventual fast-forwarded `main` SHA must still
+pass fresh exact remote CI and benchmark-evidence workflows. The benchmark
+workflow continues to use Zig only to build the pinned upstream fx comparison
+target; machine-god remains a Rust product.
 
 Milestone 03 remains in progress. Concrete providers, a production permission
 prompt and modes beyond `ask`, durable native sessions, broader CLI behavior,
