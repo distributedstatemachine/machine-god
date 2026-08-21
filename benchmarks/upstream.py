@@ -2016,6 +2016,7 @@ def linux_containment_preflight() -> None:
         baseline = LinuxProcessSupervisor.capture_baseline()
         with tempfile.TemporaryDirectory(prefix="machine-god-containment-") as directory:
             marker = Path(directory) / "hostile.pid"
+            marker_staging = Path(directory) / "hostile.pid.partial"
             script = (
                 "import os,pathlib,time; "
                 "first=os.fork(); "
@@ -2023,7 +2024,10 @@ def linux_containment_preflight() -> None:
                 "os.setsid(); second=os.fork(); "
                 "(os._exit(0) if second else None); "
                 "os.environ.clear(); "
-                f"pathlib.Path({str(marker)!r}).write_text(str(os.getpid())); "
+                f"marker=pathlib.Path({str(marker)!r}); "
+                f"staging=pathlib.Path({str(marker_staging)!r}); "
+                "staging.write_text(str(os.getpid()), encoding='ascii'); "
+                "os.replace(staging, marker); "
                 "time.sleep(30)"
             )
             supervisor = LinuxProcessSupervisor(baseline)

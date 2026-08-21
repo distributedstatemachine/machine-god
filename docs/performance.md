@@ -82,22 +82,24 @@ pipes, and uses bounded cleanup waits. Linux CI also enables the harness as a
 child subreaper and supervises immutable PID identities with pidfds and `/proc`
 parent relationships. A one-time hostile preflight must prove that a child which
 clears its environment, calls `setsid`, and double-forks can still be discovered,
-killed, and reaped. Execution fails closed if subreaper, pidfd, or process-table
-supervision is unavailable, or if a successful command leaks a descendant. The
-post-success path uses a bounded settle period to discover and `waitpid` every
-adopted child, including short-lived double-fork zombies, and accepts a run only
-after no supervised descendant PID remains. Linux measurement runs fork a child
-which creates its process group and blocks on a private close-on-exec gate before
-executing the target. While it is blocked, the parent opens the root pidfd,
-registers the exit observer, and attaches the immutable root identity with a
-direct, single-PID `/proc/<pid>/stat` lookup. Only then does it start the sample
-clock and release the gate. Thus even sub-millisecond exits are observed from
-before exec, every requested run is retained, and no duration-dependent retry or
-discard can bias the distribution. There is no periodic process-table monitor.
-Pidfd readability timestamps root exit without reaping it. Full descendant
-discovery, settling, and reaping begin only after that timestamp. Every process
-record stores the measured interval plus separate `setup_ns`, `supervision_ns`,
-and `cleanup_ns` durations.
+killed, and reaped. The descendant publishes its complete decimal PID through a
+private staging file and atomic rename, so the supervisor never treats a merely
+created, partially written marker as ready. Execution fails closed if subreaper,
+pidfd, or process-table supervision is unavailable, or if a successful command
+leaks a descendant. The post-success path uses a bounded settle period to
+discover and `waitpid` every adopted child, including short-lived double-fork
+zombies, and accepts a run only after no supervised descendant PID remains.
+Linux measurement runs fork a child which creates its process group and blocks
+on a private close-on-exec gate before executing the target. While it is blocked,
+the parent opens the root pidfd, registers the exit observer, and attaches the
+immutable root identity with a direct, single-PID `/proc/<pid>/stat` lookup. Only
+then does it start the sample clock and release the gate. Thus even
+sub-millisecond exits are observed from before exec, every requested run is
+retained, and no duration-dependent retry or discard can bias the distribution.
+There is no periodic process-table monitor. Pidfd readability timestamps root
+exit without reaping it. Full descendant discovery, settling, and reaping begin
+only after that timestamp. Every process record stores the measured interval
+plus separate `setup_ns`, `supervision_ns`, and `cleanup_ns` durations.
 
 Each built benchmark binary is identified by path, canonical path, SHA-256,
 size, mode, device, inode, and timestamps before measurement. On Linux its bytes

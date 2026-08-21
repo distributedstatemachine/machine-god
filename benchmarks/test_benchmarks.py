@@ -851,7 +851,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
             displaced = root / "displaced"
             replacement = root / "replacement"
             original_bytes = b"original executable A"
-            replacement_bytes = b"replacement bytes B"
+            replacement_bytes = b"replaced executable B"
             binary.write_bytes(original_bytes)
             replacement.write_bytes(replacement_bytes)
             binary.chmod(0o755)
@@ -908,6 +908,11 @@ class BenchmarkScriptsTest(unittest.TestCase):
                     benchmark_run,
                     "run_process",
                     side_effect=record_pinned_execution,
+                ),
+                mock.patch.object(
+                    benchmark_run,
+                    "repository_head",
+                    return_value="1" * 40,
                 ),
                 mock.patch.object(sys, "stderr", diagnostic),
                 self.assertRaises(SystemExit) as raised,
