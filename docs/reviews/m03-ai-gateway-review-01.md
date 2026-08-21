@@ -156,7 +156,7 @@ Rust/Cargo 1.94.1:
 
 - `cargo fmt --all -- --check`;
 - workspace/all-target/all-feature Clippy with warnings denied;
-- workspace tests: 299 top-level tests plus 19 deep-JSON child-process probes;
+- workspace tests: 301 top-level tests plus 19 deep-JSON child-process probes;
 - workspace documentation tests: 2;
 - focused AI Gateway evidence: 35 direct codec tests and 2 real-engine tests;
 - warnings-denied `machine-god-native` library Clippy for
