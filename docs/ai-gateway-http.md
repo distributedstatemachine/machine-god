@@ -1,0 +1,235 @@
+# Optional native AI Gateway HTTP transport
+
+This page is the normative contract for the candidate seventh bounded
+Milestone 03 slice. It adds a Reqwest-backed `AiGatewayHttpTransport` as one
+optional native implementation of the injected byte-transport boundary in the
+[`AiGatewayProvider` codec](ai-gateway.md). The candidate remains **IN
+PROGRESS** until it is integrated, receives fresh adversarial review, and
+passes remote CI for the exact integrated commit. No green or production-ready
+claim is made here.
+
+The transport implements `AiGatewayTransport` with standard futures and
+streams, but its concrete startup future and response stream must be polled
+inside a live Tokio runtime with I/O and time enabled. A current-thread runtime
+is sufficient. The host owns that runtime, which must outlive the transport's
+requests, streams, and pooled connections and remain driven while they are
+active or being torn down. Construction performs no network effect and requires
+no runtime. Core, the codec, and custom injected transports remain
+executor-neutral and retain their existing authority and resource boundaries.
+
+## Feature and public API
+
+The implementation is opt-in through the `machine-god-native` Cargo feature
+`ai-gateway-http`. The feature and all of its exports are cfg-gated off on
+WebAssembly; there is no WASM HTTP implementation. The base crate and custom
+injected transports do not require Reqwest or Tokio.
+
+The feature exposes these construction surfaces:
+
+- `AiGatewayBearerToken::new` accepts an explicitly supplied token;
+- `AiGatewayHttpEndpoint::default` selects the sole production endpoint;
+- `AiGatewayHttpEndpoint::loopback_http` constructs the explicitly test-only
+  plaintext endpoint;
+- `AiGatewayHttpLimits::default` selects the fixed default time, connection and
+  response-chunk limits;
+- `AiGatewayHttpLimits::new(connect_timeout: Duration, request_timeout: Duration,
+  max_active_requests: usize, max_response_chunk_bytes: usize)` validates explicit
+  values; `connect_timeout`, `request_timeout`, `max_active_requests`, and
+  `max_response_chunk_bytes` are read-only accessors; and
+- `AiGatewayHttpTransport::new` uses the production endpoint and default
+  limits, while `with_endpoint_and_limits` accepts an already validated
+  endpoint and limits.
+
+Construction returns fixed `AiGatewayHttpConfigError` categories:
+`InvalidBearerToken`, `InvalidEndpoint`, `InvalidLimits`, or
+`ClientInitialization`. Display and debug text do not reflect the supplied
+token, endpoint, dependency diagnostic, operating-system diagnostic or other
+constructor input. Endpoint and transport debug output reveal only structural
+kind and limit data; URI and authorization values remain redacted.
+
+Repository-local consumers enable the transport explicitly:
+
+```toml
+[dependencies]
+machine-god-native = { path = "crates/machine-god-native", features = ["ai-gateway-http"] }
+```
+
+The trusted host passes the credential as data. The example deliberately has
+no secret literal and performs no ambient lookup:
+
+```rust,ignore
+use std::error::Error;
+use std::sync::Arc;
+
+use machine_god_native::{
+    AiGatewayBearerToken, AiGatewayHttpTransport, AiGatewayProvider,
+};
+
+fn provider_from_host_secret(
+    bearer_from_trusted_host: String,
+) -> Result<AiGatewayProvider, Box<dyn Error>> {
+    let token = AiGatewayBearerToken::new(bearer_from_trusted_host)?;
+    let transport = Arc::new(AiGatewayHttpTransport::new(token)?);
+    Ok(AiGatewayProvider::new("provider/model", transport)?)
+}
+```
+
+This API does not read an environment variable, configuration file, keychain,
+credential helper, command-line flag or prompt. Credential acquisition,
+rotation, lifetime and authorization remain trusted-host responsibilities.
+
+## Endpoint and credential confinement
+
+The production endpoint is pinned to the public constant
+`AI_GATEWAY_HTTP_DEFAULT_ENDPOINT`:
+
+```text
+https://ai-gateway.vercel.sh/v3/ai/language-model
+```
+
+There is no arbitrary production endpoint constructor. Production uses HTTPS
+with the exact scheme, host, port and path above.
+
+`AiGatewayHttpEndpoint::loopback_http` is the only alternate endpoint surface.
+It exists exclusively for deterministic tests, accepts an endpoint string no
+larger than 2,048 ASCII bytes, requires plaintext `http`, an explicit nonzero
+port and an absolute path, and accepts only canonical numeric dotted-decimal
+IPv4 loopback in `127.0.0.0/8` or the canonical bracketed IPv6 loopback host
+`[::1]`.
+User information, a query and a fragment are rejected. Names such as
+`localhost`, non-loopback destinations, alternate or encoded IP spellings,
+HTTPS alternates and non-HTTP schemes fail construction. This is a local-test
+escape hatch, not a general endpoint configuration feature; a process able to
+bind the selected loopback port is inside that test trust boundary.
+
+`AiGatewayBearerToken::new` accepts a 1–4,096-byte RFC 6750 bearer `b64token`:
+one or more ASCII letters, digits, `-`, `.`, `_`, `~`, `+`, or `/`, followed
+only by optional trailing `=` padding. The token is retained only so the
+transport can attach `Authorization: Bearer <token>` to the constructed
+request. Its debug representation is always redacted, it exposes no revealing
+display interface, and its bytes never enter transport error codes or messages.
+This is not a memory-zeroization or locked-memory claim.
+
+## Exact HTTP exchange
+
+For each codec request, the transport issues one POST to its constructed
+endpoint. It preserves the codec's validated content type,
+protocol/specification, model, streaming, session and affinity metadata and
+adds the bearer authorization header, fixed `Accept: text/event-stream`, and
+fixed `Accept-Encoding: identity`. The Reqwest/HTTP stack may add required
+wire-framing headers such as `Host` or `Content-Length`; machine-god adds no
+team, endpoint-selection, fx referer, fx title or fx user-agent identity.
+
+The request body is exactly the body supplied by `AiGatewayProvider`. The
+transport does not inspect or rewrite prompt data and does not compress the
+request. The codec's independent 12 MiB encoded-body cap applies before this
+boundary. A direct caller that violates the transport request/header contract
+receives a fixed redacted failure; it cannot replace the configured
+authorization value.
+
+Only status 200 returns an `AiGatewayByteStream`. Status is classified before
+any body is exposed:
+
+| HTTP status | `ProviderErrorKind` | Retryable |
+| --- | --- | --- |
+| `200` | accepted byte stream | not applicable |
+| `401`, `403` | `Authentication` | no |
+| `429` | `RateLimited` | yes |
+| `408`, `425`, `500`–`599` | `Unavailable` | yes |
+| every other `400`–`499` | `InvalidRequest` | no |
+| `300`–`399` | `Protocol` | no |
+| every other non-`200` status | `Protocol` | no |
+
+The mapping uses only the status. It never reads, parses, retains or reflects a
+non-200 body for diagnosis. Response headers, reason text, endpoint text,
+credential bytes and dependency-controlled diagnostics likewise never enter a
+public error or debug representation. A generic network failure is a fixed,
+conservatively retryable `Transport` error. A recognized TLS failure is a fixed
+non-retryable `Transport` error. The transport itself performs no retry for any
+category, including when the request may already have reached the peer.
+
+## Fixed client policy and resource bounds
+
+Reqwest 0.13.4 has default features disabled and enables only its Rustls
+support. The client uses Rustls with the pinned
+`webpki-root-certs` dataset and an explicit closed policy:
+
+| Concern | Default | Validated contract |
+| --- | --- | --- |
+| production endpoint | pinned | one pinned HTTPS origin and path |
+| alternate endpoint | none | explicit numeric-loopback plaintext test endpoint only |
+| proxy | disabled | no ambient or explicit proxy use |
+| redirects | disabled | every 3xx reaches the fixed status mapper |
+| response decompression | disabled | no automatic decoding |
+| cookies | disabled | no cookie persistence or replay |
+| retry/backoff | disabled | exactly one transport attempt |
+| `Expect: 100-continue` | disabled | no automatic expectation handshake |
+| active requests | 16 | 1–64; same-endpoint idle connection reuse is allowed |
+| connect timeout | 30 seconds | greater than zero and at most 5 minutes |
+| total request/stream timeout | 10 minutes | greater than zero and at most 1 hour |
+| response chunk | 64 KiB | 1 byte through 1 MiB |
+
+The connect timeout must not exceed the request timeout. Every violation is the
+same fixed `InvalidLimits` construction category. The total deadline begins
+before active-request capacity is acquired and covers capacity waiting, upload,
+response-head wait, and response-body streaming; it is not reset by each chunk.
+A semaphore permit is retained until the returned stream finishes or is
+dropped. The configured request and time bounds are client policy rather than a
+retry budget.
+
+The transport splits dependency-provided `Bytes` frames before exposing chunks
+larger than its configured limit and retains at most one upstream frame while
+that frame is drained. This is a hard bound on each public chunk, not on
+Reqwest/Hyper's internal read or frame allocation. The codec independently
+rejects chunks larger than its own configured maximum and retains its separate record,
+undecoded-buffer, total-response, record-count and JSON limits. Unused capacity
+at either layer does not enlarge the other layer's budget. The codec owns the
+request-body, overall-response and semantic event bounds; this transport does
+not advertise a broader body allowance.
+
+TLS trust comes from the dependency's bundled WebPKI roots, not the operating
+system's native root store. This is deterministic and avoids silently trusting
+machine-installed authorities. The tradeoff is that enterprise interception
+roots and private authorities installed only in a native store are rejected,
+and OS trust-store changes do not take effect until the pinned Rust trust
+dependency is updated. No API in this slice injects another root or disables
+certificate or hostname verification.
+
+## Cancellation and drop
+
+The codec passes the turn's `CancellationToken` into the transport. The
+transport checks it before dispatch and observes it while request upload,
+response-head acquisition, active-request-capacity waiting and response-body reads
+are pending. Cancellation wakes the returned future or stream; it does not
+depend on another network byte arriving. If cancellation becomes ready in the
+same poll as a transport result, the fixed cancelled provider error wins.
+
+Dropping the startup future before dispatch sends nothing. Dropping it after
+dispatch, cancelling it, or dropping/cancelling the returned byte stream drops
+the owned in-flight Reqwest future or body and releases transport buffers and
+the active-request permit. Machine-god creates no internal runtime and spawns no
+producer or per-request task, retry, or backoff. Reqwest/Hyper does spawn a
+connection-dispatch task on the host runtime. Cancellation returns promptly
+after dropping machine-god's owned body; socket teardown is asynchronous and
+requires the host runtime to remain driven. HTTP/1 is fixed so that dispatcher
+closes a stalled request's socket rather than merely cancelling a stream on a
+shared HTTP/2 connection. Cancellation and drop do not claim to recall bytes
+already transmitted or prove what the remote peer received.
+
+The configured connect and request timeouts are independent terminal bounds
+when cancellation is not requested. With default limits they are 30 seconds
+and 10 minutes. Timeout failures use fixed redacted provider errors; no Reqwest,
+Hyper, Tokio, Rustls, socket, or operating-system message is reflected. Polling
+the concrete transport without the required runtime returns a fixed, redacted,
+non-retryable `Transport` error; it does not panic or perform a request.
+
+## Deferred scope
+
+This slice adds no ambient credential or endpoint discovery, CLI or config
+composition, permission prompt, permission mode, session persistence,
+provider-executed tools, retry/backoff, custom proxy, custom redirect policy,
+custom certificate roots, native enterprise trust, arbitrary destination,
+WASM transport, non-Tokio execution for the concrete transport, internal
+runtime, extra tool, package, GitHub release, compatibility promotion or
+performance claim. The plaintext endpoint is exclusively a deterministic-test
+facility and is not a supported production deployment mode.

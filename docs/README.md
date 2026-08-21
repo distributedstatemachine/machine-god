@@ -9,6 +9,7 @@
 - [Native `read_file` tool](read-file.md)
 - [Native `list_files` tool](list-files.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
+- [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

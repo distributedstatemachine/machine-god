@@ -4,6 +4,8 @@ This page is the normative contract for the sixth bounded Milestone 03 slice.
 It adds an executor-neutral `AiGatewayProvider` codec to
 `machine-god-native`, behind an explicitly injected `AiGatewayTransport`. The
 current CLI does not construct this provider or make network requests.
+The separate optional [`ai-gateway-http` transport](ai-gateway-http.md) is one
+possible native injection; custom transports remain supported.
 
 The wire shape is deliberately scoped to the behavior needed from pinned
 [`vercel-labs/fx` revision
@@ -37,6 +39,13 @@ authentication and credentials, response-status validation, redirect policy,
 timeouts, and any retry policy. A transport must return only the byte stream of
 an accepted streaming response or a redacted `ProviderError`. This provider
 does not inspect HTTP status or error bodies and does not retry.
+
+That candidate native transport narrows those host choices to a pinned
+production HTTPS endpoint, an explicitly injected bearer token, and a fixed
+hardened HTTP policy. Its limits, status mapping, cancellation behavior and
+loopback-only plaintext test endpoint are normative in
+[`ai-gateway-http.md`](ai-gateway-http.md). These are transport guarantees, not
+new codec responsibilities.
 
 The request metadata contains these exact headers:
 
@@ -263,13 +272,17 @@ task, thread, timer, or retry survives cancellation or drop.
 
 ## Deferred scope
 
-This slice adds no URL or HTTP client, socket, DNS, proxy, TLS, native
+This codec slice adds no URL or HTTP client, socket, DNS, proxy, TLS, native
 credential lookup, authorization header, status-code mapping, retry/backoff,
-clock, async runtime, endpoint configuration, team routing, model catalog,
+clock, async runtime, endpoint selection, team routing, model catalog,
 provider-executed tool, image, structured-output, temperature, or metadata
 support. It adds no CLI wiring or commands, production permission prompt,
 permission mode beyond `ask`, durable native session store, or broader native
 configuration.
+
+The optional native transport supplies only the separately documented bounded
+HTTP/TLS/authentication/status subset. It does not discover credentials or
+endpoints and does not compose the provider into the CLI.
 
 It also adds no compatibility or performance evidence. The pinned fx checkout
 and Zig toolchain remain benchmark-only inputs and are not Rust product runtime

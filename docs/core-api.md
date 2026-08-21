@@ -5,9 +5,12 @@ contains no filesystem, process, environment, credential, clock, randomness, or
 network access. A host supplies every authority-bearing component explicitly
 through [`EngineBuilder`](crate::EngineBuilder).
 
-The traits use boxed standard futures and `futures-core::Stream`, so an embedding
-application may use Tokio, async-std, smol, a custom executor, or direct polling.
-All public extension traits are object-safe, `Send`, and `Sync`.
+The traits use boxed standard futures and `futures-core::Stream`, so core and
+custom injected implementations may use Tokio, async-std, smol, a custom
+executor, or direct polling. A concrete implementation may document a narrower
+host requirement; the optional native AI Gateway HTTP transport requires a
+host-owned Tokio runtime. All public extension traits are object-safe, `Send`,
+and `Sync`.
 
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};

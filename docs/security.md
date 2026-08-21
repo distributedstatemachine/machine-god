@@ -11,6 +11,10 @@ preflight seam. A fifth adds bounded one-level Unix-only `list_files`
 enumeration behind the same seam. A sixth adds a bounded AI Gateway request and
 stream codec behind an injected host transport; the codec itself receives no
 endpoint, credential, socket, TLS, status, retry, clock, or runtime authority.
+A seventh candidate slice adds one optional native implementation of that
+transport with a pinned production HTTPS endpoint and an explicitly injected
+bearer token. It remains pending integration, fresh adversarial review and
+exact-commit CI; this document does not claim that evidence is green.
 Permission mode remains `ask`; CLI registration, prompting, and the fail-closed
 behavior of a production permission handler remain future work.
 
@@ -54,9 +58,10 @@ read errors are not converted into defaults.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation, prompting and modes beyond `ask`, concrete
-provider transports and credentials, native session persistence, CLI expansion,
-native tools other than the bounded library-level `read_file` and `list_files`,
-and compatibility or performance claims remain outside the implemented slices.
+provider/CLI composition, credential discovery, native session persistence,
+CLI expansion, native tools other than the bounded library-level `read_file`
+and `list_files`, and compatibility or performance claims remain outside the
+implemented slices.
 
 Tool preflight closes the representation gap between a model's raw JSON call
 and the operation presented to permission policy. The source-compatible default
@@ -197,11 +202,92 @@ codec calls the transport at most once, and exactly once only after a valid
 request future is polled through startup. It never retries a possibly delivered
 model request.
 
+The optional native `ai-gateway-http` transport is one intentionally narrower
+host policy. Production requests can target only
+`https://ai-gateway.vercel.sh/v3/ai/language-model`. The alternate
+`AiGatewayHttpEndpoint::loopback_http` constructor is explicitly for
+deterministic tests and accepts plaintext HTTP only for a numeric IPv4 address
+in `127.0.0.0/8` or IPv6 `::1`, with an explicit port and absolute path. It
+requires that port to be nonzero and rejects user information, queries,
+fragments, hostnames and alternate or encoded IP forms; it does not turn
+arbitrary private networks or non-loopback addresses into a production
+configuration surface. Endpoint text is bounded to
+2,048 ASCII bytes. Redirects and proxies are disabled, so
+the bearer credential cannot be redirected or proxy-routed by this client.
+
+The trusted host must pass the bearer value directly through
+`AiGatewayBearerToken::new`. Machine-god performs no environment, file,
+keychain, interactive, CLI or broader configuration lookup. The value must be a
+1–4,096-byte RFC 6750 bearer `b64token`: one or more ASCII letters, digits,
+`-`, `.`, `_`, `~`, `+`, or `/`, followed only by optional trailing `=`
+padding. It is attached only as the `Authorization: Bearer` header. Its display
+surface does not reveal the value, its debug representation and all transport
+diagnostics are redacted, and no dependency text is forwarded. This is a
+non-reflection guarantee, not a secure-memory-erasure claim; the injecting host
+remains responsible for credential acquisition, lifetime, rotation and origin
+scope.
+
+The Reqwest client disables redirects, proxy use, automatic response
+decompression, cookies, retry and referer generation and fixes HTTP/1. A
+semaphore bounds active requests, defaulting to 16 with a validated range of
+1–64; its permit remains owned by the response stream. Same-endpoint idle
+connections may be reused. A connection attempt defaults to 30 seconds and is
+bounded above by 5 minutes. The complete request/response stream defaults to 10 minutes and
+is bounded above by 1 hour; both durations must be positive and the connect
+timeout cannot exceed the total. The total deadline begins before semaphore
+acquisition and covers capacity waiting. Dependency frames are split into
+public chunks of at most 64 KiB by default; a host may choose 1 byte through 1
+MiB. This public chunk cap does not bound Hyper's internal frame/read
+allocation, and the codec still applies its
+independent chunk, record, undecoded-buffer, total-byte and record-count limits.
+The fixed POST request carries the codec headers and JSON body plus the injected
+authorization header, fixed `Accept: text/event-stream`, and fixed
+`Accept-Encoding: identity`. No response header, error body or dependency
+diagnostic is reflected through the provider error.
+
+Only HTTP 200 is accepted as a stream. Status handling is closed and exact:
+401/403 are non-retryable authentication errors; 429 is retryable rate
+limiting; 408, 425 and every 5xx status are retryable unavailability; all other
+4xx statuses are non-retryable invalid requests; and 3xx or any remaining
+non-200 status is a non-retryable protocol error. A generic network failure is
+conservatively retryable transport failure, while a recognized TLS failure is
+non-retryable transport failure. The mapping uses only the status or fixed
+failure class and never consumes an error body for diagnosis. The transport
+itself performs no retry, including after a request may have been delivered.
+
+TLS uses Reqwest's Rustls backend with the pinned `webpki-root-certs` dataset;
+default Reqwest features and native-root loading are disabled. The repository
+explicitly permits that certificate dataset's `CDLA-Permissive-2.0` license.
+This makes trust deterministic
+and avoids silently inheriting a machine-wide trust store, at the deliberate
+cost that enterprise interception roots and private certificate authorities in
+the operating-system store are not trusted. Updating trust follows the pinned
+Rust dependency rather than an immediate OS trust-store update. The feature is
+unavailable and its exports are cfg-gated on WebAssembly targets.
+
+The same core cancellation token reaches the Reqwest work. Cancellation before
+dispatch prevents a request; cancellation while active-request capacity, the
+upload, response head, or body is pending wakes the wrapper and drops the owned
+in-flight operation and semaphore permit.
+Dropping a transport future or returned byte stream performs the same ownership
+teardown. Machine-god owns no internal runtime and detaches no producer task,
+retry, or timer. Reqwest/Hyper owns connection-dispatch tasks on the host
+runtime. The concrete transport must be polled inside a live host-owned Tokio
+runtime with I/O and time enabled, and that runtime must remain driven through
+asynchronous socket teardown. Missing runtime support produces a fixed redacted
+failure rather than dependency diagnostics. Cancellation
+and drop bound owned work but do not promise that the operating system, remote
+peer or dependency can prove whether already-transmitted bytes were delivered.
+The normative transport contract is
+[`ai-gateway-http.md`](ai-gateway-http.md).
+
 Machine-god supplies no fx referer, title or user agent and therefore does not
-misrepresent the caller's identity. It also supplies no authorization, team or
-endpoint metadata. A host may add its own values only under that host's
-identity and disclosure policy. The model, session ID and complete encoded
-prompt are necessarily disclosed to the selected transport. Tool descriptions,
+misrepresent the caller's identity. The codec supplies no authorization, team
+or endpoint metadata. The optional HTTP transport adds exactly the explicitly
+injected authorization value plus its fixed accept headers; a custom host
+transport may add its own values only under that host's identity and disclosure
+policy. The model, session ID and complete encoded prompt are necessarily
+disclosed to the selected transport. Tool descriptions,
 schemas, arguments and serialized results may be part of that prompt and must
 be treated as sensitive model input.
 

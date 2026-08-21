@@ -7,6 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod ai_gateway;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+mod ai_gateway_http;
 mod config;
 mod list_files;
 mod read_file;
@@ -16,6 +18,17 @@ pub use ai_gateway::{
     AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind,
     AiGatewayHeader, AiGatewayLimits, AiGatewayProvider, AiGatewayTransport,
     AiGatewayTransportRequest,
+};
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use ai_gateway_http::{
+    AI_GATEWAY_HTTP_DEFAULT_CONNECT_TIMEOUT, AI_GATEWAY_HTTP_DEFAULT_ENDPOINT,
+    AI_GATEWAY_HTTP_DEFAULT_MAX_ACTIVE_REQUESTS, AI_GATEWAY_HTTP_DEFAULT_REQUEST_TIMEOUT,
+    AI_GATEWAY_HTTP_DEFAULT_RESPONSE_CHUNK_BYTES, AI_GATEWAY_HTTP_MAX_ACTIVE_REQUESTS,
+    AI_GATEWAY_HTTP_MAX_BEARER_TOKEN_BYTES, AI_GATEWAY_HTTP_MAX_CONNECT_TIMEOUT,
+    AI_GATEWAY_HTTP_MAX_ENDPOINT_BYTES, AI_GATEWAY_HTTP_MAX_REQUEST_TIMEOUT,
+    AI_GATEWAY_HTTP_MAX_RESPONSE_CHUNK_BYTES, AiGatewayBearerToken, AiGatewayHttpConfigError,
+    AiGatewayHttpConfigErrorKind, AiGatewayHttpEndpoint, AiGatewayHttpLimits,
+    AiGatewayHttpTransport,
 };
 
 pub use config::{

@@ -12,13 +12,17 @@ tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
 policy. It also includes bounded Unix-only `read_file` and one-level
 `list_files` library capabilities rooted in host-injected workspaces, plus a
-bounded AI Gateway codec over an injected host transport. Native HTTP,
-credentials, provider/CLI wiring, permission prompting, durable native
+bounded AI Gateway codec over an injected host transport. An optional,
+native-only HTTPS transport for that codec is the current candidate slice. It
+uses one pinned production endpoint and an explicitly injected, redacted bearer
+token; integration, adversarial review and exact-commit CI are still pending.
+Credential discovery, provider/CLI wiring, permission prompting, durable native
 sessions, the remaining native tools, and compatibility work remain planned;
 the project is not yet production-ready. See the exact [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md), and
-[AI Gateway provider contract](docs/ai-gateway.md).
+[AI Gateway codec](docs/ai-gateway.md) plus
+[native HTTP transport](docs/ai-gateway-http.md) contracts.
 
 ## Development
 

@@ -43,7 +43,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with six bounded slices. The first provides read-only native config/state
+with six integrated bounded slices and a seventh candidate slice. The first
+provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
 schema-v1 `ask` config, bounded to 64 KiB with fail-closed file and content
@@ -93,10 +94,22 @@ Empty chunks fail, bounded no-event work yields cooperatively, and cancellation
 wins same-poll terminal races. The injected host retains endpoint, HTTP, TLS,
 authentication, status and retry responsibility; this slice performs no
 network effect itself. Its exact contract is in
-[`ai-gateway.md`](ai-gateway.md). These slices do not complete Milestone 03.
-Permission prompting and modes beyond `ask`, a native HTTP transport,
-credentials and broader configuration, durable native sessions, provider/CLI
-wiring, workspace discovery, recursive/glob/grep and mutation tools, non-Unix
+[`ai-gateway.md`](ai-gateway.md). The seventh candidate slice supplies an
+optional native-only Reqwest/Rustls HTTP transport for that injected codec. It fixes the
+production URL to `https://ai-gateway.vercel.sh/v3/ai/language-model`, requires
+an explicitly injected bounded bearer token, accepts plaintext only through an
+explicit numeric-loopback test endpoint, and fixes proxy, redirect,
+decompression, cookie, retry, timeout, active-request, status and diagnostic
+policy. The concrete transport is polled on a host-owned Tokio runtime; core,
+the codec and custom transports remain executor-neutral. Its proposed exact contract is in
+[`ai-gateway-http.md`](ai-gateway-http.md). This candidate remains **IN
+PROGRESS** pending integration, fresh adversarial review, and remote CI for the
+exact integrated commit; this plan records no green evidence for it yet.
+
+These slices do not complete Milestone 03. Permission prompting and modes
+beyond `ask`, credential discovery and broader configuration, durable native
+sessions, provider/CLI wiring, workspace discovery, recursive/glob/grep and
+mutation tools, non-Unix
 hardened workspace construction, the remaining executable native tools, and
 compatibility or performance claims remain planned. Existing CLI bytes,
 benchmark evidence, workflows, and Zig inputs are unchanged; the provider is

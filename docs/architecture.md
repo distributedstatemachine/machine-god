@@ -21,14 +21,16 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has six bounded slices. The first two are native-host slices;
+Milestone 03 has six integrated bounded slices and a seventh candidate slice.
+The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
-provides a bounded Gateway codec over an injected host byte transport.
-`machine-god-native`
-snapshots only
-`XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and
-state paths, and inspects their final metadata for status. A separate
+provides a bounded Gateway codec over an injected host byte transport. The
+seventh candidate supplies one optional native HTTP implementation of that
+transport; it remains pending integration, review and exact-commit CI.
+`machine-god-native` snapshots only `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and
+`HOME`, resolves namespaced config and state paths, and inspects their final
+metadata for status. A separate
 synchronous native authority can load the resolved config file read-only.
 `machine-god-cli` remains a thin formatter for status, does not invoke the
 loader, and owns no product state. The exact surfaces are documented in
@@ -50,6 +52,9 @@ host-selected absolute workspace -> retained directory authority
 
 host-selected endpoint/auth/status/retry transport
        -> injected byte stream -> AI Gateway codec -> ModelEvent stream -> core
+
+host-injected bearer token -> optional bounded native HTTP transport
+                           -> the same injected AI Gateway codec boundary
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -86,9 +91,10 @@ most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 or operating-system error text. Configuration mutation, permission modes beyond
-`ask`, prompting, native provider transports and credentials, executable native
-tools other than the bounded `read_file` and `list_files` library capabilities,
-durable native sessions, and CLI expansion remain deferred.
+`ask`, prompting, credential discovery and provider/CLI composition,
+executable native tools other than the bounded `read_file` and `list_files`
+library capabilities, durable native sessions, and CLI expansion remain
+deferred.
 
 ```text
                         machine-god-core
@@ -177,6 +183,52 @@ rejection does not cause recursive teardown; accepted JSON is first proven to
 be within the safe depth ceiling. No provider task, timer, thread or retry is
 detached. The normative projection, limits and redacted failure behavior are in
 [`ai-gateway.md`](ai-gateway.md).
+
+The optional `ai-gateway-http` Cargo feature provides a native, Tokio-hosted
+`AiGatewayHttpTransport` implementation without changing the codec or core.
+Construction remains effect-free, while the concrete transport future and
+stream require a host-owned Tokio runtime with I/O and time enabled. That
+runtime must remain driven through asynchronous connection teardown. Core, the
+codec, and custom transports remain executor-neutral.
+Its production endpoint is the fixed
+`https://ai-gateway.vercel.sh/v3/ai/language-model`; the host must inject a
+1–4,096-byte RFC 6750 bearer `b64token`. The only alternate endpoint API is an
+explicit test-only plaintext constructor restricted to numeric IPv4 loopback
+in `127.0.0.0/8` or IPv6 `::1`, with an explicit port and absolute path and no
+userinfo, query, fragment or alternate IP spelling. The port must be nonzero.
+Arbitrary production URL selection and ambient credential lookup are therefore
+absent. Alongside the codec metadata, the transport adds only that authorization
+value, `Accept: text/event-stream` and `Accept-Encoding: identity`, apart from
+required HTTP framing headers.
+
+The transport owns one Reqwest client configured with pinned WebPKI roots,
+proxies and redirects disabled, no response decompression or cookie engine, no
+automatic retry, and HTTP/1 only. It defaults to at most 16 active requests, a
+30-second connection timeout and a 10-minute total request/stream timeout.
+Validated custom limits allow 1–64 active requests, a
+positive connection timeout no longer than 5 minutes, and a positive total
+timeout no longer than 1 hour and no shorter than the connection timeout.
+The total deadline starts before bounded-capacity acquisition and includes that
+wait. Same-endpoint idle connections may be reused. Dependency frames are split
+to public chunks of 64 KiB by default, with a validated configurable ceiling no
+larger than 1 MiB; this does not bound Hyper's internal frame allocation. The
+codec independently enforces its own per-chunk,
+record, buffer and aggregate response limits.
+
+Only status 200 yields a byte stream. Fixed redacted provider errors classify
+401/403 as non-retryable authentication, 429 as retryable rate limiting,
+408/425/5xx as retryable unavailability, other 4xx as non-retryable invalid
+requests, and 3xx or every other non-200 response as a non-retryable protocol
+failure. Neither response error bodies and headers nor Reqwest/Hyper/Tokio/Rustls
+diagnostic text cross this boundary. Cancellation is observed before dispatch
+and throughout pending capacity, upload, response-head and response-body work.
+Dropping or cancelling the future or stream drops the owned in-flight
+request/body and active-request permit. Machine-god creates no internal runtime
+or producer task; Reqwest/Hyper owns connection-dispatch tasks on the host
+runtime, so that runtime must keep advancing through socket teardown. No retry
+or timer is detached by machine-god. The complete feature, API,
+platform and security contract is in
+[`ai-gateway-http.md`](ai-gateway-http.md).
 
 The multi-round turn loop is an executor-neutral future polled inline by the
 `Turn` stream. A one-event acknowledgement gate connects it to observer
