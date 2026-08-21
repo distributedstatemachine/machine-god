@@ -462,6 +462,17 @@ def require_text(value: object, field: str) -> str:
     return value
 
 
+def validate_generated_at_utc(value: object) -> None:
+    timestamp = require_text(value, "generated_at_utc")
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        raise ValueError("generated_at_utc must be a canonical UTC timestamp") from None
+    canonical = parsed.isoformat().replace("+00:00", "Z")
+    if parsed.tzinfo != timezone.utc or timestamp != canonical:
+        raise ValueError("generated_at_utc must be a canonical UTC timestamp")
+
+
 def is_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -770,7 +781,7 @@ def validate_upstream_evidence(
         raise ValueError("upstream harness evidence must be bootstrap-only")
     if data.get("claim_eligible") is not False:
         raise ValueError("bootstrap evidence must not be claim eligible")
-    require_text(data.get("generated_at_utc"), "generated_at_utc")
+    validate_generated_at_utc(data.get("generated_at_utc"))
     runner_class = require_text(data.get("runner_class"), "runner_class")
     if expected_runner_class is not None and runner_class != expected_runner_class:
         raise ValueError("evidence runner class does not match the expected runner class")
@@ -1392,8 +1403,8 @@ def validate_upstream_evidence(
         ):
             try:
                 actual_identity = executable_identity(actual_path)
-            except OSError as error:
-                raise ValueError(f"{name} executable identity is unreadable") from error
+            except (OSError, RuntimeError):
+                raise ValueError(f"{name} executable identity is unreadable") from None
             if measurement["executable_identity"] != actual_identity:
                 raise ValueError(
                     f"{name} measured executable identity does not match the supplied binary"

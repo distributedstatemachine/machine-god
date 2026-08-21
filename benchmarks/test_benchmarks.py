@@ -939,6 +939,60 @@ class UpstreamHarnessTest(unittest.TestCase):
             expected_lock_sha256=sha256_file(lock_path),
         )
 
+    def test_accepts_canonical_generated_at_utc_boundaries(self) -> None:
+        timestamps = (
+            "0001-01-01T00:00:00Z",
+            "2026-08-20T00:00:00.000001Z",
+            "9999-12-31T23:59:59.999999Z",
+        )
+        for timestamp in timestamps:
+            with self.subTest(timestamp=timestamp):
+                evidence = self.valid_upstream_evidence()
+                evidence["generated_at_utc"] = timestamp
+                validate_upstream_evidence(evidence)
+
+    def test_rejects_noncanonical_generated_at_utc(self) -> None:
+        timestamps = (
+            "machine-god is 100x faster",
+            "2026-08-20 00:00:00Z",
+            "2026-08-20T00:00:00+00:00",
+            "2026-08-20T04:00:00+04:00",
+            "2026-08-20T00:00:00.1Z",
+            "2026-08-20T00:00:00.000000Z",
+            "2026-02-30T00:00:00Z",
+            "2026-08-20T00:00:00Z machine-god won",
+        )
+        for timestamp in timestamps:
+            with self.subTest(timestamp=timestamp):
+                evidence = self.valid_upstream_evidence()
+                evidence["generated_at_utc"] = timestamp
+                with self.assertRaisesRegex(ValueError, "canonical UTC timestamp"):
+                    validate_upstream_evidence(evidence)
+
+    def test_executable_identity_runtime_error_is_controlled_validation_error(self) -> None:
+        evidence = self.valid_upstream_evidence()
+        expected_binaries = {
+            "fx": Path("/tmp/fx"),
+            "machine-god": Path("/tmp/machine-god"),
+        }
+        with (
+            mock.patch.object(upstream, "validate_binary_file"),
+            mock.patch.object(
+                upstream,
+                "executable_identity",
+                side_effect=RuntimeError("identity changed while inspected"),
+            ),
+            self.assertRaisesRegex(
+                ValueError, "fx executable identity is unreadable"
+            ) as raised,
+        ):
+            validate_upstream_evidence(
+                evidence,
+                expected_binaries=expected_binaries,
+            )
+
+        self.assertIsNone(raised.exception.__cause__)
+
     def test_rejects_false_comparison_claim(self) -> None:
         evidence = self.valid_upstream_evidence()
         evidence["workloads"][0]["equivalence"] = "equivalent"
@@ -1465,6 +1519,39 @@ class UpstreamHarnessTest(unittest.TestCase):
                 command, check=False, capture_output=True, text=True
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
+            checker_arguments = command[1:]
+            runtime_error_driver = f"""
+import runpy
+import sys
+from pathlib import Path
+import upstream
+
+actual_executable_identity = upstream.executable_identity
+fx_binary = Path({str(fx_binary)!r}).resolve()
+
+def fail_fx_identity(path):
+    if Path(path).resolve() == fx_binary:
+        raise RuntimeError("identity changed while inspected")
+    return actual_executable_identity(path)
+
+upstream.executable_identity = fail_fx_identity
+sys.argv = {checker_arguments!r}
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+            controlled_identity_failure = subprocess.run(
+                [sys.executable, "-c", runtime_error_driver],
+                cwd=ROOT,
+                env={**os.environ, "PYTHONPATH": str(ROOT / "benchmarks")},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(controlled_identity_failure.returncode, 0)
+            self.assertEqual(
+                controlled_identity_failure.stderr,
+                "fx executable identity is unreadable\n",
+            )
+            self.assertNotIn("Traceback", controlled_identity_failure.stderr)
             machine_binary.write_bytes(b"tampered")
             tampered = subprocess.run(
                 command, check=False, capture_output=True, text=True

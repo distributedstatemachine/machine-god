@@ -280,6 +280,28 @@ failure-path cleanup, and deterministic pathname replacement.
 This remediation requires another fresh exact-SHA three-way review and all
 local and remote gates.
 
+## Review round 11 findings and remediation
+
+Fresh correctness/API and performance/resource/evidence reviewers examined
+exact commit `f25ff2a4c1e31070edc383eae061865733cf21f5`. The schema-2
+descriptor binding passed targeted device, FIFO, growth, deletion, replacement,
+and descriptor-leak probes. Two lower-severity evidence-validation gaps
+remained:
+
+1. `generated_at_utc` accepted any nonempty string, including invalid dates,
+   offset variants, and claim-bearing prose. Validation now parses and
+   round-trips exactly the UTC `Z` representation emitted by the collector.
+   Boundary and mutation tests cover valid canonical timestamps, invalid dates,
+   offsets, alternate fractional precision, and prose.
+2. A `RuntimeError` from post-validation executable-identity inspection could
+   escape the validator and produce a checker traceback. Both `OSError` and
+   `RuntimeError` are now converted at that boundary into a cause-free
+   `ValueError`. Direct and checker-process regressions require controlled
+   one-line failure.
+
+These remediations require another fresh exact-SHA three-way review and all
+local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,
