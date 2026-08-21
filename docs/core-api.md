@@ -62,6 +62,16 @@ provider arguments and tool outputs each receive their own complete budget.
 Traversal stops after visiting the configured limit plus one and never queues
 unvisited siblings.
 
+[`MAX_SAFE_JSON_DEPTH`](crate::MAX_SAFE_JSON_DEPTH) is an independent hard
+ceiling of 64 containers. Hosts may lower `max_json_depth`, but
+[`EngineBuilder::build`](crate::EngineBuilder::build) rejects a higher value
+with [`BuildError::JsonDepthLimitExceedsSafeMaximum`](crate::BuildError::JsonDepthLimitExceedsSafeMaximum)
+before catalog validation, serialization, caching, or runtime component calls;
+the value is never silently clamped. This ceiling protects the recursive
+serialization, clone, retained-value destruction, and downstream extension
+paths that follow iterative validation. Builder-owned Schemas are still drained
+iteratively if this configuration check fails.
+
 ## Turn lifecycle
 
 Awaiting [`Session::prompt`](crate::Session::prompt) atomically reserves a

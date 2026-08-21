@@ -84,6 +84,14 @@ policy or execution. A tool result is checked after the effect but before
 serialization and durable replacement; an over-depth or over-node result leaves
 the precommitted unknown placeholder and terminates without replay.
 
+The configurable depth is subordinate to the public hard safety ceiling
+`MAX_SAFE_JSON_DEPTH` (64). Engine construction rejects a larger configuration
+before catalog traversal or any provider, store, or policy call and never
+clamps it. Iterative validation alone cannot make an accepted 50,000-level tree
+safe for subsequent recursive serialization, cloning, retention, extension
+components, and ordinary destruction, so this is a structural invariant rather
+than an operator-tunable resource budget.
+
 Owned rejection paths replace each hostile `Value` with `Null` and consume the
 original through an iterative child-iterator stack before the surrounding
 object is dropped. This applies to builder abandonment, duplicate replacement

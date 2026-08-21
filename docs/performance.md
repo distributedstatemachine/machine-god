@@ -200,6 +200,13 @@ record; individual provider arguments and results each start one counter. It
 precedes recursive serialization and cloning wherever core controls the
 boundary.
 
+Configured depth may be lowered but cannot exceed the audited hard ceiling of
+64. Construction rejects a larger value before catalog work rather than
+clamping it. This fixed ceiling bounds the stack exposure of recursive
+serialization, cloning, extension code, retained-value destruction, and other
+accepted-value paths; the node and byte limits remain operator-selected resource
+budgets because their traversal is iterative once depth is structurally safe.
+
 Rejected owned values are reclaimed by consuming their arrays and maps through
 the same shape of iterator stack. This costs O(actual nodes), not merely the
 validation prefix, and O(actual depth) auxiliary memory; it prevents both a

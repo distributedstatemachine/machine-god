@@ -150,6 +150,7 @@ pub enum BuildError {
     MissingSessionStore,
     MissingPermissionHandler,
     DuplicateTool(String),
+    JsonDepthLimitExceedsSafeMaximum,
     ToolCatalogTooLarge,
     ToolCatalogJsonDepthExceeded,
     ToolCatalogJsonNodeLimitExceeded,
@@ -164,6 +165,11 @@ impl fmt::Display for BuildError {
                 formatter.write_str("a permission handler is required")
             }
             Self::DuplicateTool(name) => write!(formatter, "duplicate tool registration: {name}"),
+            Self::JsonDepthLimitExceedsSafeMaximum => write!(
+                formatter,
+                "configured JSON depth limit exceeds the hard safety maximum of {} containers",
+                crate::engine::MAX_SAFE_JSON_DEPTH
+            ),
             Self::ToolCatalogTooLarge => {
                 formatter.write_str("serialized tool catalog exceeds the configured byte limit")
             }

@@ -2,12 +2,12 @@ use futures_core::Stream;
 use futures_util::StreamExt;
 use machine_god_core::{
     BoxFuture, BuildError, CancellationToken, ContentBlock, Engine, EngineError, EngineEvent,
-    EngineLimits, InferenceOptions, Message, ModelEvent, ModelEventStream, ModelProvider,
-    ModelRequest, PermissionDecision, PermissionError, PermissionGrantScope, PermissionHandler,
-    PermissionRequest, Prompt, ProviderError, ProviderErrorKind, Role, SessionId, SessionRecord,
-    SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind, StopReason,
-    TokenUsage, Tool, ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName,
-    ToolOutput, ToolSpec, Turn, TurnEvent,
+    EngineLimits, InferenceOptions, MAX_SAFE_JSON_DEPTH, Message, ModelEvent, ModelEventStream,
+    ModelProvider, ModelRequest, PermissionDecision, PermissionError, PermissionGrantScope,
+    PermissionHandler, PermissionRequest, Prompt, ProviderError, ProviderErrorKind, Role,
+    SessionId, SessionRecord, SessionRevision, SessionStore, SessionStoreError,
+    SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId, ToolContext,
+    ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
@@ -1882,6 +1882,41 @@ fn tool_catalog_json_depth_limit_enforces_exact_boundary() {
 }
 
 #[test]
+fn configured_json_depth_enforces_the_hard_safety_ceiling() {
+    let mut exact_spec = spec("safe-depth-exact");
+    exact_spec.input_schema = nested_array(MAX_SAFE_JSON_DEPTH);
+    Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(ScriptedTool::new(exact_spec, []))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "json_depth",
+            MAX_SAFE_JSON_DEPTH,
+        ))
+        .build()
+        .unwrap();
+
+    let error = Engine::builder()
+        .provider(ScriptedModelProvider::new("unused", []))
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .limits(with_limit(
+            EngineLimits::default(),
+            "json_depth",
+            MAX_SAFE_JSON_DEPTH + 1,
+        ))
+        .build()
+        .unwrap_err();
+    assert_eq!(error, BuildError::JsonDepthLimitExceedsSafeMaximum);
+    assert_eq!(
+        error.to_string(),
+        "configured JSON depth limit exceeds the hard safety maximum of 64 containers"
+    );
+}
+
+#[test]
 fn inference_options_json_depth_fails_before_persistence_or_provider() {
     let exact_options = InferenceOptions {
         metadata: BTreeMap::from([("nested".to_owned(), nested_array(2))]),
@@ -2475,6 +2510,7 @@ fn deep_owned_json_rejections_are_stack_safe_in_subprocesses() {
         "builder_abandon",
         "builder_duplicate",
         "catalog_build",
+        "configured_depth_ceiling",
         "unpolled_prompt",
         "prompt_options",
         "loaded_metadata",
@@ -2537,6 +2573,32 @@ fn deep_owned_json_rejection_child() {
                 result,
                 Err(BuildError::ToolCatalogJsonDepthExceeded)
             ));
+        }
+        "configured_depth_ceiling" => {
+            let provider = ScriptedModelProvider::new("unused", []);
+            let store = InMemorySessionStore::new();
+            let permissions = ScriptedPermissionHandler::new([]);
+            let result = Engine::builder()
+                .provider(provider.clone())
+                .session_store(store.clone())
+                .permission_handler(permissions.clone())
+                .tool(one_shot_schema_tool(
+                    "deep-configured-ceiling",
+                    nested_array(DEEP_JSON_DEPTH),
+                ))
+                .limits(with_limit(
+                    EngineLimits::default(),
+                    "json_depth",
+                    DEEP_JSON_DEPTH,
+                ))
+                .build();
+            assert!(matches!(
+                result,
+                Err(BuildError::JsonDepthLimitExceedsSafeMaximum)
+            ));
+            assert!(provider.requests().is_empty());
+            assert!(store.calls().is_empty());
+            assert!(permissions.requests().is_empty());
         }
         "unpolled_prompt" => {
             let engine = Engine::builder()

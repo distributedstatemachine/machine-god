@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-five finding remediated; awaiting fresh rereview of the
-fifth fix commit.
+Status: review-cycle-six finding remediated; awaiting fresh rereview of the
+sixth fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -17,7 +17,10 @@ Cycle-three fix reviewed for cycle four:
 Cycle-four fix reviewed for cycle five:
 `83b465cd02a143b116e9e3ac21663363f35f4fba`.
 
-Cycle-five fix commit: populated after this remediation commit. Reviewers must
+Cycle-five fix reviewed for cycle six:
+`f0d6369093c12fdf51e7ab17724ec3bb67f248bb`.
+
+Cycle-six fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -177,6 +180,31 @@ and advisory gates are required for the final immutable cycle-two commit.
    conflict loads are guarded inside their poll wrappers, while direct loads,
    prompt values, builder Schemas, and mutation candidates arm guards before
    validation or fallible branching.
+
+## Review cycle 06 finding and remediation
+
+1. `max_json_depth` was nonzero but otherwise unrestricted. A host could set it
+   to 50,000, the iterative validator would accept a matching tree, and later
+   recursive `serde_json` serialization, cloning, retention, extension code, or
+   ordinary destruction could overflow the process stack. The public
+   `MAX_SAFE_JSON_DEPTH` structural ceiling is now fixed at the audited default
+   of 64. `EngineBuilder::build` returns the dedicated stable
+   `JsonDepthLimitExceedsSafeMaximum` error before catalog validation,
+   serialization, caching, or runtime component calls whenever the configured
+   value is higher; it never clamps. The tool-map ownership guard is armed
+   first, so this early error still drains hostile builder Schemas iteratively.
+   Boundary coverage accepts 64 and rejects 65 with the exact public error and
+   message. A thirteenth subprocess case configures 50,000 with a matching deep
+   Schema, observes the controlled build error, proves no provider/store/policy
+   call, and exits without aborting.
+2. The configuration audit found no other knob that lifts a structural stack
+   safety invariant. Once depth is at most 64, node, byte, message, event, call,
+   round, text, reasoning, result, and denial-reason maxima control
+   operator-selected time or memory exposure; their counting/traversal and
+   arithmetic are iterative or checked. Large values may intentionally permit
+   correspondingly large resource consumption, but do not authorize deeper
+   recursion. Producer-private construction and queued-value destruction remain
+   the documented external responsibility.
 
 ## Honest limitations for review
 

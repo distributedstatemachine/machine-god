@@ -12,7 +12,7 @@ mod session;
 mod tool;
 
 pub use cancel::{CancellationToken, Cancelled};
-pub use engine::{Engine, EngineBuilder, EngineLimits};
+pub use engine::{Engine, EngineBuilder, EngineLimits, MAX_SAFE_JSON_DEPTH};
 pub use error::{
     BuildError, EngineError, EventSinkError, PermissionError, ProviderError, ProviderErrorKind,
     SessionStoreError, SessionStoreErrorKind, ToolError, ToolErrorKind,

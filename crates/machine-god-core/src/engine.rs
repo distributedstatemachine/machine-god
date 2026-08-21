@@ -14,6 +14,14 @@ use std::sync::Barrier;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// Hard ceiling for JSON container depth in any constructed engine.
+///
+/// Validation itself is iterative, but accepted values subsequently cross
+/// audited `serde_json` serialization, cloning, and destruction paths whose
+/// implementations are recursive. Hosts may configure a lower limit but
+/// cannot raise it above this process-safety invariant.
+pub const MAX_SAFE_JSON_DEPTH: usize = 64;
+
 /// Builder requiring explicit authority-bearing components.
 #[derive(Default)]
 pub struct EngineBuilder {
@@ -57,7 +65,7 @@ impl Default for EngineLimits {
             max_model_events_per_turn: NonZeroUsize::new(4_096).expect("default is nonzero"),
             max_tool_calls_per_turn: NonZeroUsize::new(16).expect("default is nonzero"),
             max_tool_calls_per_round: NonZeroUsize::new(4).expect("default is nonzero"),
-            max_json_depth: NonZeroUsize::new(64).expect("default is nonzero"),
+            max_json_depth: NonZeroUsize::new(MAX_SAFE_JSON_DEPTH).expect("default is nonzero"),
             max_json_nodes: NonZeroUsize::new(65_536).expect("default is nonzero"),
             max_assistant_text_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
             max_reasoning_bytes: NonZeroUsize::new(1024 * 1024).expect("default is nonzero"),
@@ -201,10 +209,14 @@ impl EngineBuilder {
     /// # Errors
     ///
     /// Returns [`BuildError`] when a required component is absent, two
-    /// registered tools have the same name, or the tool catalog exceeds its
-    /// configured serialized-byte, JSON-depth, or aggregate JSON-node bound.
+    /// registered tools have the same name, the configured JSON depth exceeds
+    /// [`MAX_SAFE_JSON_DEPTH`], or the tool catalog exceeds its configured
+    /// serialized-byte, JSON-depth, or aggregate JSON-node bound.
     pub fn build(mut self) -> Result<Engine, BuildError> {
         let tools = ToolMapGuard::new(std::mem::take(&mut self.tools));
+        if self.limits.max_json_depth.get() > MAX_SAFE_JSON_DEPTH {
+            return Err(BuildError::JsonDepthLimitExceedsSafeMaximum);
+        }
         if let Some(name) = self.duplicate_tool.take() {
             return Err(BuildError::DuplicateTool(name.to_string()));
         }
