@@ -21,9 +21,10 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has five bounded slices. The first two are native-host slices;
-the third extends the authority-free core tool contract, and the fourth and
-fifth use that contract for bounded executable native capabilities.
+Milestone 03 has six bounded slices. The first two are native-host slices;
+the third extends the authority-free core tool contract, the fourth and fifth
+use that contract for bounded executable native capabilities, and the sixth
+provides a bounded Gateway codec over an injected host byte transport.
 `machine-god-native`
 snapshots only
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and
@@ -33,7 +34,9 @@ synchronous native authority can load the resolved config file read-only.
 loader, and owns no product state. The exact surfaces are documented in
 [`cli.md`](cli.md) and [`configuration.md`](configuration.md). The separate
 [`read_file` contract](read-file.md) and
-[`list_files` contract](list-files.md) do not change either CLI surface.
+[`list_files` contract](list-files.md) do not change either CLI surface. The
+separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
+surface and does not change CLI bytes.
 
 ```text
 process environment -> resolved native paths
@@ -44,6 +47,9 @@ process environment -> resolved native paths
 host-selected absolute workspace -> retained directory authority
  model {path}  -> lexical preflight -> Read policy      -> read_file
  model {path?} -> lexical preflight -> Enumerate policy -> one-level list_files
+
+host-selected endpoint/auth/status/retry transport
+       -> injected byte stream -> AI Gateway codec -> ModelEvent stream -> core
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -80,9 +86,9 @@ most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 or operating-system error text. Configuration mutation, permission modes beyond
-`ask`, prompting, providers, executable native tools other than the bounded
-`read_file` and `list_files` library capabilities, durable native sessions, and
-CLI expansion remain deferred.
+`ask`, prompting, native provider transports and credentials, executable native
+tools other than the bounded `read_file` and `list_files` library capabilities,
+durable native sessions, and CLI expansion remain deferred.
 
 ```text
                         machine-god-core
@@ -102,6 +108,61 @@ observation may use the authority-free no-op sink. Validated IDs, explicit
 durable session-incarnation IDs, structured component errors, optimistic session
 revisions, monotonic event sequences, one-live-turn session leases, and
 idempotent cancellation form the initial cross-component invariants.
+
+The first concrete provider remains on the native side of core's explicit
+boundary but owns no network effect. `AiGatewayProvider` encodes the supported
+`ModelRequest` projection and decodes pinned protocol `0.0.1`, language-model
+specification `4` data-stream bytes. An `AiGatewayTransport` supplied by the
+host receives the owned body, fixed protocol/model/session headers and the turn
+cancellation token, then returns an executor-neutral byte stream. Endpoint
+selection, HTTP, DNS, proxies, TLS, authentication, status validation, timeout
+and retry policy all remain outside the codec:
+
+```text
+trusted host authority
+ endpoint + credentials + network/status/retry policy
+                       |
+                       v
+             AiGatewayTransport
+                       |
+               bounded byte stream
+                       v
+              AiGatewayProvider
+       request projection + stream codec
+                       |
+                       v
+ machine-god-core ModelProvider / ModelEventStream
+```
+
+Provider construction fixes a nonempty default model, injected transport and
+independent resource limits. A request-level model may override that default.
+The body contains only `prompt`, `tools`, `toolChoice`, and optional
+`maxOutputTokens`; temperature and inference metadata are rejected. Fixed
+metadata carries content type, protocol/specification versions, model,
+streaming mode and the same core session ID for both session and affinity.
+Machine-god adds no endpoint, authorization, referer, title, or user-agent and
+makes one transport call without codec-side retry.
+
+The transcript projection accepts system/user text, assistant text and complete
+tool calls, and complete tool results whose name is resolved from the
+immediately preceding assistant calls. JSON blocks and structurally invalid
+tool histories fail before transport. Response chunks may split delimiters,
+UTF-8 and JSON arbitrarily. The codec recognizes the pinned single-`data: ` line
+record shape while bounded blank, comment, non-data and unknown-event records
+are no-ops. It incrementally reconstructs local tool inputs and yields only
+complete text, reasoning, tool-call, usage and stop events. Malformed known
+schemas, conflicting, duplicate, provider-executed, incomplete, post-finish and
+over-limit input fails closed. `[DONE]` and EOF are not finish proof; exactly
+one valid finish produces exactly one stop.
+
+Both startup and response parsing are poll-driven. Cancellation is checked
+around encoding and transport startup and between chunks, records and yielded
+events. The codec registers a cancellation wakeup, and the transport receives
+the same token so it can wake while its future or byte stream is pending. Drop
+owns and destroys the in-flight transport future/stream and partial decode
+state; no provider task, timer, thread or retry is detached. The normative
+projection, limits and redacted failure behavior are in
+[`ai-gateway.md`](ai-gateway.md).
 
 The multi-round turn loop is an executor-neutral future polled inline by the
 `Turn` stream. A one-event acknowledgement gate connects it to observer

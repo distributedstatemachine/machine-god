@@ -8,6 +8,7 @@
 - [Native configuration](configuration.md)
 - [Native `read_file` tool](read-file.md)
 - [Native `list_files` tool](list-files.md)
+- [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

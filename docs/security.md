@@ -8,9 +8,11 @@ loads configuration synchronously and read-only. A third, provider-neutral
 slice adds capability-aware tool preflight without exercising native authority.
 A fourth slice adds a bounded Unix-only `read_file` implementation behind that
 preflight seam. A fifth adds bounded one-level Unix-only `list_files`
-enumeration behind the same seam. Permission mode remains `ask`; CLI
-registration, prompting, and the fail-closed behavior of a production
-permission handler remain future work.
+enumeration behind the same seam. A sixth adds a bounded AI Gateway request and
+stream codec behind an injected host transport; the codec itself receives no
+endpoint, credential, socket, TLS, status, retry, clock, or runtime authority.
+Permission mode remains `ask`; CLI registration, prompting, and the fail-closed
+behavior of a production permission handler remain future work.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -52,9 +54,9 @@ read errors are not converted into defaults.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation, prompting and modes beyond `ask`, concrete
-providers, native session persistence, CLI expansion, native tools other than
-the bounded library-level `read_file` and `list_files`, and compatibility or
-performance claims remain outside the implemented slices.
+provider transports and credentials, native session persistence, CLI expansion,
+native tools other than the bounded library-level `read_file` and `list_files`,
+and compatibility or performance claims remain outside the implemented slices.
 
 Tool preflight closes the representation gap between a model's raw JSON call
 and the operation presented to permission policy. The source-compatible default
@@ -173,6 +175,62 @@ points visible beneath a retained directory are trusted inputs. Hardened
 non-Unix workspace construction and traversal remain deferred. The normative
 surfaces are [`read-file.md`](read-file.md) and
 [`list-files.md`](list-files.md).
+
+The injected-transport AI Gateway provider preserves network authority at an
+explicit trusted-host boundary. `AiGatewayProvider` accepts only an owned body,
+fixed protocol/model/session metadata and a transport object. It cannot select
+a URL, resolve DNS, open a socket, configure a proxy, negotiate TLS, read a
+credential, interpret an HTTP status, follow a redirect or schedule a retry.
+The host's `AiGatewayTransport` owns each of those decisions and must return
+only the byte stream of an accepted response or a redacted `ProviderError`.
+
+Consequently, SSRF controls belong where the endpoint is selected and
+resolved, not in this codec. A production transport must constrain schemes,
+origins, redirects, proxy routing and resolved addresses according to its host
+policy, including DNS rebinding and link-local/private address considerations.
+Secret controls also remain there: credentials must be attached outside the
+request body and fixed codec headers, must not enter debug or error text, and
+must be scoped to the selected origin. Authentication, rate-limit, availability
+and other status classification must occur before returning a successful byte
+stream. The host likewise decides whether an operation is safe to retry; the
+codec calls the transport once and never retries a possibly delivered model
+request.
+
+Machine-god supplies no fx referer, title or user agent and therefore does not
+misrepresent the caller's identity. It also supplies no authorization, team or
+endpoint metadata. A host may add its own values only under that host's
+identity and disclosure policy. The model, session ID and complete encoded
+prompt are necessarily disclosed to the selected transport. Tool descriptions,
+schemas, arguments and serialized results may be part of that prompt and must
+be treated as sensitive model input.
+
+Untrusted response bytes are accepted only through independent request, chunk,
+record, undecoded-buffer, total-response, record-count, message, tool,
+streamed-tool-input, final-tool-call and per-call argument limits. Strict UTF-8,
+JSON and supported-event schema validation rejects malformed, conflicting,
+duplicate, provider-executed, incomplete and post-finish state. Bounded blank,
+comment, non-data and unknown-event records are no-ops. Partial tool inputs are
+never emitted. `[DONE]` or EOF without one valid finish is a failure, so
+truncation cannot be reported as a normal stop. Provider error events and a
+unified `error` finish
+are redacted protocol failures rather than model-visible text.
+
+Construction, request, decoder, bound and cancellation errors use fixed
+categories without reflecting prompts, tool values, response records, model
+bytes, endpoint data, credentials or transport-controlled diagnostics. Provider
+and request debug output is similarly structural. A supplied transport owns the
+sanitization of its own error kind, code, message and retryability before the
+codec receives it.
+
+Cancellation is checked around request construction and transport startup and
+between response chunks, records and yielded events. The provider registers a
+cancellation wakeup rather than waiting for a new hostile or stalled response
+chunk. The transport receives the same cancellation token and is responsible
+for waking and tearing down its pending I/O. Dropping provider work drops its
+owned future, byte stream, buffers and partial tool state; no codec task, timer,
+thread or retry is detached. A blocking or cancellation-insensitive injected
+transport violates its host-side contract and cannot be repaired by the codec.
+The exact boundary is documented in [`ai-gateway.md`](ai-gateway.md).
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,

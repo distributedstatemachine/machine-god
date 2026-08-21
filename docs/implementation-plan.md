@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with five bounded slices. The first provides read-only native config/state
+with six bounded slices. The first provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
 schema-v1 `ask` config, bounded to 64 KiB with fail-closed file and content
@@ -79,15 +79,25 @@ and returns at most 100 sorted retained entries and 16 KiB of aggregate raw
 entry-name bytes plus a truncation flag. It reads only the first extra visible
 entry needed to establish truncation, so a truncated subset may reflect
 filesystem iteration order rather than global directory order. The exact
-contract is in [`list-files.md`](list-files.md). These slices do not complete
-Milestone 03. Concrete providers, permission prompting and modes beyond `ask`,
-durable native sessions, broader configuration and CLI behavior, workspace
-discovery, recursive/glob/grep and mutation tools, non-Unix hardened workspace
-construction, the remaining executable native tools, and compatibility or
-performance claims remain planned. Existing CLI bytes, provider surfaces,
-benchmark evidence, workflows, and Zig inputs are unchanged; the help and
-status commands remain explicitly non-equivalent, claim-ineligible, and
-unmeasured in bootstrap evidence.
+contract is in [`list-files.md`](list-files.md). The sixth slice adds the first
+concrete `ModelProvider`: a bounded, executor-neutral Vercel AI Gateway protocol
+`0.0.1` / language-model specification `4` codec over an explicitly injected
+byte transport. It projects the supported core transcript into the request
+shape exercised by pinned fx, strictly reconstructs text, reasoning, local tool
+calls, usage and finish events from arbitrarily fragmented data-stream bytes,
+and makes exactly one cancellation-aware transport call. The injected host
+retains endpoint, HTTP, TLS, authentication, status and retry responsibility;
+this slice performs no network effect itself. Its exact contract is in
+[`ai-gateway.md`](ai-gateway.md). These slices do not complete Milestone 03.
+Permission prompting and modes beyond `ask`, a native HTTP transport,
+credentials and broader configuration, durable native sessions, provider/CLI
+wiring, workspace discovery, recursive/glob/grep and mutation tools, non-Unix
+hardened workspace construction, the remaining executable native tools, and
+compatibility or performance claims remain planned. Existing CLI bytes,
+benchmark evidence, workflows, and Zig inputs are unchanged; the provider is
+explicitly scoped to a pinned wire shape and makes no current-protocol or full
+fx-equivalence claim. Help and status remain claim-ineligible and unmeasured in
+bootstrap evidence.
 
 ## Release gates
 

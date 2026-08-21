@@ -6,9 +6,17 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod ai_gateway;
 mod config;
 mod list_files;
 mod read_file;
+
+pub use ai_gateway::{
+    AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
+    AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind,
+    AiGatewayHeader, AiGatewayLimits, AiGatewayProvider, AiGatewayTransport,
+    AiGatewayTransportRequest,
+};
 
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,

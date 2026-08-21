@@ -1,0 +1,227 @@
+# Injected-transport AI Gateway provider
+
+This page is the normative contract for the sixth bounded Milestone 03 slice.
+It adds an executor-neutral `AiGatewayProvider` codec to
+`machine-god-native`, behind an explicitly injected `AiGatewayTransport`. The
+current CLI does not construct this provider or make network requests.
+
+The wire shape is deliberately scoped to the behavior needed from pinned
+[`vercel-labs/fx` revision
+`b1774fbf6c7602b503026f96f6e960e946c692ef`](https://github.com/vercel-labs/fx/commit/b1774fbf6c7602b503026f96f6e960e946c692ef).
+It is not a claim of compatibility with a current Vercel AI Gateway protocol,
+full fx equivalence, or a measured performance improvement.
+
+## Public boundary
+
+`AiGatewayProvider` implements core's `ModelProvider`. `new` takes a nonempty
+default model and an `Arc<dyn AiGatewayTransport>` with
+`AiGatewayLimits::default()`; `with_limits` also takes explicit limits. Its
+stable provider name is `AI_GATEWAY_PROVIDER_NAME`. The public wire constants
+are `AI_GATEWAY_PROTOCOL_VERSION` (`0.0.1`) and
+`AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION` (`4`). Provider and request
+debug representations reveal structure only; they do not reveal model input,
+headers, bodies, response bytes, or transport-controlled errors.
+
+The transport receives one owned `AiGatewayTransportRequest` containing the
+encoded body and fixed request metadata, plus the turn's `CancellationToken`.
+It returns an `AiGatewayByteStream`, whose chunks may split any UTF-8 code point,
+JSON token, field, or record delimiter. The provider invokes the transport
+exactly once per `ModelProvider::stream` call and never detaches a task or
+thread.
+
+The injected host transport owns all effects and policy needed to deliver that
+request: endpoint and URL selection, DNS, proxy behavior, HTTP method, TLS,
+authentication and credentials, response-status validation, redirect policy,
+timeouts, and any retry policy. A transport must return only the byte stream of
+an accepted streaming response or a redacted `ProviderError`. This provider
+does not inspect HTTP status or error bodies and does not retry.
+
+The request metadata contains these exact headers:
+
+| Header | Value |
+| --- | --- |
+| `content-type` | `application/json` |
+| `ai-gateway-protocol-version` | `0.0.1` |
+| `ai-language-model-specification-version` | `4` |
+| `ai-language-model-id` | selected model |
+| `ai-language-model-streaming` | `true` |
+| `x-session-id` | core session ID |
+| `x-session-affinity` | the same core session ID |
+
+Machine-god does not add authorization, team, endpoint, accept, referer, title,
+or user-agent values. In particular, it does not impersonate fx's referer,
+title, or user agent. A host may add transport-level metadata under its own
+identity and security policy.
+
+## Request projection
+
+The selected model is `ModelRequest.options.model` when present and otherwise
+the provider's default. An empty selected model is invalid. Temperature and
+inference metadata are unsupported and rejected rather than ignored. A present
+`max_output_tokens` becomes the sole optional body field
+`maxOutputTokens`; zero is invalid.
+
+The body has only `prompt`, `tools`, `toolChoice`, and the optional
+`maxOutputTokens`. `toolChoice` is `{"type":"auto"}` when tools are present
+and `{"type":"none"}` when the tool list is empty. Each `ToolSpec` is a
+Gateway function tool with its validated name, description, and JSON Schema
+under `inputSchema`:
+
+```json
+{
+  "prompt": [],
+  "tools": [
+    {
+      "type": "function",
+      "name": "read_file",
+      "description": "Read a file",
+      "inputSchema": {"type": "object"}
+    }
+  ],
+  "toolChoice": {"type": "auto"},
+  "maxOutputTokens": 4096
+}
+```
+
+The accepted provider-neutral transcript projection is intentionally narrow:
+
+- each system or user message contains exactly one text block;
+- an assistant message contains an optional single leading text block followed
+  by one or more complete tool-call blocks, or just its single text block;
+- each tool message contains exactly one tool-result block whose call ID
+  resolves uniquely to calls in the immediately preceding assistant group; and
+- a tool result uses that resolved call's tool name and serializes the complete
+  `ToolOutput` as the Gateway text output value.
+
+Assistant calls are emitted as `tool-call` content with `toolCallId`,
+`toolName`, and JSON `input`. Tool results are emitted as `tool-result` content
+with that same ID and name and an output of `{"type":"text","value":"..."}`.
+An assistant call/result block must be complete: calls have unique IDs in their
+message, and the following tool messages supply exactly one result for each
+call without intervening roles. Those results may appear in any order, but an
+orphan, duplicate, missing, or name-conflicting result is invalid history.
+`ContentBlock::Json`, a role with an unsupported block kind, and otherwise
+invalid role/content combinations are rejected before the transport is called.
+
+## Streaming response
+
+The decoder consumes newline-delimited records and recognizes the pinned
+single-line data-stream shape. Each recognized record is exactly one line
+beginning `data: ` followed by either one JSON object or `[DONE]`. An SSE-style
+blank line may follow but is not required. Both LF and CRLF delimiters are
+accepted. Blank lines, comment lines and non-data SSE fields are bounded and
+ignored. A data line missing the exact `data: ` prefix is therefore not
+interpreted as model data. Arbitrary transport chunk fragmentation is accepted,
+but invalid UTF-8, malformed JSON, duplicate JSON fields, and malformed schemas
+for supported event types fail closed. An unknown JSON event type is a bounded
+no-op.
+
+Supported JSON events are:
+
+| Gateway event | Core event |
+| --- | --- |
+| `text-delta` with string `delta` | `ModelEvent::TextDelta` |
+| `reasoning-delta` with string `delta` | `ModelEvent::ReasoningDelta` |
+| complete `tool-call` | `ModelEvent::ToolCall` |
+| valid `finish.usage` | `ModelEvent::Usage` before stop |
+| valid `finish.finishReason.unified` | exactly one `ModelEvent::Stop` |
+
+A tool call may carry its complete JSON `input` in the final `tool-call`, or it
+may be reconstructed from one `tool-input-start`, zero or more matching
+`tool-input-delta` records, one `tool-input-end`, and a matching final
+`tool-call`. A complete input carried by the final event is authoritative; an
+otherwise missing input may use the completed streamed value. Identity and
+name conflicts still reject. If the streamed input was already ended, its JSON
+must also equal an explicit final input. Call IDs and names must be nonempty and
+valid for core, final IDs must be unique, argument JSON must be complete, and no
+more than the configured number of calls may be accumulated. Only a validated
+final call is emitted to core; start, delta, and end records never expose a
+partial call.
+
+The decoder rejects unmatched, conflicting, late, duplicate, or unfinished tool
+input state. It also rejects provider-executed calls, `tool-result` response
+events, provider error events, a unified `error` finish, and any additional JSON
+record already received in the same chunk after finish. `[DONE]` emits nothing
+and can terminate the stream only after one valid finish; EOF has the same
+requirement. A stream that ends with `[DONE]` or EOF but no finish is a protocol
+failure. Once the stop is yielded, later transport chunks are not polled.
+
+The unified finish mapping is exact:
+
+| `finishReason.unified` | `StopReason` |
+| --- | --- |
+| `stop` | `Completed` |
+| `tool-calls` | `ToolCalls` |
+| `length` | `MaxOutputTokens` |
+| `content-filter` | `ContentFilter` |
+| `other` | `Other("other")` |
+| `error` | provider protocol failure; no stop |
+
+When present, usage requires nonnegative integer totals. `inputTokens.total`,
+`outputTokens.total`, and `inputTokens.cacheRead` map to `input_tokens`,
+`output_tokens`, and `cached_input_tokens`. Usage is emitted at most once,
+immediately before the stop it accompanies. Missing usage emits no usage event;
+malformed or overflowing usage fails the response rather than silently
+changing a total.
+
+## Independent resource limits
+
+`AiGatewayLimits::default()` applies every limit independently:
+
+| Resource | Default maximum |
+| --- | ---: |
+| encoded request body | 12 MiB (12,582,912 bytes) |
+| one transport chunk | 1 MiB (1,048,576 bytes) |
+| one decoded data record | 1 MiB (1,048,576 bytes) |
+| undecoded receive buffer | 1 MiB (1,048,576 bytes) |
+| total response bytes | 16 MiB (16,777,216 bytes) |
+| response records | 8,192 |
+| request messages | 4,096 |
+| request tool specifications | 1,024 |
+| simultaneously reconstructed streamed tool inputs | 64 |
+| final response tool calls | 64 |
+| historical or response arguments per tool call | 64 KiB (65,536 bytes) |
+
+Crossing any bound fails before retaining the excess object. Custom limits do
+not make one budget substitute for another. In particular, a small record does
+not grant additional total-response capacity, and unused capacity in one tool
+call does not enlarge another call's argument budget.
+
+## Errors and cancellation
+
+Construction rejects an invalid default model or invalid limits through fixed
+`InvalidModel` and `InvalidLimits` configuration categories. Request
+validation, protocol parsing, resource exhaustion, and cancellation use fixed
+redacted provider-error categories. Codec-generated errors and debug output
+never reflect prompt text, tool arguments or results, model response bytes,
+credentials, endpoint values, or malformed record contents. Request/history
+errors are non-retryable invalid-request failures; decoder and bound failures
+are non-retryable protocol failures; cancellation is non-retryable and
+distinct. A trusted injected transport error is passed through unchanged so its
+authentication, rate-limit, availability, transport, code, and retryability
+classification survives; the transport must redact that error before returning
+it.
+
+Cancellation is checked before and after request encoding, before the transport
+call, while its startup future is pending, between received chunks, between
+decoded records, before each yielded event, and at terminal processing. The
+provider registers for cancellation wakeups, so cancellation does not require
+another response byte to become observable. The transport receives the same
+token and must arrange an equivalent wakeup while its own future or byte stream
+is pending. Dropping the provider future or event stream drops all owned
+transport futures, streams, buffers, and partial tool state. No detached task,
+thread, timer, or retry survives cancellation or drop.
+
+## Deferred scope
+
+This slice adds no URL or HTTP client, socket, DNS, proxy, TLS, native
+credential lookup, authorization header, status-code mapping, retry/backoff,
+clock, async runtime, endpoint configuration, team routing, model catalog,
+provider-executed tool, image, structured-output, temperature, or metadata
+support. It adds no CLI wiring or commands, production permission prompt,
+permission mode beyond `ask`, durable native session store, or broader native
+configuration.
+
+It also adds no compatibility or performance evidence. The pinned fx checkout
+and Zig toolchain remain benchmark-only inputs and are not Rust product runtime
+dependencies.
