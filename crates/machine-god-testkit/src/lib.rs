@@ -15,7 +15,10 @@ pub use provider::{
 pub use session_store::{
     InMemorySessionStore, RecordedSessionStoreCall, SessionStoreScript, SessionStoreStep,
 };
-pub use tool::{RecordedToolInvocation, ScriptedTool, ToolStep};
+pub use tool::{
+    RecordedToolInvocation, RecordedToolPreparation, ScriptedPreparedTool, ScriptedTool,
+    ToolPrepareStep, ToolStep,
+};
 
 /// Testkit version aligned with the core API version.
 pub const TESTKIT_API_VERSION: u32 = machine_god_core::API_VERSION;

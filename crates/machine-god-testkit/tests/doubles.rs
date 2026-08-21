@@ -5,13 +5,14 @@ use machine_god_core::{
     PermissionError, PermissionGrantScope, PermissionHandler, PermissionRequest,
     PermissionRequestId, PermissionRisk, ProviderError, ProviderErrorKind, Role, Session,
     SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
-    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCallId,
+    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, TurnEvent, TurnId,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep,
     RecordedSessionStoreCall, RecordingEventSink, ScriptedModelProvider, ScriptedPermissionHandler,
-    ScriptedTool, SessionStoreScript, SessionStoreStep, ToolStep,
+    ScriptedPreparedTool, ScriptedTool, SessionStoreScript, SessionStoreStep, ToolPrepareStep,
+    ToolStep,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -341,6 +342,34 @@ fn every_double_reports_its_recording_bound() {
     .unwrap_err();
     assert_eq!(error.code, "testkit_record_capacity_exhausted");
 
+    let prepared_tool = ScriptedPreparedTool::with_record_capacity(
+        tool_spec(),
+        [ToolPrepareStep::Prepared {
+            capability: Capability::Custom {
+                name: "bounded".to_owned(),
+                details: json!({}),
+            },
+            arguments: json!({}),
+        }],
+        [ToolStep::Output(ToolOutput::success("unused"))],
+        0,
+    );
+    let error = prepared_tool
+        .prepare(ToolCall {
+            id: ToolCallId::new("bounded-prepare").unwrap(),
+            name: tool_spec().name,
+            arguments: json!({}),
+        })
+        .unwrap_err();
+    assert_eq!(error.code, "testkit_record_capacity_exhausted");
+    let error = futures_executor::block_on(prepared_tool.execute(
+        tool_context(),
+        json!({}),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "testkit_record_capacity_exhausted");
+
     let store = InMemorySessionStore::configured(BTreeMap::new(), SessionStoreScript::default(), 0);
     let error =
         futures_executor::block_on(store.load(SessionId::new("bounded").unwrap())).unwrap_err();
@@ -422,6 +451,67 @@ fn tool_records_results_errors_and_cancelled_pending_work() {
     assert_eq!(invocations.len(), 3);
     assert_eq!(invocations[2].arguments, json!({"call": 3}));
     assert!(invocations[2].cancellation.is_cancelled());
+}
+
+#[test]
+fn prepared_tool_records_preparation_and_execution_independently() {
+    let requested = ToolCall {
+        id: ToolCallId::new("prepared-call").unwrap(),
+        name: tool_spec().name,
+        arguments: json!({"raw": "input"}),
+    };
+    let prepared_arguments = json!({"normalized": true});
+    let tool = ScriptedPreparedTool::new(
+        tool_spec(),
+        [ToolPrepareStep::Prepared {
+            capability: Capability::Custom {
+                name: "prepared-fixture".to_owned(),
+                details: json!({"safe": true}),
+            },
+            arguments: prepared_arguments.clone(),
+        }],
+        [ToolStep::Output(ToolOutput::success("done"))],
+    );
+
+    assert!(tool.prepare(requested.clone()).is_ok());
+    assert_eq!(tool.preparations().len(), 1);
+    assert_eq!(tool.preparations()[0].call, requested);
+    assert!(tool.invocations().is_empty());
+
+    futures_executor::block_on(tool.execute(
+        tool_context(),
+        prepared_arguments.clone(),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(tool.invocations().len(), 1);
+    assert_eq!(tool.invocations()[0].arguments, prepared_arguments);
+    assert_eq!(tool.remaining_steps(), (0, 0));
+}
+
+#[test]
+fn prepared_tool_errors_before_execution_and_preserves_execution_script() {
+    let expected = ToolError::new(
+        ToolErrorKind::InvalidInput,
+        "invalid_path",
+        "fixture rejected its input",
+        false,
+    );
+    let tool = ScriptedPreparedTool::new(
+        tool_spec(),
+        [ToolPrepareStep::Error(expected.clone())],
+        [ToolStep::Output(ToolOutput::success("must remain unused"))],
+    );
+    let requested = ToolCall {
+        id: ToolCallId::new("prepare-error").unwrap(),
+        name: tool_spec().name,
+        arguments: json!({}),
+    };
+
+    assert_eq!(tool.prepare(requested).unwrap_err(), expected);
+    assert_eq!(tool.preparations().len(), 1);
+    assert!(tool.invocations().is_empty());
+    assert_eq!(tool.remaining_steps(), (0, 1));
 }
 
 #[test]

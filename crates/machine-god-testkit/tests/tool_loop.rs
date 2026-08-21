@@ -1,19 +1,19 @@
 use futures_core::Stream;
 use futures_util::StreamExt;
 use machine_god_core::{
-    BoxFuture, BuildError, CancellationToken, ContentBlock, Engine, EngineError, EngineEvent,
-    EngineLimits, InferenceOptions, MAX_SAFE_JSON_DEPTH, Message, ModelEvent, ModelEventStream,
-    ModelProvider, ModelRequest, PermissionDecision, PermissionError, PermissionGrantScope,
-    PermissionHandler, PermissionRequest, Prompt, ProviderError, ProviderErrorKind, Role, Session,
-    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
-    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
-    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
-    TurnHandle,
+    BoxFuture, BuildError, CancellationToken, Capability, ContentBlock, Engine, EngineError,
+    EngineEvent, EngineLimits, FilesystemAccess, InferenceOptions, MAX_SAFE_JSON_DEPTH, Message,
+    ModelEvent, ModelEventStream, ModelProvider, ModelRequest, PermissionDecision, PermissionError,
+    PermissionGrantScope, PermissionHandler, PermissionRequest, PreparedToolCall, Prompt,
+    ProviderError, ProviderErrorKind, Role, Session, SessionId, SessionIncarnationId,
+    SessionRecord, SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind,
+    StopReason, TokenUsage, Tool, ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind,
+    ToolName, ToolOutput, ToolSpec, Turn, TurnEvent, TurnHandle,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
-    ScriptedModelProvider, ScriptedPermissionHandler, ScriptedTool, SessionStoreScript,
-    SessionStoreStep, ToolStep,
+    ScriptedModelProvider, ScriptedPermissionHandler, ScriptedPreparedTool, ScriptedTool,
+    SessionStoreScript, SessionStoreStep, ToolPrepareStep, ToolStep,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -64,6 +64,13 @@ fn allow() -> PermissionStep {
     PermissionStep::Decision(PermissionDecision::Allow {
         scope: PermissionGrantScope::Once,
     })
+}
+
+fn prepared(capability: Capability, arguments: Value) -> ToolPrepareStep {
+    ToolPrepareStep::Prepared {
+        capability,
+        arguments,
+    }
 }
 
 fn unknown_result_size() -> usize {
@@ -368,6 +375,430 @@ fn denial_and_tool_error_become_durable_model_visible_results() {
         };
         assert!(output.is_error);
     }
+}
+
+#[test]
+fn legacy_tool_preparation_preserves_the_original_capability_and_arguments() {
+    let arguments = json!({"path": "raw.txt"});
+    let requested = call("legacy-call", "legacy", arguments.clone());
+    let provider = ScriptedModelProvider::new(
+        "legacy-preparation",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: requested.clone(),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = ScriptedPermissionHandler::new([allow()]);
+    let tool = ScriptedTool::new(
+        spec("legacy"),
+        [ToolStep::Output(ToolOutput::success("done"))],
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+
+    let output =
+        collect(&engine.create_test_session(SessionId::new("legacy-preparation").unwrap()));
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(permissions.requests().len(), 1);
+    assert_eq!(
+        permissions.requests()[0].capability,
+        Capability::Tool {
+            name: requested.name,
+            call_id: requested.id,
+            arguments: arguments.clone(),
+        }
+    );
+    assert_eq!(tool.invocations().len(), 1);
+    assert_eq!(tool.invocations()[0].arguments, arguments);
+}
+
+#[test]
+fn prepared_capability_reaches_policy_and_only_allowed_arguments_reach_execution() {
+    let first = call("denied", "prepared", json!({"raw": "first"}));
+    let second = call("allowed", "prepared", json!({"raw": "second"}));
+    let normalized_first = json!({"normalized": "first"});
+    let normalized_second = json!({"normalized": "second"});
+    let provider = ScriptedModelProvider::new(
+        "prepared-policy",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: first.clone(),
+                },
+                ModelEvent::ToolCall {
+                    call: second.clone(),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let tool = ScriptedPreparedTool::new(
+        spec("prepared"),
+        [
+            prepared(
+                Capability::Filesystem {
+                    access: FilesystemAccess::Read,
+                    path: "/workspace/first".to_owned(),
+                },
+                normalized_first,
+            ),
+            prepared(
+                Capability::Filesystem {
+                    access: FilesystemAccess::Read,
+                    path: "/workspace/second".to_owned(),
+                },
+                normalized_second.clone(),
+            ),
+        ],
+        [ToolStep::Output(ToolOutput::success("read"))],
+    );
+    let permissions = ScriptedPermissionHandler::new([
+        PermissionStep::Decision(PermissionDecision::Deny {
+            reason: "not this file".to_owned(),
+        }),
+        allow(),
+    ]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+
+    let output = collect(&engine.create_test_session(SessionId::new("prepared-policy").unwrap()));
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(tool.preparations().len(), 2);
+    assert_eq!(tool.preparations()[0].call, first);
+    assert_eq!(tool.preparations()[1].call, second);
+    assert_eq!(
+        permissions
+            .requests()
+            .into_iter()
+            .map(|request| request.capability)
+            .collect::<Vec<_>>(),
+        [
+            Capability::Filesystem {
+                access: FilesystemAccess::Read,
+                path: "/workspace/first".to_owned(),
+            },
+            Capability::Filesystem {
+                access: FilesystemAccess::Read,
+                path: "/workspace/second".to_owned(),
+            },
+        ]
+    );
+    assert_eq!(tool.invocations().len(), 1);
+    assert_eq!(tool.invocations()[0].arguments, normalized_second);
+}
+
+#[test]
+fn preparation_error_recovers_with_a_durable_generic_result_without_effects() {
+    let requested = call("invalid", "prepared", json!({"raw": true}));
+    let provider = ScriptedModelProvider::new(
+        "prepare-error",
+        [
+            events([
+                ModelEvent::ToolCall { call: requested },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let tool = ScriptedPreparedTool::new(
+        spec("prepared"),
+        [ToolPrepareStep::Error(ToolError::new(
+            ToolErrorKind::InvalidInput,
+            "secret_fixture_code",
+            "secret fixture details",
+            false,
+        ))],
+        [ToolStep::Output(ToolOutput::success("must not execute"))],
+    );
+    let store = InMemorySessionStore::new();
+    let permissions = ScriptedPermissionHandler::new([]);
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let id = SessionId::new("prepare-error").unwrap();
+
+    let output = collect(&engine.create_test_session(id.clone()));
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(tool.preparations().len(), 1);
+    assert!(tool.invocations().is_empty());
+    assert!(permissions.requests().is_empty());
+    let provider_requests = provider.requests();
+    let model_result = &provider_requests[1].request.messages[2];
+    let ContentBlock::ToolResult { output, .. } = &model_result.content[0] else {
+        panic!("expected prepared tool error result")
+    };
+    assert!(output.is_error);
+    assert_eq!(output.content["code"], "tool_error");
+    assert!(!output.content.to_string().contains("secret"));
+    assert_eq!(&store.record(&id).unwrap().messages[2], model_result);
+}
+
+#[test]
+fn prepared_permission_grants_are_not_cached_by_the_engine() {
+    let provider = ScriptedModelProvider::new(
+        "prepared-grants",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("first", "prepared", json!({})),
+                },
+                ModelEvent::ToolCall {
+                    call: call("second", "prepared", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let tool = ScriptedPreparedTool::new(
+        spec("prepared"),
+        [
+            prepared(
+                Capability::Custom {
+                    name: "same-capability".to_owned(),
+                    details: json!({}),
+                },
+                json!({"call": 1}),
+            ),
+            prepared(
+                Capability::Custom {
+                    name: "same-capability".to_owned(),
+                    details: json!({}),
+                },
+                json!({"call": 2}),
+            ),
+        ],
+        [ToolStep::Output(ToolOutput::success("once"))],
+    );
+    let permissions = ScriptedPermissionHandler::new([
+        PermissionStep::Decision(PermissionDecision::Allow {
+            scope: PermissionGrantScope::Session,
+        }),
+        PermissionStep::Decision(PermissionDecision::Deny {
+            reason: "second call denied".to_owned(),
+        }),
+    ]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+
+    let output = collect(&engine.create_test_session(SessionId::new("prepared-grants").unwrap()));
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(permissions.requests().len(), 2);
+    assert_eq!(tool.preparations().len(), 2);
+    assert_eq!(tool.invocations().len(), 1);
+    assert_eq!(tool.invocations()[0].arguments, json!({"call": 1}));
+}
+
+#[derive(Clone, Debug, Default)]
+struct CancelDuringPreparationTool {
+    state: Arc<CancelDuringPreparationState>,
+}
+
+#[derive(Debug, Default)]
+struct CancelDuringPreparationState {
+    handle: Mutex<Option<TurnHandle>>,
+    preparations: AtomicUsize,
+    executions: AtomicUsize,
+}
+
+impl CancelDuringPreparationTool {
+    fn set_handle(&self, handle: TurnHandle) {
+        *self
+            .state
+            .handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(handle);
+    }
+}
+
+impl Tool for CancelDuringPreparationTool {
+    fn spec(&self) -> ToolSpec {
+        spec("cancel-during-prepare")
+    }
+
+    fn prepare(&self, _call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        self.state.preparations.fetch_add(1, Ordering::SeqCst);
+        let handle = self
+            .state
+            .handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("turn handle is installed before the turn is polled");
+        assert!(handle.cancel());
+        Ok(PreparedToolCall::new(
+            Capability::Custom {
+                name: "cancelled-preparation".to_owned(),
+                details: json!({}),
+            },
+            json!({"prepared": true}),
+        ))
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        self.state.executions.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(ToolOutput::success("unexpected")) })
+    }
+}
+
+#[test]
+fn cancellation_after_preparation_wins_before_policy_or_execution() {
+    let provider = ScriptedModelProvider::new(
+        "cancel-during-preparation",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("cancel", "cancel-during-prepare", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let tool = CancelDuringPreparationTool::default();
+    let permissions = ScriptedPermissionHandler::new([]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let session = engine.create_test_session(SessionId::new("cancel-during-preparation").unwrap());
+    let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
+    tool.set_handle(turn.handle());
+
+    let output = futures_executor::block_on(turn.by_ref().collect::<Vec<_>>())
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert_eq!(tool.state.preparations.load(Ordering::SeqCst), 1);
+    assert_eq!(tool.state.executions.load(Ordering::SeqCst), 0);
+    assert!(permissions.requests().is_empty());
+}
+
+fn assert_oversized_prepared_value_rejected(case: &str, capability: Capability, arguments: Value) {
+    let provider = ScriptedModelProvider::new(
+        case,
+        [events([
+            ModelEvent::ToolCall {
+                call: call("oversized", "prepared", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let tool = ScriptedPreparedTool::new(
+        spec("prepared"),
+        [prepared(capability, arguments)],
+        [ToolStep::Output(ToolOutput::success("must not execute"))],
+    );
+    let permissions = ScriptedPermissionHandler::new([]);
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .limits(with_limit(EngineLimits::default(), "arguments", 128))
+        .build()
+        .unwrap();
+    let id = SessionId::new(case).unwrap();
+
+    let output = collect(&engine.create_test_session(id.clone()));
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "tool_argument_size_limit"
+    ));
+    assert_eq!(tool.preparations().len(), 1);
+    assert!(tool.invocations().is_empty());
+    assert!(permissions.requests().is_empty());
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "oversized");
+}
+
+#[test]
+fn oversized_prepared_values_fail_before_policy_or_execution() {
+    assert_oversized_prepared_value_rejected(
+        "oversized-prepared-arguments",
+        Capability::Custom {
+            name: "bounded".to_owned(),
+            details: json!({}),
+        },
+        Value::String("x".repeat(512)),
+    );
+    assert_oversized_prepared_value_rejected(
+        "oversized-prepared-capability",
+        Capability::Filesystem {
+            access: FilesystemAccess::Read,
+            path: "x".repeat(512),
+        },
+        json!({}),
+    );
 }
 
 fn protocol_failure(
@@ -2776,6 +3207,8 @@ fn deep_owned_json_rejections_are_stack_safe_in_subprocesses() {
         "provider_arguments",
         "provider_cancel_ready",
         "provider_event_limit",
+        "prepared_arguments",
+        "prepared_capability",
         "tool_output",
         "tool_cancel_ready",
     ] {
@@ -3021,6 +3454,59 @@ fn deep_owned_json_rejection_child() {
             ));
             assert!(permissions.requests().is_empty());
             assert!(tool.invocations().is_empty());
+        }
+        "prepared_arguments" | "prepared_capability" => {
+            let permissions = ScriptedPermissionHandler::new([]);
+            let store = InMemorySessionStore::new();
+            let (capability, arguments) = if case == "prepared_arguments" {
+                (
+                    Capability::Custom {
+                        name: "deep-prepared".to_owned(),
+                        details: json!({}),
+                    },
+                    nested_array(DEEP_JSON_DEPTH),
+                )
+            } else {
+                (
+                    Capability::Custom {
+                        name: "deep-prepared".to_owned(),
+                        details: nested_array(DEEP_JSON_DEPTH),
+                    },
+                    json!({}),
+                )
+            };
+            let tool = ScriptedPreparedTool::new(
+                spec("deep-prepared"),
+                [prepared(capability, arguments)],
+                [ToolStep::Output(ToolOutput::success("must not execute"))],
+            );
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new(
+                    case.as_str(),
+                    [events([
+                        ModelEvent::ToolCall {
+                            call: call("deep", "deep-prepared", json!({})),
+                        },
+                        ModelEvent::Stop {
+                            reason: StopReason::ToolCalls,
+                        },
+                    ])],
+                ))
+                .session_store(store.clone())
+                .permission_handler(permissions.clone())
+                .tool(tool.clone())
+                .build()
+                .unwrap();
+            let id = SessionId::new(case.as_str()).unwrap();
+            let output = collect(&engine.create_test_session(id.clone()));
+            assert!(matches!(
+                &output.last().unwrap().payload,
+                TurnEvent::Failed { code, .. } if code == "json_depth_limit"
+            ));
+            assert_eq!(tool.preparations().len(), 1);
+            assert!(tool.invocations().is_empty());
+            assert!(permissions.requests().is_empty());
+            assert_unknown_result(&store.record(&id).unwrap().messages[2], "deep");
         }
         "tool_output" => {
             let store = InMemorySessionStore::new();
