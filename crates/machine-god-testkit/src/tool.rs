@@ -357,3 +357,75 @@ impl Tool for ScriptedPreparedTool {
 fn tool_fixture_error(code: &'static str, message: &'static str) -> ToolError {
     ToolError::new(ToolErrorKind::Other, code, message, false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ScriptedPreparedTool, ToolPrepareStep, ToolStep};
+    use machine_god_core::{
+        CancellationToken, Capability, SessionId, SessionIncarnationId, Tool, ToolCall, ToolCallId,
+        ToolContext, ToolName, ToolOutput, ToolSpec, TurnId,
+    };
+    use serde_json::json;
+
+    fn spec() -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("poisoned-prepared-tool").unwrap(),
+            description: "poison recovery fixture".to_owned(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call() -> ToolCall {
+        ToolCall {
+            id: ToolCallId::new("poisoned-prepare").unwrap(),
+            name: spec().name,
+            arguments: json!({"raw": true}),
+        }
+    }
+
+    fn context() -> ToolContext {
+        ToolContext {
+            session_id: SessionId::new("poisoned-tool-session").unwrap(),
+            session_incarnation_id: SessionIncarnationId::new("poisoned-incarnation").unwrap(),
+            turn_id: TurnId::new("turn-1").unwrap(),
+            call_id: ToolCallId::new("poisoned-execution").unwrap(),
+        }
+    }
+
+    #[test]
+    fn prepared_tool_recovers_its_single_poisoned_state_lock() {
+        let expected_spec = spec();
+        let tool = ScriptedPreparedTool::new(
+            expected_spec.clone(),
+            [ToolPrepareStep::Prepared {
+                capability: Capability::Custom {
+                    name: "poison-recovered".to_owned(),
+                    details: json!({}),
+                },
+                arguments: json!({"normalized": true}),
+            }],
+            [ToolStep::Output(ToolOutput::success("recovered"))],
+        );
+        let inner = tool.inner.clone();
+        let poison = std::thread::spawn(move || {
+            let _guard = inner.state.lock().unwrap();
+            panic!("poison prepared tool state");
+        })
+        .join();
+        assert!(poison.is_err());
+
+        assert_eq!(tool.spec(), expected_spec);
+        assert!(tool.prepare(call()).is_ok());
+        assert!(
+            futures_executor::block_on(tool.execute(
+                context(),
+                json!({"normalized": true}),
+                CancellationToken::new(),
+            ))
+            .is_ok()
+        );
+        assert_eq!(tool.preparations().len(), 1);
+        assert_eq!(tool.invocations().len(), 1);
+        assert_eq!(tool.remaining_steps(), (0, 0));
+    }
+}

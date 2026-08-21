@@ -16,6 +16,8 @@ use machine_god_testkit::{
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
 
 trait EngineTestSessions {
     fn create_test_session(&self, id: SessionId) -> Session;
@@ -89,6 +91,31 @@ fn tool_context() -> ToolContext {
         session_incarnation_id: SessionIncarnationId::new("tool-incarnation").unwrap(),
         turn_id: TurnId::new("turn-1").unwrap(),
         call_id: ToolCallId::new("call-1").unwrap(),
+    }
+}
+
+fn prepared_call(index: usize) -> ToolCall {
+    ToolCall {
+        id: ToolCallId::new(format!("prepared-call-{index}")).unwrap(),
+        name: tool_spec().name,
+        arguments: json!({"raw": index}),
+    }
+}
+
+fn prepared_context(index: usize) -> ToolContext {
+    ToolContext {
+        call_id: ToolCallId::new(format!("prepared-execution-{index}")).unwrap(),
+        ..tool_context()
+    }
+}
+
+fn prepared_step(index: usize) -> ToolPrepareStep {
+    ToolPrepareStep::Prepared {
+        capability: Capability::Custom {
+            name: "prepared-fixture".to_owned(),
+            details: json!({"index": index}),
+        },
+        arguments: json!({"normalized": index}),
     }
 }
 
@@ -512,6 +539,188 @@ fn prepared_tool_errors_before_execution_and_preserves_execution_script() {
     assert_eq!(tool.preparations().len(), 1);
     assert!(tool.invocations().is_empty());
     assert_eq!(tool.remaining_steps(), (0, 1));
+}
+
+#[test]
+fn prepared_tool_script_exhaustion_records_only_the_attempted_phase() {
+    let tool = ScriptedPreparedTool::new(
+        tool_spec(),
+        [prepared_step(0)],
+        [ToolStep::Output(ToolOutput::success("executed"))],
+    );
+
+    assert!(tool.prepare(prepared_call(0)).is_ok());
+    let prepare_error = tool.prepare(prepared_call(1)).unwrap_err();
+    assert_eq!(prepare_error.kind, ToolErrorKind::Other);
+    assert_eq!(prepare_error.code, "testkit_script_exhausted");
+    assert_eq!(
+        prepare_error.message,
+        "scripted tool was prepared after its preparation script was exhausted"
+    );
+    assert!(!prepare_error.retryable);
+    assert_eq!(tool.preparations().len(), 2);
+    assert!(tool.invocations().is_empty());
+    assert_eq!(tool.remaining_steps(), (0, 1));
+
+    futures_executor::block_on(tool.execute(
+        prepared_context(0),
+        json!({"execution": 0}),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    let execute_error = futures_executor::block_on(tool.execute(
+        prepared_context(1),
+        json!({"execution": 1}),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+    assert_eq!(execute_error.kind, ToolErrorKind::Other);
+    assert_eq!(execute_error.code, "testkit_script_exhausted");
+    assert_eq!(
+        execute_error.message,
+        "scripted tool was invoked after its execution script was exhausted"
+    );
+    assert!(!execute_error.retryable);
+    assert_eq!(tool.preparations().len(), 2);
+    assert_eq!(tool.invocations().len(), 2);
+    assert_eq!(tool.remaining_steps(), (0, 0));
+}
+
+#[test]
+fn prepared_tool_record_capacity_is_independent_at_n_and_n_plus_one() {
+    const CAPACITY: usize = 3;
+    let tool = ScriptedPreparedTool::with_record_capacity(
+        tool_spec(),
+        (0..=CAPACITY).map(prepared_step),
+        (0..=CAPACITY)
+            .map(|index| ToolStep::Output(ToolOutput::success(json!({"execution": index})))),
+        CAPACITY,
+    );
+
+    for index in 0..CAPACITY {
+        assert!(tool.prepare(prepared_call(index)).is_ok());
+    }
+    let prepare_error = tool.prepare(prepared_call(CAPACITY)).unwrap_err();
+    assert_eq!(prepare_error.code, "testkit_record_capacity_exhausted");
+    assert_eq!(tool.preparations().len(), CAPACITY);
+    assert!(tool.invocations().is_empty());
+    assert_eq!(tool.remaining_steps(), (1, CAPACITY + 1));
+
+    for index in 0..CAPACITY {
+        futures_executor::block_on(tool.execute(
+            prepared_context(index),
+            json!({"execution": index}),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+    }
+    let execute_error = futures_executor::block_on(tool.execute(
+        prepared_context(CAPACITY),
+        json!({"execution": CAPACITY}),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+    assert_eq!(execute_error.code, "testkit_record_capacity_exhausted");
+    assert_eq!(tool.preparations().len(), CAPACITY);
+    assert_eq!(tool.invocations().len(), CAPACITY);
+    assert_eq!(tool.remaining_steps(), (1, 1));
+}
+
+#[test]
+fn prepared_tool_concurrent_calls_and_snapshots_remain_bounded_and_consistent() {
+    const CALLS: usize = 24;
+    let expected_spec = tool_spec();
+    let tool = ScriptedPreparedTool::with_record_capacity(
+        expected_spec.clone(),
+        (0..CALLS).map(prepared_step),
+        (0..CALLS).map(|_| ToolStep::Output(ToolOutput::success("executed"))),
+        CALLS,
+    );
+    let barrier = Arc::new(Barrier::new(CALLS * 2 + 2));
+    let done = Arc::new(AtomicBool::new(false));
+    let snapshot_tool = tool.clone();
+    let snapshot_barrier = Arc::clone(&barrier);
+    let snapshot_done = Arc::clone(&done);
+    let snapshot = std::thread::spawn(move || {
+        snapshot_barrier.wait();
+        let mut samples = 0usize;
+        loop {
+            let preparations = snapshot_tool.preparations();
+            let preparation_ids: BTreeSet<_> = preparations
+                .iter()
+                .map(|recorded| recorded.call.id.to_string())
+                .collect();
+            assert_eq!(preparation_ids.len(), preparations.len());
+            assert!(preparations.len() <= CALLS);
+
+            let invocations = snapshot_tool.invocations();
+            let execution_ids: BTreeSet<_> = invocations
+                .iter()
+                .map(|recorded| recorded.context.call_id.to_string())
+                .collect();
+            assert_eq!(execution_ids.len(), invocations.len());
+            assert!(invocations.len() <= CALLS);
+            assert!(
+                invocations
+                    .iter()
+                    .all(|recorded| !recorded.cancellation.is_cancelled())
+            );
+
+            let remaining = snapshot_tool.remaining_steps();
+            assert!(remaining.0 <= CALLS);
+            assert!(remaining.1 <= CALLS);
+            assert_eq!(snapshot_tool.spec(), expected_spec);
+            samples += 1;
+            if snapshot_done.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+        samples
+    });
+
+    let mut workers = Vec::new();
+    for index in 0..CALLS {
+        let preparation_tool = tool.clone();
+        let preparation_barrier = Arc::clone(&barrier);
+        workers.push(std::thread::spawn(move || {
+            preparation_barrier.wait();
+            preparation_tool.prepare(prepared_call(index)).map(drop)
+        }));
+
+        let execution_tool = tool.clone();
+        let execution_barrier = Arc::clone(&barrier);
+        workers.push(std::thread::spawn(move || {
+            execution_barrier.wait();
+            futures_executor::block_on(execution_tool.execute(
+                prepared_context(index),
+                json!({"execution": index}),
+                CancellationToken::new(),
+            ))
+            .map(drop)
+        }));
+    }
+    barrier.wait();
+    for worker in workers {
+        worker.join().unwrap().unwrap();
+    }
+    done.store(true, Ordering::SeqCst);
+    assert!(snapshot.join().unwrap() > 0);
+
+    let preparations = tool.preparations();
+    let preparation_ids: BTreeSet<_> = preparations
+        .iter()
+        .map(|recorded| recorded.call.id.to_string())
+        .collect();
+    let invocations = tool.invocations();
+    let execution_ids: BTreeSet<_> = invocations
+        .iter()
+        .map(|recorded| recorded.context.call_id.to_string())
+        .collect();
+    assert_eq!(preparations.len(), CALLS);
+    assert_eq!(preparation_ids.len(), CALLS);
+    assert_eq!(invocations.len(), CALLS);
+    assert_eq!(execution_ids.len(), CALLS);
+    assert_eq!(tool.remaining_steps(), (0, 0));
 }
 
 #[test]
