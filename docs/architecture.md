@@ -63,12 +63,14 @@ and must be exactly a schema-v1 object with `schema_version` equal to `1` and
 `permission_mode` equal to `"ask"`. Unknown, duplicate, missing, wrong-type, or
 unsupported fields and values are rejected.
 
-The loader opens the final path no-follow and nonblocking, checks that the
-opened descriptor is a regular file, and retains at most the 64 KiB cap plus one
-byte. It never writes, creates, or canonicalizes. Typed diagnostics distinguish
-failure classes without reflecting selected paths, file contents, or operating-
-system error text. Configuration mutation, permission modes beyond `ask`,
-prompting, providers, executable tools, durable native sessions, and CLI
+On the supported Unix targets exercised by Milestone 03, the loader opens the
+final path no-follow and nonblocking. A preliminary path-kind check is followed
+by authoritative opened-descriptor regularity validation. The loader retains at
+most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
+Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
+distinguish failure classes without reflecting selected paths, file contents,
+or operating-system error text. Configuration mutation, permission modes beyond
+`ask`, prompting, providers, executable tools, durable native sessions, and CLI
 expansion remain deferred.
 
 ```text

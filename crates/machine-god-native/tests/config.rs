@@ -216,6 +216,25 @@ fn unsupported_schema_version_has_a_distinct_error_kind() {
 }
 
 #[test]
+fn future_schema_is_classified_before_version_specific_fields() {
+    let temporary = TemporaryDirectory::new();
+    let config_root = temporary.path().join("xdg");
+    let cases = [
+        br#"{"schema_version":2,"permission_mode":"future","new_field":true}"#.as_slice(),
+        br#"{"schema_version":18446744073709551616}"#.as_slice(),
+        br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
+    ];
+
+    for contents in cases {
+        assert_contents_error(
+            &config_root,
+            contents,
+            NativeConfigErrorKind::UnsupportedSchemaVersion,
+        );
+    }
+}
+
+#[test]
 fn unsupported_permission_mode_is_an_invalid_format() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("xdg");

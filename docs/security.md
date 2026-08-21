@@ -27,12 +27,15 @@ rather than reflecting path or OS-error text.
 
 Configuration loading uses the same config-location selection, but missing and
 unavailable locations yield explicit built-in schema-v1 `ask` defaults. An
-invalid selected environment value does not fall back. A present path is opened
-no-follow and nonblocking, and its descriptor must identify a regular file
-before any bytes are read. Final symlinks and non-regular entries therefore
-fail closed without a FIFO open becoming an unbounded wait. The loader does not
-canonicalize, create, or write anything; its no-follow guarantee is for the
-final component and is not a claim that the complete ancestor path is frozen.
+invalid selected environment value does not fall back. On the supported Unix
+targets exercised by Milestone 03, a present path is opened no-follow and
+nonblocking. A preliminary path-kind check is followed by authoritative
+opened-descriptor regularity validation before any bytes are read. Final
+symlinks and non-regular entries therefore fail closed without a FIFO open
+becoming an unbounded wait. Hardened open semantics for non-Unix targets remain
+deferred. The loader does not canonicalize, create, or write anything; its
+no-follow guarantee is for the final component and is not a claim that the
+complete ancestor path is frozen.
 
 The raw configuration bound is 64 KiB, with at most one additional byte
 retained to detect overflow or growth. Accepted bytes must be valid UTF-8 and a

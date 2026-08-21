@@ -50,17 +50,18 @@ observation nor concurrent file growth turns loading into an unbounded read.
 
 ## Filesystem boundary
 
-The loader opens the final path with no-follow and nonblocking behavior and
-validates the opened descriptor as a regular file before reading it. It
-therefore rejects a final symlink, directory, FIFO, socket, device, or other
-non-regular entry and does not block opening a hostile FIFO. Validation is tied
-to the descriptor that is read instead of to a separate pathname metadata
-observation.
+On the supported Unix targets exercised by Milestone 03, the loader opens the
+final path with no-follow and nonblocking behavior. It performs a preliminary
+path-kind check, then authoritatively validates the opened descriptor as a
+regular file before reading it. It therefore rejects a final symlink,
+directory, FIFO, socket, device, or other non-regular entry and does not block
+opening a hostile FIFO. Hardened open semantics for non-Unix targets are not
+part of this milestone's supported contract.
 
 Loading never writes configuration, creates files or directories, or
 canonicalizes the selected path. It does not claim to validate or freeze the
-entire ancestor path: the bounded guarantee in this slice is final-component
-no-follow plus descriptor regularity.
+entire ancestor path: on supported Unix targets, the bounded guarantee in this
+slice is final-component no-follow plus descriptor regularity.
 
 Errors are typed so callers can distinguish invalid environment input,
 open/read failure, invalid file kind, size overflow, invalid format, and an

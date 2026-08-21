@@ -8,6 +8,7 @@ use std::path::Path;
 use std::os::unix::fs::OpenOptionsExt;
 
 use serde::Deserialize;
+use serde_json::value::RawValue;
 
 use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file};
 
@@ -205,13 +206,10 @@ fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError
     }
 
     let bytes = read_bounded(&mut file)?;
+    validate_schema_version(&bytes)?;
     let wire: WireNativeConfig = serde_json::from_slice(&bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
-    if wire.schema_version != u64::from(CONFIG_SCHEMA_VERSION) {
-        return Err(NativeConfigError::new(
-            NativeConfigErrorKind::UnsupportedSchemaVersion,
-        ));
-    }
+    debug_assert_eq!(wire.schema_version, u64::from(CONFIG_SCHEMA_VERSION));
 
     let permission_mode = match wire.permission_mode {
         WirePermissionMode::Ask => PermissionMode::Ask,
@@ -219,6 +217,26 @@ fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError
     Ok(LoadedNativeConfig::from_file(NativeConfig {
         permission_mode,
     }))
+}
+
+fn validate_schema_version(bytes: &[u8]) -> Result<(), NativeConfigError> {
+    let envelope: WireSchemaEnvelope<'_> = serde_json::from_slice(bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    let version = envelope.schema_version.get();
+    if is_json_integer(version) {
+        if version.parse::<u32>() == Ok(CONFIG_SCHEMA_VERSION) {
+            return Ok(());
+        }
+        return Err(NativeConfigError::new(
+            NativeConfigErrorKind::UnsupportedSchemaVersion,
+        ));
+    }
+    Err(NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))
+}
+
+fn is_json_integer(value: &str) -> bool {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn open_config_file(path: &Path) -> Result<Option<File>, NativeConfigError> {
@@ -263,6 +281,12 @@ fn read_bounded(file: &mut File) -> Result<Vec<u8>, NativeConfigError> {
 struct WireNativeConfig {
     schema_version: u64,
     permission_mode: WirePermissionMode,
+}
+
+#[derive(Deserialize)]
+struct WireSchemaEnvelope<'a> {
+    #[serde(borrow)]
+    schema_version: &'a RawValue,
 }
 
 #[derive(Deserialize)]
@@ -388,6 +412,27 @@ mod tests {
             error.kind(),
             NativeConfigErrorKind::UnsupportedSchemaVersion
         );
+    }
+
+    #[test]
+    fn future_and_arbitrary_size_integer_versions_are_classified_before_v1_fields() {
+        for (index, document) in [
+            br#"{"schema_version":2,"permission_mode":"future","new_field":true}"#.as_slice(),
+            br#"{"schema_version":18446744073709551616}"#.as_slice(),
+            br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let temporary = TestDirectory::new(&format!("future-version-{index}"));
+            temporary.write_config(document);
+            assert_eq!(
+                load_native_config(&temporary.environment())
+                    .unwrap_err()
+                    .kind(),
+                NativeConfigErrorKind::UnsupportedSchemaVersion
+            );
+        }
     }
 
     #[test]
