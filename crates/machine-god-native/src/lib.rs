@@ -7,10 +7,15 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod config;
+mod read_file;
 
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
     NativeConfigError, NativeConfigErrorKind, load_native_config, load_process_config,
+};
+pub use read_file::{
+    MAX_READ_FILE_BYTES, MAX_READ_FILE_PATH_BYTES, READ_FILE_TOOL_NAME, ReadFileTool,
+    ReadFileToolOpenError, ReadFileToolOpenErrorKind,
 };
 
 /// Core API version intentionally supported by this native host.

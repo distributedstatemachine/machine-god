@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with three bounded slices. The first provides read-only native config/state
+with four bounded slices. The first provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
 schema-v1 `ask` config, bounded to 64 KiB with fail-closed file and content
@@ -60,10 +60,18 @@ Preparation is synchronous, bounded, nonblocking, effect-free trusted-host work
 with immediate before/after cancellation checks; its arguments may drive only
 effects within the authorized capability. Preparation failure produces a
 durable generic tool error without consulting policy or exercising the tool.
-These slices do not complete Milestone 03. The next planned slice is the first
-read-only native `read_file` tool. Concrete providers, permission prompting and
-modes beyond `ask`, durable native sessions, broader configuration and CLI
-behavior, the remaining executable native tools, and compatibility or
+The fourth slice adds the first executable native tool: a Unix-hardened,
+read-only `read_file` capability rooted in an absolute workspace selected and
+opened explicitly by the host. Its pure preflight accepts only a strict
+`{path:string}` input, bounds that UTF-8 path at 4,096 bytes, and gives policy
+and execution the same normalized workspace-relative path. Allowed execution
+walks retained directory descriptors without following any component symlink,
+accepts only a regular file, retains at most 8 KiB plus one overflow-detection
+byte, and returns only valid UTF-8. The exact contract is in
+[`read-file.md`](read-file.md). These slices do not complete Milestone 03.
+Concrete providers, permission prompting and modes beyond `ask`, durable native
+sessions, broader configuration and CLI behavior, non-Unix hardened workspace
+construction, the remaining executable native tools, and compatibility or
 performance claims remain planned. Existing CLI bytes are unchanged, and the
 help and status commands remain explicitly non-equivalent, claim-ineligible,
 and unmeasured in bootstrap evidence.

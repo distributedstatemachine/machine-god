@@ -14,6 +14,12 @@ serde_json = { workspace = true, features = ["raw_value"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+rustix.workspace = true
+
+[dev-dependencies]
+futures-executor = "0.3.31"
+futures-util = "0.3.31"
+machine-god-testkit = { version = "0.1.0", path = "../machine-god-testkit" }
 
 [lints]
 workspace = true

@@ -21,21 +21,26 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has three bounded slices. The first two are native-host slices;
-the third extends the authority-free core tool contract without adding an
-executable native capability. `machine-god-native` snapshots only
+Milestone 03 has four bounded slices. The first two are native-host slices;
+the third extends the authority-free core tool contract, and the fourth uses
+that contract for the first executable native capability. `machine-god-native`
+snapshots only
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and
 state paths, and inspects their final metadata for status. A separate
 synchronous native authority can load the resolved config file read-only.
 `machine-god-cli` remains a thin formatter for status, does not invoke the
 loader, and owns no product state. The exact surfaces are documented in
-[`cli.md`](cli.md) and [`configuration.md`](configuration.md).
+[`cli.md`](cli.md) and [`configuration.md`](configuration.md). The separate
+[`read_file` contract](read-file.md) does not change either CLI surface.
 
 ```text
 process environment -> resolved native paths
  config path --+-> final metadata -----------> status -> CLI text/JSON
                +-> bounded read-only loader -> schema-v1 config
  state path ------> final metadata -----------> status -> CLI text/JSON
+
+host-selected absolute workspace -> retained directory authority
+ model {path} -> lexical preflight -> policy -> descriptor-relative read_file
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -50,9 +55,9 @@ Status inspection remains deliberately shallower than configuration loading. It
 uses `symlink_metadata` on the final path, reports
 missing/inaccessible/wrong-kind states, and treats a final symlink as
 wrong-kind. It does not open, read, or parse the config file. Permission mode is
-fixed to `ask`; executable native tools and permission prompting are outside
-these slices. The CLI serializes paths as JSON strings even in human status so
-path contents do not become terminal controls. Bare invocation keeps the
+fixed to `ask`; the CLI does not construct an engine, register `read_file`, or
+prompt for permission. The CLI serializes paths as JSON strings even in human
+status so path contents do not become terminal controls. Bare invocation keeps the
 bootstrap identity contract. Help, version, status, and argument errors remain
 byte-stable presentation behavior, not an engine-owned command model.
 
@@ -71,8 +76,9 @@ most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 or operating-system error text. Configuration mutation, permission modes beyond
-`ask`, prompting, providers, executable native tools, durable native sessions,
-and CLI expansion remain deferred.
+`ask`, prompting, providers, executable native tools other than the bounded
+`read_file` library capability, durable native sessions, and CLI expansion
+remain deferred.
 
 ```text
                         machine-god-core
@@ -136,6 +142,30 @@ implementations must not reinterpret normalized arguments into a broader path,
 command, or destination. This obligation keeps authorization and execution
 about the same normalized operation without giving core semantic knowledge of
 tool JSON or ambient operating-system authority.
+
+The native `read_file` tool is constructed with one explicit absolute workspace
+root. On supported Unix targets construction opens the final root directory
+without following a final symlink and retains that directory authority. Pure
+preflight performs no filesystem lookup: it strictly decodes one path string,
+bounds it to 4,096 UTF-8 bytes, and lexically normalizes or rejects its
+components. The resulting `Capability::Filesystem(Read)` path and prepared
+execution path are the same normalized workspace-relative string.
+
+After policy allows that capability, execution walks from the retained root
+with descriptor-relative opens. Every component is opened no-follow, each
+ancestor descriptor remains stable for the next lookup, and the final opened
+descriptor is authoritatively required to be a regular file. Nonblocking open
+flags keep a substituted special file from hanging the traversal. The reader
+retains at most 8 KiB plus one byte, rejects invalid UTF-8 rather than encoding
+arbitrary bytes, and returns exactly a JSON object containing `content` on
+success. Cancellation is checked before traversal, between bounded reads, and
+after validation; it cannot preempt one operating-system call already in
+flight. No background task is detached.
+
+The retained root confines model-selected components, but it is not a sandbox
+against the host that selected the workspace. Resolution of the root's ancestor
+path and mount points beneath it belong to that trusted host boundary. Hardened
+construction and traversal on non-Unix targets remain deferred.
 
 A preparation error consults no permission handler and starts no tool. It
 replaces the already-durable unknown placeholder with the same fixed generic

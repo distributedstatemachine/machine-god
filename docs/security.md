@@ -6,8 +6,9 @@ first Milestone 03 native slice only snapshots config/state environment inputs
 and reads final-path metadata for status. A second bounded native authority
 loads configuration synchronously and read-only. A third, provider-neutral
 slice adds capability-aware tool preflight without exercising native authority.
-Permission mode remains `ask`; executable native tools and the
-prompt/fail-closed behavior of real permission requests remain future work.
+A fourth slice adds a bounded Unix-only `read_file` implementation behind that
+preflight seam. Permission mode remains `ask`; CLI registration, prompting, and
+the fail-closed behavior of a production permission handler remain future work.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -49,9 +50,9 @@ read errors are not converted into defaults.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation, prompting and modes beyond `ask`, concrete
-tools or providers, native session persistence, CLI expansion, and
-compatibility or performance claims remain outside the implemented native
-configuration slices.
+providers, native session persistence, CLI expansion, native tools other than
+the bounded library-level `read_file`, and compatibility or performance claims
+remain outside the implemented slices.
 
 Tool preflight closes the representation gap between a model's raw JSON call
 and the operation presented to permission policy. The source-compatible default
@@ -81,9 +82,61 @@ The prepared arguments are not a second grant of authority. A trusted tool may
 use them only for effects contained by the exact prepared capability that
 policy allowed. Native filesystem, process, and network implementations must not
 reinterpret them into a broader path, command, or destination. This slice
-supplies that authorization seam only. Workspace confinement, symlink-safe
-filesystem access, and the first native `read_file` implementation remain
-planned and must use the same path for authorization and execution.
+supplies that authorization seam. Its first native consumer is `read_file`. The
+host injects one absolute workspace root, and Unix construction opens and
+retains the final root directory without following a final symlink. Before that
+open it rebuilds the host root from lexical path components, removing redundant
+separators and `.` components throughout while preserving `..`, without
+canonicalizing ancestors or resolving symlinks. The resulting removal of
+terminal separators and terminal `.` components ensures that `/root-link/` and
+`/root-link/.` cannot bypass final-component no-follow; the equivalent forms of
+a real directory remain accepted. Provider input is exactly an object with one
+UTF-8 `path` string bounded to 4,096 bytes. Effect-free preflight performs only
+strict decoding and lexical normalization; it removes `.` components,
+collapses repeated separators, and rejects `/`-rooted paths, `..`, forbidden
+control or line/paragraph-separator or bidirectional-formatting characters, or
+an empty normalized path before policy. On supported Unix, backslash and
+Windows-looking prefixes are ordinary confined filename bytes, not path
+separators or prefixes.
+Policy receives
+`FilesystemAccess::Read` for exactly the normalized workspace-relative path
+that execution receives.
+
+Allowed execution starts from the retained root descriptor and opens every path
+component descriptor-relatively with no-follow semantics. It retains stable
+ancestor descriptors during traversal, opens nonblocking, and authoritatively
+checks that the final descriptor is a regular file before reading. A symlink in
+any model-selected component, a directory, FIFO, socket, device, or other
+non-regular final entry fails closed. Path replacement after a component is
+opened cannot redirect later lookup through a different ancestor; replacement
+of the final pathname after open cannot change which descriptor is read.
+Replacement by another ordinary file before its open may change the bytes at
+the same authorized path, so this is path authorization, not an immutable file
+identity or snapshot guarantee.
+
+The reader retains at most 8 KiB plus one byte to detect overflow or growth and
+never truncates a successful result. It accepts only valid UTF-8 and returns
+exactly `{content}`; successful content is intentionally model-visible and
+therefore also present in the durable tool result and observer event. Failures
+use the fixed constructor and tool-error tables in
+[`read-file.md`](read-file.md). Operating-system error numbers may select among
+those fixed categories, but no OS text, workspace path, requested path, or file
+bytes enter their display, debug, code, or message. Only non-cancellation
+preparation and execution errors become core's generic durable tool-error
+result. A direct `Tool::execute` observes cancellation as the fixed
+`read_file_cancelled` error; when the engine owns the shared token, engine
+cancellation wins, terminates the turn, and leaves the unknown placeholder
+rather than writing a generic tool error. Cancellation is checked before
+traversal, between bounded reads, and after content validation. It closes
+retained per-call descriptors and buffers but cannot interrupt an individual
+open, metadata, or read syscall already in flight.
+
+This is descriptor-rooted confinement of model-selected path components, not a
+claim that an untrusted host is sandboxed. The host's resolution of ancestor
+components leading to the injected root and mount points visible beneath the
+retained directory are trusted inputs. Hardened non-Unix workspace construction
+and traversal remain deferred. The normative surface is
+[`read-file.md`](read-file.md).
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,

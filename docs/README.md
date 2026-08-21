@@ -6,6 +6,7 @@
 - [Deterministic testkit](testkit.md)
 - [Command-line interface](cli.md)
 - [Native configuration](configuration.md)
+- [Native `read_file` tool](read-file.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

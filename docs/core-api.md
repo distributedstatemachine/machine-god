@@ -321,6 +321,17 @@ JSON. In particular, native filesystem, process, and network tools must execute
 the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
+The first concrete consumer is the native
+[`read_file` tool](read-file.md). Its effect-free preflight turns the strict
+provider `{path:string}` object into both a prepared
+`Capability::Filesystem { access: Read, path }` and prepared execution
+arguments containing the same normalized workspace-relative path. The native
+tool, not core, owns the injected workspace directory authority, Unix
+descriptor-relative no-follow traversal, 4,096-byte path bound, 8 KiB content
+bound, UTF-8 requirement, redacted error taxonomy, and syscall-granularity
+cancellation limitations. Core's policy ordering, prepared-value limits,
+generic durable tool-error mapping, and result limits remain unchanged.
+
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the
 next model round. Cancellation or a policy, tool, observer, or store failure

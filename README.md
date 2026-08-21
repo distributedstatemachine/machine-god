@@ -10,9 +10,12 @@ Milestones 01 and 02 are complete, and Milestone 03 is in progress. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
-policy. The first executable native tool, concrete providers, durable native
-sessions, and compatibility work remain planned; the project is not yet
-production-ready. See the exact [CLI contract](docs/cli.md).
+policy. It also includes a bounded Unix-only `read_file` library capability
+rooted in a host-injected workspace. CLI wiring and permission prompting,
+concrete providers, durable native sessions, the remaining native tools, and
+compatibility work remain planned; the project is not yet production-ready.
+See the exact [CLI contract](docs/cli.md) and
+[`read_file` contract](docs/read-file.md).
 
 ## Development
 
