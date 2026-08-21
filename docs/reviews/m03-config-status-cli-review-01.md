@@ -394,6 +394,30 @@ replacement never runs, collection fails, and no evidence is published.
 This remediation requires another fresh exact-SHA three-way review and all
 local and remote gates.
 
+## Review round 16 findings and remediation
+
+Reviewers examined exact commit
+`1f07cde559cfe0c857b15ea4d5532ff419a1d808`. Pinned schema-1
+execution and final-sample replacement rejection were GREEN. They found that
+schema-1 publication still used a direct pathname write, which could overwrite
+the target of a pre-existing output link and could leave partial evidence.
+They also found that an expected operational rejection produced a Python
+traceback instead of a controlled diagnostic.
+
+Schema 1 now holds the existing bounded exclusive output lock across collection
+and publication, then uses the verified exclusive temporary-file writer,
+file/directory synchronization, and atomic replacement shared with schema 2.
+Output links are replaced without modifying their targets, failed publication
+preserves prior evidence, and lock contention fails before collection within a
+bounded interval. Ordinary path, collection, subprocess, and publication
+failures now produce one cause-free diagnostic; `SystemExit` and interrupts
+retain their existing behavior.
+
+Regressions cover output-link replacement, prior-evidence preservation,
+bounded lock contention, success-summary suppression on failure, and
+traceback-free final-sample replacement rejection. These remediations require
+another fresh exact-SHA three-way review and all local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

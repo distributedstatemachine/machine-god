@@ -383,6 +383,168 @@ class BenchmarkScriptsTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_schema_one_collector_atomically_replaces_output_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "test-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
+            victim = root / "victim.json"
+            victim.write_text("do not overwrite", encoding="utf-8")
+            evidence_path = root / "evidence.json"
+            evidence_path.symlink_to(victim)
+
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(ROOT / "benchmarks/run.py"),
+                        "--binary",
+                        str(binary),
+                        "--output",
+                        str(evidence_path),
+                        "--runs",
+                        "10",
+                        "--warmup",
+                        "1",
+                    ],
+                ),
+                mock.patch.object(
+                    benchmark_run, "run_once", side_effect=[(1, 0)] * 11
+                ),
+                mock.patch.object(
+                    benchmark_run.subprocess,
+                    "check_output",
+                    return_value="1" * 40 + "\n",
+                ),
+                mock.patch("builtins.print") as print_output,
+            ):
+                self.assertEqual(benchmark_run.main(), 0)
+
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite")
+            self.assertFalse(evidence_path.is_symlink())
+            self.assertEqual(
+                json.loads(evidence_path.read_text(encoding="utf-8"))["median_ns"],
+                1,
+            )
+            print_output.assert_called_once()
+
+    def test_schema_one_failed_publication_preserves_prior_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "test-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
+            evidence_path = root / "evidence.json"
+            prior_evidence = '{"prior": true}\n'
+            evidence_path.write_text(prior_evidence, encoding="utf-8")
+            diagnostic = io.StringIO()
+
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(ROOT / "benchmarks/run.py"),
+                        "--binary",
+                        str(binary),
+                        "--output",
+                        str(evidence_path),
+                        "--runs",
+                        "10",
+                        "--warmup",
+                        "1",
+                    ],
+                ),
+                mock.patch.object(
+                    benchmark_run,
+                    "collect_evidence",
+                    return_value={"schema_version": 1},
+                ),
+                mock.patch.object(
+                    upstream,
+                    "write_evidence_atomic",
+                    side_effect=OSError("publication failed"),
+                ),
+                mock.patch.object(sys, "stderr", diagnostic),
+                mock.patch("builtins.print") as print_output,
+                self.assertRaises(SystemExit) as raised,
+            ):
+                benchmark_run.main()
+
+            self.assertEqual(raised.exception.code, 1)
+            self.assertEqual(diagnostic.getvalue(), "error: publication failed\n")
+            self.assertNotIn("Traceback", diagnostic.getvalue())
+            self.assertEqual(evidence_path.read_text(encoding="utf-8"), prior_evidence)
+            self.assertFalse(evidence_path.with_name(f".{evidence_path.name}.lock").exists())
+            print_output.assert_not_called()
+
+    def test_schema_one_output_lock_collision_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "test-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
+            evidence_path = root / "evidence.json"
+            prior_evidence = '{"prior": true}\n'
+            evidence_path.write_text(prior_evidence, encoding="utf-8")
+            lock = acquire_output_lock(evidence_path)
+            diagnostic = io.StringIO()
+
+            def publish_with_short_timeout(
+                output: Path, producer: object
+            ) -> object:
+                return collect_and_publish_evidence(
+                    output, producer, lock_timeout_seconds=0.05
+                )
+
+            try:
+                with (
+                    mock.patch.object(
+                        sys,
+                        "argv",
+                        [
+                            str(ROOT / "benchmarks/run.py"),
+                            "--binary",
+                            str(binary),
+                            "--output",
+                            str(evidence_path),
+                            "--runs",
+                            "10",
+                            "--warmup",
+                            "1",
+                        ],
+                    ),
+                    mock.patch.object(
+                        benchmark_run,
+                        "collect_and_publish_evidence",
+                        side_effect=publish_with_short_timeout,
+                    ),
+                    mock.patch.object(
+                        benchmark_run, "collect_evidence"
+                    ) as collect_evidence,
+                    mock.patch.object(sys, "stderr", diagnostic),
+                    mock.patch("builtins.print") as print_output,
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    started = time.monotonic()
+                    benchmark_run.main()
+                self.assertTrue(lock.path.exists())
+            finally:
+                upstream.release_output_lock(lock)
+
+            self.assertEqual(raised.exception.code, 1)
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertIn("locked by another invocation", diagnostic.getvalue())
+            self.assertNotIn("Traceback", diagnostic.getvalue())
+            self.assertEqual(evidence_path.read_text(encoding="utf-8"), prior_evidence)
+            self.assertEqual(
+                list(root.glob(f".{evidence_path.name}.*.partial")), []
+            )
+            collect_evidence.assert_not_called()
+            print_output.assert_not_called()
+
     @unittest.skipUnless(os.name == "posix", "pinned collector regression requires POSIX")
     def test_schema_one_collector_rejects_final_sample_path_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -400,6 +562,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
             original_run_once = benchmark_run.run_once
             launches = 0
             executed_bytes: list[bytes] = []
+            diagnostic = io.StringIO()
 
             def record_pinned_execution(
                 _command: object, **options: object
@@ -448,10 +611,14 @@ class BenchmarkScriptsTest(unittest.TestCase):
                     "run_process",
                     side_effect=record_pinned_execution,
                 ),
-                self.assertRaisesRegex(RuntimeError, "identity changed"),
+                mock.patch.object(sys, "stderr", diagnostic),
+                self.assertRaises(SystemExit) as raised,
             ):
                 benchmark_run.main()
 
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn("identity changed", diagnostic.getvalue())
+            self.assertNotIn("Traceback", diagnostic.getvalue())
             self.assertEqual(launches, 11)
             self.assertEqual(executed_bytes, [original_bytes] * 11)
             self.assertNotIn(replacement_bytes, executed_bytes)

@@ -14,6 +14,7 @@ from pathlib import Path
 from upstream import (  # noqa: E402
     CONTAINMENT_ENVIRONMENT_KEY,
     PinnedExecutable,
+    collect_and_publish_evidence,
     executable_identity,
     pin_executable,
     run_process,
@@ -63,32 +64,19 @@ def integer_median(samples: list[int]) -> int:
     return (ordered[middle - 1] + ordered[middle]) // 2
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--runs", type=int, default=30)
-    parser.add_argument("--warmup", type=int, default=5)
-    args = parser.parse_args()
-
-    binary = args.binary.resolve()
-    if not binary.is_file() or not os.access(binary, os.X_OK):
-        parser.error(f"binary is not executable: {binary}")
-    if args.runs < 10 or args.warmup < 1:
-        parser.error("runs must be >= 10 and warmup must be >= 1")
-
+def collect_evidence(binary: Path, runs: int, warmup: int) -> dict[str, object]:
     identity = executable_identity(binary)
     pinned = pin_executable(identity)
     environment = os.environ.copy()
     environment[CONTAINMENT_ENVIRONMENT_KEY] = secrets.token_hex(16)
     try:
-        for _ in range(args.warmup):
+        for _ in range(warmup):
             _, returncode = run_once(pinned, binary, identity, environment)
             if returncode != 0:
                 raise SystemExit(f"warmup exited {returncode}")
 
         samples = []
-        for _ in range(args.runs):
+        for _ in range(runs):
             elapsed_ns, returncode = run_once(pinned, binary, identity, environment)
             if returncode != 0:
                 raise SystemExit(f"benchmark exited {returncode}")
@@ -115,7 +103,7 @@ def main() -> int:
             },
             "binary": collected_binary,
             "command": [str(binary)],
-            "warmup": args.warmup,
+            "warmup": warmup,
             "samples_ns": samples,
             "median_ns": integer_median(samples),
             "p95_ns": ordered[p95_index],
@@ -131,9 +119,32 @@ def main() -> int:
             except BaseException:
                 pass
         raise
+    return evidence
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--binary", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--runs", type=int, default=30)
+    parser.add_argument("--warmup", type=int, default=5)
+    args = parser.parse_args()
+
+    try:
+        binary = args.binary.resolve()
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            parser.error(f"binary is not executable: {binary}")
+        if args.runs < 10 or args.warmup < 1:
+            parser.error("runs must be >= 10 and warmup must be >= 1")
+
+        requested_output = args.output.absolute()
+        output = requested_output.parent.resolve() / requested_output.name
+        evidence = collect_and_publish_evidence(
+            output,
+            lambda: collect_evidence(binary, args.runs, args.warmup),
+        )
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
+        parser.exit(1, f"error: {error}\n")
     print(
         json.dumps(
             {

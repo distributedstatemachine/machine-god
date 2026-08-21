@@ -3676,12 +3676,14 @@ def collect_and_publish_evidence(
     producer: Callable[[], Mapping[str, Any]],
     *,
     lock_timeout_seconds: float = 1.0,
-) -> None:
+) -> Mapping[str, Any]:
     lock = acquire_output_lock(output, lock_timeout_seconds)
     try:
-        write_evidence_atomic(output, producer())
+        evidence = producer()
+        write_evidence_atomic(output, evidence)
     finally:
         release_output_lock(lock)
+    return evidence
 
 
 def main() -> int:
