@@ -140,7 +140,10 @@ dependencies = [
 name = "machine-god-native"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "machine-god-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -6,6 +6,13 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod config;
+
+pub use config::{
+    CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
+    NativeConfigError, NativeConfigErrorKind, load_native_config, load_process_config,
+};
+
 /// Core API version intentionally supported by this native host.
 pub const SUPPORTED_CORE_API_VERSION: u32 = 1;
 

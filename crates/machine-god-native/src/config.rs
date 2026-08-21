@@ -1,0 +1,457 @@
+use std::error::Error;
+use std::fmt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read};
+use std::path::Path;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
+use serde::Deserialize;
+
+use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file};
+
+/// Configuration schema version understood by this native host.
+pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+
+/// Maximum number of bytes retained while loading a native configuration.
+pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
+
+/// Validated native host configuration.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NativeConfig {
+    permission_mode: PermissionMode,
+}
+
+impl NativeConfig {
+    /// Returns the configured permission behavior.
+    #[must_use]
+    pub const fn permission_mode(&self) -> PermissionMode {
+        self.permission_mode
+    }
+}
+
+/// Source from which a native configuration was loaded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfigOrigin {
+    /// No configuration location or file was available, so safe defaults apply.
+    BuiltInDefaults,
+    /// A configuration file was opened, bounded, and validated.
+    File,
+}
+
+/// A validated native configuration together with its source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LoadedNativeConfig {
+    config: NativeConfig,
+    origin: ConfigOrigin,
+}
+
+impl LoadedNativeConfig {
+    /// Returns the validated native configuration.
+    #[must_use]
+    pub const fn config(&self) -> &NativeConfig {
+        &self.config
+    }
+
+    /// Returns the source of the loaded configuration.
+    #[must_use]
+    pub const fn origin(&self) -> ConfigOrigin {
+        self.origin
+    }
+
+    const fn built_in_defaults() -> Self {
+        Self {
+            config: NativeConfig {
+                permission_mode: PermissionMode::Ask,
+            },
+            origin: ConfigOrigin::BuiltInDefaults,
+        }
+    }
+
+    const fn from_file(config: NativeConfig) -> Self {
+        Self {
+            config,
+            origin: ConfigOrigin::File,
+        }
+    }
+}
+
+/// Stable category for a native configuration load failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeConfigErrorKind {
+    /// The selected configuration environment value is invalid.
+    InvalidEnvironment,
+    /// The selected path is a symlink or another non-regular file type.
+    InvalidFileType,
+    /// The file could not be safely opened, inspected, or read.
+    Unreadable,
+    /// The file exceeds [`MAX_CONFIG_BYTES`].
+    TooLarge,
+    /// The file is not valid UTF-8 JSON matching the strict configuration schema.
+    InvalidFormat,
+    /// The file uses a schema version this native host does not support.
+    UnsupportedSchemaVersion,
+}
+
+/// Redacted native configuration load failure.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct NativeConfigError {
+    kind: NativeConfigErrorKind,
+}
+
+impl NativeConfigError {
+    /// Returns the stable category of this failure.
+    #[must_use]
+    pub const fn kind(&self) -> NativeConfigErrorKind {
+        self.kind
+    }
+
+    const fn new(kind: NativeConfigErrorKind) -> Self {
+        Self { kind }
+    }
+}
+
+impl fmt::Debug for NativeConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeConfigError")
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl fmt::Display for NativeConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self.kind {
+            NativeConfigErrorKind::InvalidEnvironment => {
+                "native configuration environment is invalid"
+            }
+            NativeConfigErrorKind::InvalidFileType => {
+                "native configuration path is not a regular file"
+            }
+            NativeConfigErrorKind::Unreadable => "native configuration file is unreadable",
+            NativeConfigErrorKind::TooLarge => "native configuration file is too large",
+            NativeConfigErrorKind::InvalidFormat => "native configuration format is invalid",
+            NativeConfigErrorKind::UnsupportedSchemaVersion => {
+                "native configuration schema version is unsupported"
+            }
+        })
+    }
+}
+
+impl Error for NativeConfigError {}
+
+/// Resolves and synchronously loads native configuration without modifying it.
+///
+/// A missing file or unavailable configuration location returns the safe built-in
+/// configuration. A selected but invalid location, an unsafe file type, an I/O
+/// failure, an oversized file, or invalid configuration returns a typed error.
+///
+/// # Errors
+///
+/// Returns [`NativeConfigError`] when a selected location is invalid, the file
+/// cannot be safely read within its bound, or its contents do not match the
+/// supported schema.
+pub fn load_native_config(
+    environment: &NativeEnvironment,
+) -> Result<LoadedNativeConfig, NativeConfigError> {
+    match resolve_config_file(environment) {
+        ResolvedPath::Path(path) => load_config_path(&path),
+        ResolvedPath::Unavailable => Ok(LoadedNativeConfig::built_in_defaults()),
+        ResolvedPath::InvalidEnvironment => Err(NativeConfigError::new(
+            NativeConfigErrorKind::InvalidEnvironment,
+        )),
+    }
+}
+
+/// Captures the process environment and synchronously loads native configuration.
+///
+/// # Errors
+///
+/// Returns [`NativeConfigError`] under the same conditions as
+/// [`load_native_config`].
+pub fn load_process_config() -> Result<LoadedNativeConfig, NativeConfigError> {
+    load_native_config(&NativeEnvironment::from_process())
+}
+
+fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError> {
+    let initial_metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(LoadedNativeConfig::built_in_defaults());
+        }
+        Err(_) => return Err(NativeConfigError::new(NativeConfigErrorKind::Unreadable)),
+    };
+    if !initial_metadata.file_type().is_file() {
+        return Err(NativeConfigError::new(
+            NativeConfigErrorKind::InvalidFileType,
+        ));
+    }
+
+    let Some(mut file) = open_config_file(path)? else {
+        return Ok(LoadedNativeConfig::built_in_defaults());
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::Unreadable))?;
+    if !metadata.file_type().is_file() {
+        return Err(NativeConfigError::new(
+            NativeConfigErrorKind::InvalidFileType,
+        ));
+    }
+    if metadata.len() > MAX_CONFIG_BYTES as u64 {
+        return Err(NativeConfigError::new(NativeConfigErrorKind::TooLarge));
+    }
+
+    let bytes = read_bounded(&mut file)?;
+    let wire: WireNativeConfig = serde_json::from_slice(&bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    if wire.schema_version != u64::from(CONFIG_SCHEMA_VERSION) {
+        return Err(NativeConfigError::new(
+            NativeConfigErrorKind::UnsupportedSchemaVersion,
+        ));
+    }
+
+    let permission_mode = match wire.permission_mode {
+        WirePermissionMode::Ask => PermissionMode::Ask,
+    };
+    Ok(LoadedNativeConfig::from_file(NativeConfig {
+        permission_mode,
+    }))
+}
+
+fn open_config_file(path: &Path) -> Result<Option<File>, NativeConfigError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+
+    match options.open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        #[cfg(unix)]
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => Err(NativeConfigError::new(
+            NativeConfigErrorKind::InvalidFileType,
+        )),
+        Err(_) => Err(NativeConfigError::new(NativeConfigErrorKind::Unreadable)),
+    }
+}
+
+fn read_bounded(file: &mut File) -> Result<Vec<u8>, NativeConfigError> {
+    let mut bytes = vec![0_u8; MAX_CONFIG_BYTES + 1];
+    let mut length = 0;
+    loop {
+        match file.read(&mut bytes[length..]) {
+            Ok(0) => break,
+            Ok(read) => {
+                length += read;
+                if length > MAX_CONFIG_BYTES {
+                    return Err(NativeConfigError::new(NativeConfigErrorKind::TooLarge));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => return Err(NativeConfigError::new(NativeConfigErrorKind::Unreadable)),
+        }
+    }
+    bytes.truncate(length);
+    Ok(bytes)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireNativeConfig {
+    schema_version: u64,
+    permission_mode: WirePermissionMode,
+}
+
+#[derive(Deserialize)]
+enum WirePermissionMode {
+    #[serde(rename = "ask")]
+    Ask,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES, NativeConfigErrorKind,
+        load_native_config,
+    };
+    use crate::{NativeEnvironment, PermissionMode};
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Debug)]
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(test_name: &str) -> Self {
+            let base = std::env::temp_dir().join("machine-god-native-config-tests");
+            fs::create_dir_all(&base).expect("failed to create config test base directory");
+            loop {
+                let id = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+                let path = base.join(format!("{}-{test_name}-{id}", std::process::id()));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("failed to create test directory: {error}"),
+                }
+            }
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn environment(&self) -> NativeEnvironment {
+            NativeEnvironment::new(Some(self.0.as_os_str().to_owned()), None, None)
+        }
+
+        fn config_path(&self) -> PathBuf {
+            self.0.join("machine-god/config.json")
+        }
+
+        fn write_config(&self, bytes: &[u8]) {
+            let path = self.config_path();
+            fs::create_dir_all(path.parent().expect("config path has parent"))
+                .expect("failed to create config parent");
+            fs::write(path, bytes).expect("failed to write config fixture");
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            if let Err(error) = fs::remove_dir_all(&self.0)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                eprintln!("failed to remove config test directory: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn unavailable_and_missing_locations_use_safe_defaults() {
+        let unavailable = load_native_config(&NativeEnvironment::new(None, None, None)).unwrap();
+        assert_eq!(unavailable.origin(), ConfigOrigin::BuiltInDefaults);
+        assert_eq!(unavailable.config().permission_mode(), PermissionMode::Ask);
+
+        let temporary = TestDirectory::new("missing");
+        let missing = load_native_config(&temporary.environment()).unwrap();
+        assert_eq!(missing.origin(), ConfigOrigin::BuiltInDefaults);
+        assert!(!temporary.config_path().exists());
+    }
+
+    #[test]
+    fn exact_schema_loads_from_a_regular_file() {
+        let temporary = TestDirectory::new("valid");
+        temporary.write_config(br#"{"schema_version":1,"permission_mode":"ask"}"#);
+
+        let loaded = load_native_config(&temporary.environment()).unwrap();
+        assert_eq!(CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(loaded.origin(), ConfigOrigin::File);
+        assert_eq!(loaded.config().permission_mode(), PermissionMode::Ask);
+    }
+
+    #[test]
+    fn strict_schema_rejects_invalid_json_shapes() {
+        let invalid_documents: &[&[u8]] = &[
+            br"{}",
+            br#"{"schema_version":1}"#,
+            br#"{"permission_mode":"ask"}"#,
+            br#"{"schema_version":1,"permission_mode":"ask","extra":true}"#,
+            br#"{"schema_version":1,"schema_version":1,"permission_mode":"ask"}"#,
+            br#"{"schema_version":"1","permission_mode":"ask"}"#,
+            br#"{"schema_version":1,"permission_mode":"deny"}"#,
+            br#"{"schema_version":1,"permission_mode":"ask"} trailing"#,
+            b"{\"schema_version\":1,\"permission_mode\":\"ask\xff\"}",
+        ];
+
+        for (index, document) in invalid_documents.iter().enumerate() {
+            let temporary = TestDirectory::new(&format!("invalid-{index}"));
+            temporary.write_config(document);
+            let error = load_native_config(&temporary.environment()).unwrap_err();
+            assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFormat);
+        }
+    }
+
+    #[test]
+    fn unsupported_schema_version_has_its_own_kind() {
+        let temporary = TestDirectory::new("unsupported-version");
+        temporary.write_config(br#"{"schema_version":2,"permission_mode":"ask"}"#);
+
+        let error = load_native_config(&temporary.environment()).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeConfigErrorKind::UnsupportedSchemaVersion
+        );
+    }
+
+    #[test]
+    fn retained_read_is_bounded_at_limit_plus_one() {
+        let valid = br#"{"schema_version":1,"permission_mode":"ask"}"#;
+        let temporary = TestDirectory::new("exact-limit");
+        let mut exact_limit = Vec::with_capacity(MAX_CONFIG_BYTES);
+        exact_limit.extend_from_slice(valid);
+        exact_limit.resize(MAX_CONFIG_BYTES, b' ');
+        temporary.write_config(&exact_limit);
+        assert_eq!(
+            load_native_config(&temporary.environment())
+                .unwrap()
+                .origin(),
+            ConfigOrigin::File
+        );
+
+        exact_limit.push(b' ');
+        temporary.write_config(&exact_limit);
+        let error = load_native_config(&temporary.environment()).unwrap_err();
+        assert_eq!(error.kind(), NativeConfigErrorKind::TooLarge);
+    }
+
+    #[test]
+    fn invalid_environment_and_file_type_are_typed() {
+        let invalid_environment = NativeEnvironment::new(
+            Some(OsString::from("relative")),
+            None,
+            Some(OsString::from("/unused")),
+        );
+        assert_eq!(
+            load_native_config(&invalid_environment).unwrap_err().kind(),
+            NativeConfigErrorKind::InvalidEnvironment
+        );
+
+        let temporary = TestDirectory::new("directory");
+        fs::create_dir_all(temporary.config_path()).unwrap();
+        assert_eq!(
+            load_native_config(&temporary.environment())
+                .unwrap_err()
+                .kind(),
+            NativeConfigErrorKind::InvalidFileType
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn final_symlink_is_rejected_and_errors_are_redacted() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = TestDirectory::new("secret-path");
+        let secret_target = temporary.path().join("secret-content");
+        fs::write(
+            &secret_target,
+            br#"{"schema_version":1,"permission_mode":"ask"}"#,
+        )
+        .unwrap();
+        let config_path = temporary.config_path();
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        symlink(&secret_target, config_path).unwrap();
+
+        let error = load_native_config(&temporary.environment()).unwrap_err();
+        assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFileType);
+        assert!(!format!("{error:?}").contains("secret"));
+        assert!(!error.to_string().contains("secret"));
+    }
+}

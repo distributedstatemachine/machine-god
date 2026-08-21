@@ -18,6 +18,7 @@ publish = false
 
 [workspace.dependencies]
 futures-core = "0.3.31"
+libc = "0.2.189"
 machine-god-core = { version = "0.1.0", path = "crates/machine-god-core" }
 machine-god-native = { version = "0.1.0", path = "crates/machine-god-native" }
 serde = { version = "1.0.228", features = ["derive"] }
