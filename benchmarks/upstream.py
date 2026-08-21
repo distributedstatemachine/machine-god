@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, BinaryIO, Callable, Mapping, Sequence
 
 
 EXPECTED_RUST_VERSION = "1.94.1"
@@ -299,6 +299,22 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def bounded_sha256_file(source: BinaryIO, expected_bytes: int) -> str:
+    """Hash exactly the declared bytes and verify that EOF immediately follows."""
+
+    digest = hashlib.sha256()
+    remaining = expected_bytes
+    while remaining:
+        chunk = source.read(min(remaining, 1024 * 1024))
+        if not chunk:
+            raise ValueError("supplied binary became shorter during inspection")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if source.read(1):
+        raise ValueError("supplied binary became longer during inspection")
+    return digest.hexdigest()
+
+
 def executable_identity(path: Path) -> dict[str, object]:
     """Bind an invocation path and the canonical executable it dispatches to."""
 
@@ -519,16 +535,81 @@ def validate_binary(binary: object, field: str) -> dict[str, Any]:
 
 
 def validate_binary_file(binary: Mapping[str, Any], actual: Path, field: str) -> None:
-    expected_path = Path(require_text(binary.get("path"), f"{field}.path")).resolve()
-    actual_path = actual.resolve()
+    try:
+        expected_path = Path(
+            require_text(binary.get("path"), f"{field}.path")
+        ).resolve()
+        actual_path = actual.resolve()
+    except (OSError, RuntimeError, ValueError):
+        raise ValueError(f"{field}.path cannot be resolved") from None
     if expected_path != actual_path:
         raise ValueError(f"{field}.path does not match the supplied binary")
-    if not actual_path.is_file() or not os.access(actual_path, os.X_OK):
-        raise ValueError(f"supplied binary is not executable: {actual_path}")
-    if actual_path.stat().st_size != binary.get("bytes"):
-        raise ValueError(f"{field}.bytes does not match the supplied binary")
-    if sha256_file(actual_path) != binary.get("sha256"):
-        raise ValueError(f"{field}.sha256 does not match the supplied binary")
+    declared_bytes = binary.get("bytes")
+    if not is_integer(declared_bytes) or declared_bytes <= 0:
+        raise ValueError(f"{field}.bytes must be a positive integer")
+    open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    open_flags |= getattr(os, "O_CLOEXEC", 0)
+    open_flags |= getattr(os, "O_NOFOLLOW", 0)
+    open_flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(actual_path, open_flags)
+    except (OSError, RuntimeError, ValueError):
+        raise ValueError(f"failed to inspect supplied binary for {field}") from None
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"supplied binary for {field} is not a regular file")
+        execute_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        lacks_posix_execute_mode = (
+            os.name == "posix" and not before.st_mode & execute_bits
+        )
+        if lacks_posix_execute_mode or not os.access(actual_path, os.X_OK):
+            raise ValueError(f"supplied binary for {field} is not executable")
+        if before.st_size != declared_bytes:
+            raise ValueError(f"{field}.bytes does not match the supplied binary")
+        with os.fdopen(descriptor, "rb", buffering=0, closefd=False) as source:
+            checksum = bounded_sha256_file(source, declared_bytes)
+        after = os.fstat(descriptor)
+        path_after = os.lstat(actual_path)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        path_identity = (
+            path_after.st_dev,
+            path_after.st_ino,
+            path_after.st_mode,
+            path_after.st_size,
+            path_after.st_mtime_ns,
+            path_after.st_ctime_ns,
+        )
+        if before_identity != path_identity:
+            raise ValueError(f"supplied binary path for {field} changed while inspected")
+        if before_identity != after_identity:
+            raise ValueError(f"supplied binary for {field} changed while inspected")
+        if checksum != binary.get("sha256"):
+            raise ValueError(f"{field}.sha256 does not match the supplied binary")
+    except ValueError:
+        raise
+    except (OSError, RuntimeError):
+        raise ValueError(f"failed to inspect supplied binary for {field}") from None
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            raise ValueError(f"failed to close supplied binary for {field}") from None
 
 
 def validate_command_record(

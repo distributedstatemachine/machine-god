@@ -259,6 +259,27 @@ paths, non-executable regular files, and the exact read bound.
 This remediation requires another fresh exact-SHA three-way review and all
 local and remote gates.
 
+## Review round 10 finding and remediation
+
+Fresh correctness/API and performance/resource/evidence reviewers independently
+examined exact commit `03ecbc95a853c5f2e145d49bc15b3e7033e4bec7`.
+The schema-1 supplied-binary remediation was GREEN, but the schema-2 validator
+still performed separate pathname metadata checks followed by an unbounded
+reopen-and-hash operation. A same-size replacement could disconnect the file
+whose executable status was checked from the bytes later hashed, and replacing
+the path with a device could make validation read indefinitely.
+
+Schema-2 binary validation now opens one nonblocking, close-on-exec, no-follow
+descriptor where those flags are available. It checks regular-file and
+executable status and declared size on that descriptor, hashes only the
+declared size plus one end-of-file probe, and verifies both the descriptor and
+canonical pathname identities after hashing. All paths close the descriptor.
+Regressions cover non-regular and non-executable files, bounded growth,
+failure-path cleanup, and deterministic pathname replacement.
+
+This remediation requires another fresh exact-SHA three-way review and all
+local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

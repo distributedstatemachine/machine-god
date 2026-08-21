@@ -29,6 +29,7 @@ from upstream import (  # noqa: E402
     ProcessTimeout,
     UpstreamLock,
     acquire_output_lock,
+    bounded_sha256_file,
     canonical_git_entries_sha256,
     canonical_manifest_sha256,
     check_machine_cleanliness,
@@ -48,6 +49,7 @@ from upstream import (  # noqa: E402
     sha256_file,
     source_tree_sha256,
     unavailable_workloads,
+    validate_binary_file,
     validate_upstream_evidence,
     write_evidence_atomic,
 )
@@ -467,6 +469,103 @@ class UpstreamHarnessTest(unittest.TestCase):
             "invocation_ctime_ns": 4,
             "invocation_link_target": "",
         }
+
+    def binary_record(self, path: Path) -> dict[str, object]:
+        content = path.read_bytes()
+        return {
+            "path": str(path),
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+
+    def test_schema_two_binary_validation_rejects_non_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "binary-directory"
+            binary.mkdir()
+            record = {"path": str(binary), "bytes": 1, "sha256": "0" * 64}
+
+            with (
+                mock.patch.object(upstream, "bounded_sha256_file") as hash_file,
+                self.assertRaises(ValueError),
+            ):
+                validate_binary_file(record, binary, "build.binary")
+
+            hash_file.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "executable mode regression requires POSIX")
+    def test_schema_two_binary_validation_rejects_non_executable_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "non-executable-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o600)
+
+            with self.assertRaisesRegex(ValueError, "is not executable"):
+                validate_binary_file(
+                    self.binary_record(binary), binary, "build.binary"
+                )
+
+    def test_schema_two_binary_hash_is_bounded_to_declared_size(self) -> None:
+        source = io.BytesIO(b"expected-unbounded-extra-data")
+
+        with self.assertRaisesRegex(ValueError, "became longer"):
+            bounded_sha256_file(source, len(b"expected"))
+
+        self.assertEqual(source.tell(), len(b"expected") + 1)
+
+    def test_schema_two_binary_validation_closes_descriptor_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
+            record = self.binary_record(binary)
+            record["sha256"] = "0" * 64
+            opened_descriptors: list[int] = []
+            original_open = os.open
+
+            def tracking_open(path: object, flags: int) -> int:
+                descriptor = original_open(path, flags)
+                opened_descriptors.append(descriptor)
+                return descriptor
+
+            with (
+                mock.patch.object(upstream.os, "open", side_effect=tracking_open),
+                self.assertRaisesRegex(ValueError, "sha256"),
+            ):
+                validate_binary_file(record, binary, "build.binary")
+
+            self.assertEqual(len(opened_descriptors), 1)
+            with self.assertRaises(OSError):
+                os.fstat(opened_descriptors[0])
+
+    @unittest.skipUnless(os.name == "posix", "pathname replacement requires POSIX")
+    def test_schema_two_binary_validation_rejects_path_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "binary"
+            displaced = root / "displaced-binary"
+            replacement = root / "replacement-binary"
+            binary.write_bytes(b"original")
+            replacement.write_bytes(b"replaced")
+            binary.chmod(0o755)
+            replacement.chmod(0o755)
+            record = self.binary_record(binary)
+            original_hash = upstream.bounded_sha256_file
+
+            def hash_then_replace(source: object, expected_bytes: int) -> str:
+                checksum = original_hash(source, expected_bytes)
+                binary.rename(displaced)
+                replacement.rename(binary)
+                return checksum
+
+            with (
+                mock.patch.object(
+                    upstream,
+                    "bounded_sha256_file",
+                    side_effect=hash_then_replace,
+                ),
+                self.assertRaisesRegex(ValueError, "path.*changed"),
+            ):
+                validate_binary_file(record, binary, "build.binary")
 
     def valid_upstream_evidence(
         self,
