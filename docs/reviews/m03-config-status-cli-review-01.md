@@ -325,6 +325,30 @@ an unchanged symlink, and same-path content mutation.
 This remediation requires another fresh exact-SHA three-way review and all
 local and remote gates.
 
+## Review round 13 findings and remediation
+
+Three reviewers examined exact commit
+`803f0d3f7601da522bf49c464f4bc5aa398cc179` and found two related
+identity/resource gaps:
+
+1. Rechecking only the top invocation symlink and original target missed a
+   retargeted intermediate symlink in a multi-hop chain. Executable identity now
+   resolves the invocation again after hashing and requires the same canonical
+   target. A two-hop retarget regression covers the case.
+2. Binary record collection, descriptor hashing, and the pinning copy still had
+   end-of-file-driven reads after identity capture. Concurrent growth could
+   therefore keep collection or measurement preparation running indefinitely.
+   Descriptor hashing and copying now consume exactly the recorded size plus
+   one end-of-file probe, recheck descriptor and canonical-path metadata, and
+   retain guaranteed cleanup. `binary_record` uses the bounded executable
+   identity path, and the general file hasher now uses one descriptor with the
+   same bounded-read and post-read identity rules.
+
+Regressions cover exact descriptor hash/copy read counts with an always-readable
+source, growing executable and generic files, intermediate-link retargeting,
+and existing pinning behavior. These remediations require another fresh
+exact-SHA three-way review and all local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

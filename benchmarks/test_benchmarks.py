@@ -2204,6 +2204,139 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             ):
                 executable_identity(executable)
 
+    @unittest.skipUnless(os.name == "posix", "intermediate symlink requires POSIX")
+    def test_executable_identity_rejects_retargeted_intermediate_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invocation = root / "tool"
+            intermediate = root / "intermediate"
+            first_target = root / "first-target"
+            second_target = root / "second-target"
+            first_target.write_bytes(b"#!/bin/sh\n")
+            second_target.write_bytes(b"#!/bin/sh\n")
+            first_target.chmod(0o755)
+            second_target.chmod(0o755)
+            intermediate.symlink_to(first_target)
+            invocation.symlink_to(intermediate)
+            original_hash = upstream.bounded_sha256_file
+
+            def hash_then_retarget(source: object, expected_bytes: int) -> str:
+                checksum = original_hash(source, expected_bytes)
+                intermediate.unlink()
+                intermediate.symlink_to(second_target)
+                return checksum
+
+            with (
+                mock.patch.object(
+                    upstream,
+                    "bounded_sha256_file",
+                    side_effect=hash_then_retarget,
+                ),
+                self.assertRaisesRegex(RuntimeError, "resolution changed"),
+            ):
+                executable_identity(invocation)
+
+    def test_descriptor_hash_is_bounded_when_source_always_has_data(self) -> None:
+        reads: list[tuple[int, int]] = []
+
+        def always_read(_descriptor: int, size: int, offset: int) -> bytes:
+            reads.append((size, offset))
+            return b"x" * size
+
+        with (
+            mock.patch.object(upstream.os, "pread", side_effect=always_read),
+            self.assertRaisesRegex(RuntimeError, "became longer"),
+        ):
+            upstream.sha256_descriptor(123, 7)
+
+        self.assertEqual(reads, [(7, 0), (1, 7)])
+
+    def test_descriptor_copy_is_bounded_when_source_always_has_data(self) -> None:
+        reads: list[tuple[int, int]] = []
+        writes: list[int] = []
+
+        def always_read(_descriptor: int, size: int, offset: int) -> bytes:
+            reads.append((size, offset))
+            return b"x" * size
+
+        def record_write(_descriptor: int, content: object) -> int:
+            size = len(content)
+            writes.append(size)
+            return size
+
+        with (
+            mock.patch.object(upstream.os, "pread", side_effect=always_read),
+            mock.patch.object(upstream.os, "write", side_effect=record_write),
+            self.assertRaisesRegex(RuntimeError, "became longer"),
+        ):
+            upstream.copy_descriptor(123, 456, 7)
+
+        self.assertEqual(reads, [(7, 0), (1, 7)])
+        self.assertEqual(writes, [7])
+
+    def test_generic_file_hash_is_bounded_when_file_grows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "growing-file"
+            path.write_bytes(b"evidence")
+            initial_size = path.stat().st_size
+            reads: list[int] = []
+            original_hash = upstream.bounded_sha256_file
+
+            def grow_then_hash(source: object, expected_bytes: int) -> str:
+                with path.open("ab") as destination:
+                    destination.write(b"unbounded-growth")
+
+                class CountingSource:
+                    def read(self, size: int) -> bytes:
+                        reads.append(size)
+                        return source.read(size)
+
+                return original_hash(CountingSource(), expected_bytes)
+
+            with (
+                mock.patch.object(
+                    upstream,
+                    "bounded_sha256_file",
+                    side_effect=grow_then_hash,
+                ),
+                self.assertRaisesRegex(ValueError, "became longer"),
+            ):
+                sha256_file(path)
+
+            self.assertEqual(reads, [initial_size, 1])
+
+    def test_binary_record_is_bounded_when_executable_grows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "growing-binary"
+            executable.write_bytes(b"#!/bin/sh\n")
+            executable.chmod(0o755)
+            initial_size = executable.stat().st_size
+            reads: list[int] = []
+            original_hash = upstream.bounded_sha256_file
+
+            def grow_then_hash(source: object, expected_bytes: int) -> str:
+                with executable.open("ab") as destination:
+                    destination.write(b"unbounded-growth")
+
+                class CountingSource:
+                    def read(self, size: int) -> bytes:
+                        reads.append(size)
+                        return source.read(size)
+
+                return original_hash(CountingSource(), expected_bytes)
+
+            with (
+                mock.patch.object(
+                    upstream,
+                    "bounded_sha256_file",
+                    side_effect=grow_then_hash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "became longer"),
+            ):
+                upstream.binary_record(executable)
+
+            self.assertEqual(reads, [initial_size, 1])
+
     @unittest.skipUnless(os.name == "posix", "setsid regression requires POSIX")
     def test_timeout_cleanup_is_bounded_when_detached_child_holds_pipe(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

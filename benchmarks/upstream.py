@@ -291,12 +291,46 @@ def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    invocation = path.absolute()
+    canonical = invocation.resolve(strict=True)
+    target_before = canonical.lstat()
+    open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    open_flags |= getattr(os, "O_CLOEXEC", 0)
+    open_flags |= getattr(os, "O_NOFOLLOW", 0)
+    open_flags |= getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(canonical, open_flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"file is not regular: {canonical}")
+        if stat_identity(target_before) != stat_identity(before):
+            raise ValueError(f"file path changed before hashing: {canonical}")
+        with os.fdopen(descriptor, "rb", buffering=0, closefd=False) as source:
+            checksum = bounded_sha256_file(source, before.st_size)
+        after = os.fstat(descriptor)
+        canonical_after = invocation.resolve(strict=True)
+        if canonical_after != canonical:
+            raise ValueError(f"file resolution changed while hashed: {invocation}")
+        target_after = canonical_after.lstat()
+        if stat_identity(target_before) != stat_identity(target_after):
+            raise ValueError(f"file path changed while hashed: {canonical}")
+        if stat_identity(before) != stat_identity(after):
+            raise ValueError(f"file changed while hashed: {canonical}")
+        return checksum
+    finally:
+        os.close(descriptor)
 
 
 def bounded_sha256_file(source: BinaryIO, expected_bytes: int) -> str:
@@ -358,11 +392,12 @@ def executable_identity(path: Path) -> dict[str, object]:
                 f"tool changed while its identity was read: {canonical}: {error}"
             ) from None
         after = os.fstat(descriptor)
-        target_after = canonical.lstat()
         invocation_after = invocation.lstat()
         invocation_link_target_after = (
             os.readlink(invocation) if stat.S_ISLNK(invocation_after.st_mode) else ""
         )
+        canonical_after = invocation.resolve(strict=True)
+        target_after = canonical_after.lstat()
     finally:
         try:
             os.close(descriptor)
@@ -386,6 +421,8 @@ def executable_identity(path: Path) -> dict[str, object]:
     )
     if invocation_metadata_before != invocation_metadata_after:
         raise RuntimeError(f"tool invocation path changed while inspected: {invocation}")
+    if canonical_after != canonical:
+        raise RuntimeError(f"tool resolution changed while inspected: {invocation}")
     target_metadata_after = (
         target_after.st_dev,
         target_after.st_ino,
@@ -2756,23 +2793,54 @@ def prepare_upstream(
 
 
 def binary_record(path: Path) -> dict[str, object]:
-    resolved = path.resolve()
-    if not resolved.is_file() or not os.access(resolved, os.X_OK):
-        raise RuntimeError(f"build did not produce an executable binary: {resolved}")
+    try:
+        identity = executable_identity(path)
+    except OSError as error:
+        raise RuntimeError(f"build did not produce an executable binary: {path}") from error
     return {
-        "path": str(resolved),
-        "bytes": resolved.stat().st_size,
-        "sha256": sha256_file(resolved),
+        "path": identity["canonical_executable"],
+        "bytes": identity["bytes"],
+        "sha256": identity["sha256"],
     }
 
 
-def sha256_descriptor(descriptor: int) -> str:
+def sha256_descriptor(descriptor: int, expected_bytes: int) -> str:
     digest = hashlib.sha256()
     offset = 0
-    while chunk := os.pread(descriptor, 1024 * 1024, offset):
+    while offset < expected_bytes:
+        chunk = os.pread(
+            descriptor,
+            min(expected_bytes - offset, 1024 * 1024),
+            offset,
+        )
+        if not chunk:
+            raise RuntimeError("descriptor became shorter while hashed")
         digest.update(chunk)
         offset += len(chunk)
+    if os.pread(descriptor, 1, offset):
+        raise RuntimeError("descriptor became longer while hashed")
     return digest.hexdigest()
+
+
+def copy_descriptor(source: int, destination: int, expected_bytes: int) -> None:
+    offset = 0
+    while offset < expected_bytes:
+        chunk = os.pread(
+            source,
+            min(expected_bytes - offset, 1024 * 1024),
+            offset,
+        )
+        if not chunk:
+            raise RuntimeError("source executable became shorter while copied")
+        view = memoryview(chunk)
+        while view:
+            written = os.write(destination, view)
+            if written <= 0:
+                raise RuntimeError("pinned executable copy made no write progress")
+            view = view[written:]
+        offset += len(chunk)
+    if os.pread(source, 1, offset):
+        raise RuntimeError("source executable became longer while copied")
 
 
 @dataclass
@@ -2793,8 +2861,13 @@ class PinnedExecutable:
         ):
             if self.record[field] != actual:
                 raise RuntimeError(f"pinned executable {field} changed")
-        if sha256_descriptor(self.descriptor) != self.record["sha256"]:
+        if sha256_descriptor(self.descriptor, int(self.record["bytes"])) != self.record[
+            "sha256"
+        ]:
             raise RuntimeError("pinned executable content changed")
+        metadata_after_hash = os.fstat(self.descriptor)
+        if stat_identity(metadata) != stat_identity(metadata_after_hash):
+            raise RuntimeError("pinned executable identity changed while hashed")
         if self.method == "linux-sealed-memfd-fexecve":
             expected_seals = int(self.record["seals"])
             if fcntl.fcntl(self.descriptor, fcntl.F_GET_SEALS) != expected_seals:
@@ -2819,7 +2892,14 @@ def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
 
     verify_executable_identity(identity)
     canonical = Path(require_text(identity.get("canonical_executable"), "binary.canonical"))
-    source = os.open(canonical, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    expected_bytes = identity.get("bytes")
+    if not is_integer(expected_bytes) or expected_bytes <= 0:
+        raise RuntimeError("binary identity has an invalid byte count")
+    source_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    source_flags |= getattr(os, "O_CLOEXEC", 0)
+    source_flags |= getattr(os, "O_NOFOLLOW", 0)
+    source_flags |= getattr(os, "O_NONBLOCK", 0)
+    source = os.open(canonical, source_flags)
     try:
         source_metadata = os.fstat(source)
         for field, actual in (
@@ -2830,8 +2910,16 @@ def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
         ):
             if identity.get(field) != actual:
                 raise RuntimeError(f"binary identity changed before pinning ({field})")
-        if sha256_descriptor(source) != identity.get("sha256"):
+        canonical_before = canonical.lstat()
+        if stat_identity(canonical_before) != stat_identity(source_metadata):
+            raise RuntimeError("binary path changed before pinning")
+        if sha256_descriptor(source, expected_bytes) != identity.get("sha256"):
             raise RuntimeError("binary content changed before pinning")
+        source_after_hash = os.fstat(source)
+        if stat_identity(source_metadata) != stat_identity(source_after_hash):
+            raise RuntimeError("binary identity changed while verified for pinning")
+        if stat_identity(canonical_before) != stat_identity(canonical.lstat()):
+            raise RuntimeError("binary path changed while verified for pinning")
 
         temporary: tempfile.TemporaryDirectory[str] | None = None
         execution_path: Path | None = None
@@ -2863,13 +2951,12 @@ def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
             )
             method = "private-copy"
         try:
-            offset = 0
-            while chunk := os.pread(source, 1024 * 1024, offset):
-                view = memoryview(chunk)
-                while view:
-                    written = os.write(descriptor, view)
-                    view = view[written:]
-                offset += len(chunk)
+            copy_descriptor(source, descriptor, expected_bytes)
+            source_after_copy = os.fstat(source)
+            if stat_identity(source_metadata) != stat_identity(source_after_copy):
+                raise RuntimeError("binary identity changed while copied for pinning")
+            if stat_identity(canonical_before) != stat_identity(canonical.lstat()):
+                raise RuntimeError("binary path changed while copied for pinning")
             os.fchmod(descriptor, 0o500)
             os.fsync(descriptor)
             seals = 0
@@ -2882,9 +2969,13 @@ def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
                 )
                 fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
             metadata = os.fstat(descriptor)
+            pinned_checksum = sha256_descriptor(descriptor, expected_bytes)
+            metadata_after_hash = os.fstat(descriptor)
+            if stat_identity(metadata) != stat_identity(metadata_after_hash):
+                raise RuntimeError("pinned executable identity changed while hashed")
             record: dict[str, object] = {
                 "method": method,
-                "sha256": sha256_descriptor(descriptor),
+                "sha256": pinned_checksum,
                 "bytes": metadata.st_size,
                 "mode": stat.S_IMODE(metadata.st_mode),
                 "device": metadata.st_dev,
