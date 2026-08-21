@@ -17,6 +17,8 @@ sys.path.insert(0, str(ROOT / "benchmarks"))
 
 from upstream import (  # noqa: E402
     ALLOWED_MACHINE_OUTPUTS,
+    BOOTSTRAP_DESCRIPTION,
+    BOOTSTRAP_REASON,
     CONTAINMENT_ENVIRONMENT_KEY,
     EXPECTED_RUST_VERSION,
     EXPECTED_ZIG_VERSION,
@@ -495,10 +497,10 @@ class UpstreamHarnessTest(unittest.TestCase):
             "workloads": [
                 {
                     "id": "bootstrap-exit",
-                    "description": "harness smoke path",
+                    "description": BOOTSTRAP_DESCRIPTION,
                     "equivalence": "non-equivalent",
                     "claim_eligible": False,
-                    "reason": "the programs execute different bootstrap behavior",
+                    "reason": BOOTSTRAP_REASON,
                     "implementations": implementations,
                 },
                 *unavailable_workloads(fx_binary, machine_binary),
@@ -614,6 +616,34 @@ class UpstreamHarnessTest(unittest.TestCase):
             ),
             lambda data: data["workloads"][3].__setitem__(
                 "machine_god_available", True
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
+    def test_rejects_claim_bearing_workload_prose(self) -> None:
+        mutations = (
+            lambda data: data["workloads"][0].__setitem__(
+                "description", "machine-god is 100x faster than fx"
+            ),
+            lambda data: data["workloads"][0].__setitem__(
+                "reason", "these measurements prove a product performance win"
+            ),
+            lambda data: data["workloads"][1].__setitem__(
+                "description", "equivalent help benchmark"
+            ),
+            lambda data: data["workloads"][2].__setitem__(
+                "reason", "machine-god status measured at 1 ns"
+            ),
+            lambda data: data["workloads"][1]["implementations"][1].__setitem__(
+                "reason", "machine-god won this benchmark"
+            ),
+            lambda data: data["workloads"][3]["implementations"][0].__setitem__(
+                "reason", "fx is slower"
             ),
         )
         for mutate in mutations:

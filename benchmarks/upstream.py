@@ -35,6 +35,13 @@ from typing import Any, Callable, Mapping, Sequence
 
 EXPECTED_RUST_VERSION = "1.94.1"
 EXPECTED_ZIG_VERSION = "0.16.0"
+BOOTSTRAP_DESCRIPTION = (
+    "Launch each release binary through its current no-network bootstrap path"
+)
+BOOTSTRAP_REASON = (
+    "fx uses its FX_BENCH no-argument fast path while machine-god prints its "
+    "bootstrap identity; these samples validate the harness and are not product-equivalent"
+)
 HEX_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CONTAINMENT_ENVIRONMENT_KEY = "MACHINE_GOD_BENCHMARK_RUN_TOKEN"
 ALLOWED_MACHINE_OUTPUTS = (".bench", "benchmarks/results", "target")
@@ -985,8 +992,11 @@ def validate_upstream_evidence(
     if [workload.get("id") for workload in workloads if isinstance(workload, dict)] != expected_ids:
         raise ValueError("workload identifiers or order are not canonical")
     bootstrap = workloads[0]
-    require_text(bootstrap.get("description"), "workloads[0].description")
-    require_text(bootstrap.get("reason"), "workloads[0].reason")
+    if (
+        bootstrap.get("description") != BOOTSTRAP_DESCRIPTION
+        or bootstrap.get("reason") != BOOTSTRAP_REASON
+    ):
+        raise ValueError("bootstrap-exit narrative is not canonical")
     if (
         bootstrap.get("equivalence") != "non-equivalent"
         or bootstrap.get("claim_eligible") is not False
@@ -1062,6 +1072,11 @@ def validate_upstream_evidence(
             [machine_binary["path"], "status", "--json"],
         ),
     }
+    expected_local_workloads = unavailable_workloads(
+        Path(fx_binary["path"]), Path(machine_binary["path"])
+    )
+    if workloads[1:] != expected_local_workloads:
+        raise ValueError("local workload inventory and narratives are not canonical")
     for index, workload in enumerate(workloads[1:3], 1):
         field = f"workloads[{index}]"
         if (
@@ -2977,13 +2992,10 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
     fx_measurement_environment = {**base_env, "FX_BENCH": "1"}
     bootstrap = {
         "id": "bootstrap-exit",
-        "description": "Launch each release binary through its current no-network bootstrap path",
+        "description": BOOTSTRAP_DESCRIPTION,
         "equivalence": "non-equivalent",
         "claim_eligible": False,
-        "reason": (
-            "fx uses its FX_BENCH no-argument fast path while machine-god prints its "
-            "bootstrap identity; these samples validate the harness and are not product-equivalent"
-        ),
+        "reason": BOOTSTRAP_REASON,
         "implementations": [
             run_measurement(
                 "fx",

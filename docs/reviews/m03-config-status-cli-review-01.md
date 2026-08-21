@@ -83,6 +83,19 @@ These remediations are not a GREEN result by themselves. They require fresh
 review of their exact committed SHA, followed by the complete local and remote
 gates.
 
+The performance/resource/evidence reviewer then identified a third finding on
+the same exact round-01 commit:
+
+3. Workload and implementation key sets were fixed, but their nonempty
+   `description` and `reason` strings remained free-form. An evidence artifact
+   could replace them with prose asserting false equivalence or invented
+   measurements while retaining structurally claim-ineligible fields. The
+   bootstrap narrative now uses shared constants in collection and validation,
+   and the five local workload records are validated against the complete
+   canonical structures produced by their shared definition. Mutation tests
+   replace bootstrap, implemented, unimplemented, fx, and machine-god prose
+   with claim-bearing statements and require rejection.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,
