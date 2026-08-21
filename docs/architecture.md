@@ -121,10 +121,14 @@ Preparation is synchronous trusted-host code and must be deterministic,
 bounded, nonblocking, and free of external effects. Core checks cancellation
 immediately before and after the call; it cannot interrupt preparation in
 flight. Core validates the prepared arguments at the exact configured tool
-argument-byte limit. Capability serialization uses that limit plus a fixed 1
-KiB allowance for the tagged permission envelope. Core then presents the
-prepared capability to policy and passes exactly the prepared arguments to
-`Tool::execute` only after policy allows the request.
+argument-byte limit, including their JSON depth and node bounds. For a prepared
+capability, depth and node traversal covers only JSON values embedded in its
+`Tool` or `Custom` variant. Every variant is also serialized as a whole under
+one total byte cap of the configured argument limit plus 1 KiB. That fixed 1
+KiB is headroom within the total capability cap, not a separately metered
+envelope. Core then presents the prepared capability to policy and passes
+exactly the prepared arguments to `Tool::execute` only after policy allows the
+request.
 
 The trusted tool must ensure those arguments can drive only effects contained
 by the exact capability that policy authorized. Filesystem, process, and network

@@ -53,12 +53,14 @@ capability-aware tool preflight: the source-compatible default preserves the
 raw `Capability::Tool` request, while a tool may prepare a normalized capability
 and the exact arguments that an allowed execution receives. Core bounds the
 prepared arguments at the existing exact byte limit and gives capability
-serialization a fixed 1 KiB envelope allowance before policy. Preparation is
-synchronous, bounded, nonblocking, effect-free trusted-host work with immediate
-before/after cancellation checks; its arguments may drive only effects within
-the authorized capability. Preparation failure produces a durable generic tool
-error without consulting policy or exercising the tool. These
-slices do not complete Milestone 03. The next planned slice is the first
+serialization one total byte cap equal to that limit plus 1 KiB of fixed
+headroom before policy. JSON depth and node traversal applies to the prepared
+arguments and only the JSON values embedded in `Tool` or `Custom` capabilities.
+Preparation is synchronous, bounded, nonblocking, effect-free trusted-host work
+with immediate before/after cancellation checks; its arguments may drive only
+effects within the authorized capability. Preparation failure produces a
+durable generic tool error without consulting policy or exercising the tool.
+These slices do not complete Milestone 03. The next planned slice is the first
 read-only native `read_file` tool. Concrete providers, permission prompting and
 modes beyond `ask`, durable native sessions, broader configuration and CLI
 behavior, the remaining executable native tools, and compatibility or

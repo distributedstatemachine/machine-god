@@ -64,15 +64,18 @@ open a path, start a process, contact a network destination, mutate state, or
 exercise any other unapproved authority. Core checks cancellation immediately
 before and after preparation returns but cannot interrupt it in flight.
 
-Core applies its resource bounds to the prepared capability and arguments
-before policy or execution. Prepared arguments retain the exact configured
-tool-argument byte limit; the serialized capability has that limit plus a fixed
-1 KiB allowance for the tagged permission envelope. An invalid or oversized
-prepared value fails before either boundary. A tool-reported preparation error
-is reduced to a fixed generic durable tool error, does not consult policy, and
-causes no tool effect. Policy still sees a fresh request with the existing
-critical risk, fixed reason, and deterministic permission ID; core still does
-not cache positive grant scopes.
+Core applies its resource bounds before policy or execution. Prepared arguments
+retain the exact configured tool-argument byte limit and their JSON depth and
+node bounds. Capability depth and node traversal covers only JSON values
+embedded in `Capability::Tool` or `Capability::Custom`; every capability variant
+is separately serialized as a whole under one total byte cap of
+`max_tool_argument_bytes + 1024`. The fixed 1 KiB is headroom within that total
+cap, not a separately metered envelope or payload allowance. An invalid or
+oversized prepared value fails before either boundary. A tool-reported
+preparation error is reduced to a fixed generic durable tool error, does not
+consult policy, and causes no tool effect. Policy still sees a fresh request
+with the existing critical risk, fixed reason, and deterministic permission ID;
+core still does not cache positive grant scopes.
 
 The prepared arguments are not a second grant of authority. A trusted tool may
 use them only for effects contained by the exact prepared capability that

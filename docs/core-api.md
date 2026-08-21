@@ -272,16 +272,20 @@ preparation and immediately after it returns. Because preparation is
 synchronous, core cannot interrupt it in flight; a blocking implementation
 would delay cancellation and violates the contract.
 
-Core validates the complete prepared capability and arguments against its JSON
-depth, node, and byte resource bounds before calling policy. Prepared execution
-arguments retain the exact configured `max_tool_argument_bytes` limit. The
-serialized capability receives that configured limit plus a fixed 1 KiB
-allowance for its tagged permission envelope, so the source-compatible default
-does not reject raw arguments that were valid at the existing exact boundary.
-Rejection occurs before authorization or tool execution. A preparation error
-also consults no permission handler and starts no tool. It becomes the same
-fixed generic, durable tool-error result as an execution error, replacing that
-call's unknown
+Core validates prepared execution arguments against the configured JSON depth
+and node bounds and the exact `max_tool_argument_bytes` serialized-byte limit.
+Within a prepared capability, the same depth and node traversal applies only to
+the embedded JSON `serde_json::Value` in `Capability::Tool` or
+`Capability::Custom`; the filesystem, process, and network variants contain no
+embedded JSON value to traverse. Every capability variant is additionally
+validated as a whole against one serialized-byte cap of
+`max_tool_argument_bytes + 1024`. The fixed 1 KiB is headroom within that total
+cap, not a separately metered envelope field or second payload budget. It keeps
+the source-compatible default from rejecting raw arguments that were valid at
+the existing exact boundary. Rejection occurs before authorization or tool
+execution. A preparation error also consults no permission handler and starts
+no tool. It becomes the same fixed generic, durable tool-error result as an
+execution error, replacing that call's unknown
 placeholder so the next model round can recover without receiving the tool's
 diagnostic.
 
