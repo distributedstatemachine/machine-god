@@ -1,10 +1,26 @@
 # Security
 
-The core is designed to have no ambient filesystem, process, environment,
-credential, or network authority. Native capabilities will be supplied explicitly
-by a host. When native tools land, the CLI must use permission mode `ask` by
-default and unresolved noninteractive requests must fail closed. These are future
-invariants until their milestone is implemented and tested.
+The core has no ambient filesystem, process, environment, credential, or
+network authority. Native capabilities are supplied explicitly by a host. The
+first Milestone 03 native slice only snapshots config/state environment inputs
+and reads final-path metadata for status. It reports permission mode `ask`
+unconditionally; executable native tools and the prompt/fail-closed behavior of
+real permission requests remain future work.
+
+Status resolution recognizes only the `machine-god` namespace. Empty XDG
+values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
+invalid and cannot be bypassed through a `HOME` fallback. Missing or empty
+`HOME` is unavailable. Inspection uses `symlink_metadata`, so a final symlink is
+classified as the wrong kind instead of followed. It does not canonicalize,
+open or parse `config.json`, create locations, or write state. These constraints
+make status a bounded observation surface, not configuration authority.
+
+Status paths are user-visible and may disclose the selected config/state
+location when the user explicitly runs the command. JSON output uses JSON
+escaping, and human output uses the same JSON-string encoding for paths, so
+newlines and control characters in environment-derived paths cannot inject
+terminal lines. Non-UTF-8 CLI arguments are rejected as invalid. Output errors
+use a fixed diagnostic rather than reflecting path or OS-error text.
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,

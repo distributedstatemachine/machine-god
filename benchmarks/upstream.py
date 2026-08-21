@@ -1001,14 +1001,63 @@ def validate_upstream_evidence(
     ):
         raise ValueError("bootstrap measurements must run from materialized machine-god source")
 
-    local_commands = {
-        "help": [fx_binary["path"], "help"],
-        "status-json": [fx_binary["path"], "status", "--json"],
+    implemented_commands = {
+        "help": (
+            [fx_binary["path"], "help"],
+            [machine_binary["path"], "help"],
+        ),
+        "status-json": (
+            [fx_binary["path"], "status", "--json"],
+            [machine_binary["path"], "status", "--json"],
+        ),
+    }
+    for index, workload in enumerate(workloads[1:3], 1):
+        field = f"workloads[{index}]"
+        if (
+            workload.get("equivalence") != "non-equivalent"
+            or workload.get("claim_eligible") is not False
+        ):
+            raise ValueError(f"{field} must remain non-equivalent and claim-ineligible")
+        require_text(workload.get("description"), f"{field}.description")
+        require_text(workload.get("reason"), f"{field}.reason")
+        items = workload.get("implementations")
+        if not isinstance(items, list) or len(items) != 2:
+            raise ValueError(f"{field} must describe fx and machine-god")
+        fx_item, machine_item = items
+        if not isinstance(fx_item, dict) or not isinstance(machine_item, dict):
+            raise ValueError(f"{field} implementations must be objects")
+        fx_command, machine_command = implemented_commands[workload["id"]]
+        if (
+            fx_item.get("project") != "fx"
+            or fx_item.get("status") != "not-measured"
+            or require_command(fx_item.get("command"), f"{field}.fx.command")
+            != fx_command
+        ):
+            raise ValueError(f"{field} fx command is not canonical")
+        if (
+            machine_item.get("project") != "machine-god"
+            or machine_item.get("status") != "not-measured"
+            or require_command(
+                machine_item.get("command"), f"{field}.machine_god.command"
+            )
+            != machine_command
+        ):
+            raise ValueError(f"{field} machine-god command is not canonical")
+        expected_item_keys = {"project", "status", "command", "reason"}
+        if (
+            set(fx_item) != expected_item_keys
+            or set(machine_item) != expected_item_keys
+        ):
+            raise ValueError(f"{field} must contain commands but no measurement results")
+        require_text(fx_item.get("reason"), f"{field}.fx.reason")
+        require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
+
+    unimplemented_commands = {
         "doctor-json": [fx_binary["path"], "doctor", "--json"],
         "sessions-json": [fx_binary["path"], "sessions", "--json"],
         "background-json": [fx_binary["path"], "background", "--json"],
     }
-    for index, workload in enumerate(workloads[1:], 1):
+    for index, workload in enumerate(workloads[3:], 3):
         field = f"workloads[{index}]"
         if (
             workload.get("equivalence") != "unimplemented"
@@ -1021,17 +1070,22 @@ def validate_upstream_evidence(
         if not isinstance(items, list) or len(items) != 2:
             raise ValueError(f"{field} must describe fx and machine-god")
         fx_item, machine_item = items
+        if not isinstance(fx_item, dict) or not isinstance(machine_item, dict):
+            raise ValueError(f"{field} implementations must be objects")
         if (
             fx_item.get("project") != "fx"
             or fx_item.get("status") != "not-measured"
             or require_command(fx_item.get("command"), f"{field}.fx.command")
-            != local_commands[workload["id"]]
+            != unimplemented_commands[workload["id"]]
+            or set(fx_item) != {"project", "status", "command", "reason"}
         ):
             raise ValueError(f"{field} fx command is not canonical")
-        if machine_item.get("project") != "machine-god" or machine_item.get("status") != "unimplemented":
+        if (
+            machine_item.get("project") != "machine-god"
+            or machine_item.get("status") != "unimplemented"
+            or set(machine_item) != {"project", "status", "reason"}
+        ):
             raise ValueError(f"{field} machine-god gap is not explicit")
-        if "samples" in fx_item or "samples" in machine_item:
-            raise ValueError(f"{field} must not contain unpaired samples")
         require_text(fx_item.get("reason"), f"{field}.fx.reason")
         require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
 
@@ -2583,14 +2637,27 @@ def run_measurement(
         pinned.close()
 
 
-def unavailable_workloads(fx_binary: Path) -> list[dict[str, object]]:
-    definitions = (
-        ("help", [str(fx_binary), "help"], "machine-god has no help command"),
+def unavailable_workloads(
+    fx_binary: Path, machine_binary: Path
+) -> list[dict[str, object]]:
+    implemented = (
+        (
+            "help",
+            [str(fx_binary), "help"],
+            [str(machine_binary), "help"],
+            "both help commands exist, but their output contracts are not equivalent",
+        ),
         (
             "status-json",
             [str(fx_binary), "status", "--json"],
-            "machine-god has no local status command or configuration model",
+            [str(machine_binary), "status", "--json"],
+            (
+                "machine-god reports only read-only native configuration status; "
+                "semantic equivalence with fx is not established"
+            ),
         ),
+    )
+    unimplemented = (
         (
             "doctor-json",
             [str(fx_binary), "doctor", "--json"],
@@ -2607,7 +2674,34 @@ def unavailable_workloads(fx_binary: Path) -> list[dict[str, object]]:
             "machine-god has no background-task list command",
         ),
     )
-    return [
+    implemented_records = [
+        {
+            "id": identifier,
+            "description": (
+                f"Pinned local commands: {' '.join(fx_command[1:])} and "
+                f"{' '.join(machine_command[1:])}"
+            ),
+            "equivalence": "non-equivalent",
+            "claim_eligible": False,
+            "reason": reason,
+            "implementations": [
+                {
+                    "project": "fx",
+                    "status": "not-measured",
+                    "command": fx_command,
+                    "reason": "non-equivalent commands are intentionally not measured",
+                },
+                {
+                    "project": "machine-god",
+                    "status": "not-measured",
+                    "command": machine_command,
+                    "reason": "non-equivalent commands are intentionally not measured",
+                },
+            ],
+        }
+        for identifier, fx_command, machine_command, reason in implemented
+    ]
+    unimplemented_records = [
         {
             "id": identifier,
             "description": f"Pinned fx local command: {' '.join(command[1:])}",
@@ -2628,8 +2722,9 @@ def unavailable_workloads(fx_binary: Path) -> list[dict[str, object]]:
                 },
             ],
         }
-        for identifier, command, reason in definitions
+        for identifier, command, reason in unimplemented
     ]
+    return [*implemented_records, *unimplemented_records]
 
 
 def base_environment(home: Path, temporary: Path, containment_token: str) -> dict[str, str]:
@@ -2915,7 +3010,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             "inherits_parent_environment": False,
             "allowlisted_environment_only": True,
         },
-        "workloads": [bootstrap, *unavailable_workloads(fx_binary)],
+        "workloads": [bootstrap, *unavailable_workloads(fx_binary, machine_binary)],
     }
     validate_upstream_evidence(
         evidence,

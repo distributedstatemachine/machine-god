@@ -35,16 +35,21 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | --- | --- | --- |
 | 01 | Repository, docs, CI, workspace, upstream benchmark harness, and non-product bootstrap evidence | COMPLETE |
 | 02 | Provider-neutral streaming engine and deterministic testkit | COMPLETE |
-| 03 | Providers, native tools, permissions, sessions, config, and CLI | NOT STARTED |
+| 03 | Providers, native tools, permissions, sessions, config, and CLI | IN PROGRESS |
 | 04 | Security, lifecycle, concurrency, and persistence hardening | NOT STARTED |
 | 05 | Skills, MCP, ACP, and subagent extensibility | NOT STARTED |
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
 Milestone 02 completion evidence is retained in the
-[milestone review](reviews/m02-milestone-review.md). Milestone 03 remains the
-next delivery milestone; concrete providers and native host behavior are not
-part of the completed provider-neutral engine.
+[milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
+with a bounded first slice: read-only native config/state discovery, a fixed
+`ask` permission-mode report, and help/version/status CLI behavior. This does
+not complete Milestone 03. Concrete providers, executable native tools,
+permission prompting, durable native sessions, configuration parsing, and
+broader CLI behavior remain planned. Compatibility with pinned fx also remains
+planned: the newly implemented help and status commands are explicitly
+non-equivalent, claim-ineligible, and unmeasured in bootstrap evidence.
 
 ## Release gates
 

@@ -501,7 +501,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "reason": "the programs execute different bootstrap behavior",
                     "implementations": implementations,
                 },
-                *unavailable_workloads(fx_binary),
+                *unavailable_workloads(fx_binary, machine_binary),
             ],
         }
 
@@ -595,6 +595,78 @@ class UpstreamHarnessTest(unittest.TestCase):
         evidence["workloads"][0]["claim_eligible"] = True
         with self.assertRaises(ValueError):
             validate_upstream_evidence(evidence)
+
+    def test_records_implemented_local_commands_without_measurements(self) -> None:
+        evidence = self.valid_upstream_evidence()
+        machine_binary = evidence["builds"][1]["binary"]["path"]
+        for workload, command in (
+            (evidence["workloads"][1], [machine_binary, "help"]),
+            (
+                evidence["workloads"][2],
+                [machine_binary, "status", "--json"],
+            ),
+        ):
+            self.assertEqual(workload["equivalence"], "non-equivalent")
+            self.assertIs(workload["claim_eligible"], False)
+            self.assertEqual(
+                [item["status"] for item in workload["implementations"]],
+                ["not-measured", "not-measured"],
+            )
+            self.assertEqual(workload["implementations"][1]["command"], command)
+            self.assertNotIn("samples", workload["implementations"][0])
+            self.assertNotIn("samples", workload["implementations"][1])
+
+    def test_rejects_implemented_workload_schema_drift(self) -> None:
+        mutations = (
+            lambda data: data["workloads"][1].__setitem__(
+                "equivalence", "unimplemented"
+            ),
+            lambda data: data["workloads"][1].__setitem__("claim_eligible", True),
+            lambda data: data["workloads"][1]["implementations"][0].__setitem__(
+                "status", "measured"
+            ),
+            lambda data: data["workloads"][1]["implementations"][1].__setitem__(
+                "command", ["machine-god", "--help"]
+            ),
+            lambda data: data["workloads"][2]["implementations"][0].__setitem__(
+                "samples", []
+            ),
+            lambda data: data["workloads"][2]["implementations"][1].__setitem__(
+                "median_ns", 1
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
+    def test_rejects_unimplemented_workload_schema_drift(self) -> None:
+        mutations = (
+            lambda data: data["workloads"][3].__setitem__(
+                "equivalence", "non-equivalent"
+            ),
+            lambda data: data["workloads"][3].__setitem__("claim_eligible", True),
+            lambda data: data["workloads"][4]["implementations"][0].__setitem__(
+                "command", ["fx", "session", "--json"]
+            ),
+            lambda data: data["workloads"][4]["implementations"][1].__setitem__(
+                "status", "not-measured"
+            ),
+            lambda data: data["workloads"][5]["implementations"][1].__setitem__(
+                "command", ["machine-god", "background", "--json"]
+            ),
+            lambda data: data["workloads"][5]["implementations"][0].__setitem__(
+                "samples", []
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
 
     def test_rejects_unverified_upstream_commit(self) -> None:
         evidence = self.valid_upstream_evidence()

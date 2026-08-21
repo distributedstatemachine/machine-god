@@ -21,6 +21,39 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
+Milestone 03 has started with one bounded native-host slice. The core remains
+unchanged and authority-free. `machine-god-native` snapshots only
+`XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and
+state paths, and inspects their final metadata. `machine-god-cli` is a thin
+formatter for that status and owns no product state. The exact surface is
+documented in [`cli.md`](cli.md).
+
+```text
+process environment                    final-path metadata
+ XDG_CONFIG_HOME --+                  +-> config file state
+ HOME fallback ----+-> native status -+-> state directory state -> CLI text/JSON
+ XDG_STATE_HOME ---+                  +-> permission mode: ask
+```
+
+The config and state roots resolve independently. A nonempty XDG root wins and
+must be absolute Unicode; an invalid selected root fails that location without
+trying `HOME`. An empty XDG value falls back to a nonempty absolute-Unicode
+`HOME`. Missing or empty `HOME` makes a needed fallback unavailable. The only
+paths produced are `<config-root>/machine-god/config.json` and
+`<state-root>/machine-god`, with `.config` and `.local/state` inserted for the
+respective `HOME` fallbacks.
+
+Inspection is deliberately shallower than configuration loading. It uses
+`symlink_metadata` on the final path, reports missing/inaccessible/wrong-kind
+states, and treats a final symlink as wrong-kind. It does not read or parse the
+config file, canonicalize a path, create a directory, or persist anything.
+Permission mode is fixed to `ask`; executable native tools and permission
+prompting are outside this slice. The CLI serializes paths as JSON strings even
+in human status so path contents do not become terminal controls. Bare
+invocation keeps the bootstrap identity contract. Help, version, status, and
+argument errors are fixed presentation behavior, not an engine-owned command
+model.
+
 ```text
                         machine-god-core
  host ---------------------------------------------------------------+

@@ -4,6 +4,7 @@
 - [Architecture](architecture.md)
 - [Provider-neutral core API](core-api.md)
 - [Deterministic testkit](testkit.md)
+- [Command-line interface](cli.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)
@@ -11,3 +12,4 @@
 - [Adversarial reviews](reviews/README.md)
 - [Milestone 01 completion evidence](reviews/m01-milestone-review.md)
 - [Milestone 02 completion evidence](reviews/m02-milestone-review.md)
+- [Milestone 03 config/status CLI review candidate](reviews/m03-config-status-cli-review-01.md)

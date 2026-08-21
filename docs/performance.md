@@ -28,6 +28,10 @@ python3 benchmarks/check.py benchmarks/results/upstream-bootstrap.json \
   --machine-god-binary .bench/scratch/machine-target/release/machine-god
 ```
 
+The pinned Zig toolchain is used only to build that upstream fx reference. It
+is benchmark infrastructure, not a machine-god product language, runtime, or
+dependency.
+
 The harness strictly parses `benchmarks/upstream.lock`, requires the locked Zig
 0.16.0 and Rust 1.94.1 toolchains, and fails rather than silently substituting a
 different version. It requires nonexistent upstream and scratch paths, clones fx
@@ -169,11 +173,21 @@ The current `bootstrap-exit` workload is deliberately labeled
 `non-equivalent`: fx uses its upstream-only `FX_BENCH=1` fast path, whereas the
 machine-god bootstrap binary prints its identity. It checks the harness and
 captures launch samples, but it cannot support a product performance claim.
-Help, status, doctor, session-list, and background-task workloads are recorded
-as `unimplemented` for machine-god and are not timed on fx in isolation. Once
-both products expose matching semantics and fixtures, a later milestone must
-introduce a claim-eligible schema and reviewed workload definition rather than
-relabel this bootstrap evidence.
+
+Help and JSON status now exist in both binaries, but existence is not semantic
+equivalence. Schema 2 records the exact `fx help` / `machine-god help` and
+`fx status --json` / `machine-god status --json` commands with both
+implementations set to `not-measured`, no samples, `equivalence:
+non-equivalent`, and `claim_eligible: false`. The current machine-god status is
+only read-only native configuration/runtime metadata, and neither its behavior
+nor its output contract has been shown equivalent to fx. Doctor, session-list,
+and background-task workloads remain `unimplemented` for machine-god; their fx
+commands also remain unmeasured because an unpaired result is not a comparison.
+The validator fixes these distinct shapes and rejects commands, statuses,
+sample fields, or eligibility that drift from them. No M03 performance or
+compatibility claim is made. A later milestone must define matching semantics
+and fixtures and introduce claim-eligible reviewed evidence rather than relabel
+this bootstrap artifact.
 
 ## Milestone 02 orchestration note
 
