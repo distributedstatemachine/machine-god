@@ -113,7 +113,8 @@ Rust/Cargo 1.94.1:
 - workspace/all-target/all-feature tests: 193 top-level tests, including 24
   native unit and 18 native black-box configuration tests;
 - workspace documentation tests: 2;
-- repo-wide Python discovery: 129 passed, 8 expected platform skips;
+- repo-wide Python discovery: 129 run, comprising 121 passed and 8 expected
+  platform skips;
 - release build and bare/help/status JSON CLI smoke checks;
 - `cargo-deny check`: advisories, bans, licenses, and sources all accepted;
 - `cargo audit --no-fetch`: 1,225 cached advisories checked across 33 lockfile
