@@ -1,12 +1,12 @@
 # Milestone 03 config/status CLI review candidate 01
 
-Status: **REVIEW CANDIDATE — adversarial results pending**.
+Status: **ADVERSARIAL GREEN — exact remote CI pending**.
 
-This is a candidate record, not completion evidence. It must not be relabeled
-GREEN until fresh correctness/API, security/abuse, and
-performance/resource/evidence reviewers have examined the same integrated
-commit and their findings have been resolved. Exact remote CI for that commit
-is also pending.
+Three fresh correctness/API, input/reliability, and
+performance/resource/evidence passes are GREEN for the exact integrated code
+commit recorded in round 19. This status does not assert milestone completion:
+the exact remote CI and benchmark-evidence workflows are still pending, and
+the deferred Milestone 03 scope remains open.
 
 ## Candidate scope
 
@@ -461,6 +461,27 @@ child stopped at 4,097 observed bytes for a 4,096-byte cap, pipe cleanup,
 timing-accounting preservation, schema-1 prior-evidence/lock/pin cleanup on Git
 output overflow, and Git pathname replacement. These remediations require
 another fresh exact-SHA three-way review and all local and remote gates.
+
+## Review round 19 GREEN result
+
+Three fresh reviewers independently examined exact clean commit
+`78aaa76a028e34a8893336722907151739105f51` and reported GREEN with no
+actionable findings.
+
+- The CI-equivalent repo-wide Python suite passed 129 tests with 8 expected
+  platform skips. Focused high-volume probes enforced the first byte beyond the
+  configured stream cap, bounded simultaneous stdout/stderr, terminated noisy
+  process trees, and left no reader threads.
+- Exact-cap partial-write cases, overflow-versus-deadline ordering, schema-1
+  Git identity binding, transactional cleanup/publication, schema-2 callers,
+  strict evidence validation, and the non-equivalent/claim-ineligible docs were
+  GREEN.
+- Rust 1.94.1 formatting, Clippy with warnings denied, workspace tests,
+  documentation tests, native/CLI focused tests, release status smoke, and
+  no-write behavior were GREEN across the review passes.
+
+No compatibility or performance claim was promoted. Exact remote CI and
+benchmark-evidence workflows remain required for the final integrated commit.
 
 ## Deferred scope
 
