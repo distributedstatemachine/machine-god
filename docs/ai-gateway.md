@@ -13,8 +13,9 @@ full fx equivalence, or a measured performance improvement.
 
 ## Public boundary
 
-`AiGatewayProvider` implements core's `ModelProvider`. `new` takes a nonempty
-default model and an `Arc<dyn AiGatewayTransport>` with
+`AiGatewayProvider` implements core's `ModelProvider`. `new` takes a default
+model of 1–128 visible ASCII bytes (`0x21` through `0x7e`) and an
+`Arc<dyn AiGatewayTransport>` with
 `AiGatewayLimits::default()`; `with_limits` also takes explicit limits. Its
 stable provider name is `AI_GATEWAY_PROVIDER_NAME`. The public wire constants
 are `AI_GATEWAY_PROTOCOL_VERSION` (`0.0.1`) and
@@ -57,11 +58,13 @@ identity and security policy.
 ## Request projection
 
 The selected model is `ModelRequest.options.model` when present and otherwise
-the provider's default. An empty selected model is invalid. Temperature and
-inference metadata have no pinned wire projection and are ignored rather than
-making an otherwise valid request fail. Metadata JSON is still traversed under
-the same structural depth and node limits as other owned request JSON before it
-is discarded iteratively; temperature has no JSON structure to traverse.
+the provider's default. The override has the same 1–128 visible-ASCII-byte
+rule; spaces, controls, non-ASCII text, and longer values are invalid.
+Temperature and inference metadata have no pinned wire projection and are
+ignored rather than making an otherwise valid request fail. Metadata JSON is
+still traversed under the same structural depth and node limits as other owned
+request JSON before it is discarded iteratively; temperature has no JSON
+structure to traverse.
 Neither field is serialized. A present `max_output_tokens` becomes the sole
 optional body field `maxOutputTokens`; zero is invalid.
 
@@ -106,6 +109,10 @@ call without intervening roles. Those results may appear in any order, but an
 orphan, duplicate, missing, or name-conflicting result is invalid history.
 `ContentBlock::Json`, a role with an unsupported block kind, and otherwise
 invalid role/content combinations are rejected before the transport is called.
+Cheap message, tool, selected-model, and per-role content-count checks run while
+the iterative request guard is still armed and before any JSON traversal.
+Traversal then checks cancellation at every metadata value, tool, message,
+content block, and JSON node.
 
 ## Streaming response
 
@@ -134,11 +141,15 @@ A tool call may carry its complete JSON `input` in the final `tool-call`, or it
 may be reconstructed from one `tool-input-start`, zero or more matching
 `tool-input-delta` records, one `tool-input-end`, and a matching final
 `tool-call`. A complete input carried by the final event is authoritative; an
-otherwise missing input uses the completed streamed value with the same ID. If
+otherwise missing input uses the completed streamed value with the same ID. An
+explicit input with the same final and provisional ID replaces the provisional
+value, while the name must remain consistent. If
 the final ID differs from a provisional streamed ID, an explicit final name and
 input reconcile it only when exactly one ended provisional input has that name
 and a structurally equal JSON value. An ambiguous match, an identity/name
-conflict, or unequal explicit input rejects the response. Call IDs and names
+conflict, or unequal changed-ID input rejects the response. Ended streamed
+inputs are parsed once and retain their bounded parsed value for matching, so
+reconciliation does not repeatedly parse every candidate. Call IDs and names
 must be nonempty and valid for core, final IDs must be unique, argument JSON
 must be complete, and no more than the configured number of calls may be
 accumulated. Only the validated final ID, name, and arguments are emitted to
@@ -231,7 +242,10 @@ another response byte to become observable. The transport receives the same
 token and must arrange an equivalent wakeup while its own future or byte stream
 is pending. If cancellation becomes ready during the same poll that would
 otherwise return a terminal response event or terminal response failure,
-cancellation wins. Dropping the provider future or event stream drops all owned
+cancellation wins. The decoder retains a cancellation waiter only while its
+stream poll returns `Pending`; every ready event, error, stop, and end outcome
+deregisters it before returning, so later cancellation cannot spuriously wake
+an inactive poller. Dropping the provider future or event stream drops all owned
 transport futures, streams, buffers, and partial tool state. Before an owned
 `ModelRequest` leaves its guard, all of its JSON trees, including ignored
 metadata, pass aggregate depth/node validation. Early rejection, cancellation,

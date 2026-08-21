@@ -193,8 +193,9 @@ request body and fixed codec headers, must not enter debug or error text, and
 must be scoped to the selected origin. Authentication, rate-limit, availability
 and other status classification must occur before returning a successful byte
 stream. The host likewise decides whether an operation is safe to retry; the
-codec calls the transport once and never retries a possibly delivered model
-request.
+codec calls the transport at most once, and exactly once only after a valid
+request future is polled through startup. It never retries a possibly delivered
+model request.
 
 Machine-god supplies no fx referer, title or user agent and therefore does not
 misrepresent the caller's identity. It also supplies no authorization, team or
@@ -239,7 +240,9 @@ chunk. The transport receives the same cancellation token and is responsible
 for waking and tearing down its pending I/O. When cancellation and a terminal
 provider result become ready in the same poll, cancellation wins. Dropping
 provider work drops its owned future, byte stream, buffers and partial tool
-state. All request-side JSON, including ignored metadata, is depth/node checked
+state. Ready decoder outcomes first deregister their cancellation waiter, so an
+inactive poller's waker is neither retained nor spuriously woken later. All
+request-side JSON, including ignored metadata, is depth/node checked
 before the owned request leaves its guard. An early-rejected, cancelled or
 dropped guarded request drains those values with an iterative child stack,
 preventing deep hostile input from triggering recursive JSON teardown. Accepted

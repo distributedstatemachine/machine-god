@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Wake, Waker};
 
 use futures_util::{FutureExt, Stream, StreamExt, future};
 use machine_god_core::{
@@ -114,6 +115,15 @@ impl AiGatewayTransport for ScriptedTransport {
 struct ScriptedByteStream {
     steps: VecDeque<ByteStep>,
     cancellation: CancellationToken,
+}
+
+#[derive(Debug, Default)]
+struct WakeCounter(AtomicUsize);
+
+impl Wake for WakeCounter {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl Stream for ScriptedByteStream {
@@ -247,6 +257,16 @@ fn provider_identity_configuration_and_debug_are_fixed_and_redacted() {
     let invalid = AiGatewayProvider::new("", Arc::new(ScriptedTransport::new([]))).unwrap_err();
     assert_eq!(invalid.kind(), AiGatewayConfigErrorKind::InvalidModel);
     assert!(!format!("{invalid:?}").contains("secret"));
+    AiGatewayProvider::new("m".repeat(128), Arc::new(ScriptedTransport::new([]))).unwrap();
+    for invalid_model in [
+        "m".repeat(129),
+        "provider bad".to_owned(),
+        "modèle".to_owned(),
+    ] {
+        let error = AiGatewayProvider::new(invalid_model, Arc::new(ScriptedTransport::new([])))
+            .unwrap_err();
+        assert_eq!(error.kind(), AiGatewayConfigErrorKind::InvalidModel);
+    }
 
     let limits = AiGatewayLimits {
         max_request_bytes: 0,
@@ -259,6 +279,34 @@ fn provider_identity_configuration_and_debug_are_fixed_and_redacted() {
     )
     .unwrap_err();
     assert_eq!(invalid.kind(), AiGatewayConfigErrorKind::InvalidLimits);
+}
+
+#[test]
+fn request_model_override_uses_the_same_visible_ascii_boundary() {
+    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    let gateway = provider(&transport);
+    let mut valid = request(vec![Message::text(Role::User, "hello")]);
+    valid.options.model = Some("m".repeat(128));
+    let stream = start(&gateway, valid, CancellationToken::new()).unwrap();
+    futures_executor::block_on(stream.collect::<Vec<_>>());
+    assert_eq!(transport.requests().len(), 1);
+
+    for invalid_model in [
+        "m".repeat(129),
+        "provider bad".to_owned(),
+        "bad\nmodel".to_owned(),
+    ] {
+        let transport = ScriptedTransport::new([]);
+        let provider = provider(&transport);
+        let mut invalid = request(vec![Message::text(Role::User, "hello")]);
+        invalid.options.model = Some(invalid_model);
+        let error = expect_start_error(
+            start(&provider, invalid, CancellationToken::new()),
+            "invalid model override",
+        );
+        assert_eq!(error.code, "gateway_invalid_model");
+        assert!(transport.requests().is_empty());
+    }
 }
 
 #[test]
@@ -522,14 +570,14 @@ fn streamed_tool_input_falls_back_only_after_start_delta_and_end() {
 #[test]
 fn final_tool_calls_reconcile_unique_provisional_ids_by_name_and_input() {
     let body = concat!(
-        "data: {\"type\":\"tool-input-start\",\"id\":\"provisional-a\",\"toolName\":\"read_file\"}\n\n",
-        "data: {\"type\":\"tool-input-delta\",\"id\":\"provisional-a\",\"delta\":\"{\\\"path\\\":\\\"a\\\"}\"}\n\n",
+        "data: {\"type\":\"tool-input-start\",\"id\":\"provisional-a\",\"toolName\":\"operate\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"provisional-a\",\"delta\":\"{\\\"alpha\\\":1,\\\"beta\\\":2}\"}\n\n",
         "data: {\"type\":\"tool-input-end\",\"id\":\"provisional-a\"}\n\n",
-        "data: {\"type\":\"tool-input-start\",\"id\":\"provisional-b\",\"toolName\":\"list_files\"}\n\n",
-        "data: {\"type\":\"tool-input-delta\",\"id\":\"provisional-b\",\"delta\":\"{\\\"path\\\":\\\"b\\\"}\"}\n\n",
+        "data: {\"type\":\"tool-input-start\",\"id\":\"provisional-b\",\"toolName\":\"operate\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"provisional-b\",\"delta\":\"{\\\"alpha\\\":3,\\\"beta\\\":4}\"}\n\n",
         "data: {\"type\":\"tool-input-end\",\"id\":\"provisional-b\"}\n\n",
-        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final-b\",\"toolName\":\"list_files\",\"input\":{\"path\":\"b\"}}\n\n",
-        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final-a\",\"toolName\":\"read_file\",\"input\":{\"path\":\"a\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final-b\",\"toolName\":\"operate\",\"input\":{\"beta\":4,\"alpha\":3}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final-a\",\"toolName\":\"operate\",\"input\":{\"beta\":2,\"alpha\":1}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     );
     let events = collect(fragments(body.as_bytes(), &[3, 11, 1, 19])).unwrap();
@@ -537,12 +585,14 @@ fn final_tool_calls_reconcile_unique_provisional_ids_by_name_and_input() {
     assert!(matches!(
         &events[0],
         ModelEvent::ToolCall { call }
-            if call.id.as_str() == "final-b" && call.arguments == json!({"path":"b"})
+            if call.id.as_str() == "final-b"
+                && call.arguments == json!({"alpha":3,"beta":4})
     ));
     assert!(matches!(
         &events[1],
         ModelEvent::ToolCall { call }
-            if call.id.as_str() == "final-a" && call.arguments == json!({"path":"a"})
+            if call.id.as_str() == "final-a"
+                && call.arguments == json!({"alpha":1,"beta":2})
     ));
     assert_eq!(
         events[2],
@@ -550,6 +600,22 @@ fn final_tool_calls_reconcile_unique_provisional_ids_by_name_and_input() {
             reason: StopReason::ToolCalls
         }
     );
+}
+
+#[test]
+fn explicit_final_input_corrects_same_id_streamed_input() {
+    let body = concat!(
+        "data: {\"type\":\"tool-input-start\",\"id\":\"call-1\",\"toolName\":\"read_file\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"call-1\",\"delta\":\"{\\\"path\\\":\\\"old\\\"}\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"call-1\"}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"call-1\",\"toolName\":\"read_file\",\"input\":{\"path\":\"new\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    );
+    let events = collect(bytes(body)).unwrap();
+    assert!(matches!(
+        &events[0],
+        ModelEvent::ToolCall { call } if call.arguments == json!({"path":"new"})
+    ));
 }
 
 #[test]
@@ -780,6 +846,44 @@ fn empty_chunks_fail_and_no_event_chunks_yield_after_one_source_poll() {
 }
 
 #[test]
+fn ready_stream_outcomes_do_not_retain_or_spuriously_wake_pollers() {
+    let cases = [
+        (
+            b"data: {\"type\":\"text-delta\",\"delta\":\"ready\"}\n\n".to_vec(),
+            false,
+        ),
+        (finish("stop").into_bytes(), true),
+        (Vec::new(), true),
+    ];
+    for (chunk, terminal) in cases {
+        let cancellation = CancellationToken::new();
+        let transport =
+            ScriptedTransport::new([TransportStep::Bytes(vec![ByteStep::Chunk(chunk)])]);
+        let provider = provider(&transport);
+        let mut events = start(
+            &provider,
+            request(vec![Message::text(Role::User, "hello")]),
+            cancellation.clone(),
+        )
+        .unwrap();
+        let wake_counter = Arc::new(WakeCounter::default());
+        let waker = Waker::from(Arc::clone(&wake_counter));
+        let mut context = Context::from_waker(&waker);
+        let result = events.as_mut().poll_next(&mut context);
+        assert!(matches!(result, Poll::Ready(Some(_))));
+        if terminal {
+            assert!(matches!(
+                events.as_mut().poll_next(&mut context),
+                Poll::Ready(None)
+            ));
+        }
+        assert_eq!(Arc::strong_count(&wake_counter), 2);
+        cancellation.cancel();
+        assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+    }
+}
+
+#[test]
 fn cancellation_before_poll_has_no_transport_side_effect_and_drop_detaches_no_work() {
     let transport = ScriptedTransport::new([TransportStep::Pending]);
     let provider = provider(&transport);
@@ -844,7 +948,6 @@ fn request_guard_iteratively_drops_deep_json_before_and_during_polling() {
     const CHILD_MODE: &str = "MACHINE_GOD_GATEWAY_DEEP_DROP_MODE";
     if let Ok(mode) = std::env::var(CHILD_MODE) {
         let transport = ScriptedTransport::new([]);
-        let provider = provider(&transport);
         let mut model_request = request(vec![Message::text(Role::User, "hello")]);
         model_request
             .options
@@ -881,18 +984,56 @@ fn request_guard_iteratively_drops_deep_json_before_and_during_polling() {
                 }],
             },
         ]);
+        if mode == "content_count" {
+            model_request.messages[2].content.extend([
+                ContentBlock::Text {
+                    text: "excess-1".to_owned(),
+                },
+                ContentBlock::Text {
+                    text: "excess-2".to_owned(),
+                },
+            ]);
+        }
+        let provider = if mode == "message_count" {
+            AiGatewayProvider::with_limits(
+                "provider/default",
+                Arc::new(transport.clone()),
+                AiGatewayLimits {
+                    max_messages: 1,
+                    ..AiGatewayLimits::default()
+                },
+            )
+            .unwrap()
+        } else if mode == "content_count" {
+            AiGatewayProvider::with_limits(
+                "provider/default",
+                Arc::new(transport.clone()),
+                AiGatewayLimits {
+                    max_tool_calls: 1,
+                    ..AiGatewayLimits::default()
+                },
+            )
+            .unwrap()
+        } else {
+            provider(&transport)
+        };
         let future = provider.stream(model_request, CancellationToken::new());
         if mode == "unpolled" {
             drop(future);
         } else {
             let error = expect_start_error(futures_executor::block_on(future), "deep request JSON");
             assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
-            assert_eq!(error.code, "gateway_json_depth_limit");
+            let expected = match mode.as_str() {
+                "message_count" => "gateway_request_count_limit",
+                "content_count" => "gateway_invalid_history",
+                _ => "gateway_json_depth_limit",
+            };
+            assert_eq!(error.code, expected);
         }
         return;
     }
 
-    for mode in ["unpolled", "polled"] {
+    for mode in ["unpolled", "polled", "message_count", "content_count"] {
         let status = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
             .arg("request_guard_iteratively_drops_deep_json_before_and_during_polling")

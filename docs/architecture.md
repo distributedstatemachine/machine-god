@@ -142,7 +142,8 @@ are structurally validated where applicable, and are then ignored and omitted.
 Fixed metadata carries content type, protocol/specification versions, model,
 streaming mode and the same core session ID for both session and affinity.
 Machine-god adds no endpoint, authorization, referer, title, or user-agent and
-makes one transport call without codec-side retry.
+makes at most one transport call without codec-side retry: exactly one only
+after a valid request future is polled through startup.
 
 The transcript projection accepts system/user text, assistant text and complete
 tool calls, and complete tool results whose name is resolved from the
@@ -164,8 +165,10 @@ events, and wins when a terminal result becomes ready in the same poll. The
 codec registers a cancellation wakeup, and the transport receives the same
 token so it can wake while its future or byte stream is pending. Empty chunks
 fail, while a nonempty no-event chunk consumes at most one unit of source work
-per poll before scheduling another poll and yielding. Drop owns and destroys
-the in-flight transport future/stream and partial decode state. Guarded request
+per poll before scheduling another poll and yielding. Ready stream outcomes
+deregister the codec's cancellation waiter; only a pending poll retains it.
+Drop owns and destroys the in-flight transport future/stream and partial decode
+state. Guarded request
 JSON is iteratively drained on unpolled, cancelled, and rejected paths, so depth
 rejection does not cause recursive teardown; accepted JSON is first proven to
 be within the safe depth ceiling. No provider task, timer, thread or retry is

@@ -285,6 +285,12 @@ impl ModelProvider for AiGatewayProvider {
             if cancellation.is_cancelled() {
                 return Err(cancelled_error());
             }
+            validate_request_envelope(
+                request.get(),
+                &self.default_model,
+                self.limits,
+                &cancellation,
+            )?;
             validate_request_json(request.get(), self.limits, &cancellation)?;
             let transport_request = build_request(
                 request.take(),
@@ -419,6 +425,40 @@ fn valid_model(model: &str) -> bool {
     !model.is_empty()
         && model.len() <= 128
         && model.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+}
+
+fn validate_request_envelope(
+    request: &ModelRequest,
+    default_model: &str,
+    limits: AiGatewayLimits,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    check_cancel(cancellation)?;
+    if request.messages.is_empty()
+        || request.messages.len() > limits.max_messages
+        || request.tools.len() > limits.max_tools
+    {
+        return Err(invalid_request("gateway_request_count_limit"));
+    }
+    if request.options.max_output_tokens == Some(0) {
+        return Err(invalid_request("gateway_invalid_max_output_tokens"));
+    }
+    let model = request.options.model.as_deref().unwrap_or(default_model);
+    if !valid_model(model) {
+        return Err(invalid_request("gateway_invalid_model"));
+    }
+    for message in &request.messages {
+        check_cancel(cancellation)?;
+        let valid_count = match message.role {
+            Role::System | Role::User | Role::Tool => message.content.len() == 1,
+            Role::Assistant => message.content.len() <= limits.max_tool_calls.saturating_add(1),
+            _ => false,
+        };
+        if !valid_count {
+            return Err(invalid_request("gateway_invalid_history"));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -684,9 +724,11 @@ fn validate_request_json(
 ) -> Result<(), ProviderError> {
     let mut nodes = 0;
     for value in request.options.metadata.values() {
+        check_cancel(cancellation)?;
         validate_json(value, &mut nodes, limits.max_json_nodes, cancellation)?;
     }
     for tool in &request.tools {
+        check_cancel(cancellation)?;
         validate_json(
             &tool.input_schema,
             &mut nodes,
@@ -695,7 +737,9 @@ fn validate_request_json(
         )?;
     }
     for message in &request.messages {
+        check_cancel(cancellation)?;
         for block in &message.content {
+            check_cancel(cancellation)?;
             let value = match block {
                 ContentBlock::Json { value } => Some(value),
                 ContentBlock::ToolCall { call } => Some(&call.arguments),
@@ -896,6 +940,43 @@ impl Write for CountingWriter {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
+}
+
+struct ProtocolArgumentsWriter {
+    bytes: Vec<u8>,
+    max: usize,
+    exceeded: bool,
+}
+
+impl Write for ProtocolArgumentsWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() > self.max.saturating_sub(self.bytes.len()) {
+            self.exceeded = true;
+            return Err(io::Error::other("limit"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn canonical_arguments(value: &Value, max_bytes: usize) -> Result<Vec<u8>, ProviderError> {
+    let mut writer = ProtocolArgumentsWriter {
+        bytes: Vec::new(),
+        max: max_bytes,
+        exceeded: false,
+    };
+    if serde_json::to_writer(&mut writer, value).is_err() {
+        return Err(if writer.exceeded {
+            protocol_error("gateway_tool_arguments_byte_limit")
+        } else {
+            protocol_error("gateway_invalid_tool_arguments")
+        });
+    }
+    Ok(writer.bytes)
 }
 
 fn parse_final_arguments(
@@ -1143,18 +1224,21 @@ fn optional_nonnegative_integer(
 struct StreamedToolInput {
     name: ToolName,
     arguments: String,
+    parsed_arguments: Option<Value>,
+    canonical_arguments: Option<Vec<u8>>,
     ended: bool,
 }
 
 struct GatewayEventStream {
     source: AiGatewayByteStream,
     cancellation_token: CancellationToken,
-    cancellation: Pin<Box<machine_god_core::Cancelled>>,
+    cancellation: Option<Pin<Box<machine_god_core::Cancelled>>>,
     limits: AiGatewayLimits,
     undecoded: Vec<u8>,
     total_bytes: usize,
     records: usize,
     streamed: BTreeMap<ToolCallId, StreamedToolInput>,
+    reconciliation: BTreeMap<ToolName, BTreeMap<Vec<u8>, BTreeSet<ToolCallId>>>,
     emitted_calls: BTreeSet<ToolCallId>,
     pending: VecDeque<Result<ModelEvent, ProviderError>>,
     finished: bool,
@@ -1170,17 +1254,34 @@ impl GatewayEventStream {
         Self {
             source,
             cancellation_token: cancellation.clone(),
-            cancellation: Box::pin(cancellation.cancelled()),
+            cancellation: None,
             limits,
             undecoded: Vec::new(),
             total_bytes: 0,
             records: 0,
             streamed: BTreeMap::new(),
+            reconciliation: BTreeMap::new(),
             emitted_calls: BTreeSet::new(),
             pending: VecDeque::new(),
             finished: false,
             terminal: false,
         }
+    }
+
+    fn poll_cancellation(&mut self, context: &mut Context<'_>) -> bool {
+        let cancellation = self
+            .cancellation
+            .get_or_insert_with(|| Box::pin(self.cancellation_token.cancelled()));
+        if cancellation.as_mut().poll(context).is_ready() {
+            self.cancellation = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn clear_cancellation_waiter(&mut self) {
+        self.cancellation = None;
     }
 
     fn consume_chunk(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
@@ -1321,6 +1422,8 @@ impl GatewayEventStream {
             StreamedToolInput {
                 name,
                 arguments: String::new(),
+                parsed_arguments: None,
+                canonical_arguments: None,
                 ended: false,
             },
         );
@@ -1356,6 +1459,8 @@ impl GatewayEventStream {
         &mut self,
         object: &serde_json::Map<String, Value>,
     ) -> Result<(), ProviderError> {
+        let max_bytes = self.limits.max_tool_arguments_bytes;
+        let max_nodes = self.limits.max_json_nodes;
         let id = parse_call_id(required_string(object, "id")?)?;
         let streamed = self
             .streamed
@@ -1364,7 +1469,19 @@ impl GatewayEventStream {
         if streamed.ended {
             return Err(protocol_error("gateway_duplicate_tool_input_end"));
         }
+        let parsed = parse_argument_text(&streamed.arguments, max_bytes, max_nodes)?;
+        let canonical = canonical_arguments(&parsed, max_bytes)?;
+        let name = streamed.name.clone();
+        streamed.arguments = String::new();
+        streamed.parsed_arguments = Some(parsed);
+        streamed.canonical_arguments = Some(canonical.clone());
         streamed.ended = true;
+        self.reconciliation
+            .entry(name)
+            .or_default()
+            .entry(canonical)
+            .or_default()
+            .insert(id);
         Ok(())
     }
 
@@ -1372,32 +1489,54 @@ impl GatewayEventStream {
         &self,
         final_id: &ToolCallId,
         explicit_name: Option<&ToolName>,
-        explicit_arguments: Option<&Value>,
+        explicit_canonical: Option<&[u8]>,
     ) -> Result<Option<ToolCallId>, ProviderError> {
         if self.streamed.contains_key(final_id) {
             return Ok(Some(final_id.clone()));
         }
-        let (Some(name), Some(arguments)) = (explicit_name, explicit_arguments) else {
+        let (Some(name), Some(canonical)) = (explicit_name, explicit_canonical) else {
             return Ok(None);
         };
-        let mut matched = None;
-        for (candidate_id, candidate) in &self.streamed {
-            if !candidate.ended || candidate.name != *name {
-                continue;
-            }
-            let candidate_arguments = parse_argument_text(
-                &candidate.arguments,
-                self.limits.max_tool_arguments_bytes,
-                self.limits.max_json_nodes,
-            )?;
-            if candidate_arguments == *arguments {
-                if matched.is_some() {
-                    return Err(protocol_error("gateway_ambiguous_tool_call"));
-                }
-                matched = Some(candidate_id.clone());
-            }
+        let Some(matches) = self
+            .reconciliation
+            .get(name)
+            .and_then(|by_arguments| by_arguments.get(canonical))
+        else {
+            return Ok(None);
+        };
+        if matches.len() != 1 {
+            return Err(protocol_error("gateway_ambiguous_tool_call"));
         }
-        Ok(matched)
+        Ok(matches.first().cloned())
+    }
+
+    fn remove_streamed(&mut self, id: &ToolCallId) {
+        let Some(streamed) = self.streamed.remove(id) else {
+            return;
+        };
+        let Some(canonical) = streamed.canonical_arguments else {
+            return;
+        };
+        let name = streamed.name;
+        let remove_name = self
+            .reconciliation
+            .get_mut(&name)
+            .is_some_and(|by_arguments| {
+                let remove_arguments =
+                    by_arguments
+                        .get_mut(canonical.as_slice())
+                        .is_some_and(|matches| {
+                            matches.remove(id);
+                            matches.is_empty()
+                        });
+                if remove_arguments {
+                    by_arguments.remove(canonical.as_slice());
+                }
+                by_arguments.is_empty()
+            });
+        if remove_name {
+            self.reconciliation.remove(&name);
+        }
     }
 
     fn consume_tool_call(
@@ -1436,8 +1575,15 @@ impl GatewayEventStream {
                 )
             })
             .transpose()?;
-        let streamed_id =
-            self.reconciled_streamed_id(&id, explicit_name.as_ref(), explicit_arguments.as_ref())?;
+        let explicit_canonical = explicit_arguments
+            .as_ref()
+            .map(|arguments| canonical_arguments(arguments, self.limits.max_tool_arguments_bytes))
+            .transpose()?;
+        let streamed_id = self.reconciled_streamed_id(
+            &id,
+            explicit_name.as_ref(),
+            explicit_canonical.as_deref(),
+        )?;
         let streamed = streamed_id
             .as_ref()
             .and_then(|streamed_id| self.streamed.get(streamed_id));
@@ -1459,26 +1605,13 @@ impl GatewayEventStream {
             let streamed = streamed
                 .filter(|input| input.ended)
                 .ok_or_else(|| protocol_error("gateway_incomplete_tool_input"))?;
-            parse_argument_text(
-                &streamed.arguments,
-                self.limits.max_tool_arguments_bytes,
-                self.limits.max_json_nodes,
-            )?
+            streamed
+                .parsed_arguments
+                .clone()
+                .ok_or_else(|| protocol_error("gateway_incomplete_tool_input"))?
         };
-        if let Some(streamed) = streamed
-            && streamed.ended
-        {
-            let streamed_arguments = parse_argument_text(
-                &streamed.arguments,
-                self.limits.max_tool_arguments_bytes,
-                self.limits.max_json_nodes,
-            )?;
-            if streamed_arguments != arguments {
-                return Err(protocol_error("gateway_conflicting_tool_call"));
-            }
-        }
         if let Some(streamed_id) = streamed_id {
-            self.streamed.remove(&streamed_id);
+            self.remove_streamed(&streamed_id);
         }
         self.emitted_calls.insert(id.clone());
         self.pending.push_back(Ok(ModelEvent::ToolCall {
@@ -1546,13 +1679,15 @@ impl Stream for GatewayEventStream {
     fn poll_next(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         if this.terminal {
+            this.clear_cancellation_waiter();
             return Poll::Ready(None);
         }
-        if this.cancellation.as_mut().poll(context).is_ready() {
+        if this.poll_cancellation(context) {
             this.terminal = true;
             return Poll::Ready(Some(Err(cancelled_error())));
         }
         if let Some(event) = this.pending.pop_front() {
+            this.clear_cancellation_waiter();
             if matches!(event, Ok(ModelEvent::Stop { .. })) {
                 this.terminal = true;
             }
@@ -1560,21 +1695,25 @@ impl Stream for GatewayEventStream {
         }
         let source_result = this.source.as_mut().poll_next(context);
         if source_result.is_ready() && this.cancellation_token.is_cancelled() {
+            this.clear_cancellation_waiter();
             this.terminal = true;
             return Poll::Ready(Some(Err(cancelled_error())));
         }
         match source_result {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(Err(error))) => {
+                this.clear_cancellation_waiter();
                 this.terminal = true;
                 Poll::Ready(Some(Err(error)))
             }
             Poll::Ready(Some(Ok(chunk))) => {
                 if let Err(error) = this.consume_chunk(&chunk) {
+                    this.clear_cancellation_waiter();
                     this.terminal = true;
                     return Poll::Ready(Some(Err(error)));
                 }
                 if let Some(event) = this.pending.pop_front() {
+                    this.clear_cancellation_waiter();
                     if matches!(event, Ok(ModelEvent::Stop { .. })) {
                         this.terminal = true;
                     }
@@ -1585,15 +1724,18 @@ impl Stream for GatewayEventStream {
             }
             Poll::Ready(None) => {
                 if let Err(error) = this.consume_eof() {
+                    this.clear_cancellation_waiter();
                     this.terminal = true;
                     return Poll::Ready(Some(Err(error)));
                 }
                 if let Some(event) = this.pending.pop_front() {
+                    this.clear_cancellation_waiter();
                     if matches!(event, Ok(ModelEvent::Stop { .. })) {
                         this.terminal = true;
                     }
                     return Poll::Ready(Some(event));
                 }
+                this.clear_cancellation_waiter();
                 this.terminal = true;
                 Poll::Ready(None)
             }
