@@ -5,6 +5,7 @@
 - [Provider-neutral core API](core-api.md)
 - [Deterministic testkit](testkit.md)
 - [Command-line interface](cli.md)
+- [Native configuration](configuration.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

@@ -21,18 +21,20 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has started with one bounded native-host slice. The core remains
+Milestone 03 has started with two bounded native-host slices. The core remains
 unchanged and authority-free. `machine-god-native` snapshots only
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and
-state paths, and inspects their final metadata. `machine-god-cli` is a thin
-formatter for that status and owns no product state. The exact surface is
-documented in [`cli.md`](cli.md).
+state paths, and inspects their final metadata for status. A separate
+synchronous native authority can load the resolved config file read-only.
+`machine-god-cli` remains a thin formatter for status, does not invoke the
+loader, and owns no product state. The exact surfaces are documented in
+[`cli.md`](cli.md) and [`configuration.md`](configuration.md).
 
 ```text
-process environment                    final-path metadata
- XDG_CONFIG_HOME --+                  +-> config file state
- HOME fallback ----+-> native status -+-> state directory state -> CLI text/JSON
- XDG_STATE_HOME ---+                  +-> permission mode: ask
+process environment -> resolved native paths
+ config path --+-> final metadata -----------> status -> CLI text/JSON
+               +-> bounded read-only loader -> schema-v1 config
+ state path ------> final metadata -----------> status -> CLI text/JSON
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -43,16 +45,31 @@ paths produced are `<config-root>/machine-god/config.json` and
 `<state-root>/machine-god`, with `.config` and `.local/state` inserted for the
 respective `HOME` fallbacks.
 
-Inspection is deliberately shallower than configuration loading. It uses
-`symlink_metadata` on the final path, reports missing/inaccessible/wrong-kind
-states, and treats a final symlink as wrong-kind. It does not read or parse the
-config file, canonicalize a path, create a directory, or persist anything.
-Permission mode is fixed to `ask`; executable native tools and permission
-prompting are outside this slice. The CLI serializes paths as JSON strings even
-in human status so path contents do not become terminal controls. Bare
-invocation keeps the bootstrap identity contract. Help, version, status, and
-argument errors are fixed presentation behavior, not an engine-owned command
-model.
+Status inspection remains deliberately shallower than configuration loading. It
+uses `symlink_metadata` on the final path, reports
+missing/inaccessible/wrong-kind states, and treats a final symlink as
+wrong-kind. It does not open, read, or parse the config file. Permission mode is
+fixed to `ask`; executable native tools and permission prompting are outside
+these slices. The CLI serializes paths as JSON strings even in human status so
+path contents do not become terminal controls. Bare invocation keeps the
+bootstrap identity contract. Help, version, status, and argument errors remain
+byte-stable presentation behavior, not an engine-owned command model.
+
+The synchronous loader resolves only the config location. An unavailable
+location or missing file yields an explicit built-in schema-v1 configuration
+with permission mode `ask`; invalid selected environment input and all other
+load failures fail closed. A present file must be at most 64 KiB of valid UTF-8
+and must be exactly a schema-v1 object with `schema_version` equal to `1` and
+`permission_mode` equal to `"ask"`. Unknown, duplicate, missing, wrong-type, or
+unsupported fields and values are rejected.
+
+The loader opens the final path no-follow and nonblocking, checks that the
+opened descriptor is a regular file, and retains at most the 64 KiB cap plus one
+byte. It never writes, creates, or canonicalizes. Typed diagnostics distinguish
+failure classes without reflecting selected paths, file contents, or operating-
+system error text. Configuration mutation, permission modes beyond `ask`,
+prompting, providers, executable tools, durable native sessions, and CLI
+expansion remain deferred.
 
 ```text
                         machine-god-core
