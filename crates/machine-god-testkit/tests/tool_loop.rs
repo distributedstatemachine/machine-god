@@ -795,7 +795,9 @@ fn oversized_prepared_values_fail_before_policy_or_execution() {
         "oversized-prepared-capability",
         Capability::Filesystem {
             access: FilesystemAccess::Read,
-            path: "x".repeat(512),
+            // Prepared capabilities receive the configured 128-byte argument
+            // limit plus the fixed 1 KiB serialization envelope.
+            path: "x".repeat(1_153),
         },
         json!({}),
     );
