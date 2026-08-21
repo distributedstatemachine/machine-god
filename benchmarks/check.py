@@ -41,7 +41,10 @@ def main() -> int:
     parser.add_argument("--machine-god-binary", type=Path)
     parser.add_argument("--expected-runner-class")
     args = parser.parse_args()
-    data = json.loads(args.evidence.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(args.evidence.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid benchmark evidence: {error}") from None
     if not isinstance(data, dict):
         raise SystemExit("benchmark evidence must be an object")
 
@@ -122,7 +125,7 @@ def main() -> int:
                     "machine-god": args.machine_god_binary,
                 },
             )
-        except (OSError, subprocess.SubprocessError, ValueError) as error:
+        except (OSError, subprocess.SubprocessError, TypeError, ValueError) as error:
             raise SystemExit(str(error)) from error
         if (
             args.expected_git_sha

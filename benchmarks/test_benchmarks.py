@@ -142,6 +142,21 @@ class BenchmarkScriptsTest(unittest.TestCase):
         self.assertEqual(completed.stderr, "benchmark evidence must be an object\n")
         self.assertNotIn("Traceback", completed.stderr)
 
+    def test_checker_rejects_invalid_json_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_path = Path(directory) / "evidence.json"
+            evidence_path.write_text("{\n", encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "benchmarks/check.py"), str(evidence_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("invalid benchmark evidence", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+
     def test_checker_rejects_command_binary_mismatch(self) -> None:
         evidence = self.valid_evidence()
         evidence["command"] = ["different-binary"]
@@ -737,6 +752,30 @@ class UpstreamHarnessTest(unittest.TestCase):
                 mutate(evidence)
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence, expected_lock=canonical)
+
+    def test_every_malformed_scalar_type_is_a_controlled_validation_error(self) -> None:
+        def scalar_paths(value: object, path: tuple[object, ...] = ()):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    yield from scalar_paths(child, (*path, key))
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    yield from scalar_paths(child, (*path, index))
+            else:
+                yield path
+
+        template = self.valid_upstream_evidence()
+        paths = list(scalar_paths(template))
+        self.assertGreater(len(paths), 100)
+        for path in paths:
+            with self.subTest(path=path):
+                evidence = self.valid_upstream_evidence()
+                target: object = evidence
+                for part in path[:-1]:
+                    target = target[part]  # type: ignore[index]
+                target[path[-1]] = {}  # type: ignore[index]
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
 
     def test_records_implemented_local_commands_without_measurements(self) -> None:
         evidence = self.valid_upstream_evidence()

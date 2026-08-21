@@ -597,7 +597,10 @@ def validate_measurement(
         raise ValueError(f"{field}.pinned_executable must be an object")
     if set(pinned) != PINNED_EXECUTABLE_KEYS:
         raise ValueError(f"{field}.pinned_executable fields are not canonical")
-    if pinned.get("method") not in {"linux-sealed-memfd-fexecve", "private-copy"}:
+    if not isinstance(pinned.get("method"), str) or pinned["method"] not in {
+        "linux-sealed-memfd-fexecve",
+        "private-copy",
+    }:
         raise ValueError(f"{field}.pinned_executable.method is unsupported")
     for name in ("bytes", "mode", "device", "inode", "seals"):
         if not is_integer(pinned.get(name)) or pinned[name] < 0:
@@ -994,8 +997,6 @@ def validate_upstream_evidence(
         raise ValueError("fx build profile must be ReleaseSafe")
     if machine_build.get("profile") != "release":
         raise ValueError("machine-god build profile must be release")
-    if Path(machine_build["cwd"]).resolve() != source_dir:
-        raise ValueError("machine-god build did not use the materialized source tree")
     fx_command = [tools["zig"]["executable"], "build", "-Doptimize=ReleaseSafe"]
     machine_command = [
         tools["cargo"]["executable"],
@@ -1022,6 +1023,8 @@ def validate_upstream_evidence(
         expected_timeout=timeouts["build"],
         extra_keys={"project", "profile", "binary"},
     )
+    if Path(machine_build["cwd"]).resolve() != source_dir:
+        raise ValueError("machine-god build did not use the materialized source tree")
     for key in BASE_ENVIRONMENT_KEYS:
         if fx_build["environment"][key] != tool_environment[key]:
             raise ValueError(f"fx build environment changes canonical {key}")
@@ -2393,7 +2396,10 @@ def validate_source_manifest(value: object, field: str) -> list[dict[str, object
         parts = path.split("/")
         if path.startswith("/") or any(part in {"", ".", ".."} for part in parts):
             raise ValueError(f"{item_field}.path is unsafe")
-        if item.get("mode") not in {"100644", "100755"}:
+        if not isinstance(item.get("mode"), str) or item["mode"] not in {
+            "100644",
+            "100755",
+        }:
             raise ValueError(f"{item_field}.mode is unsupported")
         object_id = require_text(item.get("object"), f"{item_field}.object")
         if not HEX_SHA_RE.fullmatch(object_id):

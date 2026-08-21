@@ -136,6 +136,24 @@ security/abuse pass then found two final malformed-input edges:
 
 These fixes require another fresh exact-SHA review and all local/remote gates.
 
+## Review round 04 finding and remediation
+
+Correctness/API review of exact commit
+`26764691605fff387cd1919f7fe9afc7d608f6e7` was GREEN. The independent
+malformed-input review found three scalar type paths that still raised
+`TypeError` rather than the validator's controlled `ValueError`: an unhashable
+manifest mode, an unhashable pinned-executable method, and a non-path build
+working directory used before command-record validation. The two membership
+checks now require strings, and build path comparison occurs only after the
+record's exact type validation. A property-style regression replaces every
+scalar leaf in a valid evidence tree with an object and requires `ValueError`.
+The command-line checker additionally converts invalid JSON, decoding failures,
+and defense-in-depth `TypeError` results into one-line failures without Python
+tracebacks.
+
+The remediation requires fresh exact-SHA adversarial review and complete local
+and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,
