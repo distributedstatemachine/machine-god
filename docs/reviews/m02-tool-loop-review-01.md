@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-eight findings remediated; awaiting fresh rereview of the
-eighth fix commit.
+Status: review-cycle-nine findings remediated; awaiting fresh rereview of the
+ninth fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -26,7 +26,10 @@ Cycle-six fix reviewed for cycle seven:
 Cycle-seven fix reviewed for cycle eight:
 `240fb939d274b4d77a41187eb5c0724aecd78faa`.
 
-Cycle-eight fix commit: populated after this remediation commit. Reviewers must
+Cycle-eight fix reviewed for cycle nine:
+`e9b20c61de0091f7f9ffc469c60f061f6bd9b23c`.
+
+Cycle-nine fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -245,6 +248,32 @@ and advisory gates are required for the final immutable cycle-two commit.
    and proves tool contexts, returned events, sink-recorded events, and their
    serialized forms remain distinct. Focused cancellation regressions cover
    both local terminal construction paths.
+
+## Review cycle 09 findings and remediations
+
+1. `Turn::poll_delivery` returned component-supplied `EventSinkError` codes and
+   messages unchanged. A hostile sink could expose secrets, newlines, or
+   unbounded diagnostics through the public error. Core now drops those strings
+   and returns only `event_sink_failed` / `event sink failed`. Regressions use
+   large secret-bearing values and verify the stable public fields plus `Display`
+   and `Debug`; another sink cancels and returns a ready hostile error in the
+   same poll, proving cancellation precedence without diagnostic leakage.
+2. The correctness review framed a gap between return from the final
+   `commit_message` await and `emitter.establish_terminal`. That exact
+   interleaving is rejected: a ready await resumes inside the same workflow poll
+   and terminal establishment is synchronous, so the outer `Turn` cannot poll
+   cancellation between those instructions. The adjacent boundary audit did
+   confirm a real gap inside the generic cancellation-aware save poll: a store
+   could durably persist, request cancellation, and return `Ready(Ok)` in one
+   poll, causing the wrapper to discard the success as cancellation. The final
+   assistant commit now uses a specialized precedence mode. Cancellation still
+   wins before polling, while the save is pending, or with a ready error; a
+   ready success is reconciled and followed immediately by terminal
+   establishment. A store regression persists the final answer, cancels from
+   that ready-success poll, and proves the provider `Stop` and `Completed`
+   outcome remain intact. The existing pending-final-save cancellation
+   regression remains green. Placeholder and tool-result commits retain their
+   original cancellation behavior.
 
 ## Honest limitations for review
 

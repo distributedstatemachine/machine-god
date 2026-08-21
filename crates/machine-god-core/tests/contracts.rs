@@ -7,7 +7,7 @@ use machine_god_core::{
     PermissionRequest, ProviderError, ProviderErrorKind, Role, Session, SessionId,
     SessionIncarnationId, SessionRecord, SessionRevision, SessionStore, SessionStoreError,
     StopReason, TokenUsage, Tool, ToolContext, ToolError, ToolName, ToolOutput, ToolSpec, Turn,
-    TurnEvent,
+    TurnEvent, TurnHandle,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
@@ -1684,12 +1684,42 @@ fn provider_errors_remain_structured_in_band() {
     ));
 }
 
-#[derive(Debug)]
-struct RejectingSink;
+const SINK_SECRET: &str = "SENTINEL_EVENT_SINK_SECRET";
 
-impl EventSink for RejectingSink {
+fn hostile_sink_error() -> EventSinkError {
+    EventSinkError::new(
+        format!("hostile\n{SINK_SECRET}{}", "c".repeat(65_536)),
+        format!("hostile message\n{SINK_SECRET}{}", "m".repeat(65_536)),
+    )
+}
+
+#[derive(Debug)]
+struct HostileRejectingSink;
+
+impl EventSink for HostileRejectingSink {
     fn emit(&self, _event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
-        Box::pin(async { Err(EventSinkError::new("closed", "observer closed")) })
+        Box::pin(async { Err(hostile_sink_error()) })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct CancelAndRejectSink {
+    handle: Arc<Mutex<Option<TurnHandle>>>,
+}
+
+impl CancelAndRejectSink {
+    fn install(&self, handle: TurnHandle) {
+        *self.handle.lock().unwrap() = Some(handle);
+    }
+}
+
+impl EventSink for CancelAndRejectSink {
+    fn emit(&self, _event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
+        let handle = self.handle.lock().unwrap().clone();
+        Box::pin(async move {
+            assert!(handle.expect("turn handle is installed").cancel());
+            Err(hostile_sink_error())
+        })
     }
 }
 
@@ -2160,13 +2190,57 @@ fn observer_failure_terminates_and_releases_turn() {
         .provider(StaticProvider::completed())
         .session_store(MemoryStore::default())
         .permission_handler(AllowOnce)
-        .event_sink(RejectingSink)
+        .event_sink(HostileRejectingSink)
         .build()
         .unwrap();
     let session = engine.create_test_session(SessionId::new("sink-error").unwrap());
     let mut turn = prompt(&session, "go");
-    let result = futures_executor::block_on(turn.next()).unwrap();
-    assert!(matches!(result, Err(EngineError::EventSink(_))));
+    let error = futures_executor::block_on(turn.next())
+        .unwrap()
+        .unwrap_err();
+    let display = error.to_string();
+    let debug = format!("{error:?}");
+    assert!(!display.contains(SINK_SECRET));
+    assert!(!debug.contains(SINK_SECRET));
+    assert!(!display.contains('\n'));
+    assert!(!debug.contains("hostile message"));
+    let EngineError::EventSink(error) = error else {
+        panic!("expected an event-sink error")
+    };
+    assert_eq!(error.code, "event_sink_failed");
+    assert_eq!(error.message, "event sink failed");
+    assert!(futures_executor::block_on(turn.next()).is_none());
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn cancellation_observed_during_ready_sink_error_wins_without_leaking_it() {
+    let sink = CancelAndRejectSink::default();
+    let engine = Engine::builder()
+        .provider(PendingProvider)
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(sink.clone())
+        .build()
+        .unwrap();
+    let session = engine.create_test_session(SessionId::new("cancel-ready-sink-error").unwrap());
+    let mut turn = prompt(&session, "go");
+    let handle = turn.handle();
+    sink.install(handle.clone());
+
+    let event = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(handle.is_cancelled());
+    assert!(matches!(
+        event.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    let debug = format!("{event:?}");
+    let serialized = serde_json::to_string(&event).unwrap();
+    assert!(!debug.contains(SINK_SECRET));
+    assert!(!serialized.contains(SINK_SECRET));
     assert!(futures_executor::block_on(turn.next()).is_none());
     assert!(!session.has_active_turn());
 }

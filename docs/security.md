@@ -23,6 +23,10 @@ a fresh logical lifetime whose turn numbering and tool-call ordinal restarted.
 keys and event-sink deduplication or audit keys cannot collide across resets
 whose session, turn, call, and event sequence identifiers repeat.
 
+Event sinks are untrusted diagnostic producers. A sink failure crosses the
+public API only as `event_sink_failed` / `event sink failed`; the original code
+and message are dropped, including when cancellation races a ready sink error.
+
 Benchmark CI obtains Zig only from the official Zig 0.16.0 HTTPS archive and
 verifies SHA-256 digest
 `70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00`

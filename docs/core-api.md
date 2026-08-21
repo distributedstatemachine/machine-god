@@ -135,7 +135,10 @@ retain or refresh a cancellation waiter. Later cancellation cannot change that
 outcome and therefore cannot create a self-waking hot loop while the terminal
 observer remains backpressured. A final provider `Stop` is not established as
 the turn outcome until its assistant message has been saved. Its save therefore
-remains cancellable and a pending store cannot prevent shutdown.
+remains cancellable while pending, and a pending store cannot prevent shutdown.
+If that save durably succeeds and requests cancellation in the same poll, the
+success is reconciled and terminal precedence is established synchronously;
+the already-persisted final answer is not relabeled as cancelled.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
 So is the validated [`SessionIncarnationId`](crate::SessionIncarnationId) that
@@ -183,6 +186,9 @@ Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:
 an event is yielded to the caller only after the configured event sink accepts
 the same event. Observer failure terminates the turn with `EngineError::EventSink`.
+Untrusted sink codes and messages are dropped and replaced by the stable
+`event_sink_failed` / `event sink failed` diagnostic before that error crosses
+the public boundary.
 If that failure occurs before the provider reaches a terminal outcome, core
 cancels the shared provider token before dropping the stream and releasing the
 lease; stale cancellation handles then observe that cleanup signal. Observer
@@ -194,10 +200,13 @@ terminal cancellation directly before releasing the session lease. Core
 rechecks cancellation immediately after provider startup, provider-stream,
 store, policy, tool, and observer-delivery polls and before interpreting their
 results. Cancellation observed at one of those boundaries wins while the turn
-is still preterminal. A provider failure or missing-stop failure establishes
-precedence when accepted; a final `Stop` establishes precedence only after its
-required durable commit succeeds. Later cancellation cannot relabel or bypass
-their pending delivery or terminal result.
+is still preterminal. The narrow exception is a ready successful final-assistant
+save: durable success wins that poll, reconciliation completes, and the final
+`Stop` is established before control returns to the outer turn. Cancellation
+still wins if that save is pending or returns an error in the cancelling poll.
+A provider failure or missing-stop failure establishes precedence when accepted;
+later cancellation cannot relabel or bypass an established pending delivery or
+terminal result.
 
 Cancellation provenance is explicit. Only `Completed(Cancelled)` synthesized by
 the local cancellation token bypasses an optional observer, so observer
@@ -273,14 +282,16 @@ messages. Durable saving is authoritative: observer success events follow their
 related commit, and observer failure never replays a committed effect.
 
 A final non-tool `Stop` remains preterminal during its required assistant
-commit. Cancellation can interrupt that save and release the live-turn lease;
-store failure becomes a terminal durability failure. After a successful commit,
-the provider result is established and cancellation cannot relabel its model
-`Stop`, observer delivery, or `Completed` event. Intermediate `ToolCalls` stops
-are not turn-terminal, so cancellation may interrupt their atomic placeholder
-commit, permission request, tool work, result replacement, or next-provider
-startup. All such futures are owned and polled inline by `Turn`; dropping the
-turn drops them rather than detaching work.
+commit. Cancellation can interrupt a pending save and release the live-turn
+lease; store failure becomes a terminal durability failure. A ready successful
+save is authoritative even if its poll also requests cancellation: core
+reconciles it and synchronously establishes the provider result before the outer
+turn observes cancellation. Cancellation then cannot relabel its model `Stop`,
+observer delivery, or `Completed` event. Intermediate `ToolCalls` stops are not
+turn-terminal, so cancellation may interrupt their atomic placeholder commit,
+permission request, tool work, result replacement, or next-provider startup.
+All such futures are owned and polled inline by `Turn`; dropping the turn drops
+them rather than detaching work.
 
 Prompt and serialized inference-option bytes are checked before persistence.
 Transcript message count, transcript bytes, and recursive session-metadata bytes

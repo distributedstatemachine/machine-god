@@ -73,6 +73,12 @@ pub(crate) fn redact_store_error(error: SessionStoreError) -> SessionStoreError 
     SessionStoreError::new(kind, "store_failed", "session store failed", retryable)
 }
 
+fn redact_event_sink_error(error: crate::EventSinkError) -> crate::EventSinkError {
+    let crate::EventSinkError { code, message } = error;
+    drop((code, message));
+    crate::EventSinkError::new("event_sink_failed", "event sink failed")
+}
+
 const fn initial_turn_sequence() -> u64 {
     1
 }
@@ -1115,7 +1121,7 @@ async fn run_turn_inner(
                 &record,
                 assistant,
                 &cancellation,
-                true,
+                CommitCancellation::FinalSaveSuccessWins,
             )
             .await?;
             emitter.establish_terminal();
@@ -1215,7 +1221,7 @@ async fn run_turn_inner(
             &record,
             round_messages,
             &cancellation,
-            true,
+            CommitCancellation::Cancellable,
         )
         .await?;
         cumulative_tool_result_bytes = placeholder_cumulative;
@@ -1874,6 +1880,31 @@ async fn await_operation<T>(
     }
 }
 
+async fn await_final_save(
+    mut future: BoxFuture<'_, Result<SessionRevision, SessionStoreError>>,
+    cancellation: &CancellationToken,
+) -> Result<Result<SessionRevision, SessionStoreError>, WorkflowAbort> {
+    poll_fn(|context| {
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(WorkflowAbort::Cancelled));
+        }
+        let result = future.as_mut().poll(context);
+        match result {
+            Poll::Ready(Ok(revision)) => Poll::Ready(Ok(Ok(revision))),
+            Poll::Ready(Err(error)) if cancellation.is_cancelled() => {
+                drop(error);
+                Poll::Ready(Err(WorkflowAbort::Cancelled))
+            }
+            Poll::Pending if cancellation.is_cancelled() => {
+                Poll::Ready(Err(WorkflowAbort::Cancelled))
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Ok(Err(error))),
+            Poll::Pending => Poll::Pending,
+        }
+    })
+    .await
+}
+
 async fn await_record_load(
     mut future: BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>>,
     cancellation: &CancellationToken,
@@ -1926,7 +1957,7 @@ async fn commit_message(
     base: &SessionRecord,
     message: Message,
     cancellation: &CancellationToken,
-    honor_cancellation: bool,
+    cancellation_mode: CommitCancellation,
 ) -> Result<SessionRecord, WorkflowAbort> {
     commit_messages(
         engine,
@@ -1934,9 +1965,15 @@ async fn commit_message(
         base,
         vec![message],
         cancellation,
-        honor_cancellation,
+        cancellation_mode,
     )
     .await
+}
+
+#[derive(Clone, Copy)]
+enum CommitCancellation {
+    Cancellable,
+    FinalSaveSuccessWins,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1946,14 +1983,12 @@ async fn commit_messages(
     base: &SessionRecord,
     messages: Vec<Message>,
     cancellation: &CancellationToken,
-    honor_cancellation: bool,
+    cancellation_mode: CommitCancellation,
 ) -> Result<SessionRecord, WorkflowAbort> {
     const MAX_CONFLICT_RETRIES: usize = 32;
 
     for _ in 0..MAX_CONFLICT_RETRIES {
-        if honor_cancellation {
-            check_cancelled(cancellation)?;
-        }
+        check_cancelled(cancellation)?;
         let (snapshot, persisted) = state.snapshot();
         if snapshot.id != base.id {
             return Err(TurnFailure::protocol(
@@ -1990,7 +2025,13 @@ async fn commit_messages(
         let save = engine
             .session_store
             .save(candidate.clone(), expected_revision);
-        match await_operation(save, cancellation, honor_cancellation).await? {
+        let save_result = match cancellation_mode {
+            CommitCancellation::Cancellable => await_cancellable(save, cancellation).await?,
+            CommitCancellation::FinalSaveSuccessWins => {
+                await_final_save(save, cancellation).await?
+            }
+        };
+        match save_result {
             Ok(revision) if revision > previous_revision => {
                 candidate.revision = revision;
                 let candidate = Arc::new(candidate);
@@ -2010,7 +2051,7 @@ async fn commit_messages(
             }
             Err(error) if error.kind == SessionStoreErrorKind::Conflict => {
                 let load = engine.session_store.load(base.id.clone());
-                let Some(current) = await_record_load(load, cancellation, honor_cancellation)
+                let Some(current) = await_record_load(load, cancellation, true)
                     .await?
                     .map_err(|error| TurnFailure::store(&error))?
                 else {
@@ -2419,7 +2460,9 @@ impl Turn {
             Poll::Ready(Err(error)) => {
                 self.delivery = None;
                 self.fail_before_terminal();
-                Poll::Ready(Some(Err(EngineError::EventSink(error))))
+                Poll::Ready(Some(Err(EngineError::EventSink(redact_event_sink_error(
+                    error,
+                )))))
             }
         }
     }

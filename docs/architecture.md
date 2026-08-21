@@ -124,16 +124,21 @@ before a terminal provider outcome follows the same cancel-before-release rule,
 preventing dropped streams from orphaning retained provider work.
 Terminal establishment is the cancellation precedence boundary. A final model
 stop remains preterminal through its assistant-message save so cancellation can
-wake and release a turn blocked on persistence. After that save, the stop
+wake and release a turn blocked on persistence. If the save returns ready
+success while requesting cancellation in the same poll, durable success is
+authoritative: reconciliation and terminal establishment run synchronously
+before the workflow yields to the outer turn. After that boundary, the stop
 retains its pending observer delivery and final reason even if cancellation
 races afterward. Provider failures and missing stops establish their terminal
 outcome when accepted because they have no final assistant commit.
 Provider startup, stream, persistence, policy, tool, and observer delivery polls
 include a post-poll cancellation observation before their result is
 interpreted. Cancellation observed there establishes the terminal outcome first
-while the turn remains preterminal. Only a locally synthesized cancellation
-bypasses observer delivery; a provider-originated cancelled stop follows normal
-durability and observer ordering.
+while the turn remains preterminal, except for that narrow ready successful
+final-save boundary; pending or ready-error final saves remain cancellable. Only
+a locally synthesized cancellation bypasses observer delivery; a
+provider-originated cancelled stop follows normal durability and observer
+ordering.
 Cancellation treats wakers as user-controlled callback objects: cloning happens
 before locking, registry mutation only moves values, and superseded, removed, or
 drained wakers are dropped or invoked after unlocking.

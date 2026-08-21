@@ -8,6 +8,7 @@ use machine_god_core::{
     SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
     SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
+    TurnHandle,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
@@ -1295,6 +1296,120 @@ fn pending_final_commit_is_cancellable_and_releases_the_lease() {
         }
     ));
     assert_eq!(inner.record(&id).unwrap().messages.len(), 1);
+    assert!(!session.has_active_turn());
+}
+
+#[derive(Clone, Debug)]
+struct CancelAfterFinalSaveStore {
+    inner: InMemorySessionStore,
+    save_calls: Arc<AtomicUsize>,
+    handle: Arc<Mutex<Option<TurnHandle>>>,
+}
+
+impl CancelAfterFinalSaveStore {
+    fn install(&self, handle: TurnHandle) {
+        *self.handle.lock().unwrap() = Some(handle);
+    }
+}
+
+impl SessionStore for CancelAfterFinalSaveStore {
+    fn load(
+        &self,
+        id: SessionId,
+    ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+        self.inner.load(id)
+    }
+
+    fn save(
+        &self,
+        record: SessionRecord,
+        expected_revision: Option<SessionRevision>,
+    ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+        let call = self.save_calls.fetch_add(1, Ordering::AcqRel) + 1;
+        let inner = self.inner.clone();
+        let handle = Arc::clone(&self.handle);
+        Box::pin(async move {
+            let result = inner.save(record, expected_revision).await;
+            if call == 2 && result.is_ok() {
+                let handle = handle
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("turn handle is installed before the final save");
+                assert!(handle.cancel());
+            }
+            result
+        })
+    }
+}
+
+#[test]
+fn ready_successful_final_save_wins_over_same_poll_cancellation() {
+    let provider = ScriptedModelProvider::new(
+        "final-save-success-precedence",
+        [events([
+            ModelEvent::TextDelta {
+                text: "final answer".to_owned(),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::Completed,
+            },
+        ])],
+    );
+    let inner = InMemorySessionStore::new();
+    let store = CancelAfterFinalSaveStore {
+        inner: inner.clone(),
+        save_calls: Arc::new(AtomicUsize::new(0)),
+        handle: Arc::new(Mutex::new(None)),
+    };
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let id = SessionId::new("final-save-success-precedence").unwrap();
+    let session = engine.create_test_session(id.clone());
+    let turn = futures_executor::block_on(session.prompt("go")).unwrap();
+    let handle = turn.handle();
+    store.install(handle.clone());
+
+    let output = futures_executor::block_on(turn.collect::<Vec<_>>())
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert!(handle.is_cancelled());
+    assert_eq!(store.save_calls.load(Ordering::Acquire), 2);
+    assert!(output.iter().any(|event| matches!(
+        event.payload,
+        TurnEvent::Model {
+            event: ModelEvent::Stop {
+                reason: StopReason::Completed
+            }
+        }
+    )));
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Completed,
+            ..
+        }
+    ));
+    assert!(!output.iter().any(|event| matches!(
+        event.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    )));
+    let durable = inner.record(&id).unwrap();
+    assert_eq!(durable.messages.len(), 2);
+    assert_eq!(
+        durable.messages[1],
+        Message::text(Role::Assistant, "final answer")
+    );
+    assert_eq!(session.record(), durable);
     assert!(!session.has_active_turn());
 }
 
