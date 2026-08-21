@@ -432,6 +432,7 @@ fn map_directory_stream_error(error: rustix::io::Errno) -> ToolError {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
     if cancellation.is_cancelled() {
         Err(ToolError::new(
