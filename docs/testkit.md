@@ -79,11 +79,15 @@ assert!(matches!(
   their session incarnation, including terminal cancellation delivery.
 - `ScriptedPermissionHandler` records complete requests and returns ordered
   decisions, errors, or pending futures.
-- `ScriptedTool` preserves its advertised specification, records the context,
-  JSON arguments, and cancellation handle for each invocation, and returns
-  ordered outputs or errors. The recorded context includes the durable session
-  incarnation needed to distinguish reset lifetimes. A pending tool wakes on
-  cancellation and returns a structured cancelled error.
+- `ScriptedTool` preserves its advertised specification and the default
+  source-compatible preflight, so policy sees raw `Capability::Tool` and
+  execution receives the original arguments. It records the context, exact
+  post-preflight JSON arguments, and cancellation handle for each invocation,
+  then returns ordered outputs or errors. The recorded context includes the
+  durable session incarnation needed to distinguish reset lifetimes. A pending
+  tool wakes on cancellation and returns a structured cancelled error. Tests of
+  normalized capabilities can implement `Tool::prepare` on a focused custom
+  tool while continuing to use the scripted permission handler for inspection.
 
 Inspection methods clone while holding only the relevant state mutex. A
 poisoned mutex is recovered in the same manner as core so a deliberately

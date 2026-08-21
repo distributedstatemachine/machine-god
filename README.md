@@ -8,10 +8,11 @@ performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress. The
 repository includes the provider-neutral streaming engine, its bounded durable
-tool loop, a deterministic testkit, and the first native-host slice: read-only
-configuration/status discovery and a documented CLI surface. Concrete
-providers, native tools, sessions, and compatibility work remain planned; the
-project is not yet production-ready. See the exact [CLI contract](docs/cli.md).
+tool loop, a deterministic testkit, read-only native configuration/status
+discovery and loading, and capability-aware tool preflight before permission
+policy. The first executable native tool, concrete providers, durable native
+sessions, and compatibility work remain planned; the project is not yet
+production-ready. See the exact [CLI contract](docs/cli.md).
 
 ## Development
 

@@ -4,9 +4,10 @@ The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
 first Milestone 03 native slice only snapshots config/state environment inputs
 and reads final-path metadata for status. A second bounded native authority
-loads configuration synchronously and read-only. Permission mode remains
-`ask`; executable native tools and the prompt/fail-closed behavior of real
-permission requests remain future work.
+loads configuration synchronously and read-only. A third, provider-neutral
+slice adds capability-aware tool preflight without exercising native authority.
+Permission mode remains `ask`; executable native tools and the
+prompt/fail-closed behavior of real permission requests remain future work.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -49,7 +50,27 @@ read errors are not converted into defaults.
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation, prompting and modes beyond `ask`, concrete
 tools or providers, native session persistence, CLI expansion, and
-compatibility or performance claims are outside this slice.
+compatibility or performance claims remain outside the implemented native
+configuration slices.
+
+Tool preflight closes the representation gap between a model's raw JSON call
+and the operation presented to permission policy. The source-compatible default
+retains the existing raw `Capability::Tool` and arguments. A tool may instead
+prepare a normalized `Capability` and replacement arguments, and an allowed
+execution receives exactly those prepared arguments. Preparation is an
+effect-free validation and normalization step: it must not open a path, start a
+process, contact a network destination, mutate state, or exercise any other
+unapproved authority.
+
+Core applies its resource bounds to the prepared capability and arguments
+before policy or execution. An invalid or oversized prepared value fails before
+either boundary. A tool-reported preparation error is reduced to a fixed generic
+durable tool error, does not consult policy, and causes no tool effect. Policy
+still sees a fresh request with the existing critical risk, fixed reason, and
+deterministic permission ID; core still does not cache positive grant scopes.
+This slice supplies the authorization seam only. Workspace confinement,
+symlink-safe filesystem access, and the first native `read_file` implementation
+remain planned and must use the same path for authorization and execution.
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,

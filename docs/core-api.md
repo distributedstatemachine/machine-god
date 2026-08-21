@@ -36,9 +36,11 @@ or formatting any provider-controlled value. Logging an engine therefore cannot
 trigger provider code or expose a hostile provider name.
 
 The permission decision is distinct from tool execution. A handler error never
-means approval. Native implementations must normalize paths, process arguments,
-and network destinations before presenting a [`Capability`](crate::Capability)
-to policy.
+means approval. [`Tool::prepare`](crate::Tool::prepare) is an effect-free
+preflight boundary where native implementations can normalize paths, process
+arguments, and network destinations before presenting a
+[`Capability`](crate::Capability) to policy. An allowed execution receives the
+exact arguments returned by preflight.
 
 [`EngineLimits`](crate::EngineLimits) supplies nonzero resource bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
@@ -95,7 +97,7 @@ created -> started -> provider round -> final assistant commit -> completed
                          |
                          +-> tool-call stop -> atomic assistant +
                                   unknown-result placeholders commit
-                                  -> permission -> tool
+                                  -> prepare -> validate -> permission -> tool
                                   -> in-place result replacement -----+
                          ^                                           |
                          +------------- next provider round <--------+
@@ -254,10 +256,31 @@ per-result and cumulative budgets; a budget that cannot hold all placeholders
 fails before that commit and before external work. Calls then run serially in
 provider order.
 
-Every invocation receives a fresh critical-risk `Capability::Tool`
-authorization request whose deterministic ID is a domain-separated SHA-256
-v2 digest of length-delimited session ID, session incarnation ID, turn ID, and
-ordinal. Both [`ModelRequest`](crate::ModelRequest) and
+Before authorization, core passes each validated provider call by value to
+[`Tool::prepare`](crate::Tool::prepare). Its source-compatible default returns
+a [`PreparedToolCall`](crate::PreparedToolCall) containing the original
+arguments and the same raw `Capability::Tool` used before preflight existed. A
+tool may instead use [`PreparedToolCall::new`](crate::PreparedToolCall::new) to
+return a normalized filesystem, process, network, custom, or tool capability
+together with replacement JSON arguments. Preparation is required to be
+deterministic and effect-free: it may validate and normalize values but must not
+open files, start processes, contact networks, mutate state, or otherwise
+exercise the capability that policy has not yet allowed.
+
+Core validates the complete prepared capability and arguments against its JSON
+depth, node, and byte resource bounds before calling policy. Rejection occurs
+before authorization or tool execution. A preparation error also consults no
+permission handler and starts no tool. It becomes the same fixed generic,
+durable tool-error result as an execution error, replacing that call's unknown
+placeholder so the next model round can recover without receiving the tool's
+diagnostic.
+
+Every successfully prepared invocation receives a fresh critical-risk
+authorization request for its prepared capability. Its fixed reason remains
+`model requested this registered tool`, and its deterministic ID remains a
+domain-separated SHA-256 v2 digest of length-delimited session ID, session
+incarnation ID, turn ID, and ordinal. Both
+[`ModelRequest`](crate::ModelRequest) and
 [`PermissionRequest`](crate::PermissionRequest) carry the incarnation as audit
 input. The fixed lowercase hex encoding is portable ASCII and remains below the
 128-byte public ID limit. Core does not cache positive grant scopes. A host
@@ -272,7 +295,8 @@ tool-specific diagnostics into the transcript. A policy infrastructure error
 fails the turn.
 
 An allowed tool receives a [`ToolContext`](crate::ToolContext) containing the
-session ID, session incarnation ID, turn ID, and call ID. A tool that implements
+session ID, session incarnation ID, turn ID, and call ID, plus exactly the JSON
+arguments returned by its successful preflight. A tool that implements
 idempotency, replay protection, or an audit key must include the incarnation;
 the other three values can repeat after a durable reset.
 
@@ -305,7 +329,8 @@ reconciles it and synchronously establishes the provider result before the outer
 turn observes cancellation. Cancellation then cannot relabel its model `Stop`,
 observer delivery, or `Completed` event. Intermediate `ToolCalls` stops are not
 turn-terminal, so cancellation may interrupt their atomic placeholder commit,
-permission request, tool work, result replacement, or next-provider startup.
+preparation boundary, permission request, tool work, result replacement, or
+next-provider startup.
 All such futures are owned and polled inline by `Turn`; dropping the turn drops
 them rather than detaching work.
 

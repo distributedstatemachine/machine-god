@@ -43,18 +43,24 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with two bounded slices. The first provides read-only native config/state
+with three bounded slices. The first provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
 schema-v1 `ask` config, bounded to 64 KiB with fail-closed file and content
 validation. Missing or unavailable configuration uses explicit built-in
-defaults; configuration mutation is not implemented. These slices do not
-complete Milestone 03. Concrete providers, executable native tools, permission
-prompting and modes beyond `ask`, durable native sessions, broader
-configuration and CLI behavior, and compatibility or performance claims remain
-planned. Existing CLI bytes are unchanged, and the help and status commands
-remain explicitly non-equivalent, claim-ineligible, and unmeasured in bootstrap
-evidence.
+defaults; configuration mutation is not implemented. The third adds
+capability-aware tool preflight: the source-compatible default preserves the
+raw `Capability::Tool` request, while a tool may prepare a normalized capability
+and the exact arguments that an allowed execution receives. Core bounds the
+prepared values before policy, and preparation failure produces a durable
+generic tool error without consulting policy or exercising the tool. These
+slices do not complete Milestone 03. The next planned slice is the first
+read-only native `read_file` tool. Concrete providers, permission prompting and
+modes beyond `ask`, durable native sessions, broader configuration and CLI
+behavior, the remaining executable native tools, and compatibility or
+performance claims remain planned. Existing CLI bytes are unchanged, and the
+help and status commands remain explicitly non-equivalent, claim-ineligible,
+and unmeasured in bootstrap evidence.
 
 ## Release gates
 

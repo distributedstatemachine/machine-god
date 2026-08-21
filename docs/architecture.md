@@ -21,8 +21,9 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has started with two bounded native-host slices. The core remains
-unchanged and authority-free. `machine-god-native` snapshots only
+Milestone 03 has three bounded slices. The first two are native-host slices;
+the third extends the authority-free core tool contract without adding an
+executable native capability. `machine-god-native` snapshots only
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and
 state paths, and inspects their final metadata for status. A separate
 synchronous native authority can load the resolved config file read-only.
@@ -70,8 +71,8 @@ most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 or operating-system error text. Configuration mutation, permission modes beyond
-`ask`, prompting, providers, executable tools, durable native sessions, and CLI
-expansion remain deferred.
+`ask`, prompting, providers, executable native tools, durable native sessions,
+and CLI expansion remain deferred.
 
 ```text
                         machine-god-core
@@ -107,9 +108,28 @@ Durability divides each loop into explicit phases:
 ```text
 user+turn reservation -> model
 model tool calls -> atomic assistant + N unknown placeholders commit
-                 -> permission/tool -> exact in-place result replacement -> model
+                 -> effect-free tool preflight -> bounds -> permission
+                 -> allowed tool -> exact in-place result replacement -> model
 model final answer -> assistant commit -> terminal events
 ```
+
+Tool preflight is a provider-neutral transformation before policy. The
+source-compatible `Tool::prepare` default returns the provider's original JSON
+arguments with the existing raw `Capability::Tool`. A tool may instead return a
+`PreparedToolCall` containing a normalized capability and replacement arguments.
+Preparation must exercise no external effect. Core validates the prepared
+capability and arguments within its resource bounds, presents that capability
+to policy, and passes exactly those prepared arguments to `Tool::execute` only
+after policy allows the request. This keeps authorization and execution about
+the same normalized operation without giving core filesystem, process, or
+network authority.
+
+A preparation error consults no permission handler and starts no tool. It
+replaces the already-durable unknown placeholder with the same fixed generic
+tool-error result used for an execution error, then permits the next model round
+to recover. Permission request identity, critical risk, fixed reason, event
+ordering, cancellation precedence, and the absence of core-side grant caching
+are unchanged.
 
 The transcript prefix is the optimistic-merge boundary. Allocator and metadata
 changes may advance across a retry while messages remain identical; any message
