@@ -21,15 +21,19 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has seven integrated bounded slices. The first two are native-host
-slices;
+Milestone 03 has seven integrated bounded slices plus an eighth bounded
+candidate. The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
 provides a bounded Gateway codec over an injected host byte transport. The
 seventh supplies one optional native HTTP implementation of that transport.
-Its exact feature-branch evidence is retained in the
+The eighth candidate supplies a bounded Unix file implementation of core's
+session-store boundary under an explicitly opened host root.
+The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
-the documentation-seal and eventual `main` exact-run gates remain pending.
+it is integrated on `main` at
+`508b0adbbe4447a85bd08f47095ae16c089c05d5`. Exact main CI run `32535790803`
+and benchmark run `32535790824` are green.
 `machine-god-native` snapshots only `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and
 `HOME`, resolves namespaced config and state paths, and inspects their final
 metadata for status. A separate
@@ -40,7 +44,8 @@ loader, and owns no product state. The exact surfaces are documented in
 [`read_file` contract](read-file.md) and
 [`list_files` contract](list-files.md) do not change either CLI surface. The
 separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
-surface and does not change CLI bytes.
+surface and does not change CLI bytes. The same is true of the normative
+[`native file session-store candidate`](session-store.md).
 
 ```text
 process environment -> resolved native paths
@@ -57,6 +62,9 @@ host-selected endpoint/auth/status/retry transport
 
 host-injected bearer token -> optional bounded native HTTP transport
                            -> the same injected AI Gateway codec boundary
+
+host-selected existing absolute state root -> retained directory descriptor
+ SessionId -> domain-separated SHA-256 v1 name -> bounded file SessionStore
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -95,8 +103,8 @@ distinguish failure classes without reflecting selected paths, file contents,
 or operating-system error text. Configuration mutation, permission modes beyond
 `ask`, prompting, credential discovery and provider/CLI composition,
 executable native tools other than the bounded `read_file` and `list_files`
-library capabilities, durable native sessions, and CLI expansion remain
-deferred.
+library capabilities, session migration/encryption/reset/listing, and CLI
+expansion remain deferred.
 
 ```text
                         machine-god-core
@@ -116,6 +124,42 @@ observation may use the authority-free no-op sink. Validated IDs, explicit
 durable session-incarnation IDs, structured component errors, optimistic session
 revisions, monotonic event sequences, one-live-turn session leases, and
 idempotent cancellation form the initial cross-component invariants.
+
+The eighth candidate is `machine-god-native::FileSessionStore`. On supported
+Linux and macOS Unix targets, its host supplies one existing absolute root. The
+constructor opens the final root no-follow, verifies a directory, and retains
+that descriptor; it performs no environment discovery or root creation. Flat
+record, permanent advisory-lock, and temporary names are derived by lowercase
+SHA-256 over the fixed ASCII domain separator
+`machine-god:file-session:v1:` followed by the `SessionId` UTF-8 bytes. The hash
+keeps raw IDs out of filenames but is neither content secrecy nor confinement;
+descriptor-relative access beneath the trusted host root provides the latter.
+
+Records use strict schema-v1 compact JSON envelopes and are limited by
+`MAX_FILE_SESSION_BYTES` (`8_651_165`), enough for every record satisfying
+default `EngineLimits`. Loads retain only that cap plus one overflow witness,
+open no-follow and nonblocking, and require an authoritative post-open regular
+file check before decode. They verify the requested record ID and return
+`None` for an absent record without creating artifacts. Corrupt, oversized,
+wrong-ID, symlink, and other nonregular state fails closed and remains in place.
+
+Saves serialize within the cap and perform new/update compare-and-swap under a
+permanent per-session regular no-follow advisory lock. They preserve the
+incarnation, assign revisions with checked arithmetic, write an exclusively
+created `0600` temporary regular file, synchronize it, rename it atomically
+over the record in the same retained directory, and then synchronize the
+directory. The lock coordinates cooperating processes only. A directory-sync
+failure after rename is ambiguous because the new record may already be
+visible; the caller must load and reconcile. The atomicity claim is per record
+on filesystems honoring the assumed Unix lock, rename, and sync semantics, not
+a multi-record, NFS, hostile-writer, or complete sudden-power-loss guarantee.
+
+Store futures are effect-free until first poll and detach no background work.
+The first poll performs bounded synchronous serialization, I/O, advisory-lock
+acquisition, and sync work inline and can block the executor thread. Full
+format, polling, error, trust, and deferred-scope details are in
+[`session-store.md`](session-store.md). This candidate's adversarial review,
+exact-commit CI, and `main` integration remain pending.
 
 The first concrete provider remains on the native side of core's explicit
 boundary but owns no network effect. `AiGatewayProvider` encodes the supported

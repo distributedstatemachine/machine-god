@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with seven integrated bounded slices. The first
+with seven integrated bounded slices plus an eighth bounded candidate. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -105,12 +105,29 @@ the codec and custom transports remain executor-neutral. Its exact contract is
 in [`ai-gateway-http.md`](ai-gateway-http.md). Exact feature-branch review and
 remote-run evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md).
-The documentation-seal commit and eventual `main` SHA retain their exact remote
-workflow gates.
+The slice is integrated on `main` at
+`508b0adbbe4447a85bd08f47095ae16c089c05d5`; exact main CI run `32535790803`
+and benchmark run `32535790824` are green.
+
+The eighth candidate adds a native `FileSessionStore` for supported Linux and
+macOS Unix targets. A host supplies one existing absolute root whose opened
+directory descriptor is retained; the store performs no environment discovery
+or root creation. It maps validated session IDs through a fixed
+domain-separated SHA-256 v1 layout, strictly stores one bounded versioned JSON
+envelope per record, verifies the decoded ID, and implements optimistic new and
+update saves with checked revision assignment. Permanent per-session advisory
+lock sidecars coordinate cooperating processes. Bounded no-follow regular-file
+reads and `0600` exclusive temporary writes, file sync, same-directory atomic
+rename, and directory sync fail closed without repairing corrupt or nonregular
+artifacts. Its futures are inert until polled but execute bounded synchronous
+I/O, locking, and sync calls on the first polling thread. The exact candidate
+contract is in [`session-store.md`](session-store.md). Adversarial review, local
+and remote exact-commit CI, and `main` integration remain pending.
 
 These slices do not complete Milestone 03. Permission prompting and modes
 beyond `ask`, credential discovery and broader configuration, durable native
-sessions, provider/CLI wiring, workspace discovery, recursive/glob/grep and
+session migration, encryption, reset and listing, provider/CLI wiring,
+workspace discovery, recursive/glob/grep and
 mutation tools, non-Unix
 hardened workspace construction, the remaining executable native tools, and
 compatibility or performance claims remain planned. Existing CLI bytes,

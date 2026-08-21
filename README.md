@@ -16,13 +16,17 @@ bounded AI Gateway codec over an injected host transport. An optional,
 native-only HTTPS transport for that codec is the seventh integrated bounded
 slice. It uses one pinned production endpoint and an explicitly injected,
 redacted bearer token.
-Credential discovery, provider/CLI wiring, permission prompting, durable native
-sessions, the remaining native tools, and compatibility work remain planned;
-the project is not yet production-ready. See the exact [CLI contract](docs/cli.md),
+An eighth bounded candidate implements a Unix file-backed session store under
+an explicit host-opened root; its adversarial review, exact-commit CI, and
+`main` integration remain pending. Credential discovery, provider/CLI wiring,
+permission prompting, broader session lifecycle features, the remaining native tools, and
+compatibility work remain planned; the project is not yet production-ready. See
+the exact [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
-[native HTTP transport](docs/ai-gateway-http.md) contracts.
+[native HTTP transport](docs/ai-gateway-http.md) contracts, and the normative
+[native file session-store candidate](docs/session-store.md).
 
 ## Development
 

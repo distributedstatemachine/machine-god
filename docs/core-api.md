@@ -86,6 +86,40 @@ serialization, clone, retained-value destruction, and downstream extension
 paths that follow iterative validation. Builder-owned Schemas are still drained
 iteratively if this configuration check fails.
 
+## Native file-store candidate
+
+The eighth bounded Milestone 03 candidate implements this unchanged
+provider-neutral boundary as `machine_god_native::FileSessionStore` on Linux
+and macOS Unix targets. A host explicitly supplies one existing absolute root;
+the native constructor opens and retains its directory descriptor without
+environment discovery or root creation. Fixed v1 names are lowercase SHA-256 of
+the domain-separated session ID. The digest is a stable filename and
+privacy-reduction device, not encryption or confinement. Loads verify the exact
+decoded record ID.
+
+The store persists an exact schema-v1 compact JSON envelope bounded by
+`MAX_FILE_SESSION_BYTES` (`8_651_165`), which accommodates every record obeying
+the default `EngineLimits`. Loads use a bounded cap-plus-one open-then-`fstat`
+regular-file read. Saves implement new/update compare-and-swap, immutable
+incarnation identity, and checked revision assignment beneath one permanent
+per-session regular no-follow advisory lock. Publication uses an exclusively
+created no-follow `0600` temporary regular file, file sync, same-directory
+atomic rename, and directory sync. Corrupt or nonregular artifacts fail closed
+and are not repaired. The store iteratively enforces core's default aggregate
+JSON bounds of 64 container levels and 65,536 nodes for direct trait callers as
+a separate check from its byte cap.
+
+The load/save futures perform no effect before first poll and detach no work.
+Their first poll performs bounded synchronous serialization, filesystem I/O,
+advisory-lock acquisition, and synchronization inline, so it can block the
+executor thread. Advisory coordination applies only to cooperating processes
+on filesystems honoring the assumed Unix semantics. A directory-sync error
+after rename has an ambiguous outcome and requires load-and-reconcile. This is
+not an NFS, multi-record transaction, hostile-writer, or full sudden-power-loss
+guarantee. The exact layout, failure taxonomy, trust boundary, and deferred
+scope are normative in [`session-store.md`](session-store.md); adversarial
+review, exact-commit CI, and `main` integration remain pending.
+
 ## Turn lifecycle
 
 Awaiting [`Session::prompt`](crate::Session::prompt) atomically reserves a

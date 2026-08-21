@@ -13,11 +13,17 @@ stream codec behind an injected host transport; the codec itself receives no
 endpoint, credential, socket, TLS, status, retry, clock, or runtime authority.
 A seventh integrated slice adds one optional native implementation of that
 transport with a pinned production HTTPS endpoint and an explicitly injected
-bearer token. Its feature-branch review and exact remote runs are green and
+bearer token. An eighth bounded candidate adds a Unix file-backed
+`SessionStore` beneath one explicit retained host directory descriptor. The
+seventh slice's feature-branch review and exact remote runs are green and
 recorded in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md).
-The documentation-seal and eventual `main` exact-run gates remain pending; this
-is not a production-ready claim.
+It is integrated on `main` at
+`508b0adbbe4447a85bd08f47095ae16c089c05d5`; exact main CI run `32535790803`
+and benchmark run `32535790824` are green. This is not a production-ready
+claim.
+The eighth candidate's adversarial review, exact-commit CI, and `main`
+integration are also pending.
 Permission mode remains `ask`; CLI registration, prompting, and the fail-closed
 behavior of a production permission handler remain future work.
 
@@ -61,10 +67,78 @@ read errors are not converted into defaults.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation, prompting and modes beyond `ask`, concrete
-provider/CLI composition, credential discovery, native session persistence,
-CLI expansion, native tools other than the bounded library-level `read_file`
-and `list_files`, and compatibility or performance claims remain outside the
-implemented slices.
+provider/CLI composition, credential discovery, CLI expansion, native tools
+other than the bounded library-level `read_file` and `list_files`, and
+compatibility or performance claims remain outside the implemented slices.
+
+The file-session candidate does not consume those status-derived state paths.
+The host explicitly supplies one existing absolute root. On supported Linux and
+macOS Unix targets, `FileSessionStore::open` opens the final component
+no-follow, verifies the resulting descriptor is a directory, and retains it.
+The store performs no environment lookup, root discovery or creation, session
+listing, deletion, reset, or arbitrary child-path access. Root ownership,
+permissions, quotas, ancestor resolution, and filesystem behavior remain in the
+trusted host boundary. Hardened non-Unix support is deferred.
+
+For each validated `SessionId`, lowercase SHA-256 of the ASCII domain separator
+`machine-god:file-session:v1:` plus the ID's UTF-8 bytes selects fixed flat
+`.json`, `.lock`, and `.tmp` names. This keeps raw IDs out of ordinary filenames
+and prevents ID bytes from becoming path syntax, but it does not hide a
+guessable ID or record contents and does not provide authentication or
+confinement. Descriptor-relative operations under the retained root provide the
+path boundary. Load also verifies the exact decoded record ID, so a misplaced
+record or theoretical digest collision fails as corrupt state rather than being
+merged.
+
+The strict compact schema-v1 envelope is bounded to
+`MAX_FILE_SESSION_BYTES` (`8_651_165`), enough for every record under default
+`EngineLimits`. Loads retain at most one extra byte to detect exact
+overflow, then reject invalid UTF-8, malformed or unknown structure, unsupported
+versions, zero revisions, wrong IDs, and over-limit data. The record and
+permanent lock are opened no-follow and authoritatively required by `fstat` to
+be regular files; special files cannot turn a read into FIFO, device, socket,
+or directory access. Missing loads create no artifact. Corrupt and nonregular
+artifacts are preserved rather than repaired, replaced, unlinked, or migrated.
+The store iteratively enforces core's default aggregate JSON bounds of 64
+container levels and 65,536 nodes for direct callers before serialization and
+after decode; the file-size ceiling remains a separate resource bound.
+
+Every save is serialized under the byte cap before publication. A permanent
+regular no-follow lock sidecar provides exclusive advisory coordination
+for cooperating store instances and processes. It is retained so cooperating
+processes do not split across recreated lock inodes. A process that ignores the
+lock, or an actor able to remove or replace the sidecar, remains outside that
+coordination guarantee. Under the exclusive lock, new and update saves compare
+the exact stored revision, reject incarnation changes, and assign the next
+revision with checked arithmetic. They write through an exclusively created,
+no-follow, authoritatively regular `0600` temporary file, synchronize that file,
+atomically rename it over the record in the retained directory, and synchronize
+the directory.
+
+Before rename, failure preserves the old authoritative record. After rename,
+directory-sync failure is necessarily ambiguous: the new record may be visible
+but not proven durable, so a caller must load and reconcile rather than blindly
+retrying a possibly completed operation. Atomic publication is one complete old
+or new record on supported local filesystems honoring the assumed Unix advisory
+lock, rename, and sync semantics. It is not a cross-record transaction, a
+defense against noncooperating writers, an NFS guarantee, or a promise that
+every sudden-power-loss/full-system failure mode preserves the last acknowledged
+version. The implementation requests `fsync`; on macOS it does not request
+`F_FULLFSYNC` and does not claim a successful save reached physical media.
+Record contents are plaintext; encryption, authentication, secure
+erasure, key management, migration, reset, and listing remain deferred.
+
+Load and save futures are inert until first poll and spawn no task, thread,
+timer, or runtime work. First poll performs bounded synchronous filesystem I/O,
+advisory locking, file sync, and directory sync inline. Retained data and
+successful transfer work are bounded, but interrupted syscalls are retried;
+syscall attempts and wall-clock duration are not bounded. Those calls can block
+the polling executor thread, and dropping the future cannot interrupt a
+synchronous call already in progress. Fixed errors never reflect session IDs,
+hashes, roots, child paths,
+record bytes, parser diagnostics, OS text, or raw error numbers. The complete
+candidate contract and fixed taxonomy are in
+[`session-store.md`](session-store.md).
 
 Tool preflight closes the representation gap between a model's raw JSON call
 and the operation presented to permission policy. The source-compatible default

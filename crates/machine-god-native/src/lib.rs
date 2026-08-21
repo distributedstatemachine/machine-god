@@ -12,6 +12,7 @@ mod ai_gateway_http;
 mod config;
 mod list_files;
 mod read_file;
+mod session_store;
 
 pub use ai_gateway::{
     AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
@@ -42,6 +43,10 @@ pub use list_files::{
 pub use read_file::{
     MAX_READ_FILE_BYTES, MAX_READ_FILE_PATH_BYTES, READ_FILE_TOOL_NAME, ReadFileTool,
     ReadFileToolOpenError, ReadFileToolOpenErrorKind,
+};
+pub use session_store::{
+    FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
+    FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES,
 };
 
 /// Core API version intentionally supported by this native host.

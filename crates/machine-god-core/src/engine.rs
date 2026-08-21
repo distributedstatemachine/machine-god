@@ -506,7 +506,12 @@ impl Engine {
         Ok(Session::from_state(Arc::clone(&self.inner), state))
     }
 
-    /// Loads a stored session without blocking an executor thread.
+    /// Returns a future that loads a stored session through the configured
+    /// store.
+    ///
+    /// Creating the future does not call the store. Polling it delegates to the
+    /// configured [`SessionStore`], whose executor and blocking requirements
+    /// therefore apply.
     #[must_use]
     pub fn load_session(
         &self,
