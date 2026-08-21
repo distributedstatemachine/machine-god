@@ -206,6 +206,8 @@ fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError
     }
 
     let bytes = read_bounded(&mut file)?;
+    std::str::from_utf8(&bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
     validate_schema_version(&bytes)?;
     let wire: WireNativeConfig = serde_json::from_slice(&bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
@@ -433,6 +435,19 @@ mod tests {
                 NativeConfigErrorKind::UnsupportedSchemaVersion
             );
         }
+    }
+
+    #[test]
+    fn invalid_utf8_in_an_ignored_future_field_is_still_invalid_format() {
+        let temporary = TestDirectory::new("future-invalid-utf8");
+        temporary.write_config(b"{\"schema_version\":2,\"future\":\"\xff\"}");
+
+        assert_eq!(
+            load_native_config(&temporary.environment())
+                .unwrap_err()
+                .kind(),
+            NativeConfigErrorKind::InvalidFormat
+        );
     }
 
     #[test]

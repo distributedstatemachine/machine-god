@@ -235,6 +235,18 @@ fn future_schema_is_classified_before_version_specific_fields() {
 }
 
 #[test]
+fn invalid_utf8_precedes_future_version_classification() {
+    let temporary = TemporaryDirectory::new();
+    let config_root = temporary.path().join("xdg");
+
+    assert_contents_error(
+        &config_root,
+        b"{\"schema_version\":2,\"future\":\"\xff\"}",
+        NativeConfigErrorKind::InvalidFormat,
+    );
+}
+
+#[test]
 fn unsupported_permission_mode_is_an_invalid_format() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("xdg");
