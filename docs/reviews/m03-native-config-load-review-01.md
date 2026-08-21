@@ -5,7 +5,8 @@ Status: **ADVERSARIAL GREEN — exact remote CI pending**
 ## Candidate
 
 - Base: `8abc233d5d9e5a4585882a938b9693df097be8c6`
-- Adversarially green implementation: `c06b5160b5a837a78c6cc588fd322591def05da9`
+- Adversarially green candidate: `d4de949f9e29373e394bed3162c3d2101063af1a`
+- Configuration implementation: `c06b5160b5a837a78c6cc588fd322591def05da9`
 - Branch: `agent/m03-native-config-load`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 
@@ -103,9 +104,48 @@ All three reviewers reported GREEN with no actionable findings:
   CLI byte stability, plan boundaries, and absence of compatibility or
   performance overclaims.
 
+### Seal follow-up — `c73831ef83b5a102f2ab55be9e6ea3906cf5511f`
+
+The documentation seal corrected the Python result accounting to 129 tests
+run, comprising 121 passed and 8 expected skips. During that exact-SHA seal, a
+reviewer also reproduced a pre-existing scheduling race in
+`test_replacement_during_sample_cannot_change_executed_bytes`: the replacement
+thread could swap the public invocation path before the measured pinned child
+had started. This was accepted as a test-reliability finding even though the
+configuration implementation and benchmark workload were unchanged.
+
+Resolution `a6a321905ca51c1c998bb451930a1ca533361a6a` replaced the fixed 50 ms
+delay with a child-written startup marker. The replacement thread now waits a
+bounded three seconds for pinned execution to begin, while the existing
+post-sample identity check and `good` result assertion continue to prove that
+the sampled pinned bytes ran and that the public path was replaced.
+
+### Round 4 — `a6a321905ca51c1c998bb451930a1ca533361a6a`
+
+- The runtime reviewer reported GREEN.
+- **MEDIUM — accepted:** startup and result marker paths were interpolated into
+  POSIX shell text without shell quoting. A temporary-directory path containing
+  whitespace or shell metacharacters could therefore make the regression fail
+  spuriously or create a stray file.
+
+Resolution `d4de949f9e29373e394bed3162c3d2101063af1a` applies POSIX
+`shlex.quote` to both paths in the Linux `sh -c` command and the generated
+non-Linux POSIX script.
+
+### Round 5 — `d4de949f9e29373e394bed3162c3d2101063af1a`
+
+All three reviewers reported GREEN with no actionable findings. They verified
+the bounded startup handshake, process and thread cleanup, the retained pinned
+byte and identity-swap assertions, Linux and non-Linux POSIX quoting, and scope
+isolation from product code, manifests, evidence, workloads, and claims. The
+focused regression passed 10 consecutive runs in a normal environment and 10
+more with a temporary-directory path containing spaces, a single quote, a
+dollar sign, and a semicolon. Two parallel full Python-suite runs also passed
+during the synchronization review.
+
 ## Exact local checks
 
-The following passed on the adversarially green implementation SHA using exact
+The following passed on the adversarially green candidate SHA using exact
 Rust/Cargo 1.94.1:
 
 - `cargo fmt --all -- --check`;
@@ -119,7 +159,7 @@ Rust/Cargo 1.94.1:
 - `cargo-deny check`: advisories, bans, licenses, and sources all accepted;
 - `cargo audit --no-fetch`: 1,225 cached advisories checked across 33 lockfile
   dependencies with no finding;
-- relative documentation links: 32 checked; and
+- relative documentation links: 33 checked; and
 - `git diff --check` and a clean worktree.
 
 The stripped local release CLI remained 319,152 bytes. This is a local
