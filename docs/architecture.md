@@ -117,19 +117,30 @@ Tool preflight is a provider-neutral transformation before policy. The
 source-compatible `Tool::prepare` default returns the provider's original JSON
 arguments with the existing raw `Capability::Tool`. A tool may instead return a
 `PreparedToolCall` containing a normalized capability and replacement arguments.
-Preparation must exercise no external effect. Core validates the prepared
-capability and arguments within its resource bounds, presents that capability
-to policy, and passes exactly those prepared arguments to `Tool::execute` only
-after policy allows the request. This keeps authorization and execution about
-the same normalized operation without giving core filesystem, process, or
-network authority.
+Preparation is synchronous trusted-host code and must be deterministic,
+bounded, nonblocking, and free of external effects. Core checks cancellation
+immediately before and after the call; it cannot interrupt preparation in
+flight. Core validates the prepared arguments at the exact configured tool
+argument-byte limit. Capability serialization uses that limit plus a fixed 1
+KiB allowance for the tagged permission envelope. Core then presents the
+prepared capability to policy and passes exactly the prepared arguments to
+`Tool::execute` only after policy allows the request.
+
+The trusted tool must ensure those arguments can drive only effects contained
+by the exact capability that policy authorized. Filesystem, process, and network
+implementations must not reinterpret normalized arguments into a broader path,
+command, or destination. This obligation keeps authorization and execution
+about the same normalized operation without giving core semantic knowledge of
+tool JSON or ambient operating-system authority.
 
 A preparation error consults no permission handler and starts no tool. It
 replaces the already-durable unknown placeholder with the same fixed generic
 tool-error result used for an execution error, then permits the next model round
 to recover. Permission request identity, critical risk, fixed reason, event
 ordering, cancellation precedence, and the absence of core-side grant caching
-are unchanged.
+are unchanged. The cancellation claim covers the immediate checks around the
+synchronous preflight; preparation itself must not block because it cannot be
+cancelled while running.
 
 The transcript prefix is the optimistic-merge boundary. Allocator and metadata
 changes may advance across a retry while messages remain identical; any message

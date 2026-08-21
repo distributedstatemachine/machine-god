@@ -58,19 +58,29 @@ and the operation presented to permission policy. The source-compatible default
 retains the existing raw `Capability::Tool` and arguments. A tool may instead
 prepare a normalized `Capability` and replacement arguments, and an allowed
 execution receives exactly those prepared arguments. Preparation is an
-effect-free validation and normalization step: it must not open a path, start a
-process, contact a network destination, mutate state, or exercise any other
-unapproved authority.
+effect-free validation and normalization step implemented by trusted host code.
+It must be deterministic, synchronous, bounded, and nonblocking, and it must not
+open a path, start a process, contact a network destination, mutate state, or
+exercise any other unapproved authority. Core checks cancellation immediately
+before and after preparation returns but cannot interrupt it in flight.
 
 Core applies its resource bounds to the prepared capability and arguments
-before policy or execution. An invalid or oversized prepared value fails before
-either boundary. A tool-reported preparation error is reduced to a fixed generic
-durable tool error, does not consult policy, and causes no tool effect. Policy
-still sees a fresh request with the existing critical risk, fixed reason, and
-deterministic permission ID; core still does not cache positive grant scopes.
-This slice supplies the authorization seam only. Workspace confinement,
-symlink-safe filesystem access, and the first native `read_file` implementation
-remain planned and must use the same path for authorization and execution.
+before policy or execution. Prepared arguments retain the exact configured
+tool-argument byte limit; the serialized capability has that limit plus a fixed
+1 KiB allowance for the tagged permission envelope. An invalid or oversized
+prepared value fails before either boundary. A tool-reported preparation error
+is reduced to a fixed generic durable tool error, does not consult policy, and
+causes no tool effect. Policy still sees a fresh request with the existing
+critical risk, fixed reason, and deterministic permission ID; core still does
+not cache positive grant scopes.
+
+The prepared arguments are not a second grant of authority. A trusted tool may
+use them only for effects contained by the exact prepared capability that
+policy allowed. Native filesystem, process, and network implementations must not
+reinterpret them into a broader path, command, or destination. This slice
+supplies that authorization seam only. Workspace confinement, symlink-safe
+filesystem access, and the first native `read_file` implementation remain
+planned and must use the same path for authorization and execution.
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,

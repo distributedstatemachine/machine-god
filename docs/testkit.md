@@ -97,6 +97,13 @@ assert!(matches!(
   specification, and remaining-step counts share one mutex, giving inspection
   methods consistent snapshots without clocks or global state.
 
+Focused `ScriptedPreparedTool` regressions cover independent preparation and
+execution script exhaustion, zero and finite per-phase recording capacities,
+concurrent preparation/execution with snapshot inspection, and recovery after
+the shared mutex is deliberately poisoned. The concurrency assertions require
+complete, internally consistent records and step accounting; they do not assume
+one scheduler-dependent ordering between independent threads.
+
 Inspection methods clone while holding only the relevant state mutex. A
 poisoned mutex is recovered in the same manner as core so a deliberately
 panicking test thread does not make later assertions panic. Permanently pending

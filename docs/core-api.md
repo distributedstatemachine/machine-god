@@ -36,11 +36,12 @@ or formatting any provider-controlled value. Logging an engine therefore cannot
 trigger provider code or expose a hostile provider name.
 
 The permission decision is distinct from tool execution. A handler error never
-means approval. [`Tool::prepare`](crate::Tool::prepare) is an effect-free
-preflight boundary where native implementations can normalize paths, process
-arguments, and network destinations before presenting a
-[`Capability`](crate::Capability) to policy. An allowed execution receives the
-exact arguments returned by preflight.
+means approval. [`Tool::prepare`](crate::Tool::prepare) is a synchronous,
+effect-free preflight boundary where native implementations can normalize paths,
+process arguments, and network destinations before presenting a
+[`Capability`](crate::Capability) to policy. It is trusted host code and must do
+only bounded, nonblocking work. An allowed execution receives the exact
+arguments returned by preflight.
 
 [`EngineLimits`](crate::EngineLimits) supplies nonzero resource bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
@@ -263,15 +264,24 @@ arguments and the same raw `Capability::Tool` used before preflight existed. A
 tool may instead use [`PreparedToolCall::new`](crate::PreparedToolCall::new) to
 return a normalized filesystem, process, network, custom, or tool capability
 together with replacement JSON arguments. Preparation is required to be
-deterministic and effect-free: it may validate and normalize values but must not
-open files, start processes, contact networks, mutate state, or otherwise
-exercise the capability that policy has not yet allowed.
+deterministic, synchronous, bounded, nonblocking, and effect-free: it may
+validate and normalize values but must not open files, start processes, contact
+networks, mutate state, or otherwise exercise the capability that policy has
+not yet allowed. Core checks cancellation immediately before calling
+preparation and immediately after it returns. Because preparation is
+synchronous, core cannot interrupt it in flight; a blocking implementation
+would delay cancellation and violates the contract.
 
 Core validates the complete prepared capability and arguments against its JSON
-depth, node, and byte resource bounds before calling policy. Rejection occurs
-before authorization or tool execution. A preparation error also consults no
-permission handler and starts no tool. It becomes the same fixed generic,
-durable tool-error result as an execution error, replacing that call's unknown
+depth, node, and byte resource bounds before calling policy. Prepared execution
+arguments retain the exact configured `max_tool_argument_bytes` limit. The
+serialized capability receives that configured limit plus a fixed 1 KiB
+allowance for its tagged permission envelope, so the source-compatible default
+does not reject raw arguments that were valid at the existing exact boundary.
+Rejection occurs before authorization or tool execution. A preparation error
+also consults no permission handler and starts no tool. It becomes the same
+fixed generic, durable tool-error result as an execution error, replacing that
+call's unknown
 placeholder so the next model round can recover without receiving the tool's
 diagnostic.
 
@@ -299,6 +309,13 @@ session ID, session incarnation ID, turn ID, and call ID, plus exactly the JSON
 arguments returned by its successful preflight. A tool that implements
 idempotency, replay protection, or an audit key must include the incarnation;
 the other three values can repeat after a durable reset.
+
+Prepared arguments may drive only effects contained by the exact prepared
+capability that policy allowed. This is a normative obligation of the trusted
+tool implementation, not a semantic relation core can infer from arbitrary
+JSON. In particular, native filesystem, process, and network tools must execute
+the normalized path, command, or destination represented by that capability and
+must not reinterpret their prepared arguments into broader authority.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the
@@ -329,8 +346,9 @@ reconciles it and synchronously establishes the provider result before the outer
 turn observes cancellation. Cancellation then cannot relabel its model `Stop`,
 observer delivery, or `Completed` event. Intermediate `ToolCalls` stops are not
 turn-terminal, so cancellation may interrupt their atomic placeholder commit,
-preparation boundary, permission request, tool work, result replacement, or
-next-provider startup.
+permission request, tool work, result replacement, or next-provider startup.
+Synchronous preparation is the bounded exception described above: cancellation
+is observed at its immediate before/after checks, not inside the call.
 All such futures are owned and polled inline by `Turn`; dropping the turn drops
 them rather than detaching work.
 
