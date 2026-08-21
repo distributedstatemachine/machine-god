@@ -31,6 +31,19 @@ def is_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def reject_duplicate_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate JSON object name: {name}")
+        result[name] = value
+    return result
+
+
+def reject_nonfinite_constant(value: str) -> object:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence", type=Path)
@@ -42,8 +55,12 @@ def main() -> int:
     parser.add_argument("--expected-runner-class")
     args = parser.parse_args()
     try:
-        data = json.loads(args.evidence.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        data = json.loads(
+            args.evidence.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_members,
+            parse_constant=reject_nonfinite_constant,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
         raise SystemExit(f"invalid benchmark evidence: {error}") from None
     if not isinstance(data, dict):
         raise SystemExit("benchmark evidence must be an object")

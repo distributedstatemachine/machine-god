@@ -170,6 +170,29 @@ controlled rejection.
 The remediation requires a fresh exact-SHA three-way review and all local and
 remote gates.
 
+## Review round 06 findings and remediation
+
+Correctness/API and performance/resource/evidence reviewers examined exact
+commit `5e71c868a975667fce343437277fdb3122974d07` and found two independent
+serialization-type gaps:
+
+1. Command and measurement timeout equality accepted JSON `true` when the
+   declared timeout was numeric `1`/`1.0`; measurement aggregates could
+   similarly accept `true` when the derived median or p95 was `1`. Timeout
+   comparisons now require a positive non-boolean number first, and aggregate
+   comparisons require a non-boolean integer. Direct aggregate-one regressions
+   and an exhaustive alternate-JSON-type sweep cover the equality collisions.
+2. Python's ordinary JSON decoder silently retained only the last occurrence
+   of a duplicate object name. Raw evidence could therefore contain a false
+   claim or sample field followed by the canonical field and appear valid after
+   decoding. The checker now uses an object-pairs hook that rejects duplicate
+   names at every depth and a constant hook that rejects non-standard `NaN` and
+   infinities. Root and nested duplicate/non-finite cases require a controlled
+   one-line error without a traceback.
+
+The remediation requires fresh exact-SHA review and complete local and remote
+gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

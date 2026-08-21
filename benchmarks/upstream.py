@@ -545,7 +545,8 @@ def validate_command_record(
     require_environment(
         record.get("environment"), f"{field}.environment", expected_environment_keys
     )
-    if record.get("timeout_seconds") != expected_timeout:
+    timeout = record.get("timeout_seconds")
+    if not is_positive_number(timeout) or timeout != expected_timeout:
         raise ValueError(f"{field}.timeout_seconds does not match the declared timeout")
     if not is_integer(record.get("elapsed_ns")) or record["elapsed_ns"] <= 0:
         raise ValueError(f"{field}.elapsed_ns must be a positive integer")
@@ -581,7 +582,8 @@ def validate_measurement(
         f"{field}.environment",
         expected_environment_keys,
     )
-    if measurement.get("timeout_seconds") != expected_timeout:
+    timeout = measurement.get("timeout_seconds")
+    if not is_positive_number(timeout) or timeout != expected_timeout:
         raise ValueError(f"{field}.timeout_seconds does not match the declared timeout")
     identity = validate_executable_identity_record(
         measurement.get("executable_identity"), f"{field}.executable_identity"
@@ -636,9 +638,11 @@ def validate_measurement(
         if sample.get("returncode") != 0 or not is_integer(sample.get("returncode")):
             raise ValueError(f"{field}.samples[{index}].returncode must be integer zero")
         elapsed.append(elapsed_ns)
-    if measurement.get("median_ns") != int(statistics.median(elapsed)):
+    median_ns = measurement.get("median_ns")
+    if not is_integer(median_ns) or median_ns != int(statistics.median(elapsed)):
         raise ValueError(f"{field}.median_ns does not match raw samples")
-    if measurement.get("p95_ns") != percentile_95(elapsed):
+    p95_ns = measurement.get("p95_ns")
+    if not is_integer(p95_ns) or p95_ns != percentile_95(elapsed):
         raise ValueError(f"{field}.p95_ns does not match raw samples")
 
 

@@ -74,9 +74,12 @@ class BenchmarkScriptsTest(unittest.TestCase):
         }
 
     def run_checker(self, evidence: dict[str, object]) -> subprocess.CompletedProcess[str]:
+        return self.run_checker_text(json.dumps(evidence))
+
+    def run_checker_text(self, evidence: str) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "evidence.json"
-            path.write_text(json.dumps(evidence), encoding="utf-8")
+            path.write_text(evidence, encoding="utf-8")
             return subprocess.run(
                 [
                     sys.executable,
@@ -143,19 +146,26 @@ class BenchmarkScriptsTest(unittest.TestCase):
         self.assertNotIn("Traceback", completed.stderr)
 
     def test_checker_rejects_invalid_json_without_traceback(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            evidence_path = Path(directory) / "evidence.json"
-            evidence_path.write_text("{\n", encoding="utf-8")
-            completed = subprocess.run(
-                [sys.executable, str(ROOT / "benchmarks/check.py"), str(evidence_path)],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+        completed = self.run_checker_text("{\n")
 
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("invalid benchmark evidence", completed.stderr)
         self.assertNotIn("Traceback", completed.stderr)
+
+    def test_checker_rejects_duplicate_members_and_nonfinite_numbers(self) -> None:
+        cases = (
+            '{"schema_version":2,"schema_version":2}',
+            '{"schema_version":2,"source":{"machine_god":{},"machine_god":{}}}',
+            '{"schema_version":NaN}',
+            '{"schema_version":Infinity}',
+            '{"schema_version":-Infinity}',
+        )
+        for evidence in cases:
+            with self.subTest(evidence=evidence):
+                completed = self.run_checker_text(evidence)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn("invalid benchmark evidence", completed.stderr)
+                self.assertNotIn("Traceback", completed.stderr)
 
     def test_checker_rejects_command_binary_mismatch(self) -> None:
         evidence = self.valid_evidence()
@@ -777,7 +787,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence)
 
-    def test_every_scalar_rejects_a_different_json_type(self) -> None:
+    def test_every_scalar_rejects_all_alternate_json_types(self) -> None:
         def scalar_paths(value: object, path: tuple[object, ...] = ()):
             if isinstance(value, dict):
                 for key, child in value.items():
@@ -793,23 +803,24 @@ class UpstreamHarnessTest(unittest.TestCase):
         self.assertGreater(len(paths), 100)
         for path, original in paths:
             if isinstance(original, bool):
-                replacement: object = int(original)
+                replacements: tuple[object, ...] = (None, 0, 1, 0.0, 1.0, "", [], {})
             elif isinstance(original, str):
-                replacement = 0
+                replacements = (None, False, True, 0, 0.0, [], {})
             elif isinstance(original, int):
-                replacement = True
+                replacements = (None, False, True, float(original), "", [], {})
             elif isinstance(original, float):
-                replacement = False
+                replacements = (None, False, True, "", [], {})
             else:
-                replacement = {}
-            with self.subTest(path=path, replacement=replacement):
-                evidence = self.valid_upstream_evidence()
-                target: object = evidence
-                for part in path[:-1]:
-                    target = target[part]  # type: ignore[index]
-                target[path[-1]] = replacement  # type: ignore[index]
-                with self.assertRaises(ValueError):
-                    validate_upstream_evidence(evidence)
+                replacements = ({},)
+            for replacement in replacements:
+                with self.subTest(path=path, replacement=replacement):
+                    evidence = self.valid_upstream_evidence()
+                    target: object = evidence
+                    for part in path[:-1]:
+                        target = target[part]  # type: ignore[index]
+                    target[path[-1]] = replacement  # type: ignore[index]
+                    with self.assertRaises(ValueError):
+                        validate_upstream_evidence(evidence)
 
     def test_environment_policy_rejects_integer_boolean_lookalikes(self) -> None:
         for field, value in (
@@ -819,6 +830,29 @@ class UpstreamHarnessTest(unittest.TestCase):
             with self.subTest(field=field):
                 evidence = self.valid_upstream_evidence()
                 evidence["environment_policy"][field] = value
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
+    def test_measurement_numbers_reject_boolean_lookalikes(self) -> None:
+        for implementation_index in (0, 1):
+            evidence = self.valid_upstream_evidence()
+            measurement = evidence["workloads"][0]["implementations"][
+                implementation_index
+            ]
+            measurement["timeout_seconds"] = True
+            with self.subTest(implementation=implementation_index, field="timeout"):
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
+        for aggregate in ("median_ns", "p95_ns"):
+            evidence = self.valid_upstream_evidence()
+            measurement = evidence["workloads"][0]["implementations"][0]
+            for sample in measurement["samples"]:
+                sample["elapsed_ns"] = 1
+            measurement["median_ns"] = 1
+            measurement["p95_ns"] = 1
+            measurement[aggregate] = True
+            with self.subTest(aggregate=aggregate):
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence)
 
