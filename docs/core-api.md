@@ -115,6 +115,12 @@ instead of merging distinct logical lifetimes. Create and load perform only a
 targeted logarithmic lookup,
 while the last state owner reclaims its own key with an identity check so a
 delayed destructor cannot remove a concurrent replacement.
+Registry lookup upgrades an existing weak state while holding the entries
+mutex, then releases that mutex before validating session/incarnation identity.
+The upgraded `Arc` keeps the state alive for validation. If validation fails and
+that reference is the last owner, `SessionRegistration::drop` can therefore
+reenter registry cleanup without attempting to relock a mutex still held by the
+same thread.
 This lease is deliberately process-local and scoped to one `Engine`. Separate
 engine instances or processes rely on optimistic store revisions for unique turn
 IDs, but this milestone does not claim a cross-engine or distributed live-turn

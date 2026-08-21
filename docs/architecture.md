@@ -157,7 +157,12 @@ boundary, not a distributed lease. Registry access uses one requested-ID
 `BTreeMap` lookup rather than scanning all live sessions. The
 last owner removes its weak entry during state destruction only when pointer
 identity still matches, so dead keys are reclaimed without an old destructor
-removing a concurrently installed replacement. Independent engines and
+removing a concurrently installed replacement. Registry lookup holds the
+entries mutex only through weak-reference upgrade or
+new-state insertion. Existing-state identity validation runs after unlocking
+while the upgraded strong reference preserves lifetime. An incarnation conflict
+can thus drop the last state owner and reenter registration cleanup without
+self-deadlocking on the entries mutex. Independent engines and
 processes coordinate durable turn-number allocation through the session store's
 optimistic revision contract. Loaded records reconcile strictly and
 monotonically: corrupt sequences, stale revisions, and equal-revision divergence

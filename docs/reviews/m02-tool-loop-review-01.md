@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-ten findings remediated; awaiting fresh rereview of the
-tenth fix commit.
+Status: review-cycle-eleven finding remediated; awaiting fresh rereview of the
+eleventh fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -32,7 +32,10 @@ Cycle-eight fix reviewed for cycle nine:
 Cycle-nine fix reviewed for cycle ten:
 `849fcd82ef2b69ed10cff61f7429ebab3f2075aa`.
 
-Cycle-ten fix commit: populated after this remediation commit. Reviewers must
+Cycle-ten fix reviewed for cycle eleven:
+`149b07b0812ea9a731fb198adcfc25195887184a`.
+
+Cycle-eleven fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -300,6 +303,24 @@ and advisory gates are required for the final immutable cycle-two commit.
    A provider whose name call is observable and panics with a sentinel proves
    formatting neither invokes the method nor leaks the sentinel, while an exact
    assertion retains a stable useful debug shape.
+
+## Review cycle 11 finding and remediation
+
+1. `SessionRegistry::session_state` held the entries mutex while validating an
+   upgraded live state. On an incarnation conflict, another thread could drop
+   the original handle after the upgrade, leaving the validating thread's local
+   `Arc` as the last owner. Error unwinding would then drop `SessionState` and
+   its `SessionRegistration` before the entries guard, causing cleanup to relock
+   the same non-reentrant mutex and deadlock. The registry now explicitly drops
+   the entries guard immediately after `Weak::upgrade`, retains the strong
+   state, and performs identity validation outside the lock. A deterministic
+   `cfg(test)` hook clones its optional barrier while holding only the hook mutex,
+   releases that mutex, and waits only after the entries lock is gone. The
+   regression pauses there, drops the original owner, releases the sole-owner
+   conflict path, requires its result through a bounded channel receive, and
+   then proves the registry remains usable through load, convergent create, and
+   last-handle drop. Under the old ordering, the worker would deadlock before it
+   could send the conflict result.
 
 ## Honest limitations for review
 

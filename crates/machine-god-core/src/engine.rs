@@ -299,6 +299,8 @@ pub(crate) struct SessionRegistry {
     #[cfg(test)]
     entry_checks: AtomicUsize,
     #[cfg(test)]
+    after_upgrade: Mutex<Option<Arc<Barrier>>>,
+    #[cfg(test)]
     before_remove: Mutex<Option<Arc<Barrier>>>,
 }
 
@@ -389,6 +391,9 @@ impl SessionRegistry {
         #[cfg(test)]
         self.entry_checks.fetch_add(1, Ordering::Relaxed);
         if let Some(state) = entries.get(&record.id).and_then(Weak::upgrade) {
+            drop(entries);
+            #[cfg(test)]
+            self.pause_after_upgrade();
             state.validate_identity(&record)?;
             return Ok(state);
         }
@@ -397,6 +402,19 @@ impl SessionRegistry {
             crate::session::SessionState::new_registered(record, persisted, Arc::downgrade(self));
         entries.insert(id, Arc::downgrade(&state));
         Ok(state)
+    }
+
+    #[cfg(test)]
+    fn pause_after_upgrade(&self) {
+        let barrier = self
+            .after_upgrade
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(barrier) = barrier {
+            barrier.wait();
+            barrier.wait();
+        }
     }
 
     fn remove_if_matches(&self, id: &SessionId, state: &Weak<crate::session::SessionState>) {
@@ -559,13 +577,14 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use crate::{
-        BoxFuture, CancellationToken, ModelEventStream, ModelProvider, ModelRequest,
+        BoxFuture, CancellationToken, EngineError, ModelEventStream, ModelProvider, ModelRequest,
         PermissionDecision, PermissionError, PermissionHandler, PermissionRequest, ProviderError,
         SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
         SessionStoreError,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::time::Duration;
 
     trait EngineTestSessions {
         fn create_test_session(&self, id: SessionId) -> crate::Session;
@@ -777,6 +796,59 @@ mod tests {
         drop(replacement);
         assert!(registry.entries.lock().unwrap().contains_key(&id));
         drop(converged);
+        assert!(!registry.entries.lock().unwrap().contains_key(&id));
+    }
+
+    #[test]
+    fn incarnation_conflict_drops_last_upgraded_state_outside_registry_lock() {
+        let id = SessionId::new("last-upgraded-conflict").unwrap();
+        let first_incarnation = SessionIncarnationId::new("logical-lifetime-one").unwrap();
+        let second_incarnation = SessionIncarnationId::new("logical-lifetime-two").unwrap();
+        let mut stored = SessionRecord::empty(id.clone(), second_incarnation.clone());
+        stored.revision = SessionRevision(1);
+        let engine = super::Engine::builder()
+            .provider(UnusedProvider)
+            .session_store(CorruptStore(stored))
+            .permission_handler(DenyPermissions)
+            .build()
+            .unwrap();
+        let registry = Arc::clone(&engine.inner.sessions);
+        let original = engine
+            .create_session(id.clone(), first_incarnation)
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        *registry.after_upgrade.lock().unwrap() = Some(Arc::clone(&barrier));
+
+        let conflicting_engine = engine.clone();
+        let conflicting_id = id.clone();
+        let conflicting_incarnation = second_incarnation.clone();
+        let (sender, receiver) = mpsc::channel();
+        let conflicting = std::thread::spawn(move || {
+            let result = conflicting_engine
+                .create_session(conflicting_id, conflicting_incarnation)
+                .map(|_| ());
+            sender.send(result).unwrap();
+        });
+
+        barrier.wait();
+        drop(original);
+        barrier.wait();
+        let result = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("incarnation conflict must not deadlock registry cleanup");
+        assert_eq!(result, Err(EngineError::SessionIncarnationConflict));
+        conflicting.join().unwrap();
+        *registry.after_upgrade.lock().unwrap() = None;
+
+        let loaded = futures_executor::block_on(engine.load_session(id.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.incarnation_id(), second_incarnation);
+        let created = engine
+            .create_session(id.clone(), second_incarnation)
+            .unwrap();
+        drop(loaded);
+        drop(created);
         assert!(!registry.entries.lock().unwrap().contains_key(&id));
     }
 
