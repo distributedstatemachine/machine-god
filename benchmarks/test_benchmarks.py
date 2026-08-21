@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -2621,6 +2622,8 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             temporary = Path(directory)
             started = temporary / "started"
             marker = temporary / "result"
+            started_shell = shlex.quote(str(started))
+            marker_shell = shlex.quote(str(marker))
             invocation = temporary / "measured-tool"
             if sys.platform.startswith("linux"):
                 original = Path(invocation_path("sh", os.environ["PATH"])).resolve()
@@ -2630,13 +2633,15 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 command = [
                     str(invocation),
                     "-c",
-                    f"printf started > {started}; sleep 0.2; printf good > {marker}",
+                    f"printf started > {started_shell}; sleep 0.2; "
+                    f"printf good > {marker_shell}",
                 ]
             else:
                 original = temporary / "original"
                 replacement = temporary / "replacement"
                 original.write_text(
-                    f"#!/bin/sh\nprintf started > {started}\nsleep 0.2\nprintf good > {marker}\n",
+                    f"#!/bin/sh\nprintf started > {started_shell}\nsleep 0.2\n"
+                    f"printf good > {marker_shell}\n",
                     encoding="utf-8",
                 )
                 replacement.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
