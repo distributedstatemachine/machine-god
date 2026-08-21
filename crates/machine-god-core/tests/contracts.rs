@@ -1623,6 +1623,7 @@ fn dropping_a_completed_turn_does_not_cancel_or_wake_again() {
 fn cancellation_is_idempotent_and_emits_a_terminal_event() {
     let session =
         engine_with(PendingProvider).create_test_session(SessionId::new("cancel-turn").unwrap());
+    let incarnation_id = session.incarnation_id();
     let mut turn = prompt(&session, "wait");
     let handle = turn.handle();
 
@@ -1634,6 +1635,7 @@ fn cancellation_is_idempotent_and_emits_a_terminal_event() {
         (started, completed)
     });
     assert!(matches!(events.0.payload, TurnEvent::Started));
+    assert_eq!(events.0.session_incarnation_id, incarnation_id);
     assert!(matches!(
         events.1.payload,
         TurnEvent::Completed {
@@ -1641,6 +1643,7 @@ fn cancellation_is_idempotent_and_emits_a_terminal_event() {
             ..
         }
     ));
+    assert_eq!(events.1.session_incarnation_id, incarnation_id);
     assert!(futures_executor::block_on(turn.next()).is_none());
     assert!(!session.has_active_turn());
 }
@@ -2125,6 +2128,7 @@ fn cancellation_aborts_pending_observer_delivery_and_releases_turn() {
         .build()
         .unwrap();
     let session = engine.create_test_session(SessionId::new("pending-sink").unwrap());
+    let incarnation_id = session.incarnation_id();
     let mut turn = prompt(&session, "wait");
     let handle = turn.handle();
     let mut next = Box::pin(turn.next());
@@ -2144,6 +2148,7 @@ fn cancellation_aborts_pending_observer_delivery_and_releases_turn() {
             ..
         }
     ));
+    assert_eq!(cancelled.session_incarnation_id, incarnation_id);
     drop(next);
     assert!(!session.has_active_turn());
     assert!(futures_executor::block_on(turn.next()).is_none());

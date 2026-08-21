@@ -19,6 +19,9 @@ incarnation while that session ID is live. Permission request IDs use the v2
 SHA-256 preimage over length-delimited session ID, incarnation ID, turn ID, and
 ordinal. This prevents an ID-keyed permission cache from replaying an allow into
 a fresh logical lifetime whose turn numbering and tool-call ordinal restarted.
+`ToolContext` and `EngineEvent` carry the same incarnation so tool idempotency
+keys and event-sink deduplication or audit keys cannot collide across resets
+whose session, turn, call, and event sequence identifiers repeat.
 
 Benchmark CI obtains Zig only from the official Zig 0.16.0 HTTPS archive and
 verifies SHA-256 digest

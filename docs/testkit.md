@@ -75,13 +75,15 @@ assert!(matches!(
   attempt to replace an existing session ID with another incarnation.
   Independent load and save scripts can pass through, fail, or remain pending.
 - `RecordingEventSink` accepts all events by default. Its strict mode can accept,
-  fail, or permanently backpressure each event in order.
+  fail, or permanently backpressure each event in order. Recorded events retain
+  their session incarnation, including terminal cancellation delivery.
 - `ScriptedPermissionHandler` records complete requests and returns ordered
   decisions, errors, or pending futures.
 - `ScriptedTool` preserves its advertised specification, records the context,
   JSON arguments, and cancellation handle for each invocation, and returns
-  ordered outputs or errors. A pending tool wakes on cancellation and returns a
-  structured cancelled error.
+  ordered outputs or errors. The recorded context includes the durable session
+  incarnation needed to distinguish reset lifetimes. A pending tool wakes on
+  cancellation and returns a structured cancelled error.
 
 Inspection methods clone while holding only the relevant state mutex. A
 poisoned mutex is recovered in the same manner as core so a deliberately

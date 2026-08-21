@@ -81,7 +81,9 @@ Awaiting [`Session::prompt`](crate::Session::prompt) atomically reserves a
 durable turn ID and its user message, then returns a [`Turn`](crate::Turn), an
 asynchronous stream of ordered
 [`EngineEvent`](crate::EngineEvent) values. Every event carries a session ID,
-turn ID, and monotonic sequence number.
+session incarnation ID, turn ID, and monotonic sequence number. Event sinks can
+therefore deduplicate or audit otherwise identical sequences from reset session
+lifetimes without merging them.
 
 ```text
 created -> started -> provider round -> final assistant commit -> completed
@@ -243,6 +245,11 @@ staged. A tool implementation error likewise becomes a fixed generic
 model-visible result, allowing the next model round to recover without copying
 tool-specific diagnostics into the transcript. A policy infrastructure error
 fails the turn.
+
+An allowed tool receives a [`ToolContext`](crate::ToolContext) containing the
+session ID, session incarnation ID, turn ID, and call ID. A tool that implements
+idempotency, replay protection, or an audit key must include the incarnation;
+the other three values can repeat after a durable reset.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

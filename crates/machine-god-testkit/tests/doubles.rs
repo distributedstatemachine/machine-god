@@ -52,6 +52,7 @@ fn model_request(name: &str) -> ModelRequest {
 fn event(sequence: u64) -> EngineEvent {
     EngineEvent {
         session_id: SessionId::new("event-session").unwrap(),
+        session_incarnation_id: SessionIncarnationId::new("event-incarnation").unwrap(),
         turn_id: TurnId::new("turn-1").unwrap(),
         sequence,
         payload: TurnEvent::Started,
@@ -84,6 +85,7 @@ fn tool_spec() -> ToolSpec {
 fn tool_context() -> ToolContext {
     ToolContext {
         session_id: SessionId::new("tool-session").unwrap(),
+        session_incarnation_id: SessionIncarnationId::new("tool-incarnation").unwrap(),
         turn_id: TurnId::new("turn-1").unwrap(),
         call_id: ToolCallId::new("call-1").unwrap(),
     }

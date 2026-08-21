@@ -158,10 +158,12 @@ records at the same revision. Session stores preserve a host-generated globally
 unique incarnation for the entire logical record lifetime and reject a save
 that changes it. Reset, rewind, or reuse of a session ID requires the host to
 rotate the incarnation; core neither guesses legacy values nor acquires
-randomness or clock authority. Model and permission requests carry that
-incarnation, and the permission-request v2 digest binds it alongside session,
-turn, and ordinal identity to prevent an ID-cached allow from crossing a reset.
-Intrinsic load validation precedes registry
+randomness or clock authority. Model requests, permission requests, tool
+contexts, and engine events carry that incarnation. The permission-request v2
+digest binds it alongside session, turn, and ordinal identity to prevent an
+ID-cached allow from crossing a reset; tool idempotency and event-sink
+deduplication can use the same durable lifetime identity. Intrinsic load
+validation precedes registry
 publication, preventing a concurrent handle from retaining invalid persisted
 state even when the originating load returns an error. Revision zero is an
 in-memory unsaved sentinel only; persisted loads and conflict reloads require a

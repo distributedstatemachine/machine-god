@@ -3271,6 +3271,124 @@ fn permission_id_cache_cannot_replay_allow_across_session_incarnations() {
 
 #[test]
 #[allow(clippy::too_many_lines)]
+fn events_and_tool_contexts_distinguish_reset_session_incarnations() {
+    let provider = ScriptedModelProvider::new(
+        "incarnation-audit",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("call-1", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("call-1", "known", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = ScriptedPermissionHandler::new([allow(), allow()]);
+    let tool = ScriptedTool::new(
+        spec("known"),
+        [
+            ToolStep::Output(ToolOutput::success("same output")),
+            ToolStep::Output(ToolOutput::success("same output")),
+        ],
+    );
+    let sink = RecordingEventSink::new();
+    let session_id = SessionId::new("reused-session").unwrap();
+    let first_incarnation = SessionIncarnationId::new("logical-lifetime-one").unwrap();
+    let first_engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .event_sink(sink.clone())
+        .build()
+        .unwrap();
+    let first_session = first_engine
+        .create_session(session_id.clone(), first_incarnation.clone())
+        .unwrap();
+    let first_events = collect(&first_session);
+    drop(first_session);
+    drop(first_engine);
+
+    let second_incarnation = SessionIncarnationId::new("logical-lifetime-two").unwrap();
+    let second_engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions)
+        .tool(tool.clone())
+        .event_sink(sink.clone())
+        .build()
+        .unwrap();
+    let second_session = second_engine
+        .create_session(session_id.clone(), second_incarnation.clone())
+        .unwrap();
+    let second_events = collect(&second_session);
+
+    assert_eq!(first_events.len(), second_events.len());
+    for (first, second) in first_events.iter().zip(&second_events) {
+        assert_eq!(first.session_id, session_id);
+        assert_eq!(second.session_id, session_id);
+        assert_eq!(first.turn_id, second.turn_id);
+        assert_eq!(first.sequence, second.sequence);
+        assert_eq!(first.session_incarnation_id, first_incarnation);
+        assert_eq!(second.session_incarnation_id, second_incarnation);
+    }
+
+    let invocations = tool.invocations();
+    assert_eq!(invocations.len(), 2);
+    assert_eq!(
+        invocations[0].context.session_id,
+        invocations[1].context.session_id
+    );
+    assert_eq!(
+        invocations[0].context.turn_id,
+        invocations[1].context.turn_id
+    );
+    assert_eq!(
+        invocations[0].context.call_id,
+        invocations[1].context.call_id
+    );
+    assert_eq!(invocations[0].context.call_id.as_str(), "call-1");
+    assert_eq!(
+        invocations[0].context.session_incarnation_id,
+        first_incarnation
+    );
+    assert_eq!(
+        invocations[1].context.session_incarnation_id,
+        second_incarnation
+    );
+
+    let observed = sink.events();
+    let split = first_events.len();
+    assert_eq!(observed[..split], first_events);
+    assert_eq!(observed[split..], second_events);
+    assert_eq!(
+        serde_json::to_value(&second_events[0]).unwrap()["session_incarnation_id"],
+        "logical-lifetime-two"
+    );
+    assert_eq!(
+        serde_json::to_value(&invocations[1].context).unwrap()["session_incarnation_id"],
+        "logical-lifetime-two"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
 fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
     let secret = "SENTINEL_COMPONENT_SECRET";
     let provider = ScriptedModelProvider::new(

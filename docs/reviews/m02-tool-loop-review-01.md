@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-seven finding remediated; awaiting fresh rereview of the
-seventh fix commit.
+Status: review-cycle-eight findings remediated; awaiting fresh rereview of the
+eighth fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -23,7 +23,10 @@ Cycle-five fix reviewed for cycle six:
 Cycle-six fix reviewed for cycle seven:
 `043d5fbc9e72ca5ef7e190a08eb480c396ff9dac`.
 
-Cycle-seven fix commit: populated after this remediation commit. Reviewers must
+Cycle-seven fix reviewed for cycle eight:
+`240fb939d274b4d77a41187eb5c0724aecd78faa`.
+
+Cycle-eight fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -226,6 +229,22 @@ and advisory gates are required for the final immutable cycle-two commit.
    two fresh stores proves that the second logical lifetime receives a new
    decision and cannot replay the first allow; load, serialization, collision,
    and missing-field regressions enforce the durable contract.
+
+## Review cycle 08 findings and remediations
+
+1. `ToolContext` omitted the durable session incarnation. A reset lifetime could
+   therefore repeat the same session, turn, and call IDs, causing a tool's
+   idempotency or audit key to collide with an earlier invocation. Tool contexts
+   now carry the captured record incarnation alongside those IDs.
+2. `EngineEvent` likewise omitted the incarnation, so event-sink deduplication
+   or audit could merge two otherwise identical event sequences across reset
+   lifetimes. Every staged event now carries the incarnation, including
+   workflow terminal events, locally synthesized cancellation, and cancellation
+   that replaces a pending observer delivery. A two-lifetime regression uses
+   fresh engines and stores with identical session, turn, call, and sequence IDs
+   and proves tool contexts, returned events, sink-recorded events, and their
+   serialized forms remain distinct. Focused cancellation regressions cover
+   both local terminal construction paths.
 
 ## Honest limitations for review
 

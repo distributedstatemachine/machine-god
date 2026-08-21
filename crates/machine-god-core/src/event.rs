@@ -1,6 +1,6 @@
 use crate::{
     BoxFuture, EventSinkError, ModelEvent, PermissionDecision, PermissionRequest, SessionId,
-    StopReason, TokenUsage, ToolCall, ToolOutput, TurnId,
+    SessionIncarnationId, StopReason, TokenUsage, ToolCall, ToolOutput, TurnId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,7 @@ pub enum TurnEvent {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EngineEvent {
     pub session_id: SessionId,
+    pub session_incarnation_id: SessionIncarnationId,
     pub turn_id: TurnId,
     pub sequence: u64,
     pub payload: TurnEvent,

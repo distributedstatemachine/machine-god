@@ -488,6 +488,7 @@ impl Session {
         let prompt = prompt.into_inner();
         let (turn_id, record) = self.reserve_turn_and_prompt(prompt.text).await?;
         let session_id = record.id.clone();
+        let session_incarnation_id = record.incarnation_id.clone();
         let cancellation = CancellationToken::new();
         let gate = EmissionGate::default();
         let workflow = Box::pin(run_turn(
@@ -503,6 +504,7 @@ impl Session {
 
         Ok(Turn {
             session_id,
+            session_incarnation_id,
             id: turn_id.clone(),
             handle: TurnHandle {
                 turn_id,
@@ -1287,6 +1289,7 @@ async fn run_turn_inner(
                     let execution = tool.execute(
                         ToolContext {
                             session_id: session_id.clone(),
+                            session_incarnation_id: session_incarnation_id.clone(),
                             turn_id: turn_id.clone(),
                             call_id: call.id.clone(),
                         },
@@ -2241,6 +2244,7 @@ impl TurnHandle {
 /// Ordered asynchronous events for one session turn.
 pub struct Turn {
     session_id: SessionId,
+    session_incarnation_id: SessionIncarnationId,
     id: TurnId,
     handle: TurnHandle,
     cancellation: CancellationToken,
@@ -2261,6 +2265,7 @@ impl fmt::Debug for Turn {
         formatter
             .debug_struct("Turn")
             .field("session_id", &self.session_id)
+            .field("session_incarnation_id", &self.session_incarnation_id)
             .field("turn_id", &self.id)
             .field("cancelled", &self.cancellation.is_cancelled())
             .finish_non_exhaustive()
@@ -2296,6 +2301,7 @@ impl Turn {
     fn stage(&mut self, payload: TurnEvent) {
         let event = EngineEvent {
             session_id: self.session_id.clone(),
+            session_incarnation_id: self.session_incarnation_id.clone(),
             turn_id: self.id.clone(),
             sequence: self.sequence,
             payload,
@@ -2349,6 +2355,7 @@ impl Turn {
             self.locally_synthesized_cancellation = true;
             let event = EngineEvent {
                 session_id: self.session_id.clone(),
+                session_incarnation_id: self.session_incarnation_id.clone(),
                 turn_id: self.id.clone(),
                 sequence: self.sequence,
                 payload: TurnEvent::Completed {

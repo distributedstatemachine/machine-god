@@ -1,4 +1,7 @@
-use crate::{BoxFuture, CancellationToken, SessionId, ToolCallId, ToolError, ToolName, TurnId};
+use crate::{
+    BoxFuture, CancellationToken, SessionId, SessionIncarnationId, ToolCallId, ToolError, ToolName,
+    TurnId,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -22,6 +25,7 @@ pub struct ToolCall {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ToolContext {
     pub session_id: SessionId,
+    pub session_incarnation_id: SessionIncarnationId,
     pub turn_id: TurnId,
     pub call_id: ToolCallId,
 }
