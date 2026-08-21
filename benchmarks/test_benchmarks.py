@@ -26,6 +26,7 @@ from upstream import (  # noqa: E402
     LinuxProcessInfo,
     LinuxProcessSupervisor,
     MachineStatusEntry,
+    ProcessOutputLimit,
     ProcessTimeout,
     UpstreamLock,
     acquire_output_lock,
@@ -387,6 +388,11 @@ class BenchmarkScriptsTest(unittest.TestCase):
                 benchmark_run, "invocation_path", return_value="/resolved/git"
             ),
             mock.patch.object(
+                benchmark_run,
+                "executable_identity",
+                return_value={"canonical_executable": "/resolved/git"},
+            ),
+            mock.patch.object(
                 benchmark_run, "git_output", return_value="1" * 40
             ) as git_output,
         ):
@@ -415,12 +421,25 @@ class BenchmarkScriptsTest(unittest.TestCase):
         self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
         self.assertEqual(arguments[3], benchmark_run.GIT_TIMEOUT_SECONDS)
         self.assertEqual(arguments[4:], ("rev-parse", "--verify", "HEAD^{commit}"))
+        self.assertEqual(
+            git_output.call_args.kwargs["max_output_bytes"],
+            benchmark_run.GIT_OUTPUT_LIMIT_BYTES,
+        )
+        self.assertEqual(
+            git_output.call_args.kwargs["expected_executable"],
+            {"canonical_executable": "/resolved/git"},
+        )
 
         for invalid in ("1" * 39, "1" * 41, "A" * 40, "not-a-sha"):
             with (
                 self.subTest(invalid=invalid),
                 mock.patch.object(
                     benchmark_run, "invocation_path", return_value="/resolved/git"
+                ),
+                mock.patch.object(
+                    benchmark_run,
+                    "executable_identity",
+                    return_value={"canonical_executable": "/resolved/git"},
                 ),
                 mock.patch.object(benchmark_run, "git_output", return_value=invalid),
                 self.assertRaisesRegex(RuntimeError, "not a full Git SHA"),
@@ -431,6 +450,55 @@ class BenchmarkScriptsTest(unittest.TestCase):
         git_sha = benchmark_run.repository_head(ROOT)
         self.assertEqual(len(git_sha), 40)
         self.assertTrue(all(character in "0123456789abcdef" for character in git_sha))
+
+    @unittest.skipUnless(os.name == "posix", "executable replacement requires POSIX")
+    def test_schema_one_repository_head_rejects_git_path_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_git = root / "git"
+            displaced = root / "displaced-git"
+            replacement = root / "replacement-git"
+            started = root / "started"
+            fake_git.write_text(
+                "\n".join(
+                    (
+                        "#!/usr/bin/env python3",
+                        "import pathlib, time",
+                        f"pathlib.Path({str(started)!r}).write_text('started')",
+                        "time.sleep(0.2)",
+                        f"print({'1' * 40!r})",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            replacement.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+            fake_git.chmod(0o755)
+            replacement.chmod(0o755)
+
+            def replace_started_git() -> None:
+                deadline = time.monotonic() + 2.0
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                if started.exists():
+                    fake_git.rename(displaced)
+                    replacement.rename(fake_git)
+
+            replacement_thread = threading.Thread(target=replace_started_git)
+            replacement_thread.start()
+            try:
+                with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                    benchmark_run.repository_head(
+                        ROOT,
+                        git=str(fake_git),
+                        timeout_seconds=2.0,
+                    )
+            finally:
+                replacement_thread.join(2.0)
+
+            self.assertFalse(replacement_thread.is_alive())
+            self.assertTrue(displaced.exists())
+            self.assertEqual(fake_git.read_text(encoding="utf-8"), "#!/bin/sh\nexit 99\n")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup requires POSIX")
     def test_schema_one_git_timeout_is_bounded_and_cleans_up(self) -> None:
@@ -523,6 +591,96 @@ class BenchmarkScriptsTest(unittest.TestCase):
             print_output.assert_not_called()
             time.sleep(0.7)
             self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup requires POSIX")
+    def test_schema_one_git_output_overflow_cleans_up_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "test-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
+            evidence_path = root / "evidence.json"
+            prior_evidence = '{"prior": true}\n'
+            evidence_path.write_text(prior_evidence, encoding="utf-8")
+            fake_git = root / "noisy-git"
+            fake_git.write_text(
+                "\n".join(
+                    (
+                        "#!/usr/bin/env python3",
+                        "import os, time",
+                        "while True:",
+                        "    os.write(1, b'x' * 8192)",
+                        "    time.sleep(0.001)",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
+            diagnostic = io.StringIO()
+            original_head = benchmark_run.repository_head
+            original_pin = benchmark_run.pin_executable
+            pinned_executables: list[object] = []
+
+            def bounded_head(cwd: Path) -> str:
+                return original_head(
+                    cwd,
+                    git=str(fake_git),
+                    timeout_seconds=2.0,
+                    max_output_bytes=1024,
+                )
+
+            def record_pin(identity: object) -> object:
+                pinned = original_pin(identity)
+                pinned_executables.append(pinned)
+                return pinned
+
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(ROOT / "benchmarks/run.py"),
+                        "--binary",
+                        str(binary),
+                        "--output",
+                        str(evidence_path),
+                        "--runs",
+                        "10",
+                        "--warmup",
+                        "1",
+                    ],
+                ),
+                mock.patch.object(
+                    benchmark_run, "run_once", side_effect=[(1, 0)] * 11
+                ),
+                mock.patch.object(
+                    benchmark_run, "repository_head", side_effect=bounded_head
+                ),
+                mock.patch.object(
+                    benchmark_run, "pin_executable", side_effect=record_pin
+                ),
+                mock.patch.object(sys, "stderr", diagnostic),
+                mock.patch("builtins.print") as print_output,
+                self.assertRaises(SystemExit) as raised,
+            ):
+                started_at = time.monotonic()
+                benchmark_run.main()
+
+            self.assertEqual(raised.exception.code, 1)
+            self.assertLess(time.monotonic() - started_at, 3.0)
+            self.assertIn("exceeded 1024-byte output limit", diagnostic.getvalue())
+            self.assertEqual(len(diagnostic.getvalue().splitlines()), 1)
+            self.assertNotIn("Traceback", diagnostic.getvalue())
+            self.assertEqual(evidence_path.read_text(encoding="utf-8"), prior_evidence)
+            self.assertFalse(evidence_path.with_name(f".{evidence_path.name}.lock").exists())
+            self.assertEqual(len(pinned_executables), 1)
+            pinned = pinned_executables[0]
+            with self.assertRaises(OSError):
+                os.fstat(pinned.descriptor)
+            if pinned.execution_path is not None:
+                self.assertFalse(pinned.execution_path.exists())
+            print_output.assert_not_called()
 
     def test_schema_one_collector_atomically_replaces_output_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2095,6 +2253,77 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 )
             time.sleep(0.5)
             self.assertFalse(marker.exists())
+
+    def test_bounded_process_capture_preserves_stdout_and_stderr(self) -> None:
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "6" * 32
+        completed = run_process(
+            [
+                sys.executable,
+                "-c",
+                "import os; os.write(1, b'out\\x00bytes'); os.write(2, b'err\\xffbytes')",
+            ],
+            cwd=Path.cwd(),
+            environment=environment,
+            timeout_seconds=1.0,
+            max_output_bytes=64,
+        )
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, b"out\x00bytes")
+        self.assertEqual(completed.stderr, b"err\xffbytes")
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup requires POSIX")
+    def test_bounded_process_capture_rejects_noisy_tree_quickly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "child-survived"
+            child = (
+                "import pathlib,time; time.sleep(0.5); "
+                f"pathlib.Path({str(marker)!r}).write_text('bad')"
+            )
+            producer = "\n".join(
+                (
+                    "import os, subprocess, sys",
+                    f"subprocess.Popen([sys.executable, '-c', {child!r}])",
+                    "while True:",
+                    "    os.write(1, b'x' * 65536)",
+                )
+            )
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "7" * 32
+            started = time.monotonic()
+            with self.assertRaises(ProcessOutputLimit) as raised:
+                run_process(
+                    [sys.executable, "-c", producer],
+                    cwd=Path(directory),
+                    environment=environment,
+                    timeout_seconds=5.0,
+                    max_output_bytes=4096,
+                )
+            elapsed = time.monotonic() - started
+
+            self.assertLess(elapsed, 3.0)
+            self.assertEqual(raised.exception.stream_name, "stdout")
+            self.assertEqual(raised.exception.limit_bytes, 4096)
+            self.assertEqual(raised.exception.observed_bytes, 4097)
+            self.assertNotIn("x" * 100, str(raised.exception))
+            time.sleep(0.7)
+            self.assertFalse(marker.exists())
+
+    def test_process_output_limit_requires_positive_integer(self) -> None:
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "8" * 32
+        for invalid in (0, -1, True, 1.5):
+            with (
+                self.subTest(invalid=invalid),
+                self.assertRaisesRegex(ValueError, "output limit"),
+            ):
+                run_process(
+                    [sys.executable, "-c", "pass"],
+                    cwd=Path.cwd(),
+                    environment=environment,
+                    timeout_seconds=1.0,
+                    max_output_bytes=invalid,
+                )
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
     def test_linux_containment_does_not_read_descendant_environments(self) -> None:

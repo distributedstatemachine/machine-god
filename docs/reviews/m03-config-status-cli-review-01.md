@@ -439,6 +439,29 @@ integration test covers the absolute invocation path.
 This remediation requires another fresh exact-SHA three-way review and all
 local and remote gates.
 
+## Review round 18 findings and remediation
+
+Three reviewers examined exact commit
+`ed787d7574a6ec53aa847e40aadd586d36b3a45c`. They found that the
+shared captured-process path still buffered stdout and stderr without a size
+limit, allowing a fast producer to consume hundreds of megabytes before even a
+short timeout. They also found that schema-1 Git resolution did not bind the
+executable identity passed to the existing pre/post verification hook.
+
+Captured processes now drain stdout and stderr concurrently with an explicit
+16 MiB limit per stream; schema-1 Git uses a narrower 64 KiB limit. Each drainer
+retains at most its limit and reads one extra byte to detect overflow. A
+controlled output-limit error triggers the existing full process-tree cleanup,
+while successful commands retain exact stdout/stderr bytes. Time limits and the
+uncaptured measurement timing path are unchanged. Schema-1 Git now captures and
+verifies its executable identity before and after the command.
+
+Regressions cover exact successful output, invalid limits, a noisy command and
+child stopped at 4,097 observed bytes for a 4,096-byte cap, pipe cleanup,
+timing-accounting preservation, schema-1 prior-evidence/lock/pin cleanup on Git
+output overflow, and Git pathname replacement. These remediations require
+another fresh exact-SHA three-way review and all local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

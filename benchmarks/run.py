@@ -25,6 +25,7 @@ from upstream import (  # noqa: E402
 
 
 GIT_TIMEOUT_SECONDS = 10.0
+GIT_OUTPUT_LIMIT_BYTES = 64 * 1024
 
 
 def isolated_git_environment() -> dict[str, str]:
@@ -49,9 +50,11 @@ def repository_head(
     *,
     git: str = "git",
     timeout_seconds: float = GIT_TIMEOUT_SECONDS,
+    max_output_bytes: int = GIT_OUTPUT_LIMIT_BYTES,
 ) -> str:
     environment = isolated_git_environment()
     resolved_git = invocation_path(git, environment["PATH"])
+    git_identity = executable_identity(Path(resolved_git))
     git_sha = git_output(
         resolved_git,
         cwd,
@@ -60,6 +63,8 @@ def repository_head(
         "rev-parse",
         "--verify",
         "HEAD^{commit}",
+        expected_executable=git_identity,
+        max_output_bytes=max_output_bytes,
     )
     if len(git_sha) != 40 or any(
         character not in "0123456789abcdef" for character in git_sha

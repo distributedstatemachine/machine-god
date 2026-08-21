@@ -50,6 +50,8 @@ CARGO_VERSION_RE = re.compile(
     rf"^cargo {re.escape(EXPECTED_RUST_VERSION)} \([0-9a-f]{{9}} [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\)$"
 )
 CONTAINMENT_ENVIRONMENT_KEY = "MACHINE_GOD_BENCHMARK_RUN_TOKEN"
+DEFAULT_PROCESS_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024
+PROCESS_OUTPUT_READ_BYTES = 64 * 1024
 ALLOWED_MACHINE_OUTPUTS = (".bench", "benchmarks/results", "target")
 BASE_ENVIRONMENT_KEYS = {
     "HOME",
@@ -155,6 +157,25 @@ class ProcessResult:
 
 class ProcessTimeout(RuntimeError):
     """A child process exceeded its declared wall-clock limit."""
+
+
+class ProcessOutputLimit(RuntimeError):
+    """A child process exceeded a bounded stdout or stderr capture."""
+
+    def __init__(
+        self,
+        stream_name: str,
+        limit_bytes: int,
+        observed_bytes: int,
+        command: Sequence[str],
+    ) -> None:
+        self.stream_name = stream_name
+        self.limit_bytes = limit_bytes
+        self.observed_bytes = observed_bytes
+        super().__init__(
+            f"command {stream_name} exceeded {limit_bytes}-byte output limit: "
+            f"{' '.join(command)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -2037,6 +2058,112 @@ def linux_containment_preflight() -> None:
         _LINUX_PREFLIGHT_COMPLETE = True
 
 
+class BoundedProcessCapture:
+    """Drain both process pipes concurrently without retaining unbounded bytes."""
+
+    def __init__(self, process: subprocess.Popen[bytes], limit_bytes: int) -> None:
+        if process.stdout is None or process.stderr is None:
+            raise RuntimeError("captured process pipes are unavailable")
+        self._streams: dict[str, BinaryIO] = {
+            "stdout": process.stdout,
+            "stderr": process.stderr,
+        }
+        self._limit_bytes = limit_bytes
+        self._buffers = {name: bytearray() for name in self._streams}
+        self._finished = {name: threading.Event() for name in self._streams}
+        self._changed = threading.Event()
+        self._stopping = threading.Event()
+        self._lock = threading.Lock()
+        self._overflow: tuple[str, int] | None = None
+        self._errors: dict[str, BaseException] = {}
+        self._threads = [
+            threading.Thread(
+                target=self._drain,
+                args=(name, stream),
+                name=f"machine-god-capture-{name}",
+                daemon=True,
+            )
+            for name, stream in self._streams.items()
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def _drain(self, name: str, stream: BinaryIO) -> None:
+        buffer = self._buffers[name]
+        try:
+            descriptor = stream.fileno()
+            while True:
+                remaining = self._limit_bytes - len(buffer)
+                requested = min(PROCESS_OUTPUT_READ_BYTES, remaining + 1)
+                chunk = os.read(descriptor, requested)
+                if not chunk:
+                    break
+                observed = len(buffer) + len(chunk)
+                if observed > self._limit_bytes:
+                    if remaining:
+                        buffer.extend(chunk[:remaining])
+                    with self._lock:
+                        if self._overflow is None:
+                            self._overflow = (name, observed)
+                    break
+                buffer.extend(chunk)
+        except BaseException as error:
+            if not self._stopping.is_set():
+                with self._lock:
+                    self._errors[name] = error
+        finally:
+            self._finished[name].set()
+            self._changed.set()
+
+    def wait(
+        self,
+        process: subprocess.Popen[bytes],
+        command: Sequence[str],
+        deadline_ns: int,
+    ) -> tuple[bytes, bytes, int]:
+        while True:
+            with self._lock:
+                overflow = self._overflow
+                errors = dict(self._errors)
+            if overflow is not None:
+                name, observed = overflow
+                raise ProcessOutputLimit(
+                    name,
+                    self._limit_bytes,
+                    observed,
+                    command,
+                )
+            if errors:
+                name, error = next(iter(errors.items()))
+                raise RuntimeError(f"failed to capture process {name}") from error
+            if all(finished.is_set() for finished in self._finished.values()):
+                returncode = process.poll()
+                if returncode is not None:
+                    return (
+                        bytes(self._buffers["stdout"]),
+                        bytes(self._buffers["stderr"]),
+                        time.perf_counter_ns(),
+                    )
+            remaining_ns = deadline_ns - time.perf_counter_ns()
+            if remaining_ns <= 0:
+                raise subprocess.TimeoutExpired(command, 0)
+            self._changed.wait(min(remaining_ns / 1_000_000_000, 0.01))
+            self._changed.clear()
+
+    def stop(self) -> None:
+        self._stopping.set()
+        for stream in self._streams.values():
+            try:
+                stream.close()
+            except OSError:
+                pass
+        deadline = time.monotonic() + 1.0
+        for thread in self._threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        if any(thread.is_alive() for thread in self._threads):
+            raise RuntimeError("process output capture threads did not stop")
+
+
 def close_process_pipes(process: subprocess.Popen[bytes] | GatedProcess) -> None:
     for stream in (process.stdout, process.stderr):
         if stream is not None and not stream.closed:
@@ -2139,6 +2266,7 @@ def run_process(
     environment: Mapping[str, str],
     timeout_seconds: float,
     capture_output: bool = True,
+    max_output_bytes: int = DEFAULT_PROCESS_OUTPUT_LIMIT_BYTES,
     expected_executable: Mapping[str, object] | None = None,
     executable_descriptor: int | None = None,
     executable_path: Path | None = None,
@@ -2146,6 +2274,8 @@ def run_process(
     setup_started = time.perf_counter_ns()
     if not is_positive_number(timeout_seconds):
         raise ValueError("process timeout must be a positive finite number")
+    if not is_integer(max_output_bytes) or max_output_bytes <= 0:
+        raise ValueError("process output limit must be a positive integer")
     process_environment = dict(environment)
     supervisor: LinuxProcessSupervisor | None = None
     exit_observer: LinuxExitObserver | None = None
@@ -2162,6 +2292,7 @@ def run_process(
     if expected_executable is not None:
         verify_executable_identity(expected_executable)
     process: subprocess.Popen[bytes] | GatedProcess | None = None
+    output_capture: BoundedProcessCapture | None = None
     root_descriptor: int | None = None
     supervision_ns = 0
     setup_ns = 0
@@ -2191,6 +2322,8 @@ def run_process(
                 stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
                 start_new_session=True,
             )
+            if capture_output:
+                output_capture = BoundedProcessCapture(process, max_output_bytes)
         if supervisor is not None:
             supervision_started = time.perf_counter_ns()
             root_descriptor = os.pidfd_open(process.pid, 0)
@@ -2211,6 +2344,14 @@ def run_process(
                     raise subprocess.TimeoutExpired(command, timeout_seconds)
                 process.wait()
                 stdout, stderr = b"", b""
+            elif output_capture is not None:
+                stdout, stderr, end = output_capture.wait(
+                    process,
+                    command,
+                    deadline_ns,
+                )
+                output_capture.stop()
+                output_capture = None
             else:
                 remaining_ns = deadline_ns - time.perf_counter_ns()
                 if remaining_ns <= 0:
@@ -2233,6 +2374,15 @@ def run_process(
             raise ProcessTimeout(
                 f"command timed out after {timeout_seconds}s: {' '.join(command)}{detail}"
             ) from error
+        except ProcessOutputLimit as error:
+            remaining = terminate_contained_process(process, supervisor)
+            if expected_executable is not None:
+                verify_executable_identity(expected_executable)
+            if remaining:
+                raise RuntimeError(
+                    f"{error}; containment incomplete for PIDs {sorted(remaining)}"
+                ) from error
+            raise
         cleanup_started = time.perf_counter_ns()
         finalize_successful_process(process, supervisor)
         if expected_executable is not None:
@@ -2258,6 +2408,11 @@ def run_process(
             exit_observer.stop()
         raise
     finally:
+        if output_capture is not None:
+            try:
+                output_capture.stop()
+            except BaseException:
+                pass
         if root_descriptor is not None:
             os.close(root_descriptor)
 
@@ -2406,12 +2561,14 @@ def git_output(
     timeout_seconds: float,
     *arguments: str,
     expected_executable: Mapping[str, object] | None = None,
+    max_output_bytes: int = DEFAULT_PROCESS_OUTPUT_LIMIT_BYTES,
 ) -> str:
     completed = run_process(
         [*git_prefix(git), *arguments],
         cwd=cwd,
         environment=environment,
         timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
         expected_executable=expected_executable,
     )
     if completed.returncode != 0:
