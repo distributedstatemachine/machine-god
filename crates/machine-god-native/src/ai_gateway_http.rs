@@ -10,7 +10,6 @@ use std::error::Error as _;
 use std::fmt;
 use std::future::{Future, poll_fn};
 use std::net::{IpAddr, SocketAddr};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
@@ -200,11 +199,16 @@ impl AiGatewayHttpEndpoint {
         let Some((original_authority, _)) = after_scheme.split_once('/') else {
             return Err(invalid_endpoint());
         };
+        let socket = original_authority
+            .parse::<SocketAddr>()
+            .map_err(|_| invalid_endpoint())?;
+        if socket.port() == 0 || original_authority != socket.to_string() {
+            return Err(invalid_endpoint());
+        }
         let url = endpoint.parse::<Url>().map_err(|_| invalid_endpoint())?;
         if url.scheme() != "http"
             || !url.username().is_empty()
             || url.password().is_some()
-            || url.port().is_none_or(|port| port == 0)
             || url.query().is_some()
             || url.fragment().is_some()
             || !url.path().starts_with('/')
@@ -219,15 +223,14 @@ impl AiGatewayHttpEndpoint {
         let address = numeric_host
             .parse::<IpAddr>()
             .map_err(|_| invalid_endpoint())?;
+        if address != socket.ip() || url.port_or_known_default() != Some(socket.port()) {
+            return Err(invalid_endpoint());
+        }
         let is_loopback = match address {
             IpAddr::V4(address) => address.octets()[0] == 127,
             IpAddr::V6(address) => address.is_loopback(),
         };
         if !is_loopback {
-            return Err(invalid_endpoint());
-        }
-        let port = url.port().ok_or_else(invalid_endpoint)?;
-        if original_authority != SocketAddr::new(address, port).to_string() {
             return Err(invalid_endpoint());
         }
         Ok(Self {
@@ -342,6 +345,18 @@ impl Default for AiGatewayHttpLimits {
 }
 
 /// Tokio-hosted native HTTP implementation of [`AiGatewayTransport`].
+///
+/// Construction is effect-free and does not require a runtime. The returned
+/// startup future and response stream must be polled inside a live Tokio
+/// runtime with I/O and time enabled, and that runtime must remain driven
+/// through connection teardown. Polling without an active runtime handle
+/// returns a fixed transport error.
+///
+/// # Panics
+///
+/// Tokio may panic if an active runtime handle lacks its I/O or time driver.
+/// With the workspace release profile, such a violated host precondition aborts
+/// the process.
 pub struct AiGatewayHttpTransport {
     client: Client,
     endpoint: AiGatewayHttpEndpoint,
@@ -542,7 +557,7 @@ async fn acquire_permit(
 ) -> Result<OwnedSemaphorePermit, ProviderError> {
     let mut acquire = Box::pin(permits.acquire_owned());
     let mut cancelled = cancellation.cancelled();
-    let mut timeout = deadline_sleep(deadline)?;
+    let mut timeout = deadline_sleep(deadline);
     poll_fn(|context| {
         if Pin::new(&mut cancelled).poll(context).is_ready() {
             return Poll::Ready(Err(cancelled_error()));
@@ -576,7 +591,7 @@ where
 {
     let mut send = Box::pin(send);
     let mut cancelled = cancellation.cancelled();
-    let mut timeout = deadline_sleep(deadline)?;
+    let mut timeout = deadline_sleep(deadline);
     poll_fn(|context| {
         if Pin::new(&mut cancelled).poll(context).is_ready() {
             return Poll::Ready(Err(cancelled_error()));
@@ -584,10 +599,8 @@ where
         if timeout.as_mut().poll(context).is_ready() {
             return Poll::Ready(Err(transport_error()));
         }
-        let poll = catch_unwind(AssertUnwindSafe(|| send.as_mut().poll(context)));
-        match poll {
-            Err(_) => Poll::Ready(Err(runtime_required_error())),
-            Ok(Poll::Ready(result)) => {
+        match send.as_mut().poll(context) {
+            Poll::Ready(result) => {
                 if cancellation.is_cancelled() {
                     Poll::Ready(Err(cancelled_error()))
                 } else if deadline <= Instant::now() {
@@ -596,17 +609,14 @@ where
                     Poll::Ready(result.map_err(|error| map_reqwest_error(&error)))
                 }
             }
-            Ok(Poll::Pending) => Poll::Pending,
+            Poll::Pending => Poll::Pending,
         }
     })
     .await
 }
 
-fn deadline_sleep(deadline: Instant) -> Result<Pin<Box<Sleep>>, ProviderError> {
-    catch_unwind(AssertUnwindSafe(|| {
-        Box::pin(tokio::time::sleep_until(deadline))
-    }))
-    .map_err(|_| runtime_required_error())
+fn deadline_sleep(deadline: Instant) -> Pin<Box<Sleep>> {
+    Box::pin(tokio::time::sleep_until(deadline))
 }
 
 type ReqwestChunkFuture = Pin<
@@ -701,26 +711,16 @@ impl HttpResponseStream {
             return Poll::Ready(Some(Err(cancelled_error())));
         }
         if self.timeout.is_none() {
-            match deadline_sleep(self.deadline) {
-                Ok(timeout) => self.timeout = Some(timeout),
-                Err(error) => {
-                    self.finish();
-                    return Poll::Ready(Some(Err(error)));
-                }
-            }
+            self.timeout = Some(deadline_sleep(self.deadline));
         }
-        let timeout_poll = catch_unwind(AssertUnwindSafe(|| {
-            self.timeout
-                .as_mut()
-                .expect("timeout exists")
-                .as_mut()
-                .poll(context)
-        }));
-        if timeout_poll.is_err() {
-            self.finish();
-            return Poll::Ready(Some(Err(runtime_required_error())));
-        }
-        if matches!(timeout_poll, Ok(Poll::Ready(()))) {
+        if self
+            .timeout
+            .as_mut()
+            .expect("timeout exists")
+            .as_mut()
+            .poll(context)
+            .is_ready()
+        {
             self.finish();
             return Poll::Ready(Some(Err(transport_error())));
         }
@@ -790,13 +790,12 @@ impl Stream for HttpResponseStream {
         if self.pending_chunk.is_none() {
             self.start_chunk_read();
         }
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            self.pending_chunk
-                .as_mut()
-                .expect("unfinished stream has a pending chunk read")
-                .as_mut()
-                .poll(context)
-        }));
+        let result = self
+            .pending_chunk
+            .as_mut()
+            .expect("unfinished stream has a pending chunk read")
+            .as_mut()
+            .poll(context);
         if self.cancellation.is_cancelled() {
             self.finish();
             return Poll::Ready(Some(Err(cancelled_error())));
@@ -806,12 +805,8 @@ impl Stream for HttpResponseStream {
             return Poll::Ready(Some(Err(transport_error())));
         }
         match result {
-            Err(_) => {
-                self.finish();
-                Poll::Ready(Some(Err(runtime_required_error())))
-            }
-            Ok(Poll::Pending) => self.poll_waiters(context),
-            Ok(Poll::Ready((response, result))) => {
+            Poll::Pending => self.poll_waiters(context),
+            Poll::Ready((response, result)) => {
                 self.pending_chunk = None;
                 self.response = Some(response);
                 match result {

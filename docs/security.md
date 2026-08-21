@@ -252,8 +252,10 @@ limiting; 408, 425 and every 5xx status are retryable unavailability; all other
 non-200 status is a non-retryable protocol error. A generic network failure is
 conservatively retryable transport failure, while a recognized TLS failure is
 non-retryable transport failure. The mapping uses only the status or fixed
-failure class and never consumes an error body for diagnosis. The transport
-itself performs no retry, including after a request may have been delivered.
+failure class and never consumes an error body for diagnosis. Application,
+status, and backoff retries are disabled. Hyper may recover a stale reused
+connection only before writing request bytes; at most one peer-visible request
+is dispatched, and a possibly delivered request is never replayed.
 
 TLS uses Reqwest's Rustls backend with the pinned `webpki-root-certs` dataset;
 default Reqwest features and native-root loading are disabled. The repository
@@ -274,8 +276,10 @@ teardown. Machine-god owns no internal runtime and detaches no producer task,
 retry, or timer. Reqwest/Hyper owns connection-dispatch tasks on the host
 runtime. The concrete transport must be polled inside a live host-owned Tokio
 runtime with I/O and time enabled, and that runtime must remain driven through
-asynchronous socket teardown. Missing runtime support produces a fixed redacted
-failure rather than dependency diagnostics. Cancellation
+asynchronous socket teardown. No active runtime handle produces a fixed
+redacted failure. A handle without I/O or time violates the API precondition;
+Tokio may panic and the abort-on-panic release profile may terminate the host.
+Cancellation
 and drop bound owned work but do not promise that the operating system, remote
 peer or dependency can prove whether already-transmitted bytes were delivered.
 The normative transport contract is

@@ -592,6 +592,7 @@ fn bearer_tokens_and_limits_are_strict_and_redacted() {
 fn loopback_http_accepts_only_canonical_numeric_loopback_origins() {
     for accepted in [
         "http://127.0.0.1:1/v3/ai/language-model",
+        "http://127.0.0.1:80/v3/ai/language-model",
         "http://127.23.45.67:65535/test",
         "http://[::1]:8080/v3/ai/language-model",
     ] {
@@ -678,7 +679,14 @@ fn one_post_preserves_codec_bytes_and_headers_without_auth_duplication_or_compre
     ] {
         assert_eq!(request.header_values(name), [value], "header {name}");
     }
-    for absent in ["expect", "content-encoding", "transfer-encoding"] {
+    for absent in [
+        "expect",
+        "content-encoding",
+        "transfer-encoding",
+        "user-agent",
+        "referer",
+        "cookie",
+    ] {
         assert!(
             request.header_values(absent).is_empty(),
             "unexpected {absent}"

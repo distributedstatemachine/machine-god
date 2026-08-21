@@ -203,7 +203,9 @@ required HTTP framing headers.
 
 The transport owns one Reqwest client configured with pinned WebPKI roots,
 proxies and redirects disabled, no response decompression or cookie engine, no
-automatic retry, and HTTP/1 only. It defaults to at most 16 active requests, a
+application/status retry, and HTTP/1 only. Hyper may recover a stale reused
+connection only before writing request bytes; it never replays a possibly
+peer-visible request. The transport defaults to at most 16 active requests, a
 30-second connection timeout and a 10-minute total request/stream timeout.
 Validated custom limits allow 1–64 active requests, a
 positive connection timeout no longer than 5 minutes, and a positive total

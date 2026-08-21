@@ -145,8 +145,10 @@ non-200 body for diagnosis. Response headers, reason text, endpoint text,
 credential bytes and dependency-controlled diagnostics likewise never enter a
 public error or debug representation. A generic network failure is a fixed,
 conservatively retryable `Transport` error. A recognized TLS failure is a fixed
-non-retryable `Transport` error. The transport itself performs no retry for any
-category, including when the request may already have reached the peer.
+non-retryable `Transport` error. Application, status, and backoff retries are
+disabled. Hyper may reconnect and redispatch only when a reused idle connection
+fails before any request byte is written. At most one peer-visible request is
+dispatched, and no request is replayed after any byte may have reached the peer.
 
 ## Fixed client policy and resource bounds
 
@@ -162,7 +164,7 @@ support. The client uses Rustls with the pinned
 | redirects | disabled | every 3xx reaches the fixed status mapper |
 | response decompression | disabled | no automatic decoding |
 | cookies | disabled | no cookie persistence or replay |
-| retry/backoff | disabled | exactly one transport attempt |
+| retry/backoff | disabled | no replay after any request byte; stale pooled pre-write recovery is allowed |
 | `Expect: 100-continue` | disabled | no automatic expectation handshake |
 | active requests | 16 | 1–64; same-endpoint idle connection reuse is allowed |
 | connect timeout | 30 seconds | greater than zero and at most 5 minutes |
@@ -220,8 +222,10 @@ The configured connect and request timeouts are independent terminal bounds
 when cancellation is not requested. With default limits they are 30 seconds
 and 10 minutes. Timeout failures use fixed redacted provider errors; no Reqwest,
 Hyper, Tokio, Rustls, socket, or operating-system message is reflected. Polling
-the concrete transport without the required runtime returns a fixed, redacted,
-non-retryable `Transport` error; it does not panic or perform a request.
+when no Tokio runtime handle is active returns a fixed, redacted, non-retryable
+`Transport` error and performs no request. A runtime handle without enabled I/O
+or time violates the API precondition; Tokio may panic, and the repository's
+abort-on-panic release profile may terminate that host process.
 
 ## Deferred scope
 
