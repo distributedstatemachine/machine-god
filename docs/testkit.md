@@ -85,9 +85,17 @@ assert!(matches!(
   post-preflight JSON arguments, and cancellation handle for each invocation,
   then returns ordered outputs or errors. The recorded context includes the
   durable session incarnation needed to distinguish reset lifetimes. A pending
-  tool wakes on cancellation and returns a structured cancelled error. Tests of
-  normalized capabilities can implement `Tool::prepare` on a focused custom
-  tool while continuing to use the scripted permission handler for inspection.
+  tool wakes on cancellation and returns a structured cancelled error.
+- `ScriptedPreparedTool` independently scripts preparation and execution.
+  `ToolPrepareStep::Prepared` supplies the normalized capability and exact
+  execution arguments, while `ToolPrepareStep::Error` fails before execution.
+  Each `RecordedToolPreparation` retains the complete provider-requested
+  `ToolCall`; execution recording retains the context, post-preflight
+  arguments, and cancellation token. Preparation and execution have separate
+  strict scripts and separate per-phase recording bounds, so a preparation
+  error leaves the execution script untouched. Their scripts, ordered records,
+  specification, and remaining-step counts share one mutex, giving inspection
+  methods consistent snapshots without clocks or global state.
 
 Inspection methods clone while holding only the relevant state mutex. A
 poisoned mutex is recovered in the same manner as core so a deliberately
