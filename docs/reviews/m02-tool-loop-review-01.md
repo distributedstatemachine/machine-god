@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-nine findings remediated; awaiting fresh rereview of the
-ninth fix commit.
+Status: review-cycle-ten findings remediated; awaiting fresh rereview of the
+tenth fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -29,7 +29,10 @@ Cycle-seven fix reviewed for cycle eight:
 Cycle-eight fix reviewed for cycle nine:
 `e9b20c61de0091f7f9ffc469c60f061f6bd9b23c`.
 
-Cycle-nine fix commit: populated after this remediation commit. Reviewers must
+Cycle-nine fix reviewed for cycle ten:
+`849fcd82ef2b69ed10cff61f7429ebab3f2075aa`.
+
+Cycle-ten fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -274,6 +277,29 @@ and advisory gates are required for the final immutable cycle-two commit.
    outcome remain intact. The existing pending-final-save cancellation
    regression remains green. Placeholder and tool-result commits retain their
    original cancellation behavior.
+
+## Review cycle 10 findings and remediations
+
+1. The cycle-nine final-save helper received an already-created store future.
+   A `SessionStore::save` implementation can perform work eagerly, so it could
+   durably persist and request cancellation synchronously before returning a
+   ready successful future; the helper's initial cancellation check would then
+   discard that success without polling. Final-save construction now lives
+   inside the specialized helper. It checks cancellation immediately before
+   invoking `save`, unconditionally polls the new future once, and lets a ready
+   success from construction or that first poll win. Pending or ready-error
+   results still yield to cancellation, and every later poll checks cancellation
+   before touching the previously pending future. A new eager-store regression
+   joins the existing poll-time-ready-success and pending-save cancellation
+   tests; all three prove their respective precedence boundary. Placeholder and
+   tool-result save paths remain unchanged.
+2. `Engine`'s `Debug` implementation called the provider-controlled `name`
+   method and formatted its returned string. Debug logging could therefore run
+   hostile provider code, panic, block, or expose secrets. It now reports only
+   fixed structural state: `has_provider: true` and the registered tool count.
+   A provider whose name call is observable and panics with a sentinel proves
+   formatting neither invokes the method nor leaks the sentinel, while an exact
+   assertion retains a stable useful debug shape.
 
 ## Honest limitations for review
 

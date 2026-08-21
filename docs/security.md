@@ -26,6 +26,8 @@ whose session, turn, call, and event sequence identifiers repeat.
 Event sinks are untrusted diagnostic producers. A sink failure crosses the
 public API only as `event_sink_failed` / `event sink failed`; the original code
 and message are dropped, including when cancellation races a ready sink error.
+Engine debug formatting likewise never calls `ModelProvider::name` or includes
+provider-controlled text; it exposes only fixed structural fields.
 
 Benchmark CI obtains Zig only from the official Zig 0.16.0 HTTPS archive and
 verifies SHA-256 digest

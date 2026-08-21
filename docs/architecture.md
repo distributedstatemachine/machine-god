@@ -124,10 +124,14 @@ before a terminal provider outcome follows the same cancel-before-release rule,
 preventing dropped streams from orphaning retained provider work.
 Terminal establishment is the cancellation precedence boundary. A final model
 stop remains preterminal through its assistant-message save so cancellation can
-wake and release a turn blocked on persistence. If the save returns ready
-success while requesting cancellation in the same poll, durable success is
-authoritative: reconciliation and terminal establishment run synchronously
-before the workflow yields to the outer turn. After that boundary, the stop
+wake and release a turn blocked on persistence. If eager save construction
+requests cancellation and returns a future whose first poll succeeds, or that
+first poll itself requests cancellation and succeeds, durable success is
+authoritative: core checked cancellation immediately before construction,
+always gives the new future that one poll, and then runs reconciliation and
+terminal establishment synchronously before the workflow yields to the outer
+turn. A pending future receives cancellation prechecks on every later poll.
+After the successful boundary, the stop
 retains its pending observer delivery and final reason even if cancellation
 races afterward. Provider failures and missing stops establish their terminal
 outcome when accepted because they have no final assistant commit.
@@ -179,3 +183,7 @@ The durable turn allocator is monotonic independently of both fields: a higher
 revision cannot authorize a lower `next_turn_sequence`. Higher revisions may
 advance conversation messages and metadata only after passing that allocator
 guard, while equal revisions require whole-record identity.
+
+Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
+fixed structural state (`has_provider` and tool count); it never invokes the
+provider's `name` method or copies provider-controlled text.

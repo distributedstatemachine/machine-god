@@ -1881,13 +1881,19 @@ async fn await_operation<T>(
 }
 
 async fn await_final_save(
-    mut future: BoxFuture<'_, Result<SessionRevision, SessionStoreError>>,
+    store: &dyn crate::SessionStore,
+    record: SessionRecord,
+    expected_revision: Option<SessionRevision>,
     cancellation: &CancellationToken,
 ) -> Result<Result<SessionRevision, SessionStoreError>, WorkflowAbort> {
-    poll_fn(|context| {
-        if cancellation.is_cancelled() {
+    check_cancelled(cancellation)?;
+    let mut future = store.save(record, expected_revision);
+    let mut first_poll = true;
+    poll_fn(move |context| {
+        if !first_poll && cancellation.is_cancelled() {
             return Poll::Ready(Err(WorkflowAbort::Cancelled));
         }
+        first_poll = false;
         let result = future.as_mut().poll(context);
         match result {
             Poll::Ready(Ok(revision)) => Poll::Ready(Ok(Ok(revision))),
@@ -2022,13 +2028,21 @@ async fn commit_messages(
         }
         let mut candidate = candidate.into_inner();
         let previous_revision = candidate.revision;
-        let save = engine
-            .session_store
-            .save(candidate.clone(), expected_revision);
         let save_result = match cancellation_mode {
-            CommitCancellation::Cancellable => await_cancellable(save, cancellation).await?,
+            CommitCancellation::Cancellable => {
+                let save = engine
+                    .session_store
+                    .save(candidate.clone(), expected_revision);
+                await_cancellable(save, cancellation).await?
+            }
             CommitCancellation::FinalSaveSuccessWins => {
-                await_final_save(save, cancellation).await?
+                await_final_save(
+                    engine.session_store.as_ref(),
+                    candidate.clone(),
+                    expected_revision,
+                    cancellation,
+                )
+                .await?
             }
         };
         match save_result {

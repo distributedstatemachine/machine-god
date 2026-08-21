@@ -449,7 +449,7 @@ impl fmt::Debug for Engine {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Engine")
-            .field("provider", &self.inner.provider.name())
+            .field("has_provider", &true)
             .field("tool_count", &self.inner.tools.len())
             .finish_non_exhaustive()
     }
@@ -564,7 +564,7 @@ mod tests {
         SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
         SessionStoreError,
     };
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
 
     trait EngineTestSessions {
@@ -590,6 +590,25 @@ mod tests {
     impl ModelProvider for UnusedProvider {
         fn name(&self) -> &'static str {
             "unused"
+        }
+
+        fn stream(
+            &self,
+            _request: ModelRequest,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+            Box::pin(async { unreachable!("turn stream is not polled") })
+        }
+    }
+
+    struct PanickingNameProvider {
+        name_calls: Arc<AtomicUsize>,
+    }
+
+    impl ModelProvider for PanickingNameProvider {
+        fn name(&self) -> &'static str {
+            self.name_calls.fetch_add(1, Ordering::Relaxed);
+            panic!("SENTINEL_HOSTILE_PROVIDER_NAME")
         }
 
         fn stream(
@@ -649,6 +668,29 @@ mod tests {
             .permission_handler(DenyPermissions)
             .build()
             .unwrap()
+    }
+
+    #[test]
+    fn engine_debug_does_not_invoke_or_expose_provider_name() {
+        let name_calls = Arc::new(AtomicUsize::new(0));
+        let id = SessionId::new("debug-store-record").unwrap();
+        let engine = super::Engine::builder()
+            .provider(PanickingNameProvider {
+                name_calls: Arc::clone(&name_calls),
+            })
+            .session_store(CorruptStore(SessionRecord::empty(
+                id.clone(),
+                test_incarnation(&id),
+            )))
+            .permission_handler(DenyPermissions)
+            .build()
+            .unwrap();
+
+        let debug = format!("{engine:?}");
+
+        assert_eq!(name_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(debug, "Engine { has_provider: true, tool_count: 0, .. }");
+        assert!(!debug.contains("SENTINEL_HOSTILE_PROVIDER_NAME"));
     }
 
     #[test]

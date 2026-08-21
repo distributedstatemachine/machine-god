@@ -30,6 +30,11 @@ defaults. [`EventSink`](crate::EventSink) is observational and defaults to
 [`NoopEventSink`](crate::NoopEventSink). Tools are registered explicitly and are
 looked up by validated [`ToolName`](crate::ToolName).
 
+`Engine` debugging is structural: it reports a fixed `has_provider: true` flag
+and tool count without calling [`ModelProvider::name`](crate::ModelProvider::name)
+or formatting any provider-controlled value. Logging an engine therefore cannot
+trigger provider code or expose a hostile provider name.
+
 The permission decision is distinct from tool execution. A handler error never
 means approval. Native implementations must normalize paths, process arguments,
 and network destinations before presenting a [`Capability`](crate::Capability)
@@ -136,9 +141,14 @@ outcome and therefore cannot create a self-waking hot loop while the terminal
 observer remains backpressured. A final provider `Stop` is not established as
 the turn outcome until its assistant message has been saved. Its save therefore
 remains cancellable while pending, and a pending store cannot prevent shutdown.
-If that save durably succeeds and requests cancellation in the same poll, the
-success is reconciled and terminal precedence is established synchronously;
-the already-persisted final answer is not relabeled as cancelled.
+Immediately before constructing that final save, core checks cancellation. It
+then always polls the newly returned future once. If save construction or that
+first poll durably succeeds while requesting cancellation, the success is
+reconciled and terminal precedence is established synchronously; the
+already-persisted final answer is not relabeled as cancelled. If the first poll
+is pending, later polls restore the ordinary cancellation precheck, so a
+previously pending store cannot gain another success-winning poll after
+cancellation.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
 So is the validated [`SessionIncarnationId`](crate::SessionIncarnationId) that
