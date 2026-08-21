@@ -32,7 +32,7 @@ pub use permission::{
 pub use session::{
     Prompt, Session, SessionRecord, SessionRevision, SessionStore, Turn, TurnHandle,
 };
-pub use tool::{Tool, ToolCall, ToolContext, ToolOutput, ToolSpec};
+pub use tool::{PreparedToolCall, Tool, ToolCall, ToolContext, ToolOutput, ToolSpec};
 
 use core::future::Future;
 use core::pin::Pin;

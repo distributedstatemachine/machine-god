@@ -1,13 +1,13 @@
 use futures_core::Stream;
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
-    BoxFuture, BuildError, CancellationToken, Engine, EngineBuilder, EngineError, EngineEvent,
-    EventSink, EventSinkError, ModelEvent, ModelEventStream, ModelProvider, ModelRequest,
-    PermissionDecision, PermissionError, PermissionGrantScope, PermissionHandler,
-    PermissionRequest, ProviderError, ProviderErrorKind, Role, Session, SessionId,
-    SessionIncarnationId, SessionRecord, SessionRevision, SessionStore, SessionStoreError,
-    StopReason, TokenUsage, Tool, ToolContext, ToolError, ToolName, ToolOutput, ToolSpec, Turn,
-    TurnEvent, TurnHandle,
+    BoxFuture, BuildError, CancellationToken, Capability, ContentBlock, Engine, EngineBuilder,
+    EngineError, EngineEvent, EventSink, EventSinkError, ModelEvent, ModelEventStream,
+    ModelProvider, ModelRequest, PermissionDecision, PermissionError, PermissionGrantScope,
+    PermissionHandler, PermissionRequest, PreparedToolCall, ProviderError, ProviderErrorKind, Role,
+    Session, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreError, StopReason, TokenUsage, Tool, ToolCall, ToolCallId, ToolContext, ToolError,
+    ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent, TurnHandle,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
@@ -158,6 +158,101 @@ impl Tool for StaticTool {
     }
 }
 
+#[derive(Debug)]
+struct ToolThenRecoverProvider {
+    calls: Arc<AtomicUsize>,
+    tool_name: ToolName,
+}
+
+impl ModelProvider for ToolThenRecoverProvider {
+    fn name(&self) -> &'static str {
+        "tool-then-recover"
+    }
+
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        let round = self.calls.fetch_add(1, Ordering::Relaxed);
+        let events = if round == 0 {
+            vec![
+                Ok(ModelEvent::ToolCall {
+                    call: ToolCall {
+                        id: ToolCallId::new("call-1").unwrap(),
+                        name: self.tool_name.clone(),
+                        arguments: json!({"raw": true}),
+                    },
+                }),
+                Ok(ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                }),
+            ]
+        } else {
+            vec![
+                Ok(ModelEvent::TextDelta {
+                    text: "recovered".to_owned(),
+                }),
+                Ok(ModelEvent::Stop {
+                    reason: StopReason::Completed,
+                }),
+            ]
+        };
+        Box::pin(async move { Ok(Box::pin(stream::iter(events)) as ModelEventStream) })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct CountingPermissionHandler(Arc<AtomicUsize>);
+
+impl PermissionHandler for CountingPermissionHandler {
+    fn authorize(
+        &self,
+        _request: PermissionRequest,
+    ) -> BoxFuture<'_, Result<PermissionDecision, PermissionError>> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Box::pin(async {
+            Ok(PermissionDecision::Allow {
+                scope: PermissionGrantScope::Once,
+            })
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct FailingPrepareTool {
+    executions: Arc<AtomicUsize>,
+}
+
+impl Tool for FailingPrepareTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("preflight").unwrap(),
+            description: "test".to_owned(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn prepare(&self, _call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        Err(ToolError::new(
+            ToolErrorKind::InvalidInput,
+            "hostile_code",
+            "hostile preflight diagnostic",
+            false,
+        ))
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: serde_json::Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        self.executions.fetch_add(1, Ordering::Relaxed);
+        Box::pin(async { Ok(ToolOutput::success(json!({"unexpected": true}))) })
+    }
+}
+
 fn engine_with(provider: impl ModelProvider) -> Engine {
     Engine::builder()
         .provider(provider)
@@ -184,6 +279,90 @@ fn extension_traits_are_object_safe() {
     permissions(Arc::new(AllowOnce));
     sink(Arc::new(machine_god_core::NoopEventSink));
     tool(Arc::new(StaticTool("compile_surface")));
+}
+
+#[test]
+fn default_tool_preflight_preserves_policy_and_execution_inputs() {
+    let tool = StaticTool("default_preflight");
+    let call = ToolCall {
+        id: ToolCallId::new("call-default").unwrap(),
+        name: ToolName::new("default_preflight").unwrap(),
+        arguments: json!({"path": "source.rs"}),
+    };
+
+    let prepared = tool.prepare(call.clone()).unwrap();
+
+    assert_eq!(prepared.arguments(), &call.arguments);
+    assert_eq!(
+        prepared.capability(),
+        &Capability::Tool {
+            name: call.name,
+            call_id: call.id,
+            arguments: call.arguments,
+        }
+    );
+}
+
+#[test]
+fn prepare_error_skips_policy_and_execution_then_recovers_next_round() {
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ToolThenRecoverProvider {
+        calls: Arc::clone(&provider_calls),
+        tool_name: ToolName::new("preflight").unwrap(),
+    };
+    let permissions = CountingPermissionHandler::default();
+    let tool = FailingPrepareTool::default();
+    let store = MemoryStore::default();
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let session = engine.create_test_session(SessionId::new("preflight-error").unwrap());
+
+    let events = futures_executor::block_on(prompt(&session, "read").collect::<Vec<_>>());
+
+    assert!(events.iter().all(Result::is_ok));
+    assert_eq!(provider_calls.load(Ordering::Relaxed), 2);
+    assert_eq!(permissions.0.load(Ordering::Relaxed), 0);
+    assert_eq!(tool.executions.load(Ordering::Relaxed), 0);
+    let record = store.record.lock().unwrap().clone().unwrap();
+    assert!(record.messages.iter().any(|message| {
+        message.content.iter().any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult { output, .. }
+                    if output.is_error
+                        && output.content == json!({
+                            "code": "tool_error",
+                            "message": "tool execution failed",
+                            "retryable": false,
+                        })
+            )
+        })
+    }));
+}
+
+#[test]
+fn prepared_tool_call_reclaims_deep_json_iteratively() {
+    fn deep_value(depth: usize) -> serde_json::Value {
+        let mut value = serde_json::Value::Null;
+        for _ in 0..depth {
+            value = serde_json::Value::Array(vec![value]);
+        }
+        value
+    }
+
+    let prepared = PreparedToolCall::new(
+        Capability::Custom {
+            name: "deep".to_owned(),
+            details: deep_value(20_000),
+        },
+        deep_value(20_000),
+    );
+    drop(prepared);
 }
 
 #[test]
