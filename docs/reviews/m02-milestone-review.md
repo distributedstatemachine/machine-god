@@ -69,11 +69,23 @@ security/abuse, and performance/resource/concurrency.
 The bounded tool-loop report retains the complete list of trust-boundary and
 producer-owned allocation limitations.
 
-## Milestone review gate
+## Milestone evidence seal
 
-This documentation change is the Milestone 02 completion candidate. A commit
-cannot record the result of review and CI for its own exact SHA without changing
-that SHA. The coordinator must therefore obtain fresh milestone review and
-remote checks for the immutable documentation commit before integrating it. Its
-exact SHA and results are sealed externally and may be cited by a later evidence
-change; no self-attestation is claimed here.
+The exact Milestone 02 documentation candidate
+`af87f73c37ad52fd4d91ef82c4cdccd78fea6036` received fresh external review with
+no actionable findings:
+
+- correctness/API: GREEN;
+- security/abuse: GREEN; and
+- performance/resource/evidence: GREEN.
+
+The same immutable candidate completed both remote workflows successfully:
+
+| Workflow | Run |
+| --- | --- |
+| CI | [32465808810](https://github.com/distributedstatemachine/machine-god/actions/runs/32465808810) |
+| Benchmark evidence | [32465808681](https://github.com/distributedstatemachine/machine-god/actions/runs/32465808681) |
+
+This later evidence-only seal records those external results. It changes no
+code, milestone scope, or previously reviewed claim, and does not claim that the
+seal commit reviewed itself.
