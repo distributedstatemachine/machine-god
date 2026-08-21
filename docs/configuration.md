@@ -62,13 +62,12 @@ canonicalizes the selected path. It does not claim to validate or freeze the
 entire ancestor path: the bounded guarantee in this slice is final-component
 no-follow plus descriptor regularity.
 
-Errors are typed so callers can distinguish location, open/read, file-kind,
-size, encoding, syntax, schema, version, and mode failures. Their diagnostics
-do not reflect environment-derived paths, configuration bytes, or operating-
-system error text. Invalid selected environment input, inaccessible paths,
-non-regular entries and final symlinks, oversized input, invalid UTF-8,
-malformed JSON, unknown or duplicate fields, missing or wrong fields, and
-unsupported versions or modes all fail closed.
+Errors are typed so callers can distinguish invalid environment input,
+open/read failure, invalid file kind, size overflow, invalid format, and an
+unsupported schema version. Invalid UTF-8, malformed JSON, schema-shape errors,
+and unsupported permission modes are grouped as invalid format. Diagnostics do
+not reflect environment-derived paths, configuration bytes, or operating-system
+error text. All listed failures fail closed.
 
 ## Relationship to status and deferred work
 
