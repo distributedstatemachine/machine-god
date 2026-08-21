@@ -3,8 +3,8 @@ use machine_god_core::{
     CancellationToken, Capability, ContentBlock, Engine, EngineError, EngineEvent, EventSink,
     InferenceOptions, Message, ModelEvent, ModelProvider, ModelRequest, PermissionDecision,
     PermissionError, PermissionGrantScope, PermissionHandler, PermissionRequest,
-    PermissionRequestId, PermissionRisk, ProviderError, ProviderErrorKind, Role, Session,
-    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+    PermissionRequestId, PermissionRisk, PreparedToolCall, ProviderError, ProviderErrorKind, Role,
+    Session, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
     SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, TurnEvent, TurnId,
 };
@@ -16,7 +16,6 @@ use machine_god_testkit::{
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 
 trait EngineTestSessions {
@@ -116,6 +115,99 @@ fn prepared_step(index: usize) -> ToolPrepareStep {
             details: json!({"index": index}),
         },
         arguments: json!({"normalized": index}),
+    }
+}
+
+fn assert_prepared_tool_snapshot(
+    tool: &ScriptedPreparedTool,
+    expected_spec: &ToolSpec,
+    total: usize,
+    expected: usize,
+    prepared_outcomes: &BTreeMap<ToolCallId, PreparedToolCall>,
+    execution_outcomes: &BTreeMap<ToolCallId, ToolOutput>,
+) {
+    let preparations = tool.preparations();
+    let preparation_ids: BTreeSet<_> = preparations
+        .iter()
+        .map(|recorded| recorded.call.id.clone())
+        .collect();
+    assert_eq!(preparations.len(), expected);
+    assert_eq!(preparation_ids.len(), expected);
+    assert_eq!(prepared_outcomes.len(), expected);
+    assert_eq!(preparation_ids, prepared_outcomes.keys().cloned().collect());
+    for (ordinal, recorded) in preparations.iter().enumerate() {
+        let ordinal = u64::try_from(ordinal).unwrap();
+        let outcome = prepared_outcomes.get(&recorded.call.id).unwrap();
+        assert_eq!(
+            outcome
+                .arguments()
+                .get("normalized")
+                .and_then(serde_json::Value::as_u64),
+            Some(ordinal)
+        );
+        match outcome.capability() {
+            Capability::Custom { name, details } => {
+                assert_eq!(name, "prepared-fixture");
+                assert_eq!(
+                    details.get("index").and_then(serde_json::Value::as_u64),
+                    Some(ordinal)
+                );
+            }
+            capability => panic!("unexpected prepared capability: {capability:?}"),
+        }
+    }
+
+    let invocations = tool.invocations();
+    let execution_ids: BTreeSet<_> = invocations
+        .iter()
+        .map(|recorded| recorded.context.call_id.clone())
+        .collect();
+    assert_eq!(invocations.len(), expected);
+    assert_eq!(execution_ids.len(), expected);
+    assert_eq!(execution_outcomes.len(), expected);
+    assert_eq!(execution_ids, execution_outcomes.keys().cloned().collect());
+    for (ordinal, recorded) in invocations.iter().enumerate() {
+        assert!(!recorded.cancellation.is_cancelled());
+        let ordinal = u64::try_from(ordinal).unwrap();
+        let outcome = execution_outcomes.get(&recorded.context.call_id).unwrap();
+        assert!(!outcome.is_error);
+        assert_eq!(
+            outcome
+                .content
+                .get("execution_ordinal")
+                .and_then(serde_json::Value::as_u64),
+            Some(ordinal)
+        );
+    }
+
+    assert_eq!(tool.remaining_steps(), (total - expected, total - expected));
+    assert_eq!(tool.spec(), *expected_spec);
+}
+
+fn join_preparation_workers(
+    workers: Vec<
+        std::thread::JoinHandle<(
+            ToolCallId,
+            Result<PreparedToolCall, machine_god_core::ToolError>,
+        )>,
+    >,
+    outcomes: &mut BTreeMap<ToolCallId, PreparedToolCall>,
+) {
+    for worker in workers {
+        let (call_id, outcome) = worker.join().unwrap();
+        assert!(outcomes.insert(call_id, outcome.unwrap()).is_none());
+    }
+}
+
+fn join_execution_workers(
+    workers: Vec<
+        std::thread::JoinHandle<(ToolCallId, Result<ToolOutput, machine_god_core::ToolError>)>,
+    >,
+    outcomes: &mut BTreeMap<ToolCallId, ToolOutput>,
+) {
+    for worker in workers {
+        let (call_id, outcome) = worker.join().unwrap();
+        assert!(outcomes.insert(call_id, outcome.unwrap()).is_none());
     }
 }
 
@@ -629,98 +721,91 @@ fn prepared_tool_record_capacity_is_independent_at_n_and_n_plus_one() {
 #[test]
 fn prepared_tool_concurrent_calls_and_snapshots_remain_bounded_and_consistent() {
     const CALLS: usize = 24;
+    const FIRST_WAVE: usize = 8;
     let expected_spec = tool_spec();
     let tool = ScriptedPreparedTool::with_record_capacity(
         expected_spec.clone(),
         (0..CALLS).map(prepared_step),
-        (0..CALLS).map(|_| ToolStep::Output(ToolOutput::success("executed"))),
+        (0..CALLS).map(|ordinal| {
+            ToolStep::Output(ToolOutput::success(json!({"execution_ordinal": ordinal})))
+        }),
         CALLS,
     );
-    let barrier = Arc::new(Barrier::new(CALLS * 2 + 2));
-    let done = Arc::new(AtomicBool::new(false));
-    let snapshot_tool = tool.clone();
-    let snapshot_barrier = Arc::clone(&barrier);
-    let snapshot_done = Arc::clone(&done);
-    let snapshot = std::thread::spawn(move || {
-        snapshot_barrier.wait();
-        let mut samples = 0usize;
-        loop {
-            let preparations = snapshot_tool.preparations();
-            let preparation_ids: BTreeSet<_> = preparations
-                .iter()
-                .map(|recorded| recorded.call.id.to_string())
-                .collect();
-            assert_eq!(preparation_ids.len(), preparations.len());
-            assert!(preparations.len() <= CALLS);
-
-            let invocations = snapshot_tool.invocations();
-            let execution_ids: BTreeSet<_> = invocations
-                .iter()
-                .map(|recorded| recorded.context.call_id.to_string())
-                .collect();
-            assert_eq!(execution_ids.len(), invocations.len());
-            assert!(invocations.len() <= CALLS);
-            assert!(
-                invocations
-                    .iter()
-                    .all(|recorded| !recorded.cancellation.is_cancelled())
-            );
-
-            let remaining = snapshot_tool.remaining_steps();
-            assert!(remaining.0 <= CALLS);
-            assert!(remaining.1 <= CALLS);
-            assert_eq!(snapshot_tool.spec(), expected_spec);
-            samples += 1;
-            if snapshot_done.load(Ordering::SeqCst) {
-                break;
-            }
-        }
-        samples
-    });
-
-    let mut workers = Vec::new();
+    let first_wave = Arc::new(Barrier::new(FIRST_WAVE * 2 + 1));
+    let second_wave = Arc::new(Barrier::new((CALLS - FIRST_WAVE) * 2 + 1));
+    let mut first_preparations = Vec::new();
+    let mut later_preparations = Vec::new();
+    let mut first_executions = Vec::new();
+    let mut later_executions = Vec::new();
     for index in 0..CALLS {
         let preparation_tool = tool.clone();
-        let preparation_barrier = Arc::clone(&barrier);
-        workers.push(std::thread::spawn(move || {
+        let preparation_barrier = if index < FIRST_WAVE {
+            Arc::clone(&first_wave)
+        } else {
+            Arc::clone(&second_wave)
+        };
+        let preparation = std::thread::spawn(move || {
+            let requested = prepared_call(index);
+            let call_id = requested.id.clone();
             preparation_barrier.wait();
-            preparation_tool.prepare(prepared_call(index)).map(drop)
-        }));
+            (call_id, preparation_tool.prepare(requested))
+        });
+        if index < FIRST_WAVE {
+            first_preparations.push(preparation);
+        } else {
+            later_preparations.push(preparation);
+        }
 
         let execution_tool = tool.clone();
-        let execution_barrier = Arc::clone(&barrier);
-        workers.push(std::thread::spawn(move || {
+        let execution_barrier = if index < FIRST_WAVE {
+            Arc::clone(&first_wave)
+        } else {
+            Arc::clone(&second_wave)
+        };
+        let execution = std::thread::spawn(move || {
+            let context = prepared_context(index);
+            let call_id = context.call_id.clone();
             execution_barrier.wait();
-            futures_executor::block_on(execution_tool.execute(
-                prepared_context(index),
+            let result = futures_executor::block_on(execution_tool.execute(
+                context,
                 json!({"execution": index}),
                 CancellationToken::new(),
-            ))
-            .map(drop)
-        }));
+            ));
+            (call_id, result)
+        });
+        if index < FIRST_WAVE {
+            first_executions.push(execution);
+        } else {
+            later_executions.push(execution);
+        }
     }
-    barrier.wait();
-    for worker in workers {
-        worker.join().unwrap().unwrap();
-    }
-    done.store(true, Ordering::SeqCst);
-    assert!(snapshot.join().unwrap() > 0);
 
-    let preparations = tool.preparations();
-    let preparation_ids: BTreeSet<_> = preparations
-        .iter()
-        .map(|recorded| recorded.call.id.to_string())
-        .collect();
-    let invocations = tool.invocations();
-    let execution_ids: BTreeSet<_> = invocations
-        .iter()
-        .map(|recorded| recorded.context.call_id.to_string())
-        .collect();
-    assert_eq!(preparations.len(), CALLS);
-    assert_eq!(preparation_ids.len(), CALLS);
-    assert_eq!(invocations.len(), CALLS);
-    assert_eq!(execution_ids.len(), CALLS);
-    assert_eq!(tool.remaining_steps(), (0, 0));
+    let mut prepared_outcomes = BTreeMap::<ToolCallId, PreparedToolCall>::new();
+    let mut execution_outcomes = BTreeMap::<ToolCallId, ToolOutput>::new();
+
+    first_wave.wait();
+    join_preparation_workers(first_preparations, &mut prepared_outcomes);
+    join_execution_workers(first_executions, &mut execution_outcomes);
+    assert_prepared_tool_snapshot(
+        &tool,
+        &expected_spec,
+        CALLS,
+        FIRST_WAVE,
+        &prepared_outcomes,
+        &execution_outcomes,
+    );
+
+    second_wave.wait();
+    join_preparation_workers(later_preparations, &mut prepared_outcomes);
+    join_execution_workers(later_executions, &mut execution_outcomes);
+    assert_prepared_tool_snapshot(
+        &tool,
+        &expected_spec,
+        CALLS,
+        CALLS,
+        &prepared_outcomes,
+        &execution_outcomes,
+    );
 }
 
 #[test]
