@@ -21,13 +21,15 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has six integrated bounded slices and a seventh candidate slice.
-The first two are native-host slices;
+Milestone 03 has seven integrated bounded slices. The first two are native-host
+slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
 provides a bounded Gateway codec over an injected host byte transport. The
-seventh candidate supplies one optional native HTTP implementation of that
-transport; it remains pending integration, review and exact-commit CI.
+seventh supplies one optional native HTTP implementation of that transport.
+Its exact feature-branch evidence is retained in the
+[`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
+the documentation-seal and eventual `main` exact-run gates remain pending.
 `machine-god-native` snapshots only `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and
 `HOME`, resolves namespaced config and state paths, and inspects their final
 metadata for status. A separate

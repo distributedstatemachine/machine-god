@@ -11,10 +11,13 @@ preflight seam. A fifth adds bounded one-level Unix-only `list_files`
 enumeration behind the same seam. A sixth adds a bounded AI Gateway request and
 stream codec behind an injected host transport; the codec itself receives no
 endpoint, credential, socket, TLS, status, retry, clock, or runtime authority.
-A seventh candidate slice adds one optional native implementation of that
+A seventh integrated slice adds one optional native implementation of that
 transport with a pinned production HTTPS endpoint and an explicitly injected
-bearer token. It remains pending integration, fresh adversarial review and
-exact-commit CI; this document does not claim that evidence is green.
+bearer token. Its feature-branch review and exact remote runs are green and
+recorded in the
+[`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md).
+The documentation-seal and eventual `main` exact-run gates remain pending; this
+is not a production-ready claim.
 Permission mode remains `ask`; CLI registration, prompting, and the fail-closed
 behavior of a production permission handler remain future work.
 

@@ -1,18 +1,19 @@
 # Milestone 03 native AI Gateway HTTP transport review 01
 
-Status: **ADVERSARIAL GREEN — exact remote runs pending**
+Status: **FEATURE-BRANCH GREEN — final documentation seal and `main` pending**
 
-## Candidate
+## Reviewed lineage
 
 - Base: `735682fc5d861971bb862c1cef6f55607ed19645`
 - Atomic feature: `791a1c9041089ce8329326801f99047898dae745`
 - Adversarial remediation: `5cef51936e8f636b77b93a36657bda9b77fd99c7`
+- Feature-branch evidence: `be6c6371bd829202fec50604e99e5a336aa38ed4`
 - Branch: `agent/m03-ai-gateway-http`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 - Pinned reference: fx revision
   `b1774fbf6c7602b503026f96f6e960e946c692ef`
 
-The candidate adds the optional native-only Reqwest/Rustls implementation of
+The integrated slice adds the optional native-only Reqwest/Rustls implementation of
 the existing injected `AiGatewayTransport` boundary. It pins the production
 origin and path, accepts only an explicit canonical numeric-loopback plaintext
 test endpoint, receives its bearer credential directly from the trusted host,
@@ -130,12 +131,29 @@ The local release CLI remains 319,152 bytes. This is a local regression
 observation only, not retained benchmark evidence or a product-performance
 claim.
 
+## Exact remote feature-branch runs
+
+The exact feature-branch evidence SHA
+`be6c6371bd829202fec50604e99e5a336aa38ed4` passed both required remote
+workflows:
+
+- [CI run 32534687349](https://github.com/distributedstatemachine/machine-god/actions/runs/32534687349)
+  completed successfully, including quality/tests, dependency policy and
+  vulnerability audit, and all four native target jobs; and
+- [Benchmark evidence run 32534687326](https://github.com/distributedstatemachine/machine-god/actions/runs/32534687326)
+  completed successfully for both pinned-upstream and bootstrap evidence jobs.
+
+Benchmark-workflow success validates this repository's evidence path. It does
+not promote the local observation above into a product-performance or
+compatibility claim.
+
 ## Remaining gates and scope
 
-The review-record commit, feature branch, and eventual fast-forwarded `main`
-SHA must pass their exact remote CI and benchmark-evidence workflows. The
-benchmark workflow uses Zig only to build the pinned upstream fx comparison
-target; machine-god remains a Rust product.
+The exact feature branch is green. The documentation-seal commit that records
+that result and the eventual fast-forwarded `main` SHA must still pass their own
+exact remote CI and benchmark-evidence workflows. Feature-branch green is not
+the final delivery seal. The benchmark workflow uses Zig only to build the
+pinned upstream fx comparison target; machine-god remains a Rust product.
 
 Milestone 03 remains in progress. This slice does not add credential discovery,
 provider/CLI wiring, permission prompting, durable native sessions, broader

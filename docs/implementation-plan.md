@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with six integrated bounded slices and a seventh candidate slice. The first
+with seven integrated bounded slices. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -94,17 +94,19 @@ Empty chunks fail, bounded no-event work yields cooperatively, and cancellation
 wins same-poll terminal races. The injected host retains endpoint, HTTP, TLS,
 authentication, status and retry responsibility; this slice performs no
 network effect itself. Its exact contract is in
-[`ai-gateway.md`](ai-gateway.md). The seventh candidate slice supplies an
-optional native-only Reqwest/Rustls HTTP transport for that injected codec. It fixes the
+[`ai-gateway.md`](ai-gateway.md). The seventh slice supplies an optional
+native-only Reqwest/Rustls HTTP transport for that injected codec. It fixes the
 production URL to `https://ai-gateway.vercel.sh/v3/ai/language-model`, requires
 an explicitly injected bounded bearer token, accepts plaintext only through an
 explicit numeric-loopback test endpoint, and fixes proxy, redirect,
 decompression, cookie, retry, timeout, active-request, status and diagnostic
 policy. The concrete transport is polled on a host-owned Tokio runtime; core,
-the codec and custom transports remain executor-neutral. Its proposed exact contract is in
-[`ai-gateway-http.md`](ai-gateway-http.md). This candidate remains **IN
-PROGRESS** pending integration, fresh adversarial review, and remote CI for the
-exact integrated commit; this plan records no green evidence for it yet.
+the codec and custom transports remain executor-neutral. Its exact contract is
+in [`ai-gateway-http.md`](ai-gateway-http.md). Exact feature-branch review and
+remote-run evidence is retained in the
+[`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md).
+The documentation-seal commit and eventual `main` SHA retain their exact remote
+workflow gates.
 
 These slices do not complete Milestone 03. Permission prompting and modes
 beyond `ask`, credential discovery and broader configuration, durable native

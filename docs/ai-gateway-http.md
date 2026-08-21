@@ -1,12 +1,14 @@
 # Optional native AI Gateway HTTP transport
 
-This page is the normative contract for the candidate seventh bounded
+This page is the normative contract for the seventh integrated bounded
 Milestone 03 slice. It adds a Reqwest-backed `AiGatewayHttpTransport` as one
 optional native implementation of the injected byte-transport boundary in the
-[`AiGatewayProvider` codec](ai-gateway.md). The candidate remains **IN
-PROGRESS** until it is integrated, receives fresh adversarial review, and
-passes remote CI for the exact integrated commit. No green or production-ready
-claim is made here.
+[`AiGatewayProvider` codec](ai-gateway.md). The exact feature-branch review and
+remote evidence are recorded in the
+[`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md).
+The documentation-seal commit and eventual `main` SHA retain their exact-run
+delivery gates. Milestone 03 remains in progress, and this is not a
+production-ready claim.
 
 The transport implements `AiGatewayTransport` with standard futures and
 streams, but its concrete startup future and response stream must be polled

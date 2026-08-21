@@ -40,7 +40,7 @@ timeouts, and any retry policy. A transport must return only the byte stream of
 an accepted streaming response or a redacted `ProviderError`. This provider
 does not inspect HTTP status or error bodies and does not retry.
 
-That candidate native transport narrows those host choices to a pinned
+The integrated native transport narrows those host choices to a pinned
 production HTTPS endpoint, an explicitly injected bearer token, and a fixed
 hardened HTTP policy. Its limits, status mapping, cancellation behavior and
 loopback-only plaintext test endpoint are normative in
