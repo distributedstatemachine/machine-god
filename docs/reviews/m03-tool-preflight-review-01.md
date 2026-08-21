@@ -159,8 +159,12 @@ Rust/Cargo 1.94.1:
 - `cargo-deny check`: advisories, bans, licenses, and sources all accepted;
 - `cargo audit --no-fetch`: 1,225 cached advisories checked across 33 lockfile
   dependencies with no finding;
-- relative documentation links: 36 checked; and
+- relative documentation links: 35 checked; and
 - `git diff --check` and a clean worktree.
+
+The documentation/index commit `0646cc89618674c54d61ed4167594a103da84591`
+added the review-index link and separately rechecked 36 relative documentation
+links, `git diff --check`, and a clean worktree.
 
 The stripped local release CLI remained 319,152 bytes. This is a local
 regression observation only, not retained cross-platform benchmark evidence or
