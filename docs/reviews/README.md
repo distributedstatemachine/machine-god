@@ -15,3 +15,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 confined native read_file review](m03-read-file-review-01.md)
 - [Milestone 03 Linux containment marker remediation review](m03-benchmark-containment-marker-review-01.md)
 - [Milestone 03 confined native list_files review](m03-list-files-review-01.md)
+- [Milestone 03 injected-transport AI Gateway review](m03-ai-gateway-review-01.md)
