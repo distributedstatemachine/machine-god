@@ -321,8 +321,9 @@ JSON. In particular, native filesystem, process, and network tools must execute
 the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
-The first concrete consumer is the native
-[`read_file` tool](read-file.md). Its effect-free preflight turns the strict
+The first concrete consumers are the native
+[`read_file` tool](read-file.md) and [`list_files` tool](list-files.md).
+`read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
 arguments containing the same normalized workspace-relative path. The native
@@ -331,6 +332,22 @@ descriptor-relative no-follow traversal, 4,096-byte path bound, 8 KiB content
 bound, UTF-8 requirement, redacted error taxonomy, and syscall-granularity
 cancellation limitations. Core's policy ordering, prepared-value limits,
 generic durable tool-error mapping, and result limits remain unchanged.
+
+`list_files` effect-free preflight accepts only `{}` or a sole string `path`,
+defaults omission to `.`, and produces both
+`Capability::Filesystem { access: Enumerate, path }` and exact prepared
+`{"path":"<normalized>"}` execution arguments. The native tool owns the
+workspace descriptor opened from an explicit absolute host path, Unix
+descriptor-relative directory and no-follow traversal, 4,096-byte lexical path
+bound, safe UTF-8 entry-name validation, and fixed redacted errors. It
+enumerates one level without opening children, retains at most 100 entries and
+16 KiB of aggregate raw name bytes, reads one extra visible entry to establish
+truncation, and sorts only the retained subset. Its exact `{path, entries:
+[{name, kind}], truncated}` structured content plus the fixed `ToolOutput`
+envelope is at most 44,130 serialized bytes under the independent tool bounds,
+so it remains within the default 64 KiB result limit. A configured lower result
+limit still applies after execution. Core does not add recursion, ordering,
+snapshot, or filesystem semantics to this native result.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

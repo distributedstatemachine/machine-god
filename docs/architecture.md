@@ -21,9 +21,10 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has four bounded slices. The first two are native-host slices;
-the third extends the authority-free core tool contract, and the fourth uses
-that contract for the first executable native capability. `machine-god-native`
+Milestone 03 has five bounded slices. The first two are native-host slices;
+the third extends the authority-free core tool contract, and the fourth and
+fifth use that contract for bounded executable native capabilities.
+`machine-god-native`
 snapshots only
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and
 state paths, and inspects their final metadata for status. A separate
@@ -31,7 +32,8 @@ synchronous native authority can load the resolved config file read-only.
 `machine-god-cli` remains a thin formatter for status, does not invoke the
 loader, and owns no product state. The exact surfaces are documented in
 [`cli.md`](cli.md) and [`configuration.md`](configuration.md). The separate
-[`read_file` contract](read-file.md) does not change either CLI surface.
+[`read_file` contract](read-file.md) and
+[`list_files` contract](list-files.md) do not change either CLI surface.
 
 ```text
 process environment -> resolved native paths
@@ -40,7 +42,8 @@ process environment -> resolved native paths
  state path ------> final metadata -----------> status -> CLI text/JSON
 
 host-selected absolute workspace -> retained directory authority
- model {path} -> lexical preflight -> policy -> descriptor-relative read_file
+ model {path}  -> lexical preflight -> Read policy      -> read_file
+ model {path?} -> lexical preflight -> Enumerate policy -> one-level list_files
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -55,11 +58,12 @@ Status inspection remains deliberately shallower than configuration loading. It
 uses `symlink_metadata` on the final path, reports
 missing/inaccessible/wrong-kind states, and treats a final symlink as
 wrong-kind. It does not open, read, or parse the config file. Permission mode is
-fixed to `ask`; the CLI does not construct an engine, register `read_file`, or
-prompt for permission. The CLI serializes paths as JSON strings even in human
-status so path contents do not become terminal controls. Bare invocation keeps the
-bootstrap identity contract. Help, version, status, and argument errors remain
-byte-stable presentation behavior, not an engine-owned command model.
+fixed to `ask`; the CLI does not construct an engine, register `read_file` or
+`list_files`, or prompt for permission. The CLI serializes paths as JSON strings
+even in human status so path contents do not become terminal controls. Bare
+invocation keeps the bootstrap identity contract. Help, version, status, and
+argument errors remain byte-stable presentation behavior, not an engine-owned
+command model.
 
 The synchronous loader resolves only the config location. An unavailable
 location or missing file yields an explicit built-in schema-v1 configuration
@@ -77,8 +81,8 @@ Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 or operating-system error text. Configuration mutation, permission modes beyond
 `ask`, prompting, providers, executable native tools other than the bounded
-`read_file` library capability, durable native sessions, and CLI expansion
-remain deferred.
+`read_file` and `list_files` library capabilities, durable native sessions, and
+CLI expansion remain deferred.
 
 ```text
                         machine-god-core
@@ -162,10 +166,40 @@ success. Cancellation is checked before traversal, between bounded reads, and
 after validation; it cannot preempt one operating-system call already in
 flight. No background task is detached.
 
-The retained root confines model-selected components, but it is not a sandbox
-against the host that selected the workspace. Resolution of the root's ancestor
-path and mount points beneath it belong to that trusted host boundary. Hardened
-construction and traversal on non-Unix targets remain deferred.
+The native `list_files` tool is likewise rooted in an explicitly supplied
+absolute host path whose opened directory descriptor is retained. Its
+effect-free preflight accepts only `{}` or an object whose sole field is a
+string `path`; omission selects `.`. The 4,096-byte lexical path
+rules match the confined Unix spelling rules of `read_file`, including rejection
+of absolute paths, parent components, controls, and bidirectional-formatting
+characters. Backslash and space remain literal Unix filename characters. The
+prepared `Capability::Filesystem(Enumerate)` path and execution argument are the
+same normalized workspace-relative string.
+
+Allowed execution walks to exactly one selected directory with
+descriptor-relative directory and no-follow requirements. It enumerates only
+that directory's immediate entries and obtains `file`, `directory`, `symlink`,
+or `other` solely from each entry's reported type; an unknown type is `other`.
+It does not recurse, open children, read content, apply ignore rules, resolve
+symlink targets, inspect external paths, or discover a workspace. Only `.` and
+`..` are skipped. Every returned name is safe valid UTF-8.
+
+The tool retains at most 100 entries and 16 KiB of aggregate raw entry-name
+bytes, then reads the first extra visible entry needed to establish truncation.
+It sorts only the retained subset. A truncated subset can therefore depend on
+filesystem iteration order, and the result makes no whole-directory ordering or
+snapshot claim. The structured output is exactly `{path, entries:
+[{name, kind}], truncated}`. Its conservative maximum serialized size is 44,101
+bytes for the structured content and 44,130 bytes including core's fixed
+`ToolOutput` envelope, below the default 64 KiB per-result limit. The normative
+behavior, fixed redacted errors, and cancellation boundaries are in
+[`list-files.md`](list-files.md).
+
+The retained roots confine model-selected components, but they are not sandboxes
+against the hosts that selected a workspace path. Resolution of a root path's
+ancestors and mount points beneath a retained root belong to that trusted host
+boundary. Hardened construction and traversal on non-Unix targets remain
+deferred.
 
 A preparation error consults no permission handler and starts no tool. It
 replaces the already-durable unknown placeholder with the same fixed generic

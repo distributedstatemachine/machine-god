@@ -7,8 +7,10 @@ and reads final-path metadata for status. A second bounded native authority
 loads configuration synchronously and read-only. A third, provider-neutral
 slice adds capability-aware tool preflight without exercising native authority.
 A fourth slice adds a bounded Unix-only `read_file` implementation behind that
-preflight seam. Permission mode remains `ask`; CLI registration, prompting, and
-the fail-closed behavior of a production permission handler remain future work.
+preflight seam. A fifth adds bounded one-level Unix-only `list_files`
+enumeration behind the same seam. Permission mode remains `ask`; CLI
+registration, prompting, and the fail-closed behavior of a production
+permission handler remain future work.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -51,8 +53,8 @@ read errors are not converted into defaults.
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation, prompting and modes beyond `ask`, concrete
 providers, native session persistence, CLI expansion, native tools other than
-the bounded library-level `read_file`, and compatibility or performance claims
-remain outside the implemented slices.
+the bounded library-level `read_file` and `list_files`, and compatibility or
+performance claims remain outside the implemented slices.
 
 Tool preflight closes the representation gap between a model's raw JSON call
 and the operation presented to permission policy. The source-compatible default
@@ -131,12 +133,46 @@ traversal, between bounded reads, and after content validation. It closes
 retained per-call descriptors and buffers but cannot interrupt an individual
 open, metadata, or read syscall already in flight.
 
-This is descriptor-rooted confinement of model-selected path components, not a
-claim that an untrusted host is sandboxed. The host's resolution of ancestor
-components leading to the injected root and mount points visible beneath the
-retained directory are trusted inputs. Hardened non-Unix workspace construction
-and traversal remain deferred. The normative surface is
-[`read-file.md`](read-file.md).
+`list_files` uses the same authorization and confinement boundary for
+`FilesystemAccess::Enumerate`. Strict effect-free preflight accepts only `{}` or
+a sole string `path`, defaults omission to `.`, applies the 4,096-byte bound and
+the same absolute, parent, control, and bidirectional-character rejection, and
+gives policy and execution the exact same normalized path. Backslash and space
+are literal Unix filename characters. No preflight filesystem effect occurs.
+
+Allowed enumeration opens every selected component relative to the retained
+root with directory and no-follow requirements. It never follows a selected or
+entry symlink and never opens a child, resolves an entry target, reads content,
+recurses, applies ignore rules, accesses an external path, or discovers a
+workspace. It skips only `.` and `..`. Entry kinds come directly from the
+directory entry type; an unknown type is `other`. Every observed visible name,
+including a truncation witness, must be safe valid UTF-8 or the call fails with
+a fixed redacted error.
+
+Enumeration retains no more than 100 entries and 16 KiB of aggregate raw name
+bytes. It reads the first extra visible entry needed to prove truncation and
+then stops, sorting only what it retained. This limits retained memory and
+syscall work after a bound is crossed, but a truncated selection can reflect
+filesystem iteration order. It is not a whole-directory ordering or snapshot
+claim. At the independent maximums, JSON escaping and fixed entry syntax remain
+within 44,130 serialized bytes including core's fixed `ToolOutput` envelope,
+below the default 64 KiB result limit.
+
+Failures use the fixed constructor and tool-error tables in
+[`list-files.md`](list-files.md). No root, requested path, entry name,
+operating-system text, or error number enters the fixed public diagnostic.
+Cancellation is checked before traversal, between component opens, before
+enumeration, between entry reads, and after result validation and sorting. It
+cannot preempt one open or directory-read syscall already in flight and spawns
+no detached work.
+
+These tools provide descriptor-rooted confinement of model-selected path
+components, not a claim that an untrusted host is sandboxed. The host's
+resolution of ancestor components leading to an injected root path and mount
+points visible beneath a retained directory are trusted inputs. Hardened
+non-Unix workspace construction and traversal remain deferred. The normative
+surfaces are [`read-file.md`](read-file.md) and
+[`list-files.md`](list-files.md).
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,

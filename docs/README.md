@@ -7,6 +7,7 @@
 - [Command-line interface](cli.md)
 - [Native configuration](configuration.md)
 - [Native `read_file` tool](read-file.md)
+- [Native `list_files` tool](list-files.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with four bounded slices. The first provides read-only native config/state
+with five bounded slices. The first provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
 schema-v1 `ask` config, bounded to 64 KiB with fail-closed file and content
@@ -68,13 +68,26 @@ and execution the same normalized workspace-relative path. Allowed execution
 walks retained directory descriptors without following any component symlink,
 accepts only a regular file, retains at most 8 KiB plus one overflow-detection
 byte, and returns only valid UTF-8. The exact contract is in
-[`read-file.md`](read-file.md). These slices do not complete Milestone 03.
-Concrete providers, permission prompting and modes beyond `ask`, durable native
-sessions, broader configuration and CLI behavior, non-Unix hardened workspace
+[`read-file.md`](read-file.md). The fifth slice adds `list_files`, a
+Unix-hardened, read-only, one-directory enumeration rooted in an explicit
+absolute host path whose directory descriptor is retained. Its pure
+preflight accepts only `{}` or a sole string `path`, defaults an omitted path to
+`.`, and gives policy and execution the same normalized
+`Capability::Filesystem(Enumerate)` path. Allowed execution uses retained
+descriptor-relative directory and no-follow traversal, reads no child content,
+and returns at most 100 sorted retained entries and 16 KiB of aggregate raw
+entry-name bytes plus a truncation flag. It reads only the first extra visible
+entry needed to establish truncation, so a truncated subset may reflect
+filesystem iteration order rather than global directory order. The exact
+contract is in [`list-files.md`](list-files.md). These slices do not complete
+Milestone 03. Concrete providers, permission prompting and modes beyond `ask`,
+durable native sessions, broader configuration and CLI behavior, workspace
+discovery, recursive/glob/grep and mutation tools, non-Unix hardened workspace
 construction, the remaining executable native tools, and compatibility or
-performance claims remain planned. Existing CLI bytes are unchanged, and the
-help and status commands remain explicitly non-equivalent, claim-ineligible,
-and unmeasured in bootstrap evidence.
+performance claims remain planned. Existing CLI bytes, provider surfaces,
+benchmark evidence, workflows, and Zig inputs are unchanged; the help and
+status commands remain explicitly non-equivalent, claim-ineligible, and
+unmeasured in bootstrap evidence.
 
 ## Release gates
 

@@ -7,11 +7,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod config;
+mod list_files;
 mod read_file;
 
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
     NativeConfigError, NativeConfigErrorKind, load_native_config, load_process_config,
+};
+pub use list_files::{
+    LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,
+    MAX_LIST_FILES_ENTRIES, MAX_LIST_FILES_PATH_BYTES, MAX_LIST_FILES_TOTAL_NAME_BYTES,
 };
 pub use read_file::{
     MAX_READ_FILE_BYTES, MAX_READ_FILE_PATH_BYTES, READ_FILE_TOOL_NAME, ReadFileTool,
