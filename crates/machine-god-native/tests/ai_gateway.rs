@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -27,6 +28,9 @@ struct RecordedRequest {
 enum ByteStep {
     Chunk(Vec<u8>),
     Error(ProviderError),
+    CancelThenChunk(Vec<u8>),
+    CancelThenError(ProviderError),
+    CancelThenEof,
     Pending,
 }
 
@@ -34,6 +38,7 @@ enum ByteStep {
 enum TransportStep {
     Bytes(Vec<ByteStep>),
     Error(ProviderError),
+    CancelThenError(ProviderError),
     Pending,
 }
 
@@ -67,7 +72,7 @@ impl AiGatewayTransport for ScriptedTransport {
     fn stream(
         &self,
         request: AiGatewayTransportRequest,
-        _cancellation: CancellationToken,
+        cancellation: CancellationToken,
     ) -> machine_god_core::BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
         let snapshot = RecordedRequest {
             headers: request
@@ -86,8 +91,13 @@ impl AiGatewayTransport for ScriptedTransport {
             match step {
                 Some(TransportStep::Bytes(steps)) => Ok(Box::pin(ScriptedByteStream {
                     steps: steps.into(),
+                    cancellation,
                 }) as AiGatewayByteStream),
                 Some(TransportStep::Error(error)) => Err(error),
+                Some(TransportStep::CancelThenError(error)) => {
+                    cancellation.cancel();
+                    Err(error)
+                }
                 Some(TransportStep::Pending) => future::pending().await,
                 None => Err(ProviderError::new(
                     ProviderErrorKind::Other,
@@ -103,6 +113,7 @@ impl AiGatewayTransport for ScriptedTransport {
 #[derive(Debug)]
 struct ScriptedByteStream {
     steps: VecDeque<ByteStep>,
+    cancellation: CancellationToken,
 }
 
 impl Stream for ScriptedByteStream {
@@ -114,6 +125,18 @@ impl Stream for ScriptedByteStream {
             Some(_) => match self.steps.pop_front().unwrap() {
                 ByteStep::Chunk(bytes) => Poll::Ready(Some(Ok(bytes))),
                 ByteStep::Error(error) => Poll::Ready(Some(Err(error))),
+                ByteStep::CancelThenChunk(bytes) => {
+                    self.cancellation.cancel();
+                    Poll::Ready(Some(Ok(bytes)))
+                }
+                ByteStep::CancelThenError(error) => {
+                    self.cancellation.cancel();
+                    Poll::Ready(Some(Err(error)))
+                }
+                ByteStep::CancelThenEof => {
+                    self.cancellation.cancel();
+                    Poll::Ready(None)
+                }
                 ByteStep::Pending => unreachable!(),
             },
             None => Poll::Ready(None),
@@ -342,21 +365,36 @@ fn request_encoding_matches_the_pinned_gateway_shape() {
 }
 
 #[test]
-fn request_rejects_unsupported_options_and_content_without_transport() {
+fn unsupported_optional_inference_fields_are_ignored_and_omitted() {
+    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    let provider = provider(&transport);
+    let mut value = request(vec![Message::text(Role::User, "hello")]);
+    value.options.temperature = Some(0.5);
+    value
+        .options
+        .metadata
+        .insert("secret".to_owned(), json!({"nested":["value"]}));
+    let stream = start(&provider, value, CancellationToken::new()).unwrap();
+    let events = futures_executor::block_on(stream.collect::<Vec<_>>())
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        events,
+        [ModelEvent::Stop {
+            reason: StopReason::Completed
+        }]
+    );
+    let requests = transport.requests();
+    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert!(body.get("temperature").is_none());
+    assert!(body.get("metadata").is_none());
+    assert!(!String::from_utf8_lossy(&requests[0].body).contains("secret"));
+}
+
+#[test]
+fn request_rejects_unsupported_content_without_transport() {
     let cases = [
-        {
-            let mut value = request(vec![Message::text(Role::User, "hello")]);
-            value.options.temperature = Some(0.5);
-            value
-        },
-        {
-            let mut value = request(vec![Message::text(Role::User, "hello")]);
-            value
-                .options
-                .metadata
-                .insert("secret".to_owned(), json!("value"));
-            value
-        },
         request(vec![Message {
             role: Role::User,
             content: vec![ContentBlock::Json {
@@ -479,6 +517,53 @@ fn streamed_tool_input_falls_back_only_after_start_delta_and_end() {
             },
         ]
     );
+}
+
+#[test]
+fn final_tool_calls_reconcile_unique_provisional_ids_by_name_and_input() {
+    let body = concat!(
+        "data: {\"type\":\"tool-input-start\",\"id\":\"provisional-a\",\"toolName\":\"read_file\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"provisional-a\",\"delta\":\"{\\\"path\\\":\\\"a\\\"}\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"provisional-a\"}\n\n",
+        "data: {\"type\":\"tool-input-start\",\"id\":\"provisional-b\",\"toolName\":\"list_files\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"provisional-b\",\"delta\":\"{\\\"path\\\":\\\"b\\\"}\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"provisional-b\"}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final-b\",\"toolName\":\"list_files\",\"input\":{\"path\":\"b\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final-a\",\"toolName\":\"read_file\",\"input\":{\"path\":\"a\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    );
+    let events = collect(fragments(body.as_bytes(), &[3, 11, 1, 19])).unwrap();
+    assert_eq!(events.len(), 3);
+    assert!(matches!(
+        &events[0],
+        ModelEvent::ToolCall { call }
+            if call.id.as_str() == "final-b" && call.arguments == json!({"path":"b"})
+    ));
+    assert!(matches!(
+        &events[1],
+        ModelEvent::ToolCall { call }
+            if call.id.as_str() == "final-a" && call.arguments == json!({"path":"a"})
+    ));
+    assert_eq!(
+        events[2],
+        ModelEvent::Stop {
+            reason: StopReason::ToolCalls
+        }
+    );
+}
+
+#[test]
+fn ambiguous_provisional_tool_call_reconciliation_is_rejected() {
+    let body = concat!(
+        "data: {\"type\":\"tool-input-start\",\"id\":\"p-1\",\"toolName\":\"echo\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"p-1\",\"delta\":\"{}\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"p-1\"}\n\n",
+        "data: {\"type\":\"tool-input-start\",\"id\":\"p-2\",\"toolName\":\"echo\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"p-2\",\"delta\":\"{}\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"p-2\"}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final\",\"toolName\":\"echo\",\"input\":{}}\n\n"
+    );
+    protocol_error(collect(bytes(body)));
 }
 
 #[test]
@@ -633,6 +718,68 @@ fn transport_startup_and_stream_errors_preserve_structured_errors() {
 }
 
 #[test]
+fn cancellation_wins_same_poll_startup_stream_error_chunk_and_eof_races() {
+    let transport_error = ProviderError::new(
+        ProviderErrorKind::Transport,
+        "fixture_race",
+        "fixture transport race",
+        true,
+    );
+    let transport =
+        ScriptedTransport::new([TransportStep::CancelThenError(transport_error.clone())]);
+    let provider = provider(&transport);
+    let startup_error = expect_start_error(
+        start(
+            &provider,
+            request(vec![Message::text(Role::User, "hello")]),
+            CancellationToken::new(),
+        ),
+        "same-poll startup cancellation",
+    );
+    assert_eq!(startup_error.kind, ProviderErrorKind::Cancelled);
+
+    for step in [
+        ByteStep::CancelThenError(transport_error),
+        ByteStep::CancelThenChunk(finish("stop").into_bytes()),
+        ByteStep::CancelThenEof,
+    ] {
+        let error = collect(TransportStep::Bytes(vec![step])).unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    }
+}
+
+#[test]
+fn empty_chunks_fail_and_no_event_chunks_yield_after_one_source_poll() {
+    let error = protocol_error(collect(TransportStep::Bytes(vec![ByteStep::Chunk(
+        Vec::new(),
+    )])));
+    assert_eq!(error.code, "gateway_empty_chunk");
+
+    let transport = ScriptedTransport::new([TransportStep::Bytes(vec![
+        ByteStep::Chunk(b": keepalive\n".to_vec()),
+        ByteStep::Chunk(finish("stop").into_bytes()),
+    ])]);
+    let provider = provider(&transport);
+    let mut events = start(
+        &provider,
+        request(vec![Message::text(Role::User, "hello")]),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(events.next().now_or_never().is_none());
+    let events = futures_executor::block_on(events.collect::<Vec<_>>())
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        events,
+        [ModelEvent::Stop {
+            reason: StopReason::Completed
+        }]
+    );
+}
+
+#[test]
 fn cancellation_before_poll_has_no_transport_side_effect_and_drop_detaches_no_work() {
     let transport = ScriptedTransport::new([TransportStep::Pending]);
     let provider = provider(&transport);
@@ -684,6 +831,78 @@ fn cancelled_pending_byte_stream_wakes_and_resolves_as_cancelled() {
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
 }
 
+fn deeply_nested_array(depth: usize) -> Value {
+    let mut value = Value::Null;
+    for _ in 0..depth {
+        value = Value::Array(vec![value]);
+    }
+    value
+}
+
+#[test]
+fn request_guard_iteratively_drops_deep_json_before_and_during_polling() {
+    const CHILD_MODE: &str = "MACHINE_GOD_GATEWAY_DEEP_DROP_MODE";
+    if let Ok(mode) = std::env::var(CHILD_MODE) {
+        let transport = ScriptedTransport::new([]);
+        let provider = provider(&transport);
+        let mut model_request = request(vec![Message::text(Role::User, "hello")]);
+        model_request
+            .options
+            .metadata
+            .insert("deep".to_owned(), deeply_nested_array(20_000));
+        model_request.tools.push(ToolSpec {
+            name: ToolName::new("deep_tool").unwrap(),
+            description: "deep schema fixture".to_owned(),
+            input_schema: deeply_nested_array(20_000),
+        });
+        let call_id = ToolCallId::new("deep-call").unwrap();
+        model_request.messages.extend([
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Json {
+                    value: deeply_nested_array(20_000),
+                }],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall {
+                    call: ToolCall {
+                        id: call_id.clone(),
+                        name: ToolName::new("deep_tool").unwrap(),
+                        arguments: deeply_nested_array(20_000),
+                    },
+                }],
+            },
+            Message {
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult {
+                    call_id,
+                    output: ToolOutput::success(deeply_nested_array(20_000)),
+                }],
+            },
+        ]);
+        let future = provider.stream(model_request, CancellationToken::new());
+        if mode == "unpolled" {
+            drop(future);
+        } else {
+            let error = expect_start_error(futures_executor::block_on(future), "deep request JSON");
+            assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+            assert_eq!(error.code, "gateway_json_depth_limit");
+        }
+        return;
+    }
+
+    for mode in ["unpolled", "polled"] {
+        let status = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("request_guard_iteratively_drops_deep_json_before_and_during_polling")
+            .env(CHILD_MODE, mode)
+            .status()
+            .unwrap();
+        assert!(status.success(), "deep-drop child failed in {mode} mode");
+    }
+}
+
 fn tight_limits() -> AiGatewayLimits {
     AiGatewayLimits {
         max_request_bytes: 512,
@@ -697,6 +916,7 @@ fn tight_limits() -> AiGatewayLimits {
         max_streamed_tool_calls: 1,
         max_tool_calls: 1,
         max_tool_arguments_bytes: 16,
+        max_json_nodes: 32,
     }
 }
 
@@ -714,6 +934,7 @@ fn default_limits_are_fixed_and_request_and_chunk_caps_are_enforced() {
     assert_eq!(default.max_streamed_tool_calls, 64);
     assert_eq!(default.max_tool_calls, 64);
     assert_eq!(default.max_tool_arguments_bytes, 64 * 1024);
+    assert_eq!(default.max_json_nodes, 262_144);
 
     let base = tight_limits();
     let oversized_chunk = "x".repeat(129);
@@ -745,6 +966,90 @@ fn default_limits_are_fixed_and_request_and_chunk_caps_are_enforced() {
         "oversized request",
     );
     assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+    assert!(transport.requests().is_empty());
+}
+
+#[test]
+fn json_node_budget_is_independent_for_requests_records_and_string_arguments() {
+    let mut limits = AiGatewayLimits {
+        max_json_nodes: 4,
+        ..AiGatewayLimits::default()
+    };
+    let transport = ScriptedTransport::new([]);
+    let provider =
+        AiGatewayProvider::with_limits("provider/model", Arc::new(transport.clone()), limits)
+            .unwrap();
+    let mut model_request = request(vec![Message::text(Role::User, "hello")]);
+    model_request
+        .options
+        .metadata
+        .insert("wide".to_owned(), json!([0, 1, 2, 3]));
+    let error = expect_start_error(
+        start(&provider, model_request, CancellationToken::new()),
+        "wide request JSON",
+    );
+    assert_eq!(error.code, "gateway_json_node_limit");
+    assert!(transport.requests().is_empty());
+
+    let wide_record = concat!(
+        "data: {\"type\":\"future\",\"wide\":[0,1,2]}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    );
+    protocol_error(collect_with_limits(bytes(wide_record), limits));
+
+    limits.max_json_nodes = 8;
+    let nested_argument = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"call-1\",",
+        "\"toolName\":\"echo\",\"input\":\"{\\\"wide\\\":[0,1,2,3,4,5,6,7]}\"}\n\n"
+    );
+    protocol_error(collect_with_limits(bytes(nested_argument), limits));
+}
+
+#[test]
+fn tool_result_projection_uses_one_cumulative_request_budget() {
+    let calls = ["call-1", "call-2"].map(|id| ToolCall {
+        id: ToolCallId::new(id).unwrap(),
+        name: ToolName::new("echo").unwrap(),
+        arguments: json!({}),
+    });
+    let model_request = request(vec![
+        Message::text(Role::User, "run both"),
+        Message {
+            role: Role::Assistant,
+            content: calls
+                .iter()
+                .cloned()
+                .map(|call| ContentBlock::ToolCall { call })
+                .collect(),
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: calls[0].id.clone(),
+                output: ToolOutput::success("x".repeat(60)),
+            }],
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: calls[1].id.clone(),
+                output: ToolOutput::success("y".repeat(60)),
+            }],
+        },
+    ]);
+    let limits = AiGatewayLimits {
+        max_request_bytes: 100,
+        ..AiGatewayLimits::default()
+    };
+    let transport = ScriptedTransport::new([]);
+    let provider =
+        AiGatewayProvider::with_limits("provider/model", Arc::new(transport.clone()), limits)
+            .unwrap();
+    let error = expect_start_error(
+        start(&provider, model_request, CancellationToken::new()),
+        "cumulative projected tool results",
+    );
+    assert_eq!(error.code, "gateway_request_byte_limit");
     assert!(transport.requests().is_empty());
 }
 

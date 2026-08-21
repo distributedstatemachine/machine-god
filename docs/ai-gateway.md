@@ -25,9 +25,10 @@ headers, bodies, response bytes, or transport-controlled errors.
 The transport receives one owned `AiGatewayTransportRequest` containing the
 encoded body and fixed request metadata, plus the turn's `CancellationToken`.
 It returns an `AiGatewayByteStream`, whose chunks may split any UTF-8 code point,
-JSON token, field, or record delimiter. The provider invokes the transport
-exactly once per `ModelProvider::stream` call and never detaches a task or
-thread.
+JSON token, field, or record delimiter. For a valid request whose returned
+future is polled through startup, the provider invokes the transport exactly
+once. An unpolled, pre-cancelled, or invalid request invokes it zero times. The
+provider never detaches a task or thread.
 
 The injected host transport owns all effects and policy needed to deliver that
 request: endpoint and URL selection, DNS, proxy behavior, HTTP method, TLS,
@@ -57,9 +58,12 @@ identity and security policy.
 
 The selected model is `ModelRequest.options.model` when present and otherwise
 the provider's default. An empty selected model is invalid. Temperature and
-inference metadata are unsupported and rejected rather than ignored. A present
-`max_output_tokens` becomes the sole optional body field
-`maxOutputTokens`; zero is invalid.
+inference metadata have no pinned wire projection and are ignored rather than
+making an otherwise valid request fail. Metadata JSON is still traversed under
+the same structural depth and node limits as other owned request JSON before it
+is discarded iteratively; temperature has no JSON structure to traverse.
+Neither field is serialized. A present `max_output_tokens` becomes the sole
+optional body field `maxOutputTokens`; zero is invalid.
 
 The body has only `prompt`, `tools`, `toolChoice`, and the optional
 `maxOutputTokens`. `toolChoice` is `{"type":"auto"}` when tools are present
@@ -130,13 +134,15 @@ A tool call may carry its complete JSON `input` in the final `tool-call`, or it
 may be reconstructed from one `tool-input-start`, zero or more matching
 `tool-input-delta` records, one `tool-input-end`, and a matching final
 `tool-call`. A complete input carried by the final event is authoritative; an
-otherwise missing input may use the completed streamed value. Identity and
-name conflicts still reject. If the streamed input was already ended, its JSON
-must also equal an explicit final input. Call IDs and names must be nonempty and
-valid for core, final IDs must be unique, argument JSON must be complete, and no
-more than the configured number of calls may be accumulated. Only a validated
-final call is emitted to core; start, delta, and end records never expose a
-partial call.
+otherwise missing input uses the completed streamed value with the same ID. If
+the final ID differs from a provisional streamed ID, an explicit final name and
+input reconcile it only when exactly one ended provisional input has that name
+and a structurally equal JSON value. An ambiguous match, an identity/name
+conflict, or unequal explicit input rejects the response. Call IDs and names
+must be nonempty and valid for core, final IDs must be unique, argument JSON
+must be complete, and no more than the configured number of calls may be
+accumulated. Only the validated final ID, name, and arguments are emitted to
+core; start, delta, and end records never expose a partial call.
 
 The decoder rejects unmatched, conflicting, late, duplicate, or unfinished tool
 input state. It also rejects provider-executed calls, `tool-result` response
@@ -145,6 +151,14 @@ record already received in the same chunk after finish. `[DONE]` emits nothing
 and can terminate the stream only after one valid finish; EOF has the same
 requirement. A stream that ends with `[DONE]` or EOF but no finish is a protocol
 failure. Once the stop is yielded, later transport chunks are not polled.
+
+Every transport item must contain a nonempty byte chunk. An empty successful
+chunk is a protocol failure rather than an opportunity for a source to keep the
+executor in a ready loop. One poll processes at most one nonempty chunk that
+produces no event; it schedules another poll and yields so a ready source of
+comments, ignored fields, unknown events, or partial records cannot monopolize
+the executor. Event-producing chunks still expose events one at a time through
+ordinary stream polls.
 
 The unified finish mapping is exact:
 
@@ -181,11 +195,18 @@ changing a total.
 | simultaneously reconstructed streamed tool inputs | 64 |
 | final response tool calls | 64 |
 | historical or response arguments per tool call | 64 KiB (65,536 bytes) |
+| aggregate request JSON nodes; each decoded response/argument JSON tree | 262,144 |
 
 Crossing any bound fails before retaining the excess object. Custom limits do
 not make one budget substitute for another. In particular, a small record does
 not grant additional total-response capacity, and unused capacity in one tool
-call does not enlarge another call's argument budget.
+call does not enlarge another call's argument budget. The request-side node
+budget aggregates inference metadata, tool schemas, message JSON blocks,
+historical call arguments, and tool-result content. Each response record and
+each reconstructed streamed argument parse receives a fresh node budget.
+Serialized historical tool results also share one cumulative request-projection
+budget while the body is built, so intermediate retained strings cannot each
+claim the full request allowance.
 
 ## Errors and cancellation
 
@@ -208,9 +229,16 @@ decoded records, before each yielded event, and at terminal processing. The
 provider registers for cancellation wakeups, so cancellation does not require
 another response byte to become observable. The transport receives the same
 token and must arrange an equivalent wakeup while its own future or byte stream
-is pending. Dropping the provider future or event stream drops all owned
-transport futures, streams, buffers, and partial tool state. No detached task,
-thread, timer, or retry survives cancellation or drop.
+is pending. If cancellation becomes ready during the same poll that would
+otherwise return a terminal response event or terminal response failure,
+cancellation wins. Dropping the provider future or event stream drops all owned
+transport futures, streams, buffers, and partial tool state. Before an owned
+`ModelRequest` leaves its guard, all of its JSON trees, including ignored
+metadata, pass aggregate depth/node validation. Early rejection, cancellation,
+or drop drains guarded JSON iteratively before dropping the outer request, so a
+deep hostile tree does not fall back to recursive `serde_json::Value`
+destruction. Accepted trees are within the fixed safe depth ceiling. No detached
+task, thread, timer, or retry survives cancellation or drop.
 
 ## Deferred scope
 

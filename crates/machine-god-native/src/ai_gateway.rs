@@ -9,6 +9,7 @@ use machine_god_core::{
 use serde::Serialize;
 use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::future::{Future, poll_fn};
@@ -44,6 +45,7 @@ pub struct AiGatewayLimits {
     pub max_streamed_tool_calls: usize,
     pub max_tool_calls: usize,
     pub max_tool_arguments_bytes: usize,
+    pub max_json_nodes: usize,
 }
 
 impl Default for AiGatewayLimits {
@@ -60,6 +62,7 @@ impl Default for AiGatewayLimits {
             max_streamed_tool_calls: 64,
             max_tool_calls: 64,
             max_tool_arguments_bytes: 64 * 1024,
+            max_json_nodes: 262_144,
         }
     }
 }
@@ -77,6 +80,7 @@ impl AiGatewayLimits {
             && self.max_streamed_tool_calls > 0
             && self.max_tool_calls > 0
             && self.max_tool_arguments_bytes > 0
+            && self.max_json_nodes > 0
     }
 }
 
@@ -276,12 +280,18 @@ impl ModelProvider for AiGatewayProvider {
         request: ModelRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        let mut request = ModelRequestGuard::new(request);
         Box::pin(async move {
             if cancellation.is_cancelled() {
                 return Err(cancelled_error());
             }
-            let transport_request =
-                build_request(request, &self.default_model, self.limits, &cancellation)?;
+            validate_request_json(request.get(), self.limits, &cancellation)?;
+            let transport_request = build_request(
+                request.take(),
+                &self.default_model,
+                self.limits,
+                &cancellation,
+            )?;
             if cancellation.is_cancelled() {
                 return Err(cancelled_error());
             }
@@ -293,7 +303,12 @@ impl ModelProvider for AiGatewayProvider {
                 if cancelled.as_mut().poll(context).is_ready() {
                     return Poll::Ready(Err(cancelled_error()));
                 }
-                startup.as_mut().poll(context)
+                let result = startup.as_mut().poll(context);
+                if result.is_ready() && cancellation.is_cancelled() {
+                    Poll::Ready(Err(cancelled_error()))
+                } else {
+                    result
+                }
             })
             .await?;
             if cancellation.is_cancelled() {
@@ -304,6 +319,99 @@ impl ModelProvider for AiGatewayProvider {
                     as ModelEventStream,
             )
         })
+    }
+}
+
+struct ModelRequestGuard {
+    request: Option<ModelRequest>,
+}
+
+impl ModelRequestGuard {
+    fn new(request: ModelRequest) -> Self {
+        Self {
+            request: Some(request),
+        }
+    }
+
+    fn get(&self) -> &ModelRequest {
+        self.request.as_ref().expect("request guard is armed")
+    }
+
+    fn take(&mut self) -> ModelRequest {
+        self.request.take().expect("request guard is armed")
+    }
+}
+
+impl Drop for ModelRequestGuard {
+    fn drop(&mut self) {
+        let Some(request) = self.request.as_mut() else {
+            return;
+        };
+        for value in request.options.metadata.values_mut() {
+            drop_json_value_iterative(value);
+        }
+        for tool in &mut request.tools {
+            drop_json_value_iterative(&mut tool.input_schema);
+        }
+        for message in &mut request.messages {
+            for block in &mut message.content {
+                match block {
+                    ContentBlock::Json { value } => drop_json_value_iterative(value),
+                    ContentBlock::ToolCall { call } => {
+                        drop_json_value_iterative(&mut call.arguments);
+                    }
+                    ContentBlock::ToolResult { output, .. } => {
+                        drop_json_value_iterative(&mut output.content);
+                    }
+                    ContentBlock::Text { .. } | _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn drop_json_value_iterative(value: &mut Value) {
+    enum OwnedJsonFrame {
+        Array(std::vec::IntoIter<Value>),
+        Object(serde_json::map::IntoValues),
+    }
+
+    impl OwnedJsonFrame {
+        fn next(&mut self) -> Option<Value> {
+            match self {
+                Self::Array(values) => values.next(),
+                Self::Object(values) => values.next(),
+            }
+        }
+    }
+
+    let mut frames: Vec<OwnedJsonFrame> = Vec::new();
+    let mut current = Some(std::mem::take(value));
+    loop {
+        let Some(value) = current.take() else {
+            let Some(frame) = frames.last_mut() else {
+                return;
+            };
+            if let Some(next) = frame.next() {
+                current = Some(next);
+            } else {
+                frames.pop();
+            }
+            continue;
+        };
+        match value {
+            Value::Array(values) => {
+                let mut frame = OwnedJsonFrame::Array(values.into_iter());
+                current = frame.next();
+                frames.push(frame);
+            }
+            Value::Object(values) => {
+                let mut frame = OwnedJsonFrame::Object(values.into_values());
+                current = frame.next();
+                frames.push(frame);
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
     }
 }
 
@@ -391,9 +499,6 @@ fn build_request(
     {
         return Err(invalid_request("gateway_request_count_limit"));
     }
-    if request.options.temperature.is_some() || !request.options.metadata.is_empty() {
-        return Err(invalid_request("gateway_unsupported_option"));
-    }
     if request.options.max_output_tokens == Some(0) {
         return Err(invalid_request("gateway_invalid_max_output_tokens"));
     }
@@ -402,11 +507,16 @@ fn build_request(
         return Err(invalid_request("gateway_invalid_model"));
     }
 
-    let prompt = build_prompt(request.messages, limits, cancellation)?;
+    let mut projection_remaining = limits.max_request_bytes;
+    let prompt = build_prompt(
+        request.messages,
+        limits,
+        &mut projection_remaining,
+        cancellation,
+    )?;
     let mut tools = Vec::new();
     for tool in request.tools {
         check_cancel(cancellation)?;
-        validate_json(&tool.input_schema, cancellation)?;
         tools.push(GatewayTool {
             r#type: "function",
             name: tool.name.to_string(),
@@ -452,6 +562,7 @@ fn build_request(
 fn build_prompt(
     messages: Vec<Message>,
     limits: AiGatewayLimits,
+    projection_remaining: &mut usize,
     cancellation: &CancellationToken,
 ) -> Result<Vec<GatewayMessage>, ProviderError> {
     let mut prompt = Vec::with_capacity(messages.len());
@@ -487,7 +598,6 @@ fn build_prompt(
                             {
                                 return Err(invalid_request("gateway_invalid_history"));
                             }
-                            validate_json(&call.arguments, cancellation)?;
                             drop(serialize_bounded(
                                 &call.arguments,
                                 limits.max_tool_arguments_bytes,
@@ -525,13 +635,15 @@ fn build_prompt(
                 let Some(name) = pending.remove(&call_id) else {
                     return Err(invalid_request("gateway_invalid_history"));
                 };
-                validate_json(&output.content, cancellation)?;
                 let value = String::from_utf8(serialize_bounded(
                     &output,
-                    limits.max_request_bytes,
+                    *projection_remaining,
                     cancellation,
                 )?)
                 .map_err(|_| protocol_error("gateway_internal_encoding"))?;
+                *projection_remaining = projection_remaining
+                    .checked_sub(value.len())
+                    .expect("bounded serialization cannot exceed remaining budget");
                 GatewayMessage {
                     role: "tool",
                     content: GatewayContent::Parts(vec![GatewayPart::ToolResult {
@@ -565,27 +677,98 @@ fn exact_text(content: Vec<ContentBlock>) -> Result<String, ProviderError> {
     }
 }
 
-fn validate_json(value: &Value, cancellation: &CancellationToken) -> Result<(), ProviderError> {
-    let mut stack = vec![(value, 0_usize)];
-    while let Some((value, depth)) = stack.pop() {
+fn validate_request_json(
+    request: &ModelRequest,
+    limits: AiGatewayLimits,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    let mut nodes = 0;
+    for value in request.options.metadata.values() {
+        validate_json(value, &mut nodes, limits.max_json_nodes, cancellation)?;
+    }
+    for tool in &request.tools {
+        validate_json(
+            &tool.input_schema,
+            &mut nodes,
+            limits.max_json_nodes,
+            cancellation,
+        )?;
+    }
+    for message in &request.messages {
+        for block in &message.content {
+            let value = match block {
+                ContentBlock::Json { value } => Some(value),
+                ContentBlock::ToolCall { call } => Some(&call.arguments),
+                ContentBlock::ToolResult { output, .. } => Some(&output.content),
+                ContentBlock::Text { .. } | _ => None,
+            };
+            if let Some(value) = value {
+                validate_json(value, &mut nodes, limits.max_json_nodes, cancellation)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+enum JsonFrame<'a> {
+    Array(std::slice::Iter<'a, Value>, usize),
+    Object(serde_json::map::Values<'a>, usize),
+}
+
+impl<'a> JsonFrame<'a> {
+    fn next(&mut self) -> Option<(&'a Value, usize)> {
+        match self {
+            Self::Array(values, depth) => values.next().map(|value| (value, *depth)),
+            Self::Object(values, depth) => values.next().map(|value| (value, *depth)),
+        }
+    }
+}
+
+fn validate_json(
+    root: &Value,
+    nodes: &mut usize,
+    max_nodes: usize,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    let mut frames: Vec<JsonFrame<'_>> = Vec::new();
+    let mut current = Some((root, 0_usize));
+    loop {
+        let Some((value, depth)) = current.take() else {
+            let Some(frame) = frames.last_mut() else {
+                return Ok(());
+            };
+            if let Some(next) = frame.next() {
+                current = Some(next);
+            } else {
+                frames.pop();
+            }
+            continue;
+        };
         check_cancel(cancellation)?;
+        *nodes = nodes
+            .checked_add(1)
+            .filter(|nodes| *nodes <= max_nodes)
+            .ok_or_else(|| invalid_request("gateway_json_node_limit"))?;
         match value {
             Value::Array(values) => {
                 if depth >= MAX_SAFE_JSON_DEPTH {
                     return Err(invalid_request("gateway_json_depth_limit"));
                 }
-                stack.extend(values.iter().map(|value| (value, depth + 1)));
+                let mut frame = JsonFrame::Array(values.iter(), depth + 1);
+                current = frame.next();
+                frames.push(frame);
             }
             Value::Object(values) => {
                 if depth >= MAX_SAFE_JSON_DEPTH {
                     return Err(invalid_request("gateway_json_depth_limit"));
                 }
-                stack.extend(values.values().map(|value| (value, depth + 1)));
+                let mut frame = JsonFrame::Object(values.values(), depth + 1);
+                current = frame.next();
+                frames.push(frame);
             }
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
     }
-    Ok(())
 }
 
 struct BoundedWriter<'a> {
@@ -695,15 +878,39 @@ fn parse_tool_name(value: &str) -> Result<ToolName, ProviderError> {
     ToolName::new(value).map_err(|_| protocol_error("gateway_invalid_tool_call"))
 }
 
-fn parse_final_arguments(value: &Value, max_bytes: usize) -> Result<Value, ProviderError> {
+struct CountingWriter {
+    bytes: usize,
+    max: usize,
+}
+
+impl Write for CountingWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.bytes = self
+            .bytes
+            .checked_add(bytes.len())
+            .filter(|total| *total <= self.max)
+            .ok_or_else(|| io::Error::other("limit"))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn parse_final_arguments(
+    value: &Value,
+    max_bytes: usize,
+    max_nodes: usize,
+) -> Result<Value, ProviderError> {
     match value {
-        Value::String(text) => parse_argument_text(text, max_bytes),
+        Value::String(text) => parse_argument_text(text, max_bytes, max_nodes),
         Value::Array(_) | Value::Object(_) => {
-            if serde_json::to_vec(value)
-                .map_err(|_| protocol_error("gateway_invalid_tool_arguments"))?
-                .len()
-                > max_bytes
-            {
+            let mut writer = CountingWriter {
+                bytes: 0,
+                max: max_bytes,
+            };
+            if serde_json::to_writer(&mut writer, value).is_err() {
                 return Err(protocol_error("gateway_tool_arguments_byte_limit"));
             }
             Ok(value.clone())
@@ -715,26 +922,41 @@ fn parse_final_arguments(value: &Value, max_bytes: usize) -> Result<Value, Provi
 }
 
 #[derive(Clone, Copy)]
-struct StrictValueSeed {
+struct StrictValueSeed<'a> {
     depth: usize,
+    nodes: &'a Cell<usize>,
+    max_nodes: usize,
 }
 
-impl<'de> DeserializeSeed<'de> for StrictValueSeed {
+impl<'de> DeserializeSeed<'de> for StrictValueSeed<'_> {
     type Value = Value;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_any(StrictValueVisitor { depth: self.depth })
+        let nodes = self
+            .nodes
+            .get()
+            .checked_add(1)
+            .filter(|nodes| *nodes <= self.max_nodes)
+            .ok_or_else(|| D::Error::custom("JSON node limit exceeded"))?;
+        self.nodes.set(nodes);
+        deserializer.deserialize_any(StrictValueVisitor {
+            depth: self.depth,
+            nodes: self.nodes,
+            max_nodes: self.max_nodes,
+        })
     }
 }
 
-struct StrictValueVisitor {
+struct StrictValueVisitor<'a> {
     depth: usize,
+    nodes: &'a Cell<usize>,
+    max_nodes: usize,
 }
 
-impl<'de> Visitor<'de> for StrictValueVisitor {
+impl<'de> Visitor<'de> for StrictValueVisitor<'_> {
     type Value = Value;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -791,6 +1013,8 @@ impl<'de> Visitor<'de> for StrictValueVisitor {
         let mut values = Vec::new();
         let child = StrictValueSeed {
             depth: self.depth + 1,
+            nodes: self.nodes,
+            max_nodes: self.max_nodes,
         };
         while let Some(value) = sequence.next_element_seed(child)? {
             values.push(value);
@@ -808,6 +1032,8 @@ impl<'de> Visitor<'de> for StrictValueVisitor {
         let mut values = serde_json::Map::new();
         let child = StrictValueSeed {
             depth: self.depth + 1,
+            nodes: self.nodes,
+            max_nodes: self.max_nodes,
         };
         while let Some(key) = entries.next_key::<String>()? {
             if values.contains_key(&key) {
@@ -819,19 +1045,29 @@ impl<'de> Visitor<'de> for StrictValueVisitor {
     }
 }
 
-fn parse_strict_json(text: &str) -> Result<Value, serde_json::Error> {
+fn parse_strict_json(text: &str, max_nodes: usize) -> Result<Value, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(text);
-    let value = StrictValueSeed { depth: 0 }.deserialize(&mut deserializer)?;
+    let nodes = Cell::new(0);
+    let value = StrictValueSeed {
+        depth: 0,
+        nodes: &nodes,
+        max_nodes,
+    }
+    .deserialize(&mut deserializer)?;
     deserializer.end()?;
     Ok(value)
 }
 
-fn parse_argument_text(text: &str, max_bytes: usize) -> Result<Value, ProviderError> {
+fn parse_argument_text(
+    text: &str,
+    max_bytes: usize,
+    max_nodes: usize,
+) -> Result<Value, ProviderError> {
     if text.len() > max_bytes {
         return Err(protocol_error("gateway_tool_arguments_byte_limit"));
     }
-    let value =
-        parse_strict_json(text).map_err(|_| protocol_error("gateway_invalid_tool_arguments"))?;
+    let value = parse_strict_json(text, max_nodes)
+        .map_err(|_| protocol_error("gateway_invalid_tool_arguments"))?;
     match value {
         Value::Array(_) | Value::Object(_) => Ok(value),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
@@ -949,6 +1185,9 @@ impl GatewayEventStream {
 
     fn consume_chunk(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
         check_cancel(&self.cancellation_token)?;
+        if chunk.is_empty() {
+            return Err(protocol_error("gateway_empty_chunk"));
+        }
         if chunk.len() > self.limits.max_chunk_bytes {
             return Err(protocol_error("gateway_chunk_byte_limit"));
         }
@@ -984,6 +1223,7 @@ impl GatewayEventStream {
     }
 
     fn consume_eof(&mut self) -> Result<(), ProviderError> {
+        check_cancel(&self.cancellation_token)?;
         if !self.undecoded.is_empty() {
             let line = std::mem::take(&mut self.undecoded);
             self.consume_line(&line)?;
@@ -1019,7 +1259,8 @@ impl GatewayEventStream {
             return Err(protocol_error("gateway_event_after_finish"));
         }
         let text = std::str::from_utf8(data).map_err(|_| protocol_error("gateway_invalid_utf8"))?;
-        let event = parse_strict_json(text).map_err(|_| protocol_error("gateway_invalid_json"))?;
+        let event = parse_strict_json(text, self.limits.max_json_nodes)
+            .map_err(|_| protocol_error("gateway_invalid_json"))?;
         let object = event
             .as_object()
             .ok_or_else(|| protocol_error("gateway_invalid_event"))?;
@@ -1127,6 +1368,38 @@ impl GatewayEventStream {
         Ok(())
     }
 
+    fn reconciled_streamed_id(
+        &self,
+        final_id: &ToolCallId,
+        explicit_name: Option<&ToolName>,
+        explicit_arguments: Option<&Value>,
+    ) -> Result<Option<ToolCallId>, ProviderError> {
+        if self.streamed.contains_key(final_id) {
+            return Ok(Some(final_id.clone()));
+        }
+        let (Some(name), Some(arguments)) = (explicit_name, explicit_arguments) else {
+            return Ok(None);
+        };
+        let mut matched = None;
+        for (candidate_id, candidate) in &self.streamed {
+            if !candidate.ended || candidate.name != *name {
+                continue;
+            }
+            let candidate_arguments = parse_argument_text(
+                &candidate.arguments,
+                self.limits.max_tool_arguments_bytes,
+                self.limits.max_json_nodes,
+            )?;
+            if candidate_arguments == *arguments {
+                if matched.is_some() {
+                    return Err(protocol_error("gateway_ambiguous_tool_call"));
+                }
+                matched = Some(candidate_id.clone());
+            }
+        }
+        Ok(matched)
+    }
+
     fn consume_tool_call(
         &mut self,
         object: &serde_json::Map<String, Value>,
@@ -1144,17 +1417,33 @@ impl GatewayEventStream {
         }
         let id = parse_call_id(required_string(object, "toolCallId")?)?;
         let explicit_name = object.get("toolName");
-        let streamed = self.streamed.get(&id);
-        let name = match explicit_name {
+        let explicit_name = match explicit_name {
             Some(value) => parse_tool_name(
                 value
                     .as_str()
                     .ok_or_else(|| protocol_error("gateway_invalid_tool_call"))?,
-            )?,
-            None => streamed
-                .map(|input| input.name.clone())
-                .ok_or_else(|| protocol_error("gateway_invalid_tool_call"))?,
+            )
+            .map(Some)?,
+            None => None,
         };
+        let explicit_arguments = object
+            .get("input")
+            .map(|input| {
+                parse_final_arguments(
+                    input,
+                    self.limits.max_tool_arguments_bytes,
+                    self.limits.max_json_nodes,
+                )
+            })
+            .transpose()?;
+        let streamed_id =
+            self.reconciled_streamed_id(&id, explicit_name.as_ref(), explicit_arguments.as_ref())?;
+        let streamed = streamed_id
+            .as_ref()
+            .and_then(|streamed_id| self.streamed.get(streamed_id));
+        let name = explicit_name
+            .or_else(|| streamed.map(|input| input.name.clone()))
+            .ok_or_else(|| protocol_error("gateway_invalid_tool_call"))?;
         if let Some(input) = streamed
             && input.name != name
         {
@@ -1164,24 +1453,33 @@ impl GatewayEventStream {
             return Err(protocol_error("gateway_duplicate_tool_call"));
         }
 
-        let arguments = if let Some(input) = object.get("input") {
-            parse_final_arguments(input, self.limits.max_tool_arguments_bytes)?
+        let arguments = if let Some(arguments) = explicit_arguments {
+            arguments
         } else {
             let streamed = streamed
                 .filter(|input| input.ended)
                 .ok_or_else(|| protocol_error("gateway_incomplete_tool_input"))?;
-            parse_argument_text(&streamed.arguments, self.limits.max_tool_arguments_bytes)?
+            parse_argument_text(
+                &streamed.arguments,
+                self.limits.max_tool_arguments_bytes,
+                self.limits.max_json_nodes,
+            )?
         };
         if let Some(streamed) = streamed
             && streamed.ended
         {
-            let streamed_arguments =
-                parse_argument_text(&streamed.arguments, self.limits.max_tool_arguments_bytes)?;
+            let streamed_arguments = parse_argument_text(
+                &streamed.arguments,
+                self.limits.max_tool_arguments_bytes,
+                self.limits.max_json_nodes,
+            )?;
             if streamed_arguments != arguments {
                 return Err(protocol_error("gateway_conflicting_tool_call"));
             }
         }
-        self.streamed.remove(&id);
+        if let Some(streamed_id) = streamed_id {
+            self.streamed.remove(&streamed_id);
+        }
         self.emitted_calls.insert(id.clone());
         self.pending.push_back(Ok(ModelEvent::ToolCall {
             call: ToolCall {
@@ -1260,39 +1558,44 @@ impl Stream for GatewayEventStream {
             }
             return Poll::Ready(Some(event));
         }
-        loop {
-            match this.source.as_mut().poll_next(context) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Some(Err(error))) => {
+        let source_result = this.source.as_mut().poll_next(context);
+        if source_result.is_ready() && this.cancellation_token.is_cancelled() {
+            this.terminal = true;
+            return Poll::Ready(Some(Err(cancelled_error())));
+        }
+        match source_result {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(Err(error))) => {
+                this.terminal = true;
+                Poll::Ready(Some(Err(error)))
+            }
+            Poll::Ready(Some(Ok(chunk))) => {
+                if let Err(error) = this.consume_chunk(&chunk) {
                     this.terminal = true;
                     return Poll::Ready(Some(Err(error)));
                 }
-                Poll::Ready(Some(Ok(chunk))) => {
-                    if let Err(error) = this.consume_chunk(&chunk) {
+                if let Some(event) = this.pending.pop_front() {
+                    if matches!(event, Ok(ModelEvent::Stop { .. })) {
                         this.terminal = true;
-                        return Poll::Ready(Some(Err(error)));
                     }
-                    if let Some(event) = this.pending.pop_front() {
-                        if matches!(event, Ok(ModelEvent::Stop { .. })) {
-                            this.terminal = true;
-                        }
-                        return Poll::Ready(Some(event));
-                    }
+                    return Poll::Ready(Some(event));
                 }
-                Poll::Ready(None) => {
-                    if let Err(error) = this.consume_eof() {
-                        this.terminal = true;
-                        return Poll::Ready(Some(Err(error)));
-                    }
-                    if let Some(event) = this.pending.pop_front() {
-                        if matches!(event, Ok(ModelEvent::Stop { .. })) {
-                            this.terminal = true;
-                        }
-                        return Poll::Ready(Some(event));
-                    }
+                context.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Poll::Ready(None) => {
+                if let Err(error) = this.consume_eof() {
                     this.terminal = true;
-                    return Poll::Ready(None);
+                    return Poll::Ready(Some(Err(error)));
                 }
+                if let Some(event) = this.pending.pop_front() {
+                    if matches!(event, Ok(ModelEvent::Stop { .. })) {
+                        this.terminal = true;
+                    }
+                    return Poll::Ready(Some(event));
+                }
+                this.terminal = true;
+                Poll::Ready(None)
             }
         }
     }

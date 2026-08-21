@@ -137,8 +137,9 @@ trusted host authority
 Provider construction fixes a nonempty default model, injected transport and
 independent resource limits. A request-level model may override that default.
 The body contains only `prompt`, `tools`, `toolChoice`, and optional
-`maxOutputTokens`; temperature and inference metadata are rejected. Fixed
-metadata carries content type, protocol/specification versions, model,
+`maxOutputTokens`; temperature and inference metadata have no wire projection,
+are structurally validated where applicable, and are then ignored and omitted.
+Fixed metadata carries content type, protocol/specification versions, model,
 streaming mode and the same core session ID for both session and affinity.
 Machine-god adds no endpoint, authorization, referer, title, or user-agent and
 makes one transport call without codec-side retry.
@@ -153,15 +154,22 @@ are no-ops. It incrementally reconstructs local tool inputs and yields only
 complete text, reasoning, tool-call, usage and stop events. Malformed known
 schemas, conflicting, duplicate, provider-executed, incomplete, post-finish and
 over-limit input fails closed. `[DONE]` and EOF are not finish proof; exactly
-one valid finish produces exactly one stop.
+one valid finish produces exactly one stop. A final call whose ID differs from
+its provisional stream identity reconciles only through one unique ended input
+with the same tool name and structurally equal explicit JSON input.
 
 Both startup and response parsing are poll-driven. Cancellation is checked
 around encoding and transport startup and between chunks, records and yielded
-events. The codec registers a cancellation wakeup, and the transport receives
-the same token so it can wake while its future or byte stream is pending. Drop
-owns and destroys the in-flight transport future/stream and partial decode
-state; no provider task, timer, thread or retry is detached. The normative
-projection, limits and redacted failure behavior are in
+events, and wins when a terminal result becomes ready in the same poll. The
+codec registers a cancellation wakeup, and the transport receives the same
+token so it can wake while its future or byte stream is pending. Empty chunks
+fail, while a nonempty no-event chunk consumes at most one unit of source work
+per poll before scheduling another poll and yielding. Drop owns and destroys
+the in-flight transport future/stream and partial decode state. Guarded request
+JSON is iteratively drained on unpolled, cancelled, and rejected paths, so depth
+rejection does not cause recursive teardown; accepted JSON is first proven to
+be within the safe depth ceiling. No provider task, timer, thread or retry is
+detached. The normative projection, limits and redacted failure behavior are in
 [`ai-gateway.md`](ai-gateway.md).
 
 The multi-round turn loop is an executor-neutral future polled inline by the

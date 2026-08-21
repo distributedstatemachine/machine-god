@@ -206,14 +206,24 @@ be treated as sensitive model input.
 
 Untrusted response bytes are accepted only through independent request, chunk,
 record, undecoded-buffer, total-response, record-count, message, tool,
-streamed-tool-input, final-tool-call and per-call argument limits. Strict UTF-8,
-JSON and supported-event schema validation rejects malformed, conflicting,
-duplicate, provider-executed, incomplete and post-finish state. Bounded blank,
-comment, non-data and unknown-event records are no-ops. Partial tool inputs are
-never emitted. `[DONE]` or EOF without one valid finish is a failure, so
-truncation cannot be reported as a normal stop. Provider error events and a
-unified `error` finish
-are redacted protocol failures rather than model-visible text.
+streamed-tool-input, final-tool-call and per-call argument limits, plus an
+aggregate request JSON-node limit and a fresh node limit for each decoded
+response or serialized-argument JSON tree. Strict UTF-8, JSON and
+supported-event schema validation rejects malformed, conflicting, duplicate,
+provider-executed, incomplete and post-finish state. A final identity can
+replace a differing provisional identity only through one unambiguous
+same-name, structurally equal explicit-input match. Bounded blank, comment,
+non-data and unknown-event records are no-ops.
+Partial tool inputs are never emitted. `[DONE]` or EOF without one valid finish
+is a failure, so truncation cannot be reported as a normal stop. Provider error
+events and a unified `error` finish are redacted protocol failures rather than
+model-visible text.
+
+An empty successful response chunk is rejected. A nonempty chunk that produces
+no event consumes at most one source item in a poll before the codec schedules
+another poll and yields. A malicious always-ready source therefore cannot hold
+an executor thread by returning an unlimited sequence of comments, ignored
+fields, unknown events, or partial records in one poll.
 
 Construction, request, decoder, bound and cancellation errors use fixed
 categories without reflecting prompts, tool values, response records, model
@@ -226,11 +236,17 @@ Cancellation is checked around request construction and transport startup and
 between response chunks, records and yielded events. The provider registers a
 cancellation wakeup rather than waiting for a new hostile or stalled response
 chunk. The transport receives the same cancellation token and is responsible
-for waking and tearing down its pending I/O. Dropping provider work drops its
-owned future, byte stream, buffers and partial tool state; no codec task, timer,
-thread or retry is detached. A blocking or cancellation-insensitive injected
-transport violates its host-side contract and cannot be repaired by the codec.
-The exact boundary is documented in [`ai-gateway.md`](ai-gateway.md).
+for waking and tearing down its pending I/O. When cancellation and a terminal
+provider result become ready in the same poll, cancellation wins. Dropping
+provider work drops its owned future, byte stream, buffers and partial tool
+state. All request-side JSON, including ignored metadata, is depth/node checked
+before the owned request leaves its guard. An early-rejected, cancelled or
+dropped guarded request drains those values with an iterative child stack,
+preventing deep hostile input from triggering recursive JSON teardown. Accepted
+values are within the safe depth ceiling. No codec task, timer, thread or retry
+is detached. A blocking or cancellation-insensitive injected transport violates
+its host-side contract and cannot be repaired by the codec. The exact boundary
+is documented in [`ai-gateway.md`](ai-gateway.md).
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,

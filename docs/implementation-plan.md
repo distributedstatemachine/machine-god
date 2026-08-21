@@ -85,9 +85,14 @@ concrete `ModelProvider`: a bounded, executor-neutral Vercel AI Gateway protocol
 byte transport. It projects the supported core transcript into the request
 shape exercised by pinned fx, strictly reconstructs text, reasoning, local tool
 calls, usage and finish events from arbitrarily fragmented data-stream bytes,
-and makes exactly one cancellation-aware transport call. The injected host
-retains endpoint, HTTP, TLS, authentication, status and retry responsibility;
-this slice performs no network effect itself. Its exact contract is in
+independently bounds JSON nodes as well as bytes and counts, ignores unsupported
+temperature and metadata after applicable structural validation, and makes one
+cancellation-aware transport call after a valid request future is polled
+through startup (and zero for an unpolled, pre-cancelled, or invalid request).
+Empty chunks fail, bounded no-event work yields cooperatively, and cancellation
+wins same-poll terminal races. The injected host retains endpoint, HTTP, TLS,
+authentication, status and retry responsibility; this slice performs no
+network effect itself. Its exact contract is in
 [`ai-gateway.md`](ai-gateway.md). These slices do not complete Milestone 03.
 Permission prompting and modes beyond `ask`, a native HTTP transport,
 credentials and broader configuration, durable native sessions, provider/CLI
