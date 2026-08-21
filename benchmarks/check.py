@@ -59,6 +59,14 @@ def integer_median(samples: list[int]) -> int:
     return (ordered[middle - 1] + ordered[middle]) // 2
 
 
+def resolve_evidence_path(value: object, field: str) -> Path:
+    text = require_text(value, field)
+    try:
+        return Path(text).resolve()
+    except (OSError, RuntimeError, ValueError):
+        raise SystemExit(f"{field} is not a valid filesystem path") from None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence", type=Path)
@@ -235,17 +243,25 @@ def main() -> int:
         character not in "0123456789abcdef" for character in checksum.lower()
     ):
         raise SystemExit("binary checksum is missing")
-    recorded_binary = Path(require_text(binary.get("path"), "binary.path")).resolve()
-    recorded_command = Path(command[0]).resolve()
+    recorded_binary = resolve_evidence_path(binary.get("path"), "binary.path")
+    recorded_command = resolve_evidence_path(command[0], "command[0]")
     if recorded_command != recorded_binary:
         raise SystemExit("command executable does not match binary.path")
     if args.binary:
-        actual_binary = args.binary.resolve()
+        try:
+            actual_binary = args.binary.resolve()
+        except (OSError, RuntimeError, ValueError) as error:
+            raise SystemExit(f"supplied binary path is invalid: {error}") from None
         if recorded_binary != actual_binary:
             raise SystemExit("recorded binary path does not match supplied binary")
-        if actual_binary.stat().st_size != binary["bytes"]:
+        try:
+            actual_size = actual_binary.stat().st_size
+            actual_checksum = file_sha256(actual_binary)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise SystemExit(f"failed to inspect supplied binary: {error}") from None
+        if actual_size != binary["bytes"]:
             raise SystemExit("binary size does not match evidence")
-        if file_sha256(actual_binary) != checksum:
+        if actual_checksum != checksum:
             raise SystemExit("binary checksum does not match evidence")
     print("benchmark evidence is valid")
     return 0

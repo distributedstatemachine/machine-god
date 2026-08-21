@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import platform
-import statistics
 import subprocess
 import time
 from pathlib import Path
@@ -32,6 +31,14 @@ def run_once(binary: Path) -> tuple[int, int]:
         stderr=subprocess.DEVNULL,
     )
     return time.perf_counter_ns() - start, completed.returncode
+
+
+def integer_median(samples: list[int]) -> int:
+    ordered = sorted(samples)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
 
 
 def main() -> int:
@@ -82,7 +89,7 @@ def main() -> int:
         "command": [str(binary)],
         "warmup": args.warmup,
         "samples_ns": samples,
-        "median_ns": int(statistics.median(samples)),
+        "median_ns": integer_median(samples),
         "p95_ns": ordered[p95_index],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -101,4 +108,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

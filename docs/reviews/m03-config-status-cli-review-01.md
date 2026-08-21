@@ -215,6 +215,30 @@ classes:
 
 The remediations require fresh exact-SHA review and all local and remote gates.
 
+## Review round 08 findings and remediation
+
+Two fresh review passes examined exact commit
+`16c7d5aa45d063fcb54cbb8dbf6ad59ba96ffdcf`. The native status and CLI
+contract remained GREEN, and the schema-2 validator rejected all malformed
+container and alternate-scalar mutations exercised by the reviewers. Two
+schema-1 collector/checker integration gaps remained:
+
+1. The bootstrap collector calculated an even-length median through
+   floating-point `statistics.median`, while the checker had already moved to
+   exact integer arithmetic. Large integer samples could therefore produce an
+   artifact that the checker rejected. The collector now uses the same exact
+   integer floor-median rule, and a collector-to-checker regression covers
+   arbitrarily large samples whose middle values differ.
+2. Embedded-NUL evidence paths reached `Path.resolve()` outside a controlled
+   error boundary, and a missing supplied binary could similarly let a
+   filesystem exception escape. Evidence-path resolution and supplied-binary
+   inspection now convert filesystem/path failures into one-line validation
+   errors without tracebacks. Regressions cover both NUL-bearing recorded paths
+   and a missing supplied binary.
+
+The remediations require another fresh exact-SHA three-way review and all local
+and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

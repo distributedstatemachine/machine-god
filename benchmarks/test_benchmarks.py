@@ -50,6 +50,7 @@ from upstream import (  # noqa: E402
     validate_upstream_evidence,
     write_evidence_atomic,
 )
+import run as benchmark_run  # noqa: E402
 import upstream  # noqa: E402
 
 
@@ -174,6 +175,51 @@ class BenchmarkScriptsTest(unittest.TestCase):
         completed = self.run_checker(evidence)
         self.assertNotEqual(completed.returncode, 0)
 
+    def test_checker_rejects_nul_paths_without_traceback(self) -> None:
+        mutations = (
+            ("binary.path", lambda data: data["binary"].__setitem__("path", "bad\0path")),
+            ("command[0]", lambda data: data["command"].__setitem__(0, "bad\0path")),
+        )
+        for field, mutate in mutations:
+            with self.subTest(field=field):
+                evidence = self.valid_evidence()
+                mutate(evidence)
+                completed = self.run_checker(evidence)
+
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertEqual(
+                    completed.stderr,
+                    f"{field} is not a valid filesystem path\n",
+                )
+                self.assertNotIn("Traceback", completed.stderr)
+
+    def test_checker_rejects_missing_supplied_binary_without_traceback(self) -> None:
+        evidence = self.valid_evidence()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing_binary = root / "missing-binary"
+            evidence["binary"]["path"] = str(missing_binary)
+            evidence["command"] = [str(missing_binary)]
+            evidence_path = root / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "benchmarks/check.py"),
+                    str(evidence_path),
+                    "--bootstrap",
+                    "--binary",
+                    str(missing_binary),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("failed to inspect supplied binary", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+
     def test_checker_rejects_undeclared_and_malformed_schema_one_fields(self) -> None:
         mutations = (
             lambda data: data.__setitem__("performance_claim", "100x"),
@@ -198,6 +244,65 @@ class BenchmarkScriptsTest(unittest.TestCase):
         evidence["median_ns"] = huge
         evidence["p95_ns"] = huge
         completed = self.run_checker(evidence)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_collector_emits_exact_large_integer_median_accepted_by_checker(self) -> None:
+        lower_middle = 10**4000 + 1
+        upper_middle = lower_middle + 1
+        samples = [upper_middle, lower_middle] * 5
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "test-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
+            evidence_path = root / "evidence.json"
+            run_results = [(1, 0), *((sample, 0) for sample in samples)]
+
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(ROOT / "benchmarks/run.py"),
+                        "--binary",
+                        str(binary),
+                        "--output",
+                        str(evidence_path),
+                        "--runs",
+                        "10",
+                        "--warmup",
+                        "1",
+                    ],
+                ),
+                mock.patch.object(
+                    benchmark_run, "run_once", side_effect=run_results
+                ),
+                mock.patch.object(
+                    benchmark_run.subprocess,
+                    "check_output",
+                    return_value="1" * 40 + "\n",
+                ),
+                mock.patch("builtins.print"),
+            ):
+                self.assertEqual(benchmark_run.main(), 0)
+
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(evidence["median_ns"], lower_middle)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "benchmarks/check.py"),
+                    str(evidence_path),
+                    "--bootstrap",
+                    "--binary",
+                    str(binary),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_checker_binds_binary_and_expected_sha(self) -> None:
