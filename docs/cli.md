@@ -61,8 +61,9 @@ state_directory: state=<state> path=<JSON-string-or-null>
 ```
 
 Even in human output, a present path is encoded as a JSON string. Quotes,
-backslashes, control characters, and other terminal-sensitive contents are
-therefore escaped. An unresolved path is the unquoted token `null`.
+backslashes, C0/C1 controls, Unicode line/paragraph separators, and Unicode
+bidirectional-formatting controls are escaped. An unresolved path is the
+unquoted token `null`.
 
 `machine-god status --json` writes one compact JSON object in this fixed key
 order, followed by one LF:

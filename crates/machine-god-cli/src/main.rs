@@ -181,7 +181,12 @@ fn push_json_string(output: &mut String, value: &str) {
             '\n' => output.push_str("\\n"),
             '\r' => output.push_str("\\r"),
             '\t' => output.push_str("\\t"),
-            '\u{00}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}' => {
+            '\u{00}'..='\u{1f}'
+            | '\u{7f}'..='\u{9f}'
+            | '\u{061c}'
+            | '\u{200e}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}' => {
                 let _ = write!(output, "\\u{:04x}", character as u32);
             }
             _ => output.push(character),
@@ -252,11 +257,19 @@ mod tests {
         let mut encoded = String::new();
         push_json_string(
             &mut encoded,
-            "quote\" slash\\ controls\n\r\t\u{1b}\u{7f}\u{85} separators\u{2028}\u{2029}",
+            concat!(
+                "quote\" slash\\ controls\n\r\t\u{1b}\u{7f}\u{85} ",
+                "bidi\u{061c}\u{200e}\u{200f}\u{202a}\u{202e}\u{2066}\u{2069} ",
+                "separators\u{2028}\u{2029}",
+            ),
         );
         assert_eq!(
             encoded,
-            "\"quote\\\" slash\\\\ controls\\n\\r\\t\\u001b\\u007f\\u0085 separators\\u2028\\u2029\""
+            concat!(
+                "\"quote\\\" slash\\\\ controls\\n\\r\\t\\u001b\\u007f\\u0085 ",
+                "bidi\\u061c\\u200e\\u200f\\u202a\\u202e\\u2066\\u2069 ",
+                "separators\\u2028\\u2029\"",
+            )
         );
     }
 

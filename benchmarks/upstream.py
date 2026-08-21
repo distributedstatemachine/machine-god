@@ -583,6 +583,23 @@ def validate_upstream_evidence(
 ) -> None:
     """Validate provenance and forbid bootstrap evidence from claiming equivalence."""
 
+    expected_root_keys = {
+        "schema_version",
+        "classification",
+        "claim_eligible",
+        "generated_at_utc",
+        "runner_class",
+        "timeouts_seconds",
+        "source",
+        "host",
+        "tools",
+        "tool_environment",
+        "builds",
+        "environment_policy",
+        "workloads",
+    }
+    if set(data) != expected_root_keys:
+        raise ValueError("upstream benchmark evidence fields are not canonical")
     if data.get("schema_version") != 2 or not is_integer(data.get("schema_version")):
         raise ValueError("unsupported upstream benchmark schema")
     if data.get("classification") != "bootstrap-infrastructure-only":
@@ -944,6 +961,19 @@ def validate_upstream_evidence(
     workloads = data.get("workloads")
     if not isinstance(workloads, list) or len(workloads) != 6:
         raise ValueError("the canonical bootstrap workload inventory is incomplete")
+    expected_workload_keys = {
+        "id",
+        "description",
+        "equivalence",
+        "claim_eligible",
+        "reason",
+        "implementations",
+    }
+    if any(
+        not isinstance(workload, dict) or set(workload) != expected_workload_keys
+        for workload in workloads
+    ):
+        raise ValueError("workload fields are not canonical")
     expected_ids = [
         "bootstrap-exit",
         "help",
@@ -971,6 +1001,27 @@ def validate_upstream_evidence(
     ]:
         raise ValueError("bootstrap measurements must be ordered as fx then machine-god")
     fx_measurement, machine_measurement = implementations
+    expected_measurement_keys = {
+        "project",
+        "status",
+        "command",
+        "cwd",
+        "environment",
+        "timeout_seconds",
+        "warmup",
+        "executable_identity",
+        "pinned_executable",
+        "samples",
+        "median_ns",
+        "p95_ns",
+    }
+    if (
+        not isinstance(fx_measurement, dict)
+        or not isinstance(machine_measurement, dict)
+        or set(fx_measurement) != expected_measurement_keys
+        or set(machine_measurement) != expected_measurement_keys
+    ):
+        raise ValueError("bootstrap measurement fields are not canonical")
     if fx_measurement.get("status") != "measured" or machine_measurement.get("status") != "measured":
         raise ValueError("both bootstrap implementations must be measured")
     validate_measurement(

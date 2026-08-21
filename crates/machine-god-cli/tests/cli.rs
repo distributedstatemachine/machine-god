@@ -216,16 +216,23 @@ fn relative_selected_roots_are_invalid_and_do_not_fall_back() {
 #[test]
 fn status_escapes_path_control_characters() {
     let temporary = TestDirectory::new("escaping");
-    let config_root = temporary.path().join("config-\u{1b}[31m\nquoted-\"");
-    let state_root = temporary.path().join("state-\\slash");
-    let output = run_with_roots(&["status"], config_root.as_os_str(), state_root.as_os_str());
-    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let config_root = temporary
+        .path()
+        .join("config-\u{1b}[31m\nquoted-\"-\u{061c}-\u{202e}");
+    let state_root = temporary.path().join("state-\\slash-\u{200f}-\u{2066}");
 
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    assert!(!stdout.contains('\u{1b}'));
-    assert!(stdout.contains("\\u001b[31m\\nquoted-\\\""));
-    assert!(stdout.contains("state-\\\\slash"));
+    for arguments in [&["status"][..], &["status", "--json"][..]] {
+        let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+        let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        for raw_control in ['\u{1b}', '\u{061c}', '\u{200f}', '\u{202e}', '\u{2066}'] {
+            assert!(!stdout.contains(raw_control));
+        }
+        assert!(stdout.contains("\\u001b[31m\\nquoted-\\\"-\\u061c-\\u202e"));
+        assert!(stdout.contains("state-\\\\slash-\\u200f-\\u2066"));
+    }
 }
 
 #[cfg(unix)]

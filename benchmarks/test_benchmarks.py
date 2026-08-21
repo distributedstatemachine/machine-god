@@ -596,6 +596,33 @@ class UpstreamHarnessTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_upstream_evidence(evidence)
 
+    def test_rejects_undeclared_claim_and_measurement_fields(self) -> None:
+        mutations = (
+            lambda data: data.__setitem__(
+                "performance_claim", "machine-god is 100x faster"
+            ),
+            lambda data: data["workloads"][0].__setitem__(
+                "comparison", {"claim_eligible": True}
+            ),
+            lambda data: data["workloads"][0]["implementations"][0].__setitem__(
+                "winner", "fx"
+            ),
+            lambda data: data["workloads"][1].__setitem__("samples", []),
+            lambda data: data["workloads"][1].__setitem__("median_ns", 1),
+            lambda data: data["workloads"][2].__setitem__(
+                "result", {"winner": "machine-god", "speedup": 100}
+            ),
+            lambda data: data["workloads"][3].__setitem__(
+                "machine_god_available", True
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
     def test_records_implemented_local_commands_without_measurements(self) -> None:
         evidence = self.valid_upstream_evidence()
         machine_binary = evidence["builds"][1]["binary"]["path"]

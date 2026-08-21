@@ -57,6 +57,32 @@ Reviewers should challenge:
 4. any evidence-schema path that could time a non-equivalent pair, retain
    samples, or imply that the remaining commands are implemented.
 
+## Review round 01 findings and remediation
+
+The correctness/API and security/abuse reviewers examined exact commit
+`141fea29df0cafff1e50cf8de161ec22b593a4eb` and independently confirmed two
+findings. The performance/resource/evidence review of that same immutable
+commit continued in parallel.
+
+1. JSON syntax escaping covered C0/C1 controls and line separators but left
+   Unicode bidirectional-formatting controls literal. A hostile path could
+   visually reorder terminal status despite remaining valid JSON. The encoder
+   now also escapes `U+061C`, `U+200E`–`U+200F`, `U+202A`–`U+202E`, and
+   `U+2066`–`U+2069`. Unit and process-level regressions cover both human and
+   JSON status and assert that none of those raw controls reach stdout.
+2. Implementation records for unmeasured workloads had exact-key checks, but
+   the evidence root and workload objects accepted undeclared fields. An
+   artifact could therefore attach claim-like or measurement-like material
+   outside the checked implementation records. Validation now requires the
+   exact schema-2 root, workload, and measured-bootstrap implementation key
+   sets. Mutation tests inject false performance claims, comparison objects,
+   availability flags, winners, results, samples, and aggregates at those
+   levels and require rejection.
+
+These remediations are not a GREEN result by themselves. They require fresh
+review of their exact committed SHA, followed by the complete local and remote
+gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

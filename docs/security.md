@@ -17,10 +17,12 @@ make status a bounded observation surface, not configuration authority.
 
 Status paths are user-visible and may disclose the selected config/state
 location when the user explicitly runs the command. JSON output uses JSON
-escaping, and human output uses the same JSON-string encoding for paths, so
-newlines and control characters in environment-derived paths cannot inject
-terminal lines. Non-UTF-8 CLI arguments are rejected as invalid. Output errors
-use a fixed diagnostic rather than reflecting path or OS-error text.
+escaping, and human output uses the same JSON-string encoding for paths. C0/C1
+controls, Unicode line/paragraph separators, and bidirectional-formatting
+controls are emitted as escapes, so environment-derived paths cannot inject
+terminal lines or visually reorder the surrounding status fields. Non-UTF-8
+CLI arguments are rejected as invalid. Output errors use a fixed diagnostic
+rather than reflecting path or OS-error text.
 
 The threat model must cover workspace escape, symlink races, command injection,
 permission confusion, SSRF, secret exposure, corrupted state, denial of service,
