@@ -383,65 +383,79 @@ class BenchmarkScriptsTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_schema_one_binary_record_rejects_growth(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            binary = Path(directory) / "binary"
-            binary.write_bytes(b"#!/bin/sh\n")
-            binary.chmod(0o755)
-            initial_size = binary.stat().st_size
-            reads: list[int] = []
-            original_hash = benchmark_run.bounded_sha256
-
-            def grow_then_hash(source: object, expected_bytes: int) -> str:
-                with binary.open("ab") as destination:
-                    destination.write(b"unbounded-growth")
-
-                class CountingSource:
-                    def read(self, size: int) -> bytes:
-                        reads.append(size)
-                        return source.read(size)
-
-                return original_hash(CountingSource(), expected_bytes)
-
-            with (
-                mock.patch.object(
-                    benchmark_run,
-                    "bounded_sha256",
-                    side_effect=grow_then_hash,
-                ),
-                self.assertRaisesRegex(RuntimeError, "became longer"),
-            ):
-                benchmark_run.binary_record(binary)
-
-            self.assertEqual(reads, [initial_size, 1])
-
-    def test_schema_one_binary_record_rejects_path_replacement(self) -> None:
+    @unittest.skipUnless(os.name == "posix", "pinned collector regression requires POSIX")
+    def test_schema_one_collector_rejects_final_sample_path_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binary = root / "binary"
             displaced = root / "displaced"
             replacement = root / "replacement"
-            binary.write_bytes(b"#!/bin/sh\n")
-            replacement.write_bytes(b"#!/bin/sh\n")
+            original_bytes = b"original executable A"
+            replacement_bytes = b"replacement bytes B"
+            binary.write_bytes(original_bytes)
+            replacement.write_bytes(replacement_bytes)
             binary.chmod(0o755)
             replacement.chmod(0o755)
-            original_hash = benchmark_run.bounded_sha256
+            evidence_path = root / "evidence.json"
+            original_run_once = benchmark_run.run_once
+            launches = 0
+            executed_bytes: list[bytes] = []
 
-            def hash_then_replace(source: object, expected_bytes: int) -> str:
-                checksum = original_hash(source, expected_bytes)
-                binary.rename(displaced)
-                replacement.rename(binary)
-                return checksum
+            def record_pinned_execution(
+                _command: object, **options: object
+            ) -> object:
+                descriptor = options["executable_descriptor"]
+                if descriptor is not None:
+                    content = os.pread(descriptor, len(original_bytes) + 1, 0)
+                else:
+                    execution_path = options["executable_path"]
+                    content = Path(execution_path).read_bytes()
+                executed_bytes.append(content)
+                return mock.Mock(elapsed_ns=1, returncode=0)
+
+            def run_then_replace(*arguments: object) -> tuple[int, int]:
+                nonlocal launches
+                result = original_run_once(*arguments)
+                launches += 1
+                if launches == 11:
+                    binary.rename(displaced)
+                    replacement.rename(binary)
+                return result
 
             with (
                 mock.patch.object(
-                    benchmark_run,
-                    "bounded_sha256",
-                    side_effect=hash_then_replace,
+                    sys,
+                    "argv",
+                    [
+                        str(ROOT / "benchmarks/run.py"),
+                        "--binary",
+                        str(binary),
+                        "--output",
+                        str(evidence_path),
+                        "--runs",
+                        "10",
+                        "--warmup",
+                        "1",
+                    ],
                 ),
-                self.assertRaisesRegex(RuntimeError, "path changed"),
+                mock.patch.object(
+                    benchmark_run,
+                    "run_once",
+                    side_effect=run_then_replace,
+                ),
+                mock.patch.object(
+                    benchmark_run,
+                    "run_process",
+                    side_effect=record_pinned_execution,
+                ),
+                self.assertRaisesRegex(RuntimeError, "identity changed"),
             ):
-                benchmark_run.binary_record(binary)
+                benchmark_run.main()
+
+            self.assertEqual(launches, 11)
+            self.assertEqual(executed_bytes, [original_bytes] * 11)
+            self.assertNotIn(replacement_bytes, executed_bytes)
+            self.assertFalse(evidence_path.exists())
 
     def test_checker_binds_binary_and_expected_sha(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

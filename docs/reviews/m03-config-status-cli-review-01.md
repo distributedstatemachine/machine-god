@@ -373,6 +373,27 @@ cleanup, schema-1 binary growth and replacement, and materialized-source growth
 and replacement. These remediations require another fresh exact-SHA three-way
 review and all local and remote gates.
 
+## Review round 15 finding and remediation
+
+Three reviewers examined exact commit
+`633bc16ebf72a2c652127cfbeab012c5816f64b4` and independently found a
+schema-1 execution/evidence binding flaw. The collector launched a mutable
+pathname for every warmup and sample, then recorded its identity only after all
+runs. A program could replace that pathname during the final sample, causing
+accepted evidence to identify replacement bytes that were never measured.
+
+The schema-1 collector now captures and pins the executable before warmup,
+executes only the sealed descriptor or private copy for every launch while
+preserving the original resolved `argv[0]`, and verifies the pinned and source
+identities before and after launches and immediately before publication. The
+recorded path, byte count, and digest come from the original identity, and pin
+resources close on all success and failure paths. A final-sample replacement
+regression proves that the original bytes run for all eleven test launches, the
+replacement never runs, collection fails, and no evidence is published.
+
+This remediation requires another fresh exact-SHA three-way review and all
+local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,
