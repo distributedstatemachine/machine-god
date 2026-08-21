@@ -964,12 +964,35 @@ impl Write for ProtocolArgumentsWriter {
 }
 
 fn canonical_arguments(value: &Value, max_bytes: usize) -> Result<Vec<u8>, ProviderError> {
+    fn normalize_signed_zero(value: &mut Value) {
+        match value {
+            Value::Array(values) => {
+                for value in values {
+                    normalize_signed_zero(value);
+                }
+            }
+            Value::Object(values) => {
+                for value in values.values_mut() {
+                    normalize_signed_zero(value);
+                }
+            }
+            Value::Number(number)
+                if number.is_f64() && number.as_f64().is_some_and(|value| value == 0.0) =>
+            {
+                *number = serde_json::Number::from_f64(0.0).expect("zero is finite");
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
+    let mut normalized = value.clone();
+    normalize_signed_zero(&mut normalized);
     let mut writer = ProtocolArgumentsWriter {
         bytes: Vec::new(),
         max: max_bytes,
         exceeded: false,
     };
-    if serde_json::to_writer(&mut writer, value).is_err() {
+    if serde_json::to_writer(&mut writer, &normalized).is_err() {
         return Err(if writer.exceeded {
             protocol_error("gateway_tool_arguments_byte_limit")
         } else {
@@ -1226,6 +1249,7 @@ struct StreamedToolInput {
     arguments: String,
     parsed_arguments: Option<Value>,
     canonical_arguments: Option<Vec<u8>>,
+    invalid_arguments: bool,
     ended: bool,
 }
 
@@ -1239,6 +1263,7 @@ struct GatewayEventStream {
     records: usize,
     streamed: BTreeMap<ToolCallId, StreamedToolInput>,
     reconciliation: BTreeMap<ToolName, BTreeMap<Vec<u8>, BTreeSet<ToolCallId>>>,
+    finalized_streamed: BTreeSet<ToolCallId>,
     emitted_calls: BTreeSet<ToolCallId>,
     pending: VecDeque<Result<ModelEvent, ProviderError>>,
     finished: bool,
@@ -1261,6 +1286,7 @@ impl GatewayEventStream {
             records: 0,
             streamed: BTreeMap::new(),
             reconciliation: BTreeMap::new(),
+            finalized_streamed: BTreeSet::new(),
             emitted_calls: BTreeSet::new(),
             pending: VecDeque::new(),
             finished: false,
@@ -1414,7 +1440,10 @@ impl GatewayEventStream {
         }
         let id = parse_call_id(required_string(object, "id")?)?;
         let name = parse_tool_name(required_string(object, "toolName")?)?;
-        if self.streamed.contains_key(&id) || self.emitted_calls.contains(&id) {
+        if self.streamed.contains_key(&id)
+            || self.finalized_streamed.contains(&id)
+            || self.emitted_calls.contains(&id)
+        {
             return Err(protocol_error("gateway_duplicate_tool_call"));
         }
         self.streamed.insert(
@@ -1424,6 +1453,7 @@ impl GatewayEventStream {
                 arguments: String::new(),
                 parsed_arguments: None,
                 canonical_arguments: None,
+                invalid_arguments: false,
                 ended: false,
             },
         );
@@ -1436,6 +1466,13 @@ impl GatewayEventStream {
     ) -> Result<(), ProviderError> {
         let id = parse_call_id(required_string(object, "id")?)?;
         let delta = required_string(object, "delta")?;
+        if self.finalized_streamed.contains(&id) {
+            return if delta.len() <= self.limits.max_tool_arguments_bytes {
+                Ok(())
+            } else {
+                Err(protocol_error("gateway_tool_arguments_byte_limit"))
+            };
+        }
         let streamed = self
             .streamed
             .get_mut(&id)
@@ -1462,6 +1499,9 @@ impl GatewayEventStream {
         let max_bytes = self.limits.max_tool_arguments_bytes;
         let max_nodes = self.limits.max_json_nodes;
         let id = parse_call_id(required_string(object, "id")?)?;
+        if self.finalized_streamed.contains(&id) {
+            return Ok(());
+        }
         let streamed = self
             .streamed
             .get_mut(&id)
@@ -1469,19 +1509,24 @@ impl GatewayEventStream {
         if streamed.ended {
             return Err(protocol_error("gateway_duplicate_tool_input_end"));
         }
-        let parsed = parse_argument_text(&streamed.arguments, max_bytes, max_nodes)?;
-        let canonical = canonical_arguments(&parsed, max_bytes)?;
-        let name = streamed.name.clone();
+        let parsed = parse_argument_text(&streamed.arguments, max_bytes, max_nodes);
         streamed.arguments = String::new();
-        streamed.parsed_arguments = Some(parsed);
-        streamed.canonical_arguments = Some(canonical.clone());
         streamed.ended = true;
-        self.reconciliation
-            .entry(name)
-            .or_default()
-            .entry(canonical)
-            .or_default()
-            .insert(id);
+        match parsed {
+            Ok(parsed) => {
+                let canonical = canonical_arguments(&parsed, max_bytes)?;
+                let name = streamed.name.clone();
+                streamed.parsed_arguments = Some(parsed);
+                streamed.canonical_arguments = Some(canonical.clone());
+                self.reconciliation
+                    .entry(name)
+                    .or_default()
+                    .entry(canonical)
+                    .or_default()
+                    .insert(id);
+            }
+            Err(_) => streamed.invalid_arguments = true,
+        }
         Ok(())
     }
 
@@ -1514,6 +1559,7 @@ impl GatewayEventStream {
         let Some(streamed) = self.streamed.remove(id) else {
             return;
         };
+        self.finalized_streamed.insert(id.clone());
         let Some(canonical) = streamed.canonical_arguments else {
             return;
         };
@@ -1605,6 +1651,9 @@ impl GatewayEventStream {
             let streamed = streamed
                 .filter(|input| input.ended)
                 .ok_or_else(|| protocol_error("gateway_incomplete_tool_input"))?;
+            if streamed.invalid_arguments {
+                return Err(protocol_error("gateway_invalid_tool_arguments"));
+            }
             streamed
                 .parsed_arguments
                 .clone()

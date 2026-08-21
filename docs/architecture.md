@@ -157,7 +157,10 @@ schemas, conflicting, duplicate, provider-executed, incomplete, post-finish and
 over-limit input fails closed. `[DONE]` and EOF are not finish proof; exactly
 one valid finish produces exactly one stop. A final call whose ID differs from
 its provisional stream identity reconciles only through one unique ended input
-with the same tool name and structurally equal explicit JSON input.
+with the same tool name and structurally equal explicit JSON input. The bounded
+canonical index normalizes signed floating zero. An authoritative exact-ID
+final can replace invalid or unfinished provisional input; a tombstone safely
+absorbs later bounded delta/end records for that finalized provisional ID.
 
 Both startup and response parsing are poll-driven. Cancellation is checked
 around encoding and transport startup and between chunks, records and yielded

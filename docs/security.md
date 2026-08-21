@@ -213,8 +213,11 @@ response or serialized-argument JSON tree. Strict UTF-8, JSON and
 supported-event schema validation rejects malformed, conflicting, duplicate,
 provider-executed, incomplete and post-finish state. A final identity can
 replace a differing provisional identity only through one unambiguous
-same-name, structurally equal explicit-input match. Bounded blank, comment,
-non-data and unknown-event records are no-ops.
+same-name, structurally equal explicit-input match. Canonical lookup normalizes
+signed floating zero and invalid provisional JSON is retained only as a fixed
+marker. An authoritative exact-ID final may replace that marker or unfinished
+input, after which bounded delta/end records for its tombstone are ignored.
+Bounded blank, comment, non-data and unknown-event records are no-ops.
 Partial tool inputs are never emitted. `[DONE]` or EOF without one valid finish
 is a failure, so truncation cannot be reported as a normal stop. Provider error
 events and a unified `error` finish are redacted protocol failures rather than

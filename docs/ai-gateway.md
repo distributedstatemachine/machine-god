@@ -143,20 +143,27 @@ may be reconstructed from one `tool-input-start`, zero or more matching
 `tool-call`. A complete input carried by the final event is authoritative; an
 otherwise missing input uses the completed streamed value with the same ID. An
 explicit input with the same final and provisional ID replaces the provisional
-value, while the name must remain consistent. If
-the final ID differs from a provisional streamed ID, an explicit final name and
+value, even if the provisional bytes end early or do not form valid JSON, while
+the name must remain consistent. A finalized-ID tombstone ignores later bounded
+delta/end records for that same provisional ID. If the final ID differs from a
+provisional streamed ID, an explicit final name and
 input reconcile it only when exactly one ended provisional input has that name
 and a structurally equal JSON value. An ambiguous match, an identity/name
 conflict, or unequal changed-ID input rejects the response. Ended streamed
-inputs are parsed once and retain their bounded parsed value for matching, so
-reconciliation does not repeatedly parse every candidate. Call IDs and names
+inputs are parsed once and retain either their bounded parsed value or an
+invalid marker. Valid values use a bounded canonical index that normalizes
+signed floating zero, matching structural JSON equality without repeatedly
+parsing or scanning every candidate. Invalid streamed JSON fails only if it is
+needed as fallback or remains unresolved. Call IDs and names
 must be nonempty and valid for core, final IDs must be unique, argument JSON
 must be complete, and no more than the configured number of calls may be
 accumulated. Only the validated final ID, name, and arguments are emitted to
 core; start, delta, and end records never expose a partial call.
 
-The decoder rejects unmatched, conflicting, late, duplicate, or unfinished tool
-input state. It also rejects provider-executed calls, `tool-result` response
+The decoder rejects unmatched, conflicting, duplicate, or unfinished tool input
+state, and rejects late input for an unresolved state. Bounded delta/end records
+that arrive after an authoritative exact-ID final are ignored through the
+finalized tombstone. It also rejects provider-executed calls, `tool-result` response
 events, provider error events, a unified `error` finish, and any additional JSON
 record already received in the same chunk after finish. `[DONE]` emits nothing
 and can terminate the stream only after one valid finish; EOF has the same

@@ -619,6 +619,60 @@ fn explicit_final_input_corrects_same_id_streamed_input() {
 }
 
 #[test]
+fn authoritative_exact_id_final_tolerates_malformed_or_late_provisional_completion() {
+    let malformed_ended = concat!(
+        "data: {\"type\":\"tool-input-start\",\"id\":\"call-1\",\"toolName\":\"echo\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"call-1\",\"delta\":\"{\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"call-1\"}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"call-1\",\"toolName\":\"echo\",\"input\":{\"value\":1}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    );
+    let events = collect(bytes(malformed_ended)).unwrap();
+    assert!(matches!(
+        &events[0],
+        ModelEvent::ToolCall { call } if call.arguments == json!({"value":1})
+    ));
+
+    let final_before_end = concat!(
+        "data: {\"type\":\"tool-input-start\",\"id\":\"call-2\",\"toolName\":\"echo\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"call-2\",\"delta\":\"{\"}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"call-2\",\"toolName\":\"echo\",\"input\":{\"value\":2}}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"call-2\",\"delta\":\"}\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"call-2\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    );
+    let events = collect(bytes(final_before_end)).unwrap();
+    assert!(matches!(
+        &events[0],
+        ModelEvent::ToolCall { call } if call.arguments == json!({"value":2})
+    ));
+
+    let required_fallback = concat!(
+        "data: {\"type\":\"tool-input-start\",\"id\":\"call-3\",\"toolName\":\"echo\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"call-3\",\"delta\":\"{\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"call-3\"}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"call-3\",\"toolName\":\"echo\"}\n\n"
+    );
+    protocol_error(collect(bytes(required_fallback)));
+}
+
+#[test]
+fn changed_id_reconciliation_normalizes_signed_floating_zero() {
+    let body = concat!(
+        "data: {\"type\":\"tool-input-start\",\"id\":\"provisional\",\"toolName\":\"measure\"}\n\n",
+        "data: {\"type\":\"tool-input-delta\",\"id\":\"provisional\",\"delta\":\"{\\\"value\\\":-0.0}\"}\n\n",
+        "data: {\"type\":\"tool-input-end\",\"id\":\"provisional\"}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"final\",\"toolName\":\"measure\",\"input\":{\"value\":0.0}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    );
+    let events = collect(bytes(body)).unwrap();
+    assert!(matches!(
+        &events[0],
+        ModelEvent::ToolCall { call } if call.id.as_str() == "final"
+    ));
+}
+
+#[test]
 fn ambiguous_provisional_tool_call_reconciliation_is_rejected() {
     let body = concat!(
         "data: {\"type\":\"tool-input-start\",\"id\":\"p-1\",\"toolName\":\"echo\"}\n\n",
