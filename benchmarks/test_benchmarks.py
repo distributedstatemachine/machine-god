@@ -777,6 +777,51 @@ class UpstreamHarnessTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence)
 
+    def test_every_scalar_rejects_a_different_json_type(self) -> None:
+        def scalar_paths(value: object, path: tuple[object, ...] = ()):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    yield from scalar_paths(child, (*path, key))
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    yield from scalar_paths(child, (*path, index))
+            else:
+                yield path, value
+
+        template = self.valid_upstream_evidence()
+        paths = list(scalar_paths(template))
+        self.assertGreater(len(paths), 100)
+        for path, original in paths:
+            if isinstance(original, bool):
+                replacement: object = int(original)
+            elif isinstance(original, str):
+                replacement = 0
+            elif isinstance(original, int):
+                replacement = True
+            elif isinstance(original, float):
+                replacement = False
+            else:
+                replacement = {}
+            with self.subTest(path=path, replacement=replacement):
+                evidence = self.valid_upstream_evidence()
+                target: object = evidence
+                for part in path[:-1]:
+                    target = target[part]  # type: ignore[index]
+                target[path[-1]] = replacement  # type: ignore[index]
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
+    def test_environment_policy_rejects_integer_boolean_lookalikes(self) -> None:
+        for field, value in (
+            ("inherits_parent_environment", 0),
+            ("allowlisted_environment_only", 1),
+        ):
+            with self.subTest(field=field):
+                evidence = self.valid_upstream_evidence()
+                evidence["environment_policy"][field] = value
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
     def test_records_implemented_local_commands_without_measurements(self) -> None:
         evidence = self.valid_upstream_evidence()
         machine_binary = evidence["builds"][1]["binary"]["path"]

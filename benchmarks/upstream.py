@@ -877,10 +877,13 @@ def validate_upstream_evidence(
         data.get("tool_environment"), "tool_environment", TOOL_ENVIRONMENT_KEYS
     )
     policy = data.get("environment_policy")
-    if policy != {
-        "inherits_parent_environment": False,
-        "allowlisted_environment_only": True,
-    }:
+    if (
+        not isinstance(policy, dict)
+        or set(policy)
+        != {"inherits_parent_environment", "allowlisted_environment_only"}
+        or policy["inherits_parent_environment"] is not False
+        or policy["allowlisted_environment_only"] is not True
+    ):
         raise ValueError("environment_policy must forbid ambient inheritance")
 
     repository_root = Path(

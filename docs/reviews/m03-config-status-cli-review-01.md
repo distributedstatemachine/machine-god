@@ -154,6 +154,22 @@ tracebacks.
 The remediation requires fresh exact-SHA adversarial review and complete local
 and remote gates.
 
+## Review round 05 finding and remediation
+
+Correctness/API review of exact commit
+`0cd66a7d3d81ab291378e12f7a98b380a4d4739f` was GREEN. The independent
+performance/resource/evidence review ran 3,238 cross-type mutations and found
+one Python-specific evidence bypass: ordinary dictionary equality treated JSON
+integer `0` as equal to `false` and integer `1` as equal to `true` in the
+environment-policy record. Validation now requires that record's exact keys
+and checks its values with boolean identity. Direct regressions cover both
+integer lookalikes, and a property-style suite replaces every scalar leaf with
+a different JSON type, including boolean-to-integer substitutions, and requires
+controlled rejection.
+
+The remediation requires a fresh exact-SHA three-way review and all local and
+remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,
