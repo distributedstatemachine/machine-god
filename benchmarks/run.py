@@ -16,10 +16,56 @@ from upstream import (  # noqa: E402
     PinnedExecutable,
     collect_and_publish_evidence,
     executable_identity,
+    git_output,
+    invocation_path,
     pin_executable,
     run_process,
     verify_executable_identity,
 )
+
+
+GIT_TIMEOUT_SECONDS = 10.0
+
+
+def isolated_git_environment() -> dict[str, str]:
+    path_value = os.environ.get("PATH")
+    if not path_value:
+        raise RuntimeError("PATH is required to invoke Git")
+    return {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "LANG": "C",
+        "LC_ALL": "C",
+        CONTAINMENT_ENVIRONMENT_KEY: secrets.token_hex(16),
+        "NO_COLOR": "1",
+        "PATH": path_value,
+    }
+
+
+def repository_head(
+    cwd: Path,
+    *,
+    git: str = "git",
+    timeout_seconds: float = GIT_TIMEOUT_SECONDS,
+) -> str:
+    environment = isolated_git_environment()
+    resolved_git = invocation_path(git, environment["PATH"])
+    git_sha = git_output(
+        resolved_git,
+        cwd,
+        environment,
+        timeout_seconds,
+        "rev-parse",
+        "--verify",
+        "HEAD^{commit}",
+    )
+    if len(git_sha) != 40 or any(
+        character not in "0123456789abcdef" for character in git_sha
+    ):
+        raise RuntimeError(f"machine-god HEAD is not a full Git SHA: {git_sha}")
+    return git_sha
 
 
 def run_once(
@@ -92,9 +138,7 @@ def collect_evidence(binary: Path, runs: int, warmup: int) -> dict[str, object]:
         evidence = {
             "schema_version": 1,
             "classification": "bootstrap-infrastructure-only",
-            "git_sha": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], text=True
-            ).strip(),
+            "git_sha": repository_head(Path.cwd()),
             "host": {
                 "system": platform.system(),
                 "release": platform.release(),

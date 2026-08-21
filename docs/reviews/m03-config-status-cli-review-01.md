@@ -418,6 +418,27 @@ bounded lock contention, success-summary suppression on failure, and
 traceback-free final-sample replacement rejection. These remediations require
 another fresh exact-SHA three-way review and all local and remote gates.
 
+## Review round 17 finding and remediation
+
+Three reviewers examined exact commit
+`1105a72a0516fb9fff17ecaba4eec8297afc7e49`. Atomic publication,
+prior-evidence preservation, lock contention, pinned execution, and controlled
+diagnostics passed. They found one remaining liveness gap: schema-1 Git revision
+collection used an unbounded subprocess while the pin and full-run output lock
+were held.
+
+Schema 1 now resolves Git to an absolute executable and uses the existing
+contained process runner with a fixed ten-second timeout, null input, captured
+output, hardened Git arguments, and an isolated allowlisted environment. It
+requests a verified commit object and accepts only an exact lowercase
+40-character hexadecimal SHA. A timeout regression requires bounded return,
+descendant cleanup, pin cleanup, output-lock release, unchanged prior evidence,
+one diagnostic without a traceback, and no success summary. A real default-Git
+integration test covers the absolute invocation path.
+
+This remediation requires another fresh exact-SHA three-way review and all
+local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

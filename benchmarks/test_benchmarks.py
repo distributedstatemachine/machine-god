@@ -357,9 +357,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
                     benchmark_run, "run_once", side_effect=run_results
                 ),
                 mock.patch.object(
-                    benchmark_run.subprocess,
-                    "check_output",
-                    return_value="1" * 40 + "\n",
+                    benchmark_run, "repository_head", return_value="1" * 40
                 ),
                 mock.patch("builtins.print"),
             ):
@@ -382,6 +380,149 @@ class BenchmarkScriptsTest(unittest.TestCase):
             )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_schema_one_repository_head_is_isolated_and_requires_full_sha(self) -> None:
+        with (
+            mock.patch.object(
+                benchmark_run, "invocation_path", return_value="/resolved/git"
+            ),
+            mock.patch.object(
+                benchmark_run, "git_output", return_value="1" * 40
+            ) as git_output,
+        ):
+            self.assertEqual(benchmark_run.repository_head(ROOT), "1" * 40)
+
+        arguments = git_output.call_args.args
+        self.assertEqual(arguments[0:2], ("/resolved/git", ROOT))
+        environment = arguments[2]
+        self.assertEqual(
+            set(environment),
+            {
+                "GIT_CONFIG_GLOBAL",
+                "GIT_CONFIG_NOSYSTEM",
+                "GIT_NO_REPLACE_OBJECTS",
+                "GIT_TERMINAL_PROMPT",
+                "LANG",
+                "LC_ALL",
+                CONTAINMENT_ENVIRONMENT_KEY,
+                "NO_COLOR",
+                "PATH",
+            },
+        )
+        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(environment["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(environment["GIT_NO_REPLACE_OBJECTS"], "1")
+        self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(arguments[3], benchmark_run.GIT_TIMEOUT_SECONDS)
+        self.assertEqual(arguments[4:], ("rev-parse", "--verify", "HEAD^{commit}"))
+
+        for invalid in ("1" * 39, "1" * 41, "A" * 40, "not-a-sha"):
+            with (
+                self.subTest(invalid=invalid),
+                mock.patch.object(
+                    benchmark_run, "invocation_path", return_value="/resolved/git"
+                ),
+                mock.patch.object(benchmark_run, "git_output", return_value=invalid),
+                self.assertRaisesRegex(RuntimeError, "not a full Git SHA"),
+            ):
+                benchmark_run.repository_head(ROOT)
+
+    def test_schema_one_repository_head_runs_real_default_git(self) -> None:
+        git_sha = benchmark_run.repository_head(ROOT)
+        self.assertEqual(len(git_sha), 40)
+        self.assertTrue(all(character in "0123456789abcdef" for character in git_sha))
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup requires POSIX")
+    def test_schema_one_git_timeout_is_bounded_and_cleans_up(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "test-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
+            evidence_path = root / "evidence.json"
+            prior_evidence = '{"prior": true}\n'
+            evidence_path.write_text(prior_evidence, encoding="utf-8")
+            marker = root / "child-survived"
+            child_code = (
+                "import pathlib,time; time.sleep(0.5); "
+                f"pathlib.Path({str(marker)!r}).write_text('bad')"
+            )
+            fake_git = root / "fake-git"
+            fake_git.write_text(
+                "\n".join(
+                    (
+                        "#!/usr/bin/env python3",
+                        "import subprocess, sys, time",
+                        f"subprocess.Popen([sys.executable, '-c', {child_code!r}])",
+                        "time.sleep(5)",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
+            diagnostic = io.StringIO()
+            original_head = benchmark_run.repository_head
+            original_pin = benchmark_run.pin_executable
+            pinned_executables: list[object] = []
+
+            def short_timeout_head(cwd: Path) -> str:
+                return original_head(cwd, git=str(fake_git), timeout_seconds=0.1)
+
+            def record_pin(identity: object) -> object:
+                pinned = original_pin(identity)
+                pinned_executables.append(pinned)
+                return pinned
+
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(ROOT / "benchmarks/run.py"),
+                        "--binary",
+                        str(binary),
+                        "--output",
+                        str(evidence_path),
+                        "--runs",
+                        "10",
+                        "--warmup",
+                        "1",
+                    ],
+                ),
+                mock.patch.object(
+                    benchmark_run, "run_once", side_effect=[(1, 0)] * 11
+                ),
+                mock.patch.object(
+                    benchmark_run, "repository_head", side_effect=short_timeout_head
+                ),
+                mock.patch.object(
+                    benchmark_run, "pin_executable", side_effect=record_pin
+                ),
+                mock.patch.object(sys, "stderr", diagnostic),
+                mock.patch("builtins.print") as print_output,
+                self.assertRaises(SystemExit) as raised,
+            ):
+                started = time.monotonic()
+                benchmark_run.main()
+            elapsed = time.monotonic() - started
+
+            self.assertEqual(raised.exception.code, 1)
+            self.assertLess(elapsed, 3.0)
+            self.assertIn("timed out after 0.1s", diagnostic.getvalue())
+            self.assertEqual(len(diagnostic.getvalue().splitlines()), 1)
+            self.assertNotIn("Traceback", diagnostic.getvalue())
+            self.assertEqual(evidence_path.read_text(encoding="utf-8"), prior_evidence)
+            self.assertFalse(evidence_path.with_name(f".{evidence_path.name}.lock").exists())
+            self.assertEqual(len(pinned_executables), 1)
+            pinned = pinned_executables[0]
+            with self.assertRaises(OSError):
+                os.fstat(pinned.descriptor)
+            if pinned.execution_path is not None:
+                self.assertFalse(pinned.execution_path.exists())
+            print_output.assert_not_called()
+            time.sleep(0.7)
+            self.assertFalse(marker.exists())
 
     def test_schema_one_collector_atomically_replaces_output_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -414,9 +555,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
                     benchmark_run, "run_once", side_effect=[(1, 0)] * 11
                 ),
                 mock.patch.object(
-                    benchmark_run.subprocess,
-                    "check_output",
-                    return_value="1" * 40 + "\n",
+                    benchmark_run, "repository_head", return_value="1" * 40
                 ),
                 mock.patch("builtins.print") as print_output,
             ):
