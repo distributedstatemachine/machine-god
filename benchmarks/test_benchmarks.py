@@ -159,6 +159,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
             '{"schema_version":NaN}',
             '{"schema_version":Infinity}',
             '{"schema_version":-Infinity}',
+            '{"schema_version":1e9999}',
         )
         for evidence in cases:
             with self.subTest(evidence=evidence):
@@ -172,6 +173,32 @@ class BenchmarkScriptsTest(unittest.TestCase):
         evidence["command"] = ["different-binary"]
         completed = self.run_checker(evidence)
         self.assertNotEqual(completed.returncode, 0)
+
+    def test_checker_rejects_undeclared_and_malformed_schema_one_fields(self) -> None:
+        mutations = (
+            lambda data: data.__setitem__("performance_claim", "100x"),
+            lambda data: data["host"].__setitem__("winner", "machine-god"),
+            lambda data: data.__setitem__("binary", None),
+            lambda data: data.__setitem__("binary", []),
+            lambda data: data["binary"].__setitem__("result", "faster"),
+            lambda data: data["command"].append("--extra"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_evidence()
+                mutate(evidence)
+                completed = self.run_checker(evidence)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertNotIn("Traceback", completed.stderr)
+
+    def test_checker_handles_huge_integer_samples_with_exact_arithmetic(self) -> None:
+        evidence = self.valid_evidence()
+        huge = 10**4000
+        evidence["samples_ns"] = [huge] * 10
+        evidence["median_ns"] = huge
+        evidence["p95_ns"] = huge
+        completed = self.run_checker(evidence)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_checker_binds_binary_and_expected_sha(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -843,6 +870,23 @@ class UpstreamHarnessTest(unittest.TestCase):
             with self.subTest(implementation=implementation_index, field="timeout"):
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence)
+
+    def test_huge_numbers_use_controlled_exact_validation(self) -> None:
+        for timeout_name in ("fetch", "build", "sample"):
+            evidence = self.valid_upstream_evidence()
+            evidence["timeouts_seconds"][timeout_name] = 10**4000
+            with self.subTest(timeout=timeout_name):
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
+        evidence = self.valid_upstream_evidence()
+        huge = 10**4000
+        for measurement in evidence["workloads"][0]["implementations"]:
+            for sample in measurement["samples"]:
+                sample["elapsed_ns"] = huge
+            measurement["median_ns"] = huge
+            measurement["p95_ns"] = huge
+        validate_upstream_evidence(evidence)
 
         for aggregate in ("median_ns", "p95_ns"):
             evidence = self.valid_upstream_evidence()

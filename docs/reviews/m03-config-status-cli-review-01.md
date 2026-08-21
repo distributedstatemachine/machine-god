@@ -193,6 +193,28 @@ serialization-type gaps:
 The remediation requires fresh exact-SHA review and complete local and remote
 gates.
 
+## Review round 07 findings and remediation
+
+Correctness/API and performance/resource/evidence review of exact commit
+`9a47865e7a4e68ba9918a4599dbd1d0943af5b5c` found two remaining robustness
+classes:
+
+1. Converting an arbitrary-size JSON integer through `math.isfinite` or
+   `statistics.median` could raise `OverflowError`; exponent notation such as
+   `1e9999` could also decode to infinity without invoking the decoder's
+   constant hook. Integer positivity now avoids float conversion, both evidence
+   schemas derive medians with exact integer arithmetic, and JSON float parsing
+   rejects non-finite results. Regressions cover 4,000-digit timeouts and
+   samples plus exponent overflow without tracebacks.
+2. Legacy schema-1 bootstrap validation still allowed undeclared root/host/
+   binary fields, extra command arguments, and non-object binary metadata that
+   could cause an attribute error. Schema 1 now fixes its root, host, binary,
+   and single-executable command shapes before field access. Mutations inject
+   claims, results, malformed binaries, and extra arguments and require
+   controlled rejection.
+
+The remediations require fresh exact-SHA review and all local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

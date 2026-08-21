@@ -21,7 +21,6 @@ import select
 import shutil
 import signal
 import stat
-import statistics
 import subprocess
 import sys
 import tempfile
@@ -452,12 +451,11 @@ def is_integer(value: object) -> bool:
 
 
 def is_positive_number(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value > 0
-    )
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    return isinstance(value, float) and math.isfinite(value) and value > 0
 
 
 def require_command(value: object, field: str) -> list[str]:
@@ -494,6 +492,14 @@ def percentile_95(samples: Sequence[int]) -> int:
     ordered = sorted(samples)
     index = min(len(ordered) - 1, (len(ordered) * 95 + 99) // 100 - 1)
     return ordered[index]
+
+
+def integer_median(samples: Sequence[int]) -> int:
+    ordered = sorted(samples)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
 
 
 def validate_binary(binary: object, field: str) -> dict[str, Any]:
@@ -639,7 +645,7 @@ def validate_measurement(
             raise ValueError(f"{field}.samples[{index}].returncode must be integer zero")
         elapsed.append(elapsed_ns)
     median_ns = measurement.get("median_ns")
-    if not is_integer(median_ns) or median_ns != int(statistics.median(elapsed)):
+    if not is_integer(median_ns) or median_ns != integer_median(elapsed):
         raise ValueError(f"{field}.median_ns does not match raw samples")
     p95_ns = measurement.get("p95_ns")
     if not is_integer(p95_ns) or p95_ns != percentile_95(elapsed):
@@ -2834,7 +2840,7 @@ def run_measurement(
             "executable_identity": dict(expected_executable),
             "pinned_executable": dict(pinned.record),
             "samples": samples,
-            "median_ns": int(statistics.median(elapsed)),
+            "median_ns": integer_median(elapsed),
             "p95_ns": percentile_95(elapsed),
         }
     finally:
