@@ -2619,6 +2619,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     def test_replacement_during_sample_cannot_change_executed_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
+            started = temporary / "started"
             marker = temporary / "result"
             invocation = temporary / "measured-tool"
             if sys.platform.startswith("linux"):
@@ -2629,13 +2630,13 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 command = [
                     str(invocation),
                     "-c",
-                    f"sleep 0.2; printf good > {marker}",
+                    f"printf started > {started}; sleep 0.2; printf good > {marker}",
                 ]
             else:
                 original = temporary / "original"
                 replacement = temporary / "replacement"
                 original.write_text(
-                    f"#!/bin/sh\nsleep 0.2\nprintf good > {marker}\n",
+                    f"#!/bin/sh\nprintf started > {started}\nsleep 0.2\nprintf good > {marker}\n",
                     encoding="utf-8",
                 )
                 replacement.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
@@ -2646,9 +2647,15 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             identity = executable_identity(invocation)
             environment = os.environ.copy()
             environment[CONTAINMENT_ENVIRONMENT_KEY] = "d" * 32
+            replacement_errors: list[str] = []
 
             def replace_invocation() -> None:
-                time.sleep(0.05)
+                deadline = time.monotonic() + 3.0
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                if not started.exists():
+                    replacement_errors.append("measured child did not signal startup")
+                    return
                 invocation.unlink()
                 invocation.symlink_to(replacement)
 
@@ -2663,12 +2670,13 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                         environment,
                         warmup=0,
                         runs=1,
-                        timeout_seconds=1.0,
+                        timeout_seconds=3.0,
                         expected_executable=identity,
                     )
             finally:
-                replacer.join(1.0)
+                replacer.join(4.0)
             self.assertFalse(replacer.is_alive())
+            self.assertEqual(replacement_errors, [])
             self.assertEqual(marker.read_text(encoding="utf-8"), "good")
 
     @unittest.skipUnless(os.name == "posix", "executable symlink regression requires POSIX")
