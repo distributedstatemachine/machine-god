@@ -653,6 +653,55 @@ class UpstreamHarnessTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence)
 
+    def test_rejects_undeclared_nested_evidence_fields(self) -> None:
+        mutations = (
+            lambda data: data["source"].__setitem__("performance_claim", "100x"),
+            lambda data: data["source"]["machine_god"].__setitem__(
+                "performance_claim", "100x"
+            ),
+            lambda data: data["source"]["machine_god"]["materialization"].__setitem__(
+                "winner", "machine-god"
+            ),
+            lambda data: data["source"]["machine_god"]["materialization"][
+                "entries"
+            ][0].__setitem__("result", "faster"),
+            lambda data: data["source"]["machine_god"]["materialization"][
+                "listing_command"
+            ].__setitem__("median_ns", 1),
+            lambda data: data["source"]["fx"].__setitem__("equivalent", True),
+            lambda data: data["source"]["fx"]["preparation_commands"][0].__setitem__(
+                "winner", "machine-god"
+            ),
+            lambda data: data["host"].__setitem__("performance_claim", "100x"),
+            lambda data: data["host"]["runner"].__setitem__("result", "faster"),
+            lambda data: data["tools"].__setitem__("winner", "machine-god"),
+            lambda data: data["tools"]["cargo"].__setitem__(
+                "performance_claim", "100x"
+            ),
+            lambda data: data["builds"][0].__setitem__("winner", "fx"),
+            lambda data: data["builds"][0]["binary"].__setitem__(
+                "result", "faster"
+            ),
+            lambda data: data["workloads"][0]["implementations"][0][
+                "executable_identity"
+            ].__setitem__("performance_claim", "100x"),
+            lambda data: data["workloads"][0]["implementations"][0][
+                "pinned_executable"
+            ].__setitem__("winner", "fx"),
+            lambda data: data["workloads"][0]["implementations"][0]["samples"][
+                0
+            ].__setitem__("comparison", {"winner": "machine-god"}),
+            lambda data: data["workloads"][0]["implementations"][0]["samples"][
+                0
+            ].__setitem__("median_ns", 1),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence)
+
     def test_records_implemented_local_commands_without_measurements(self) -> None:
         evidence = self.valid_upstream_evidence()
         machine_binary = evidence["builds"][1]["binary"]["path"]

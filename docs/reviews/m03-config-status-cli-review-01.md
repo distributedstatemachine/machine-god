@@ -96,6 +96,23 @@ the same exact round-01 commit:
    replace bootstrap, implemented, unimplemented, fx, and machine-god prose
    with claim-bearing statements and require rejection.
 
+## Review round 02 finding and remediation
+
+Fresh correctness/API and security/abuse review of exact commit
+`b23b293a020b39a5c6a89f59537dad4efdcb4b95` agreed on one further
+evidence-integrity gap. Exact keys stopped at the root, workload, and top-level
+measurement objects. Nested source, host, tool, command, build, binary,
+executable-identity, pinned-executable, and sample objects could still carry
+undeclared claim-like or measurement-like fields. Validation now fixes the key
+set at every schema-2 object level, while environment maps remain governed by
+their existing exact allowlists. A representative mutation suite injects
+claims, winners, comparisons, results, and aggregates into every nested object
+kind and requires rejection.
+
+All reviewed native and CLI behavior, including both output formats' bidi
+escaping, was GREEN in this round. The evidence remediation still requires a
+fresh exact-SHA three-way review and complete local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

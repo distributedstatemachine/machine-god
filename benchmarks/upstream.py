@@ -80,6 +80,53 @@ FORBIDDEN_ENVIRONMENT_NAMES = {
     "LD_PRELOAD",
     "RUSTFLAGS",
 }
+EXECUTABLE_IDENTITY_KEYS = {
+    "executable",
+    "canonical_executable",
+    "sha256",
+    "bytes",
+    "mode",
+    "device",
+    "inode",
+    "mtime_ns",
+    "ctime_ns",
+    "invocation_mode",
+    "invocation_device",
+    "invocation_inode",
+    "invocation_mtime_ns",
+    "invocation_ctime_ns",
+    "invocation_link_target",
+}
+COMMAND_RECORD_KEYS = {
+    "command",
+    "cwd",
+    "environment",
+    "timeout_seconds",
+    "elapsed_ns",
+    "setup_ns",
+    "supervision_ns",
+    "cleanup_ns",
+    "returncode",
+    "stdout_sha256",
+    "stderr_sha256",
+}
+BINARY_KEYS = {"path", "bytes", "sha256"}
+PINNED_EXECUTABLE_KEYS = {
+    "method",
+    "sha256",
+    "bytes",
+    "mode",
+    "device",
+    "inode",
+    "seals",
+}
+SAMPLE_KEYS = {
+    "elapsed_ns",
+    "setup_ns",
+    "supervision_ns",
+    "cleanup_ns",
+    "returncode",
+}
 
 
 @dataclass(frozen=True)
@@ -352,6 +399,8 @@ def validate_executable_identity_record(
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field} must be an object")
+    if set(value) != EXECUTABLE_IDENTITY_KEYS:
+        raise ValueError(f"{field} fields are not canonical")
     executable = require_text(value.get("executable"), f"{field}.executable")
     canonical = require_text(
         value.get("canonical_executable"), f"{field}.canonical_executable"
@@ -443,6 +492,8 @@ def percentile_95(samples: Sequence[int]) -> int:
 def validate_binary(binary: object, field: str) -> dict[str, Any]:
     if not isinstance(binary, dict):
         raise ValueError(f"{field} must be an object")
+    if set(binary) != BINARY_KEYS:
+        raise ValueError(f"{field} fields are not canonical")
     require_text(binary.get("path"), f"{field}.path")
     if not is_integer(binary.get("bytes")) or binary["bytes"] <= 0:
         raise ValueError(f"{field}.bytes must be a positive integer")
@@ -474,9 +525,12 @@ def validate_command_record(
     expected_command: Sequence[str] | None = None,
     expected_environment_keys: set[str],
     expected_timeout: float,
+    extra_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise ValueError(f"{field} must be an object")
+    if set(record) != COMMAND_RECORD_KEYS | (extra_keys or set()):
+        raise ValueError(f"{field} fields are not canonical")
     command = require_command(record.get("command"), f"{field}.command")
     if expected_command is not None and command != list(expected_command):
         raise ValueError(f"{field}.command is not the exact expected command")
@@ -534,6 +588,8 @@ def validate_measurement(
     pinned = measurement.get("pinned_executable")
     if not isinstance(pinned, dict):
         raise ValueError(f"{field}.pinned_executable must be an object")
+    if set(pinned) != PINNED_EXECUTABLE_KEYS:
+        raise ValueError(f"{field}.pinned_executable fields are not canonical")
     if pinned.get("method") not in {"linux-sealed-memfd-fexecve", "private-copy"}:
         raise ValueError(f"{field}.pinned_executable.method is unsupported")
     for name in ("bytes", "mode", "device", "inode", "seals"):
@@ -557,7 +613,7 @@ def validate_measurement(
         raise ValueError(f"{field} needs at least 10 raw samples")
     elapsed: list[int] = []
     for index, sample in enumerate(samples):
-        if not isinstance(sample, dict):
+        if not isinstance(sample, dict) or set(sample) != SAMPLE_KEYS:
             raise ValueError(f"{field}.samples[{index}] must be an object")
         elapsed_ns = sample.get("elapsed_ns")
         if not is_integer(elapsed_ns) or elapsed_ns <= 0:
@@ -626,12 +682,31 @@ def validate_upstream_evidence(
             raise ValueError(f"timeouts_seconds.{name} must be a positive finite number")
 
     source = data.get("source")
-    if not isinstance(source, dict):
+    if not isinstance(source, dict) or set(source) != {"machine_god", "fx"}:
         raise ValueError("source provenance is missing")
     machine_source = source.get("machine_god")
     fx_source = source.get("fx")
     if not isinstance(machine_source, dict) or not isinstance(fx_source, dict):
         raise ValueError("both source revisions are required")
+    if set(machine_source) != {
+        "git_sha",
+        "dirty",
+        "repository_root",
+        "allowed_output_directories",
+        "materialization",
+    }:
+        raise ValueError("machine-god source fields are not canonical")
+    if set(fx_source) != {
+        "repository",
+        "locked_commit",
+        "verified_commit",
+        "lock_path",
+        "lock_sha256",
+        "fresh_checkout",
+        "hooks_disabled",
+        "preparation_commands",
+    }:
+        raise ValueError("fx source fields are not canonical")
     machine_sha = require_text(machine_source.get("git_sha"), "source.machine_god.git_sha")
     if not HEX_SHA_RE.fullmatch(machine_sha):
         raise ValueError("source.machine_god.git_sha must be a lowercase 40-character SHA")
@@ -672,14 +747,34 @@ def validate_upstream_evidence(
         raise ValueError("evidence does not bind the canonical upstream lock bytes")
 
     host = data.get("host")
-    if not isinstance(host, dict):
+    if not isinstance(host, dict) or set(host) != {
+        "system",
+        "release",
+        "machine",
+        "python",
+        "cpu_count",
+        "cpu_model",
+        "runner",
+    }:
         raise ValueError("host metadata is missing")
     for field in ("system", "release", "machine", "python", "cpu_model"):
         require_text(host.get(field), f"host.{field}")
     if not is_integer(host.get("cpu_count")) or host["cpu_count"] < 1:
         raise ValueError("host.cpu_count must be a positive integer")
     runner = host.get("runner")
-    if not isinstance(runner, dict) or runner.get("class") != runner_class:
+    if (
+        not isinstance(runner, dict)
+        or set(runner)
+        != {
+            "class",
+            "github_actions",
+            "image_os",
+            "image_version",
+            "runner_os",
+            "runner_arch",
+        }
+        or runner.get("class") != runner_class
+    ):
         raise ValueError("host.runner.class must bind the evidence runner class")
     for field in ("image_os", "image_version", "runner_os", "runner_arch"):
         require_text(runner.get(field), f"host.runner.{field}")
@@ -687,12 +782,17 @@ def validate_upstream_evidence(
         raise ValueError("host.runner.github_actions must be boolean")
 
     tools = data.get("tools")
-    if not isinstance(tools, dict):
+    if not isinstance(tools, dict) or set(tools) != {"git", "zig", "rustc", "cargo"}:
         raise ValueError("tool provenance is missing")
     for name in ("git", "zig", "rustc", "cargo"):
         tool = tools.get(name)
         if not isinstance(tool, dict):
             raise ValueError(f"tools.{name} is missing")
+        expected_tool_keys = EXECUTABLE_IDENTITY_KEYS | {"command", "version"}
+        if name != "git":
+            expected_tool_keys |= {"required_version"}
+        if set(tool) != expected_tool_keys:
+            raise ValueError(f"tools.{name} fields are not canonical")
         command = require_command(tool.get("command"), f"tools.{name}.command")
         executable = require_text(tool.get("executable"), f"tools.{name}.executable")
         if command[0] != executable:
@@ -777,6 +877,18 @@ def validate_upstream_evidence(
     materialization = machine_source.get("materialization")
     if (
         not isinstance(materialization, dict)
+        or set(materialization)
+        != {
+            "method",
+            "source_dir",
+            "manifest_path",
+            "git_tree",
+            "entries",
+            "git_entries_sha256",
+            "manifest_sha256",
+            "source_tree_sha256",
+            "listing_command",
+        }
         or materialization.get("method") != "git-ls-tree-cat-file"
     ):
         raise ValueError("machine-god source must use canonical Git-object materialization")
@@ -889,6 +1001,7 @@ def validate_upstream_evidence(
         expected_command=fx_command,
         expected_environment_keys=FX_BUILD_ENVIRONMENT_KEYS,
         expected_timeout=timeouts["build"],
+        extra_keys={"project", "profile", "binary"},
     )
     validate_command_record(
         machine_build,
@@ -896,6 +1009,7 @@ def validate_upstream_evidence(
         expected_command=machine_command,
         expected_environment_keys=MACHINE_BUILD_ENVIRONMENT_KEYS,
         expected_timeout=timeouts["build"],
+        extra_keys={"project", "profile", "binary"},
     )
     for key in BASE_ENVIRONMENT_KEYS:
         if fx_build["environment"][key] != tool_environment[key]:
