@@ -349,6 +349,30 @@ source, growing executable and generic files, intermediate-link retargeting,
 and existing pinning behavior. These remediations require another fresh
 exact-SHA three-way review and all local and remote gates.
 
+## Review round 14 findings and remediation
+
+Three reviewers examined exact commit
+`b7c1a2438d1093acb121d1851127de32ee6316bb`. They independently found
+that a completed pinned executable leaked its descriptor if final source
+identity verification failed after construction. The evidence/resource pass
+also identified the two remaining production end-of-file reads: schema-1
+binary metadata hashing and materialized-source file collection.
+
+Pinned-resource ownership now remains under one cleanup guard through final
+source verification; failures close the source, pinned descriptor, and private
+temporary directory without masking the active error. Adjacent measurement
+cleanup preserves its active error as well. Schema-1 binary metadata and
+materialized-source files are now collected through nonblocking, no-follow
+descriptors with initial-size-plus-one-byte bounds and pre/post pathname and
+descriptor identity checks. The production read audit found no other
+end-of-file file reads; remaining raw reads are fixed one-byte process
+synchronization operations.
+
+Regressions cover final-verification descriptor and temporary-directory
+cleanup, schema-1 binary growth and replacement, and materialized-source growth
+and replacement. These remediations require another fresh exact-SHA three-way
+review and all local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

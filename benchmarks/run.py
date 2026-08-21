@@ -8,17 +8,64 @@ import hashlib
 import json
 import os
 import platform
+import stat
 import subprocess
 import time
 from pathlib import Path
+from typing import BinaryIO
 
 
-def sha256(path: Path) -> str:
+def bounded_sha256(source: BinaryIO, expected_bytes: int) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
+    remaining = expected_bytes
+    while remaining:
+        chunk = source.read(min(remaining, 1024 * 1024))
+        if not chunk:
+            raise RuntimeError("binary became shorter while inspected")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if source.read(1):
+        raise RuntimeError("binary became longer while inspected")
     return digest.hexdigest()
+
+
+def stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def binary_record(binary: Path) -> dict[str, object]:
+    before_path = binary.lstat()
+    open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    open_flags |= getattr(os, "O_CLOEXEC", 0)
+    open_flags |= getattr(os, "O_NOFOLLOW", 0)
+    open_flags |= getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(binary, open_flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or not before.st_mode & 0o111:
+            raise RuntimeError(f"binary is not executable: {binary}")
+        if stat_identity(before_path) != stat_identity(before):
+            raise RuntimeError("binary path changed before inspection")
+        if not os.access(binary, os.X_OK):
+            raise RuntimeError(f"binary is not executable: {binary}")
+        with os.fdopen(descriptor, "rb", buffering=0, closefd=False) as source:
+            checksum = bounded_sha256(source, before.st_size)
+        after = os.fstat(descriptor)
+        path_after = binary.lstat()
+        if stat_identity(before_path) != stat_identity(path_after):
+            raise RuntimeError("binary path changed while inspected")
+        if stat_identity(before) != stat_identity(after):
+            raise RuntimeError("binary changed while inspected")
+        return {"path": str(binary), "bytes": before.st_size, "sha256": checksum}
+    finally:
+        os.close(descriptor)
 
 
 def run_once(binary: Path) -> tuple[int, int]:
@@ -69,6 +116,7 @@ def main() -> int:
 
     ordered = sorted(samples)
     p95_index = min(len(ordered) - 1, (len(ordered) * 95 + 99) // 100 - 1)
+    collected_binary = binary_record(binary)
     evidence = {
         "schema_version": 1,
         "classification": "bootstrap-infrastructure-only",
@@ -81,11 +129,7 @@ def main() -> int:
             "machine": platform.machine(),
             "python": platform.python_version(),
         },
-        "binary": {
-            "path": str(binary),
-            "bytes": binary.stat().st_size,
-            "sha256": sha256(binary),
-        },
+        "binary": collected_binary,
         "command": [str(binary)],
         "warmup": args.warmup,
         "samples_ns": samples,

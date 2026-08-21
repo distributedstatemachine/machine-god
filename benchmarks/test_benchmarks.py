@@ -383,6 +383,66 @@ class BenchmarkScriptsTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_schema_one_binary_record_rejects_growth(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "binary"
+            binary.write_bytes(b"#!/bin/sh\n")
+            binary.chmod(0o755)
+            initial_size = binary.stat().st_size
+            reads: list[int] = []
+            original_hash = benchmark_run.bounded_sha256
+
+            def grow_then_hash(source: object, expected_bytes: int) -> str:
+                with binary.open("ab") as destination:
+                    destination.write(b"unbounded-growth")
+
+                class CountingSource:
+                    def read(self, size: int) -> bytes:
+                        reads.append(size)
+                        return source.read(size)
+
+                return original_hash(CountingSource(), expected_bytes)
+
+            with (
+                mock.patch.object(
+                    benchmark_run,
+                    "bounded_sha256",
+                    side_effect=grow_then_hash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "became longer"),
+            ):
+                benchmark_run.binary_record(binary)
+
+            self.assertEqual(reads, [initial_size, 1])
+
+    def test_schema_one_binary_record_rejects_path_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "binary"
+            displaced = root / "displaced"
+            replacement = root / "replacement"
+            binary.write_bytes(b"#!/bin/sh\n")
+            replacement.write_bytes(b"#!/bin/sh\n")
+            binary.chmod(0o755)
+            replacement.chmod(0o755)
+            original_hash = benchmark_run.bounded_sha256
+
+            def hash_then_replace(source: object, expected_bytes: int) -> str:
+                checksum = original_hash(source, expected_bytes)
+                binary.rename(displaced)
+                replacement.rename(binary)
+                return checksum
+
+            with (
+                mock.patch.object(
+                    benchmark_run,
+                    "bounded_sha256",
+                    side_effect=hash_then_replace,
+                ),
+                self.assertRaisesRegex(RuntimeError, "path changed"),
+            ):
+                benchmark_run.binary_record(binary)
+
     def test_checker_binds_binary_and_expected_sha(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2336,6 +2396,86 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 upstream.binary_record(executable)
 
             self.assertEqual(reads, [initial_size, 1])
+
+    def test_materialized_source_read_rejects_growth_and_path_replacement(self) -> None:
+        mutations = ("growth", "replacement")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "source"
+                source.mkdir()
+                path = source / "file.txt"
+                path.write_bytes(b"source")
+                path.chmod(0o644)
+                replacement = root / "replacement"
+                replacement.write_bytes(b"source")
+                replacement.chmod(0o644)
+                displaced = root / "displaced"
+                original_read = upstream.bounded_descriptor_bytes
+
+                def mutate_then_read(descriptor: int, expected_bytes: int) -> bytes:
+                    if mutation == "growth":
+                        with path.open("ab") as destination:
+                            destination.write(b"growth")
+                        return original_read(descriptor, expected_bytes)
+                    contents = original_read(descriptor, expected_bytes)
+                    path.rename(displaced)
+                    replacement.rename(path)
+                    return contents
+
+                with (
+                    mock.patch.object(
+                        upstream,
+                        "bounded_descriptor_bytes",
+                        side_effect=mutate_then_read,
+                    ),
+                    self.assertRaisesRegex(RuntimeError, "longer|path changed"),
+                ):
+                    upstream.materialized_source_entries(source)
+
+    def test_pin_executable_closes_resources_when_final_verification_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "tool"
+            executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+            executable.chmod(0o755)
+            identity = executable_identity(executable)
+            pinned_instances: list[upstream.PinnedExecutable] = []
+            original_pinned_verify = upstream.PinnedExecutable.verify
+            verification_calls = 0
+
+            def record_pinned(instance: upstream.PinnedExecutable) -> None:
+                pinned_instances.append(instance)
+                original_pinned_verify(instance)
+
+            def fail_final(_identity: object) -> None:
+                nonlocal verification_calls
+                verification_calls += 1
+                if verification_calls == 2:
+                    raise RuntimeError("final source identity changed")
+
+            with (
+                mock.patch.object(
+                    upstream.PinnedExecutable,
+                    "verify",
+                    autospec=True,
+                    side_effect=record_pinned,
+                ),
+                mock.patch.object(
+                    upstream,
+                    "verify_executable_identity",
+                    side_effect=fail_final,
+                ),
+                self.assertRaisesRegex(RuntimeError, "final source identity changed"),
+            ):
+                upstream.pin_executable(identity)
+
+            self.assertEqual(verification_calls, 2)
+            self.assertEqual(len(pinned_instances), 1)
+            pinned = pinned_instances[0]
+            with self.assertRaises(OSError):
+                os.fstat(pinned.descriptor)
+            if pinned.execution_path is not None:
+                self.assertFalse(pinned.execution_path.exists())
 
     @unittest.skipUnless(os.name == "posix", "setsid regression requires POSIX")
     def test_timeout_cleanup_is_bounded_when_detached_child_holds_pipe(self) -> None:

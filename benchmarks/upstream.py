@@ -2556,6 +2556,24 @@ def git_blob_oid(contents: bytes) -> str:
     return hashlib.sha1(header + contents, usedforsecurity=False).hexdigest()
 
 
+def bounded_descriptor_bytes(descriptor: int, expected_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    offset = 0
+    while offset < expected_bytes:
+        chunk = os.pread(
+            descriptor,
+            min(expected_bytes - offset, 1024 * 1024),
+            offset,
+        )
+        if not chunk:
+            raise RuntimeError("materialized file became shorter while read")
+        chunks.append(chunk)
+        offset += len(chunk)
+    if os.pread(descriptor, 1, offset):
+        raise RuntimeError("materialized file became longer while read")
+    return b"".join(chunks)
+
+
 def validate_source_manifest(value: object, field: str) -> list[dict[str, object]]:
     if not isinstance(value, list) or not value:
         raise ValueError(f"{field} must be a non-empty list")
@@ -2608,7 +2626,34 @@ def materialized_source_entries(source_dir: Path) -> list[dict[str, object]]:
         mode_bits = stat.S_IMODE(metadata.st_mode)
         if mode_bits not in {0o644, 0o755}:
             raise RuntimeError(f"noncanonical mode in materialized source: {relative}")
-        contents = path.read_bytes()
+        open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        open_flags |= getattr(os, "O_CLOEXEC", 0)
+        open_flags |= getattr(os, "O_NOFOLLOW", 0)
+        open_flags |= getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(path, open_flags)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise RuntimeError(
+                    f"unsupported entry in materialized source: {relative}"
+                )
+            if stat_identity(metadata) != stat_identity(opened):
+                raise RuntimeError(
+                    f"materialized source path changed before read: {relative}"
+                )
+            contents = bounded_descriptor_bytes(descriptor, opened.st_size)
+            after = os.fstat(descriptor)
+            path_after = path.lstat()
+            if stat_identity(metadata) != stat_identity(path_after):
+                raise RuntimeError(
+                    f"materialized source path changed while read: {relative}"
+                )
+            if stat_identity(opened) != stat_identity(after):
+                raise RuntimeError(
+                    f"materialized source file changed while read: {relative}"
+                )
+        finally:
+            os.close(descriptor)
         entries.append(
             {
                 "path": relative,
@@ -2882,9 +2927,19 @@ class PinnedExecutable:
                 raise RuntimeError("private executable copy identity changed")
 
     def close(self) -> None:
-        os.close(self.descriptor)
-        if self.temporary_directory is not None:
-            self.temporary_directory.cleanup()
+        close_error: BaseException | None = None
+        try:
+            os.close(self.descriptor)
+        except BaseException as error:
+            close_error = error
+        try:
+            if self.temporary_directory is not None:
+                self.temporary_directory.cleanup()
+        except BaseException as error:
+            if close_error is None:
+                close_error = error
+        if close_error is not None:
+            raise close_error
 
 
 def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
@@ -2899,7 +2954,10 @@ def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
     source_flags |= getattr(os, "O_CLOEXEC", 0)
     source_flags |= getattr(os, "O_NOFOLLOW", 0)
     source_flags |= getattr(os, "O_NONBLOCK", 0)
-    source = os.open(canonical, source_flags)
+    source: int | None = os.open(canonical, source_flags)
+    descriptor: int | None = None
+    temporary: tempfile.TemporaryDirectory[str] | None = None
+    pinned: PinnedExecutable | None = None
     try:
         source_metadata = os.fstat(source)
         for field, actual in (
@@ -2921,7 +2979,6 @@ def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
         if stat_identity(canonical_before) != stat_identity(canonical.lstat()):
             raise RuntimeError("binary path changed while verified for pinning")
 
-        temporary: tempfile.TemporaryDirectory[str] | None = None
         execution_path: Path | None = None
         if sys.platform.startswith("linux"):
             required = (
@@ -2950,55 +3007,76 @@ def pin_executable(identity: Mapping[str, object]) -> PinnedExecutable:
                 os.O_RDWR | getattr(os, "O_CLOEXEC", 0),
             )
             method = "private-copy"
-        try:
-            copy_descriptor(source, descriptor, expected_bytes)
-            source_after_copy = os.fstat(source)
-            if stat_identity(source_metadata) != stat_identity(source_after_copy):
-                raise RuntimeError("binary identity changed while copied for pinning")
-            if stat_identity(canonical_before) != stat_identity(canonical.lstat()):
-                raise RuntimeError("binary path changed while copied for pinning")
-            os.fchmod(descriptor, 0o500)
-            os.fsync(descriptor)
-            seals = 0
-            if method == "linux-sealed-memfd-fexecve":
-                seals = (
-                    fcntl.F_SEAL_SEAL
-                    | fcntl.F_SEAL_SHRINK
-                    | fcntl.F_SEAL_GROW
-                    | fcntl.F_SEAL_WRITE
-                )
-                fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
-            metadata = os.fstat(descriptor)
-            pinned_checksum = sha256_descriptor(descriptor, expected_bytes)
-            metadata_after_hash = os.fstat(descriptor)
-            if stat_identity(metadata) != stat_identity(metadata_after_hash):
-                raise RuntimeError("pinned executable identity changed while hashed")
-            record: dict[str, object] = {
-                "method": method,
-                "sha256": pinned_checksum,
-                "bytes": metadata.st_size,
-                "mode": stat.S_IMODE(metadata.st_mode),
-                "device": metadata.st_dev,
-                "inode": metadata.st_ino,
-                "seals": seals,
-            }
-            pinned = PinnedExecutable(
-                descriptor,
-                method,
-                record,
-                execution_path,
-                temporary,
+        copy_descriptor(source, descriptor, expected_bytes)
+        source_after_copy = os.fstat(source)
+        if stat_identity(source_metadata) != stat_identity(source_after_copy):
+            raise RuntimeError("binary identity changed while copied for pinning")
+        if stat_identity(canonical_before) != stat_identity(canonical.lstat()):
+            raise RuntimeError("binary path changed while copied for pinning")
+        os.fchmod(descriptor, 0o500)
+        os.fsync(descriptor)
+        seals = 0
+        if method == "linux-sealed-memfd-fexecve":
+            seals = (
+                fcntl.F_SEAL_SEAL
+                | fcntl.F_SEAL_SHRINK
+                | fcntl.F_SEAL_GROW
+                | fcntl.F_SEAL_WRITE
             )
-            pinned.verify()
-        except BaseException:
-            os.close(descriptor)
-            if temporary is not None:
-                temporary.cleanup()
-            raise
-    finally:
+            fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
+        metadata = os.fstat(descriptor)
+        pinned_checksum = sha256_descriptor(descriptor, expected_bytes)
+        metadata_after_hash = os.fstat(descriptor)
+        if stat_identity(metadata) != stat_identity(metadata_after_hash):
+            raise RuntimeError("pinned executable identity changed while hashed")
+        record: dict[str, object] = {
+            "method": method,
+            "sha256": pinned_checksum,
+            "bytes": metadata.st_size,
+            "mode": stat.S_IMODE(metadata.st_mode),
+            "device": metadata.st_dev,
+            "inode": metadata.st_ino,
+            "seals": seals,
+        }
+        pinned = PinnedExecutable(
+            descriptor,
+            method,
+            record,
+            execution_path,
+            temporary,
+        )
+        pinned.verify()
         os.close(source)
-    verify_executable_identity(identity)
-    return pinned
+        source = None
+        verify_executable_identity(identity)
+        return pinned
+    except BaseException:
+        if source is not None:
+            try:
+                os.close(source)
+            except BaseException:
+                pass
+        if pinned is not None:
+            try:
+                pinned.close()
+            except BaseException:
+                pass
+        elif descriptor is not None:
+            try:
+                os.close(descriptor)
+            except BaseException:
+                pass
+            if temporary is not None:
+                try:
+                    temporary.cleanup()
+                except BaseException:
+                    pass
+        elif temporary is not None:
+            try:
+                temporary.cleanup()
+            except BaseException:
+                pass
+        raise
 
 
 def run_measurement(
@@ -3048,7 +3126,7 @@ def run_measurement(
         if failed:
             raise RuntimeError(f"{project} measured run exited {failed[0]['returncode']}")
         elapsed = [sample["elapsed_ns"] for sample in samples]
-        return {
+        result = {
             "project": project,
             "status": "measured",
             "command": command,
@@ -3062,8 +3140,14 @@ def run_measurement(
             "median_ns": integer_median(elapsed),
             "p95_ns": percentile_95(elapsed),
         }
-    finally:
-        pinned.close()
+    except BaseException:
+        try:
+            pinned.close()
+        except BaseException:
+            pass
+        raise
+    pinned.close()
+    return result
 
 
 def unavailable_workloads(
