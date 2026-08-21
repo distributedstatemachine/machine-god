@@ -8,9 +8,9 @@ use machine_god_core::{
 };
 use serde_json::{Value, json};
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fd::{AsFd, OwnedFd};
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fs::{Dir, FileType, Mode, OFlags};
 
 /// Maximum number of UTF-8 bytes accepted in a requested path.
@@ -89,12 +89,12 @@ impl Error for ListFilesToolOpenError {}
 /// A read-only native tool confined to one explicitly opened workspace root.
 ///
 /// Construction acquires the only ambient filesystem authority used by this
-/// tool. Supported Unix implementations retain the opened directory descriptor;
-/// later calls never reopen the workspace root by path.
+/// tool. Supported Linux and macOS implementations retain the opened directory
+/// descriptor; later calls never reopen the workspace root by path.
 pub struct ListFilesTool {
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
-    #[cfg(not(unix))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
 }
 
@@ -107,7 +107,7 @@ impl ListFilesTool {
     /// Returns a redacted typed failure when the platform is unsupported, the
     /// path is relative, or the root cannot be opened as a real directory.
     pub fn open(root: &Path) -> Result<Self, ListFilesToolOpenError> {
-        #[cfg(not(unix))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = root;
             Err(ListFilesToolOpenError::new(
@@ -115,7 +115,7 @@ impl ListFilesTool {
             ))
         }
 
-        #[cfg(unix)]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let lexical_root = root.components().collect::<std::path::PathBuf>();
             if !lexical_root.is_absolute() {
@@ -210,13 +210,13 @@ impl Tool for ListFilesTool {
                 return Err(invalid_arguments());
             }
 
-            #[cfg(not(unix))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 let _ = cancellation;
                 Err(unsupported_platform())
             }
 
-            #[cfg(unix)]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 self.execute_unix(&normalized, &cancellation)
             }
@@ -251,7 +251,7 @@ fn decode_execution_arguments(arguments: Value) -> Result<String, ToolError> {
     Ok(path)
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl ListFilesTool {
     fn execute_unix(
         &self,
@@ -286,7 +286,7 @@ impl ListFilesTool {
         let directory_fd = directory
             .as_ref()
             .map_or_else(|| self.root.as_fd(), AsFd::as_fd);
-        let mut stream = Dir::read_from(directory_fd).map_err(|_| read_failed())?;
+        let mut stream = Dir::read_from(directory_fd).map_err(map_directory_stream_error)?;
         let mut entries = Vec::new();
         let mut total_name_bytes = 0_usize;
         let mut truncated = false;
@@ -343,7 +343,7 @@ impl ListFilesTool {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn classify_file_type(file_type: FileType) -> &'static str {
     if file_type.is_file() {
         "file"
@@ -400,7 +400,7 @@ fn is_forbidden_path_character(character: char) -> bool {
         )
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_root_open_error(error: rustix::io::Errno) -> ListFilesToolOpenError {
     let kind = if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
         ListFilesToolOpenErrorKind::InvalidFileType
@@ -410,7 +410,7 @@ fn map_root_open_error(error: rustix::io::Errno) -> ListFilesToolOpenError {
     ListFilesToolOpenError::new(kind)
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_path_open_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::NOENT {
         not_found()
@@ -420,6 +420,15 @@ fn map_path_open_error(error: rustix::io::Errno) -> ToolError {
         permission_denied()
     } else {
         unavailable()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_directory_stream_error(error: rustix::io::Errno) -> ToolError {
+    if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
+        permission_denied()
+    } else {
+        read_failed()
     }
 }
 
@@ -454,7 +463,7 @@ fn invalid_path() -> ToolError {
     )
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn unsupported_platform() -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -464,7 +473,7 @@ fn unsupported_platform() -> ToolError {
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn not_found() -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -474,7 +483,7 @@ fn not_found() -> ToolError {
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn permission_denied() -> ToolError {
     ToolError::new(
         ToolErrorKind::PermissionDenied,
@@ -484,7 +493,7 @@ fn permission_denied() -> ToolError {
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn rejected_path() -> ToolError {
     ToolError::new(
         ToolErrorKind::PermissionDenied,
@@ -494,7 +503,7 @@ fn rejected_path() -> ToolError {
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn unavailable() -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -504,7 +513,7 @@ fn unavailable() -> ToolError {
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_failed() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -514,7 +523,7 @@ fn read_failed() -> ToolError {
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn invalid_entry_name() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,

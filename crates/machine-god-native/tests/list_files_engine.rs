@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::fs;
 use std::io;

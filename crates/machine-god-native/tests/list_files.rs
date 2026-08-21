@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -626,6 +626,26 @@ fn execute_reports_missing_inaccessible_and_other_open_failures_with_redaction()
         assert!(!display.contains("private-inaccessible"));
     }
     fs::set_permissions(&inaccessible, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[test]
+fn execute_classifies_revoked_root_access_as_permission_denied() {
+    let temporary = TemporaryDirectory::new();
+    let tool = tool(temporary.path());
+    fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o000)).unwrap();
+    let operating_system_enforces_mode = fs::read_dir(temporary.path()).is_err();
+    let result = execute(&tool, json!({ "path": "." }), CancellationToken::new());
+    fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700)).unwrap();
+
+    if operating_system_enforces_mode {
+        assert_tool_error(
+            result.unwrap_err(),
+            ToolErrorKind::PermissionDenied,
+            "list_files_permission_denied",
+            "requested directory cannot be listed",
+            false,
+        );
+    }
 }
 
 #[test]
