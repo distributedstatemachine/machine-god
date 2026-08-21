@@ -6,10 +6,10 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Milestone 01's repository, documentation, CI, compatibility inventory, and
-pinned upstream benchmark harness with non-product bootstrap evidence are
-complete. Milestone 02's provider-neutral engine is in progress; the project is
-not yet production-ready.
+Milestones 01 and 02 are complete. The repository now includes the
+provider-neutral streaming engine, its bounded durable tool loop, and a
+deterministic testkit. Milestone 03's concrete providers and native host
+integrations are next; the project is not yet production-ready.
 
 ## Development
 

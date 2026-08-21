@@ -1,7 +1,7 @@
-# Milestone 02 bounded tool-loop candidate
+# Milestone 02 bounded tool-loop review
 
-Status: review-cycle-eleven finding remediated; awaiting fresh rereview of the
-eleventh fix commit.
+Status: **GREEN and complete** at exact candidate
+`c90499b9198d7fb4a426c54249a5061c6df9dbe1`.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -35,10 +35,8 @@ Cycle-nine fix reviewed for cycle ten:
 Cycle-ten fix reviewed for cycle eleven:
 `149b07b0812ea9a731fb198adcfc25195887184a`.
 
-Cycle-eleven fix commit: populated after this remediation commit. Reviewers must
-review that exact immutable commit and replace this status only after
-correctness/API, security/abuse, and performance/concurrency rereviews all report
-no findings.
+Cycle-eleven fix reviewed for cycle twelve:
+`c90499b9198d7fb4a426c54249a5061c6df9dbe1`.
 
 ## Candidate scope
 
@@ -322,6 +320,22 @@ and advisory gates are required for the final immutable cycle-two commit.
    last-handle drop. Under the old ordering, the worker would deadlock before it
    could send the conflict result.
 
+## Review cycle 12 result
+
+Fresh adversarial review of the exact cycle-eleven fix commit reported no new
+findings:
+
+- correctness/API: GREEN;
+- security/abuse: GREEN; and
+- performance/resource/concurrency: GREEN.
+
+The exact candidate also completed both remote workflows successfully:
+
+| Workflow | Run |
+| --- | --- |
+| CI | [32464211010](https://github.com/distributedstatemachine/machine-god/actions/runs/32464211010) |
+| Benchmark evidence | [32464210997](https://github.com/distributedstatemachine/machine-god/actions/runs/32464210997) |
+
 ## Honest limitations for review
 
 - `Stop` is trusted as the immediate end of a provider round. Core does not poll
@@ -349,10 +363,10 @@ and advisory gates are required for the final immutable cycle-two commit.
   stream's private queue are destroyed by that provider's `Drop` implementation,
   which must itself be stack-safe or bounded during decoding/construction.
 
-## Required review evidence
+## Retained review focus
 
-Reviewers should verify terminal/cancellation races in every async phase,
-observer ordering relative to commits, no execution before complete-round
-validation, exact limit boundaries and checked arithmetic, transcript conflict
-handling without duplication, sensitive error truncation, and absence of
-runtime or ambient native authority in core.
+Future changes should continue to verify terminal/cancellation races in every
+async phase, observer ordering relative to commits, no execution before
+complete-round validation, exact limit boundaries and checked arithmetic,
+transcript conflict handling without duplication, sensitive error truncation,
+and absence of runtime or ambient native authority in core.

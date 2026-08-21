@@ -34,12 +34,17 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
 | 01 | Repository, docs, CI, workspace, upstream benchmark harness, and non-product bootstrap evidence | COMPLETE |
-| 02 | Provider-neutral streaming engine and deterministic testkit | IN PROGRESS |
+| 02 | Provider-neutral streaming engine and deterministic testkit | COMPLETE |
 | 03 | Providers, native tools, permissions, sessions, config, and CLI | NOT STARTED |
 | 04 | Security, lifecycle, concurrency, and persistence hardening | NOT STARTED |
 | 05 | Skills, MCP, ACP, and subagent extensibility | NOT STARTED |
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
+
+Milestone 02 completion evidence is retained in the
+[milestone review](reviews/m02-milestone-review.md). Milestone 03 remains the
+next delivery milestone; concrete providers and native host behavior are not
+part of the completed provider-neutral engine.
 
 ## Release gates
 
