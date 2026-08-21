@@ -35,10 +35,10 @@ an async executor.
 ```
 
 An engine requires explicit provider, store, and permission components. Event
-observation may use the authority-free no-op sink. Validated IDs, structured
-component errors, optimistic session revisions, monotonic event sequences,
-one-live-turn session leases, and idempotent cancellation form the initial
-cross-component invariants.
+observation may use the authority-free no-op sink. Validated IDs, explicit
+durable session-incarnation IDs, structured component errors, optimistic session
+revisions, monotonic event sequences, one-live-turn session leases, and
+idempotent cancellation form the initial cross-component invariants.
 
 The multi-round turn loop is an executor-neutral future polled inline by the
 `Turn` stream. A one-event acknowledgement gate connects it to observer
@@ -140,10 +140,12 @@ drained wakers are dropped or invoked after unlocking.
 
 Each `Engine` owns a weak session-state registry keyed by `SessionId`. All
 create/load races inside that engine converge on one in-memory record and active
-turn flag; a live turn itself keeps the state alive if its originating session
-handle is dropped. This is an in-process coordination boundary, not a
-distributed lease. Registry access uses one requested-ID `BTreeMap` lookup
-rather than scanning all live sessions. The
+turn flag only if the persisted `SessionIncarnationId` also matches. A collision
+between the same live session ID and a different incarnation fails rather than
+merging logical lifetimes; a live turn itself keeps the state alive if its
+originating session handle is dropped. This is an in-process coordination
+boundary, not a distributed lease. Registry access uses one requested-ID
+`BTreeMap` lookup rather than scanning all live sessions. The
 last owner removes its weak entry during state destruction only when pointer
 identity still matches, so dead keys are reclaimed without an old destructor
 removing a concurrently installed replacement. Independent engines and
@@ -152,7 +154,14 @@ optimistic revision contract. Loaded records reconcile strictly and
 monotonically: corrupt sequences, stale revisions, and equal-revision divergence
 are protocol errors, and completion of an older in-flight save cannot replace a
 newer canonical record. Successful-save reconciliation also rejects divergent
-records at the same revision. Intrinsic load validation precedes registry
+records at the same revision. Session stores preserve a host-generated globally
+unique incarnation for the entire logical record lifetime and reject a save
+that changes it. Reset, rewind, or reuse of a session ID requires the host to
+rotate the incarnation; core neither guesses legacy values nor acquires
+randomness or clock authority. Model and permission requests carry that
+incarnation, and the permission-request v2 digest binds it alongside session,
+turn, and ordinal identity to prevent an ID-cached allow from crossing a reset.
+Intrinsic load validation precedes registry
 publication, preventing a concurrent handle from retaining invalid persisted
 state even when the originating load returns an error. Revision zero is an
 in-memory unsaved sentinel only; persisted loads and conflict reloads require a

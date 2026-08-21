@@ -3,10 +3,10 @@ use machine_god_core::{
     CancellationToken, Capability, ContentBlock, Engine, EngineError, EngineEvent, EventSink,
     InferenceOptions, Message, ModelEvent, ModelProvider, ModelRequest, PermissionDecision,
     PermissionError, PermissionGrantScope, PermissionHandler, PermissionRequest,
-    PermissionRequestId, PermissionRisk, ProviderError, ProviderErrorKind, Role, SessionId,
-    SessionRecord, SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind,
-    StopReason, TokenUsage, Tool, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName,
-    ToolOutput, ToolSpec, TurnEvent, TurnId,
+    PermissionRequestId, PermissionRisk, ProviderError, ProviderErrorKind, Role, Session,
+    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCallId,
+    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, TurnEvent, TurnId,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep,
@@ -16,6 +16,23 @@ use machine_god_testkit::{
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
+trait EngineTestSessions {
+    fn create_test_session(&self, id: SessionId) -> Session;
+}
+
+impl EngineTestSessions for Engine {
+    fn create_test_session(&self, id: SessionId) -> Session {
+        let incarnation = test_incarnation(&id);
+        self.create_session(id, incarnation)
+            .expect("test session identity does not conflict")
+    }
+}
+
+fn test_incarnation(id: &SessionId) -> SessionIncarnationId {
+    SessionIncarnationId::new(format!("test-incarnation-{id}"))
+        .expect("test session identity is valid")
+}
+
 fn deny_permissions() -> ScriptedPermissionHandler {
     ScriptedPermissionHandler::new([])
 }
@@ -23,6 +40,8 @@ fn deny_permissions() -> ScriptedPermissionHandler {
 fn model_request(name: &str) -> ModelRequest {
     ModelRequest {
         session_id: SessionId::new(name).unwrap(),
+        session_incarnation_id: SessionIncarnationId::new(format!("request-incarnation-{name}"))
+            .unwrap(),
         turn_id: TurnId::new("turn-1").unwrap(),
         messages: Vec::new(),
         tools: Vec::new(),
@@ -43,6 +62,7 @@ fn permission_request() -> PermissionRequest {
     PermissionRequest {
         id: PermissionRequestId::new("permission-1").unwrap(),
         session_id: SessionId::new("permission-session").unwrap(),
+        session_incarnation_id: SessionIncarnationId::new("permission-incarnation").unwrap(),
         turn_id: TurnId::new("turn-1").unwrap(),
         capability: Capability::Custom {
             name: "fixture".to_owned(),
@@ -97,7 +117,7 @@ fn complete_engine_turn_is_deterministic_and_fully_inspectable() {
         .event_sink(sink.clone())
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("engine-flow").unwrap());
+    let session = engine.create_test_session(SessionId::new("engine-flow").unwrap());
 
     let turn = futures_executor::block_on(session.prompt("hello model")).unwrap();
     let events = futures_executor::block_on(turn.collect::<Vec<_>>());
@@ -174,7 +194,7 @@ fn provider_start_errors_become_structured_terminal_turn_events() {
         .permission_handler(deny_permissions())
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("start-error").unwrap());
+    let session = engine.create_test_session(SessionId::new("start-error").unwrap());
     let turn = futures_executor::block_on(session.prompt("fail")).unwrap();
     let events = futures_executor::block_on(turn.collect::<Vec<_>>());
     let events: Vec<_> = events.into_iter().collect::<Result<_, _>>().unwrap();
@@ -199,7 +219,7 @@ fn pending_provider_start_is_cancelled_without_a_clock() {
         .permission_handler(deny_permissions())
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("pending-start").unwrap());
+    let session = engine.create_test_session(SessionId::new("pending-start").unwrap());
     let mut turn = futures_executor::block_on(session.prompt("wait")).unwrap();
     assert!(matches!(
         futures_executor::block_on(turn.next())
@@ -242,7 +262,7 @@ fn pending_sink_exposes_backpressure_and_engine_cancellation() {
         .event_sink(sink.clone())
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("sink-backpressure").unwrap());
+    let session = engine.create_test_session(SessionId::new("sink-backpressure").unwrap());
     let mut turn = futures_executor::block_on(session.prompt("block")).unwrap();
     assert!(futures_executor::block_on(turn.next()).unwrap().is_ok());
     assert!(turn.next().now_or_never().is_none());
@@ -277,7 +297,7 @@ fn store_scripts_fail_before_mutation_and_report_exhaustion() {
         },
         4,
     );
-    let record = SessionRecord::empty(id.clone());
+    let record = SessionRecord::empty(id.clone(), test_incarnation(&id));
     assert_eq!(
         futures_executor::block_on(store.save(record.clone(), None)).unwrap_err(),
         error
@@ -498,7 +518,7 @@ fn event_sink_script_records_errors_and_exhausted_calls() {
 #[test]
 fn store_load_and_save_inspection_preserves_exact_inputs() {
     let id = SessionId::new("load-save-inspection").unwrap();
-    let mut record = SessionRecord::empty(id.clone());
+    let mut record = SessionRecord::empty(id.clone(), test_incarnation(&id));
     record.revision = SessionRevision(8);
     record.next_turn_sequence = 5;
     let store = InMemorySessionStore::from_records(BTreeMap::from([(id.clone(), record.clone())]));
@@ -533,7 +553,7 @@ fn strict_empty_provider_script_surfaces_through_the_engine() {
         .permission_handler(deny_permissions())
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("engine-exhaustion").unwrap());
+    let session = engine.create_test_session(SessionId::new("engine-exhaustion").unwrap());
     let turn = futures_executor::block_on(session.prompt("one too many")).unwrap();
     let events = futures_executor::block_on(turn.collect::<Vec<_>>());
     assert!(events.iter().all(Result::is_ok));
@@ -546,7 +566,7 @@ fn strict_empty_provider_script_surfaces_through_the_engine() {
 #[test]
 fn store_conflicts_are_typed_and_do_not_mutate_state() {
     let id = SessionId::new("store-conflict").unwrap();
-    let mut initial = SessionRecord::empty(id.clone());
+    let mut initial = SessionRecord::empty(id.clone(), test_incarnation(&id));
     initial.revision = SessionRevision(3);
     let store = InMemorySessionStore::from_records(BTreeMap::from([(id.clone(), initial.clone())]));
     let mut candidate = initial.clone();

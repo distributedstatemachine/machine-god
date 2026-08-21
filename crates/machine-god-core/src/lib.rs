@@ -18,7 +18,9 @@ pub use error::{
     SessionStoreError, SessionStoreErrorKind, ToolError, ToolErrorKind,
 };
 pub use event::{EngineEvent, EventSink, NoopEventSink, TurnEvent};
-pub use id::{InvalidId, PermissionRequestId, SessionId, ToolCallId, ToolName, TurnId};
+pub use id::{
+    InvalidId, PermissionRequestId, SessionId, SessionIncarnationId, ToolCallId, ToolName, TurnId,
+};
 pub use model::{
     ContentBlock, InferenceOptions, Message, ModelEvent, ModelEventStream, ModelProvider,
     ModelRequest, Role, StopReason, TokenUsage,

@@ -1,7 +1,7 @@
 # Milestone 02 bounded tool-loop candidate
 
-Status: review-cycle-six finding remediated; awaiting fresh rereview of the
-sixth fix commit.
+Status: review-cycle-seven finding remediated; awaiting fresh rereview of the
+seventh fix commit.
 
 Reviewed base commit: `48b31d6e6aa32f74d4a5c4e12a21919e917cea00`.
 
@@ -20,7 +20,10 @@ Cycle-four fix reviewed for cycle five:
 Cycle-five fix reviewed for cycle six:
 `f0d6369093c12fdf51e7ab17724ec3bb67f248bb`.
 
-Cycle-six fix commit: populated after this remediation commit. Reviewers must
+Cycle-six fix reviewed for cycle seven:
+`043d5fbc9e72ca5ef7e190a08eb480c396ff9dac`.
+
+Cycle-seven fix commit: populated after this remediation commit. Reviewers must
 review that exact immutable commit and replace this status only after
 correctness/API, security/abuse, and performance/concurrency rereviews all report
 no findings.
@@ -205,6 +208,24 @@ and advisory gates are required for the final immutable cycle-two commit.
    correspondingly large resource consumption, but do not authorize deeper
    recursion. Producer-private construction and queued-value destruction remain
    the documented external responsibility.
+
+## Review cycle 07 finding and remediation
+
+1. Permission request IDs bound the session ID, turn ID, and ordinal, but a host
+   could delete or reset durable state under the same session ID while retaining
+   an ID-caching permission handler. Turn numbering and ordinal would restart,
+   recreating an old request ID and replaying an allow into a new tool call.
+   Every session record now requires a validated, caller-supplied
+   `SessionIncarnationId`; core supplies no clock-, randomness-, or
+   session-ID-derived fallback. Stores preserve it and reject mutation, while
+   the live registry refuses to merge the same session ID with a different
+   incarnation. `ModelRequest` and `PermissionRequest` expose it for audit, and
+   permission IDs now use the v2 SHA-256 preimage over length-delimited session
+   ID, incarnation ID, turn ID, and ordinal. Known vectors cover differences
+   across sessions, incarnations, and turns. A shared ID-caching policy across
+   two fresh stores proves that the second logical lifetime receives a new
+   decision and cannot replay the first allow; load, serialization, collision,
+   and missing-field regressions enforce the durable contract.
 
 ## Honest limitations for review
 

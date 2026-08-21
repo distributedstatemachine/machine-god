@@ -128,6 +128,7 @@ macro_rules! identifier {
 }
 
 identifier!(SessionId, "session ID");
+identifier!(SessionIncarnationId, "session incarnation ID");
 identifier!(TurnId, "turn ID");
 identifier!(ToolCallId, "tool-call ID");
 identifier!(PermissionRequestId, "permission-request ID");
@@ -135,12 +136,16 @@ identifier!(ToolName, "tool name");
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionId, ToolName};
+    use super::{SessionId, SessionIncarnationId, ToolName};
 
     #[test]
     fn identifiers_reject_log_and_path_injection_characters() {
         for invalid in ["", "two words", "line\nbreak", "path/to", "café"] {
             assert!(SessionId::new(invalid).is_err(), "accepted {invalid:?}");
+            assert!(
+                SessionIncarnationId::new(invalid).is_err(),
+                "accepted {invalid:?}"
+            );
         }
     }
 

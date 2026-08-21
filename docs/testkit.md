@@ -20,7 +20,7 @@ use futures_executor::block_on;
 use futures_util::StreamExt;
 use machine_god_core::{
     Engine, ModelEvent, PermissionDecision, PermissionGrantScope, SessionId,
-    StopReason, TurnEvent,
+    SessionIncarnationId, StopReason, TurnEvent,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep,
@@ -48,7 +48,10 @@ let engine = Engine::builder()
     .event_sink(sink.clone())
     .build()?;
 
-let session = engine.create_session(SessionId::new("docs")?);
+let session = engine.create_session(
+    SessionId::new("docs")?,
+    SessionIncarnationId::new("docs-logical-lifetime-1")?,
+)?;
 let turn = block_on(session.prompt("say hello"))?;
 let events = block_on(turn.collect::<Vec<_>>());
 assert!(events.iter().all(Result::is_ok));
@@ -68,8 +71,9 @@ assert!(matches!(
   after a prefix, or keep startup pending until cancellation.
 - `InMemorySessionStore` performs load/save and revision comparison under one
   mutex. Successful saves return and store a revision greater than both the
-  current stored revision and the submitted record revision. Independent load
-  and save scripts can pass through, fail, or remain pending.
+  current stored revision and the submitted record revision. It rejects an
+  attempt to replace an existing session ID with another incarnation.
+  Independent load and save scripts can pass through, fail, or remain pending.
 - `RecordingEventSink` accepts all events by default. Its strict mode can accept,
   fail, or permanently backpressure each event in order.
 - `ScriptedPermissionHandler` records complete requests and returns ordered

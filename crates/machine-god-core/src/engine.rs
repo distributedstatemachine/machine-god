@@ -1,6 +1,7 @@
 use crate::{
     BoxFuture, BuildError, EngineError, EventSink, ModelProvider, NoopEventSink, PermissionHandler,
-    Session, SessionId, SessionRecord, SessionStore, Tool, ToolName, ToolSpec,
+    Session, SessionId, SessionIncarnationId, SessionRecord, SessionStore, Tool, ToolName,
+    ToolSpec,
 };
 use serde::ser::SerializeSeq;
 use serde::{Serialize, Serializer};
@@ -370,7 +371,7 @@ impl EngineInner {
         &self,
         record: SessionRecord,
         persisted: bool,
-    ) -> Arc<crate::session::SessionState> {
+    ) -> Result<Arc<crate::session::SessionState>, EngineError> {
         self.sessions.session_state(record, persisted)
     }
 }
@@ -380,7 +381,7 @@ impl SessionRegistry {
         self: &Arc<Self>,
         record: SessionRecord,
         persisted: bool,
-    ) -> Arc<crate::session::SessionState> {
+    ) -> Result<Arc<crate::session::SessionState>, EngineError> {
         let mut entries = self
             .entries
             .lock()
@@ -388,13 +389,14 @@ impl SessionRegistry {
         #[cfg(test)]
         self.entry_checks.fetch_add(1, Ordering::Relaxed);
         if let Some(state) = entries.get(&record.id).and_then(Weak::upgrade) {
-            return state;
+            state.validate_identity(&record)?;
+            return Ok(state);
         }
         let id = record.id.clone();
         let state =
             crate::session::SessionState::new_registered(record, persisted, Arc::downgrade(self));
         entries.insert(id, Arc::downgrade(&state));
-        state
+        Ok(state)
     }
 
     fn remove_if_matches(&self, id: &SessionId, state: &Weak<crate::session::SessionState>) {
@@ -465,16 +467,25 @@ impl Engine {
         self.inner.limits
     }
 
-    /// Returns the engine-canonical in-memory handle for `id`.
+    /// Returns the engine-canonical in-memory handle for one logical session.
     ///
     /// If this engine already loaded or created the session, the returned
     /// handle shares that state and its live-turn lease rather than replacing
     /// it. Durable state is reconciled by [`Self::load_session`] and prompt
     /// reservation.
-    #[must_use]
-    pub fn create_session(&self, id: SessionId) -> Session {
-        let state = self.inner.session_state(SessionRecord::empty(id), false);
-        Session::from_state(Arc::clone(&self.inner), state)
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SessionIncarnationConflict`] if the same session
+    /// ID is already live in this engine with another incarnation.
+    pub fn create_session(
+        &self,
+        id: SessionId,
+        incarnation_id: SessionIncarnationId,
+    ) -> Result<Session, EngineError> {
+        let state = self
+            .inner
+            .session_state(SessionRecord::empty(id, incarnation_id), false)?;
+        Ok(Session::from_state(Arc::clone(&self.inner), state))
     }
 
     /// Loads a stored session without blocking an executor thread.
@@ -506,7 +517,7 @@ impl Engine {
             record
                 .map(|record| {
                     let record = record.into_inner();
-                    let state = inner.session_state(record.clone(), true);
+                    let state = inner.session_state(record.clone(), true)?;
                     state.reconcile_loaded(record)?;
                     Ok(Session::from_state(Arc::clone(&inner), state))
                 })
@@ -550,10 +561,28 @@ mod tests {
     use crate::{
         BoxFuture, CancellationToken, ModelEventStream, ModelProvider, ModelRequest,
         PermissionDecision, PermissionError, PermissionHandler, PermissionRequest, ProviderError,
-        SessionId, SessionRecord, SessionRevision, SessionStore, SessionStoreError,
+        SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+        SessionStoreError,
     };
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
+
+    trait EngineTestSessions {
+        fn create_test_session(&self, id: SessionId) -> crate::Session;
+    }
+
+    impl EngineTestSessions for super::Engine {
+        fn create_test_session(&self, id: SessionId) -> crate::Session {
+            let incarnation = test_incarnation(&id);
+            self.create_session(id, incarnation)
+                .expect("test session identity does not conflict")
+        }
+    }
+
+    fn test_incarnation(id: &SessionId) -> SessionIncarnationId {
+        SessionIncarnationId::new(format!("test-incarnation-{id}"))
+            .expect("test session identity is valid")
+    }
 
     #[derive(Debug)]
     struct UnusedProvider;
@@ -610,10 +639,12 @@ mod tests {
     }
 
     fn test_engine() -> super::Engine {
+        let id = SessionId::new("unused-store-record").unwrap();
         super::Engine::builder()
             .provider(UnusedProvider)
             .session_store(CorruptStore(SessionRecord::empty(
-                SessionId::new("unused-store-record").unwrap(),
+                id.clone(),
+                test_incarnation(&id),
             )))
             .permission_handler(DenyPermissions)
             .build()
@@ -628,7 +659,7 @@ mod tests {
         let mut live = Vec::with_capacity(SESSION_COUNT);
         for index in 0..SESSION_COUNT {
             let id = SessionId::new(format!("scaling-{index:04}")).unwrap();
-            live.push(engine.create_session(id));
+            live.push(engine.create_test_session(id));
         }
         assert_eq!(
             engine.inner.sessions.entry_checks.load(Ordering::Relaxed),
@@ -640,7 +671,7 @@ mod tests {
         );
 
         for session in &live {
-            drop(engine.create_session(session.id()));
+            drop(engine.create_test_session(session.id()));
         }
         assert_eq!(
             engine.inner.sessions.entry_checks.load(Ordering::Relaxed),
@@ -656,7 +687,7 @@ mod tests {
     fn dropping_the_last_session_handle_reclaims_its_registry_key() {
         let engine = test_engine();
         let id = SessionId::new("drop-reclaims-key").unwrap();
-        let session = engine.create_session(id.clone());
+        let session = engine.create_test_session(id.clone());
         assert!(
             engine
                 .inner
@@ -685,20 +716,20 @@ mod tests {
         let engine = test_engine();
         let registry = Arc::clone(&engine.inner.sessions);
         let id = SessionId::new("replacement-race").unwrap();
-        let original = engine.create_session(id.clone());
+        let original = engine.create_test_session(id.clone());
         let barrier = Arc::new(Barrier::new(2));
         *registry.before_remove.lock().unwrap() = Some(Arc::clone(&barrier));
 
         let dropping = std::thread::spawn(move || drop(original));
         barrier.wait();
-        let replacement = engine.create_session(id.clone());
+        let replacement = engine.create_test_session(id.clone());
         barrier.wait();
         dropping.join().unwrap();
         *registry.before_remove.lock().unwrap() = None;
 
         let registered = registry.entries.lock().unwrap().get(&id).cloned().unwrap();
         assert_eq!(registered.strong_count(), 1);
-        let converged = engine.create_session(id.clone());
+        let converged = engine.create_test_session(id.clone());
         assert_eq!(registered.strong_count(), 2);
 
         drop(replacement);
@@ -710,7 +741,7 @@ mod tests {
     #[test]
     fn corrupt_load_is_rejected_before_registry_publication() {
         let id = SessionId::new("reject-before-publication").unwrap();
-        let mut corrupt = SessionRecord::empty(id.clone());
+        let mut corrupt = SessionRecord::empty(id.clone(), test_incarnation(&id));
         corrupt.revision = SessionRevision(9);
         corrupt.next_turn_sequence = 0;
         let engine = super::Engine::builder()
@@ -723,7 +754,7 @@ mod tests {
         assert!(futures_executor::block_on(engine.load_session(id.clone())).is_err());
         assert!(engine.inner.sessions.entries.lock().unwrap().is_empty());
 
-        let created = engine.create_session(id);
+        let created = engine.create_test_session(id);
         assert_eq!(created.record().next_turn_sequence, 1);
         let turn = futures_executor::block_on(created.prompt("safe first turn")).unwrap();
         assert_eq!(turn.id().as_str(), "turn-1");

@@ -238,7 +238,16 @@ impl InMemorySessionStore {
             return Ok((step, None));
         }
 
-        let current_revision = state.records.get(&record.id).map(|stored| stored.revision);
+        let current = state.records.get(&record.id);
+        if current.is_some_and(|stored| stored.incarnation_id != record.incarnation_id) {
+            return Err(SessionStoreError::new(
+                SessionStoreErrorKind::Conflict,
+                "incarnation_conflict",
+                "stored session incarnation did not match the saved record",
+                false,
+            ));
+        }
+        let current_revision = current.map(|stored| stored.revision);
         if current_revision != expected_revision {
             return Err(SessionStoreError::new(
                 SessionStoreErrorKind::Conflict,
@@ -308,13 +317,22 @@ fn store_fixture_error(code: &'static str, message: &'static str) -> SessionStor
 #[cfg(test)]
 mod tests {
     use super::InMemorySessionStore;
-    use machine_god_core::{SessionId, SessionRecord, SessionRevision, SessionStore};
+    use machine_god_core::{
+        SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+        SessionStoreErrorKind,
+    };
+
+    fn empty_record(id: SessionId) -> SessionRecord {
+        let incarnation = SessionIncarnationId::new(format!("test-incarnation-{id}"))
+            .expect("test incarnation is valid");
+        SessionRecord::empty(id, incarnation)
+    }
 
     #[test]
     fn compare_and_swap_is_atomic_across_threads() {
         let store = InMemorySessionStore::new();
         let id = SessionId::new("atomic-cas").unwrap();
-        let mut initial = SessionRecord::empty(id.clone());
+        let mut initial = empty_record(id.clone());
         initial.next_turn_sequence = 2;
         assert_eq!(
             futures_executor::block_on(store.save(initial, None)).unwrap(),
@@ -342,11 +360,36 @@ mod tests {
     #[test]
     fn returned_revision_is_greater_than_an_unpersisted_input_revision() {
         let store = InMemorySessionStore::new();
-        let mut record = SessionRecord::empty(SessionId::new("high-input-revision").unwrap());
+        let mut record = empty_record(SessionId::new("high-input-revision").unwrap());
         record.revision = SessionRevision(41);
         assert_eq!(
             futures_executor::block_on(store.save(record, None)).unwrap(),
             SessionRevision(42)
+        );
+    }
+
+    #[test]
+    fn stored_session_incarnation_cannot_change() {
+        let store = InMemorySessionStore::new();
+        let id = SessionId::new("incarnation-cas").unwrap();
+        let original = empty_record(id.clone());
+        assert_eq!(
+            futures_executor::block_on(store.save(original.clone(), None)).unwrap(),
+            SessionRevision(1)
+        );
+
+        let replacement = SessionRecord::empty(
+            id.clone(),
+            SessionIncarnationId::new("replacement-incarnation").unwrap(),
+        );
+        let error = futures_executor::block_on(store.save(replacement, Some(SessionRevision(1))))
+            .unwrap_err();
+
+        assert_eq!(error.kind, SessionStoreErrorKind::Conflict);
+        assert_eq!(error.code, "incarnation_conflict");
+        assert_eq!(
+            store.record(&id).unwrap().incarnation_id,
+            original.incarnation_id
         );
     }
 

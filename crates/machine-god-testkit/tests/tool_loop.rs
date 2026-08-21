@@ -4,10 +4,10 @@ use machine_god_core::{
     BoxFuture, BuildError, CancellationToken, ContentBlock, Engine, EngineError, EngineEvent,
     EngineLimits, InferenceOptions, MAX_SAFE_JSON_DEPTH, Message, ModelEvent, ModelEventStream,
     ModelProvider, ModelRequest, PermissionDecision, PermissionError, PermissionGrantScope,
-    PermissionHandler, PermissionRequest, Prompt, ProviderError, ProviderErrorKind, Role,
-    SessionId, SessionRecord, SessionRevision, SessionStore, SessionStoreError,
-    SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId, ToolContext,
-    ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
+    PermissionHandler, PermissionRequest, Prompt, ProviderError, ProviderErrorKind, Role, Session,
+    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, Tool, ToolCall, ToolCallId,
+    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
@@ -21,6 +21,23 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+
+trait EngineTestSessions {
+    fn create_test_session(&self, id: SessionId) -> Session;
+}
+
+impl EngineTestSessions for Engine {
+    fn create_test_session(&self, id: SessionId) -> Session {
+        let incarnation = test_incarnation(&id);
+        self.create_session(id, incarnation)
+            .expect("test session identity does not conflict")
+    }
+}
+
+fn test_incarnation(id: &SessionId) -> SessionIncarnationId {
+    SessionIncarnationId::new(format!("test-incarnation-{id}"))
+        .expect("test session identity is valid")
+}
 
 fn tool_name(name: &str) -> ToolName {
     ToolName::new(name).unwrap()
@@ -164,7 +181,7 @@ fn two_round_tool_turn_is_serial_ordered_and_durable() {
         .build()
         .unwrap();
     let id = SessionId::new("two-round").unwrap();
-    let session = engine.create_session(id.clone());
+    let session = engine.create_test_session(id.clone());
 
     let observed = collect(&session);
     assert_eq!(observed, sink.events());
@@ -259,7 +276,7 @@ fn multiple_tools_are_authorized_executed_and_persisted_in_provider_order() {
         .build()
         .unwrap();
 
-    let output = collect(&engine.create_session(SessionId::new("ordered-tools").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("ordered-tools").unwrap()));
     assert!(matches!(
         output.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -330,7 +347,7 @@ fn denial_and_tool_error_become_durable_model_visible_results() {
         .build()
         .unwrap();
 
-    let output = collect(&engine.create_session(SessionId::new("error-roundtrip").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("error-roundtrip").unwrap()));
     assert!(matches!(
         output.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -366,7 +383,7 @@ fn protocol_failure(
         builder = builder.tool(tool);
     }
     let engine = builder.build().unwrap();
-    let output = collect(&engine.create_session(SessionId::new("invalid").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("invalid").unwrap()));
     (output, permissions)
 }
 
@@ -474,7 +491,7 @@ fn duplicate_call_id_in_a_later_round_fails_before_reexecution() {
         .build()
         .unwrap();
     let id = SessionId::new("cross-round-duplicate").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "duplicate_tool_call_id"
@@ -537,7 +554,7 @@ fn per_round_call_budget_fails_before_any_execution() {
         .limits(with_limit(EngineLimits::default(), "calls_round", 1))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("round-budget").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("round-budget").unwrap()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "tool_calls_per_round_limit"
@@ -582,7 +599,7 @@ fn assistant_reasoning_and_argument_budgets_are_checked() {
             .limits(with_limit(EngineLimits::default(), field, 4))
             .build()
             .unwrap();
-        let output = collect(&engine.create_session(SessionId::new(id).unwrap()));
+        let output = collect(&engine.create_test_session(SessionId::new(id).unwrap()));
         assert!(matches!(
             &output.last().unwrap().payload,
             TurnEvent::Failed { code: observed, .. } if observed == code
@@ -609,7 +626,7 @@ fn assistant_reasoning_and_argument_budgets_are_checked() {
         .limits(with_limit(EngineLimits::default(), "arguments", 4))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("argument-budget").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("argument-budget").unwrap()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "tool_argument_size_limit"
@@ -648,7 +665,7 @@ fn oversized_executed_result_leaves_a_durable_unknown_result_marker() {
         .build()
         .unwrap();
     let id = SessionId::new("large-result").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
 
     assert!(matches!(
         &output.last().unwrap().payload,
@@ -678,7 +695,7 @@ fn stop_is_immediate_even_when_provider_stream_would_remain_pending() {
         .permission_handler(ScriptedPermissionHandler::new([]))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("stop-pending").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("stop-pending").unwrap()));
     assert!(matches!(
         output.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -712,7 +729,7 @@ fn model_round_and_turn_call_budgets_stop_before_additional_work() {
         .limits(with_limit(EngineLimits::default(), "rounds", 1))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("round-limit").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("round-limit").unwrap()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "model_round_limit"
@@ -754,7 +771,7 @@ fn model_round_and_turn_call_budgets_stop_before_additional_work() {
         .limits(with_limit(EngineLimits::default(), "calls_turn", 1))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("turn-call-limit").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("turn-call-limit").unwrap()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "tool_call_limit"
@@ -796,7 +813,7 @@ fn exact_result_boundary_is_allowed_and_cumulative_boundary_is_checked() {
         .limits(limits)
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("exact-result").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("exact-result").unwrap()));
     assert!(matches!(
         output.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -837,7 +854,7 @@ fn exact_result_boundary_is_allowed_and_cumulative_boundary_is_checked() {
         .build()
         .unwrap();
     let id = SessionId::new("cumulative-result").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "cumulative_tool_result_size_limit"
@@ -890,7 +907,7 @@ fn usage_accumulation_overflow_fails_closed() {
         ))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("usage-overflow").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("usage-overflow").unwrap()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "usage_overflow"
@@ -932,7 +949,7 @@ fn cancellation_interrupts_pending_permission_tool_store_and_new_provider_phases
         .tool(ScriptedTool::new(spec("known"), []))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("cancel-permission").unwrap());
+    let session = engine.create_test_session(SessionId::new("cancel-permission").unwrap());
     let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
     for _ in 0..4 {
         let _ = next(&mut turn);
@@ -966,7 +983,7 @@ fn cancellation_interrupts_pending_permission_tool_store_and_new_provider_phases
         .tool(ScriptedTool::new(spec("known"), [ToolStep::Pending]))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("cancel-tool").unwrap());
+    let session = engine.create_test_session(SessionId::new("cancel-tool").unwrap());
     let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
     for _ in 0..6 {
         let _ = next(&mut turn);
@@ -1008,7 +1025,7 @@ fn cancellation_interrupts_pending_permission_tool_store_and_new_provider_phases
         .tool(ScriptedTool::new(spec("known"), []))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("cancel-store").unwrap());
+    let session = engine.create_test_session(SessionId::new("cancel-store").unwrap());
     let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
     for _ in 0..3 {
         let _ = next(&mut turn);
@@ -1048,7 +1065,7 @@ fn cancellation_interrupts_pending_permission_tool_store_and_new_provider_phases
         ))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("cancel-next-provider").unwrap());
+    let session = engine.create_test_session(SessionId::new("cancel-next-provider").unwrap());
     let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
     for _ in 0..7 {
         let _ = next(&mut turn);
@@ -1168,7 +1185,8 @@ fn allocator_only_conflict_is_merged_but_transcript_divergence_fails_closed() {
         .permission_handler(ScriptedPermissionHandler::new([]))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("allocator-conflict").unwrap()));
+    let output =
+        collect(&engine.create_test_session(SessionId::new("allocator-conflict").unwrap()));
     assert!(matches!(
         output.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -1191,7 +1209,8 @@ fn allocator_only_conflict_is_merged_but_transcript_divergence_fails_closed() {
         .permission_handler(ScriptedPermissionHandler::new([]))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("transcript-conflict").unwrap()));
+    let output =
+        collect(&engine.create_test_session(SessionId::new("transcript-conflict").unwrap()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "transcript_diverged"
@@ -1262,7 +1281,7 @@ fn pending_final_commit_is_cancellable_and_releases_the_lease() {
         .build()
         .unwrap();
     let id = SessionId::new("final-commit").unwrap();
-    let session = engine.create_session(id.clone());
+    let session = engine.create_test_session(id.clone());
     let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
     assert!(matches!(next(&mut turn).payload, TurnEvent::Started));
     poll_pending(&mut turn);
@@ -1328,7 +1347,7 @@ fn nonincreasing_store_revision_fails_without_claiming_completion() {
         .build()
         .unwrap();
     let id = SessionId::new("bad-revision").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "non_increasing_revision"
@@ -1361,7 +1380,7 @@ fn provider_originated_cancelled_completion_cannot_bypass_pending_sink() {
         .event_sink(sink.clone())
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("provider-cancelled").unwrap());
+    let session = engine.create_test_session(SessionId::new("provider-cancelled").unwrap());
     let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
     assert!(matches!(next(&mut turn).payload, TurnEvent::Started));
     assert!(matches!(
@@ -1411,7 +1430,7 @@ fn model_event_and_stop_detail_limits_enforce_exact_boundaries() {
             .limits(with_limit(EngineLimits::default(), "events", event_limit))
             .build()
             .unwrap();
-        let session = engine.create_session(SessionId::new(id).unwrap());
+        let session = engine.create_test_session(SessionId::new(id).unwrap());
         let output = collect(&session);
         if completes {
             assert!(matches!(
@@ -1444,7 +1463,7 @@ fn model_event_and_stop_detail_limits_enforce_exact_boundaries() {
             .limits(with_limit(EngineLimits::default(), "stop_detail", 4))
             .build()
             .unwrap();
-        let output = collect(&engine.create_session(SessionId::new(id).unwrap()));
+        let output = collect(&engine.create_test_session(SessionId::new(id).unwrap()));
         assert_eq!(
             matches!(output.last().unwrap().payload, TurnEvent::Completed { .. }),
             completes
@@ -1463,7 +1482,7 @@ fn prompt_and_transcript_limits_fail_before_unbounded_cloning_or_persistence() {
         .limits(with_limit(EngineLimits::default(), "prompt", 4))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("prompt-limit").unwrap());
+    let session = engine.create_test_session(SessionId::new("prompt-limit").unwrap());
     assert!(matches!(
         futures_executor::block_on(session.prompt("12345")),
         Err(EngineError::Protocol(message)) if message.contains("prompt")
@@ -1475,6 +1494,7 @@ fn prompt_and_transcript_limits_fail_before_unbounded_cloning_or_persistence() {
     let id = SessionId::new("hostile-history").unwrap();
     let hostile = SessionRecord {
         id: id.clone(),
+        incarnation_id: test_incarnation(&id),
         revision: SessionRevision(1),
         next_turn_sequence: 2,
         messages: vec![
@@ -1505,6 +1525,7 @@ fn prompt_and_transcript_limits_fail_before_unbounded_cloning_or_persistence() {
     let id = SessionId::new("hostile-history-bytes").unwrap();
     let hostile = SessionRecord {
         id: id.clone(),
+        incarnation_id: test_incarnation(&id),
         revision: SessionRevision(1),
         next_turn_sequence: 2,
         messages: vec![Message::text(Role::User, "larger than four bytes")],
@@ -1542,7 +1563,7 @@ fn prompt_and_transcript_limits_fail_before_unbounded_cloning_or_persistence() {
         ))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("growing-history").unwrap());
+    let session = engine.create_test_session(SessionId::new("growing-history").unwrap());
     let output = collect(&session);
     assert!(matches!(
         &output.last().unwrap().payload,
@@ -1562,6 +1583,7 @@ fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
     let id = SessionId::new("metadata-boundary").unwrap();
     let record = SessionRecord {
         id: id.clone(),
+        incarnation_id: test_incarnation(&id),
         revision: SessionRevision(1),
         next_turn_sequence: 1,
         messages: Vec::new(),
@@ -1593,6 +1615,7 @@ fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
     let id = SessionId::new("metadata-over").unwrap();
     let record = SessionRecord {
         id: id.clone(),
+        incarnation_id: test_incarnation(&id),
         revision: SessionRevision(1),
         next_turn_sequence: 1,
         messages: Vec::new(),
@@ -1616,7 +1639,7 @@ fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
         futures_executor::block_on(engine.load_session(id.clone())),
         Err(EngineError::Protocol(message)) if message.contains("metadata")
     ));
-    assert!(engine.create_session(id).record().metadata.is_empty());
+    assert!(engine.create_test_session(id).record().metadata.is_empty());
 
     let options = InferenceOptions {
         model: Some("model-with-a-name".to_owned()),
@@ -1643,7 +1666,7 @@ fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
         ))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("options-boundary").unwrap());
+    let session = engine.create_test_session(SessionId::new("options-boundary").unwrap());
     let output = futures_executor::block_on(async {
         session
             .prompt(Prompt {
@@ -1677,7 +1700,7 @@ fn metadata_options_and_tool_catalog_limits_enforce_serialized_boundaries() {
         ))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("options-over").unwrap());
+    let session = engine.create_test_session(SessionId::new("options-over").unwrap());
     assert!(matches!(
         futures_executor::block_on(session.prompt(Prompt {
             text: "go".to_owned(),
@@ -1936,7 +1959,7 @@ fn inference_options_json_depth_fails_before_persistence_or_provider() {
         .limits(with_limit(EngineLimits::default(), "json_depth", 2))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("options-depth-exact").unwrap());
+    let session = engine.create_test_session(SessionId::new("options-depth-exact").unwrap());
     let observed = futures_executor::block_on(async {
         session
             .prompt(Prompt {
@@ -1966,7 +1989,7 @@ fn inference_options_json_depth_fails_before_persistence_or_provider() {
         .limits(with_limit(EngineLimits::default(), "json_depth", 2))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("options-depth-over").unwrap());
+    let session = engine.create_test_session(SessionId::new("options-depth-over").unwrap());
     assert!(matches!(
         futures_executor::block_on(session.prompt(Prompt {
             text: "go".to_owned(),
@@ -1986,6 +2009,7 @@ fn loaded_record_json_depth_checks_metadata_and_transcript_before_publication() 
     let id = SessionId::new("loaded-depth-exact").unwrap();
     let exact = SessionRecord {
         id: id.clone(),
+        incarnation_id: test_incarnation(&id),
         revision: SessionRevision(1),
         next_turn_sequence: 1,
         messages: vec![Message {
@@ -2029,6 +2053,7 @@ fn loaded_record_json_depth_checks_metadata_and_transcript_before_publication() 
         let id = SessionId::new(id_text).unwrap();
         let record = SessionRecord {
             id: id.clone(),
+            incarnation_id: test_incarnation(&id),
             revision: SessionRevision(1),
             next_turn_sequence: 1,
             messages: vec![Message {
@@ -2051,7 +2076,7 @@ fn loaded_record_json_depth_checks_metadata_and_transcript_before_publication() 
             futures_executor::block_on(engine.load_session(id.clone())),
             Err(EngineError::Protocol(message)) if message.contains("depth limit")
         ));
-        assert!(engine.create_session(id).record().messages.is_empty());
+        assert!(engine.create_test_session(id).record().messages.is_empty());
     }
 }
 
@@ -2086,7 +2111,8 @@ fn provider_argument_json_depth_fails_before_authorization_or_tool_execution() {
         .limits(with_limit(EngineLimits::default(), "json_depth", 2))
         .build()
         .unwrap();
-    let observed = collect(&engine.create_session(SessionId::new("argument-depth-exact").unwrap()));
+    let observed =
+        collect(&engine.create_test_session(SessionId::new("argument-depth-exact").unwrap()));
     assert!(matches!(
         observed.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -2115,7 +2141,8 @@ fn provider_argument_json_depth_fails_before_authorization_or_tool_execution() {
         .limits(with_limit(EngineLimits::default(), "json_depth", 2))
         .build()
         .unwrap();
-    let observed = collect(&engine.create_session(SessionId::new("argument-depth-over").unwrap()));
+    let observed =
+        collect(&engine.create_test_session(SessionId::new("argument-depth-over").unwrap()));
     assert!(matches!(
         &observed.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "json_depth_limit"
@@ -2154,7 +2181,8 @@ fn tool_output_json_depth_exact_boundary_and_unknown_overflow_marker() {
         .limits(with_limit(EngineLimits::default(), "json_depth", 2))
         .build()
         .unwrap();
-    let observed = collect(&engine.create_session(SessionId::new("output-depth-exact").unwrap()));
+    let observed =
+        collect(&engine.create_test_session(SessionId::new("output-depth-exact").unwrap()));
     assert!(matches!(
         observed.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -2186,7 +2214,7 @@ fn tool_output_json_depth_exact_boundary_and_unknown_overflow_marker() {
         .build()
         .unwrap();
     let id = SessionId::new("output-depth-over").unwrap();
-    let observed = collect(&engine.create_session(id.clone()));
+    let observed = collect(&engine.create_test_session(id.clone()));
     assert!(matches!(
         &observed.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "json_depth_limit"
@@ -2240,7 +2268,7 @@ fn inference_metadata_json_node_budget_enforces_exact_and_plus_one_before_effect
         .limits(limits)
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("options-nodes-exact").unwrap());
+    let session = engine.create_test_session(SessionId::new("options-nodes-exact").unwrap());
     let output = futures_executor::block_on(async {
         session
             .prompt(Prompt {
@@ -2276,7 +2304,7 @@ fn inference_metadata_json_node_budget_enforces_exact_and_plus_one_before_effect
         .limits(limits)
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("options-nodes-over").unwrap());
+    let session = engine.create_test_session(SessionId::new("options-nodes-over").unwrap());
     assert!(matches!(
         futures_executor::block_on(session.prompt(Prompt {
             text: "go".to_owned(),
@@ -2301,6 +2329,7 @@ fn loaded_record_json_node_budget_is_aggregate_across_metadata_and_messages() {
     let id = SessionId::new("record-nodes-exact").unwrap();
     let exact = SessionRecord {
         id: id.clone(),
+        incarnation_id: test_incarnation(&id),
         revision: SessionRevision(1),
         next_turn_sequence: 1,
         messages: vec![Message {
@@ -2328,6 +2357,7 @@ fn loaded_record_json_node_budget_is_aggregate_across_metadata_and_messages() {
     let id = SessionId::new("record-nodes-over").unwrap();
     let over = SessionRecord {
         id: id.clone(),
+        incarnation_id: test_incarnation(&id),
         revision: SessionRevision(1),
         next_turn_sequence: 1,
         messages: vec![Message {
@@ -2355,7 +2385,7 @@ fn loaded_record_json_node_budget_is_aggregate_across_metadata_and_messages() {
         futures_executor::block_on(engine.load_session(id.clone())),
         Err(EngineError::Protocol(message)) if message.contains("node limit")
     ));
-    assert!(engine.create_session(id).record().messages.is_empty());
+    assert!(engine.create_test_session(id).record().messages.is_empty());
 }
 
 #[test]
@@ -2390,8 +2420,9 @@ fn provider_argument_json_node_limit_precedes_authorization_and_execution() {
         .limits(limits)
         .build()
         .unwrap();
-    let output =
-        collect(&engine.create_session(SessionId::new("argument-nodes-exact-record").unwrap()));
+    let output = collect(
+        &engine.create_test_session(SessionId::new("argument-nodes-exact-record").unwrap()),
+    );
     assert!(matches!(
         output.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -2419,7 +2450,8 @@ fn provider_argument_json_node_limit_precedes_authorization_and_execution() {
         .limits(limits)
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("argument-nodes-over").unwrap()));
+    let output =
+        collect(&engine.create_test_session(SessionId::new("argument-nodes-over").unwrap()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "json_node_limit"
@@ -2460,7 +2492,7 @@ fn tool_output_json_node_limit_keeps_post_effect_placeholder() {
         .build()
         .unwrap();
     let output =
-        collect(&engine.create_session(SessionId::new("output-nodes-exact-record").unwrap()));
+        collect(&engine.create_test_session(SessionId::new("output-nodes-exact-record").unwrap()));
     assert!(matches!(
         output.last().unwrap().payload,
         TurnEvent::Completed { .. }
@@ -2492,7 +2524,7 @@ fn tool_output_json_node_limit_keeps_post_effect_placeholder() {
         .build()
         .unwrap();
     let id = SessionId::new("output-nodes-over").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "json_node_limit"
@@ -2607,7 +2639,7 @@ fn deep_owned_json_rejection_child() {
                 .permission_handler(ScriptedPermissionHandler::new([]))
                 .build()
                 .unwrap();
-            let session = engine.create_session(SessionId::new("deep-unpolled").unwrap());
+            let session = engine.create_test_session(SessionId::new("deep-unpolled").unwrap());
             let future = session.prompt(Prompt {
                 text: "go".to_owned(),
                 options: InferenceOptions {
@@ -2626,7 +2658,7 @@ fn deep_owned_json_rejection_child() {
                 .permission_handler(ScriptedPermissionHandler::new([]))
                 .build()
                 .unwrap();
-            let session = engine.create_session(SessionId::new("deep-options").unwrap());
+            let session = engine.create_test_session(SessionId::new("deep-options").unwrap());
             let result = futures_executor::block_on(session.prompt(Prompt {
                 text: "go".to_owned(),
                 options: InferenceOptions {
@@ -2661,6 +2693,7 @@ fn deep_owned_json_rejection_child() {
             };
             let store = OneShotLoadStore::new(SessionRecord {
                 id: id.clone(),
+                incarnation_id: test_incarnation(&id),
                 revision: SessionRevision(1),
                 next_turn_sequence: 1,
                 messages,
@@ -2676,7 +2709,7 @@ fn deep_owned_json_rejection_child() {
                 futures_executor::block_on(engine.load_session(id.clone())),
                 Err(EngineError::Protocol(message)) if message.contains("depth limit")
             ));
-            assert!(engine.create_session(id).record().messages.is_empty());
+            assert!(engine.create_test_session(id).record().messages.is_empty());
         }
         "provider_arguments" => {
             let permissions = ScriptedPermissionHandler::new([]);
@@ -2698,8 +2731,9 @@ fn deep_owned_json_rejection_child() {
                 .tool(tool.clone())
                 .build()
                 .unwrap();
-            let output =
-                collect(&engine.create_session(SessionId::new("deep-provider-arguments").unwrap()));
+            let output = collect(
+                &engine.create_test_session(SessionId::new("deep-provider-arguments").unwrap()),
+            );
             assert!(matches!(
                 &output.last().unwrap().payload,
                 TurnEvent::Failed { code, .. } if code == "json_depth_limit"
@@ -2717,7 +2751,7 @@ fn deep_owned_json_rejection_child() {
                 .build()
                 .unwrap();
             let output = collect(
-                &engine.create_session(SessionId::new("deep-provider-cancel-ready").unwrap()),
+                &engine.create_test_session(SessionId::new("deep-provider-cancel-ready").unwrap()),
             );
             assert!(matches!(
                 &output.last().unwrap().payload,
@@ -2753,7 +2787,7 @@ fn deep_owned_json_rejection_child() {
                 .build()
                 .unwrap();
             let output = collect(
-                &engine.create_session(SessionId::new("deep-provider-event-limit").unwrap()),
+                &engine.create_test_session(SessionId::new("deep-provider-event-limit").unwrap()),
             );
             assert!(matches!(
                 &output.last().unwrap().payload,
@@ -2788,7 +2822,7 @@ fn deep_owned_json_rejection_child() {
                 .build()
                 .unwrap();
             let id = SessionId::new("deep-tool-output").unwrap();
-            let output = collect(&engine.create_session(id.clone()));
+            let output = collect(&engine.create_test_session(id.clone()));
             assert!(matches!(
                 &output.last().unwrap().payload,
                 TurnEvent::Failed { code, .. } if code == "json_depth_limit"
@@ -2816,7 +2850,7 @@ fn deep_owned_json_rejection_child() {
                 .build()
                 .unwrap();
             let id = SessionId::new("deep-tool-cancel-ready").unwrap();
-            let output = collect(&engine.create_session(id.clone()));
+            let output = collect(&engine.create_test_session(id.clone()));
             assert!(matches!(
                 &output.last().unwrap().payload,
                 TurnEvent::Completed {
@@ -2855,7 +2889,7 @@ fn placeholder_budgets_fail_before_committing_calls_or_requesting_permission() {
         .build()
         .unwrap();
     let id = SessionId::new("placeholder-budget").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { code, .. } if code == "tool_result_size_limit"
@@ -2913,7 +2947,7 @@ fn denial_reason_is_host_only_and_permission_ids_include_turn_identity() {
         .build()
         .unwrap();
     let id = SessionId::new("permission-identity").unwrap();
-    let session = engine.create_session(id.clone());
+    let session = engine.create_test_session(id.clone());
     let first_events = collect(&session);
     let _second_events = collect(&session);
 
@@ -2923,6 +2957,14 @@ fn denial_reason_is_host_only_and_permission_ids_include_turn_identity() {
         .map(|request| request.id.to_string())
         .collect::<Vec<_>>();
     assert_eq!(ids.len(), 2);
+    assert_eq!(
+        ids[0],
+        "permission-sha256-4096be63b07d394fc466cb6e4ad288c4cb7c220a72c94a39ce56cff72bbb6d05"
+    );
+    assert_eq!(
+        ids[1],
+        "permission-sha256-84549f4ad140e2f9e949015edf5cf5c129f942b07ed46a6e75236c55a17b9001"
+    );
     assert_ne!(ids[0], ids[1]);
     assert!(ids.iter().all(|id| {
         id.len() == 82
@@ -3004,8 +3046,8 @@ fn permission_request_ids_are_distinct_across_sessions() {
         .tool(ScriptedTool::new(spec("known"), []))
         .build()
         .unwrap();
-    collect(&engine.create_session(SessionId::new("permission-session-one").unwrap()));
-    collect(&engine.create_session(SessionId::new("permission-session-two").unwrap()));
+    collect(&engine.create_test_session(SessionId::new("permission-session-one").unwrap()));
+    collect(&engine.create_test_session(SessionId::new("permission-session-two").unwrap()));
 
     let requests = permissions.requests();
     assert_eq!(requests.len(), 2);
@@ -3013,7 +3055,11 @@ fn permission_request_ids_are_distinct_across_sessions() {
     assert_ne!(requests[0].session_id, requests[1].session_id);
     assert_eq!(
         requests[0].id.as_str(),
-        "permission-sha256-e0587c0d089e3b55553560e7d014b8684db1d83eb9d8e3f19ccb635e7e3cc5ca"
+        "permission-sha256-2c0a6739295b45af6cdd02b8e1a74540e5b6962f015496af0cb7545941b01ef3"
+    );
+    assert_eq!(
+        requests[1].id.as_str(),
+        "permission-sha256-f9c54a25f666735ffb6ce5114a4b631a1ae3b20ec156a02308714cb88776e0a5"
     );
     assert_ne!(requests[0].id, requests[1].id);
 }
@@ -3112,13 +3158,115 @@ fn permission_id_cache_cannot_reuse_allow_across_sessions() {
         .build()
         .unwrap();
 
-    collect(&engine.create_session(SessionId::new("cache-session-one").unwrap()));
-    collect(&engine.create_session(SessionId::new("cache-session-two").unwrap()));
+    collect(&engine.create_test_session(SessionId::new("cache-session-one").unwrap()));
+    collect(&engine.create_test_session(SessionId::new("cache-session-two").unwrap()));
 
     let requests = permissions.requests();
     assert_eq!(requests.len(), 2);
     assert_ne!(requests[0].id, requests[1].id);
     assert_eq!(tool.invocations().len(), 1);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn permission_id_cache_cannot_replay_allow_across_session_incarnations() {
+    let provider = ScriptedModelProvider::new(
+        "permission-incarnation-isolation",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("first", "known", json!({"value": 1})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("second", "known", json!({"value": 2})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = IdCachingPermissionHandler::default();
+    let tool = ScriptedTool::new(
+        spec("known"),
+        [ToolStep::Output(ToolOutput::success("first allowed"))],
+    );
+    let first_store = InMemorySessionStore::new();
+    let first_engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(first_store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let session_id = SessionId::new("reset-session").unwrap();
+    let first_incarnation = SessionIncarnationId::new("logical-lifetime-one").unwrap();
+    let first = first_engine
+        .create_session(session_id.clone(), first_incarnation.clone())
+        .unwrap();
+    collect(&first);
+    drop(first);
+    drop(first_engine);
+
+    let second_store = InMemorySessionStore::new();
+    let second_engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(second_store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let second_incarnation = SessionIncarnationId::new("logical-lifetime-two").unwrap();
+    let second = second_engine
+        .create_session(session_id.clone(), second_incarnation.clone())
+        .unwrap();
+    collect(&second);
+
+    let requests = permissions.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].session_id, requests[1].session_id);
+    assert_eq!(requests[0].turn_id, requests[1].turn_id);
+    assert_ne!(
+        requests[0].session_incarnation_id,
+        requests[1].session_incarnation_id
+    );
+    assert_ne!(requests[0].id, requests[1].id);
+    assert_eq!(
+        requests[0].id.as_str(),
+        "permission-sha256-78138afa649c773135f30c04e267505c9587efce79246248bd6024a614d27604"
+    );
+    assert_eq!(
+        requests[1].id.as_str(),
+        "permission-sha256-b6660b1120d8f7ffc88abad91c4e58506e4c0e2eafbb53e754f7219598f980ae"
+    );
+    assert_eq!(tool.invocations().len(), 1);
+    assert_eq!(
+        first_store.record(&session_id).unwrap().incarnation_id,
+        first_incarnation
+    );
+    assert_eq!(
+        second_store.record(&session_id).unwrap().incarnation_id,
+        second_incarnation
+    );
+    assert_eq!(
+        serde_json::to_value(&requests[1]).unwrap()["session_incarnation_id"],
+        "logical-lifetime-two"
+    );
+    assert_eq!(
+        serde_json::to_value(&provider.requests()[2].request).unwrap()["session_incarnation_id"],
+        "logical-lifetime-two"
+    );
 }
 
 #[test]
@@ -3140,7 +3288,7 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
         .permission_handler(ScriptedPermissionHandler::new([]))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("provider-secret").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("provider-secret").unwrap()));
     assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
     assert!(matches!(
         &output.last().unwrap().payload,
@@ -3169,7 +3317,7 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
         .build()
         .unwrap();
     let id = SessionId::new("permission-secret").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
     assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
     assert!(matches!(
         &output.last().unwrap().payload,
@@ -3205,7 +3353,7 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
         .permission_handler(ScriptedPermissionHandler::new([]))
         .build()
         .unwrap();
-    let output = collect(&engine.create_session(SessionId::new("store-secret").unwrap()));
+    let output = collect(&engine.create_test_session(SessionId::new("store-secret").unwrap()));
     assert!(!format!("{:?}", output.last().unwrap().payload).contains(secret));
     assert!(matches!(
         &output.last().unwrap().payload,
@@ -3231,7 +3379,7 @@ fn provider_permission_and_store_terminal_diagnostics_are_redacted() {
         .permission_handler(ScriptedPermissionHandler::new([]))
         .build()
         .unwrap();
-    let session = engine.create_session(SessionId::new("initial-store-secret").unwrap());
+    let session = engine.create_test_session(SessionId::new("initial-store-secret").unwrap());
     let error = futures_executor::block_on(session.prompt("go")).unwrap_err();
     assert!(!error.to_string().contains(secret));
     assert!(matches!(
@@ -3312,7 +3460,7 @@ fn permission_sink_and_replacement_save_failures_leave_placeholders() {
         .build()
         .unwrap();
     let id = SessionId::new("sink-placeholder").unwrap();
-    let session = engine.create_session(id.clone());
+    let session = engine.create_test_session(id.clone());
     let turn = futures_executor::block_on(session.prompt("go")).unwrap();
     let result = futures_executor::block_on(turn.collect::<Vec<_>>());
     assert!(matches!(
@@ -3358,7 +3506,7 @@ fn permission_sink_and_replacement_save_failures_leave_placeholders() {
         .build()
         .unwrap();
     let id = SessionId::new("save-placeholder").unwrap();
-    let output = collect(&engine.create_session(id.clone()));
+    let output = collect(&engine.create_test_session(id.clone()));
     assert!(matches!(
         &output.last().unwrap().payload,
         TurnEvent::Failed { component, .. } if component == "store"
@@ -3418,7 +3566,7 @@ fn cancellation_ready_race_keeps_placeholder_and_next_prompt_never_replays() {
         .build()
         .unwrap();
     let id = SessionId::new("cancel-ready").unwrap();
-    let session = engine.create_session(id.clone());
+    let session = engine.create_test_session(id.clone());
     let first = collect(&session);
     assert!(matches!(
         first.last().unwrap().payload,
@@ -3480,7 +3628,7 @@ fn multi_call_cancellation_preserves_known_prefix_and_unknown_suffix_for_resume(
         .build()
         .unwrap();
     let id = SessionId::new("multi-resume").unwrap();
-    let session = engine.create_session(id.clone());
+    let session = engine.create_test_session(id.clone());
     let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
     let mut saw_second_request = false;
     for _ in 0..20 {

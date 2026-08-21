@@ -283,12 +283,13 @@ mod tests {
     use super::{ModelProviderStep, ScriptedModelProvider};
     use machine_god_core::{
         CancellationToken, InferenceOptions, ModelProvider, ModelRequest, ProviderError, SessionId,
-        TurnId,
+        SessionIncarnationId, TurnId,
     };
 
     fn request() -> ModelRequest {
         ModelRequest {
             session_id: SessionId::new("provider-test").unwrap(),
+            session_incarnation_id: SessionIncarnationId::new("provider-test-incarnation").unwrap(),
             turn_id: TurnId::new("turn-1").unwrap(),
             messages: Vec::new(),
             tools: Vec::new(),

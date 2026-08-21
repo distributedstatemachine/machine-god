@@ -10,11 +10,14 @@ application may use Tokio, async-std, smol, a custom executor, or direct polling
 All public extension traits are object-safe, `Send`, and `Sync`.
 
 ```rust,no_run
-use machine_god_core::{Engine, SessionId};
+use machine_god_core::{Engine, SessionId, SessionIncarnationId};
 
 # fn configured_engine() -> Engine { unimplemented!() }
 let engine = configured_engine();
-let session = engine.create_session(SessionId::new("example").unwrap());
+let session = engine.create_session(
+    SessionId::new("example").unwrap(),
+    SessionIncarnationId::new("0198d2f9-ef9a-7d72-9c1d-6f6db8f3dd50").unwrap(),
+).unwrap();
 assert_eq!(session.id().as_str(), "example");
 ```
 
@@ -98,7 +101,11 @@ including across separately created, separately loaded, and cloned session
 handles. A second prompt returns
 [`EngineError::SessionBusy`](crate::EngineError::SessionBusy). Engine instances
 keep a weak ordered registry by session ID; handles and live turns share the
-canonical state. Create and load perform only a targeted logarithmic lookup,
+canonical state only when their durable incarnation IDs also match. Creating or
+loading the same live session ID with another incarnation fails with
+[`EngineError::SessionIncarnationConflict`](crate::EngineError::SessionIncarnationConflict)
+instead of merging distinct logical lifetimes. Create and load perform only a
+targeted logarithmic lookup,
 while the last state owner reclaims its own key with an identity check so a
 delayed destructor cannot remove a concurrent replacement.
 This lease is deliberately process-local and scoped to one `Engine`. Separate
@@ -129,6 +136,16 @@ the turn outcome until its assistant message has been saved. Its save therefore
 remains cancellable and a pending store cannot prevent shutdown.
 
 The next turn sequence is part of [`SessionRecord`](crate::SessionRecord).
+So is the validated [`SessionIncarnationId`](crate::SessionIncarnationId) that
+identifies one logical lifetime of a reusable session ID. A host must supply a
+globally unique incarnation when calling [`Engine::create_session`](crate::Engine::create_session)
+and persist it unchanged for every later load and save. Core deliberately has no
+clock or randomness from which to synthesize one. A host that deletes, resets,
+rewinds, or otherwise starts a fresh logical session under an old session ID
+must allocate a new incarnation first. Stores must reject a save that changes
+the incarnation of an existing record; assigning or migrating identities for
+legacy records is an explicit host operation. Deserialization does not invent a
+fallback incarnation for records that omit it.
 Prompt creation reserves it and appends the user message through the configured
 store's optimistic revision before exposing the `Turn` or calling the provider;
 stale handles reload and retry within a fixed bound.
@@ -212,11 +229,14 @@ provider order.
 
 Every invocation receives a fresh critical-risk `Capability::Tool`
 authorization request whose deterministic ID is a domain-separated SHA-256
-digest of length-delimited session ID, turn ID, and ordinal. The fixed lowercase
-hex encoding is portable ASCII and remains below the 128-byte public ID limit.
-Core does not cache positive grant scopes. A host policy may implement its own
-identity-safe caching without reusing an allow across sessions. Denial becomes a
-fixed generic error `ToolResult` without starting the tool. The detailed policy
+v2 digest of length-delimited session ID, session incarnation ID, turn ID, and
+ordinal. Both [`ModelRequest`](crate::ModelRequest) and
+[`PermissionRequest`](crate::PermissionRequest) carry the incarnation as audit
+input. The fixed lowercase hex encoding is portable ASCII and remains below the
+128-byte public ID limit. Core does not cache positive grant scopes. A host
+policy may implement its own identity-safe caching without reusing an allow
+across sessions, turns, or reset session lifetimes. Denial becomes a fixed
+generic error `ToolResult` without starting the tool. The detailed policy
 reason remains available only in the host-facing `PermissionResolved` event and
 is truncated on a UTF-8 boundary to its configured limit before it is cloned or
 staged. A tool implementation error likewise becomes a fixed generic

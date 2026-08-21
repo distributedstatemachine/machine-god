@@ -1,9 +1,9 @@
 use crate::{
     BoxFuture, CancellationToken, Capability, ContentBlock, EngineError, EngineEvent,
     InferenceOptions, Message, ModelEvent, ModelEventStream, ModelRequest, PermissionDecision,
-    PermissionRequest, PermissionRequestId, PermissionRisk, Role, SessionId, SessionStoreError,
-    SessionStoreErrorKind, StopReason, TokenUsage, ToolCall, ToolContext, ToolOutput, TurnEvent,
-    TurnId,
+    PermissionRequest, PermissionRequestId, PermissionRisk, Role, SessionId, SessionIncarnationId,
+    SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage, ToolCall, ToolContext,
+    ToolOutput, TurnEvent, TurnId,
 };
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,8 @@ pub struct SessionRevision(pub u64);
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SessionRecord {
     pub id: SessionId,
+    /// Globally unique identity for this logical lifetime of `id`.
+    pub incarnation_id: SessionIncarnationId,
     pub revision: SessionRevision,
     /// First never-reserved turn sequence number. Reconciliation never permits
     /// this allocator position to decrease.
@@ -41,9 +43,10 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     #[must_use]
-    pub fn empty(id: SessionId) -> Self {
+    pub fn empty(id: SessionId, incarnation_id: SessionIncarnationId) -> Self {
         Self {
             id,
+            incarnation_id,
             revision: SessionRevision::default(),
             next_turn_sequence: initial_turn_sequence(),
             messages: Vec::new(),
@@ -75,6 +78,9 @@ const fn initial_turn_sequence() -> u64 {
 }
 
 /// Object-safe persistence boundary with optimistic concurrency.
+///
+/// A store must preserve [`SessionRecord::incarnation_id`] for the complete
+/// logical lifetime of a record and reject a save that attempts to change it.
 pub trait SessionStore: Send + Sync + 'static {
     fn load(
         &self,
@@ -245,6 +251,16 @@ impl SessionState {
         Ok(())
     }
 
+    pub(crate) fn validate_identity(&self, record: &SessionRecord) -> Result<(), EngineError> {
+        let canonical = self
+            .data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record
+            .clone();
+        Self::validate_record_identity(&canonical, record)
+    }
+
     pub(crate) fn reconcile_loaded(&self, record: SessionRecord) -> Result<(), EngineError> {
         const MAX_RECONCILE_RETRIES: usize = 32;
 
@@ -252,12 +268,7 @@ impl SessionState {
         let record = Arc::new(record);
         for _ in 0..MAX_RECONCILE_RETRIES {
             let (canonical, _) = self.snapshot();
-            if record.id != canonical.id {
-                return Err(EngineError::Protocol(format!(
-                    "session store returned ID {} for requested ID {}",
-                    record.id, canonical.id
-                )));
-            }
+            Self::validate_record_identity(&canonical, &record)?;
             Self::validate_sequence_progress(&canonical, &record)?;
             if record.revision < canonical.revision {
                 return Err(EngineError::Protocol(format!(
@@ -297,6 +308,7 @@ impl SessionState {
 
         for _ in 0..MAX_RECONCILE_RETRIES {
             let (canonical, _) = self.snapshot();
+            Self::validate_record_identity(&canonical, &record)?;
             Self::validate_sequence_progress(&canonical, &record)?;
             let equal_revision_diverged =
                 canonical.revision == record.revision && *canonical != *record;
@@ -366,6 +378,22 @@ impl SessionState {
         }
         Ok(())
     }
+
+    fn validate_record_identity(
+        canonical: &SessionRecord,
+        candidate: &SessionRecord,
+    ) -> Result<(), EngineError> {
+        if candidate.id != canonical.id {
+            return Err(EngineError::Protocol(format!(
+                "session store returned ID {} for requested ID {}",
+                candidate.id, canonical.id
+            )));
+        }
+        if candidate.incarnation_id != canonical.incarnation_id {
+            return Err(EngineError::SessionIncarnationConflict);
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Session {
@@ -391,6 +419,18 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .record
             .id
+            .clone()
+    }
+
+    /// Returns the durable identity of this logical session lifetime.
+    #[must_use]
+    pub fn incarnation_id(&self) -> SessionIncarnationId {
+        self.state
+            .data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record
+            .incarnation_id
             .clone()
     }
 
@@ -550,6 +590,9 @@ impl Session {
                             "session store returned ID {} for requested ID {id}",
                             current.get().id
                         )));
+                    }
+                    if current.get().incarnation_id != snapshot.incarnation_id {
+                        return Err(EngineError::SessionIncarnationConflict);
                     }
                     validate_record_limits(current.get(), self.engine.limits)?;
                     self.state.reconcile_loaded(current.into_inner())?;
@@ -871,6 +914,7 @@ async fn run_turn_inner(
     emitter.emit(TurnEvent::Started).await;
 
     let limits = engine.limits;
+    let session_incarnation_id = record.incarnation_id.clone();
     let mut model_rounds = 0usize;
     let mut model_events = 0usize;
     let mut tool_calls = 0usize;
@@ -897,6 +941,7 @@ async fn run_turn_inner(
         validate_inference_options(&options, limits)?;
         let request = ModelRequest {
             session_id: session_id.clone(),
+            session_incarnation_id: session_incarnation_id.clone(),
             turn_id: turn_id.clone(),
             messages: record.messages.clone(),
             tools: engine.tool_specs(),
@@ -1181,10 +1226,12 @@ async fn run_turn_inner(
                 .ok_or_else(|| {
                     TurnFailure::limit("tool_call_limit", "tool call count overflowed")
                 })?;
-            let permission_id = permission_request_id(&session_id, &turn_id, ordinal)?;
+            let permission_id =
+                permission_request_id(&session_id, &session_incarnation_id, &turn_id, ordinal)?;
             let request = PermissionRequest {
                 id: permission_id.clone(),
                 session_id: session_id.clone(),
+                session_incarnation_id: session_incarnation_id.clone(),
                 turn_id: turn_id.clone(),
                 capability: Capability::Tool {
                     name: call.name.clone(),
@@ -1351,14 +1398,19 @@ fn tool_result_message(call_id: crate::ToolCallId, output: ToolOutput) -> Messag
 
 fn permission_request_id(
     session_id: &SessionId,
+    session_incarnation_id: &SessionIncarnationId,
     turn_id: &TurnId,
     ordinal: usize,
 ) -> Result<PermissionRequestId, WorkflowAbort> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
 
     let mut hasher = Sha256::new();
-    hasher.update(b"machine-god:permission-request:v1\0");
-    for component in [session_id.as_str(), turn_id.as_str()] {
+    hasher.update(b"machine-god:permission-request:v2\0");
+    for component in [
+        session_id.as_str(),
+        session_incarnation_id.as_str(),
+        turn_id.as_str(),
+    ] {
         let length = u64::try_from(component.len()).map_err(|_| {
             TurnFailure::protocol("permission_id", "permission identity length overflowed")
         })?;
@@ -1907,6 +1959,13 @@ async fn commit_messages(
             )
             .into());
         }
+        if snapshot.incarnation_id != base.incarnation_id {
+            return Err(TurnFailure::protocol(
+                "session_incarnation_changed",
+                "session incarnation changed during transcript commit",
+            )
+            .into());
+        }
         if snapshot.messages != base.messages {
             return Err(TurnFailure::protocol(
                 "transcript_diverged",
@@ -1970,6 +2029,13 @@ async fn commit_messages(
                     )
                     .into());
                 }
+                if current.get().incarnation_id != base.incarnation_id {
+                    return Err(TurnFailure::protocol(
+                        "session_incarnation_changed",
+                        "session incarnation changed during message commit",
+                    )
+                    .into());
+                }
                 SessionState::validate_loaded(current.get()).map_err(|error| {
                     TurnFailure::protocol("invalid_conflict_record", error.to_string())
                 })?;
@@ -2020,6 +2086,13 @@ async fn replace_message(
             return Err(TurnFailure::protocol(
                 "session_identity_changed",
                 "session identity changed during result replacement",
+            )
+            .into());
+        }
+        if snapshot.incarnation_id != base.incarnation_id {
+            return Err(TurnFailure::protocol(
+                "session_incarnation_changed",
+                "session incarnation changed during result replacement",
             )
             .into());
         }
@@ -2086,6 +2159,13 @@ async fn replace_message(
                     return Err(TurnFailure::protocol(
                         "session_identity_changed",
                         "session store returned a different session during result replacement",
+                    )
+                    .into());
+                }
+                if current.get().incarnation_id != base.incarnation_id {
+                    return Err(TurnFailure::protocol(
+                        "session_incarnation_changed",
+                        "session incarnation changed during result replacement",
                     )
                     .into());
                 }

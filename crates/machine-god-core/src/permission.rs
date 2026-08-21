@@ -1,5 +1,6 @@
 use crate::{
-    BoxFuture, PermissionError, PermissionRequestId, SessionId, ToolCallId, ToolName, TurnId,
+    BoxFuture, PermissionError, PermissionRequestId, SessionId, SessionIncarnationId, ToolCallId,
+    ToolName, TurnId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -66,6 +67,7 @@ pub enum PermissionRisk {
 pub struct PermissionRequest {
     pub id: PermissionRequestId,
     pub session_id: SessionId,
+    pub session_incarnation_id: SessionIncarnationId,
     pub turn_id: TurnId,
     pub capability: Capability,
     pub risk: PermissionRisk,

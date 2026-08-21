@@ -1,4 +1,6 @@
-use crate::{BoxFuture, CancellationToken, SessionId, ToolCall, ToolSpec, TurnId};
+use crate::{
+    BoxFuture, CancellationToken, SessionId, SessionIncarnationId, ToolCall, ToolSpec, TurnId,
+};
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,6 +71,7 @@ pub struct InferenceOptions {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ModelRequest {
     pub session_id: SessionId,
+    pub session_incarnation_id: SessionIncarnationId,
     pub turn_id: TurnId,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,

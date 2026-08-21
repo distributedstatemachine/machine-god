@@ -190,6 +190,7 @@ impl std::error::Error for BuildError {}
 #[non_exhaustive]
 pub enum EngineError {
     SessionBusy,
+    SessionIncarnationConflict,
     Provider(ProviderError),
     Store(SessionStoreError),
     Permission(PermissionError),
@@ -201,6 +202,9 @@ impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SessionBusy => formatter.write_str("the session already has an active turn"),
+            Self::SessionIncarnationConflict => {
+                formatter.write_str("the session ID is already active with a different incarnation")
+            }
             Self::Provider(error) => write!(formatter, "provider failed: {error}"),
             Self::Store(error) => write!(formatter, "session store failed: {error}"),
             Self::Permission(error) => write!(formatter, "permission handler failed: {error}"),
