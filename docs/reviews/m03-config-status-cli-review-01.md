@@ -113,6 +113,29 @@ All reviewed native and CLI behavior, including both output formats' bidi
 escaping, was GREEN in this round. The evidence remediation still requires a
 fresh exact-SHA three-way review and complete local and remote gates.
 
+## Review round 03 finding and remediation
+
+Correctness/API and performance/resource/evidence review of exact commit
+`48cb452aa0a912c5d61a4ecf04fcb714253c177e` was GREEN. Their generic probes
+injected undeclared fields into all 74 object instances and claim prose into all
+22 narrative fields; every mutation was rejected. The independent
+security/abuse pass then found two final malformed-input edges:
+
+1. With an expected upstream lock, a non-object `tools` value was dereferenced
+   before the validator reached its structural check, producing an internal
+   `AttributeError` instead of a controlled validation error. Lock comparison
+   is now split so repository/commit validation precedes tool parsing and the
+   Zig binding occurs only after exact tool validation. The command-line
+   checker also rejects a non-object JSON root before calling `.get`.
+2. Rust and Cargo versions used prefix checks, so arbitrary claim-bearing text
+   could be appended to an otherwise valid version. Git version was likewise
+   only nonempty. Exact-toolchain Rust/Cargo outputs and the supported Git
+   output forms now use full-string patterns; Zig was already exact. Mutation
+   tests require malformed tool structures and appended claim prose to fail as
+   `ValueError`.
+
+These fixes require another fresh exact-SHA review and all local/remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

@@ -127,6 +127,21 @@ class BenchmarkScriptsTest(unittest.TestCase):
                 completed = self.run_checker(evidence)
                 self.assertNotEqual(completed.returncode, 0)
 
+    def test_checker_rejects_non_object_json_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_path = Path(directory) / "evidence.json"
+            evidence_path.write_text("[]\n", encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "benchmarks/check.py"), str(evidence_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(completed.stderr, "benchmark evidence must be an object\n")
+        self.assertNotIn("Traceback", completed.stderr)
+
     def test_checker_rejects_command_binary_mismatch(self) -> None:
         evidence = self.valid_evidence()
         evidence["command"] = ["different-binary"]
@@ -319,7 +334,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "invocation_ctime_ns": 1,
                 "invocation_link_target": "",
                 "required_version": EXPECTED_RUST_VERSION,
-                "version": "rustc 1.94.1 (test 2026-01-01)",
+                "version": "rustc 1.94.1 (e408947bf 2026-03-25)",
             },
             "cargo": {
                 "command": ["/usr/bin/cargo", "+1.94.1", "--version"],
@@ -339,7 +354,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "invocation_ctime_ns": 1,
                 "invocation_link_target": "",
                 "required_version": EXPECTED_RUST_VERSION,
-                "version": "cargo 1.94.1 (test 2026-01-01)",
+                "version": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
             },
         }
         plan = command_plan(
@@ -701,6 +716,27 @@ class UpstreamHarnessTest(unittest.TestCase):
                 mutate(evidence)
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence)
+
+    def test_rejects_malformed_tools_and_claim_bearing_version_suffixes(self) -> None:
+        mutations = (
+            lambda data: data.__setitem__("tools", []),
+            lambda data: data["tools"]["git"].__setitem__(
+                "version", "git version 2 machine-god is faster"
+            ),
+            lambda data: data["tools"]["rustc"].__setitem__(
+                "version", "rustc 1.94.1 (e408947bf 2026-03-25) machine-god is faster"
+            ),
+            lambda data: data["tools"]["cargo"].__setitem__(
+                "version", "cargo 1.94.1 (29ea6fb6a 2026-03-24) winner=machine-god"
+            ),
+        )
+        canonical = parse_upstream_lock(ROOT / "benchmarks/upstream.lock")
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                evidence = self.valid_upstream_evidence()
+                mutate(evidence)
+                with self.assertRaises(ValueError):
+                    validate_upstream_evidence(evidence, expected_lock=canonical)
 
     def test_records_implemented_local_commands_without_measurements(self) -> None:
         evidence = self.valid_upstream_evidence()

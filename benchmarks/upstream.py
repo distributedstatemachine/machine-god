@@ -43,6 +43,13 @@ BOOTSTRAP_REASON = (
     "bootstrap identity; these samples validate the harness and are not product-equivalent"
 )
 HEX_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+GIT_VERSION_RE = re.compile(r"^git version [0-9]+(?:\.[0-9]+)*(?: \(Apple Git-[0-9]+\))?$")
+RUSTC_VERSION_RE = re.compile(
+    rf"^rustc {re.escape(EXPECTED_RUST_VERSION)} \([0-9a-f]{{9}} [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\)$"
+)
+CARGO_VERSION_RE = re.compile(
+    rf"^cargo {re.escape(EXPECTED_RUST_VERSION)} \([0-9a-f]{{9}} [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\)$"
+)
 CONTAINMENT_ENVIRONMENT_KEY = "MACHINE_GOD_BENCHMARK_RUN_TOKEN"
 ALLOWED_MACHINE_OUTPUTS = (".bench", "benchmarks/results", "target")
 BASE_ENVIRONMENT_KEYS = {
@@ -723,10 +730,7 @@ def validate_upstream_evidence(
     if not HEX_SHA_RE.fullmatch(locked_commit) or verified_commit != locked_commit:
         raise ValueError("the verified fx commit must equal the locked 40-character SHA")
     if expected_lock is not None and (
-        repository != expected_lock.repository
-        or locked_commit != expected_lock.commit
-        or data.get("tools", {}).get("zig", {}).get("required_version")
-        != expected_lock.zig
+        repository != expected_lock.repository or locked_commit != expected_lock.commit
     ):
         raise ValueError("evidence does not match the canonical upstream lock")
     if fx_source.get("fresh_checkout") is not True:
@@ -854,10 +858,17 @@ def validate_upstream_evidence(
         raise ValueError("tools.zig.required_version is not pinned to 0.16.0")
     if tools["zig"].get("version") != EXPECTED_ZIG_VERSION:
         raise ValueError("evidence was not built with Zig 0.16.0")
-    for name in ("rustc", "cargo"):
+    if expected_lock is not None and tools["zig"]["required_version"] != expected_lock.zig:
+        raise ValueError("evidence does not match the canonical upstream lock")
+    if not GIT_VERSION_RE.fullmatch(tools["git"]["version"]):
+        raise ValueError("evidence has a noncanonical Git version")
+    for name, version_pattern in (
+        ("rustc", RUSTC_VERSION_RE),
+        ("cargo", CARGO_VERSION_RE),
+    ):
         if tools[name].get("required_version") != EXPECTED_RUST_VERSION:
             raise ValueError(f"tools.{name}.required_version is not pinned to 1.94.1")
-        if not tools[name]["version"].startswith(f"{name} {EXPECTED_RUST_VERSION} "):
+        if not version_pattern.fullmatch(tools[name]["version"]):
             raise ValueError(f"evidence was not built with {name} {EXPECTED_RUST_VERSION}")
     tool_environment = require_environment(
         data.get("tool_environment"), "tool_environment", TOOL_ENVIRONMENT_KEYS

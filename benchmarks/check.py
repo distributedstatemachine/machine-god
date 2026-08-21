@@ -42,6 +42,8 @@ def main() -> int:
     parser.add_argument("--expected-runner-class")
     args = parser.parse_args()
     data = json.loads(args.evidence.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise SystemExit("benchmark evidence must be an object")
 
     if data.get("schema_version") == 2:
         if args.bootstrap:
