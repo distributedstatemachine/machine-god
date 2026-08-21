@@ -322,18 +322,52 @@ def executable_identity(path: Path) -> dict[str, object]:
     invocation_before = invocation.lstat()
     link_target = os.readlink(invocation) if stat.S_ISLNK(invocation_before.st_mode) else ""
     canonical = invocation.resolve(strict=True)
-    descriptor = os.open(canonical, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    target_before = canonical.lstat()
+    open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    open_flags |= getattr(os, "O_CLOEXEC", 0)
+    open_flags |= getattr(os, "O_NOFOLLOW", 0)
+    open_flags |= getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(canonical, open_flags)
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or not before.st_mode & 0o111:
             raise RuntimeError(f"tool is not a regular executable file: {canonical}")
-        digest = hashlib.sha256()
-        while chunk := os.read(descriptor, 1024 * 1024):
-            digest.update(chunk)
+        target_metadata_before = (
+            target_before.st_dev,
+            target_before.st_ino,
+            target_before.st_mode,
+            target_before.st_size,
+            target_before.st_mtime_ns,
+            target_before.st_ctime_ns,
+        )
+        metadata_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        if target_metadata_before != metadata_before:
+            raise RuntimeError(f"tool target path changed before inspection: {canonical}")
+        try:
+            with os.fdopen(descriptor, "rb", buffering=0, closefd=False) as source:
+                checksum = bounded_sha256_file(source, before.st_size)
+        except ValueError as error:
+            raise RuntimeError(
+                f"tool changed while its identity was read: {canonical}: {error}"
+            ) from None
         after = os.fstat(descriptor)
+        target_after = canonical.lstat()
+        invocation_after = invocation.lstat()
+        invocation_link_target_after = (
+            os.readlink(invocation) if stat.S_ISLNK(invocation_after.st_mode) else ""
+        )
     finally:
-        os.close(descriptor)
-    invocation_after = invocation.lstat()
+        try:
+            os.close(descriptor)
+        except OSError:
+            raise RuntimeError(f"failed to close tool after inspection: {canonical}") from None
     invocation_metadata_before = (
         invocation_before.st_dev,
         invocation_before.st_ino,
@@ -348,17 +382,17 @@ def executable_identity(path: Path) -> dict[str, object]:
         invocation_after.st_mode,
         invocation_after.st_mtime_ns,
         invocation_after.st_ctime_ns,
-        os.readlink(invocation) if stat.S_ISLNK(invocation_after.st_mode) else "",
+        invocation_link_target_after,
     )
     if invocation_metadata_before != invocation_metadata_after:
         raise RuntimeError(f"tool invocation path changed while inspected: {invocation}")
-    metadata_before = (
-        before.st_dev,
-        before.st_ino,
-        before.st_mode,
-        before.st_size,
-        before.st_mtime_ns,
-        before.st_ctime_ns,
+    target_metadata_after = (
+        target_after.st_dev,
+        target_after.st_ino,
+        target_after.st_mode,
+        target_after.st_size,
+        target_after.st_mtime_ns,
+        target_after.st_ctime_ns,
     )
     metadata_after = (
         after.st_dev,
@@ -368,12 +402,14 @@ def executable_identity(path: Path) -> dict[str, object]:
         after.st_mtime_ns,
         after.st_ctime_ns,
     )
+    if target_metadata_before != target_metadata_after:
+        raise RuntimeError(f"tool target path changed while inspected: {canonical}")
     if metadata_before != metadata_after:
         raise RuntimeError(f"tool changed while its identity was read: {canonical}")
     return {
         "executable": str(invocation),
         "canonical_executable": str(canonical),
-        "sha256": digest.hexdigest(),
+        "sha256": checksum,
         "bytes": before.st_size,
         "mode": stat.S_IMODE(before.st_mode),
         "device": before.st_dev,

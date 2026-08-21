@@ -2108,6 +2108,102 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 )
             mutator.wait(timeout=1)
 
+    def test_executable_identity_bounds_growth_and_closes_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "growing-tool"
+            executable.write_bytes(b"#!/bin/sh\n")
+            executable.chmod(0o755)
+            initial_size = executable.stat().st_size
+            opened_descriptors: list[int] = []
+            read_sizes: list[int] = []
+            original_open = os.open
+            original_hash = upstream.bounded_sha256_file
+
+            def tracking_open(path: object, flags: int) -> int:
+                descriptor = original_open(path, flags)
+                opened_descriptors.append(descriptor)
+                return descriptor
+
+            def grow_then_hash(source: object, expected_bytes: int) -> str:
+                with executable.open("ab") as destination:
+                    destination.write(b"growing data that must not be streamed to EOF")
+
+                class CountingSource:
+                    def read(self, size: int) -> bytes:
+                        read_sizes.append(size)
+                        return source.read(size)
+
+                return original_hash(CountingSource(), expected_bytes)
+
+            with (
+                mock.patch.object(upstream.os, "open", side_effect=tracking_open),
+                mock.patch.object(
+                    upstream,
+                    "bounded_sha256_file",
+                    side_effect=grow_then_hash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "became longer"),
+            ):
+                executable_identity(executable)
+
+            self.assertEqual(read_sizes, [initial_size, 1])
+            self.assertEqual(len(opened_descriptors), 1)
+            with self.assertRaises(OSError):
+                os.fstat(opened_descriptors[0])
+
+    @unittest.skipUnless(os.name == "posix", "target replacement requires POSIX")
+    def test_executable_identity_rejects_canonical_target_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invocation = root / "tool"
+            target = root / "target"
+            displaced = root / "displaced"
+            replacement = root / "replacement"
+            target.write_bytes(b"#!/bin/sh\n")
+            replacement.write_bytes(b"#!/bin/sh\n")
+            target.chmod(0o755)
+            replacement.chmod(0o755)
+            invocation.symlink_to(target)
+            original_hash = upstream.bounded_sha256_file
+
+            def hash_then_replace(source: object, expected_bytes: int) -> str:
+                checksum = original_hash(source, expected_bytes)
+                target.rename(displaced)
+                replacement.rename(target)
+                return checksum
+
+            with (
+                mock.patch.object(
+                    upstream,
+                    "bounded_sha256_file",
+                    side_effect=hash_then_replace,
+                ),
+                self.assertRaisesRegex(RuntimeError, "target path changed"),
+            ):
+                executable_identity(invocation)
+
+    def test_executable_identity_rejects_content_change_during_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "changing-tool"
+            executable.write_bytes(b"#!/bin/sh\n")
+            executable.chmod(0o755)
+            original_hash = upstream.bounded_sha256_file
+
+            def hash_then_change(source: object, expected_bytes: int) -> str:
+                checksum = original_hash(source, expected_bytes)
+                executable.write_bytes(b"#!/bin/zsh")
+                return checksum
+
+            with (
+                mock.patch.object(
+                    upstream,
+                    "bounded_sha256_file",
+                    side_effect=hash_then_change,
+                ),
+                self.assertRaisesRegex(RuntimeError, "changed while inspected"),
+            ):
+                executable_identity(executable)
+
     @unittest.skipUnless(os.name == "posix", "setsid regression requires POSIX")
     def test_timeout_cleanup_is_bounded_when_detached_child_holds_pipe(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

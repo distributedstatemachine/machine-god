@@ -302,6 +302,29 @@ remained:
 These remediations require another fresh exact-SHA three-way review and all
 local and remote gates.
 
+## Review round 12 finding and remediation
+
+Three reviewers examined exact commit
+`06c4893918905a342545cc28bb80f1519d3f8136`. Correctness/API and
+performance/resource/evidence passes were GREEN, including 107 repo-wide
+Python tests, native/CLI checks, formatting, Clippy, release smoke, no-write
+behavior, timestamp mutations, raw-JSON failures, and binary device, growth,
+replacement, and descriptor-leak probes. The independent final reviewer found
+one shared resource-bound gap: executable identity still hashed a regular tool
+or measured binary until end-of-file, so concurrent growth could prevent
+validation or collection from terminating.
+
+Executable identity now opens the canonical target with nonblocking,
+close-on-exec, and no-follow flags where available; binds target metadata to the
+descriptor; hashes the initial descriptor size plus one end-of-file probe; and
+then revalidates the invocation entry, canonical target pathname, and descriptor
+metadata. Symlink invocation support is retained. Regressions cover bounded
+growth and read count, descriptor cleanup, canonical-target replacement behind
+an unchanged symlink, and same-path content mutation.
+
+This remediation requires another fresh exact-SHA three-way review and all
+local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,
