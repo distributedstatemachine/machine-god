@@ -239,6 +239,26 @@ schema-1 collector/checker integration gaps remained:
 The remediations require another fresh exact-SHA three-way review and all local
 and remote gates.
 
+## Review round 09 finding and remediation
+
+Fresh correctness/API and performance/resource/evidence reviewers independently
+examined exact commit `777c7a4b1594f52c000213ba01820244e6bc1a84` and
+found one remaining schema-1 supplied-binary validation flaw. The checker
+hashed a path before rejecting its size and did not first require an executable
+regular file. A character device such as `/dev/zero` could therefore make the
+checker read indefinitely, while a matching non-executable regular file was
+accepted despite the collector's executable-binary requirement.
+
+The checker now opens the supplied path once with nonblocking, close-on-exec,
+and no-follow flags where the platform provides them. Descriptor metadata must
+identify a regular executable of the declared size before hashing. Hashing is
+bounded to that declared size plus one end-of-file probe, so concurrent growth
+cannot turn validation into an unbounded read. Regressions cover non-regular
+paths, non-executable regular files, and the exact read bound.
+
+This remediation requires another fresh exact-SHA three-way review and all
+local and remote gates.
+
 ## Deferred scope
 
 This slice does not complete Milestone 03. Configuration parsing or mutation,

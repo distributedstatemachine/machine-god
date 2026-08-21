@@ -9,15 +9,23 @@ import json
 import math
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
+from typing import BinaryIO
 
 
-def file_sha256(path: Path) -> str:
+def file_sha256(source: BinaryIO, expected_bytes: int) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
+    remaining = expected_bytes
+    while remaining:
+        chunk = source.read(min(remaining, 1024 * 1024))
+        if not chunk:
+            raise ValueError("supplied binary became shorter during inspection")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if source.read(1):
+        raise ValueError("supplied binary became longer during inspection")
     return digest.hexdigest()
 
 
@@ -254,13 +262,39 @@ def main() -> int:
             raise SystemExit(f"supplied binary path is invalid: {error}") from None
         if recorded_binary != actual_binary:
             raise SystemExit("recorded binary path does not match supplied binary")
+        open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        open_flags |= getattr(os, "O_CLOEXEC", 0)
+        open_flags |= getattr(os, "O_NOFOLLOW", 0)
+        open_flags |= getattr(os, "O_NONBLOCK", 0)
         try:
-            actual_size = actual_binary.stat().st_size
-            actual_checksum = file_sha256(actual_binary)
+            descriptor = os.open(actual_binary, open_flags)
         except (OSError, RuntimeError, ValueError) as error:
             raise SystemExit(f"failed to inspect supplied binary: {error}") from None
-        if actual_size != binary["bytes"]:
+        try:
+            actual_metadata = os.fstat(descriptor)
+        except (OSError, RuntimeError, ValueError) as error:
+            os.close(descriptor)
+            raise SystemExit(f"failed to inspect supplied binary: {error}") from None
+        if not stat.S_ISREG(actual_metadata.st_mode):
+            os.close(descriptor)
+            raise SystemExit("supplied binary is not a regular file")
+        if actual_metadata.st_size != binary["bytes"]:
+            os.close(descriptor)
             raise SystemExit("binary size does not match evidence")
+        execute_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        lacks_posix_execute_mode = (
+            os.name == "posix" and not actual_metadata.st_mode & execute_bits
+        )
+        if lacks_posix_execute_mode or not os.access(actual_binary, os.X_OK):
+            os.close(descriptor)
+            raise SystemExit("supplied binary is not executable")
+        try:
+            with os.fdopen(descriptor, "rb", closefd=False) as source:
+                actual_checksum = file_sha256(source, binary["bytes"])
+        except (OSError, RuntimeError, ValueError) as error:
+            raise SystemExit(f"failed to inspect supplied binary: {error}") from None
+        finally:
+            os.close(descriptor)
         if actual_checksum != checksum:
             raise SystemExit("binary checksum does not match evidence")
     print("benchmark evidence is valid")

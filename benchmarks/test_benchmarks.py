@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 import signal
@@ -50,6 +51,7 @@ from upstream import (  # noqa: E402
     validate_upstream_evidence,
     write_evidence_atomic,
 )
+import check as benchmark_check  # noqa: E402
 import run as benchmark_run  # noqa: E402
 import upstream  # noqa: E402
 
@@ -220,6 +222,80 @@ class BenchmarkScriptsTest(unittest.TestCase):
         self.assertIn("failed to inspect supplied binary", completed.stderr)
         self.assertNotIn("Traceback", completed.stderr)
 
+    def test_checker_rejects_non_regular_supplied_binary_before_hashing(self) -> None:
+        evidence = self.valid_evidence()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            non_regular_binary = root / "binary-directory"
+            non_regular_binary.mkdir()
+            evidence["binary"]["path"] = str(non_regular_binary)
+            evidence["command"] = [str(non_regular_binary)]
+            evidence_path = root / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "benchmarks/check.py"),
+                    str(evidence_path),
+                    "--bootstrap",
+                    "--binary",
+                    str(non_regular_binary),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(
+            completed.stderr,
+            "supplied binary is not a regular file\n",
+        )
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_checker_rejects_non_executable_regular_supplied_binary(self) -> None:
+        evidence = self.valid_evidence()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "non-executable-binary"
+            binary.write_bytes(b"test executable")
+            binary.chmod(0o600)
+            evidence["binary"] = {
+                "path": str(binary),
+                "bytes": binary.stat().st_size,
+                "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+            }
+            evidence["command"] = [str(binary)]
+            evidence_path = root / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "benchmarks/check.py"),
+                    str(evidence_path),
+                    "--bootstrap",
+                    "--binary",
+                    str(binary),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(completed.stderr, "supplied binary is not executable\n")
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_binary_hash_reads_only_declared_size_and_one_eof_byte(self) -> None:
+        source = io.BytesIO(b"expected-unbounded-extra-data")
+
+        with self.assertRaisesRegex(ValueError, "became longer"):
+            benchmark_check.file_sha256(source, len(b"expected"))
+
+        self.assertEqual(source.tell(), len(b"expected") + 1)
+
     def test_checker_rejects_undeclared_and_malformed_schema_one_fields(self) -> None:
         mutations = (
             lambda data: data.__setitem__("performance_claim", "100x"),
@@ -310,6 +386,7 @@ class BenchmarkScriptsTest(unittest.TestCase):
             root = Path(directory)
             binary = root / "test-binary"
             binary.write_bytes(b"test executable")
+            binary.chmod(0o755)
             evidence = self.valid_evidence()
             evidence["command"] = [str(binary)]
             evidence["binary"] = {
