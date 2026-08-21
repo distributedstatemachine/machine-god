@@ -2,16 +2,18 @@ use futures_core::Stream;
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
     BoxFuture, BuildError, CancellationToken, Capability, ContentBlock, Engine, EngineBuilder,
-    EngineError, EngineEvent, EventSink, EventSinkError, ModelEvent, ModelEventStream,
-    ModelProvider, ModelRequest, PermissionDecision, PermissionError, PermissionGrantScope,
-    PermissionHandler, PermissionRequest, PreparedToolCall, ProviderError, ProviderErrorKind, Role,
-    Session, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
-    SessionStoreError, StopReason, TokenUsage, Tool, ToolCall, ToolCallId, ToolContext, ToolError,
-    ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent, TurnHandle,
+    EngineError, EngineEvent, EngineLimits, EventSink, EventSinkError, ModelEvent,
+    ModelEventStream, ModelProvider, ModelRequest, PermissionDecision, PermissionError,
+    PermissionGrantScope, PermissionHandler, PermissionRequest, PreparedToolCall, ProviderError,
+    ProviderErrorKind, Role, Session, SessionId, SessionIncarnationId, SessionRecord,
+    SessionRevision, SessionStore, SessionStoreError, StopReason, TokenUsage, Tool, ToolCall,
+    ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn,
+    TurnEvent, TurnHandle,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
@@ -224,6 +226,177 @@ struct FailingPrepareTool {
     executions: Arc<AtomicUsize>,
 }
 
+#[derive(Clone, Debug)]
+struct BoundaryProvider {
+    call: ToolCall,
+    rounds: Arc<AtomicUsize>,
+}
+
+impl BoundaryProvider {
+    fn new(call: ToolCall) -> Self {
+        Self {
+            call,
+            rounds: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl ModelProvider for BoundaryProvider {
+    fn name(&self) -> &'static str {
+        "boundary"
+    }
+
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+        let events = if self.rounds.fetch_add(1, Ordering::Relaxed) == 0 {
+            vec![
+                Ok(ModelEvent::ToolCall {
+                    call: self.call.clone(),
+                }),
+                Ok(ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                }),
+            ]
+        } else {
+            vec![Ok(ModelEvent::Stop {
+                reason: StopReason::Completed,
+            })]
+        };
+        Box::pin(async move { Ok(Box::pin(stream::iter(events)) as ModelEventStream) })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct RecordingAllow {
+    requests: Arc<Mutex<Vec<PermissionRequest>>>,
+}
+
+impl PermissionHandler for RecordingAllow {
+    fn authorize(
+        &self,
+        request: PermissionRequest,
+    ) -> BoxFuture<'_, Result<PermissionDecision, PermissionError>> {
+        self.requests.lock().unwrap().push(request);
+        Box::pin(async {
+            Ok(PermissionDecision::Allow {
+                scope: PermissionGrantScope::Once,
+            })
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RecordingDefaultTool {
+    name: ToolName,
+    executions: Arc<Mutex<Vec<Value>>>,
+}
+
+impl Tool for RecordingDefaultTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.name.clone(),
+            description: "boundary test".to_owned(),
+            input_schema: json!({}),
+        }
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        self.executions.lock().unwrap().push(arguments);
+        Box::pin(async { Ok(ToolOutput::success(json!({"ok": true}))) })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RecordingPreparedTool {
+    name: ToolName,
+    capability: Capability,
+    arguments: Value,
+    executions: Arc<Mutex<Vec<Value>>>,
+}
+
+impl Tool for RecordingPreparedTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.name.clone(),
+            description: "prepared boundary test".to_owned(),
+            input_schema: json!({}),
+        }
+    }
+
+    fn prepare(&self, _call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        Ok(PreparedToolCall::new(
+            self.capability.clone(),
+            self.arguments.clone(),
+        ))
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        self.executions.lock().unwrap().push(arguments);
+        Box::pin(async { Ok(ToolOutput::success(json!({"ok": true}))) })
+    }
+}
+
+fn boundary_events(
+    case: &str,
+    call: ToolCall,
+    tool: impl Tool,
+    permissions: RecordingAllow,
+    argument_limit: usize,
+) -> Vec<EngineEvent> {
+    let limits = EngineLimits {
+        max_tool_argument_bytes: NonZeroUsize::new(argument_limit).unwrap(),
+        ..EngineLimits::default()
+    };
+    let engine = Engine::builder()
+        .provider(BoundaryProvider::new(call))
+        .session_store(MemoryStore::default())
+        .permission_handler(permissions)
+        .tool(tool)
+        .limits(limits)
+        .build()
+        .unwrap();
+    let session = engine.create_test_session(SessionId::new(case).unwrap());
+    futures_executor::block_on(prompt(&session, "boundary").collect::<Vec<_>>())
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+}
+
+fn json_string_with_serialized_size(size: usize) -> Value {
+    assert!(size >= 2);
+    let value = Value::String("x".repeat(size - 2));
+    assert_eq!(serde_json::to_vec(&value).unwrap().len(), size);
+    value
+}
+
+fn custom_capability_with_serialized_size(size: usize) -> Capability {
+    let empty = Capability::Custom {
+        name: "boundary".to_owned(),
+        details: Value::String(String::new()),
+    };
+    let envelope_size = serde_json::to_vec(&empty).unwrap().len();
+    assert!(size >= envelope_size);
+    let capability = Capability::Custom {
+        name: "boundary".to_owned(),
+        details: Value::String("x".repeat(size - envelope_size)),
+    };
+    assert_eq!(serde_json::to_vec(&capability).unwrap().len(), size);
+    capability
+}
+
 impl Tool for FailingPrepareTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -301,6 +474,130 @@ fn default_tool_preflight_preserves_policy_and_execution_inputs() {
             arguments: call.arguments,
         }
     );
+}
+
+#[test]
+fn default_preflight_preserves_the_exact_raw_argument_boundary() {
+    const ARGUMENT_LIMIT: usize = 128;
+    let name = ToolName::new("default-boundary").unwrap();
+    let exact_arguments = json_string_with_serialized_size(ARGUMENT_LIMIT);
+    let exact_call = ToolCall {
+        id: ToolCallId::new("exact").unwrap(),
+        name: name.clone(),
+        arguments: exact_arguments.clone(),
+    };
+    let exact_executions = Arc::new(Mutex::new(Vec::new()));
+    let exact_permissions = RecordingAllow::default();
+    let exact_events = boundary_events(
+        "default-exact-boundary",
+        exact_call.clone(),
+        RecordingDefaultTool {
+            name: name.clone(),
+            executions: Arc::clone(&exact_executions),
+        },
+        exact_permissions.clone(),
+        ARGUMENT_LIMIT,
+    );
+
+    assert!(matches!(
+        exact_events.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(
+        exact_executions.lock().unwrap().as_slice(),
+        std::slice::from_ref(&exact_arguments)
+    );
+    assert_eq!(
+        exact_permissions.requests.lock().unwrap()[0].capability,
+        Capability::Tool {
+            name: exact_call.name,
+            call_id: exact_call.id,
+            arguments: exact_arguments,
+        }
+    );
+
+    let oversized_executions = Arc::new(Mutex::new(Vec::new()));
+    let oversized_permissions = RecordingAllow::default();
+    let oversized_events = boundary_events(
+        "default-plus-one-boundary",
+        ToolCall {
+            id: ToolCallId::new("plus-one").unwrap(),
+            name: name.clone(),
+            arguments: json_string_with_serialized_size(ARGUMENT_LIMIT + 1),
+        },
+        RecordingDefaultTool {
+            name,
+            executions: Arc::clone(&oversized_executions),
+        },
+        oversized_permissions.clone(),
+        ARGUMENT_LIMIT,
+    );
+    assert!(matches!(
+        &oversized_events.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "tool_argument_size_limit"
+    ));
+    assert!(oversized_permissions.requests.lock().unwrap().is_empty());
+    assert!(oversized_executions.lock().unwrap().is_empty());
+}
+
+#[test]
+fn prepared_capability_uses_its_derived_envelope_boundary() {
+    const ARGUMENT_LIMIT: usize = 64;
+    const CAPABILITY_ENVELOPE_BYTES: usize = 1024;
+    let capability_limit = ARGUMENT_LIMIT + CAPABILITY_ENVELOPE_BYTES;
+    let name = ToolName::new("prepared-boundary").unwrap();
+    let call = ToolCall {
+        id: ToolCallId::new("prepared").unwrap(),
+        name: name.clone(),
+        arguments: json!({}),
+    };
+    let prepared_arguments = json!({"normalized": true});
+    let exact_capability = custom_capability_with_serialized_size(capability_limit);
+    let exact_executions = Arc::new(Mutex::new(Vec::new()));
+    let exact_permissions = RecordingAllow::default();
+    let exact_events = boundary_events(
+        "prepared-capability-exact",
+        call.clone(),
+        RecordingPreparedTool {
+            name: name.clone(),
+            capability: exact_capability.clone(),
+            arguments: prepared_arguments.clone(),
+            executions: Arc::clone(&exact_executions),
+        },
+        exact_permissions.clone(),
+        ARGUMENT_LIMIT,
+    );
+
+    assert!(matches!(
+        exact_events.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert_eq!(
+        exact_permissions.requests.lock().unwrap()[0].capability,
+        exact_capability
+    );
+    assert_eq!(*exact_executions.lock().unwrap(), [prepared_arguments]);
+
+    let oversized_executions = Arc::new(Mutex::new(Vec::new()));
+    let oversized_permissions = RecordingAllow::default();
+    let oversized_events = boundary_events(
+        "prepared-capability-plus-one",
+        call,
+        RecordingPreparedTool {
+            name,
+            capability: custom_capability_with_serialized_size(capability_limit + 1),
+            arguments: json!({}),
+            executions: Arc::clone(&oversized_executions),
+        },
+        oversized_permissions.clone(),
+        ARGUMENT_LIMIT,
+    );
+    assert!(matches!(
+        &oversized_events.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "tool_argument_size_limit"
+    ));
+    assert!(oversized_permissions.requests.lock().unwrap().is_empty());
+    assert!(oversized_executions.lock().unwrap().is_empty());
 }
 
 #[test]

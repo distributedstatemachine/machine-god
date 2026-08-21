@@ -1640,6 +1640,12 @@ fn validate_json_value(value: &Value, limits: crate::EngineLimits) -> Result<(),
     validate_json_roots(std::iter::once(value), limits).map_err(json_limit_failure)
 }
 
+// A serialized capability adds enum tags, field names, and validated IDs
+// around its operation data. Reserving a fixed 1 KiB envelope preserves the
+// legacy default at the exact raw-argument boundary without granting prepared
+// execution arguments one additional byte.
+const PREPARED_CAPABILITY_ENVELOPE_BYTES: usize = 1024;
+
 fn validate_prepared_tool_call(
     prepared: &PreparedToolCall,
     limits: crate::EngineLimits,
@@ -1663,9 +1669,14 @@ fn validate_prepared_tool_call(
     if let Some(value) = capability_json_value(prepared.capability()) {
         validate_json_value(value, limits)?;
     }
-    let capability_bytes =
-        serialized_json_size_bounded(prepared.capability(), limits.max_tool_argument_bytes.get())
-            .map_err(|error| {
+    // Saturation keeps the derived bound representable even for a
+    // host-supplied `usize::MAX` argument limit.
+    let capability_limit = limits
+        .max_tool_argument_bytes
+        .get()
+        .saturating_add(PREPARED_CAPABILITY_ENVELOPE_BYTES);
+    let capability_bytes = serialized_json_size_bounded(prepared.capability(), capability_limit)
+        .map_err(|error| {
             TurnFailure::protocol(
                 "tool_argument_serialization",
                 format!("prepared tool capability could not be serialized: {error}"),

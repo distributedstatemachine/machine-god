@@ -43,6 +43,14 @@ pub struct PreparedToolCall {
 
 impl PreparedToolCall {
     /// Creates a prepared call from its policy capability and execution input.
+    ///
+    /// A caller implementing [`Tool::prepare`] must construct this value in
+    /// bounded, nonblocking, effect-free work. Preparation is synchronous and
+    /// receives no cancellation token: core checks cancellation immediately
+    /// before and after it returns, but cannot preempt it while it is running.
+    /// The capability must cover every authority that the later
+    /// [`Tool::execute`] may exercise, and that execution must interpret these
+    /// arguments consistently with the operation described by the capability.
     #[must_use]
     pub fn new(capability: Capability, arguments: Value) -> Self {
         Self {
@@ -119,6 +127,15 @@ pub trait Tool: Send + Sync + 'static {
     /// The default preserves the original critical-risk tool authorization:
     /// policy sees the registered name, call ID, and model arguments, and
     /// execution receives those same arguments.
+    ///
+    /// Implementations must complete in bounded time, must not block on
+    /// external work, and must not exercise filesystem, process, network, or
+    /// any other authority. This method is synchronous and receives no
+    /// cancellation token: core checks cancellation immediately before and
+    /// after it returns, but cannot preempt an in-flight preparation.
+    /// [`Tool::execute`] must exercise no authority beyond the returned
+    /// capability and must interpret the returned arguments consistently with
+    /// the operation that capability describes.
     ///
     /// # Errors
     ///
