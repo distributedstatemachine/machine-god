@@ -1,9 +1,10 @@
 # Native ask permission handler
 
-Status: Milestone 03 ninth-slice candidate. This document fixes the intended
-contract while implementation, tests, adversarial review, exact remote CI, and
-integration on `main` are still required. It is not evidence that the slice is
-integrated or that the CLI prompts today.
+Status: Milestone 03 ninth-slice candidate. The implementation and black-box
+tests are present on the feature branch. This document fixes their intended
+contract while adversarial-review remediation, exact feature-SHA remote CI, and
+integration and verification on `main` remain required. It is not evidence
+that the slice is integrated or that the CLI prompts today.
 
 `AskPermissionHandler` is an executor-neutral native adapter from core's
 `PermissionHandler` boundary to an explicitly injected `PermissionPrompter`.
@@ -140,8 +141,10 @@ grant decisions.
 
 ## Integration gate
 
-This slice may be described as the ninth integrated Milestone 03 slice only
-after its implementation and tests are integrated, three fresh adversarial
-reviews have no confirmed open findings, the required local checks pass, and
-remote CI is green for the exact integrated commit. Until then, this document
-is a candidate contract and all existing CLI bytes remain unchanged.
+Feature-branch code, tests, and local checks do not by themselves make this an
+integrated slice. This slice may be described as the ninth integrated
+Milestone 03 slice only after three fresh adversarial reviews have no confirmed
+open findings, remote CI is green for the exact reviewed feature SHA, the
+feature is fast-forwarded to `main`, and the exact `main` checks are green.
+Until then, this document is a candidate contract and all existing CLI bytes
+remain unchanged.

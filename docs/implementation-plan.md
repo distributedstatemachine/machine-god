@@ -146,11 +146,13 @@ The adapter detaches no work and supplies no second cancellation token, so an
 injected prompter must not leave a detached approval operation behind. It owns
 no terminal, UI, environment, filesystem, process, network, configuration, or
 runtime authority. The exact candidate contract is in
-[`ask-permission.md`](ask-permission.md). This plan must continue to say
-"eight integrated slices and a ninth candidate" until the implementation,
-tests, three fresh adversarial reviews, required local checks, exact remote CI,
-and `main` integration are all evidenced. Only then may the milestone summary
-be updated to nine integrated slices.
+[`ask-permission.md`](ask-permission.md). The implementation and black-box tests
+are present on the feature branch, but this plan must continue to say "eight
+integrated slices and a ninth candidate" until three fresh adversarial reviews
+have no confirmed open findings, remote CI is green for the exact reviewed
+feature SHA, and fast-forward integration and exact checks on `main` are
+evidenced. Only then may the milestone summary be updated to nine integrated
+slices.
 
 ### Milestone 03 completion boundary
 

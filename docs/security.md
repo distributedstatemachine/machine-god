@@ -30,11 +30,13 @@ It is integrated on `main` at
 and benchmark run `32541315997` are green.
 A ninth bounded candidate defines the fail-closed native
 `AskPermissionHandler` over an explicitly injected `PermissionPrompter`. It
-does not contain a prompt UI or change CLI behavior, and it is not an integrated
-slice until implementation, tests, adversarial review, exact remote CI, and
-`main` integration evidence are available. Permission mode remains `ask`; CLI
-registration and a concrete prompt remain future work. The candidate's exact
-security boundary is in [`ask-permission.md`](ask-permission.md).
+does not contain a prompt UI or change CLI behavior. Its implementation and
+black-box tests are present on the feature branch, but it is not an integrated
+slice until adversarial-review remediation, exact feature-SHA remote CI, and
+`main` integration and verification evidence are available. Permission mode
+remains `ask`; CLI registration and a concrete prompt remain future work. The
+candidate's exact security boundary is in
+[`ask-permission.md`](ask-permission.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
