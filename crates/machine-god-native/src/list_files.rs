@@ -99,6 +99,11 @@ pub struct ListFilesTool {
 }
 
 impl ListFilesTool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
+        Self { root }
+    }
+
     /// Opens and retains an absolute workspace root without following its final
     /// component when native descriptor-relative access is supported.
     ///
@@ -143,7 +148,7 @@ impl ListFilesTool {
                 ));
             }
 
-            Ok(Self { root: descriptor })
+            Ok(Self::from_root_descriptor(descriptor))
         }
     }
 }

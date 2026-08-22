@@ -94,6 +94,11 @@ pub struct ReadFileTool {
 }
 
 impl ReadFileTool {
+    #[cfg(unix)]
+    pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
+        Self { root }
+    }
+
     /// Opens and retains an absolute workspace root without following its final
     /// component when native descriptor-relative access is supported.
     ///
@@ -137,7 +142,7 @@ impl ReadFileTool {
                 ));
             }
 
-            Ok(Self { root: descriptor })
+            Ok(Self::from_root_descriptor(descriptor))
         }
     }
 }

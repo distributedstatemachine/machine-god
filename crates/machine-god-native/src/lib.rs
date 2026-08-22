@@ -15,7 +15,19 @@ mod ask_permission;
 mod config;
 mod list_files;
 mod read_file;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
+mod reference_host;
 mod session_store;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
+mod workspace;
 
 pub use ai_gateway::{
     AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION,
@@ -58,6 +70,14 @@ pub use list_files::{
 pub use read_file::{
     MAX_READ_FILE_BYTES, MAX_READ_FILE_PATH_BYTES, READ_FILE_TOOL_NAME, ReadFileTool,
     ReadFileToolOpenError, ReadFileToolOpenErrorKind,
+};
+#[cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
+pub use reference_host::{
+    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
 };
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
