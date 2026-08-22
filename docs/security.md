@@ -52,12 +52,11 @@ without rewrite or migration. It is integrated on `main` at
 and benchmark-evidence run `32576876780` are green. See
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
-A twelfth bounded candidate implements Linux/macOS-only library composition
+A twelfth bounded slice implements Linux/macOS-only library composition
 behind the existing `ai-gateway-http` and non-WebAssembly gate. Production
-implementation and independent black-box tests are composed, and three fresh
-adversarial tracks are green on exact behavior SHA `5afda631`. Exact feature
-gates are green on review record SHA `4a767255`; the documentation seal and
-`main` delivery remain pending. Its boundary is in
+implementation, independent black-box tests, three fresh adversarial tracks,
+and exact feature and `main` workflows are green; it is integrated at
+`86627d78`. Its boundary is in
 [`native-reference-host.md`](native-reference-host.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -126,11 +125,11 @@ modes beyond `ask`, token fields in configuration, required-root and session
 lifecycle, CLI composition and expansion, native tools other than the bounded
 library-level `read_file` and `list_files`, composed release-binary end-to-end
 host evidence, and compatibility or performance claims remain open. The
-twelfth candidate composes the existing library components only after an
+twelfth slice composes the existing library components only after an
 already validated config value is supplied; it does not change config loading
 or CLI behavior.
 
-The candidate `NativeReferenceHost` first rejects any loaded selection
+The integrated `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. It then opens the
 existing absolute workspace once and clones that retained descriptor so
 exactly `list_files` and `read_file` share one opened directory identity. This
@@ -175,8 +174,8 @@ transport, provider, or engine. Component errors, roots, config/model values,
 credential bytes and source, endpoint data, prompt data, OS diagnostics, and
 raw error numbers are discarded. Host debug output is fixed to
 `NativeReferenceHost { .. }` and exposes no config structure or source. These
-are adversarially and feature-branch green candidate behaviors while the
-documentation seal and `main` delivery remain pending.
+are adversarially green behaviors integrated on `main` under exact green
+workflows.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

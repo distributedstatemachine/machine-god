@@ -128,16 +128,15 @@ or make a network request. The eleventh integrated
 [`native configuration schema-v2 slice`](configuration.md) adds only
 declarative provider, transport, and model data; it does not add a credential
 field or invoke this adapter. The separate twelfth
-[`native reference-host candidate`](native-reference-host.md) implements a
+[`native reference-host slice`](native-reference-host.md) implements a
 production library constructor that consumes an explicitly injected snapshot
-and retains only the selected source metadata. Its focused composed tests and
-three fresh adversarial tracks are green on exact behavior SHA `5afda631`.
-Exact feature gates are green on review record SHA `4a767255`; the documentation
-seal and `main` delivery remain pending. Its custom-
+and retains only the selected source metadata. Its implementation, independent
+tests, three fresh adversarial tracks, and exact feature and `main` workflows
+are green; it is integrated at `86627d78`. Its custom-
 transport authority override skips discovery
 and reports no native-discovery source. The broader M03 credential-and-
-configuration checklist item remains unchecked even after that candidate is
-delivered because configuration still has no bounded credential-source field.
+configuration checklist item remains unchecked because configuration still has
+no bounded credential-source field.
 This adapter's adversarial, feature-branch, documentation-seal, and `main` gates
 are green at the exact lineage recorded in its review. Existing CLI bytes and
 benchmark workloads are unchanged. Zig remains only a build input for the

@@ -1,13 +1,12 @@
 # Native reference-host composition
 
-Status: composed candidate contract for the twelfth bounded Milestone 03
-library slice. Eleven slices are integrated. Production implementation and an
-independent seven-test black-box suite are composed on this feature branch;
-their focused Rust/Cargo 1.94.1 checks and three fresh adversarial tracks are
-green on exact behavior SHA `5afda631`. Exact feature-branch CI and benchmark
-evidence are green on review record SHA `4a767255`; the documentation seal and
-`main` delivery remain pending. Milestone 03 remains `IN PROGRESS`. Candidate
-lineage is recorded in the
+Status: integrated contract for the twelfth bounded Milestone 03 library slice.
+Twelve slices are integrated. Production implementation, an independently
+owned seven-test black-box suite, three fresh adversarial tracks, and exact
+feature and `main` workflows are green. The slice is integrated on `main` at
+`86627d7834e418d5e7b65f6b8497e4bddfa53395`; exact main CI run `32579366049`
+and benchmark-evidence run `32579366055` are green. Milestone 03 remains
+`IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
 `NativeReferenceHost` composes the existing validated native configuration,
@@ -227,10 +226,8 @@ claims remain open. This slice does not alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
-The frozen reference-host composition checklist item may become complete only
-after implementation, independent tests, composed adversarial review, exact
-feature-SHA gates, fast-forward integration, and exact `main` gates all pass.
-The composed candidate alone does not satisfy it. The combined credential-
-and-configuration item remains unchecked even after this composition is
-delivered because schema v2 has no bounded credential-source field. Milestone
-03 remains in progress.
+The frozen reference-host composition checklist item is complete: the
+implementation, independent tests, composed adversarial review, exact feature
+gates, fast-forward integration, and exact `main` gates are green. The combined
+credential-and-configuration item remains unchecked because schema v2 has no
+bounded credential-source field. Milestone 03 remains in progress.

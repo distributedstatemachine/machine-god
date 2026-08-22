@@ -21,11 +21,11 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has eleven integrated bounded slices and a twelfth bounded
-candidate whose production implementation and independent black-box tests are
-composed on its feature branch, with three fresh adversarial tracks green on
-exact behavior SHA `5afda631` and exact feature gates green on review record
-SHA `4a767255`. The documentation seal and `main` delivery remain pending.
+Milestone 03 has twelve integrated bounded slices. The twelfth slice's
+production implementation, independent black-box tests, three fresh adversarial
+tracks, and exact feature and `main` workflows are green. It is integrated on
+`main` at `86627d7834e418d5e7b65f6b8497e4bddfa53395`; exact main CI run
+`32579366049` and benchmark-evidence run `32579366055` are green.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -63,16 +63,17 @@ and benchmark-evidence run `32576876780` are green. Its contract and delivery
 lineage are in [`configuration.md`](configuration.md)
 and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
-The twelfth candidate implements a Linux/macOS-only `NativeReferenceHost` behind
+The twelfth slice implements a Linux/macOS-only `NativeReferenceHost` behind
 the existing `ai-gateway-http` and non-WebAssembly gate. It composes an
 already validated config selection with the provider, either production HTTP
 from an injected credential snapshot or a trusted custom transport, one shared
 retained workspace feeding exactly `list_files` and `read_file`, the existing
 file store under a separate session root, and the ask adapter over an injected
 prompter. It uses default engine limits and the no-op event sink. The CLI
-remains byte-unchanged and thin. The candidate contract and lineage are
+remains byte-unchanged and thin. The contract and lineage are
 in [`native-reference-host.md`](native-reference-host.md) and its
-[`review record`](reviews/m03-native-reference-host-review-01.md).
+[`review record`](reviews/m03-native-reference-host-review-01.md). It is
+integrated at the exact green `main` SHA and runs recorded above.
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -94,7 +95,7 @@ also a library surface and does not change CLI bytes or supply a concrete
 terminal prompt. Credential discovery is another separate
 library surface; credentials are fields in neither supported configuration
 schema, and discovery by itself does not add CLI composition. The twelfth
-candidate's production library constructor consumes an explicitly
+slice's production library constructor consumes an explicitly
 injected credential snapshot; it does not give the config loader or CLI ambient
 credential authority.
 
@@ -185,7 +186,7 @@ most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 model values, or operating-system error text. Credentials are deliberately in
-neither schema. The separate twelfth candidate consumes this already
+neither schema. The separate twelfth slice consumes this already
 loaded value without changing the loader: a file-backed v1 remains observable
 as version `1` while its fixed projected values drive composition. Configuration
 mutation or migration, permission modes beyond `ask`, a concrete prompt UI,
@@ -213,7 +214,7 @@ durable session-incarnation IDs, structured component errors, optimistic session
 revisions, monotonic event sequences, one-live-turn session leases, and
 idempotent cancellation form the initial cross-component invariants.
 
-The twelfth candidate composes one exact selection of those existing
+The twelfth slice composes one exact selection of those existing
 boundaries. Both synchronous constructors first validate permission mode `ask`,
 provider `vercel_ai_gateway`, and transport `ai_gateway_http`. They then open
 one workspace directory once and clone its retained descriptor so exactly the
@@ -245,9 +246,8 @@ The wrapper retains the exact `LoadedNativeConfig`, including a file-backed v1
 origin and observable version `1` while using its projected provider,
 transport, and model values. Its fixed debug form exposes no config structure
 or source. Every nested construction error is reduced to one fixed redacted
-stage in the non-exhaustive reference-host error taxonomy. These are composed
-candidate behaviors that are adversarially and feature-branch green while the
-documentation seal and `main` delivery remain pending.
+stage in the non-exhaustive reference-host error taxonomy. These behaviors are
+adversarially green and integrated on `main` under exact green workflows.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

@@ -1,8 +1,6 @@
 # Milestone 03 native reference-host composition review 01
 
-Status: **FEATURE GREEN — implementation, independent tests, local gates,
-adversarial review, and exact feature workflows green; documentation seal and
-`main` delivery pending**
+Status: **DELIVERY GREEN — integrated on `main`**
 
 ## Candidate lineage
 
@@ -26,18 +24,18 @@ adversarial review, and exact feature workflows green; documentation seal and
   `5afda631b83ee0ebd65ddc0e1d49079739b4914d`
 - Review record and exact feature-gate SHA:
   `4a7672559b7f05f8e427d5b9db2b12984163253a`
-- Documentation seal: this branch commit; exact SHA reported at handoff
-- Exact `main` delivery SHA: `PENDING`
+- Documentation seal and integrated `main` behavior:
+  `86627d7834e418d5e7b65f6b8497e4bddfa53395`
+- Exact `main` delivery SHA:
+  `86627d7834e418d5e7b65f6b8497e4bddfa53395`
 - Integration branch: `agent/m03-native-reference-host`
 - Candidate-docs branch: `agent/m03-native-reference-host-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
-The base contains eleven integrated bounded Milestone 03 slices. Production,
-independently owned tests, and candidate documentation for the twelfth bounded
-library slice are composed on this branch. All three fresh adversarial tracks
-are green on exact behavior SHA `5afda631`. Exact feature CI and benchmark
-evidence are green on review record SHA `4a767255`; no documentation-seal or
-`main` workflow has run. Milestone 03 remains `IN PROGRESS`.
+This is the twelfth integrated bounded Milestone 03 slice. Its production
+implementation, independently owned tests, documentation, three fresh
+adversarial tracks, and exact feature and `main` workflows are green. Milestone
+03 remains `IN PROGRESS`.
 
 ## Adversarially green behavior
 
@@ -154,11 +152,22 @@ The reviewed behavior and its review record are feature-green at
   [`32578674621`](https://github.com/distributedstatemachine/machine-god/actions/runs/32578674621)
   is green.
 
-## Remaining gates and scope
+The documentation seal at
+`86627d7834e418d5e7b65f6b8497e4bddfa53395` passed exact feature CI run
+[`32579006446`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579006446)
+and benchmark-evidence run
+[`32579006421`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579006421).
 
-The documentation seal must pass both exact feature workflows before
-fast-forward integration. Exact `main` CI and benchmark-evidence runs must then
-pass on the same sealed SHA.
+## Exact `main` delivery gates
+
+The seal was fast-forwarded without force to `main` at
+`86627d7834e418d5e7b65f6b8497e4bddfa53395`. Exact main CI run
+[`32579366049`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579366049)
+and benchmark-evidence run
+[`32579366055`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579366055)
+are green for that exact SHA.
+
+## Scope
 
 Root selection and safe creation, a terminal prompter, session identifiers and
 lifecycle commands, the remaining native tools, CLI composition/execution, and
@@ -166,8 +175,7 @@ deterministic release-binary end-to-end evidence remain open. No compatibility,
 full fx-equivalence, or product-performance claim is made. Zig remains solely
 the pinned upstream benchmark build input; machine-god remains a Rust product.
 
-The frozen reference-host composition checklist item remains unchecked until
-full delivery. The
-combined credential-and-configuration item must remain unchecked after this
-slice because config v2 has no bounded credential-source field. Milestone 03
-remains in progress. No package or GitHub release is authorized.
+The frozen reference-host composition checklist item is complete. The combined
+credential-and-configuration item remains unchecked because config v2 has no
+bounded credential-source field. Milestone 03 remains in progress. No package
+or GitHub release is authorized.

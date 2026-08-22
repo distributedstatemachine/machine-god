@@ -158,23 +158,21 @@ create or drive a Tokio runtime, discover or attach a credential, open a
 network connection, or compose any component into core or the CLI.
 
 The separate twelfth
-[`native reference-host candidate`](native-reference-host.md) consumes an
+[`native reference-host slice`](native-reference-host.md) consumes an
 already loaded value without changing this loader. It retains the exact
 `LoadedNativeConfig`: an accepted file-backed v1 therefore remains observable
 with file origin and schema version `1`, while its existing fixed in-memory
 provider, transport, and model projection drives composition. The candidate's
 production constructor receives a separate injected credential snapshot; no
-credential enters this configuration value or loader. Production implementation
-and focused independent tests are composed, and three fresh adversarial tracks
-are green on exact behavior SHA `5afda631`. Exact feature gates are green on
-review record SHA `4a767255`; the documentation seal and `main` delivery remain
-pending.
+credential enters this configuration value or loader. Its production
+implementation, independent tests, three fresh adversarial tracks, and exact
+feature and `main` workflows are green; it is integrated at `86627d78`.
 
 Configuration mutation, a migration or rewrite command, a terminal permission
 prompter and modes beyond `ask`, runtime and CLI composition, required
 workspace and state-root lifecycle, the remaining native tools, CLI and
 session expansion, release-binary end-to-end host evidence, and compatibility
 or performance claims remain open. This slice and the twelfth composition
-candidate do not complete the combined credential-and-configuration checklist
+slice do not complete the combined credential-and-configuration checklist
 item because v2 has no bounded credential-source field. Milestone 03 remains
 in progress.

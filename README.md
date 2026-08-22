@@ -48,7 +48,7 @@ and benchmark-evidence run `32576876780` are green. See the
 [native configuration contract](docs/configuration.md) and
 [review record](docs/reviews/m03-native-host-config-review-01.md).
 
-A twelfth bounded library candidate implements `NativeReferenceHost` for Linux
+A twelfth bounded library slice implements `NativeReferenceHost` for Linux
 and macOS behind the optional `ai-gateway-http` and non-WebAssembly gate. It
 composes an already validated native configuration with the AI Gateway
 provider, either production HTTP from an injected credential snapshot or a
@@ -57,13 +57,11 @@ exactly `list_files` and `read_file`, the existing file session store, and the
 ask handler over an injected prompter. Construction remains synchronous and
 creates no root, runtime, network request, prompt operation, session record, or
 background work. Production implementation and independent black-box tests are
-composed on this feature branch, their focused pinned-toolchain checks are
-green, and three fresh adversarial tracks are green on exact behavior SHA
-`5afda631`. Exact feature-branch CI and benchmark evidence are green on review
-record SHA `4a767255`; the documentation seal and `main` delivery remain
-pending. The CLI is byte-unchanged and remains thin. See
-the [candidate contract](docs/native-reference-host.md) and
-[candidate review record](docs/reviews/m03-native-reference-host-review-01.md).
+integrated on `main` at `86627d7834e418d5e7b65f6b8497e4bddfa53395`.
+Exact main CI run `32579366049` and benchmark-evidence run `32579366055` are
+green. The CLI is byte-unchanged and remains thin. See the
+[composition contract](docs/native-reference-host.md) and
+[review record](docs/reviews/m03-native-reference-host-review-01.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),

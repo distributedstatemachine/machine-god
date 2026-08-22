@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with eleven integrated bounded slices and a twelfth bounded candidate. The first
+with twelve integrated bounded slices. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -199,13 +199,13 @@ integrated on `main` at `a10f24edde80a225f89e6c7068ec035cb70f80a8`;
 exact main CI run `32576876769` and benchmark-evidence run `32576876780` are
 green.
 
-The twelfth bounded library candidate is Linux/macOS-only and gated on the
-existing `ai-gateway-http` feature and non-WebAssembly targets. Its proposed
+The twelfth bounded library slice is Linux/macOS-only and gated on the
+existing `ai-gateway-http` feature and non-WebAssembly targets. Its
 `NativeReferenceHost` consumes an already validated `LoadedNativeConfig` and
 composes `AiGatewayProvider` over either production `AiGatewayHttpTransport`
 from an injected credential snapshot or an explicit trusted custom transport,
 one shared retained workspace identity feeding exactly `list_files` and
-`read_file`, the existing `FileSessionStore` over a separate existing session
+`read_file`, the existing `FileSessionStore` over a separately supplied existing
 root, and `AskPermissionHandler` over an injected `PermissionPrompter`. It uses
 default `EngineLimits` and the default no-op event sink. Constructors are
 synchronous: they make no network request, poll no prompt, touch no session
@@ -219,19 +219,17 @@ v1 as observable version `1` with its fixed projected provider, transport, and
 model values. Production exposes only the selected non-secret credential-source
 metadata; the custom-transport authority override reports no native-discovery
 source and exposes no secret getter. Fixed stage-only errors and host debug
-output are redacted. The CLI remains byte-unchanged and thin. Only the
-[`candidate contract`](native-reference-host.md) and
-[`candidate review record`](reviews/m03-native-reference-host-review-01.md),
-production implementation, and independent black-box tests are composed on
-this branch. Focused pinned-toolchain checks and three fresh adversarial tracks
-are green on exact behavior SHA `5afda631`. Exact feature-branch CI and
-benchmark evidence are green on review record SHA `4a767255`; the documentation
-seal and `main` delivery remain pending.
+output are redacted. The CLI remains byte-unchanged and thin. The
+[`composition contract`](native-reference-host.md),
+[`review record`](reviews/m03-native-reference-host-review-01.md), production
+implementation, independent black-box tests, three fresh adversarial tracks,
+and exact feature and `main` workflows are green. The slice is integrated on
+`main` at `86627d7834e418d5e7b65f6b8497e4bddfa53395`; exact main CI run
+`32579366049` and benchmark-evidence run `32579366055` are green.
 
 ### Milestone 03 completion boundary
 
-The eleven integrated slices and twelfth composed candidate do not
-complete Milestone 03.
+The twelve integrated slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -245,18 +243,16 @@ gate:
 - [x] Integrate the eleventh native host configuration schema-v2 slice under
   its exact contract and retain feature, adversarial-review, exact-SHA CI, and
   `main` evidence.
-- [ ] Compose a useful native reference-host path through an explicitly selected
+- [x] Compose a useful native reference-host path through an explicitly selected
   provider and transport, session store, permission handler and prompter, and
   registered tools. The CLI stays a thin host and owns no product state.
-  The composed candidate alone does not satisfy this item; it may be checked
-  only after implementation, independent tests, composed adversarial review,
-  exact feature-SHA gates, fast-forward integration, and exact `main` gates.
+  Implementation, independent tests, composed adversarial review, exact
+  feature-SHA gates, fast-forward integration, and exact `main` gates are green.
 - [ ] Add bounded, redacted credential acquisition and the configuration fields
   required by that composition. Source precedence, missing/invalid behavior,
   size limits, and secret non-reflection must be normative and tested; core
   receives no ambient credential or configuration authority. This item remains
-  unchecked because config v2 has no bounded credential-source field, including
-  after the twelfth composition candidate is delivered.
+  unchecked because config v2 has no bounded credential-source field.
 - [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
@@ -291,7 +287,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth and eleventh slices and the twelfth candidate; Zig
+by the tenth, eleventh, and twelfth slices; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
