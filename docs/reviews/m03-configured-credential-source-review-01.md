@@ -1,8 +1,7 @@
 # Milestone 03 configured credential-source review 01
 
-Status: **COMPOSED CANDIDATE — production, independent tests, and local
-focused/workspace gates green; adversarial review in progress; exact remote
-gates and `main` delivery pending**
+Status: **ADVERSARIAL GREEN — exact behavior green; documentation seal,
+exact remote gates, and `main` delivery pending**
 
 ## Candidate lineage
 
@@ -34,10 +33,12 @@ gates and `main` delivery pending**
   `187eaefb1995c8cc75ed3a573a2c41541e20f5f6`
 - Initial composed and adversarial-review candidate:
   `a8467cc4e889b0778b7b95968714b8c2b08d6fc4`
-- Documentation status reconciliation: this commit; exact SHA reported at
-  handoff
-- Adversarially green behavior: `PENDING`
-- Review record and exact feature-gate SHA: `PENDING`
+- Documentation status reconciliation:
+  `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`
+- Adversarially green behavior:
+  `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`
+- Adversarial-green review record: this commit; exact SHA reported at handoff
+- Exact feature workflows: `PENDING`
 - Documentation seal: `PENDING`
 - Exact `main` delivery SHA: `PENDING`
 - Integration branch: `agent/m03-configured-credential-source`
@@ -47,15 +48,13 @@ gates and `main` delivery pending**
 The base contains twelve integrated bounded Milestone 03 slices. Production,
 independently owned black-box tests, and candidate documentation for the
 thirteenth slice are composed on this branch. Focused checks and required local
-workspace gates are green for that composition. Adversarial review is not yet
-green: this descendant fixes one confirmed documentation-status finding, its
-rereview is pending, and overall adversarial green cannot yet be claimed. The
-API/test/portability and security tracks are green on initial composed SHA
-`a8467cc4`; the documentation track alone requires this descendant and an exact
-rereview. No exact candidate feature workflow, documentation-seal workflow, or
-`main` delivery workflow has run. Milestone 03 remains `IN PROGRESS`.
+workspace gates are green. All three fresh adversarial tracks are green on
+exact behavior/finding-fix SHA
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. No exact candidate feature,
+documentation-seal, or `main` workflow has run. Milestone 03 remains
+`IN PROGRESS`.
 
-## Composed behavior awaiting adversarial green
+## Adversarially green behavior
 
 The composed candidate implements:
 
@@ -109,71 +108,67 @@ claim, CLI behavior, provider/network effect during loading, or product-
 performance claim. Core receives no ambient credential or configuration
 authority.
 
-## Parallel delivery and pending adversarial review
+## Parallel delivery and adversarial review
 
 Production implementation, independent black-box tests, and candidate
 documentation were completed in isolated worktrees with non-overlapping
 ownership, then composed at exact SHA
-`a8467cc4e889b0778b7b95968714b8c2b08d6fc4`. Three fresh adversarial tracks are
-reviewing exact composed commits for:
+`a8467cc4e889b0778b7b95968714b8c2b08d6fc4`. Three fresh adversarial tracks
+reviewed correctness/API/tests/portability, security/resources/authority, and
+maintained documentation/evidence scope.
 
-- schema/API compatibility, strict v1/v2/v3 dispatch, projections, public
-  getters, target/feature surfaces, and independent tests;
-- resource, authority, secret non-reflection, failure precedence, and
-  reference-host acquisition/runtime-source separation; and
-- maintained documentation, plan/checklist honesty, unchanged CLI and
-  benchmark scope, and exact evidence boundaries.
+- Security and API/test/portability were **GREEN** on initial composed SHA
+  `a8467cc4` and again on exact SHA `35ce591e`.
+- The documentation track found one **MEDIUM** issue on `a8467cc4`: maintained
+  pages still said implementation, independent tests, and composition were
+  pending.
+- Exact SHA `35ce591e` reconciled every maintained status page while preserving
+  pending remote, seal, `main`, and checklist gates. The documentation track
+  then reported **GREEN** on that exact SHA.
 
-Confirmed findings must be fixed and rereviewed until all three tracks are
-green. Documentation-only seal and delivery-record commits do not require a
-new adversarial review after the production feature is already green.
+No finding was rejected. All three tracks are green together on exact behavior
+SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
 
-The documentation track confirmed that maintained status pages still described
-implementation, independent tests, and composition as pending on initial
-composed SHA `a8467cc4`. This documentation-only descendant reconciles those
-pages while preserving pending adversarial and delivery gates. Its exact SHA
-is recorded at handoff; documentation rereview remains pending. No adversarial-
-green SHA is claimed yet.
+This documentation-only seal changes evidence and status text only. Per the
+delivery workflow and the user's explicit instruction, it does not require a
+new adversarial review after the production behavior is already green.
 
-The security and API/test/portability tracks independently reported **GREEN**
-on exact initial composed SHA `a8467cc4e889b0778b7b95968714b8c2b08d6fc4`.
-Their reviewed production and test behavior is unchanged by this docs-only
-status correction. The documentation track must still rereview this exact
-descendant before all three tracks can be recorded green together.
+## Exact local checks
 
-## Candidate documentation checks
+The following are green on `a8467cc4`, exact behavior descendant `35ce591e`,
+or both where the latter changes documentation only, with exact Rust and Cargo
+1.94.1:
 
-The following passed in the isolated candidate-docs worktree with exact
-`rustc 1.94.1` and `cargo 1.94.1`:
+- formatting;
+- 29 focused native configuration tests and 15 all-feature configured-source
+  tests;
+- workspace all-target/all-feature Clippy with warnings denied;
+- default-feature and all-feature workspace tests;
+- workspace doc tests;
+- repo-wide Python tests: 129 run, 121 passed, and 8 expected platform skips;
+- API-review FreeBSD, WASI, and Apple target compile checks on `a8467cc4`,
+  unchanged by the documentation-only `35ce591e` descendant; and
+- candidate and status-reconciliation Markdown link and diff checks.
 
-- `cargo +1.94.1 test --doc --workspace`: two passed, zero failed;
-- repository-relative Markdown links: 154 checked across 46 Markdown files,
-  with none missing; and
-- `git diff --check` with only intended documentation changes.
+This documentation-only seal also passes exact Rust/Cargo 1.94.1 workspace doc
+tests (two passed, zero failed), 154 repository-relative links across 46
+Markdown files with none missing, and `git diff --check`. These local results
+are not exact remote or `main` evidence.
 
-Passing these checks validates only this candidate documentation. It is not
-implementation, test, adversarial-review, exact remote, or delivery evidence.
+## Residual risk and deferred scope
 
-This composed status-reconciliation descendant also passed exact Rust/Cargo
-1.94.1 workspace doc tests (two passed, zero failed), the same 154 repository-
-relative links across 46 Markdown files with none missing, and
-`git diff --check`. Its exact committed SHA is reported at handoff. These are
-documentation checks, not the pending documentation adversary's rereview.
-
-## Composed local checks
-
-On initial composed SHA `a8467cc4e889b0778b7b95968714b8c2b08d6fc4`,
-exact Rust/Cargo 1.94.1 focused native config and reference-host tests and the
-required local formatting, all-target/all-feature Clippy, workspace test, and
-workspace doc-test gates are green. This is local composed-candidate evidence,
-not adversarial, remote, seal, or `main` evidence.
+The closed configured kind supports only `environment`; it is not an auth-
+source compatibility claim. Exact v1/v2 files project that kind only in memory.
+Process snapshot construction retains its existing limitation that the standard
+library may materialize a complete OS value before bounded rejection. Runtime
+`credential_source()` remains concrete OIDC-token/API-key metadata, while
+`None` on the custom path does not prove a transport is secret-free.
 
 ## Remaining gates and scope
 
-The documentation track's exact-descendant rereview and resulting all-three
-green record, exact feature-branch CI and benchmark-evidence runs, the
-documentation seal, fast-forward integration, and exact `main` CI and benchmark-
-evidence runs remain pending.
+Exact feature-branch CI and benchmark-evidence runs, the documentation seal SHA,
+fast-forward integration, and exact `main` CI and benchmark-evidence runs remain
+pending.
 
 The combined credential-and-configuration checklist item remains unchecked
 while those gates are pending; it may be checked only after full delivery. Root

@@ -5,10 +5,11 @@ Twelve slices are integrated at final delivery-record SHA
 `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
 `32579779134`, feature benchmark-evidence run `32579779123`, main CI run
 `32580066474`, and main benchmark-evidence run `32580066485` are green for that
-base. This candidate's production implementation and independent tests are
-composed; focused checks and required local workspace gates are green. Adversarial
-review is in progress; exact remote feature gates, the documentation seal, and
-`main` delivery remain pending. Milestone 03 remains `IN PROGRESS`.
+base. This candidate's production implementation, independent tests, focused
+and required local gates, and all three fresh adversarial tracks are green on
+exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
+Exact remote feature gates, the documentation seal, and `main` delivery remain
+pending. Milestone 03 remains `IN PROGRESS`.
 Candidate lineage is recorded in the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
@@ -201,8 +202,7 @@ Configuration mutation, a migration or rewrite command, a terminal permission
 prompter and modes beyond `ask`, runtime and CLI composition, required
 workspace and state-root lifecycle, the remaining native tools, CLI and
 session expansion, release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. This thirteenth candidate may complete the
-combined credential-and-configuration checklist item only after three green
-adversarial tracks, exact feature workflows, fast-forward integration, and
-exact `main` workflows all pass. It remains unchecked while those gates are
-pending. Milestone 03 remains in progress.
+or performance claims remain open. All three adversarial tracks are green, but
+the combined credential-and-configuration checklist item remains unchecked
+until exact feature workflows, fast-forward integration, and exact `main`
+workflows all pass. Milestone 03 remains in progress.

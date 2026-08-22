@@ -71,10 +71,10 @@ strictly readable without rewrite and project the same acquisition kind only
 in memory. The loader receives no token or process authority; the production
 reference host still consumes an explicitly injected credential snapshot, and
 its runtime observation still reports the concrete selected OIDC-token or
-API-key source. Production implementation and independent tests are composed;
-focused checks and required local workspace gates are green. Adversarial review is in
-progress, while exact remote feature gates, the documentation seal, and `main`
-delivery remain pending. See the
+API-key source. Production implementation, independent tests, focused and
+required local gates, and all three fresh adversarial tracks are green on exact
+behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact remote feature
+workflows, the documentation seal, and `main` delivery remain pending. See the
 [candidate configuration contract](docs/configuration.md) and
 [candidate review](docs/reviews/m03-configured-credential-source-review-01.md).
 

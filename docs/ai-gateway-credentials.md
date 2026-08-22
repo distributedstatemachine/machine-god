@@ -142,7 +142,8 @@ configured `Environment` and then consumes its already injected snapshot;
 `NativeReferenceHost::credential_source()` still reports the concrete selected
 OIDC-token or API-key source. The broader M03 credential-and-configuration
 checklist item remains unchecked until the thirteenth candidate passes every
-remaining adversarial-review, feature, integration, and exact `main` gate.
+remaining feature, integration, and exact `main` gate. All three adversarial
+tracks are green on exact behavior SHA `35ce591e`.
 This adapter's adversarial, feature-branch, documentation-seal, and `main` gates
 are green at the exact lineage recorded in its review. Existing CLI bytes and
 benchmark workloads are unchanged. Zig remains only a build input for the

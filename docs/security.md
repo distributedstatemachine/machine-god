@@ -63,8 +63,9 @@ boundary is in [`native-reference-host.md`](native-reference-host.md).
 A thirteenth bounded candidate advances native configuration to strict v3 with
 one required closed, non-secret `environment` credential-source acquisition
 kind. Exact v1/v2 files remain readable and gain that projection only in
-memory. Production implementation and independent tests are composed and
-locally green. Adversarial review is in progress; exact remote gates and `main`
+memory. Production implementation, independent tests, local gates, and all
+three fresh adversarial tracks are green on exact behavior SHA
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact remote gates and `main`
 delivery remain pending.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -194,8 +195,8 @@ raw error numbers are discarded. Host debug output is fixed to
 `NativeReferenceHost { .. }` and exposes no config structure or source. The
 twelfth-slice behaviors are adversarially green and integrated on `main` under
 exact green workflows. The schema-v3 and configured-source validation changes
-remain candidate behavior pending adversarial green and every remote delivery
-gate.
+remain candidate behavior with three fresh adversarial tracks green on exact
+SHA `35ce591e`; every remote delivery gate remains pending.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

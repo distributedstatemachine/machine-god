@@ -80,10 +80,10 @@ integrated at the exact green `main` SHA and runs recorded above.
 The thirteenth candidate advances current native configuration to strict v3 by
 adding the closed non-secret `environment` credential-source acquisition kind.
 It retains exact strict v1/v2 reads and their observable versions, projecting
-that acquisition kind only in memory. Production implementation and independent
-tests are composed; focused checks and required local workspace gates are green.
-Adversarial review is in progress; exact remote gates and `main` delivery remain
-pending.
+that acquisition kind only in memory. Production implementation, independent
+tests, focused and required local gates, and all three fresh adversarial tracks
+are green on exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
+Exact remote gates and `main` delivery remain pending.
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -275,7 +275,8 @@ config structure or source. Every nested construction error is reduced to one
 fixed redacted stage in the non-exhaustive reference-host error taxonomy. The
 twelfth-slice composition behaviors are adversarially green and integrated on
 `main`; the schema-v3 extension and credential-source validation remain
-candidate behavior pending adversarial green and all remote delivery gates.
+candidate behavior with all three fresh adversarial tracks green on exact SHA
+`35ce591e`. All remote delivery gates remain pending.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

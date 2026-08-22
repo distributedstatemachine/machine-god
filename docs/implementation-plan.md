@@ -248,11 +248,11 @@ source; the trusted custom-transport path still skips discovery and reports
 `None`. No token bytes, arbitrary environment-variable names, persistence,
 migration, auth-source compatibility, CLI behavior, or performance claim are
 added. Production implementation, independent tests, and candidate docs are
-composed at `a8467cc4e889b0778b7b95968714b8c2b08d6fc4`; focused checks and
-required local workspace gates are green. This documentation descendant fixes one
-confirmed status finding, but its rereview and adversarial green remain pending. Exact feature workflows, the
-documentation seal, fast-forward integration, and exact `main` workflows also
-remain pending. The proposed contract and lineage are in
+composed. Focused and required local gates and all three fresh adversarial tracks
+are green on exact behavior/finding-fix SHA
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact feature workflows, the
+documentation seal, fast-forward integration, and exact `main` workflows remain
+pending. The proposed contract and lineage are in
 [`configuration.md`](configuration.md) and the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
@@ -282,8 +282,9 @@ gate:
   size limits, and secret non-reflection must be normative and tested; core
   receives no ambient credential or configuration authority. The thirteenth
   candidate supplies the missing bounded non-secret selection but this item
-  remains unchecked until adversarial review, exact feature gates,
-  fast-forward integration, and exact `main` gates are all green.
+  remains unchecked until exact feature gates, fast-forward integration, and
+  exact `main` gates are all green. All three fresh adversarial tracks are green
+  on exact behavior SHA `35ce591e`.
 - [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
