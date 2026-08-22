@@ -28,8 +28,8 @@ Status: **DELIVERY GREEN — integrated on `main`**
   `40adb062b32417463b8ba266e21ecd2b677082b4`
 - Documentation seal and integrated `main` behavior:
   `503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`
-- Exact `main` delivery SHA:
-  `503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`
+- Final config-v2 delivery record and exact `main` delivery SHA:
+  `a10f24edde80a225f89e6c7068ec035cb70f80a8`
 - Integration branch: `agent/m03-native-host-config-v2`
 - Candidate-docs branch: `agent/m03-native-host-config-v2-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly; local results green
@@ -170,12 +170,17 @@ and benchmark-evidence run
 
 ## Exact `main` delivery gates
 
-The seal was fast-forwarded without force to `main` at
-`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`. Exact main CI run
+The behavior seal was fast-forwarded without force to `main` at
+`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`. Its exact main CI run
 [`32576137963`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576137963)
 and benchmark-evidence run
 [`32576137955`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576137955)
-are green for that exact SHA.
+are green for that exact SHA. The final documentation-only delivery record at
+`a10f24edde80a225f89e6c7068ec035cb70f80a8` subsequently passed exact main CI
+run
+[`32576876769`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576876769)
+and benchmark-evidence run
+[`32576876780`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576876780).
 
 ## Scope
 

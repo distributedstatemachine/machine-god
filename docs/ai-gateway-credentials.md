@@ -127,10 +127,16 @@ variables, add a setup command, compose a provider into the CLI, select a model,
 or make a network request. The eleventh integrated
 [`native configuration schema-v2 slice`](configuration.md) adds only
 declarative provider, transport, and model data; it does not add a credential
-field or invoke this adapter. The broader M03 credential-and-configuration
-checklist item remains unchecked because configuration still has no bounded
-credential-source field and no reference-host composition invokes this
-adapter. Its adversarial, feature-branch, documentation-seal, and `main` gates
+field or invoke this adapter. The separate twelfth
+[`native reference-host candidate`](native-reference-host.md) defines a
+production library constructor that would consume an explicitly injected
+snapshot and retain only the selected source metadata; only candidate
+documentation is present, so no delivered reference-host composition invokes
+the adapter yet. Its custom-transport authority override would skip discovery
+and report no native-discovery source. The broader M03 credential-and-
+configuration checklist item remains unchecked even after that candidate is
+delivered because configuration still has no bounded credential-source field.
+This adapter's adversarial, feature-branch, documentation-seal, and `main` gates
 are green at the exact lineage recorded in its review. Existing CLI bytes and
 benchmark workloads are unchanged. Zig remains only a build input for the
 pinned upstream benchmark; machine-god remains a Rust product.

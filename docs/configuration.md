@@ -1,8 +1,8 @@
 # Native configuration
 
 Status: eleventh bounded Milestone 03 slice integrated on `main` at
-`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`. Exact main CI run `32576137963`
-and benchmark-evidence run `32576137955` are green. Milestone 03 remains
+`a10f24edde80a225f89e6c7068ec035cb70f80a8`. Exact main CI run `32576876769`
+and benchmark-evidence run `32576876780` are green. Milestone 03 remains
 `IN PROGRESS`. Exact lineage is recorded in the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 
@@ -157,9 +157,22 @@ does not instantiate `AiGatewayProvider`, select or construct an HTTP client,
 create or drive a Tokio runtime, discover or attach a credential, open a
 network connection, or compose any component into core or the CLI.
 
-Configuration mutation, a migration or rewrite command, permission prompting
-and modes beyond `ask`, provider/HTTP/runtime/token/CLI composition, required
+The separate twelfth
+[`native reference-host candidate`](native-reference-host.md) would consume an
+already loaded value without changing this loader. It retains the exact
+`LoadedNativeConfig`: an accepted file-backed v1 therefore remains observable
+with file origin and schema version `1`, while its existing fixed in-memory
+provider, transport, and model projection drives composition. The candidate's
+production constructor receives a separate injected credential snapshot; no
+credential enters this configuration value or loader. Only candidate
+documentation is present, so this relationship is not yet implementation or
+delivery evidence.
+
+Configuration mutation, a migration or rewrite command, a terminal permission
+prompter and modes beyond `ask`, runtime and CLI composition, required
 workspace and state-root lifecycle, the remaining native tools, CLI and
-session expansion, end-to-end host evidence, and compatibility or performance
-claims remain open. This slice does not complete the combined
-credential-and-configuration checklist item or Milestone 03.
+session expansion, release-binary end-to-end host evidence, and compatibility
+or performance claims remain open. This slice and the twelfth composition
+candidate do not complete the combined credential-and-configuration checklist
+item because v2 has no bounded credential-source field. Milestone 03 remains
+in progress.

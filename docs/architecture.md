@@ -21,7 +21,9 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has eleven integrated bounded slices.
+Milestone 03 has eleven integrated bounded slices and a twelfth bounded
+candidate whose normative documentation is present but whose implementation,
+tests, composition, review, remote gates, and delivery are pending.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -54,11 +56,21 @@ in [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 The eleventh slice advances native configuration to a strict current
 schema v2 while retaining strict v1 reads without file rewrite or migration.
 It is a declarative library surface only, integrated on `main` at
-`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`. Exact main CI run `32576137963`
-and benchmark run `32576137955` are green. Its contract and delivery lineage
-are in [`configuration.md`](configuration.md)
+`a10f24edde80a225f89e6c7068ec035cb70f80a8`. Exact main CI run `32576876769`
+and benchmark-evidence run `32576876780` are green. Its contract and delivery
+lineage are in [`configuration.md`](configuration.md)
 and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
+The twelfth candidate defines a Linux/macOS-only `NativeReferenceHost` behind
+the existing `ai-gateway-http` and non-WebAssembly gate. It would compose an
+already validated config selection with the provider, either production HTTP
+from an injected credential snapshot or a trusted custom transport, one shared
+retained workspace feeding exactly `list_files` and `read_file`, the existing
+file store under a separate session root, and the ask adapter over an injected
+prompter. It uses default engine limits and the no-op event sink. The CLI
+remains byte-unchanged and thin. The candidate contract and pending lineage are
+in [`native-reference-host.md`](native-reference-host.md) and its
+[`candidate review`](reviews/m03-native-reference-host-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -79,7 +91,10 @@ surface and does not change CLI bytes. The same is true of the normative
 also a library surface and does not change CLI bytes or supply a concrete
 terminal prompt. Credential discovery is another separate
 library surface; credentials are fields in neither supported configuration
-schema, and discovery does not add CLI composition.
+schema, and discovery by itself does not add CLI composition. The twelfth
+candidate's production library constructor would consume an explicitly
+injected credential snapshot; it does not give the config loader or CLI ambient
+credential authority.
 
 ```text
 process environment -> resolved native paths
@@ -106,6 +121,12 @@ host-selected existing absolute state root -> retained directory descriptor
 core-owned bounded PermissionRequest -> AskPermissionHandler
                                      -> injected PermissionPrompter
                                      -> structured allow/deny decision
+
+validated LoadedNativeConfig + existing workspace/session roots
+ + injected PermissionPrompter
+ + credential snapshot -------------> production AI Gateway HTTP
+ |                                    -> NativeReferenceHost -> Engine
+ + trusted custom transport override -> credential_source: None
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -162,11 +183,14 @@ most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 model values, or operating-system error text. Credentials are deliberately in
-neither schema. Configuration mutation or migration, permission modes beyond
-`ask`, a concrete prompt UI, provider/HTTP/runtime/token/CLI composition,
-executable native tools other than the bounded `read_file` and `list_files`
-library capabilities, session migration/encryption/reset/listing, required-root
-lifecycle, CLI expansion, and composed end-to-end host evidence remain open.
+neither schema. The separate twelfth candidate would consume this already
+loaded value without changing the loader: a file-backed v1 remains observable
+as version `1` while its fixed projected values drive composition. Configuration
+mutation or migration, permission modes beyond `ask`, a concrete prompt UI,
+runtime ownership, token fields in config, CLI composition, executable native
+tools other than the bounded `read_file` and `list_files` library capabilities,
+session migration/encryption/reset/listing, required-root lifecycle, CLI
+expansion, and composed release-binary end-to-end evidence remain open.
 
 ```text
                         machine-god-core
@@ -186,6 +210,37 @@ observation may use the authority-free no-op sink. Validated IDs, explicit
 durable session-incarnation IDs, structured component errors, optimistic session
 revisions, monotonic event sequences, one-live-turn session leases, and
 idempotent cancellation form the initial cross-component invariants.
+
+The twelfth candidate packages one exact selection of those existing
+boundaries. Both synchronous constructors first validate permission mode `ask`,
+provider `vercel_ai_gateway`, and transport `ai_gateway_http`. They then open
+one workspace directory once and clone its retained descriptor so exactly the
+`list_files` and `read_file` tools share one opened directory identity. A
+separate existing session root is opened through `FileSessionStore`. The
+injected `PermissionPrompter` is wrapped by `AskPermissionHandler`, and
+`AiGatewayProvider` receives the loaded config model and either the production
+or custom transport. `EngineBuilder` receives no explicit limits or event sink,
+so the documented defaults and `NoopEventSink` apply.
+
+On the production path, both non-secret roots open before the consumed
+credential snapshot is discovered and its token moves into
+`AiGatewayHttpTransport`. On the custom path, the injected transport is a
+trusted authority override: no credential discovery or production HTTP
+construction runs, and the retained credential-source observation is `None`.
+That absence says nothing about authority or secrets encapsulated by the custom
+transport. The production path instead retains only `Some` selected-source
+metadata and exposes no bearer-token getter.
+
+Construction opens roots and creates bounded component values synchronously but
+makes no network request, prompts no user, touches no session record, creates
+no root or runtime, and starts no background task. Production HTTP work later
+must be polled on a live host-owned Tokio runtime with I/O and time enabled.
+The wrapper retains the exact `LoadedNativeConfig`, including a file-backed v1
+origin and observable version `1` while using its projected provider,
+transport, and model values. Its fixed debug form exposes no config structure
+or source. Every nested construction error is reduced to one fixed redacted
+stage in the non-exhaustive reference-host error taxonomy. These are candidate
+requirements, not evidence of implementation or delivery on this branch.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

@@ -1,0 +1,229 @@
+# Native reference-host composition
+
+Status: candidate normative contract for the twelfth bounded Milestone 03
+library slice. Eleven slices are integrated. Only candidate documentation is
+present on this branch; implementation, independent black-box tests, composed
+feature behavior, adversarial review, exact remote feature gates, and `main`
+delivery remain pending. Milestone 03 remains `IN PROGRESS`. Candidate lineage
+is recorded in the
+[`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
+
+`NativeReferenceHost` composes the existing validated native configuration,
+AI Gateway provider and transport boundary, file session store, ask permission
+adapter, and two confined read-only tools into one provider-neutral `Engine`.
+It is a library surface in `machine-god-native`. The `machine-god-cli` crate and
+every existing CLI output byte remain unchanged.
+
+## Feature and platform boundary
+
+The complete composition API is exported only under this gate:
+
+```text
+all(
+  feature = "ai-gateway-http",
+  not(target_family = "wasm"),
+  any(target_os = "linux", target_os = "macos")
+)
+```
+
+The twelfth slice therefore supports Linux and macOS only, requires the
+optional `ai-gateway-http` feature, and has no WebAssembly export. This gate
+applies to both the production-HTTP and custom-transport constructors because
+the composed host always contains the Linux/macOS descriptor-rooted tools and
+file session store. It does not broaden the existing standalone portability of
+core, the AI Gateway codec, custom transports, or the ask adapter.
+
+The public composition and observation surface is:
+
+```rust,ignore
+NativeReferenceHost::compose_ai_gateway_http(
+    loaded_config: LoadedNativeConfig,
+    credential_environment: AiGatewayCredentialEnvironment,
+    workspace_root: &Path,
+    session_root: &Path,
+    permission_prompter: Arc<dyn PermissionPrompter>,
+) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
+
+NativeReferenceHost::compose_with_ai_gateway_transport(
+    loaded_config: LoadedNativeConfig,
+    transport: Arc<dyn AiGatewayTransport>,
+    workspace_root: &Path,
+    session_root: &Path,
+    permission_prompter: Arc<dyn PermissionPrompter>,
+) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
+
+NativeReferenceHost::engine(&self) -> &Engine
+NativeReferenceHost::into_engine(self) -> Engine
+NativeReferenceHost::loaded_config(&self) -> &LoadedNativeConfig
+NativeReferenceHost::credential_source(&self)
+    -> Option<AiGatewayCredentialSource>
+```
+
+Both constructors consume an already validated `LoadedNativeConfig`; neither
+loads configuration nor reads the process environment. The accepted selection
+is exactly permission mode `ask`, provider `vercel_ai_gateway`, and transport
+`ai_gateway_http`. Any other future or otherwise unsupported selection fails
+closed before a root, credential, transport, provider, or engine is opened or
+constructed.
+
+## Exact production composition
+
+`compose_ai_gateway_http` performs these synchronous construction stages in
+this order:
+
+1. validate the loaded permission, provider, and transport selections;
+2. open the existing absolute workspace once and retain that directory
+   identity for the two tools;
+3. open the existing absolute session root as `FileSessionStore`;
+4. consume the injected `AiGatewayCredentialEnvironment` and discover one
+   validated bearer token under its existing precedence rules;
+5. move that bearer token into production `AiGatewayHttpTransport`;
+6. construct `AiGatewayProvider` with the loaded configuration's projected
+   model;
+7. wrap the injected prompter in `AskPermissionHandler`; and
+8. build `Engine` with exactly `list_files` and `read_file`, default
+   `EngineLimits`, and the default `NoopEventSink`.
+
+The non-secret workspace and session roots are therefore opened before
+credential discovery and bearer-token handoff. A selection, workspace, or
+session-store failure neither discovers nor hands a credential to the HTTP
+transport. Credential discovery retains its exact precedence and fail-closed
+validation contract, and production transport construction retains its pinned
+endpoint and HTTP/TLS/status/cancellation policy.
+
+The workspace is opened once with the existing Linux/macOS final-component
+no-follow and authoritative directory checks. One retained descriptor remains
+with one tool and a descriptor clone of the same opened directory object feeds
+the other. The composed engine registers exactly the existing one-level
+`list_files` and bounded UTF-8 `read_file`; it discovers or registers no other
+tool. This shared retained identity prevents separate path opens from selecting
+different workspace directory objects if the host path is replaced between
+tool construction steps. It does not make the workspace a sandbox against the
+host, change either tool's model-selected path rules, or freeze mounts beneath
+the retained directory.
+
+The session root is separate from the workspace. It must already exist and is
+opened through the existing `FileSessionStore::open` contract. The composition
+does not derive it from `LoadedNativeConfig` or native status.
+
+## Explicit custom-transport override
+
+`compose_with_ai_gateway_transport` is a trusted authority override. It still
+requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
+selection, opens the same workspace and session-store authorities, constructs
+the same provider and permission adapter, registers the same two tools, and
+uses the same default engine limits and no-op sink. It deliberately performs no
+credential discovery and does not construct `AiGatewayHttpTransport`.
+
+The injected `Arc<dyn AiGatewayTransport>` owns whatever endpoint, network,
+authentication, status, timeout, retry, runtime, and diagnostic policy it
+implements. It must obey the existing `AiGatewayTransport` contract, including
+returning only accepted response bytes or a redacted `ProviderError`. This path
+is intended for trusted custom hosts and deterministic tests; it is not a way
+to weaken the production transport's pinned policy while retaining a
+production-transport claim.
+
+`credential_source()` returns `None` for this constructor. That value means
+only that native credential discovery did not run. It does not assert that the
+custom transport is unauthenticated or holds no secret.
+
+## Synchronous construction and later polling
+
+Both constructors are synchronous. They perform only selection validation,
+bounded component construction, the documented root opens, and—on the
+production path—discovery from the already injected credential snapshot and
+HTTP client construction. They make no network request, poll no permission
+prompt, load or save no session record, and create no file or directory. They
+do not create a Tokio runtime, task, thread, timer, channel, retry, or other
+background work.
+
+The constructors do not select or create the workspace or session root. They
+also do not call `AiGatewayCredentialEnvironment::from_process`; a caller that
+wants process discovery must take that explicit snapshot before composition.
+Constructing `AskPermissionHandler` does not invoke the injected prompter.
+Constructing `FileSessionStore` retains only its root and does not touch a
+session record or lock sidecar.
+
+If the resulting engine later polls the production
+`AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
+runtime with I/O and time enabled. The runtime must remain driven while
+requests, response streams, pooled connections, or asynchronous socket teardown
+remain active. `NativeReferenceHost` supplies no runtime. Core, the codec, and
+the explicit custom-transport boundary remain executor-neutral.
+
+## Retained observation and secret boundary
+
+`loaded_config()` returns the exact `LoadedNativeConfig` consumed by the
+constructor. In particular, an accepted file-backed schema-v1 value remains
+observable with `ConfigOrigin::File` and `schema_version() == 1`; the host does
+not relabel or migrate it. Its already defined in-memory projection supplies
+permission mode `ask`, provider `vercel_ai_gateway`, transport
+`ai_gateway_http`, and model `zai/glm-5.2` to composition. Built-in and
+file-backed schema-v2 origins and values are likewise retained exactly.
+
+The production constructor retains only the non-secret
+`AiGatewayCredentialSource` selected during discovery. Its stable metadata is
+available as `Some(source)` through `credential_source()`. The custom transport
+constructor returns `None`. `NativeReferenceHost` has no bearer-token getter,
+and the credential-source observation exposes no secret value. The production
+token remains encapsulated by `AiGatewayHttpTransport` under its existing
+non-reflection and best-effort clearing contract.
+
+`engine()` borrows the composed engine. `into_engine()` consumes the wrapper
+and returns that engine; the retained configuration and source observation are
+then no longer available through the wrapper. Host debugging is exactly
+`NativeReferenceHost { .. }`: it exposes no configuration structure, model,
+credential source, roots, component diagnostic, or transport detail.
+
+## Fixed failures
+
+`NativeReferenceHostBuildErrorKind` is non-exhaustive so callers must preserve
+forward compatibility. The complete initial categories and display strings
+are:
+
+| Kind | Exact `Display` |
+| --- | --- |
+| `UnsupportedSelection` | `native reference-host selection is unsupported` |
+| `WorkspaceRoot` | `native reference-host workspace root is unavailable` |
+| `SessionStore` | `native reference-host session store is unavailable` |
+| `Credential` | `native reference-host credential is unavailable` |
+| `HttpTransport` | `native reference-host HTTP transport construction failed` |
+| `Provider` | `native reference-host provider construction failed` |
+| `Engine` | `native reference-host engine construction failed` |
+
+Each failure retains only its kind. `Debug` is the fixed
+`NativeReferenceHostBuildError { kind: ... }` structure, `Display` is the
+corresponding table entry, and the error has no nested source. Component errors
+are reduced at their boundary. No configuration value, model, credential
+source or bytes, workspace or session path, prompt data, endpoint, provider or
+transport diagnostic, operating-system text, or raw error number is retained
+or reflected.
+
+Construction order also fixes failure precedence. Selection fails first;
+workspace failure precedes session-store failure; both precede production
+credential and HTTP failures; and provider or engine failure occurs only after
+the earlier components have been constructed. The custom path cannot return
+`Credential` or `HttpTransport` because it exercises neither stage.
+
+## Deferred scope and milestone boundary
+
+This candidate does not select or safely create required workspace or state
+roots, implement a concrete terminal `PermissionPrompter`, allocate a session
+ID or `SessionIncarnationId`, or add create/list/resume/replay/reset session
+lifecycle commands. It does not add the remaining native tools, compose or run
+the CLI, or change any existing CLI byte. A reset under a reused session ID
+still requires a new host-generated incarnation before reuse.
+
+Deterministic end-to-end evidence through a freshly built release binary,
+remaining CLI ownership, compatibility promotion, and product-performance
+claims remain open. This slice does not alter the pinned fx inventory,
+benchmark workloads, or workflows. Zig remains only the pinned upstream
+benchmark build input; machine-god remains a Rust product.
+
+The frozen reference-host composition checklist item may become complete only
+after implementation, independent tests, composed adversarial review, exact
+feature-SHA gates, fast-forward integration, and exact `main` gates all pass.
+Candidate documentation alone does not satisfy it. The combined credential-
+and-configuration item remains unchecked even after this composition is
+delivered because schema v2 has no bounded credential-source field. Milestone
+03 remains in progress.

@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with eleven integrated bounded slices. The first
+with eleven integrated bounded slices and a twelfth bounded candidate. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -195,13 +195,40 @@ contract and review lineage are in
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 Production implementation, black-box tests, documentation, three fresh
 adversarial tracks, and exact feature and `main` gates are green. The slice is
-integrated on `main` at `503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`;
-exact main CI run `32576137963` and benchmark-evidence run `32576137955` are
+integrated on `main` at `a10f24edde80a225f89e6c7068ec035cb70f80a8`;
+exact main CI run `32576876769` and benchmark-evidence run `32576876780` are
 green.
+
+The twelfth bounded library candidate is Linux/macOS-only and gated on the
+existing `ai-gateway-http` feature and non-WebAssembly targets. Its proposed
+`NativeReferenceHost` consumes an already validated `LoadedNativeConfig` and
+composes `AiGatewayProvider` over either production `AiGatewayHttpTransport`
+from an injected credential snapshot or an explicit trusted custom transport,
+one shared retained workspace identity feeding exactly `list_files` and
+`read_file`, the existing `FileSessionStore` over a separate existing session
+root, and `AskPermissionHandler` over an injected `PermissionPrompter`. It uses
+default `EngineLimits` and the default no-op event sink. Constructors are
+synchronous: they make no network request, poll no prompt, touch no session
+record, create no root or runtime, and start no background work. Production
+construction opens its non-secret roots before credential discovery and token
+handoff. A production HTTP request later requires a host-owned, driven Tokio
+runtime.
+
+The host retains the exact loaded configuration, including file-backed schema
+v1 as observable version `1` with its fixed projected provider, transport, and
+model values. Production exposes only the selected non-secret credential-source
+metadata; the custom-transport authority override reports no native-discovery
+source and exposes no secret getter. Fixed stage-only errors and host debug
+output are redacted. The CLI remains byte-unchanged and thin. Only the
+[`candidate contract`](native-reference-host.md) and
+[`candidate review record`](reviews/m03-native-reference-host-review-01.md) are
+present on this branch; implementation, tests, composition, adversarial review,
+exact remote feature gates, and `main` delivery remain pending.
 
 ### Milestone 03 completion boundary
 
-The eleven integrated slices do not complete Milestone 03.
+The eleven integrated slices and twelfth candidate documentation do not
+complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -218,10 +245,15 @@ gate:
 - [ ] Compose a useful native reference-host path through an explicitly selected
   provider and transport, session store, permission handler and prompter, and
   registered tools. The CLI stays a thin host and owns no product state.
+  Candidate documentation alone does not satisfy this item; it may be checked
+  only after implementation, independent tests, composed adversarial review,
+  exact feature-SHA gates, fast-forward integration, and exact `main` gates.
 - [ ] Add bounded, redacted credential acquisition and the configuration fields
   required by that composition. Source precedence, missing/invalid behavior,
   size limits, and secret non-reflection must be normative and tested; core
-  receives no ambient credential or configuration authority.
+  receives no ambient credential or configuration authority. This item remains
+  unchecked because config v2 has no bounded credential-source field, including
+  after the twelfth composition candidate is delivered.
 - [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
@@ -256,7 +288,8 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth and eleventh slices; Zig remains only the pinned
+by the tenth and eleventh slices and the twelfth candidate documentation; Zig
+remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
 no current-protocol or full fx-equivalence claim. Help and status remain

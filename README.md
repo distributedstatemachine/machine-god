@@ -43,10 +43,25 @@ are in neither schema, and the new fields do not compose a provider, HTTP client
 runtime, token, network request, or CLI path. The feature implementation,
 black-box tests, documentation, three adversarial tracks, and exact feature and
 `main` gates are green. It is integrated on `main` at
-`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`; exact main CI run `32576137963`
-and benchmark run `32576137955` are green. See the
+`a10f24edde80a225f89e6c7068ec035cb70f80a8`; exact main CI run `32576876769`
+and benchmark-evidence run `32576876780` are green. See the
 [native configuration contract](docs/configuration.md) and
 [review record](docs/reviews/m03-native-host-config-review-01.md).
+
+A twelfth bounded library candidate defines `NativeReferenceHost` for Linux
+and macOS behind the optional `ai-gateway-http` and non-WebAssembly gate. It
+would compose an already validated native configuration with the AI Gateway
+provider, either production HTTP from an injected credential snapshot or a
+trusted injected custom transport, one shared retained workspace feeding
+exactly `list_files` and `read_file`, the existing file session store, and the
+ask handler over an injected prompter. Construction remains synchronous and
+creates no root, runtime, network request, prompt operation, session record, or
+background work. Only candidate documentation is present on this branch;
+implementation, tests, composition, adversarial review, exact remote gates, and
+`main` delivery remain pending. The CLI is byte-unchanged and remains thin. See
+the [candidate contract](docs/native-reference-host.md) and
+[candidate review record](docs/reviews/m03-native-reference-host-review-01.md).
+
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
@@ -54,7 +69,8 @@ The project is not yet production-ready. See the exact
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
-normative [native file session store](docs/session-store.md).
+normative [native file session store](docs/session-store.md) plus the candidate
+[native reference-host composition](docs/native-reference-host.md).
 
 ## Development
 

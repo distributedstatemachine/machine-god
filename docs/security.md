@@ -48,10 +48,16 @@ and benchmark run `32573320937` are green. Its exact boundary is in
 An eleventh integrated bounded slice advances the built-in and current native
 config schema to strict v2 while keeping exact strict v1 files read-compatible
 without rewrite or migration. It is integrated on `main` at
-`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`; exact main CI run `32576137963`
-and benchmark run `32576137955` are green. See
+`a10f24edde80a225f89e6c7068ec035cb70f80a8`; exact main CI run `32576876769`
+and benchmark-evidence run `32576876780` are green. See
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
+A twelfth bounded candidate defines Linux/macOS-only library composition behind
+the existing `ai-gateway-http` and non-WebAssembly gate. Only candidate
+documentation is present on this branch; implementation, tests, composition,
+adversarial review, exact remote gates, and `main` delivery remain pending. Its
+proposed boundary is in
+[`native-reference-host.md`](native-reference-host.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -115,10 +121,56 @@ discover or attach a bearer token, or perform network I/O.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
-modes beyond `ask`, provider/HTTP/runtime/token/CLI composition, required-root
-and session lifecycle, CLI expansion, native tools other than the bounded
-library-level `read_file` and `list_files`, composed end-to-end host evidence,
-and compatibility or performance claims remain open.
+modes beyond `ask`, token fields in configuration, required-root and session
+lifecycle, CLI composition and expansion, native tools other than the bounded
+library-level `read_file` and `list_files`, composed release-binary end-to-end
+host evidence, and compatibility or performance claims remain open. The
+twelfth candidate would compose the existing library components only after an
+already validated config value is supplied; it does not change config loading
+or CLI behavior.
+
+The candidate `NativeReferenceHost` must first reject any loaded selection
+other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. It then opens the
+existing absolute workspace once and clones that retained descriptor so
+exactly `list_files` and `read_file` share one opened directory identity. This
+prevents path replacement between separate tool-construction opens from giving
+the tools different roots. The same trusted-host ancestor and subordinate-mount
+limits as the individual tool contracts still apply. A separate existing
+session root is retained through `FileSessionStore`; neither root is discovered
+from status or configuration, selected by model input, or created.
+
+Production construction opens both non-secret roots before it consumes the
+injected credential snapshot, discovers a bearer token, and hands that token to
+`AiGatewayHttpTransport`. Selection, workspace, and session-store failures
+therefore occur without discovering or handing off a credential. The wrapper
+retains only non-secret selected-source metadata and has no secret getter. It
+retains the exact loaded configuration, including file origin and observable
+schema version `1` for an accepted legacy file, while the existing fixed v1
+projection supplies its provider, transport, and model.
+
+The custom-transport constructor is an explicit trusted authority override. It
+performs no native credential discovery or production HTTP construction and
+reports `credential_source() == None`. That observation does not prove that the
+custom transport is unauthenticated or secret-free. The custom transport owns
+endpoint, network, authentication, status, retry, runtime, and diagnostic
+policy and must return only an accepted byte stream or an already redacted
+provider error under the existing injected-transport contract.
+
+Both proposed constructors are synchronous. Besides bounded construction and
+the root opens, they make no network request, poll no prompt, load or save no
+session record, create no root or runtime, and start no task, thread, timer,
+retry, or other background work. `AskPermissionHandler` retains but does not
+invoke the injected prompter. Later production HTTP polling still requires a
+live host-owned Tokio runtime with I/O and time enabled and driven through
+teardown.
+
+Reference-host failures retain only a non-exhaustive fixed stage kind:
+unsupported selection, workspace root, session store, credential, HTTP
+transport, provider, or engine. Component errors, roots, config/model values,
+credential bytes and source, endpoint data, prompt data, OS diagnostics, and
+raw error numbers are discarded. Host debug output is fixed to
+`NativeReferenceHost { .. }` and exposes no config structure or source. These
+are candidate requirements, not delivered-code claims.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

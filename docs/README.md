@@ -13,6 +13,7 @@
 - [Native AI Gateway credential discovery](ai-gateway-credentials.md)
 - [Native file session store](session-store.md)
 - [Native ask permission handler](ask-permission.md)
+- [Native reference-host composition candidate](native-reference-host.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)
@@ -22,3 +23,4 @@
 - [Milestone 02 completion evidence](reviews/m02-milestone-review.md)
 - [Milestone 03 config/status CLI review candidate](reviews/m03-config-status-cli-review-01.md)
 - [Milestone 03 native host configuration schema-v2 review](reviews/m03-native-host-config-review-01.md)
+- [Milestone 03 native reference-host composition candidate review](reviews/m03-native-reference-host-review-01.md)
