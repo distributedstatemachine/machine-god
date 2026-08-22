@@ -1,6 +1,6 @@
 # Milestone 03 native session-lifecycle review 01
 
-Status: **RESIDUAL FINDINGS FIXED — FINAL THREE-TRACK REREVIEW PENDING**
+Status: **REMAINING FINDING FIXED — FINAL THREE-TRACK REREVIEW PENDING**
 
 ## Candidate lineage
 
@@ -37,6 +37,14 @@ Status: **RESIDUAL FINDINGS FIXED — FINAL THREE-TRACK REREVIEW PENDING**
   engine-authority overclaim plus two low source-contract/evidence findings
 - Residual documentation finding fixes:
   `ea9aa89b12a3950414189fbe0ace720f42c64fa4`
+- Second replacement review candidate:
+  `c53658ce45eb139131e4126975757ee061f60361`
+- Second API/tests/portability rereview on `c53658c`: **GREEN**
+- Second security/resources/authority rereview on `c53658c`: **GREEN**
+- Second documentation/evidence rereview on `c53658c`: **NOT GREEN**; one
+  remaining default-versus-custom incarnation-source wording defect
+- Remaining documentation finding fix:
+  `33168e5cf23b0b652aebfde6392dafbc4a5746f5`
 - Integration branch: `agent/m03-native-session-lifecycle`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
@@ -152,6 +160,15 @@ invoke them; labels matching-incarnation reuse as defensive behavior under a
 nonconforming source rather than supported coordination; and attributes the
 fifteen-test gate to the finding-fix replacement rather than the fourteen-test
 initial candidate.
+
+API/tests/portability and security/resources/authority were again green on
+second replacement `c53658c`. Documentation/evidence confirmed all three
+residuals were fixed, then found that three remaining normative statements
+still described the default OS source as universal. Fix `33168e5` confines the
+OS-random authority and entropy language to default `NativeReferenceHost`
+composition, states that standalone create uses its configured trusted source,
+and defines `IncarnationSource` for configured-source failure or reset attempt
+exhaustion, with OS entropy failure as the default production case.
 
 All three tracks must now rereview the same replacement candidate until all
 report green. Any confirmed finding changes that candidate and repeats this
