@@ -310,6 +310,39 @@ integrated contract and review record are in
 [`native-root-selection.md`](native-root-selection.md) and
 [`m03-native-root-selection-review-01.md`](reviews/m03-native-root-selection-review-01.md).
 
+The isolated fifteenth bounded candidate defines a Linux/macOS native by-ID
+session lifecycle over the exact `Arc<FileSessionStore>` shared by
+`NativeReferenceHost` and its engine. The caller supplies each validated
+`SessionId`; production native code allocates a bounded incarnation from OS
+cryptographic randomness, with only a deterministic trusted source for tests.
+Every lifecycle constructor validates exact shared-store `Arc` identity and
+returns fixed redacted `MismatchedSessionStore` before entropy or filesystem
+effects if an engine and concrete store do not share one allocation.
+Create atomically persists an empty current-schema record at revision `1`
+before returning a live session. Resume loads the current durable incarnation
+and converges on the engine-canonical local state. Replay returns one validated,
+bounded, point-in-time `SessionRecord` from durable storage rather than
+reconstructing UI or event-stream behavior.
+
+Reset refuses a locally live incompatible lifetime before record replacement,
+then uses the permanent per-ID store lock and an exact
+ID/incarnation/revision CAS to atomically publish an empty record under the same
+ID, a new incarnation, checked revision `old + 1`, and turn allocator `1`. Its
+preceding present-record load may create the fixed lock sidecar and its bounded
+incarnation source may already have been consulted. Reset has no deletion gap
+and does not revoke another process's old handle or external effects; the new
+incarnation fences that handle's later saves. Missing resume/replay/reset,
+duplicate create, local live state, entropy failure, conflict, corruption,
+unavailability, and engine/invariant failure remain typed and redacted. Futures
+are inert before poll, detach no work, and inherit the store's bounded
+synchronous first-poll I/O and ambiguous post-rename directory-sync boundary.
+The exact API spelling may be refined by production, but these semantics are
+normative in [`native-session-lifecycle.md`](native-session-lifecycle.md).
+Production, independent tests, three fresh adversarial tracks, exact feature
+workflows, fast-forward integration, exact `main` workflows, and final delivery
+evidence are pending. `list_sessions`, lifecycle CLI commands, migration,
+encryption, and non-Unix hardening are not part of this candidate.
+
 ### Milestone 03 completion boundary
 
 The fourteen integrated slices do not complete Milestone 03.
@@ -342,9 +375,11 @@ gate:
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
   must allocate a new incarnation before reuse. The delivered fourteenth slice
-  is limited to the root-selection and safe-creation sub-boundary; this combined
-  item remains unchecked because lifecycle and reset/new-incarnation behavior
-  are still open.
+  is limited to the root-selection and safe-creation sub-boundary. The
+  fifteenth candidate covers by-ID create, resume, durable-record replay, and
+  reset/new-incarnation behavior, but production and delivery are pending and
+  native session listing remains open. This combined item therefore stays
+  unchecked.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
   `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,
@@ -375,7 +410,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fourteenth slices; Zig
+by the tenth through fifteenth slices; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes

@@ -90,6 +90,14 @@ are feature-green; the latter is integrated on `main` under exact CI
 `32590429626` and benchmark evidence `32590429592`. Its integrated security
 boundary is in
 [`native-root-selection.md`](native-root-selection.md).
+An isolated fifteenth candidate adds a by-ID native session lifecycle above the
+exact file store shared with the composed engine. The caller supplies the
+validated session ID; only production OS cryptographic randomness supplies new
+incarnations. Create persists before success, replay returns a durable bounded
+record rather than UI/events, and reset atomically changes incarnation without
+a deletion gap. Production, independent tests, three fresh adversarial tracks,
+and exact delivery remain pending. Its security boundary is in
+[`native-session-lifecycle.md`](native-session-lifecycle.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -321,7 +329,10 @@ every sudden-power-loss/full-system failure mode preserves the last acknowledged
 version. The implementation requests `fsync`; on macOS it does not request
 `F_FULLFSYNC` and does not claim a successful save reached physical media.
 Record contents are plaintext; encryption, authentication, secure
-erasure, key management, migration, reset, and listing remain deferred.
+erasure, key management, migration, and listing remain deferred. Reset is
+defined only by the separate fifteenth candidate and is not part of ordinary
+`SessionStore::save`: it requires a new host-generated incarnation and a
+reset-specific atomic current-record replacement.
 
 Load and save futures are inert until first poll and spawn no task, thread,
 timer, or runtime work. First poll performs bounded synchronous filesystem I/O,
@@ -335,6 +346,55 @@ IDs, hashes, roots, child paths,
 record bytes, parser diagnostics, OS text, or raw error numbers. The complete
 contract and fixed taxonomy are in
 [`session-store.md`](session-store.md).
+
+The fifteenth candidate gives `NativeReferenceHost` one
+`NativeSessionLifecycle` backed by the exact `Arc<FileSessionStore>` already
+given to its engine. Lifecycle and session-store observations do not reopen a
+path or select another state root. Construction performs no entropy read or
+session I/O. Create, resume, replay, and reset are futures with no effect before
+first poll and detach no work; first-poll store operations retain the existing
+bounded synchronous-I/O and advisory-lock behavior.
+
+Exact shared-store identity is validated, not trusted. A lifecycle constructor
+given a different concrete store allocation from the one configured in its
+engine fails with fixed redacted `MismatchedSessionStore` before consulting the
+incarnation source or filesystem. Reopening the same path is not equivalent:
+it could retain a different directory object after replacement and would split
+engine turns from lifecycle CAS. Reference-host construction shares one `Arc`
+and maps an impossible internal mismatch to its fixed engine build stage.
+
+Production create and reset use a fixed-size OS cryptographic-random draw with
+at least 128 random bits per new incarnation. There is no clock, PID, counter,
+session-ID hash, model value, or deterministic fallback. Tests may inject a
+deterministic source behind the trusted native boundary. Entropy failure is
+fail-closed, and reset never republishes the currently stored incarnation.
+
+Create uses the store's absent-record CAS and cannot overwrite an existing
+record. Resume accepts only one current-schema, bounds-valid record and refuses
+to merge a different local incarnation. Replay returns the successful record
+contents deliberately to its trusted caller but invokes no provider, tool,
+permission handler, network, UI, or event sink. It is a point-in-time durable
+snapshot, not a reconstruction of transient effects.
+
+Reset refuses a locally live lifetime before record replacement and never
+force-invalidates a local handle or active turn. Its preceding bounded load may
+create the permanent fixed lock sidecar, and its incarnation source may already
+have been consulted; neither changes the durable record. Under the per-ID store
+lock, reset fences the exact old ID, incarnation, and revision and atomically
+renames one empty current-schema replacement. The same ID is retained,
+incarnation changes, revision advances with checked arithmetic, and the turn
+allocator returns to `1`. Another process's old handle cannot be recalled, but
+its later save fails the incarnation fence. Reset does not undo external
+effects already dispatched by that process.
+
+Missing operations, duplicate create, local live state, entropy failure, CAS
+conflict, corrupt state, unavailable store, and engine/invariant failure remain
+distinct fixed lifecycle categories. Diagnostics and debug output expose no
+ID, incarnation, revision, record content, random bytes, path, parser or OS
+text. An unavailable create/reset may follow a completed rename whose directory
+sync failed; callers must resume or replay to reconcile and must not treat the
+category as blanket permission to retry. The complete candidate rules are in
+[`native-session-lifecycle.md`](native-session-lifecycle.md).
 
 The ask-handler slice adds no ambient authority to core or native. The host
 must inject either an owned `PermissionPrompter` or an explicitly shared

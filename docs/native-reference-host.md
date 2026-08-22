@@ -39,6 +39,14 @@ adapter, and two confined read-only tools into one provider-neutral `Engine`.
 It is a library surface in `machine-god-native`. The `machine-god-cli` crate and
 every existing CLI output byte remain unchanged.
 
+An isolated fifteenth-slice candidate adds a `NativeSessionLifecycle` owned by
+this wrapper. It supplies durable by-ID create, resume, replay, and reset over
+the exact file-store instance shared with the engine; the caller still supplies
+the validated session ID and production native code supplies OS-random
+incarnations. Production, independent tests, formal review, and exact delivery
+remain pending. Its normative behavior is in
+[`native-session-lifecycle.md`](native-session-lifecycle.md).
+
 ## Feature and platform boundary
 
 The integrated composition API is exported only under this gate:
@@ -57,6 +65,10 @@ applies to both the production-HTTP and custom-transport constructors because
 the composed host always contains the Linux/macOS descriptor-rooted tools and
 file session store. It does not broaden the existing standalone portability of
 core, the AI Gateway codec, custom transports, or the ask adapter.
+
+The fifteenth candidate retains this exact gate. It does not make the
+standalone core engine or session-store trait depend on OS randomness, a native
+filesystem, the HTTP feature, or a runtime.
 
 The public composition and observation surface is:
 
@@ -206,6 +218,12 @@ Constructing `AskPermissionHandler` does not invoke the injected prompter.
 Constructing `FileSessionStore` retains only its root and does not touch a
 session record or lock sidecar.
 
+The fifteenth candidate's construction only shares the retained
+`FileSessionStore` with `NativeSessionLifecycle`; it performs no entropy read,
+session load, save, reset, engine registration, or lock-sidecar operation.
+Those effects are owned by a lifecycle future and remain inert until that
+future is first polled.
+
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
 runtime with I/O and time enabled. The runtime must remain driven while
@@ -238,6 +256,24 @@ and returns that engine; the retained configuration and source observation are
 then no longer available through the wrapper. Host debugging is exactly
 `NativeReferenceHost { .. }`: it exposes no configuration structure, model,
 credential source, roots, component diagnostic, or transport detail.
+
+The fifteenth candidate adds host observations for the retained
+`FileSessionStore` and `NativeSessionLifecycle`. `session_store()` and
+`session_lifecycle()` expose components backed by the same shared store
+allocation that the engine received during construction. They do not reopen
+the selected path, re-resolve status, or create a second store with potentially
+different retained identity. Successful lifecycle replay deliberately returns
+the bounded durable record contents to its trusted caller; lifecycle and host
+debug output still reflects no record or identity data.
+
+This sharing is checked rather than assumed. Every standalone lifecycle
+constructor rejects non-identical store `Arc` allocations with fixed redacted
+`MismatchedSessionStore` / `mismatched_session_store` construction failure
+before consulting the incarnation source or filesystem, even when both stores
+were opened from the same path. Reference-host composition constructs one
+concrete allocation and supplies it to both the engine and lifecycle. An
+impossible internal mismatch maps to the host's existing redacted `Engine`
+build stage.
 
 ## Fixed failures
 
@@ -286,6 +322,14 @@ session lifecycle commands. It does not add the remaining native tools, compose
 or run the CLI, or change any existing CLI byte. A reset under a reused session
 ID still requires a new host-generated incarnation before reuse.
 
+The isolated fifteenth candidate fills the library-level by-ID create, resume,
+durable-record replay, and reset sub-boundary. `NativeSessionLifecycle` uses the
+exact store shared with the engine, allocates new incarnations from production
+OS randomness, persists create before success, and resets by atomic
+current-record replacement with a checked advancing revision. It does not add
+session listing, session-ID generation, a UI/event replay, or any CLI command;
+production and delivery gates remain pending.
+
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
 claims remain open. The slice does not alter the pinned fx inventory,
@@ -300,5 +344,7 @@ three adversarial tracks are green on exact behavior SHA `35ce591e`, and exact
 final-record feature and `main` workflows are green at integrated SHA
 `f840576a`. The combined root-and-session-lifecycle item remains unchecked:
 delivery of the root sub-boundary leaves create, list,
-resume, replay, reset, and reset/new-incarnation behavior open. Milestone 03
+resume, replay, reset, and reset/new-incarnation behavior open in the integrated
+baseline. The fifteenth candidate covers create/resume/replay/reset but leaves
+native listing open, so the combined item remains unchecked. Milestone 03
 remains in progress.

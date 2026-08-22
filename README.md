@@ -109,6 +109,18 @@ record; its exact workflows are reported at handoff. See the integrated
 [native root-selection contract](docs/native-root-selection.md) and
 [review record](docs/reviews/m03-native-root-selection-review-01.md).
 
+An isolated fifteenth-slice candidate defines a Linux/macOS native by-ID
+session lifecycle over the exact `FileSessionStore` shared with the composed
+engine. The caller supplies a validated session ID; the native host uses OS
+randomness for each new incarnation. Create durably publishes an empty record,
+resume returns the engine-canonical current lifetime, replay returns a bounded
+durable `SessionRecord` snapshot rather than UI events, and reset atomically
+publishes an empty new incarnation while advancing the durable revision. It
+does not add session listing or any CLI behavior. Production, independent
+tests, three fresh adversarial tracks, and exact feature and `main` delivery
+gates remain pending. See the candidate
+[native session-lifecycle contract](docs/native-session-lifecycle.md).
+
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
@@ -120,7 +132,8 @@ normative [native file session store](docs/session-store.md), the integrated
 [native reference-host composition](docs/native-reference-host.md), and the
 integrated [configured credential source](docs/configuration.md), and the
 integrated [native root-selection boundary](docs/native-root-selection.md).
-Session lifecycle remains open.
+The candidate [native session lifecycle](docs/native-session-lifecycle.md)
+remains undelivered, and session listing remains open.
 
 ## Development
 

@@ -15,6 +15,7 @@
 - [Native ask permission handler](ask-permission.md)
 - [Native reference-host composition](native-reference-host.md)
 - [Native root selection and preparation](native-root-selection.md)
+- [Native by-ID session lifecycle candidate](native-session-lifecycle.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

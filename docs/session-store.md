@@ -40,15 +40,23 @@ there.
 Each category has fixed redacted `Display` and `Debug` output. The error retains
 no root path, operating-system diagnostic, or raw error number.
 
-The separate fourteenth composed
-[`native root-selection candidate`](native-root-selection.md) does not change
+The integrated fourteenth
+[`native root-selection slice`](native-root-selection.md) does not change
 `FileSessionStore::open`: direct callers must still supply one existing absolute
-root and the constructor still creates nothing. The candidate instead prepares
+root and the constructor still creates nothing. The slice instead prepares
 and retains a private state root through a narrowly bounded descriptor-relative
 creation API, then lets new reference-host constructors transfer that retained
-descriptor into the store without reopening its path. Production and
-independent focused tests are present; formal adversarial review and delivery
-of that addition remain pending.
+descriptor into the store without reopening its path. That addition is
+integrated through final delivery record `d6b1b21` under exact green feature and
+`main` workflows.
+
+The isolated fifteenth
+[`native session-lifecycle candidate`](native-session-lifecycle.md) composes a
+`NativeSessionLifecycle` over the exact shared `FileSessionStore` already used
+by the engine. It does not change this constructor, retained-root identity,
+flat file layout, current schema, ordinary `SessionStore::load`/`save`
+behavior, or direct-caller contract. Production, independent tests, formal
+review, and delivery remain pending.
 
 ## Stable v1 layout
 
@@ -266,9 +274,12 @@ otherwise isolate the synchronous store.
 This slice adds no CLI command or existing CLI-byte change, provider or
 transport wiring, credential discovery, permission prompt or new permission
 mode, session listing, deletion, reset, or automatic cleanup. Environment-based
-state-root selection and fixed-suffix creation exist only in the separate
-fourteenth composed candidate and do not alter this path constructor. Migration
-and legacy import,
+state-root selection and fixed-suffix creation are integrated through the
+separate fourteenth slice and do not alter this path constructor. The isolated
+fifteenth candidate adds host-level by-ID create, resume, replay, and reset over
+the exact shared store, including a reset-specific atomic incarnation
+replacement; it does not change the ordinary store trait described by this
+page. Migration and legacy import,
 schema upgrades, encryption at rest, authenticated records, secure erasure,
 key management, backup/restore, multi-record transactions, cross-host
 coordination, and non-Unix hardening remain deferred. It adds no compatibility,

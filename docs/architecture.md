@@ -107,6 +107,14 @@ candidate `72cf64f6`. Replacement seal `f08dbd9e` and feature record `6f66b6e5`
 are feature-green; the latter is integrated on `main` under exact CI
 `32590429626` and benchmark evidence `32590429592`. Its integrated contract is
 in [`native-root-selection.md`](native-root-selection.md).
+An isolated fifteenth candidate adds a Linux/macOS
+`NativeSessionLifecycle` owned by `NativeReferenceHost`. The host, engine, and
+lifecycle share one `Arc<FileSessionStore>` and therefore one retained state
+root. Caller-supplied IDs drive durable create, resume, current-schema record
+replay, and atomic reset; production OS randomness supplies new incarnations.
+No session listing or CLI path is added. Production, independent tests, formal
+review, and exact delivery remain pending; the contract is in
+[`native-session-lifecycle.md`](native-session-lifecycle.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -154,6 +162,7 @@ config credential_source: environment
 
 host-selected existing absolute state root -> retained directory descriptor
  SessionId -> domain-separated SHA-256 v1 name -> bounded file SessionStore
+           -> NativeSessionLifecycle -> create / resume / record replay / reset
 
 core-owned bounded PermissionRequest -> AskPermissionHandler
                                      -> injected PermissionPrompter
@@ -257,8 +266,9 @@ skips discovery and reports `None`. Configuration mutation or migration,
 permission modes beyond `ask`, a concrete prompt UI, runtime ownership, token
 fields in config, CLI composition, executable native
 tools other than the bounded `read_file` and `list_files` library capabilities,
-session migration/encryption/reset/listing, required-root lifecycle, CLI
-expansion, and composed release-binary end-to-end evidence remain open.
+session migration/encryption/listing, delivery of the candidate by-ID native
+session lifecycle, CLI expansion, and composed release-binary end-to-end
+evidence remain open.
 
 ```text
                         machine-god-core
@@ -384,6 +394,43 @@ The first poll performs bounded synchronous serialization, I/O, advisory-lock
 acquisition, and sync work inline and can block the executor thread. Full
 format, polling, error, trust, and deferred-scope details are in
 [`session-store.md`](session-store.md).
+
+The fifteenth candidate adds `NativeSessionLifecycle` above that exact store
+without changing core's provider-neutral `SessionStore` trait. The engine,
+lifecycle, and `NativeReferenceHost::session_store()` observation share the
+same store allocation and retained directory descriptor. Lifecycle
+construction performs no entropy or persistence effect. Each create, resume,
+replay, or reset future is inert until first poll and inherits the store's
+bounded synchronous polling behavior.
+
+Every lifecycle constructor verifies exact shared `Arc` identity between its
+concrete `FileSessionStore` and the store configured in its engine. Two stores
+opened from the same path are still distinct authority objects and are rejected
+as `MismatchedSessionStore` before the incarnation source or filesystem is
+consulted. Reference-host composition wires one allocation by construction and
+maps an impossible internal mismatch to its existing redacted engine stage.
+
+Create takes a caller-supplied validated `SessionId`, obtains a production
+incarnation from a fixed-size OS cryptographic-random draw, and atomically
+persists the empty current record before returning a live session. Resume loads
+and validates the current record and converges on the engine-canonical local
+state for the same incarnation. Replay returns an owned durable
+`SessionRecord` snapshot; it does not register a live session or reconstruct
+events, UI state, transport chunks, permission decisions, or external effects.
+
+Reset rejects a locally live incompatible lifetime before record replacement,
+then atomically replaces one validated current record under its exact
+ID/incarnation/revision fence. The preceding load may create the fixed lock
+sidecar and the bounded incarnation source may already have been consulted.
+The session ID is unchanged, the incarnation is new, the durable revision
+advances with checked arithmetic, and `next_turn_sequence`, messages, and
+metadata become `1`, empty, and empty. The file is never deliberately missing
+between lifetimes. Cross-process old handles are not revoked, but the new
+incarnation fences their later saves. A post-rename directory-sync failure is
+ambiguous and requires resume/replay reconciliation rather than blind reset
+retry. Complete concurrency, entropy, resource, and redaction rules are in
+[`native-session-lifecycle.md`](native-session-lifecycle.md). Production and
+delivery evidence are pending.
 
 The ninth slice is `machine_god_native::AskPermissionHandler`. It adapts
 core's existing provider-neutral `PermissionHandler` to an explicitly injected,
