@@ -85,8 +85,9 @@ ambient-umask-dependent fixtures. All three formal tracks were green on exact
 behavior SHA `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`. The first seal exposed
 Linux-only strict-Clippy diagnostics, normalized at `90d8f96`; local macOS and
 Linux cross-target gates are green. All three final tracks are green on exact
-candidate `72cf64f6`; replacement-seal workflows, exact feature delivery, and
-`main` integration remain pending. Its candidate security boundary is in
+candidate `72cf64f6`. Replacement seal `f08dbd9e` is green under exact feature
+CI `32589778343` and benchmark evidence `32589778374`; feature-record delivery
+and `main` integration remain pending. Its candidate security boundary is in
 [`native-root-selection.md`](native-root-selection.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -260,7 +261,8 @@ production credential discovery follows acceptance of those roots. Production
 and focused tests cover this candidate behavior. Formal adversarial review was
 green on exact behavior SHA `f1dc4751`; after the post-review Linux lint
 normalization at `90d8f96`, all three final tracks are green on exact candidate
-`72cf64f6` and delivery evidence remains pending.
+`72cf64f6`. Replacement seal `f08dbd9e` is feature-green; feature-record and
+delivery evidence remain pending.
 
 The integrated file-session slice does not consume those status-derived state
 paths.

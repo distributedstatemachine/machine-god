@@ -1,6 +1,6 @@
 # Milestone 03 native root-selection review 01
 
-Status: **ADVERSARIALLY GREEN — replacement seal and delivery gates pending**
+Status: **REPLACEMENT SEAL GREEN — feature record and delivery pending**
 
 ## Candidate lineage
 
@@ -85,8 +85,16 @@ Status: **ADVERSARIALLY GREEN — replacement seal and delivery gates pending**
 - Final documentation/evidence rereview on `72cf64f6`: **GREEN**
 - Adversarially green post-lint candidate:
   `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`
-- Exact feature-gate SHA and workflows: pending
-- Replacement documentation seal and workflows: pending
+- Replacement documentation seal:
+  `f08dbd9eb2da81848b8eefb2d218006a64575835`
+- Exact replacement-seal feature CI run
+  [`32589778343`](https://github.com/distributedstatemachine/machine-god/actions/runs/32589778343):
+  **GREEN**
+- Exact replacement-seal feature benchmark-evidence run
+  [`32589778374`](https://github.com/distributedstatemachine/machine-god/actions/runs/32589778374):
+  **GREEN**
+- Feature-evidence record and exact workflows: this documentation-only commit;
+  exact SHA and runs reported at handoff
 - Exact `main` delivery and workflows: pending
 - Final delivery record and workflows: pending
 - Integration branch: `agent/m03-native-root-selection`
@@ -106,8 +114,9 @@ native Linux/macOS test job and benchmark evidence remained green. The portable
 source normalization is present at `90d8f96`, and its full local macOS plus
 Linux cross-target lint gates are green. Because production source changed,
 all three tracks rereviewed exact candidate `72cf64f6`; all are green together.
-The replacement documentation seal, feature, `main`, and final-delivery gates
-remain pending.
+Replacement documentation seal `f08dbd9e` is green under exact feature CI run
+`32589778343` and benchmark-evidence run `32589778374`. The feature-evidence
+record, `main`, and final-delivery gates remain pending.
 Milestone 03 remains `IN PROGRESS`.
 
 ## Candidate behavior
@@ -266,9 +275,9 @@ evidence.
 
 ## Remaining scope
 
-Replacement documentation-seal workflows, exact feature workflows, a fast-
-forward without force to `main`, exact `main` workflows, and final delivery
-evidence remain pending. Session lifecycle and
+Exact feature-evidence-record workflows, a fast-forward without force to
+`main`, exact `main` workflows, and final delivery evidence remain pending.
+Session lifecycle and
 reset/new-incarnation behavior, the remaining
 native tools, CLI expansion, release-binary end-to-end host evidence, and
 compatibility promotion remain open. No package or GitHub release is authorized.

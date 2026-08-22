@@ -298,9 +298,11 @@ then passed all native Linux/macOS jobs and benchmark run `32588948975`, but
 feature CI run `32588948956` exposed three Linux-only strict-Clippy diagnostics.
 Portable lint normalization is present at `90d8f96`, with local macOS and Linux
 cross-target gates green. All three final adversarial tracks are green on exact
-candidate `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`. A replacement documentation
-seal, exact feature delivery, fast-forward integration, exact `main` workflows,
-and the final delivery record remain pending. The
+candidate `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`. Replacement documentation
+seal `f08dbd9eb2da81848b8eefb2d218006a64575835` is green under exact feature CI
+run `32589778343` and benchmark-evidence run `32589778374`. The feature-evidence
+record, fast-forward integration, exact `main` workflows, and final delivery
+record remain pending. The
 candidate contract and review record are in
 [`native-root-selection.md`](native-root-selection.md) and
 [`m03-native-root-selection-review-01.md`](reviews/m03-native-root-selection-review-01.md).
