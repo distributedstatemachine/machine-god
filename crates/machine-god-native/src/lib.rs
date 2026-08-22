@@ -21,12 +21,10 @@ mod read_file;
     any(target_os = "linux", target_os = "macos")
 ))]
 mod reference_host;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod root_selection;
 mod session_store;
-#[cfg(all(
-    feature = "ai-gateway-http",
-    not(target_family = "wasm"),
-    any(target_os = "linux", target_os = "macos")
-))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace;
 
 pub use ai_gateway::{
@@ -78,6 +76,11 @@ pub use read_file::{
 ))]
 pub use reference_host::{
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use root_selection::{
+    NativeRootSelection, NativeRootSelectionError, NativeRootSelectionErrorKind,
+    PreparedNativeRoots, PreparedNativeRootsError, PreparedNativeRootsErrorKind,
 };
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,

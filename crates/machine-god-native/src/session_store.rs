@@ -213,6 +213,10 @@ impl SessionStore for FileSessionStore {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl FileSessionStore {
+    pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
+        Self { root }
+    }
+
     fn load_unix(&self, id: &SessionId) -> Result<Option<SessionRecord>, SessionStoreError> {
         let names = SessionNames::for_id(id);
         if !probe_data(self.root.as_fd(), &names.data)? {

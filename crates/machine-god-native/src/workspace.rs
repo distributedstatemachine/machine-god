@@ -3,6 +3,7 @@ use std::path::Path;
 use rustix::fd::OwnedFd;
 use rustix::fs::{FileType, Mode, OFlags};
 
+#[cfg(feature = "ai-gateway-http")]
 use crate::{ListFilesTool, ReadFileTool};
 
 pub(crate) struct WorkspaceRoot {
@@ -37,6 +38,7 @@ impl WorkspaceRoot {
         Ok(Self { descriptor })
     }
 
+    #[cfg(feature = "ai-gateway-http")]
     pub(crate) fn into_tools(self) -> Result<(ListFilesTool, ReadFileTool), WorkspaceRootError> {
         let list_files_root = self
             .descriptor
@@ -46,5 +48,9 @@ impl WorkspaceRoot {
             ListFilesTool::from_root_descriptor(list_files_root),
             ReadFileTool::from_root_descriptor(self.descriptor),
         ))
+    }
+
+    pub(crate) const fn descriptor(&self) -> &OwnedFd {
+        &self.descriptor
     }
 }

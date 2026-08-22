@@ -10,7 +10,7 @@ use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AskPermissionHandler, FileSessionStore,
     LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind, NativeTransportKind,
-    PermissionMode, PermissionPrompter, discover_ai_gateway_credential,
+    PermissionMode, PermissionPrompter, PreparedNativeRoots, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -140,6 +140,47 @@ impl NativeReferenceHost {
         )
     }
 
+    /// Composes the production AI Gateway HTTP reference host from retained,
+    /// identity-checked roots.
+    ///
+    /// This function consumes the workspace and state descriptors retained by
+    /// [`PreparedNativeRoots`] and does not reopen either selected path. It does
+    /// not create a runtime, poll the permission prompt, touch session records,
+    /// or perform network I/O.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed stage-only error if a configured selection is unsupported
+    /// or a component cannot be constructed safely.
+    pub fn compose_ai_gateway_http_with_prepared_roots(
+        loaded_config: LoadedNativeConfig,
+        credential_environment: AiGatewayCredentialEnvironment,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_selections(&loaded_config)?;
+        let (list_files, read_file, session_store) = consume_prepared_roots(prepared_roots)?;
+
+        let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
+        })?;
+        let credential_source = credential.source();
+        let transport =
+            AiGatewayHttpTransport::new(credential.into_bearer_token()).map_err(|_| {
+                NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::HttpTransport)
+            })?;
+
+        Self::finish_composition(
+            loaded_config,
+            Arc::new(transport),
+            list_files,
+            read_file,
+            session_store,
+            permission_prompter,
+            Some(credential_source),
+        )
+    }
+
     /// Composes a reference host over an explicitly injected AI Gateway transport.
     ///
     /// This path retains the same configuration, workspace, session-store, and
@@ -162,6 +203,37 @@ impl NativeReferenceHost {
         validate_selections(&loaded_config)?;
         let (list_files, read_file) = open_workspace_tools(workspace_root)?;
         let session_store = open_session_store(session_root)?;
+
+        Self::finish_composition(
+            loaded_config,
+            transport,
+            list_files,
+            read_file,
+            session_store,
+            permission_prompter,
+            None,
+        )
+    }
+
+    /// Composes a reference host over an explicitly injected AI Gateway
+    /// transport and retained, identity-checked roots.
+    ///
+    /// This path performs no credential discovery or HTTP transport
+    /// construction and does not reopen either path represented by
+    /// [`PreparedNativeRoots`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed stage-only error if a configured selection is unsupported
+    /// or a component cannot be constructed safely.
+    pub fn compose_with_ai_gateway_transport_and_prepared_roots(
+        loaded_config: LoadedNativeConfig,
+        transport: Arc<dyn AiGatewayTransport>,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_selections(&loaded_config)?;
+        let (list_files, read_file, session_store) = consume_prepared_roots(prepared_roots)?;
 
         Self::finish_composition(
             loaded_config,
@@ -271,5 +343,16 @@ fn open_session_store(
 ) -> Result<FileSessionStore, NativeReferenceHostBuildError> {
     FileSessionStore::open(session_root).map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::SessionStore)
+    })
+}
+
+fn consume_prepared_roots(
+    prepared_roots: PreparedNativeRoots,
+) -> Result<
+    (crate::ListFilesTool, crate::ReadFileTool, FileSessionStore),
+    NativeReferenceHostBuildError,
+> {
+    prepared_roots.into_parts().map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WorkspaceRoot)
     })
 }
