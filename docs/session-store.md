@@ -239,9 +239,10 @@ additionally reduces their code and message to `store_failed` / `session store
 failed` while preserving the trusted kind and retryability fields.
 
 All I/O, advisory-lock acquisition, `fsync`, and directory synchronization is
-bounded in retained data and successful transfer work. Interrupted system
-calls are retried, so syscall attempts and wall-clock duration are not bounded.
-The returned futures do not
+bounded in retained data and successful transfer work. Advisory-lock
+acquisition, byte transfers, and `fsync` retry `EINTR`; other interrupted
+operations surface through the fixed error taxonomy. Retry attempts and
+wall-clock duration are not bounded. The returned futures do not
 spawn a thread, task, timer, or runtime work. They have no effect before first
 poll and detach no work on drop; once polled, dropping cannot preempt the
 synchronous operation already executing. A host that must keep an async

@@ -1,14 +1,21 @@
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Write};
 use std::path::Path;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::collections::BTreeMap;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::io::{self, Write};
+
 use machine_god_core::{
-    BoxFuture, ContentBlock, Message, Role, SessionId, SessionIncarnationId, SessionRecord,
-    SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind, ToolCall, ToolCallId,
-    ToolName, ToolOutput,
+    BoxFuture, ContentBlock, SessionId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreError, SessionStoreErrorKind,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use machine_god_core::{
+    Message, Role, SessionIncarnationId, ToolCall, ToolCallId, ToolName, ToolOutput,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -25,7 +32,9 @@ pub const FILE_SESSION_SCHEMA_VERSION: u32 = 1;
 /// Maximum number of serialized bytes in one file session record.
 pub const MAX_FILE_SESSION_BYTES: usize = 8_651_165;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_STORED_JSON_DEPTH: usize = 64;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_STORED_JSON_NODES: usize = 65_536;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -186,7 +195,7 @@ impl SessionStore for FileSessionStore {
         record: SessionRecord,
         expected_revision: Option<SessionRevision>,
     ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
-        let mut record = RecordOwner::new(record);
+        let record = RecordOwner::new(record);
         Box::pin(async move {
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
@@ -195,6 +204,7 @@ impl SessionStore for FileSessionStore {
             }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
+                let mut record = record;
                 self.save_unix(record.get_mut(), expected_revision)
             }
         })
@@ -252,7 +262,7 @@ impl FileSessionStore {
         record.revision = revision;
         let bytes = serialize_record(record)?;
         let temp = create_temp(self.root.as_fd(), &names.temp)?;
-        if let Err(error) = write_all(&temp, &bytes).and_then(|()| rustix::fs::fsync(&temp)) {
+        if let Err(error) = write_all(&temp, &bytes).and_then(|()| sync_file(&temp)) {
             let _ = rustix::fs::unlinkat(self.root.as_fd(), &names.temp, AtFlags::empty());
             return Err(map_io_error(error));
         }
@@ -265,7 +275,7 @@ impl FileSessionStore {
             let _ = rustix::fs::unlinkat(self.root.as_fd(), &names.temp, AtFlags::empty());
             return Err(map_io_error(error));
         }
-        if rustix::fs::fsync(&self.root).is_err() {
+        if sync_file(&self.root).is_err() {
             return Err(save_ambiguous());
         }
         Ok(revision)
@@ -394,12 +404,8 @@ fn map_existing_entry_open_error(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn lock_exclusive(file: &OwnedFd) -> Result<(), SessionStoreError> {
-    loop {
-        match rustix::fs::flock(file, FlockOperation::LockExclusive) {
-            Err(error) if error == rustix::io::Errno::INTR => {}
-            result => return result.map_err(map_io_error),
-        }
-    }
+    retry_interrupted(|| rustix::fs::flock(file, FlockOperation::LockExclusive))
+        .map_err(map_io_error)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -436,12 +442,8 @@ fn read_record(
             return Err(corrupt());
         }
         let chunk_limit = remaining.min(chunk.len());
-        let read = loop {
-            match rustix::io::read(&file, &mut chunk[..chunk_limit]) {
-                Err(error) if error == rustix::io::Errno::INTR => {}
-                result => break result.map_err(map_io_error)?,
-            }
-        };
+        let read = retry_interrupted(|| rustix::io::read(&file, &mut chunk[..chunk_limit]))
+            .map_err(map_io_error)?;
         if read == 0 {
             break;
         }
@@ -517,14 +519,30 @@ fn create_new_temp(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_all(file: &OwnedFd, mut bytes: &[u8]) -> Result<(), rustix::io::Errno> {
     while !bytes.is_empty() {
-        match rustix::io::write(file, bytes) {
+        match retry_interrupted(|| rustix::io::write(file, bytes)) {
             Ok(0) => return Err(rustix::io::Errno::IO),
             Ok(written) => bytes = &bytes[written..],
-            Err(error) if error == rustix::io::Errno::INTR => {}
             Err(error) => return Err(error),
         }
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_file(file: &OwnedFd) -> Result<(), rustix::io::Errno> {
+    retry_interrupted(|| rustix::fs::fsync(file))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn retry_interrupted<T>(
+    mut operation: impl FnMut() -> Result<T, rustix::io::Errno>,
+) -> Result<T, rustix::io::Errno> {
+    loop {
+        match operation() {
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            result => return result,
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -546,12 +564,14 @@ fn map_root_open_error(root: &Path, error: rustix::io::Errno) -> FileSessionStor
     FileSessionStoreOpenError::new(kind)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Serialize)]
 struct WriteEnvelope<'a> {
     schema_version: u32,
     record: &'a SessionRecord,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn serialize_record(record: &SessionRecord) -> Result<Vec<u8>, SessionStoreError> {
     let mut writer = BoundedWriter::new();
     serde_json::to_writer(
@@ -571,11 +591,13 @@ fn serialize_record(record: &SessionRecord) -> Result<Vec<u8>, SessionStoreError
     Ok(writer.bytes)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct BoundedWriter {
     bytes: Vec<u8>,
     overflowed: bool,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl BoundedWriter {
     fn new() -> Self {
         Self {
@@ -585,6 +607,7 @@ impl BoundedWriter {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Write for BoundedWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if bytes.len() > MAX_FILE_SESSION_BYTES.saturating_sub(self.bytes.len()) {
@@ -600,6 +623,7 @@ impl Write for BoundedWriter {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredEnvelope {
@@ -607,6 +631,7 @@ struct StoredEnvelope {
     record: StoredRecord,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredRecord {
@@ -618,6 +643,7 @@ struct StoredRecord {
     metadata: BTreeMap<String, Value>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredMessage {
@@ -625,6 +651,7 @@ struct StoredMessage {
     content: Vec<StoredContentBlock>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum StoredContentBlock {
@@ -643,6 +670,7 @@ enum StoredContentBlock {
     },
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredToolCall {
@@ -651,6 +679,7 @@ struct StoredToolCall {
     arguments: Value,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredToolOutput {
@@ -658,6 +687,7 @@ struct StoredToolOutput {
     is_error: bool,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl From<StoredRecord> for SessionRecord {
     fn from(record: StoredRecord) -> Self {
         Self {
@@ -671,6 +701,7 @@ impl From<StoredRecord> for SessionRecord {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl From<StoredMessage> for Message {
     fn from(message: StoredMessage) -> Self {
         Self {
@@ -684,6 +715,7 @@ impl From<StoredMessage> for Message {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl From<StoredContentBlock> for ContentBlock {
     fn from(block: StoredContentBlock) -> Self {
         match block {
@@ -707,6 +739,7 @@ impl From<StoredContentBlock> for ContentBlock {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
     let roots = record
         .metadata
@@ -726,10 +759,12 @@ fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct JsonValidationBudget {
     nodes: usize,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl JsonValidationBudget {
     fn validate(&mut self, root: &Value) -> Result<(), ()> {
         let mut frames = Vec::<JsonFrame<'_>>::new();
@@ -772,16 +807,19 @@ impl JsonValidationBudget {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct JsonFrame<'a> {
     container_depth: usize,
     children: JsonChildren<'a>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 enum JsonChildren<'a> {
     Array(std::slice::Iter<'a, Value>),
     Object(serde_json::map::Values<'a>),
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl<'a> Iterator for JsonChildren<'a> {
     type Item = &'a Value;
 
@@ -804,6 +842,7 @@ impl RecordOwner {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn get_mut(&mut self) -> &mut SessionRecord {
         self.record.as_mut().expect("record owner is armed")
     }
@@ -877,6 +916,7 @@ fn drop_json_value_iterative(root: Value) {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn corrupt() -> SessionStoreError {
     SessionStoreError::new(
         SessionStoreErrorKind::Corrupt,
@@ -900,6 +940,7 @@ fn map_io_error(_error: rustix::io::Errno) -> SessionStoreError {
     unavailable(true)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn revision_conflict() -> SessionStoreError {
     SessionStoreError::new(
         SessionStoreErrorKind::Conflict,
@@ -909,6 +950,7 @@ fn revision_conflict() -> SessionStoreError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn incarnation_conflict() -> SessionStoreError {
     SessionStoreError::new(
         SessionStoreErrorKind::Conflict,
@@ -918,6 +960,7 @@ fn incarnation_conflict() -> SessionStoreError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn revision_exhausted() -> SessionStoreError {
     SessionStoreError::new(
         SessionStoreErrorKind::Other,
@@ -927,6 +970,7 @@ fn revision_exhausted() -> SessionStoreError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn too_large() -> SessionStoreError {
     SessionStoreError::new(
         SessionStoreErrorKind::Other,
@@ -936,6 +980,7 @@ fn too_large() -> SessionStoreError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn serialization_failed() -> SessionStoreError {
     SessionStoreError::new(
         SessionStoreErrorKind::Other,
@@ -945,6 +990,7 @@ fn serialization_failed() -> SessionStoreError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn save_ambiguous() -> SessionStoreError {
     SessionStoreError::new(
         SessionStoreErrorKind::Unavailable,
@@ -952,4 +998,34 @@ fn save_ambiguous() -> SessionStoreError {
         "file session save outcome is ambiguous",
         false,
     )
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use super::retry_interrupted;
+
+    #[test]
+    fn interrupted_operations_retry_until_success_but_other_errors_return() {
+        let mut attempts = 0_u8;
+        let value = retry_interrupted(|| {
+            attempts += 1;
+            if attempts < 4 {
+                Err(rustix::io::Errno::INTR)
+            } else {
+                Ok(17_u8)
+            }
+        })
+        .unwrap();
+        assert_eq!(value, 17);
+        assert_eq!(attempts, 4);
+
+        let mut attempts = 0_u8;
+        let error = retry_interrupted(|| {
+            attempts += 1;
+            Err::<(), _>(rustix::io::Errno::IO)
+        })
+        .unwrap_err();
+        assert_eq!(error, rustix::io::Errno::IO);
+        assert_eq!(attempts, 1);
+    }
 }

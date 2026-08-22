@@ -131,11 +131,12 @@ erasure, key management, migration, reset, and listing remain deferred.
 Load and save futures are inert until first poll and spawn no task, thread,
 timer, or runtime work. First poll performs bounded synchronous filesystem I/O,
 advisory locking, file sync, and directory sync inline. Retained data and
-successful transfer work are bounded, but interrupted syscalls are retried;
-syscall attempts and wall-clock duration are not bounded. Those calls can block
-the polling executor thread, and dropping the future cannot interrupt a
-synchronous call already in progress. Fixed errors never reflect session IDs,
-hashes, roots, child paths,
+successful transfer work are bounded. Advisory locking, byte transfers, and
+`fsync` retry `EINTR`; other interrupted operations use the fixed error
+taxonomy. Retry attempts and wall-clock duration are not bounded. Those calls
+can block the polling executor thread, and dropping the future cannot interrupt
+a synchronous call already in progress. Fixed errors never reflect session
+IDs, hashes, roots, child paths,
 record bytes, parser diagnostics, OS text, or raw error numbers. The complete
 candidate contract and fixed taxonomy are in
 [`session-store.md`](session-store.md).
