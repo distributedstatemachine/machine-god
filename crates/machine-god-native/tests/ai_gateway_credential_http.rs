@@ -139,17 +139,19 @@ fn read_complete_request(stream: &mut TcpStream) -> io::Result<String> {
     Ok(head.to_owned())
 }
 
-#[test]
-fn selected_discovered_credential_is_the_only_authorization_header_on_the_wire() {
+fn assert_wire_handoff(
+    oidc: Option<&str>,
+    api_key: Option<&str>,
+    expected_source: AiGatewayCredentialSource,
+    expected_token: &str,
+    forbidden_token: Option<&str>,
+) {
     let credential = discover_ai_gateway_credential(AiGatewayCredentialEnvironment::new(
-        Some(SELECTED_TOKEN.into()),
-        Some(LOWER_TOKEN.into()),
+        oidc.map(Into::into),
+        api_key.map(Into::into),
     ))
     .unwrap();
-    assert_eq!(
-        credential.source(),
-        AiGatewayCredentialSource::VercelOidcToken
-    );
+    assert_eq!(credential.source(), expected_source);
 
     let server = OneShotServer::start();
     let transport = AiGatewayHttpTransport::with_endpoint_and_limits(
@@ -181,7 +183,31 @@ fn selected_discovered_credential_is_the_only_authorization_header_on_the_wire()
         .collect::<Vec<_>>();
     assert_eq!(
         authorization,
-        [format!("authorization: Bearer {SELECTED_TOKEN}")]
+        [format!("authorization: Bearer {expected_token}")]
     );
-    assert!(!request_head.contains(LOWER_TOKEN));
+    if let Some(forbidden_token) = forbidden_token {
+        assert!(!request_head.contains(forbidden_token));
+    }
+}
+
+#[test]
+fn selected_oidc_credential_is_the_only_authorization_header_on_the_wire() {
+    assert_wire_handoff(
+        Some(SELECTED_TOKEN),
+        Some(LOWER_TOKEN),
+        AiGatewayCredentialSource::VercelOidcToken,
+        SELECTED_TOKEN,
+        Some(LOWER_TOKEN),
+    );
+}
+
+#[test]
+fn fallback_api_key_is_the_only_authorization_header_on_the_wire() {
+    assert_wire_handoff(
+        Some(""),
+        Some(LOWER_TOKEN),
+        AiGatewayCredentialSource::AiGatewayApiKey,
+        LOWER_TOKEN,
+        Some(SELECTED_TOKEN),
+    );
 }

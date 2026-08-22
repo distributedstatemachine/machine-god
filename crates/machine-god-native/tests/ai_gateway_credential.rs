@@ -246,6 +246,20 @@ fn selected_non_unicode_unix_values_fail_closed_and_are_redacted() {
         credential.source(),
         AiGatewayCredentialSource::VercelOidcToken
     );
+
+    let mut invalid_api_key = b"NON_UNICODE_API_KEY_MARKER".to_vec();
+    invalid_api_key.push(0xff);
+    let error = discover_ai_gateway_credential(environment(
+        Some(OsString::new()),
+        Some(OsString::from_vec(invalid_api_key)),
+    ))
+    .unwrap_err();
+    assert_error(
+        error,
+        AiGatewayCredentialErrorKind::InvalidEnvironment,
+        "AI Gateway credential environment is invalid",
+    );
+    assert!(!format!("{error:?} {error}").contains("NON_UNICODE_API_KEY_MARKER"));
 }
 
 #[cfg(windows)]
@@ -268,6 +282,22 @@ fn selected_non_unicode_windows_values_fail_closed_and_are_redacted() {
         "AI Gateway credential environment is invalid",
     );
     assert!(!format!("{error:?} {error}").contains("NON_UNICODE_SECRET_MARKER"));
+
+    let api_key_marker: Vec<u16> = "NON_UNICODE_API_KEY_MARKER"
+        .encode_utf16()
+        .chain([0xd800])
+        .collect();
+    let error = discover_ai_gateway_credential(environment(
+        Some(OsString::new()),
+        Some(OsString::from_wide(&api_key_marker)),
+    ))
+    .unwrap_err();
+    assert_error(
+        error,
+        AiGatewayCredentialErrorKind::InvalidEnvironment,
+        "AI Gateway credential environment is invalid",
+    );
+    assert!(!format!("{error:?} {error}").contains("NON_UNICODE_API_KEY_MARKER"));
 }
 
 #[test]
