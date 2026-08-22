@@ -1,7 +1,7 @@
 # Milestone 03 native `file_info` review 01
 
-Status: **FIRST FORMAL REVIEW NOT GREEN — finding fixes and three replacement
-tracks pending**
+Status: **REPLACEMENT CANDIDATE LOCAL GREEN — three replacement tracks and
+remote delivery pending**
 
 ## Candidate
 
@@ -20,6 +20,8 @@ tracks pending**
 - Isolated finding-test hardening:
   `7f2a2924b8e30abdfe572f54dfc51c1bd605a649`
 - Composed finding-fix behavior: `b69ec4b9dc46c4d43202a2c0c5ba499fa8fbd071`
+- Replacement local-gate precursor:
+  `d445eb384ceafad1f107e78d456c93aecc0bc5a2`
 - Replacement review head: pending
 - Delivery branch: `agent/m03-file-info`
 - Toolchain: Rust and Cargo 1.94.1 exactly
@@ -143,16 +145,20 @@ Independently owned hardening `7f2a292` adds the required decorated-root,
 escaping-heavy exact result-bound, signed pre-epoch, and pure invalid-metadata
 conversion evidence. It composes as behavior head `b69ec4b`, bringing the
 focused direct/engine/root/host suite from 34 to 36 tests plus five private unit
-tests. All three replacement tracks must review the same exact replacement SHA
-after its local gates and maintained documentation are composed.
+tests. Required replacement local gates are green at `d445eb3`. All three
+replacement tracks must review the same exact documentation-only descendant of
+that behavior SHA.
 
 ## Local and pending remote gates
 
-The initial 34 focused tests, formatting, workspace/all-target/all-feature
+The replacement's 36 focused integration tests and five private unit tests,
+formatting, workspace/all-target/all-feature
 warnings-denied Clippy, workspace tests, documentation tests, dependency policy
 and vulnerability checks, pinned compatibility-inventory check, and
 release-binary bare/help/status smoke checks are green under Rust and Cargo
-1.94.1 exactly. The 129-test repository Python gate initially had one
+1.94.1 exactly at local-gate precursor `d445eb3`. The 129-test repository
+Python gate is green with eight expected macOS skips. The first candidate's
+Python gate initially had one
 load-induced two-second timeout while a release build ran in parallel; that
 same regression reran green in isolation before the complete suite was rerun
 serially. This candidate changes no benchmark behavior.

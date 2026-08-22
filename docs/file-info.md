@@ -8,9 +8,9 @@ production at `f228c06bbda5d01b50905c66f378a2b29e0560bf`, where all 34
 initial focused tests are green. Finding-test hardening composes at `b69ec4b`,
 bringing the focused total to 36 plus five private unit tests. The first formal
 candidate is `8399ec7`; its three tracks were not all green. Required local
-gates were green through precursor `0973acf` and are being rerun on the
-replacement. Three replacement adversarial review tracks and exact feature and
-`main` delivery workflows remain pending. `file_info` is a library
+gates are green on the replacement through `d445eb3`. Three replacement
+adversarial review tracks and exact feature and `main` delivery workflows remain
+pending. `file_info` is a library
 capability in `machine-god-native`; the current CLI does not construct an engine,
 register this tool, prompt for permission, or change any invocation or output
 byte.
