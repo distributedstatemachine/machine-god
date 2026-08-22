@@ -168,7 +168,11 @@ bounded, while process lookup may materialize a complete OS value before the
 application can reject it. The exact candidate contract is in
 [`ai-gateway-credentials.md`](ai-gateway-credentials.md). This slice does not
 change schema v1, core, the transport, or the CLI, so the broader acquisition-
-and-configuration checklist item remains open.
+and-configuration checklist item remains open. Implementation, local gates,
+and three fresh adversarial tracks are green at
+`244e765713944b1bbe2ebca5bbbd02899c725e9f`; exact feature and `main` remote
+delivery gates remain pending. The review lineage is in the
+[`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
 ### Milestone 03 completion boundary
 
