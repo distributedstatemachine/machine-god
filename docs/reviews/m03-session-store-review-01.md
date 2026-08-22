@@ -31,10 +31,11 @@ no session command or wiring.
 - Records use a strict compact schema-v1 envelope capped at 8,651,165 bytes.
   Typed duplicate, unknown, missing, malformed, zero-counter, wrong-version,
   wrong-ID, over-depth, and over-node state fails closed.
-- Missing loads create no artifacts. Present loads and saves that pass initial
-  candidate validation hold a permanent per-session exclusive advisory lock
-  for filesystem/CAS processing and use bounded no-follow, nonblocking,
-  post-open-verified regular files.
+- Missing loads create no artifacts. For present loads and structurally valid
+  saves, after the permanent sidecar is safely opened, verified, and exclusively
+  locked, its advisory lock is held through record reads or filesystem/CAS
+  processing. Record and temporary-file access uses bounded no-follow,
+  nonblocking, post-open-verified regular files.
 - Save implements atomic compare-and-swap for cooperating processes, assigns a
   checked revision greater than both stored and candidate revisions, preserves
   incarnation, and never publishes a partial record.
@@ -98,9 +99,9 @@ Accepted findings:
   the green behavior/local gates from the pending feature-branch remote and
   `main` gates.
 - **LOW:** the initial reviewed-behavior summary said all saves acquire the
-  advisory lock, although structurally invalid candidates fail before any
-  filesystem operation. It now limits that statement to candidates that pass
-  initial validation and reach filesystem/CAS processing.
+  advisory lock, although candidates can fail before or during sidecar open,
+  verification, or lock acquisition. It now conditions the held-lock claim on
+  successful acquisition and states the protected processing interval.
 
 Both findings concern evidence precision only and do not change product code or
 the adversarially green behavior SHA.
