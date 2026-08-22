@@ -375,6 +375,41 @@ fn preparation_rejects_a_state_base_acl_without_creating_the_fixed_suffix() {
     assert!(!state_base.join("machine-god").exists());
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn preparation_accepts_a_deny_only_acl_on_a_home_base() {
+    let temporary = TemporaryDirectory::new();
+    let workspace = temporary.path().join("workspace");
+    let home = temporary.path().join("home-with-deny-acl");
+    create_private_dir(&workspace);
+    create_private_dir(&home);
+
+    let status = Command::new("/bin/chmod")
+        .args(["+a", "everyone deny delete"])
+        .arg(&home)
+        .status()
+        .expect("macOS chmod executable is available");
+    assert!(
+        status.success(),
+        "failed to install the DENY ACL fixture: {status}"
+    );
+    assert_eq!(mode(&home), 0o700);
+
+    let selection = NativeRootSelection::from_environment(
+        &environment(None, Some(home.as_os_str())),
+        &workspace,
+    )
+    .unwrap();
+    let prepared = PreparedNativeRoots::prepare(selection).unwrap();
+    let local = home.join(".local");
+    let state = local.join("state");
+    let state_root = state.join("machine-god");
+    assert_eq!(prepared.state_root(), state_root);
+    for path in [&local, &state, &state_root] {
+        assert_eq!(mode(path), 0o700);
+    }
+}
+
 #[test]
 fn preparation_rejects_equal_and_both_ancestor_directions_by_identity() {
     let temporary = TemporaryDirectory::new();
