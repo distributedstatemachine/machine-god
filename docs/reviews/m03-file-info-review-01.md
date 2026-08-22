@@ -1,7 +1,7 @@
 # Milestone 03 native `file_info` review 01
 
-Status: **LOCAL CANDIDATE GREEN — three adversarial tracks and remote delivery
-pending**
+Status: **FIRST FORMAL REVIEW NOT GREEN — finding fixes and three replacement
+tracks pending**
 
 ## Candidate
 
@@ -15,7 +15,9 @@ pending**
 - Isolated test-evidence documentation follow-up:
   `039dd03ce285c46a677062e18e8953776afcdc6d`
 - Composed local-gate precursor: `0973acfaa41b198f952fbdc204ee3d3cc462f2f4`
-- Formal review head: pending
+- First formal review head: `8399ec78450d258570e376e0989639d3f70fc976`
+- Finding-fix component: pending
+- Replacement review head: pending
 - Delivery branch: `agent/m03-file-info`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 
@@ -109,6 +111,34 @@ Every confirmed finding must be fixed and rereviewed until all three tracks are
 green on the same exact behavior SHA. Per the user's delivery instruction, a
 later documentation-only seal or delivery-evidence commit does not require an
 additional adversarial cycle after production behavior is green.
+
+## First formal review results
+
+All three tracks reviewed exact candidate `8399ec7`. The security and resource
+track was green. The correctness/API and documentation/evidence tracks were not
+green, so this candidate cannot be delivered.
+
+The correctness/API track found no production-logic defect, but confirmed
+three independent-evidence gaps:
+
+- decorated final-root symlink rejection and decorated real-root acceptance
+  were not frozen by direct `FileInfoTool::open` regressions;
+- the maximum-result test used an unescaped directory path, a null extension,
+  and only the core 64 KiB ceiling rather than proving the documented escaping-
+  heavy result remains below 17 KiB; and
+- signed pre-epoch output plus invalid size/nanosecond conversion boundaries
+  lacked direct evidence.
+
+The documentation/evidence track confirmed two low-severity inconsistencies:
+
+- the implementation plan said the three tools receive one descriptor instance
+  even though they receive the original plus two clones of one identity; and
+- the README still called the already-green local gates pending.
+
+This finding-fix candidate corrects the two documentation statements. An
+independently owned test hardening component and its exact composed replacement
+SHA will be recorded after that component completes its gates. All three
+replacement tracks must review that same replacement SHA.
 
 ## Local and pending remote gates
 

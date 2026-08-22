@@ -436,8 +436,9 @@ normative in [`file-info.md`](file-info.md).
 The candidate reference host registers exactly three workspace tools:
 `file_info`, `list_files`, and `read_file`; core exposes that catalog in
 deterministic alphabetical order. Prepared roots transfer descriptor clones of
-the same retained workspace identity so all three tools receive one descriptor
-instance. Production is present at isolated SHA `5c2d129`; independent direct
+the same retained workspace identity so the three tools receive three
+descriptor instances: the original plus two clones. Production is present at
+isolated SHA `5c2d129`; independent direct
 and engine tests are present at isolated SHA `ca0091c` and compose with
 production at `f228c06`, where all 34 focused tests are green. Required local
 gates are green through composed precursor `0973acf`. Three fresh adversarial

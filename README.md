@@ -14,9 +14,10 @@ discovery and loading, and capability-aware tool preflight before permission
 policy. It also includes bounded Unix-only `read_file` and one-level
 `list_files` library capabilities rooted in host-injected workspaces. The
 seventeenth candidate adds bounded no-follow `file_info` metadata inspection
-under a distinct exact authorization kind. It remains under local, adversarial,
-and remote review and is not delivered. The repository also includes a bounded
-AI Gateway codec over an injected host transport. An optional,
+under a distinct exact authorization kind. Its local gates are green; it
+remains under adversarial and remote review and is not delivered. The
+repository also includes a bounded AI Gateway codec over an injected host
+transport. An optional,
 native-only HTTPS transport for that codec is the seventh integrated bounded
 slice. It uses one pinned production endpoint and an explicitly injected,
 redacted bearer token.
