@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has nine integrated bounded slices.
+Milestone 03 has nine integrated bounded slices and a tenth bounded candidate.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -41,14 +41,21 @@ implemented, reviewed, and integrated on `main` at
 and benchmark run `32570197870` are green; the full lineage is recorded in the
 [`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
 Its fixed contract is in [`ask-permission.md`](ask-permission.md).
+The tenth candidate adds a separate, opt-in native credential snapshot. It
+selects a nonempty `VERCEL_OIDC_TOKEN` before a nonempty `AI_GATEWAY_API_KEY`,
+validates the selected value through the existing bounded bearer-token type,
+and moves that token without cloning into an explicit result. It does not
+change core, configuration schema v1, the transport, or CLI behavior. Its fixed
+candidate contract is in
+[`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
 `508b0adbbe4447a85bd08f47095ae16c089c05d5`. Exact main CI run `32535790803`
 and benchmark run `32535790824` are green.
-`machine-god-native` snapshots only `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and
-`HOME`, resolves namespaced config and state paths, and inspects their final
-metadata for status. A separate
+For config and status, `machine-god-native` snapshots only `XDG_CONFIG_HOME`,
+`XDG_STATE_HOME`, and `HOME`, resolves namespaced config and state paths, and
+inspects their final metadata for status. A separate
 synchronous native authority can load the resolved config file read-only.
 `machine-god-cli` remains a thin formatter for status, does not invoke the
 loader, and owns no product state. The exact surfaces are documented in
@@ -59,7 +66,8 @@ separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
 [`native file session store`](session-store.md). The ask-handler slice is
 also a library surface and does not change CLI bytes or supply a concrete
-terminal prompt.
+terminal prompt. The credential-discovery candidate is another separate
+library surface and does not add configuration fields or CLI composition.
 
 ```text
 process environment -> resolved native paths
@@ -76,6 +84,9 @@ host-selected endpoint/auth/status/retry transport
 
 host-injected bearer token -> optional bounded native HTTP transport
                            -> the same injected AI Gateway codec boundary
+
+owned VERCEL_OIDC_TOKEN / AI_GATEWAY_API_KEY snapshot
+ -> bounded native credential discovery -> explicit bearer token -> transport
 
 host-selected existing absolute state root -> retained directory descriptor
  SessionId -> domain-separated SHA-256 v1 name -> bounded file SessionStore
@@ -118,8 +129,8 @@ by authoritative opened-descriptor regularity validation. The loader retains at
 most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
-or operating-system error text. Configuration mutation, permission modes beyond
-`ask`, a concrete prompt UI, credential discovery and provider/CLI composition,
+or operating-system error text. Configuration mutation, credential fields,
+permission modes beyond `ask`, a concrete prompt UI, and provider/CLI composition,
 executable native tools other than the bounded `read_file` and `list_files`
 library capabilities, session migration/encryption/reset/listing, and CLI
 expansion remain deferred.
@@ -204,6 +215,24 @@ conforming prompter must keep its work owned by that future or clean it up on
 drop. A concrete prompt UI, CLI composition, grant persistence, and permission
 modes beyond `ask` remain outside this slice. The complete contract and
 delivery evidence are in [`ask-permission.md`](ask-permission.md).
+
+The tenth candidate is a separate `ai-gateway-http`-gated credential adapter.
+`AiGatewayCredentialEnvironment::new` accepts owned injected `OsString`
+values; `from_process` snapshots only `VERCEL_OIDC_TOKEN` and
+`AI_GATEWAY_API_KEY`. Discovery consumes the snapshot, treats only an exactly
+empty value as absent, and selects a nonempty OIDC token before a nonempty API
+key. A selected non-Unicode value is an invalid-environment error. A selected
+Unicode value moves through `AiGatewayBearerToken::new`, so the existing exact
+1–4,096-byte RFC 6750 syntax remains the sole validator. Invalid higher
+precedence fails closed rather than falling through.
+
+The snapshot can retain at most two validated 4 KiB values; the selected token
+moves into `DiscoveredAiGatewayCredential`, and the unused token is dropped.
+Snapshot, result, token, and error formatting do not reflect credentials.
+Process lookup may materialize a complete OS value before application
+validation, and clearing remains best-effort rather than a locked-memory or
+complete zeroization claim. The exact candidate contract and integration gate
+are in [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 
 The first concrete provider remains on the native side of core's explicit
 boundary but owns no network effect. `AiGatewayProvider` encodes the supported

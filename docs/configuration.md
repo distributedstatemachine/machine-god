@@ -41,6 +41,10 @@ required fields:
 Unknown or duplicate fields, missing fields, wrong JSON types or shapes,
 unsupported schema versions, and permission modes other than `ask` are errors.
 There is no forward-compatible field ignoring or value coercion in this slice.
+AI Gateway credentials are not schema-v1 fields. The separate opt-in
+[`native credential discovery candidate`](ai-gateway-credentials.md) owns a
+dedicated non-cloneable secret snapshot and does not put secret values into
+`NativeConfig`, status output, or the configuration file.
 
 The raw file limit is 64 KiB (65,536 bytes). A file of exactly that length can
 be considered for parsing; any additional byte makes it oversized. Bytes must
@@ -78,7 +82,8 @@ read or parse `config.json`, and reports permission mode `ask`. Existing CLI
 help, version, status, error, and bare-invocation bytes remain unchanged; no CLI
 command loads configuration in this slice.
 
-Configuration mutation, permission prompting and modes beyond `ask`, concrete
-providers and tools, durable native sessions, broader CLI behavior, and
+Configuration mutation, credential fields, permission prompting and modes
+beyond `ask`, concrete providers and tools, durable native sessions, broader
+CLI behavior, and
 compatibility or performance claims remain deferred. This loader is not a
 claim that Milestone 03 is complete.

@@ -42,6 +42,12 @@ The feature exposes these construction surfaces:
   limits, while `with_endpoint_and_limits` accepts an already validated
   endpoint and limits.
 
+The separate
+[`native credential discovery candidate`](ai-gateway-credentials.md) is gated
+the same way and can supply the explicit `AiGatewayBearerToken`. Discovery is
+not part of the transport and does not run during transport construction or a
+request.
+
 Construction returns fixed `AiGatewayHttpConfigError` categories:
 `InvalidBearerToken`, `InvalidEndpoint`, `InvalidLimits`, or
 `ClientInitialization`. Display and debug text do not reflect the supplied
@@ -76,9 +82,11 @@ fn provider_from_host_secret(
 }
 ```
 
-This API does not read an environment variable, configuration file, keychain,
-credential helper, command-line flag or prompt. Credential acquisition,
-rotation, lifetime and authorization remain trusted-host responsibilities.
+This transport API does not read an environment variable, configuration file,
+keychain, credential helper, command-line flag or prompt. The separate
+candidate may read only its two documented environment names when a host
+explicitly selects process discovery. Credential rotation, lifetime and
+authorization remain trusted-host responsibilities.
 
 ## Endpoint and credential confinement
 

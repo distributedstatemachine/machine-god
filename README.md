@@ -19,21 +19,26 @@ redacted bearer token.
 An eighth bounded slice implements a Unix file-backed session store under an
 explicit host-opened root. Its exact feature, documentation-seal, and `main`
 checks are green; it is integrated at
-`8f7b47db9580b14570bf9fb55763858f71a81271`. Credential discovery, provider/CLI
-wiring, a concrete prompt UI, broader session lifecycle features, the remaining
+`8f7b47db9580b14570bf9fb55763858f71a81271`. Provider/CLI wiring, a concrete
+prompt UI, broader session lifecycle features, the remaining
 native tools, and compatibility work remain planned. A ninth bounded slice
 defines an executor-neutral, fail-closed native `AskPermissionHandler` over an
 explicitly injected prompter. It is integrated on `main` at
 `27e3f2b3ff170044732d9124ffb210beabcda206`; exact main CI run `32570197911`
 and benchmark run `32570197870` are green. It has no CLI or terminal authority.
 See its [contract](docs/ask-permission.md).
+A tenth bounded candidate adds opt-in native discovery of a validated AI
+Gateway bearer credential from an owned, redacted environment snapshot. It
+does not change configuration schema v1 or CLI behavior; see its
+[candidate contract](docs/ai-gateway-credentials.md).
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
-[native HTTP transport](docs/ai-gateway-http.md) contracts, and the normative
-[native file session store](docs/session-store.md).
+[native HTTP transport](docs/ai-gateway-http.md) and
+[credential discovery](docs/ai-gateway-credentials.md) contracts, and the
+normative [native file session store](docs/session-store.md).
 
 ## Development
 

@@ -38,6 +38,11 @@ and benchmark run `32570197870` are green. Permission mode remains `ask`; CLI
 registration and a concrete prompt remain future work. The slice's exact
 security boundary and review evidence are in
 [`ask-permission.md`](ask-permission.md).
+A tenth bounded candidate adds opt-in native credential discovery behind the
+existing `ai-gateway-http` and non-WASM gate. It owns a separate secret snapshot
+and does not add credential authority to core, configuration schema v1, or the
+CLI. Its exact boundary is in
+[`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -79,7 +84,8 @@ read errors are not converted into defaults.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation, a concrete prompt UI and modes beyond
-`ask`, concrete provider/CLI composition, credential discovery, CLI expansion,
+`ask`, concrete provider/CLI composition and credential configuration, CLI
+expansion,
 native tools other than the bounded library-level `read_file` and `list_files`,
 and compatibility or performance claims remain outside the implemented slices.
 
@@ -338,8 +344,9 @@ configuration surface. Endpoint text is bounded to
 the bearer credential cannot be redirected or proxy-routed by this client.
 
 The trusted host must pass the bearer value directly through
-`AiGatewayBearerToken::new`. Machine-god performs no environment, file,
-keychain, interactive, CLI or broader configuration lookup. The value must be a
+`AiGatewayBearerToken::new`. The transport itself performs no environment,
+file, keychain, interactive, CLI or broader configuration lookup. The value
+must be a
 1–4,096-byte RFC 6750 bearer `b64token`: one or more ASCII letters, digits,
 `-`, `.`, `_`, `~`, `+`, or `/`, followed only by optional trailing `=`
 padding. It is attached only as the `Authorization: Bearer` header. Its display
@@ -348,6 +355,19 @@ diagnostics are redacted, and no dependency text is forwarded. This is a
 non-reflection guarantee, not a secure-memory-erasure claim; the injecting host
 remains responsible for credential acquisition, lifetime, rotation and origin
 scope.
+
+The tenth candidate supplies one separate optional acquisition path. An owned
+snapshot contains only `VERCEL_OIDC_TOKEN` and `AI_GATEWAY_API_KEY`; a nonempty
+OIDC token has precedence, an exactly empty value is absent, and any selected
+nonempty invalid value fails closed without fallback. Non-Unicode selection is
+distinct from malformed or oversized Unicode bearer input. Results move the
+existing bearer type without cloning, and errors retain no value, source, OS
+diagnostic, or validator text. Debug and display surfaces are non-reflecting.
+At most two validated 4 KiB tokens are retained before selection, but process
+lookup may materialize a larger OS value before rejection. Drop clearing is
+best-effort and does not cover environment storage, allocator history, HTTP
+header copies, or other dependency internals. The candidate does not persist,
+rotate, log, print, transmit, or configure a credential by itself.
 
 The Reqwest client disables redirects, proxy use, automatic response
 decompression, cookies, retry and referer generation and fixes HTTP/1. A

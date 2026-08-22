@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with nine integrated bounded slices. The first
+with nine integrated bounded slices and a tenth bounded candidate. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -154,15 +154,35 @@ Exact main CI run `32570197911` and benchmark run `32570197870` are green. The
 complete lineage is recorded in the
 [`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
 
+The tenth bounded slice is a candidate, not an integrated slice. Under the
+existing native `ai-gateway-http` and non-WASM gate, it owns a separate
+`AiGatewayCredentialEnvironment` snapshot containing only `VERCEL_OIDC_TOKEN`
+and `AI_GATEWAY_API_KEY`. A nonempty OIDC token has precedence over a nonempty
+API key; unset and exactly empty values are absent; and any selected nonempty
+non-Unicode, oversized, or malformed value fails closed without fallback.
+Discovery consumes the snapshot and returns the selected source plus the
+existing 1–4,096-byte RFC 6750 `AiGatewayBearerToken` without cloning it.
+Errors have fixed missing, invalid-environment, and invalid-bearer categories
+that retain and reflect no source or input. Accepted and retained data are
+bounded, while process lookup may materialize a complete OS value before the
+application can reject it. The exact candidate contract is in
+[`ai-gateway-credentials.md`](ai-gateway-credentials.md). This slice does not
+change schema v1, core, the transport, or the CLI, so the broader acquisition-
+and-configuration checklist item remains open.
+
 ### Milestone 03 completion boundary
 
-The nine slices alone do not complete Milestone 03. The following checklist is
-the frozen M03 boundary; changing ownership requires an explicit plan change in
-a reviewed commit rather than silently deferring a gate:
+The nine integrated slices and tenth candidate do not complete Milestone 03.
+The following checklist is the frozen M03 boundary; changing ownership requires
+an explicit plan change in a reviewed commit rather than silently deferring a
+gate:
 
 - [x] Integrate and retain evidence for slices one through eight.
 - [x] Integrate the ninth ask-handler slice under its exact contract and
   retain feature, adversarial-review, exact-SHA CI, and `main` evidence.
+- [ ] Integrate the tenth credential-discovery candidate under its exact
+  contract and retain feature, adversarial-review, exact-SHA CI, and `main`
+  evidence.
 - [ ] Compose a useful native reference-host path through an explicitly selected
   provider and transport, session store, permission handler and prompter, and
   registered tools. The CLI stays a thin host and owns no product state.
@@ -204,7 +224,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the ninth slice; Zig remains only the pinned upstream benchmark build
+by the tenth candidate; Zig remains only the pinned upstream benchmark build
 input, not a machine-god product language or runtime dependency. The provider
 is explicitly scoped to a pinned wire shape and makes no current-protocol or
 full fx-equivalence claim. Help and status remain claim-ineligible and
