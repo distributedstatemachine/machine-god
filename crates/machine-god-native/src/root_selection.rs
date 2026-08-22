@@ -11,9 +11,9 @@ use crate::workspace::WorkspaceRoot;
 use crate::workspace::WorkspaceRootError;
 use crate::{FileSessionStore, NativeEnvironment, STATE_NAMESPACE};
 
-const PRIVATE_DIRECTORY_MODE: u32 = 0o700;
-const GROUP_OR_OTHER_WRITE: u32 = 0o022;
-const GROUP_OR_OTHER_PERMISSIONS: u32 = 0o077;
+const PRIVATE_DIRECTORY_MODE: u64 = 0o700;
+const GROUP_OR_OTHER_WRITE: u64 = 0o022;
+const GROUP_OR_OTHER_PERMISSIONS: u64 = 0o077;
 
 /// Stable category for native-root selection failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -466,12 +466,13 @@ fn prepare_suffix_directory(
         let metadata = rustix::fs::fstat(&descriptor)
             .map_err(|_| PreparedNativeRootsError::new(PreparedNativeRootsErrorKind::StateRoot))?;
         if metadata.st_uid != effective_uid
-            || u32::from(metadata.st_mode) & 0o777 != PRIVATE_DIRECTORY_MODE
+            || u64::from(metadata.st_mode) & 0o777 != PRIVATE_DIRECTORY_MODE
         {
             return Err(PreparedNativeRootsError::new(
                 PreparedNativeRootsErrorKind::UnsafeStateDirectory,
             ));
         }
+        #[cfg(target_os = "macos")]
         validate_extended_acl(&descriptor)?;
     } else {
         validate_existing_directory(&descriptor, effective_uid, is_final)?;
@@ -495,7 +496,7 @@ fn validate_existing_directory(
 ) -> Result<(), PreparedNativeRootsError> {
     let metadata = rustix::fs::fstat(descriptor)
         .map_err(|_| PreparedNativeRootsError::new(PreparedNativeRootsErrorKind::StateRoot))?;
-    let permissions = u32::from(metadata.st_mode);
+    let permissions = u64::from(metadata.st_mode);
     if !FileType::from_raw_mode(metadata.st_mode).is_dir()
         || metadata.st_uid != effective_uid
         || permissions & GROUP_OR_OTHER_WRITE != 0
@@ -505,6 +506,7 @@ fn validate_existing_directory(
             PreparedNativeRootsErrorKind::UnsafeStateDirectory,
         ));
     }
+    #[cfg(target_os = "macos")]
     validate_extended_acl(descriptor)?;
     Ok(())
 }
@@ -525,11 +527,6 @@ fn validate_extended_acl(descriptor: &OwnedFd) -> Result<(), PreparedNativeRoots
             PreparedNativeRootsErrorKind::UnsafeStateDirectory,
         ));
     }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-const fn validate_extended_acl(_descriptor: &OwnedFd) -> Result<(), PreparedNativeRootsError> {
     Ok(())
 }
 
