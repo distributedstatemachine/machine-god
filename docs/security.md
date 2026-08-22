@@ -60,15 +60,14 @@ and exact feature and `main` workflows are green; its final delivery record is
 `32579779134`, feature benchmark-evidence run `32579779123`, main CI run
 `32580066474`, and main benchmark-evidence run `32580066485` green. Its
 boundary is in [`native-reference-host.md`](native-reference-host.md).
-A thirteenth bounded candidate advances native configuration to strict v3 with
+A thirteenth bounded slice advances native configuration to strict v3 with
 one required closed, non-secret `environment` credential-source acquisition
 kind. Exact v1/v2 files remain readable and gain that projection only in
 memory. Production implementation, independent tests, local gates, and all
 three fresh adversarial tracks are green on exact behavior SHA
-`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact feature CI run
-`32582210892` and benchmark-evidence run `32582210927` are green on seal SHA
-`5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`. Fast-forward integration and exact
-`main` delivery remain pending.
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. It is integrated on `main` at
+`8755757da0da07e33af48d57f46bd9ea490b5449`; exact main CI run `32582978232`
+and benchmark-evidence run `32582978286` are green.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -88,7 +87,7 @@ CLI arguments are rejected as invalid. Output errors use a fixed diagnostic
 rather than reflecting path or OS-error text.
 
 Configuration loading uses the same config-location selection. In the
-thirteenth candidate, missing and unavailable locations yield the explicit
+thirteenth slice, missing and unavailable locations yield the explicit
 strict schema-v3 built-in values: permission mode `ask`, provider
 `vercel_ai_gateway`, transport `ai_gateway_http`, model `zai/glm-5.2`, and the
 non-secret credential-source kind `environment`. Exact legacy schema-v1 and
@@ -143,13 +142,13 @@ lifecycle, CLI composition and expansion, native tools other than the bounded
 library-level `read_file` and `list_files`, composed release-binary end-to-end
 host evidence, and compatibility or performance claims remain open. The
 twelfth slice composes the existing library components only after an already
-validated config value is supplied; the thirteenth candidate adds validation
+validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
 or CLI authority.
 
 The integrated `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. The thirteenth
-candidate also requires configured credential source `environment`. It then
+slice also requires configured credential source `environment`. It then
 opens the existing absolute workspace once and clones that retained descriptor so
 exactly `list_files` and `read_file` share one opened directory identity. This
 prevents path replacement between separate tool-construction opens from giving
@@ -197,9 +196,8 @@ raw error numbers are discarded. Host debug output is fixed to
 `NativeReferenceHost { .. }` and exposes no config structure or source. The
 twelfth-slice behaviors are adversarially green and integrated on `main` under
 exact green workflows. The schema-v3 and configured-source validation changes
-remain candidate behavior with three fresh adversarial tracks green on exact
-SHA `35ce591e`. Exact feature workflows are green on seal SHA `5f4deac6`;
-fast-forward integration and exact `main` gates remain pending.
+are integrated on `main` at `8755757d`, with three fresh adversarial tracks
+green on exact SHA `35ce591e` and exact feature and `main` workflows green.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

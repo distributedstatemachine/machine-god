@@ -9,7 +9,7 @@ CLI makes model requests today. Review details are in the
 The adapter discovers one Vercel AI Gateway bearer credential from an
 explicitly owned environment snapshot. It is separate from core, the CLI, and
 native configuration. Bearer-token bytes are fields in no schema. The
-thirteenth candidate's schema v3 adds only the closed non-secret acquisition
+thirteenth slice's schema v3 adds only the closed non-secret acquisition
 kind `credential_source: "environment"`; exact v1/v2 files project that kind
 only in memory. The only ambient lookup remains the explicitly named process-
 snapshot constructor or process convenience function.
@@ -126,7 +126,7 @@ origin, redirect, proxy, status, timeout, and cancellation policy.
 
 This integrated adapter does not store or rotate credentials, write environment
 variables, add a setup command, compose a provider into the CLI, select a model,
-or make a network request. The thirteenth candidate
+or make a network request. The thirteenth slice
 [`native configuration schema-v3 contract`](configuration.md) adds a
 declarative non-secret acquisition-kind field; it adds no bearer value,
 arbitrary environment name, or ambient lookup and does not invoke this adapter.
@@ -141,10 +141,10 @@ and reports no native-discovery source. The production constructor validates
 configured `Environment` and then consumes its already injected snapshot;
 `NativeReferenceHost::credential_source()` still reports the concrete selected
 OIDC-token or API-key source. The broader M03 credential-and-configuration
-checklist item remains unchecked until the thirteenth candidate passes every
-remaining integration and exact `main` gate. All three adversarial tracks are
-green on exact behavior SHA `35ce591e`, and exact feature workflows are green
-on seal SHA `5f4deac6`.
+checklist item is complete after the thirteenth slice passed every local,
+adversarial, feature, integration, and exact `main` gate. It is integrated at
+`8755757d`; all three adversarial tracks are green on exact behavior SHA
+`35ce591e`.
 This adapter's adversarial, feature-branch, documentation-seal, and `main` gates
 are green at the exact lineage recorded in its review. Existing CLI bytes and
 benchmark workloads are unchanged. Zig remains only a build input for the

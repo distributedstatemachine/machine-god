@@ -1,7 +1,6 @@
 # Milestone 03 configured credential-source review 01
 
-Status: **FEATURE GREEN — exact behavior, adversarial review, local gates, and
-exact feature workflows green; fast-forward and `main` delivery pending**
+Status: **DELIVERY GREEN — integrated on `main`**
 
 ## Candidate lineage
 
@@ -45,25 +44,37 @@ exact feature workflows green; fast-forward and `main` delivery pending**
   [`32582210892`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582210892)
 - Exact feature benchmark-evidence run:
   [`32582210927`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582210927)
-- Documentation-only feature evidence record: this commit; exact SHA reported
-  at handoff
-- Exact `main` delivery SHA: `PENDING`
+- Documentation-only feature evidence record:
+  `8755757da0da07e33af48d57f46bd9ea490b5449`
+- Exact feature-evidence-record CI run:
+  [`32582687145`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582687145)
+- Exact feature-evidence-record benchmark run:
+  [`32582687169`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582687169)
+- Exact `main` delivery SHA:
+  `8755757da0da07e33af48d57f46bd9ea490b5449`
+- Exact `main` CI run:
+  [`32582978232`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582978232)
+- Exact `main` benchmark-evidence run:
+  [`32582978286`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582978286)
+- Final delivery record: this documentation-only commit; exact SHA reported at
+  handoff
 - Integration branch: `agent/m03-configured-credential-source`
 - Candidate-docs branch: `agent/m03-configured-credential-source-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
-The base contains twelve integrated bounded Milestone 03 slices. Production,
-independently owned black-box tests, and candidate documentation for the
-thirteenth slice are composed on this branch. Focused checks and required local
-workspace gates are green. All three fresh adversarial tracks are green on
+The thirteenth slice's production, independently owned black-box tests, and
+maintained documentation are integrated on `main`. Focused checks and required
+local workspace gates are green. All three fresh adversarial tracks are green on
 exact behavior/finding-fix SHA
 `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. The documentation seal and both
-exact feature workflows are green at `5f4deac6`; no exact `main` workflow has
-run. Milestone 03 remains `IN PROGRESS`.
+first exact feature workflows are green at `5f4deac6`. Feature-evidence record
+`8755757d` passed both exact feature workflows, was fast-forwarded without force
+to `main`, and passed both exact `main` workflows. Thirteen slices are
+integrated; Milestone 03 remains `IN PROGRESS`.
 
 ## Adversarially green behavior
 
-The composed candidate implements:
+The integrated slice implements:
 
 - `CONFIG_SCHEMA_VERSION == 3` and this exact strict built-in object:
 
@@ -95,7 +106,7 @@ The composed candidate implements:
 - the trusted custom-transport constructor to skip native discovery and keep
   returning `None` for that runtime observation.
 
-The complete candidate configuration contract is in
+The complete configuration contract is in
 [`configuration.md`](../configuration.md). The existing credential and
 composition boundaries remain in
 [`ai-gateway-credentials.md`](../ai-gateway-credentials.md) and
@@ -110,7 +121,7 @@ network, runtime, core, or CLI authority. Only an explicitly constructed
 `AiGatewayCredentialEnvironment` snapshot reaches production composition; the
 loader and reference-host constructors do not call `from_process`.
 
-The candidate adds no persistence or schema rewrite, auth-source compatibility
+The slice adds no persistence or schema rewrite, auth-source compatibility
 claim, CLI behavior, provider/network effect during loading, or product-
 performance claim. Core receives no ambient credential or configuration
 authority.
@@ -143,28 +154,37 @@ new adversarial review after the production behavior is already green.
 This feature-evidence record is likewise documentation-only and is not
 adversarially reviewed under that same workflow and user instruction.
 
+This final delivery record is also documentation-only and is not adversarially
+reviewed under that same workflow and user instruction.
+
 ## Exact local checks
 
 The following are green on `a8467cc4`, exact behavior descendant `35ce591e`,
 or both where the latter changes documentation only, with exact Rust and Cargo
 1.94.1:
 
-- formatting;
+- `cargo +1.94.1 fmt --all -- --check`;
 - 29 focused native configuration tests and 15 all-feature configured-source
   tests;
-- workspace all-target/all-feature Clippy with warnings denied;
+- locked workspace all-target/all-feature Clippy with warnings denied;
 - default-feature and all-feature workspace tests;
 - workspace doc tests;
 - repo-wide Python tests: 129 run, 121 passed, and 8 expected platform skips;
+- `cargo-deny` 0.20.2 dependency policy;
+- `cargo-audit` 0.22.2 vulnerability audit;
 - API-review FreeBSD, WASI, and Apple target compile checks on `a8467cc4`,
-  unchanged by the documentation-only `35ce591e` descendant; and
+  unchanged by the documentation-only `35ce591e` descendant, with only the
+  pre-existing WASI `read_file` dead-code warning; and
+- a fresh release binary whose bare, help, version, human-status, and JSON-status
+  output matched the exact documented bytes while strict schema-v3 bytes and
+  behavior remained unchanged; and
 - candidate and status-reconciliation Markdown link and diff checks.
 
-This documentation-only seal and feature-evidence descendant pass exact
-Rust/Cargo 1.94.1 workspace doc tests (two passed, zero failed), 154 repository-
-relative links across 46 Markdown files with none missing, and
-`git diff --check`. These local results are distinct from the exact feature
-workflows below; they are not `main` evidence.
+The documentation-only seal, feature-evidence descendant, and final delivery
+record pass exact Rust/Cargo 1.94.1 workspace doc tests (two passed, zero
+failed), 154 repository-relative links across 46 Markdown files with none
+missing, and `git diff --check`. These local results are distinct from the exact
+feature and `main` workflows below.
 
 ## Residual risk and deferred scope
 
@@ -185,13 +205,25 @@ and exact feature benchmark-evidence run
 Both runs report that exact `headSha`. This is feature-delivery and retained-
 evidence-path validation, not a product-performance claim.
 
-## Remaining gates and scope
+Feature-evidence record `8755757da0da07e33af48d57f46bd9ea490b5449`
+then passed exact feature CI run
+[`32582687145`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582687145)
+and exact feature benchmark-evidence run
+[`32582687169`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582687169).
+Both runs report that exact `headSha`.
 
-Fast-forward integration and exact `main` CI and benchmark-evidence runs remain
-pending.
+## Exact `main` delivery
 
-The combined credential-and-configuration checklist item remains unchecked
-while those gates are pending; it may be checked only after full delivery. Root
+Feature-evidence record `8755757da0da07e33af48d57f46bd9ea490b5449` was
+fast-forwarded without force to `main`. Exact main CI run
+[`32582978232`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582978232)
+and benchmark-evidence run
+[`32582978286`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582978286)
+are green for that exact SHA.
+
+## Remaining scope
+
+The combined credential-and-configuration checklist item is complete. Root
 selection and safe creation, session lifecycle behavior, the remaining native
 tools, CLI expansion and composition, deterministic release-binary end-to-end
 evidence, and compatibility promotion remain open. Milestone 03 remains in

@@ -64,7 +64,7 @@ is byte-unchanged and remains thin. See the
 [composition contract](docs/native-reference-host.md) and
 [review record](docs/reviews/m03-native-reference-host-review-01.md).
 
-A thirteenth bounded candidate advances the strict current native
+A thirteenth bounded slice advances the strict current native
 configuration to schema v3 by adding the required non-secret
 `credential_source: "environment"` selection. Exact v1 and v2 files remain
 strictly readable without rewrite and project the same acquisition kind only
@@ -73,12 +73,12 @@ reference host still consumes an explicitly injected credential snapshot, and
 its runtime observation still reports the concrete selected OIDC-token or
 API-key source. Production implementation, independent tests, focused and
 required local gates, and all three fresh adversarial tracks are green on exact
-behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact remote feature
-CI run `32582210892` and benchmark-evidence run `32582210927` are green on
-documentation seal SHA `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`.
-Fast-forward integration and exact `main` delivery remain pending. See the
-[candidate configuration contract](docs/configuration.md) and
-[candidate review](docs/reviews/m03-configured-credential-source-review-01.md).
+behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. It is integrated on
+`main` at `8755757da0da07e33af48d57f46bd9ea490b5449`; exact final feature CI
+run `32582687145`, feature benchmark-evidence run `32582687169`, main CI run
+`32582978232`, and main benchmark-evidence run `32582978286` are green. See the
+[configuration contract](docs/configuration.md) and
+[review record](docs/reviews/m03-configured-credential-source-review-01.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
@@ -89,7 +89,7 @@ The project is not yet production-ready. See the exact
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
 normative [native file session store](docs/session-store.md), the integrated
 [native reference-host composition](docs/native-reference-host.md), and the
-candidate [configured credential source](docs/configuration.md).
+integrated [configured credential source](docs/configuration.md).
 
 ## Development
 

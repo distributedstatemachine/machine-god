@@ -1,24 +1,19 @@
 # Native configuration
 
-Status: candidate contract for the thirteenth bounded Milestone 03 slice.
-Twelve slices are integrated at final delivery-record SHA
-`ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
-`32579779134`, feature benchmark-evidence run `32579779123`, main CI run
-`32580066474`, and main benchmark-evidence run `32580066485` are green for that
-base. This candidate's production implementation, independent tests, focused
-and required local gates, and all three fresh adversarial tracks are green on
-exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
-Exact feature CI run `32582210892` and benchmark-evidence run `32582210927` are
-green on documentation seal SHA `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`.
-Fast-forward integration and exact `main` delivery remain pending. Milestone 03
-remains `IN PROGRESS`.
-Candidate lineage is recorded in the
+Status: integrated contract for the thirteenth bounded Milestone 03 slice.
+Thirteen slices are integrated. Production, independent tests, focused and
+required local gates, and all three fresh adversarial tracks are green on exact
+behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. The slice is integrated on
+`main` at `8755757da0da07e33af48d57f46bd9ea490b5449`; exact final feature CI
+run `32582687145`, feature benchmark-evidence run `32582687169`, main CI run
+`32582978232`, and main benchmark-evidence run `32582978286` are green.
+Milestone 03 remains `IN PROGRESS`. Full lineage is recorded in the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
 The native configuration loader is a bounded, synchronous, read-only
 `machine-god-native` authority. Core remains independent of the process
 environment and filesystem, and the CLI does not invoke the loader. This
-candidate advances the built-in and current file schema to v3 while retaining
+slice advances the built-in and current file schema to v3 while retaining
 strict read compatibility for the exact legacy v1 and v2 objects.
 
 ## Location and defaults
@@ -182,7 +177,7 @@ command loads configuration in this slice.
 Provider, transport, model, and credential-source fields are declarative data
 only. `environment` tells the production reference-host constructor which
 already injected acquisition adapter is compatible with this configuration; it
-does not read the process environment. This candidate does not instantiate
+does not read the process environment. This slice does not instantiate
 `AiGatewayProvider`, select or construct an HTTP client, create or drive a
 Tokio runtime, discover or attach a credential, open a network connection, or
 compose any component into core or the CLI.
@@ -204,7 +199,7 @@ Configuration mutation, a migration or rewrite command, a terminal permission
 prompter and modes beyond `ask`, runtime and CLI composition, required
 workspace and state-root lifecycle, the remaining native tools, CLI and
 session expansion, release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. All three adversarial tracks are green, but
-the combined credential-and-configuration checklist item remains unchecked
-until fast-forward integration and exact `main` workflows pass. Exact feature
-workflows are green on seal SHA `5f4deac6`. Milestone 03 remains in progress.
+or performance claims remain open. The combined credential-and-configuration
+checklist item is complete after implementation, independent tests, three green
+adversarial tracks, exact feature workflows, fast-forward integration, and
+exact `main` workflows all passed. Milestone 03 remains in progress.

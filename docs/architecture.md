@@ -21,8 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twelve integrated bounded slices and a thirteenth bounded
-candidate. The twelfth slice's
+Milestone 03 has thirteen integrated bounded slices. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record
@@ -77,15 +76,15 @@ remains byte-unchanged and thin. The contract and lineage are
 in [`native-reference-host.md`](native-reference-host.md) and its
 [`review record`](reviews/m03-native-reference-host-review-01.md). It is
 integrated at the exact green `main` SHA and runs recorded above.
-The thirteenth candidate advances current native configuration to strict v3 by
+The thirteenth slice advances current native configuration to strict v3 by
 adding the closed non-secret `environment` credential-source acquisition kind.
 It retains exact strict v1/v2 reads and their observable versions, projecting
 that acquisition kind only in memory. Production implementation, independent
 tests, focused and required local gates, and all three fresh adversarial tracks
 are green on exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
-Exact feature CI run `32582210892` and benchmark-evidence run `32582210927` are
-green on documentation seal SHA `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`.
-Fast-forward integration and exact `main` delivery remain pending.
+It is integrated on `main` at `8755757da0da07e33af48d57f46bd9ea490b5449`;
+exact main CI run `32582978232` and benchmark-evidence run `32582978286` are
+green.
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -165,7 +164,7 @@ argument errors remain byte-stable presentation behavior, not an engine-owned
 command model.
 
 The synchronous loader resolves only the config location. In the thirteenth
-candidate, an unavailable location or missing file yields the explicit built-in
+slice, an unavailable location or missing file yields the explicit built-in
 schema-v3 object
 `{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment"}`.
 Invalid selected environment input and all other load failures fail closed. A
@@ -248,7 +247,7 @@ injected `PermissionPrompter` is wrapped by `AskPermissionHandler`, and
 or custom transport. `EngineBuilder` receives no explicit limits or event sink,
 so the documented defaults and `NoopEventSink` apply.
 
-The thirteenth candidate extends that first validation stage to require
+The thirteenth slice extends that first validation stage to require
 `NativeCredentialSourceKind::Environment`. It does not change constructor
 arguments: the production path still consumes the host-injected snapshot, and
 the custom transport remains an explicit trusted authority override.
@@ -276,10 +275,9 @@ transport, model, and credential-source values. Its fixed debug form exposes no
 config structure or source. Every nested construction error is reduced to one
 fixed redacted stage in the non-exhaustive reference-host error taxonomy. The
 twelfth-slice composition behaviors are adversarially green and integrated on
-`main`; the schema-v3 extension and credential-source validation remain
-candidate behavior with all three fresh adversarial tracks green on exact SHA
-`35ce591e`. Exact feature workflows are green on seal SHA `5f4deac6`;
-fast-forward integration and exact `main` gates remain pending.
+`main`; the schema-v3 extension and credential-source validation are integrated
+at `8755757d`, with all three fresh adversarial tracks green on exact behavior
+SHA `35ce591e` and exact feature and `main` workflows green.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

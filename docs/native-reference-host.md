@@ -8,12 +8,11 @@ on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
 `32579779134`, feature benchmark-evidence run `32579779123`, main CI run
 `32580066474`, and main benchmark-evidence run `32580066485` are green.
 The separate schema-v3 configured credential-source extension is a thirteenth
-candidate whose production implementation, independent tests, local gates, and
+slice whose production implementation, independent tests, local gates, and
 all three fresh adversarial tracks are green on exact behavior SHA
-`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact feature CI run
-`32582210892` and benchmark-evidence run `32582210927` are green on seal SHA
-`5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`. Fast-forward integration and exact
-`main` delivery remain pending. Milestone 03 remains
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. It is integrated on `main` at
+`8755757da0da07e33af48d57f46bd9ea490b5449`; exact main CI run `32582978232`
+and benchmark-evidence run `32582978286` are green. Milestone 03 remains
 `IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
@@ -71,9 +70,9 @@ NativeReferenceHost::credential_source(&self)
 Both constructors consume an already validated `LoadedNativeConfig`; neither
 loads configuration nor reads the process environment. The accepted selection
 is exactly permission mode `ask`, provider `vercel_ai_gateway`, and transport
-`ai_gateway_http`. The thirteenth candidate additionally requires configured
-`NativeCredentialSourceKind::Environment`; this validation change is not yet
-delivered. Any other future or otherwise unsupported selection fails
+`ai_gateway_http`. The thirteenth slice additionally requires configured
+`NativeCredentialSourceKind::Environment`. Any other future or otherwise
+unsupported selection fails
 closed before a root, credential, transport, provider, or engine is opened or
 constructed.
 
@@ -82,8 +81,8 @@ constructed.
 `compose_ai_gateway_http` performs these synchronous construction stages in
 this order:
 
-1. validate the loaded permission, provider, transport, and—after delivery of
-   the thirteenth candidate—credential-source selections;
+1. validate the loaded permission, provider, transport, and credential-source
+   selections;
 2. open the existing absolute workspace once and retain that directory
    identity for the two tools;
 3. open the existing absolute session root as `FileSessionStore`;
@@ -177,7 +176,7 @@ remain observable with `ConfigOrigin::File` and their respective
 in-memory projections supply credential source `environment`; v1 also projects
 permission mode `ask`, provider `vercel_ai_gateway`, transport
 `ai_gateway_http`, and model `zai/glm-5.2`. Built-in and file-backed schema-v3
-origins and values are retained exactly after this candidate is delivered.
+origins and values are retained exactly.
 
 The configured `NativeCredentialSourceKind::Environment` is an acquisition
 kind, not this runtime observation. The production constructor retains only the
@@ -226,7 +225,7 @@ the earlier components have been constructed. The custom path cannot return
 
 ## Deferred scope and milestone boundary
 
-This composition and the thirteenth candidate do not select or safely create
+This composition and the thirteenth slice do not select or safely create
 required workspace or state roots, implement a concrete terminal
 `PermissionPrompter`, allocate a session
 ID or `SessionIncarnationId`, or add create/list/resume/replay/reset session
@@ -236,15 +235,14 @@ still requires a new host-generated incarnation before reuse.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
-claims remain open. The candidate does not alter the pinned fx inventory,
+claims remain open. The slice does not alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature
 gates, fast-forward integration, and exact `main` gates are green. The combined
-credential-and-configuration item remains unchecked while the thirteenth
-candidate's fast-forward integration and exact `main` gates remain pending. Its
+credential-and-configuration item is also complete. The thirteenth slice's
 three adversarial tracks are green on exact behavior SHA `35ce591e`, and exact
-feature workflows are green on seal SHA `5f4deac6`. The item may be checked only
-after the remaining gates are green. Milestone 03 remains in progress.
+feature and `main` workflows are green at integrated SHA `8755757d`. Milestone
+03 remains in progress.
