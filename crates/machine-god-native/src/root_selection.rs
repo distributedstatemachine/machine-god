@@ -412,7 +412,20 @@ fn prepare_suffix_directory(
         false
     } else {
         match rustix::fs::mkdirat(parent, name, private_directory_mode()) {
-            Ok(()) => true,
+            Ok(()) => {
+                // A process umask may remove owner bits and make the new
+                // directory impossible to open. The parent descriptor has
+                // already been validated as effective-UID-owned and not
+                // group/other-writable, so same-UID mutation is the remaining
+                // trust boundary while this fixed name is normalized. Empty
+                // flags are required because Linux does not implement
+                // `AT_SYMLINK_NOFOLLOW` for `fchmodat`.
+                rustix::fs::chmodat(parent, name, private_directory_mode(), AtFlags::empty())
+                    .map_err(|_| {
+                        PreparedNativeRootsError::new(PreparedNativeRootsErrorKind::StateRoot)
+                    })?;
+                true
+            }
             Err(error) if error == rustix::io::Errno::EXIST => false,
             Err(_) => {
                 return Err(PreparedNativeRootsError::new(
