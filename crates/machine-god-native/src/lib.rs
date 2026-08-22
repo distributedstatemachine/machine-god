@@ -18,10 +18,10 @@ mod read_file;
 mod session_store;
 
 pub use ai_gateway::{
-    AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
-    AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind,
-    AiGatewayHeader, AiGatewayLimits, AiGatewayProvider, AiGatewayTransport,
-    AiGatewayTransportRequest,
+    AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION,
+    AI_GATEWAY_MAX_MODEL_BYTES, AI_GATEWAY_PROTOCOL_VERSION, AI_GATEWAY_PROVIDER_NAME,
+    AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind, AiGatewayHeader,
+    AiGatewayLimits, AiGatewayProvider, AiGatewayTransport, AiGatewayTransportRequest,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use ai_gateway_credential::{
@@ -48,7 +48,8 @@ pub use ask_permission::{
 
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
-    NativeConfigError, NativeConfigErrorKind, load_native_config, load_process_config,
+    NativeConfigError, NativeConfigErrorKind, NativeProviderKind, NativeTransportKind,
+    load_native_config, load_process_config,
 };
 pub use list_files::{
     LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,

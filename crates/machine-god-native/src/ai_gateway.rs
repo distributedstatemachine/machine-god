@@ -20,6 +20,10 @@ use std::task::{Context, Poll};
 
 /// Stable provider identifier.
 pub const AI_GATEWAY_PROVIDER_NAME: &str = "vercel_ai_gateway";
+/// Built-in model used by the native host when configuration does not select one.
+pub const AI_GATEWAY_DEFAULT_MODEL: &str = "zai/glm-5.2";
+/// Maximum number of bytes accepted in an AI Gateway model identifier.
+pub const AI_GATEWAY_MAX_MODEL_BYTES: usize = 128;
 /// Pinned Gateway protocol version.
 pub const AI_GATEWAY_PROTOCOL_VERSION: &str = "0.0.1";
 /// Pinned language-model specification version.
@@ -421,10 +425,31 @@ fn drop_json_value_iterative(value: &mut Value) {
     }
 }
 
-fn valid_model(model: &str) -> bool {
+pub(crate) fn valid_model(model: &str) -> bool {
     !model.is_empty()
-        && model.len() <= 128
+        && model.len() <= AI_GATEWAY_MAX_MODEL_BYTES
         && model.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+}
+
+#[cfg(test)]
+mod model_validation_tests {
+    use super::{AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_MAX_MODEL_BYTES, valid_model};
+
+    #[test]
+    fn built_in_and_boundary_model_identifiers_are_valid() {
+        assert!(valid_model(AI_GATEWAY_DEFAULT_MODEL));
+        assert!(valid_model("!"));
+        assert!(valid_model(&"~".repeat(AI_GATEWAY_MAX_MODEL_BYTES)));
+    }
+
+    #[test]
+    fn model_identifiers_reject_empty_oversized_and_non_visible_ascii_values() {
+        assert!(!valid_model(""));
+        assert!(!valid_model(&"!".repeat(AI_GATEWAY_MAX_MODEL_BYTES + 1)));
+        for invalid in ["model name", "model\nname", "model\u{7f}", "modèle"] {
+            assert!(!valid_model(invalid));
+        }
+    }
 }
 
 fn validate_request_envelope(

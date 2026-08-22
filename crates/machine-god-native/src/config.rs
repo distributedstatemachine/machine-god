@@ -10,25 +10,113 @@ use std::os::unix::fs::OpenOptionsExt;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
+use super::ai_gateway::{AI_GATEWAY_DEFAULT_MODEL, valid_model};
 use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file};
 
 /// Configuration schema version understood by this native host.
-pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+pub const CONFIG_SCHEMA_VERSION: u32 = 2;
 
 /// Maximum number of bytes retained while loading a native configuration.
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
 
+/// Provider selected by a native host configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeProviderKind {
+    /// Vercel AI Gateway.
+    VercelAiGateway,
+}
+
+impl NativeProviderKind {
+    /// Returns the stable, machine-readable provider name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::VercelAiGateway => "vercel_ai_gateway",
+        }
+    }
+}
+
+/// Transport selected by a native host configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeTransportKind {
+    /// Native AI Gateway HTTP transport.
+    AiGatewayHttp,
+}
+
+impl NativeTransportKind {
+    /// Returns the stable, machine-readable transport name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AiGatewayHttp => "ai_gateway_http",
+        }
+    }
+}
+
 /// Validated native host configuration.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct NativeConfig {
+    schema_version: u32,
     permission_mode: PermissionMode,
+    provider: NativeProviderKind,
+    transport: NativeTransportKind,
+    model: String,
 }
 
 impl NativeConfig {
+    /// Returns the schema version observed in the loaded configuration.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
     /// Returns the configured permission behavior.
     #[must_use]
     pub const fn permission_mode(&self) -> PermissionMode {
         self.permission_mode
+    }
+
+    /// Returns the configured provider.
+    #[must_use]
+    pub const fn provider(&self) -> NativeProviderKind {
+        self.provider
+    }
+
+    /// Returns the configured transport.
+    #[must_use]
+    pub const fn transport(&self) -> NativeTransportKind {
+        self.transport
+    }
+
+    /// Returns the configured model identifier.
+    #[must_use]
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+}
+
+impl Default for NativeConfig {
+    fn default() -> Self {
+        Self {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            permission_mode: PermissionMode::Ask,
+            provider: NativeProviderKind::VercelAiGateway,
+            transport: NativeTransportKind::AiGatewayHttp,
+            model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
+        }
+    }
+}
+
+impl fmt::Debug for NativeConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeConfig")
+            .field("schema_version", &self.schema_version)
+            .field("permission_mode", &self.permission_mode)
+            .field("provider", &self.provider)
+            .field("transport", &self.transport)
+            .field("model", &"<redacted>")
+            .finish()
     }
 }
 
@@ -42,7 +130,7 @@ pub enum ConfigOrigin {
 }
 
 /// A validated native configuration together with its source.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedNativeConfig {
     config: NativeConfig,
     origin: ConfigOrigin,
@@ -61,16 +149,14 @@ impl LoadedNativeConfig {
         self.origin
     }
 
-    const fn built_in_defaults() -> Self {
+    fn built_in_defaults() -> Self {
         Self {
-            config: NativeConfig {
-                permission_mode: PermissionMode::Ask,
-            },
+            config: NativeConfig::default(),
             origin: ConfigOrigin::BuiltInDefaults,
         }
     }
 
-    const fn from_file(config: NativeConfig) -> Self {
+    fn from_file(config: NativeConfig) -> Self {
         Self {
             config,
             origin: ConfigOrigin::File,
@@ -208,32 +294,57 @@ fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError
     let bytes = read_bounded(&mut file)?;
     std::str::from_utf8(&bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
-    validate_schema_version(&bytes)?;
-    let wire: WireNativeConfig = serde_json::from_slice(&bytes)
-        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
-    debug_assert_eq!(wire.schema_version, u64::from(CONFIG_SCHEMA_VERSION));
-
-    let permission_mode = match wire.permission_mode {
-        WirePermissionMode::Ask => PermissionMode::Ask,
+    let schema_version = validate_schema_version(&bytes)?;
+    let config = match schema_version {
+        1 => parse_v1_config(&bytes)?,
+        CONFIG_SCHEMA_VERSION => parse_v2_config(&bytes)?,
+        _ => unreachable!("validated schema version is supported"),
     };
-    Ok(LoadedNativeConfig::from_file(NativeConfig {
-        permission_mode,
-    }))
+    Ok(LoadedNativeConfig::from_file(config))
 }
 
-fn validate_schema_version(bytes: &[u8]) -> Result<(), NativeConfigError> {
+fn validate_schema_version(bytes: &[u8]) -> Result<u32, NativeConfigError> {
     let envelope: WireSchemaEnvelope<'_> = serde_json::from_slice(bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
     let version = envelope.schema_version.get();
     if is_json_integer(version) {
-        if version.parse::<u32>() == Ok(CONFIG_SCHEMA_VERSION) {
-            return Ok(());
+        if let Ok(version @ (1 | CONFIG_SCHEMA_VERSION)) = version.parse::<u32>() {
+            return Ok(version);
         }
         return Err(NativeConfigError::new(
             NativeConfigErrorKind::UnsupportedSchemaVersion,
         ));
     }
     Err(NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))
+}
+
+fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    let wire: WireNativeConfigV1 = serde_json::from_slice(bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    debug_assert_eq!(wire.schema_version, 1);
+    Ok(NativeConfig {
+        schema_version: wire.schema_version,
+        permission_mode: wire.permission_mode.into(),
+        provider: NativeProviderKind::VercelAiGateway,
+        transport: NativeTransportKind::AiGatewayHttp,
+        model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
+    })
+}
+
+fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    let wire: WireNativeConfigV2 = serde_json::from_slice(bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    debug_assert_eq!(wire.schema_version, CONFIG_SCHEMA_VERSION);
+    if !valid_model(&wire.model) {
+        return Err(NativeConfigError::new(NativeConfigErrorKind::InvalidFormat));
+    }
+    Ok(NativeConfig {
+        schema_version: wire.schema_version,
+        permission_mode: wire.permission_mode.into(),
+        provider: wire.provider.into(),
+        transport: wire.transport.into(),
+        model: wire.model,
+    })
 }
 
 fn is_json_integer(value: &str) -> bool {
@@ -280,9 +391,19 @@ fn read_bounded(file: &mut File) -> Result<Vec<u8>, NativeConfigError> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireNativeConfig {
-    schema_version: u64,
+struct WireNativeConfigV1 {
+    schema_version: u32,
     permission_mode: WirePermissionMode,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireNativeConfigV2 {
+    schema_version: u32,
+    permission_mode: WirePermissionMode,
+    provider: WireProviderKind,
+    transport: WireTransportKind,
+    model: String,
 }
 
 #[derive(Deserialize)]
@@ -297,13 +418,52 @@ enum WirePermissionMode {
     Ask,
 }
 
+impl From<WirePermissionMode> for PermissionMode {
+    fn from(value: WirePermissionMode) -> Self {
+        match value {
+            WirePermissionMode::Ask => Self::Ask,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum WireProviderKind {
+    #[serde(rename = "vercel_ai_gateway")]
+    VercelAiGateway,
+}
+
+impl From<WireProviderKind> for NativeProviderKind {
+    fn from(value: WireProviderKind) -> Self {
+        match value {
+            WireProviderKind::VercelAiGateway => Self::VercelAiGateway,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum WireTransportKind {
+    #[serde(rename = "ai_gateway_http")]
+    AiGatewayHttp,
+}
+
+impl From<WireTransportKind> for NativeTransportKind {
+    fn from(value: WireTransportKind) -> Self {
+        match value {
+            WireTransportKind::AiGatewayHttp => Self::AiGatewayHttp,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES, NativeConfigErrorKind,
-        load_native_config,
+        CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES, NativeConfig, NativeConfigErrorKind,
+        NativeProviderKind, NativeTransportKind, load_native_config,
     };
-    use crate::{NativeEnvironment, PermissionMode};
+    use crate::ai_gateway::valid_model;
+    use crate::{
+        AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_MAX_MODEL_BYTES, NativeEnvironment, PermissionMode,
+    };
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -359,31 +519,90 @@ mod tests {
         }
     }
 
+    fn valid_v2_document(model: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2,
+            "permission_mode": "ask",
+            "provider": "vercel_ai_gateway",
+            "transport": "ai_gateway_http",
+            "model": model,
+        }))
+        .unwrap()
+    }
+
+    fn assert_config(config: &NativeConfig, schema_version: u32, model: &str) {
+        assert_eq!(config.schema_version(), schema_version);
+        assert_eq!(config.permission_mode(), PermissionMode::Ask);
+        assert_eq!(config.provider(), NativeProviderKind::VercelAiGateway);
+        assert_eq!(config.provider().as_str(), "vercel_ai_gateway");
+        assert_eq!(config.transport(), NativeTransportKind::AiGatewayHttp);
+        assert_eq!(config.transport().as_str(), "ai_gateway_http");
+        assert_eq!(config.model(), model);
+    }
+
     #[test]
     fn unavailable_and_missing_locations_use_safe_defaults() {
         let unavailable = load_native_config(&NativeEnvironment::new(None, None, None)).unwrap();
         assert_eq!(unavailable.origin(), ConfigOrigin::BuiltInDefaults);
-        assert_eq!(unavailable.config().permission_mode(), PermissionMode::Ask);
+        assert_config(
+            unavailable.config(),
+            CONFIG_SCHEMA_VERSION,
+            AI_GATEWAY_DEFAULT_MODEL,
+        );
+        assert_eq!(unavailable.config(), &NativeConfig::default());
 
         let temporary = TestDirectory::new("missing");
         let missing = load_native_config(&temporary.environment()).unwrap();
         assert_eq!(missing.origin(), ConfigOrigin::BuiltInDefaults);
+        assert_config(
+            missing.config(),
+            CONFIG_SCHEMA_VERSION,
+            AI_GATEWAY_DEFAULT_MODEL,
+        );
         assert!(!temporary.config_path().exists());
     }
 
     #[test]
-    fn exact_schema_loads_from_a_regular_file() {
-        let temporary = TestDirectory::new("valid");
+    fn exact_v1_schema_loads_with_compatible_defaults_and_retains_its_version() {
+        let temporary = TestDirectory::new("valid-v1");
         temporary.write_config(br#"{"schema_version":1,"permission_mode":"ask"}"#);
 
         let loaded = load_native_config(&temporary.environment()).unwrap();
-        assert_eq!(CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(loaded.origin(), ConfigOrigin::File);
-        assert_eq!(loaded.config().permission_mode(), PermissionMode::Ask);
+        assert_config(loaded.config(), 1, AI_GATEWAY_DEFAULT_MODEL);
     }
 
     #[test]
-    fn strict_schema_rejects_invalid_json_shapes() {
+    fn exact_v2_schema_loads_all_selected_fields() {
+        let temporary = TestDirectory::new("valid-v2");
+        temporary.write_config(
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"custom/model"}"#,
+        );
+
+        let loaded = load_native_config(&temporary.environment()).unwrap();
+        assert_eq!(CONFIG_SCHEMA_VERSION, 2);
+        assert_eq!(loaded.origin(), ConfigOrigin::File);
+        assert_config(loaded.config(), CONFIG_SCHEMA_VERSION, "custom/model");
+    }
+
+    #[test]
+    fn config_debug_redacts_the_model_but_reports_structure() {
+        let temporary = TestDirectory::new("debug-redaction");
+        temporary.write_config(&valid_v2_document("private-model-marker"));
+
+        let loaded = load_native_config(&temporary.environment()).unwrap();
+        let config_debug = format!("{:?}", loaded.config());
+        let loaded_debug = format!("{loaded:?}");
+        for diagnostic in [&config_debug, &loaded_debug] {
+            assert!(!diagnostic.contains("private-model-marker"));
+            assert!(diagnostic.contains("<redacted>"));
+            assert!(diagnostic.contains("VercelAiGateway"));
+            assert!(diagnostic.contains("AiGatewayHttp"));
+        }
+    }
+
+    #[test]
+    fn strict_v1_schema_rejects_invalid_json_shapes() {
         let invalid_documents: &[&[u8]] = &[
             br"{}",
             br#"{"schema_version":1}"#,
@@ -405,9 +624,30 @@ mod tests {
     }
 
     #[test]
+    fn strict_v2_schema_rejects_unknown_duplicate_missing_and_wrong_fields() {
+        let invalid_documents: &[&[u8]] = &[
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http"}"#,
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","extra":true}"#,
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model"}"#,
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"other","transport":"ai_gateway_http","model":"model"}"#,
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"other","model":"model"}"#,
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":1}"#,
+            br#"{"schema_version":2,"permission_mode":"ask"}"#,
+            br#"{"schema_version":1,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model"}"#,
+        ];
+
+        for (index, document) in invalid_documents.iter().enumerate() {
+            let temporary = TestDirectory::new(&format!("invalid-v2-{index}"));
+            temporary.write_config(document);
+            let error = load_native_config(&temporary.environment()).unwrap_err();
+            assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFormat);
+        }
+    }
+
+    #[test]
     fn unsupported_schema_version_has_its_own_kind() {
         let temporary = TestDirectory::new("unsupported-version");
-        temporary.write_config(br#"{"schema_version":2,"permission_mode":"ask"}"#);
+        temporary.write_config(br#"{"schema_version":3,"permission_mode":"ask"}"#);
 
         let error = load_native_config(&temporary.environment()).unwrap_err();
         assert_eq!(
@@ -419,7 +659,7 @@ mod tests {
     #[test]
     fn future_and_arbitrary_size_integer_versions_are_classified_before_v1_fields() {
         for (index, document) in [
-            br#"{"schema_version":2,"permission_mode":"future","new_field":true}"#.as_slice(),
+            br#"{"schema_version":3,"permission_mode":"future","new_field":true}"#.as_slice(),
             br#"{"schema_version":18446744073709551616}"#.as_slice(),
             br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
         ]
@@ -440,7 +680,7 @@ mod tests {
     #[test]
     fn invalid_utf8_in_an_ignored_future_field_is_still_invalid_format() {
         let temporary = TestDirectory::new("future-invalid-utf8");
-        temporary.write_config(b"{\"schema_version\":2,\"future\":\"\xff\"}");
+        temporary.write_config(b"{\"schema_version\":3,\"future\":\"\xff\"}");
 
         assert_eq!(
             load_native_config(&temporary.environment())
@@ -451,11 +691,62 @@ mod tests {
     }
 
     #[test]
+    fn supported_noninteger_schema_versions_are_invalid_format_before_dispatch() {
+        for (index, document) in [
+            br#"{"schema_version":"2","permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model"}"#.as_slice(),
+            br#"{"schema_version":2.0,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model"}"#.as_slice(),
+            br#"{"schema_version":true,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model"}"#.as_slice(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let temporary = TestDirectory::new(&format!("noninteger-version-{index}"));
+            temporary.write_config(document);
+            assert_eq!(
+                load_native_config(&temporary.environment())
+                    .unwrap_err()
+                    .kind(),
+                NativeConfigErrorKind::InvalidFormat
+            );
+        }
+    }
+
+    #[test]
+    fn config_model_validation_matches_the_gateway_validator_and_exact_bound() {
+        let exactly_maximum = "!".repeat(AI_GATEWAY_MAX_MODEL_BYTES);
+        let oversized = "!".repeat(AI_GATEWAY_MAX_MODEL_BYTES + 1);
+        let candidates = [
+            AI_GATEWAY_DEFAULT_MODEL.to_owned(),
+            "!".to_owned(),
+            exactly_maximum,
+            String::new(),
+            oversized,
+            "contains space".to_owned(),
+            "contains\nnewline".to_owned(),
+            "contains\u{7f}delete".to_owned(),
+            "non-ascii-é".to_owned(),
+        ];
+
+        for (index, model) in candidates.into_iter().enumerate() {
+            let temporary = TestDirectory::new(&format!("model-{index}"));
+            temporary.write_config(&valid_v2_document(&model));
+            let result = load_native_config(&temporary.environment());
+            assert_eq!(result.is_ok(), valid_model(&model), "model index {index}");
+            match result {
+                Ok(loaded) => assert_eq!(loaded.config().model(), model),
+                Err(error) => {
+                    assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFormat);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn retained_read_is_bounded_at_limit_plus_one() {
-        let valid = br#"{"schema_version":1,"permission_mode":"ask"}"#;
+        let valid = valid_v2_document(AI_GATEWAY_DEFAULT_MODEL);
         let temporary = TestDirectory::new("exact-limit");
         let mut exact_limit = Vec::with_capacity(MAX_CONFIG_BYTES);
-        exact_limit.extend_from_slice(valid);
+        exact_limit.extend_from_slice(&valid);
         exact_limit.resize(MAX_CONFIG_BYTES, b' ');
         temporary.write_config(&exact_limit);
         assert_eq!(
