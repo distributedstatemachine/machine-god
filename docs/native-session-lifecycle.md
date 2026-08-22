@@ -351,8 +351,9 @@ library-level listing under the separate
 [`native session-listing contract`](native-session-listing.md). After that
 first composition the combined M03 root plus create/list/resume/replay/reset
 functional code scope exists, but the checklist item remains unchecked. All
-three first listing review tracks are not green. The replacement is composed;
-formal rereview and remote exact-SHA delivery gates remain pending.
+three first listing review tracks are not green. Exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e` composes the replacement; formal
+rereview and remote exact-SHA delivery gates remain pending.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and changes no benchmark workload or workflow. Zig remains solely the

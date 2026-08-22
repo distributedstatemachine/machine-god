@@ -23,8 +23,9 @@ an async executor.
 
 Milestone 03 has fifteen delivered bounded slices. The first formal sixteenth
 candidate is composed through `dec98e0`, but all three review tracks are not
-green. Its source and test fixes are composed in the replacement candidate,
-which awaits formal rereview and remote evidence. The twelfth slice's
+green. Its source and test fixes are composed in exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`, which awaits formal rereview and
+remote evidence. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record

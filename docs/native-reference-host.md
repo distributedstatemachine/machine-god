@@ -2,9 +2,10 @@
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
 Fifteen slices are delivered. The first formal sixteenth candidate is composed
-through `dec98e0`, but all three review tracks are not green and its replacement
-source and test fixes are composed in the replacement candidate. Formal
-rereview and remote evidence remain pending. This
+through `dec98e0`, but all three review tracks are not green. Its replacement
+source and test fixes are composed in exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`. Formal rereview and remote evidence
+remain pending. This
 slice's production implementation, an
 independently owned seven-test black-box suite, three fresh adversarial tracks,
 and exact feature and `main` workflows are green. Its final delivery record is
@@ -370,8 +371,9 @@ workspace/latest/cursor semantics, pagination, global snapshot, session-ID
 generation, UI replay, or CLI command. Its behavior and limits are in
 [`native-session-listing.md`](native-session-listing.md); production/test
 composition is present through `dec98e0`, but all three first formal tracks are
-not green. The replacement is composed; formal rereview and exact delivery
-evidence are pending.
+not green. Exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e` composes the replacement; formal
+rereview and exact delivery evidence are pending.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
@@ -389,7 +391,8 @@ final-record feature and `main` workflows are green at integrated SHA
 fifteenth supplies create/resume/replay/reset, and the sixteenth first candidate
 contains bounded IDs-only listing. The combined root-and-session-lifecycle item
 remains unchecked because all three first listing reviews are not green and
-the composed replacement still needs formal rereview and remote exact-SHA
-gates. Milestone 03 remains in progress because the remaining native tools,
+exact composed behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e` still needs formal rereview and
+remote exact-SHA gates. Milestone 03 remains in progress because the remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.

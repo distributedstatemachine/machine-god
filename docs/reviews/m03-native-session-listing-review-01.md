@@ -28,7 +28,7 @@ not waive the current replacement rereview or any delivery gate.
 | Removed-root finding fix and first formal candidate | `dec98e06e110be88317a2ba76c77e7ca872fed34` |
 | Isolated acquire-first replacement production fix | `4b8d8b0b38e081d1fd5ada3ba969f5b9af94eead` |
 | Isolated finding-test hardening | `446b49558b989edb399a8dabb33efe89beb490da` |
-| Composed replacement candidate | This commit; reviewers receive its exact SHA. |
+| Composed replacement behavior candidate | `3fa54635dab00ebba78b233c69fd39e04e9be57e` |
 
 The composed test commit contains 13 initial independently owned focused tests.
 The isolated test-hardening commit raises that focused suite to 18 tests, and

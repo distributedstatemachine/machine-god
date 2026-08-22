@@ -5,8 +5,9 @@ slice. Production, documentation, and 13 initial independently owned tests were
 composed through `dec98e0`, but each first-round formal review track reported
 confirmed findings. Acquire-first production fix `4b8d8b0`, test hardening
 `446b495`, and the corrected contract are composed in this replacement
-candidate. Its 18 focused tests and full all-target/all-feature workspace suite
-are green locally. Formal rereview, exact feature-SHA remote workflows, and
+behavior candidate `3fa54635dab00ebba78b233c69fd39e04e9be57e`. Its 18 focused
+tests and full all-target/all-feature workspace suite are green locally. Formal
+rereview, exact feature-SHA remote workflows, and
 delivery evidence remain pending. The fifteen earlier slices remain integrated
 through `9ada4b5`.
 
@@ -15,8 +16,9 @@ production `0accfbf`, composed as `1bffac9`; isolated documentation `63d589c`,
 composed as `87d7de0`; isolated tests `1b531297`, composed as `4b4e468`; and the
 removed-root finding fix plus first formal review candidate `dec98e0`. The
 isolated replacement source fix is `4b8d8b0`; isolated finding-test hardening is
-`446b495`; both are composed in this replacement candidate. Full lineage and
-non-green findings are recorded in the
+`446b495`; both are composed in exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`. Full lineage and non-green findings
+are recorded in the
 [`native session-listing review`](reviews/m03-native-session-listing-review-01.md).
 
 This slice adds `NativeSessionLifecycle::list_sessions` on supported Linux and
