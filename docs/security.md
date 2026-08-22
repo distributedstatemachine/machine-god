@@ -40,11 +40,17 @@ security boundary and review evidence are in
 [`ask-permission.md`](ask-permission.md).
 A tenth integrated bounded slice adds opt-in native credential discovery
 behind the existing `ai-gateway-http` and non-WASM gate. It owns a separate
-secret snapshot and does not add credential authority to core, configuration
-schema v1, or the CLI. It is integrated on `main` at
+secret snapshot and does not add credential authority to core, native
+configuration, or the CLI. It is integrated on `main` at
 `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
 and benchmark run `32573320937` are green. Its exact boundary is in
 [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
+An eleventh bounded candidate advances the built-in and current native config
+schema to strict v2 while keeping exact strict v1 files read-compatible without
+rewrite or migration. Production integration, fresh adversarial review, exact
+remote gates, and delivery on `main` remain pending; see
+[`configuration.md`](configuration.md) and the
+[`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -63,33 +69,55 @@ terminal lines or visually reorder the surrounding status fields. Non-UTF-8
 CLI arguments are rejected as invalid. Output errors use a fixed diagnostic
 rather than reflecting path or OS-error text.
 
-Configuration loading uses the same config-location selection, but missing and
-unavailable locations yield explicit built-in schema-v1 `ask` defaults. An
-invalid selected environment value does not fall back. On the supported Unix
-targets exercised by Milestone 03, a present path is opened no-follow and
-nonblocking. A preliminary path-kind check is followed by authoritative
-opened-descriptor regularity validation before any bytes are read. Final
-symlinks and non-regular entries therefore fail closed without a FIFO open
-becoming an unbounded wait. Hardened open semantics for non-Unix targets remain
-deferred. The loader does not canonicalize, create, or write anything; its
-no-follow guarantee is for the final component and is not a claim that the
-complete ancestor path is frozen.
+Configuration loading uses the same config-location selection. In the
+eleventh candidate, missing and unavailable locations yield the explicit strict
+schema-v2 built-in values: permission mode `ask`, provider
+`vercel_ai_gateway`, transport `ai_gateway_http`, and model `zai/glm-5.2`.
+The only legacy form is the exact two-field schema-v1 object; it maps in memory
+to those fixed provider, transport, and model values while remaining observable
+as schema version `1`. The loader never rewrites or migrates it. An invalid
+selected environment value does not fall back.
 
-The raw configuration bound is 64 KiB, with at most one additional byte
-retained to detect overflow or growth. Accepted bytes must be valid UTF-8 and a
-JSON object containing exactly integer `schema_version: 1` and string
-`permission_mode: "ask"`. Oversize files, invalid UTF-8, malformed JSON,
-unknown or duplicate fields, missing or wrong fields, and unsupported versions
-or modes are rejected. Typed failures do not echo environment-derived paths,
-configuration contents, or operating-system error text. Inaccessible paths and
-read errors are not converted into defaults.
+On the supported Unix targets exercised by Milestone 03, a present path is
+opened no-follow and nonblocking. A preliminary path-kind check is followed by
+authoritative opened-descriptor regularity validation before any bytes are
+read. Final symlinks and non-regular entries therefore fail closed without a
+FIFO open becoming an unbounded wait. Hardened open semantics for non-Unix
+targets remain deferred. The loader does not canonicalize, create, or write
+anything; its no-follow guarantee is for the final component and is not a claim
+that the complete ancestor path is frozen.
+
+The raw configuration bound remains 64 KiB, with at most one additional byte
+retained to detect overflow or growth. Accepted bytes must be valid UTF-8 and
+then one strict schema. V2 has exactly five fields: integer
+`schema_version: 2`; strings `permission_mode: "ask"`,
+`provider: "vercel_ai_gateway"`, and `transport: "ai_gateway_http"`; and a
+1–128-byte visible-ASCII model. V1 has exactly integer `schema_version: 1` and
+string `permission_mode: "ask"`. Oversize files, invalid UTF-8, malformed JSON,
+unknown or duplicate fields, missing or wrong fields, unsupported versions or
+enum values, and invalid models are rejected.
+
+The model validator is shared with the AI Gateway provider, preventing config
+and provider acceptance from drifting. Config owns the bounded model string and
+is cloneable but not copyable. Its debug output replaces the model with
+`<redacted>`, and typed failures do not echo environment-derived paths,
+configuration contents, model values, or operating-system error text.
+Inaccessible paths and read errors are not converted into defaults.
+
+Credentials are fields in neither v1 nor v2 and never enter config debug
+output. Provider and transport enums contain only public declarative identity.
+In particular, `NativeTransportKind::AiGatewayHttp` exists when the optional
+concrete transport is disabled and on WebAssembly; it is not evidence that an
+HTTP implementation or required runtime is available. Loading valid config
+does not instantiate the provider or transport, create a Tokio runtime,
+discover or attach a bearer token, or perform network I/O.
 
 The existing status path remains metadata-only and its CLI output is
-byte-stable. Configuration mutation, a concrete prompt UI and modes beyond
-`ask`, concrete provider/CLI composition and credential configuration, CLI
-expansion,
-native tools other than the bounded library-level `read_file` and `list_files`,
-and compatibility or performance claims remain outside the implemented slices.
+byte-stable. Configuration mutation or migration, a concrete prompt UI and
+modes beyond `ask`, provider/HTTP/runtime/token/CLI composition, required-root
+and session lifecycle, CLI expansion, native tools other than the bounded
+library-level `read_file` and `list_files`, composed end-to-end host evidence,
+and compatibility or performance claims remain open.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

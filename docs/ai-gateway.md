@@ -9,6 +9,10 @@ possible native injection; custom transports remain supported. The separate
 [`native credential discovery`](ai-gateway-credentials.md) can
 produce that transport's explicit bearer input without giving the codec ambient
 authority.
+The separate candidate [`native configuration schema v2`](configuration.md)
+can declare this provider and a validated default model, but it does not
+construct the codec, inject a transport, discover a credential, create a
+runtime, or change the CLI.
 
 The wire shape is deliberately scoped to the behavior needed from pinned
 [`vercel-labs/fx` revision
@@ -22,11 +26,18 @@ full fx equivalence, or a measured performance improvement.
 model of 1–128 visible ASCII bytes (`0x21` through `0x7e`) and an
 `Arc<dyn AiGatewayTransport>` with
 `AiGatewayLimits::default()`; `with_limits` also takes explicit limits. Its
-stable provider name is `AI_GATEWAY_PROVIDER_NAME`. The public wire constants
-are `AI_GATEWAY_PROTOCOL_VERSION` (`0.0.1`) and
+stable provider name is `AI_GATEWAY_PROVIDER_NAME` (`vercel_ai_gateway`). The
+public wire constants are `AI_GATEWAY_PROTOCOL_VERSION` (`0.0.1`) and
 `AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION` (`4`). Provider and request
 debug representations reveal structure only; they do not reveal model input,
 headers, bodies, response bytes, or transport-controlled errors.
+
+The configuration candidate publishes `AI_GATEWAY_DEFAULT_MODEL`
+(`zai/glm-5.2`) and `AI_GATEWAY_MAX_MODEL_BYTES` (`128`). Configuration-file
+models, provider defaults, and request overrides use the same validator:
+1–128 bytes, each in visible ASCII `0x21` through `0x7e`. This sharing changes
+no codec selection rule; a request override still wins over a constructed
+provider's default.
 
 The transport receives one owned `AiGatewayTransportRequest` containing the
 encoded body and fixed request metadata, plus the turn's `CancellationToken`.
@@ -279,15 +290,18 @@ This codec slice adds no URL or HTTP client, socket, DNS, proxy, TLS, native
 credential lookup, authorization header, status-code mapping, retry/backoff,
 clock, async runtime, endpoint selection, team routing, model catalog,
 provider-executed tool, image, structured-output, temperature, or metadata
-support. It adds no CLI wiring or commands, production permission prompt,
-permission mode beyond `ask`, durable native session store, or broader native
-configuration.
+support. It adds no CLI wiring or commands, production permission prompt, or
+permission mode beyond `ask`. The native session store remains a separate
+library boundary. Native configuration may declare the codec's provider kind
+and model but does not compose or invoke this codec.
 
 The optional native transport supplies only the separately documented bounded
 HTTP/TLS/authentication/status subset. It does not discover credentials or
 endpoints and does not compose the provider into the CLI. The separate native
 credential adapter discovers only the explicit bearer input; it does not
-change this codec boundary or compose either component into the CLI.
+change this codec boundary or compose either component into the CLI. The
+configuration candidate stores no credentials and likewise performs no
+composition.
 
 It also adds no compatibility or performance evidence. The pinned fx checkout
 and Zig toolchain remain benchmark-only inputs and are not Rust product runtime

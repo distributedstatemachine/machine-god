@@ -21,3 +21,4 @@
 - [Milestone 01 completion evidence](reviews/m01-milestone-review.md)
 - [Milestone 02 completion evidence](reviews/m02-milestone-review.md)
 - [Milestone 03 config/status CLI review candidate](reviews/m03-config-status-cli-review-01.md)
+- [Milestone 03 native host configuration schema-v2 candidate review](reviews/m03-native-host-config-review-01.md)

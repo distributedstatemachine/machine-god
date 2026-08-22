@@ -21,7 +21,8 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has ten integrated bounded slices.
+Milestone 03 has ten integrated bounded slices and an eleventh bounded
+candidate.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -45,11 +46,19 @@ The tenth slice adds a separate, opt-in native credential snapshot. It
 selects a nonempty `VERCEL_OIDC_TOKEN` before a nonempty `AI_GATEWAY_API_KEY`,
 validates the selected value through the existing bounded bearer-token type,
 and moves that token without cloning into an explicit result. It does not
-change core, configuration schema v1, the transport, or CLI behavior. It is
+change core, add configuration credential fields, alter the transport, or
+change CLI behavior. It is
 integrated on `main` at
 `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
 and benchmark run `32573320937` are green. Its fixed contract and evidence are
 in [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
+The eleventh candidate advances native configuration to a strict current
+schema v2 while retaining strict v1 reads without file rewrite or migration.
+It is a declarative library surface only: production integration, fresh
+adversarial review, exact remote gates, and delivery on `main` remain pending.
+Its contract and candidate lineage are in [`configuration.md`](configuration.md)
+and the
+[`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -69,12 +78,13 @@ surface and does not change CLI bytes. The same is true of the normative
 [`native file session store`](session-store.md). The ask-handler slice is
 also a library surface and does not change CLI bytes or supply a concrete
 terminal prompt. Credential discovery is another separate
-library surface and does not add configuration fields or CLI composition.
+library surface; credentials are fields in neither supported configuration
+schema, and discovery does not add CLI composition.
 
 ```text
 process environment -> resolved native paths
  config path --+-> final metadata -----------> status -> CLI text/JSON
-               +-> bounded read-only loader -> schema-v1 config
+               +-> bounded read-only loader -> strict v1/v2 config data
  state path ------> final metadata -----------> status -> CLI text/JSON
 
 host-selected absolute workspace -> retained directory authority
@@ -117,13 +127,33 @@ invocation keeps the bootstrap identity contract. Help, version, status, and
 argument errors remain byte-stable presentation behavior, not an engine-owned
 command model.
 
-The synchronous loader resolves only the config location. An unavailable
-location or missing file yields an explicit built-in schema-v1 configuration
-with permission mode `ask`; invalid selected environment input and all other
-load failures fail closed. A present file must be at most 64 KiB of valid UTF-8
-and must be exactly a schema-v1 object with `schema_version` equal to `1` and
-`permission_mode` equal to `"ask"`. Unknown, duplicate, missing, wrong-type, or
-unsupported fields and values are rejected.
+The synchronous loader resolves only the config location. In the eleventh
+candidate, an unavailable location or missing file yields the explicit built-in
+schema-v2 object
+`{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2"}`.
+Invalid selected environment input and all other load failures fail closed. A
+present file must be at most 64 KiB of valid UTF-8 and must be either that exact
+five-field v2 shape, with any 1–128-byte visible-ASCII model, or the exact strict
+legacy v1 shape
+`{"schema_version":1,"permission_mode":"ask"}`. Unknown, duplicate, missing,
+wrong-type, or unsupported fields and values are rejected in each schema.
+
+An accepted v1 file maps only in memory to provider `vercel_ai_gateway`,
+transport `ai_gateway_http`, and model `zai/glm-5.2`; its observable
+`schema_version()` stays `1`. Loading does not migrate or rewrite the file.
+`NativeConfig` exposes `schema_version`, `permission_mode`, `provider`,
+`transport`, and `model` getters and owns the bounded model string, so it and
+`LoadedNativeConfig` are cloneable but not copyable. Debug output redacts the
+model. `CONFIG_SCHEMA_VERSION` is `2`, `AI_GATEWAY_DEFAULT_MODEL` is
+`zai/glm-5.2`, and `AI_GATEWAY_MAX_MODEL_BYTES` is `128`. The config model and
+AI Gateway provider use one visible-ASCII model validator.
+
+The closed `NativeProviderKind::VercelAiGateway` and
+`NativeTransportKind::AiGatewayHttp` values expose the stable names
+`vercel_ai_gateway` and `ai_gateway_http`. These values are declarative. In
+particular, the HTTP enum is present when the optional concrete
+`ai-gateway-http` feature is disabled and on WebAssembly, where that transport
+is unavailable; valid config does not prove a usable transport implementation.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path no-follow and nonblocking. A preliminary path-kind check is followed
@@ -131,11 +161,12 @@ by authoritative opened-descriptor regularity validation. The loader retains at
 most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
-or operating-system error text. Configuration mutation, credential fields,
-permission modes beyond `ask`, a concrete prompt UI, and provider/CLI composition,
+model values, or operating-system error text. Credentials are deliberately in
+neither schema. Configuration mutation or migration, permission modes beyond
+`ask`, a concrete prompt UI, provider/HTTP/runtime/token/CLI composition,
 executable native tools other than the bounded `read_file` and `list_files`
-library capabilities, session migration/encryption/reset/listing, and CLI
-expansion remain deferred.
+library capabilities, session migration/encryption/reset/listing, required-root
+lifecycle, CLI expansion, and composed end-to-end host evidence remain open.
 
 ```text
                         machine-god-core

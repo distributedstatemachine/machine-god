@@ -8,8 +8,9 @@ CLI makes model requests today. Review details are in the
 
 The adapter discovers one Vercel AI Gateway bearer credential from an
 explicitly owned environment snapshot. It is separate from core, the CLI, and
-schema-v1 native configuration. The only ambient lookup is the explicitly
-named process-snapshot constructor or process convenience function.
+native configuration. Credentials are fields in neither the exact legacy v1
+schema nor the candidate current v2 schema. The only ambient lookup is the
+explicitly named process-snapshot constructor or process convenience function.
 
 ## Feature and public boundary
 
@@ -121,13 +122,16 @@ access. Core receives no ambient credential authority. The HTTP transport still
 receives an explicit validated bearer token and retains its existing endpoint,
 origin, redirect, proxy, status, timeout, and cancellation policy.
 
-This candidate does not change strict configuration schema v1, store or rotate
-credentials, write environment variables, add a setup command, compose a
-provider into the CLI, select a model, or make a network request. Consequently,
-it does not complete the broader M03 credential-and-configuration checklist
-item. Existing CLI bytes and benchmark workloads are unchanged. Zig remains
-only a build input for the pinned upstream benchmark; machine-god remains a
-Rust product.
+This integrated adapter does not store or rotate credentials, write environment
+variables, add a setup command, compose a provider into the CLI, select a model,
+or make a network request. The eleventh
+[`native configuration schema-v2 candidate`](configuration.md) adds only
+declarative provider, transport, and model data; it does not add a credential
+field or invoke this adapter. The broader M03 credential-and-configuration
+checklist item remains unchecked while that candidate's production,
+adversarial, remote, and `main` gates are pending. Existing CLI bytes and
+benchmark workloads are unchanged. Zig remains only a build input for the
+pinned upstream benchmark; machine-god remains a Rust product.
 
 ## Delivery evidence
 

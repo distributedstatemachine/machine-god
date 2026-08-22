@@ -20,3 +20,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native file session store review](m03-session-store-review-01.md)
 - [Milestone 03 native ask permission handler review](m03-ask-permission-review-01.md)
 - [Milestone 03 native AI Gateway credential discovery review](m03-ai-gateway-credential-review-01.md)
+- [Milestone 03 native host configuration schema-v2 candidate review](m03-native-host-config-review-01.md)

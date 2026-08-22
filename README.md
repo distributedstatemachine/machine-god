@@ -32,8 +32,18 @@ AI Gateway bearer credential from an owned, redacted environment snapshot. It
 is integrated on `main` at
 `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
 and benchmark run `32573320937` are green. It does not change configuration
-schema v1 or CLI behavior; see its
+or CLI behavior; see its
 [contract](docs/ai-gateway-credentials.md).
+An eleventh bounded candidate advances the built-in native configuration and
+current file schema to strict v2 with fixed declarative AI Gateway provider,
+HTTP transport, and `zai/glm-5.2` model defaults. The exact strict two-field v1
+file remains read-compatible without rewrite or migration and remains
+observable as schema v1 after its in-memory projection. Credentials are in
+neither schema, and the new fields do not compose a provider, HTTP client,
+runtime, token, network request, or CLI path. Production integration,
+adversarial review, exact-SHA remote gates, and `main` delivery remain pending;
+see the [native configuration contract](docs/configuration.md) and
+[candidate review record](docs/reviews/m03-native-host-config-review-01.md).
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),

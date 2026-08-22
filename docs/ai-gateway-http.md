@@ -18,6 +18,9 @@ requests, streams, and pooled connections and remain driven while they are
 active or being torn down. Construction performs no network effect and requires
 no runtime. Core, the codec, and custom injected transports remain
 executor-neutral and retain their existing authority and resource boundaries.
+The separate candidate [`native configuration schema v2`](configuration.md)
+declares the stable `ai_gateway_http` transport kind only; parsing that value
+does not construct this transport or its required runtime.
 
 ## Feature and public API
 
@@ -25,6 +28,12 @@ The implementation is opt-in through the `machine-god-native` Cargo feature
 `ai-gateway-http`. The feature and all of its exports are cfg-gated off on
 WebAssembly; there is no WASM HTTP implementation. The base crate and custom
 injected transports do not require Reqwest or Tokio.
+
+`NativeTransportKind::AiGatewayHttp` and its stable `ai_gateway_http` name are
+not cfg-gated with this optional implementation. They remain valid declarative
+configuration data in no-default-feature and WebAssembly builds, where
+`AiGatewayHttpTransport` is absent. The enum therefore does not promise that a
+configured transport is available or usable on the current build and target.
 
 The feature exposes these construction surfaces:
 
@@ -84,9 +93,9 @@ fn provider_from_host_secret(
 
 This transport API does not read an environment variable, configuration file,
 keychain, credential helper, command-line flag or prompt. The separate
-candidate may read only its two documented environment names when a host
-explicitly selects process discovery. Credential rotation, lifetime and
-authorization remain trusted-host responsibilities.
+integrated credential adapter may read only its two documented environment
+names when a host explicitly selects process discovery. Credential rotation,
+lifetime and authorization remain trusted-host responsibilities.
 
 ## Endpoint and credential confinement
 
@@ -247,3 +256,7 @@ WASM transport, non-Tokio execution for the concrete transport, internal
 runtime, extra tool, package, GitHub release, compatibility promotion or
 performance claim. The plaintext endpoint is exclusively a deterministic-test
 facility and is not a supported production deployment mode.
+
+Schema v2 may declare `transport: "ai_gateway_http"`, but that is data only: it
+does not enable the Cargo feature, construct `AiGatewayHttpTransport`, acquire
+or attach a bearer token, create or drive Tokio, or issue a request.
