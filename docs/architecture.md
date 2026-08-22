@@ -22,10 +22,10 @@ uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
 Milestone 03 has fifteen delivered bounded slices. The first formal sixteenth
-candidate is composed through `dec98e0`, but all three review tracks are not
+candidate is composed through `dec98e0`, whose three review tracks were not
 green. Its source and test fixes are composed in exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`, which awaits formal rereview and
-remote evidence. The twelfth slice's
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
+green and remote evidence remains pending. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record
@@ -133,9 +133,10 @@ no-follow regular-file access, strict current schema, and filename/decoded-ID
 digest validation. There is no multi-record snapshot, live-registry lookup,
 rich summary, workspace/latest/cursor semantic, CLI path, or fx-equivalence
 claim. Production and 13 initial independent tests are composed through
-`dec98e0`. All three first formal tracks are not green. Isolated fix `4b8d8b0`
-and test hardening `446b495` are composed in the replacement candidate, with 18
-focused tests green locally. Rereview and exact delivery evidence are pending.
+`dec98e0`. All three first formal tracks were not green. Isolated fix `4b8d8b0`
+and test hardening `446b495` are composed in exact behavior candidate
+`3fa5463`, with 18 focused tests and all three replacement tracks green. Exact
+delivery evidence is pending.
 The contract is in
 [`native-session-listing.md`](native-session-listing.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -482,9 +483,9 @@ work and detaches nothing. Full bounds, corruption behavior, authority limits,
 and deliberate non-features are in
 [`native-session-listing.md`](native-session-listing.md). Production and the 13
 initial independent tests are composed through `dec98e0`; all three first
-formal tracks are not green. Isolated fixes have 18 focused tests green, but
-are now composed in the replacement candidate. Formal rereview and delivery
-evidence remain pending.
+formal tracks were not green. The fixes and 18-test hardened suite are composed
+in exact behavior candidate `3fa5463`; all three replacement tracks are green.
+Delivery evidence remains pending.
 
 The ninth slice is `machine_god_native::AskPermissionHandler`. It adapts
 core's existing provider-neutral `PermissionHandler` to an explicitly injected,

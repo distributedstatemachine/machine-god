@@ -111,9 +111,10 @@ name-inspected overflow witness. It accepts/decodes at most 64 MiB of aggregate
 canonical record bytes plus one transient transfer byte solely to detect
 concurrent growth. All non-dot names within the scan consume budget. Production
 and 13 initial independent tests are composed through first formal candidate
-`dec98e0`, but all three first review tracks are not green. Isolated fixes have
-18 focused tests green and are composed in the replacement candidate. Formal
-rereview and delivery evidence remain pending; its security contract is in
+`dec98e0`, whose three first review tracks were not green. The fixes and 18-test
+hardened suite are composed in exact behavior candidate `3fa5463`; all three
+replacement review tracks are green. Remote delivery evidence remains pending;
+its security contract is in
 [`native-session-listing.md`](native-session-listing.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG

@@ -23,8 +23,8 @@ library-only. They add no `session`, `sessions`, `resume`, `replay`, workspace,
 or slash command and change none of the accepted invocations, output bytes,
 diagnostics, or exit statuses below. In particular, the candidate's IDs-only
 bounded result is not exposed as fx-compatible CLI output. That first formal
-candidate was not green; its composed replacement now awaits rereview. Neither
-state changes this CLI contract.
+candidate was not green; all three review tracks are green on its composed
+replacement. Pending remote delivery does not change this CLI contract.
 
 ## Accepted invocations
 

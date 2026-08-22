@@ -68,10 +68,10 @@ ordinary by-ID load/save contract on this page. It recognizes only exact
 canonical `.json` record names and validates them under the same no-follow
 regular-file, strict schema, fixed record bound, decoded-ID, and permanent
 per-ID locking rules. Production and 13 initial independent tests are composed
-through `dec98e0`, but all three first formal tracks are not green. Isolated
-fixes are composed into the replacement candidate with 18 focused tests and the
-full all-target/all-feature workspace suite green locally; formal rereview and
-delivery evidence remain pending.
+through `dec98e0`, whose three first formal tracks were not green. The fixes are
+composed into exact behavior candidate `3fa5463`; 18 focused tests, the required
+local gates, and all three replacement review tracks are green. Remote delivery
+evidence remains pending.
 Listing processes/selects at
 most 1,024 non-dot entries plus one fetched/name-inspected overflow witness and
 accepts/decodes at most 64 MiB of aggregate canonical record bytes plus one

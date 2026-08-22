@@ -2,10 +2,10 @@
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
 Fifteen slices are delivered. The first formal sixteenth candidate is composed
-through `dec98e0`, but all three review tracks are not green. Its replacement
+through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`. Formal rereview and remote evidence
-remain pending. This
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
+green and remote evidence remains pending. This
 slice's production implementation, an
 independently owned seven-test black-box suite, three fresh adversarial tracks,
 and exact feature and `main` workflows are green. Its final delivery record is
@@ -60,10 +60,10 @@ same retained lifecycle and store. It returns at most 100 sorted unique IDs plus
 and name-inspected overflow witness, and accepts/decodes at most 64 MiB of
 aggregate canonical record bytes plus one transient transfer byte to detect
 concurrent growth. It adds no CLI behavior. Production and 13 initial
-independent tests are composed; all three first formal tracks are not green.
-Isolated fixes are composed into the replacement candidate with 18 focused
-tests green locally. Formal rereview and delivery evidence remain pending. Its
-normative behavior is in
+independent tests are composed; all three first formal tracks were not green.
+The fixes are composed into exact behavior candidate `3fa5463`, with 18 focused
+tests and all three replacement review tracks green. Remote delivery evidence
+remains pending. Its normative behavior is in
 [`native-session-listing.md`](native-session-listing.md).
 
 ## Feature and platform boundary
@@ -370,10 +370,10 @@ listing through the same lifecycle. It adds no rich summaries,
 workspace/latest/cursor semantics, pagination, global snapshot, session-ID
 generation, UI replay, or CLI command. Its behavior and limits are in
 [`native-session-listing.md`](native-session-listing.md); production/test
-composition is present through `dec98e0`, but all three first formal tracks are
+composition is present through `dec98e0`, whose three first formal tracks were
 not green. Exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e` composes the replacement; formal
-rereview and exact delivery evidence are pending.
+`3fa54635dab00ebba78b233c69fd39e04e9be57e` composes the replacement, and all
+three replacement tracks are green; exact delivery evidence is pending.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
@@ -390,9 +390,9 @@ final-record feature and `main` workflows are green at integrated SHA
 `f840576a`. The fourteenth slice supplies root selection/preparation, the
 fifteenth supplies create/resume/replay/reset, and the sixteenth first candidate
 contains bounded IDs-only listing. The combined root-and-session-lifecycle item
-remains unchecked because all three first listing reviews are not green and
-exact composed behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e` still needs formal rereview and
-remote exact-SHA gates. Milestone 03 remains in progress because the remaining native tools,
+remains unchecked because exact composed behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e` still needs remote exact-SHA gates,
+despite all three replacement reviews being green. Milestone 03 remains in
+progress because the remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.

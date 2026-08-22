@@ -194,7 +194,8 @@ this bootstrap artifact.
 The first formal sixteenth
 [`native session-listing candidate`](native-session-listing.md) does not change
 that classification. Its first formal candidate was not green; the composed
-replacement awaits rereview. Its
+replacement is green across all three review tracks and awaits remote delivery.
+Its
 library result contains only sorted validated IDs and a truncation flag; it has
 no CLI path and is not semantically equivalent to fx's
 workspace-aware rich `sessions --json` surface. The `sessions-json` workload

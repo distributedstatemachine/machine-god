@@ -44,10 +44,10 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with fifteen delivered bounded slices. The first formal sixteenth-slice
-candidate is composed through `dec98e0`, but all three review tracks are not
+candidate is composed through `dec98e0`, whose three review tracks were not
 green. Its source and test fixes are composed in exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`, which awaits formal rereview and
-remote evidence. The first
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
+green and remote evidence remains pending. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -390,11 +390,11 @@ are in [`native-session-listing.md`](native-session-listing.md) and
 Production `0accfbf` is composed as `1bffac9`, documentation `63d589c` as
 `87d7de0`, and 13 initial independent tests `1b531297` as `4b4e468`, from base
 `9ada4b5`. The removed-root fix and first formal candidate are `dec98e0`. All
-three first review tracks are not green. Isolated acquire-first source fix
+three first review tracks were not green. Isolated acquire-first source fix
 `4b8d8b0` and isolated test hardening `446b495` are composed in the replacement
 candidate, with 18 focused tests and the full all-target/all-feature workspace
-suite green locally. Formal rereview and exact feature and delivery evidence
-remain pending.
+suite green locally. All three replacement tracks are green on exact behavior
+candidate `3fa5463`; exact feature and delivery evidence remain pending.
 
 The current schema and store contain no authoritative summary, workspace,
 title, preview, language, timestamp, latest-order, or index fields. This slice
@@ -443,11 +443,11 @@ gate:
   green through record `dbba2c7`. The composed sixteenth candidate supplies the
   remaining bounded IDs-only native listing functional scope. Production and
   13 initial independent tests are composed through first formal candidate
-  `dec98e0`, but all three first review tracks are not green. The replacement
+  `dec98e0`, whose three first review tracks were not green. The replacement
   source fix and 18-test hardened suite from `4b8d8b0` and `446b495` are
   composed in exact behavior candidate
-  `3fa54635dab00ebba78b233c69fd39e04e9be57e`. Formal rereview and remote
-  exact-SHA gates remain pending. The combined item therefore stays
+  `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
+  green. Remote exact-SHA gates remain pending. The combined item therefore stays
   unchecked until those delivery gates are green.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,

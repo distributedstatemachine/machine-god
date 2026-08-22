@@ -135,13 +135,13 @@ closed; unrelated names are ignored but count against the scan budget.
 The result is neither a multi-record snapshot nor a pagination or summary
 surface. Production, documentation, and 13 initial independent tests are
 composed from base `9ada4b5` through first formal candidate `dec98e0`. All three
-first review tracks are not green. Isolated fix `4b8d8b0` and test hardening
-`446b495` are composed into the replacement candidate with the corrected
-documentation; its 18 focused tests and full all-target/all-feature workspace
-suite are green locally. Formal rereview and exact remote delivery evidence
-remain pending. It adds no
+first review tracks were not green. Isolated fix `4b8d8b0` and test hardening
+`446b495` are composed into exact behavior candidate `3fa5463` with the
+corrected documentation; its 18 focused tests, required local gates, and all
+three replacement review tracks are green. Exact remote delivery evidence
+remains pending. It adds no
 CLI behavior and makes no fx equivalence or performance claim. See the
-[native session-listing contract](docs/native-session-listing.md) and non-green
+[native session-listing contract](docs/native-session-listing.md) and
 [review record](docs/reviews/m03-native-session-listing-review-01.md).
 
 The project is not yet production-ready. See the exact
@@ -157,8 +157,7 @@ integrated [configured credential source](docs/configuration.md), and the
 integrated [native root-selection boundary](docs/native-root-selection.md).
 The [native session lifecycle](docs/native-session-lifecycle.md) is integrated;
 its bounded [session-listing extension](docs/native-session-listing.md) is a
-replacement candidate awaiting rereview and delivery evidence after a non-green
-first formal review.
+review-green replacement candidate awaiting exact remote delivery evidence.
 
 ## Development
 

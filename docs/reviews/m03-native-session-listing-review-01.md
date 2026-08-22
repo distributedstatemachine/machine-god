@@ -1,18 +1,21 @@
 # Milestone 03 native session-listing review 01
 
-Status: **REPLACEMENT CANDIDATE AWAITS FORMAL REREVIEW**
+Status: **REPLACEMENT REREVIEW GREEN — REMOTE GATES PENDING**
 
 All three first-round formal tracks reported confirmed findings on exact
 candidate `dec98e06e110be88317a2ba76c77e7ca872fed34`. Production and the
-initial independent suite are composed; this is not a green or delivered slice.
+initial independent suite are composed; that first candidate was not green, and
+the slice remains undelivered until its remote gates pass.
 Replacement production work, test hardening, and corrected documentation are
 composed in this exact replacement candidate, with 18 focused tests and the
-full all-target/all-feature workspace suite green locally. Formal rereview and
-remote exact-SHA evidence remain pending.
+full all-target/all-feature workspace suite green locally. All three replacement
+review tracks are green on exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`. Remote exact-SHA evidence remains
+pending.
 
 Per the user's instruction, a later documentation-only seal will not require a
 new adversarial review after one exact behavior candidate is green. That does
-not waive the current replacement rereview or any delivery gate.
+not waive any delivery gate; the required replacement rereview is now complete.
 
 ## Exact lineage
 
@@ -33,7 +36,8 @@ not waive the current replacement rereview or any delivery gate.
 The composed test commit contains 13 initial independently owned focused tests.
 The isolated test-hardening commit raises that focused suite to 18 tests, and
 those 18 focused tests are green. The source and test fixes are composed in this
-replacement candidate; they are not yet formal rereview or remote evidence.
+replacement candidate and are green under all three replacement review tracks.
+They are not yet remote evidence.
 
 ## Candidate boundary
 
@@ -96,7 +100,9 @@ this slice.
 After first review, isolated production fix `4b8d8b0` implements acquire-first
 validation and isolated test hardening `446b495` brings the focused suite to 18
 green tests. This replacement candidate composes those results and the corrected
-contract, but does not yet establish green rereview.
+contract. All three replacement tracks are green after the documentation-only
+finding corrections at `f0b9fed` and `6689ab9`; executable behavior remains
+exactly `3fa54635dab00ebba78b233c69fd39e04e9be57e`.
 
 ## First formal review results
 
@@ -133,15 +139,38 @@ contract, but does not yet establish green rereview.
 - **Medium:** macOS concurrency wording validated the wrong descriptor order and
   overstated deterministic rename/removal outcomes.
 
-## Replacement requirements and pending evidence
+## Replacement rereview results
 
 This replacement composes the acquire-first macOS source fix and the isolated
-18-test hardened suite covering the confirmed evidence gaps. All three fresh
-rereview tracks must now be green on this one exact replacement behavior SHA.
+18-test hardened suite covering the confirmed evidence gaps.
 
-The focused and required Rust 1.94.1 local gates must rerun on that exact
-replacement. Exact feature-branch CI and benchmark-evidence workflows,
-fast-forward integration, and exact `main` workflows remain pending. Until those
+- **Correctness and API — GREEN:** the expanded evidence closes the first-round
+  locking, disappearance, writer, unavailable-I/O, and bound-documentation
+  findings. The targeted documentation confirmation is green at `6689ab9` with
+  behavior unchanged at `3fa5463`.
+- **Security and resources — GREEN:** acquire-first validation of the exact
+  fresh macOS descriptor closes the liveness window; bounds, lock behavior,
+  no-follow access, redaction, and authority were rechecked on `3fa5463`.
+- **Documentation, evidence, performance and concurrency — GREEN:** the 18-test
+  scope, exact composition status, overflow witnesses, result/error `Debug`
+  distinction, macOS concurrency wording, and benchmark/Rust-Zig boundaries
+  are consistent at documentation head `6689ab9`, with behavior unchanged at
+  `3fa5463`.
+
+## Exact replacement local evidence
+
+Exact Rust/Cargo 1.94.1 formatting, workspace all-target/all-feature Clippy,
+default and all-target/all-feature workspace tests, documentation tests, all 18
+focused listing tests, and release binary bare/help/status smoke checks are
+green. The repository Python suite ran 129 tests with eight expected macOS
+skips. `cargo deny check` accepted advisories, bans, licenses, and sources;
+`cargo audit --no-fetch` scanned 1,225 cached advisories and 175 lockfile
+dependencies with no finding. Diff checks and the worktree are clean.
+
+## Pending delivery evidence
+
+Exact feature-branch CI and benchmark-evidence workflows, fast-forward
+integration, and exact `main` workflows remain pending. Until those
 gates pass, the combined root plus native create/list/resume/replay/reset M03
 checklist item remains unchecked even though its functional code scope exists.
 

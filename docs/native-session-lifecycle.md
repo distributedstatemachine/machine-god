@@ -9,10 +9,10 @@ and benchmark evidence `32594846476`. This documentation-only commit is the
 final delivery record; its workflows are reported at handoff. Fifteen bounded
 slices are integrated. A first formal sixteenth candidate extends this
 lifecycle with bounded IDs-only listing; production and 13 initial independent
-tests are composed through `dec98e0`, but all three first review tracks are not
-green. The isolated fixes and 18-test hardened suite are now composed in the
-replacement candidate. Formal rereview and
-delivery evidence remain pending. Milestone
+tests are composed through `dec98e0`, whose three first review tracks were not
+green. The isolated fixes and 18-test hardened suite are composed in exact
+behavior candidate `3fa5463`; all three replacement review tracks are green.
+Remote delivery evidence remains pending. Milestone
 03 remains `IN PROGRESS` because this delivery gate and other frozen scope
 remain open.
 
@@ -351,9 +351,9 @@ library-level listing under the separate
 [`native session-listing contract`](native-session-listing.md). After that
 first composition the combined M03 root plus create/list/resume/replay/reset
 functional code scope exists, but the checklist item remains unchecked. All
-three first listing review tracks are not green. Exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e` composes the replacement; formal
-rereview and remote exact-SHA delivery gates remain pending.
+three replacement listing review tracks are green on exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`; remote exact-SHA delivery gates
+remain pending.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and changes no benchmark workload or workflow. Zig remains solely the

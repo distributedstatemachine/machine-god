@@ -6,10 +6,10 @@ composed through `dec98e0`, but each first-round formal review track reported
 confirmed findings. Acquire-first production fix `4b8d8b0`, test hardening
 `446b495`, and the corrected contract are composed in this replacement
 behavior candidate `3fa54635dab00ebba78b233c69fd39e04e9be57e`. Its 18 focused
-tests and full all-target/all-feature workspace suite are green locally. Formal
-rereview, exact feature-SHA remote workflows, and
-delivery evidence remain pending. The fifteen earlier slices remain integrated
-through `9ada4b5`.
+tests, full all-target/all-feature workspace suite, and all three replacement
+review tracks are green. Exact feature-SHA remote workflows and delivery
+evidence remain pending. The fifteen earlier slices remain integrated through
+`9ada4b5`.
 
 The exact first-candidate lineage is: integrated base `9ada4b5`; isolated
 production `0accfbf`, composed as `1bffac9`; isolated documentation `63d589c`,
@@ -213,8 +213,9 @@ machine-god remains a Rust product.
 
 The functional code scope for the combined Milestone 03 root plus native
 create/list/resume/replay/reset library boundary exists in the first candidate,
-but that checklist remains incomplete until replacement regressions, all three
-formal rereviews, and exact feature and `main` remote gates are green. Milestone
+and replacement regressions plus all three formal rereviews are green. That
+checklist remains incomplete until exact feature and `main` remote gates are
+green. Milestone
 03 also remains in progress for the remaining native tools, top-level CLI and
 slash-command ownership, and composed freshly built release-binary end-to-end
 evidence.

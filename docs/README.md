@@ -30,4 +30,4 @@
 - [Milestone 03 configured credential-source review](reviews/m03-configured-credential-source-review-01.md)
 - [Milestone 03 native root-selection composed candidate](reviews/m03-native-root-selection-review-01.md)
 - [Milestone 03 native session-lifecycle review](reviews/m03-native-session-lifecycle-review-01.md)
-- [Milestone 03 native session-listing first review (not green)](reviews/m03-native-session-listing-review-01.md)
+- [Milestone 03 native session-listing review (replacement green; delivery pending)](reviews/m03-native-session-listing-review-01.md)
