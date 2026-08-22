@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 mod ai_gateway;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+mod ai_gateway_credential;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod ai_gateway_http;
 mod ask_permission;
 mod config;
@@ -20,6 +22,12 @@ pub use ai_gateway::{
     AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind,
     AiGatewayHeader, AiGatewayLimits, AiGatewayProvider, AiGatewayTransport,
     AiGatewayTransportRequest,
+};
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use ai_gateway_credential::{
+    AI_GATEWAY_API_KEY_ENV, AiGatewayCredentialEnvironment, AiGatewayCredentialError,
+    AiGatewayCredentialErrorKind, AiGatewayCredentialSource, DiscoveredAiGatewayCredential,
+    VERCEL_OIDC_TOKEN_ENV, discover_ai_gateway_credential, discover_process_ai_gateway_credential,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use ai_gateway_http::{
