@@ -294,12 +294,11 @@ impl FileInfoTool {
 
         let file_type = FileType::from_raw_mode(metadata.st_mode);
         let kind = classify_file_type(file_type);
-        let size_bytes = u64::try_from(metadata.st_size).map_err(|_| invalid_metadata())?;
-        let unix_seconds: i64 = metadata.st_mtime;
-        let nanoseconds = u32::try_from(metadata.st_mtime_nsec)
-            .ok()
-            .filter(|value| *value < 1_000_000_000)
-            .ok_or_else(invalid_metadata)?;
+        let converted_metadata = convert_metadata_fields(
+            i128::from(metadata.st_size),
+            i128::from(metadata.st_mtime),
+            i128::from(metadata.st_mtime_nsec),
+        )?;
         let extension = if file_type.is_file() {
             basename.and_then(file_extension)
         } else {
@@ -310,14 +309,41 @@ impl FileInfoTool {
         Ok(ToolOutput::success(json!({
             "path": normalized,
             "kind": kind,
-            "size_bytes": size_bytes,
+            "size_bytes": converted_metadata.size_bytes,
             "modified": {
-                "unix_seconds": unix_seconds,
-                "nanoseconds": nanoseconds,
+                "unix_seconds": converted_metadata.unix_seconds,
+                "nanoseconds": converted_metadata.nanoseconds,
             },
             "extension": extension,
         })))
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ConvertedMetadata {
+    size_bytes: u64,
+    unix_seconds: i64,
+    nanoseconds: u32,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn convert_metadata_fields(
+    st_size: i128,
+    st_mtime: i128,
+    st_mtime_nsec: i128,
+) -> Result<ConvertedMetadata, ToolError> {
+    let size_bytes = u64::try_from(st_size).map_err(|_| invalid_metadata())?;
+    let unix_seconds = i64::try_from(st_mtime).map_err(|_| invalid_metadata())?;
+    let nanoseconds = u32::try_from(st_mtime_nsec)
+        .ok()
+        .filter(|value| *value < 1_000_000_000)
+        .ok_or_else(invalid_metadata)?;
+    Ok(ConvertedMetadata {
+        size_bytes,
+        unix_seconds,
+        nanoseconds,
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -575,8 +601,10 @@ fn invalid_metadata() -> ToolError {
 #[cfg(test)]
 mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use super::file_extension;
+    use super::{ConvertedMetadata, convert_metadata_fields, file_extension};
     use super::{MAX_FILE_INFO_PATH_BYTES, normalize_relative_path};
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use machine_god_core::{ToolError, ToolErrorKind};
 
     #[test]
     fn lexical_normalization_is_workspace_relative_and_accepts_root() {
@@ -612,5 +640,47 @@ mod tests {
         assert_eq!(file_extension(".bashrc"), None);
         assert_eq!(file_extension("foo."), None);
         assert_eq!(file_extension("plain"), None);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn metadata_conversion_preserves_public_integer_boundaries() {
+        assert_eq!(
+            convert_metadata_fields(0, i128::from(i64::MIN), 0).unwrap(),
+            ConvertedMetadata {
+                size_bytes: 0,
+                unix_seconds: i64::MIN,
+                nanoseconds: 0,
+            }
+        );
+        assert_eq!(
+            convert_metadata_fields(i128::from(u64::MAX), i128::from(i64::MAX), 999_999_999,)
+                .unwrap(),
+            ConvertedMetadata {
+                size_bytes: u64::MAX,
+                unix_seconds: i64::MAX,
+                nanoseconds: 999_999_999,
+            }
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn metadata_conversion_rejects_negative_st_size_and_invalid_nanoseconds() {
+        for result in [
+            convert_metadata_fields(-1, 0, 0),
+            convert_metadata_fields(0, 0, -1),
+            convert_metadata_fields(0, 0, 1_000_000_000),
+        ] {
+            assert_invalid_metadata_error(&result.unwrap_err());
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn assert_invalid_metadata_error(error: &ToolError) {
+        assert_eq!(error.kind, ToolErrorKind::Execution);
+        assert_eq!(error.code, "file_info_invalid_metadata");
+        assert_eq!(error.message, "requested path metadata is invalid");
+        assert!(!error.retryable);
     }
 }

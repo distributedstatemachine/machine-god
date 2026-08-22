@@ -374,6 +374,29 @@ fn execute_reports_exact_regular_file_size_timestamp_and_extension() {
 }
 
 #[test]
+fn execute_preserves_pre_epoch_signed_seconds_and_normalized_nanoseconds() {
+    let temporary = TemporaryDirectory::new();
+    let path = temporary.path().join("pre-epoch.txt");
+    fs::write(&path, b"timestamp").unwrap();
+    let modified = SystemTime::UNIX_EPOCH - Duration::new(1, 876_543_211);
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(modified))
+        .unwrap();
+    let tool = tool(temporary.path());
+
+    assert_eq!(
+        output_content(&tool, "pre-epoch.txt")["modified"],
+        json!({
+            "unix_seconds": -2_i64,
+            "nanoseconds": 123_456_789_u32,
+        })
+    );
+}
+
+#[test]
 fn execute_classifies_directory_root_and_regular_file_extension_edges() {
     let temporary = TemporaryDirectory::new();
     fs::create_dir(temporary.path().join("folder.with-dot")).unwrap();
@@ -700,6 +723,41 @@ fn constructor_and_debug_contracts_are_typed_fixed_and_redacted() {
     assert!(!debug.contains(temporary.path().to_string_lossy().as_ref()));
 }
 
+#[test]
+fn constructor_applies_no_follow_to_decorated_final_root_symlinks_and_accepts_root() {
+    let temporary = TemporaryDirectory::new();
+    let real_root = temporary.path().join("PRIVATE_REAL_WORKSPACE");
+    let linked_root = temporary.path().join("PRIVATE_LINKED_WORKSPACE");
+    fs::create_dir(&real_root).unwrap();
+    symlink(&real_root, &linked_root).unwrap();
+
+    let linked_root = linked_root.to_str().expect("temporary paths are UTF-8");
+    for spelling in [
+        format!("{linked_root}/"),
+        format!("{linked_root}//"),
+        format!("{linked_root}/."),
+    ] {
+        assert_open_error(
+            FileInfoTool::open(Path::new(&spelling)).unwrap_err(),
+            FileInfoToolOpenErrorKind::InvalidFileType,
+            "native file_info workspace root is not a directory",
+            &["PRIVATE_LINKED_WORKSPACE", &spelling],
+        );
+    }
+
+    let real_root = real_root.to_str().expect("temporary paths are UTF-8");
+    for spelling in [
+        format!("{real_root}/"),
+        format!("{real_root}//"),
+        format!("{real_root}/."),
+    ] {
+        FileInfoTool::open(Path::new(&spelling))
+            .expect("terminal separators and dot preserve a real root directory");
+    }
+    FileInfoTool::open(Path::new("/"))
+        .expect("lexical root normalization must preserve the filesystem root");
+}
+
 fn assert_open_error(
     error: FileInfoToolOpenError,
     kind: FileInfoToolOpenErrorKind,
@@ -742,9 +800,13 @@ fn preparation_and_execution_errors_never_reflect_untrusted_paths() {
 }
 
 #[test]
-fn maximum_lexical_result_shape_remains_well_below_the_core_result_cap() {
+fn maximum_escape_heavy_result_with_extension_remains_below_seventeen_kibibytes() {
     let temporary = TemporaryDirectory::new();
-    let component = "x".repeat(255);
+    let directory_component = "\\\"".repeat(120);
+    let extension = "\\\"".repeat(119);
+    let file_name = format!("a.{extension}");
+    assert_eq!(directory_component.len(), 240);
+    assert_eq!(file_name.len(), 240);
     let root = rustix::fs::open(
         temporary.path(),
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
@@ -752,39 +814,62 @@ fn maximum_lexical_result_shape_remains_well_below_the_core_result_cap() {
     )
     .unwrap();
     let mut directories = vec![root];
-    let mut components = Vec::new();
-    while components.iter().map(String::len).sum::<usize>() + components.len() + 255
-        <= MAX_FILE_INFO_PATH_BYTES
-    {
+    let mut components = Vec::with_capacity(17);
+    for _ in 0..16 {
         let parent = directories.last().unwrap();
-        rustix::fs::mkdirat(parent.as_fd(), &component, Mode::from_raw_mode(0o700)).unwrap();
+        rustix::fs::mkdirat(
+            parent.as_fd(),
+            &directory_component,
+            Mode::from_raw_mode(0o700),
+        )
+        .unwrap();
         let child = rustix::fs::openat(
             parent.as_fd(),
-            &component,
+            &directory_component,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         )
         .unwrap();
         directories.push(child);
-        components.push(component.clone());
+        components.push(directory_component.clone());
     }
+    let file = rustix::fs::openat(
+        directories.last().unwrap().as_fd(),
+        &file_name,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o600),
+    )
+    .unwrap();
+    drop(file);
+    components.push(file_name.clone());
     let normalized = components.join("/");
-    assert!(normalized.len() <= MAX_FILE_INFO_PATH_BYTES);
+    assert_eq!(normalized.len(), MAX_FILE_INFO_PATH_BYTES);
     let output = execute(
         &tool(temporary.path()),
         json!({ "path": &normalized }),
         CancellationToken::new(),
     )
     .unwrap();
-    let serialized = serde_json::to_vec(&output).unwrap();
-    assert!(serialized.len() < 64 * 1024);
+    let serialized_content = serde_json::to_vec(&output.content).unwrap();
+    assert!(
+        serialized_content.len() < 17 * 1024,
+        "serialized content was {} bytes",
+        serialized_content.len()
+    );
     assert_eq!(output.content["path"], normalized);
-    assert_eq!(output.content["kind"], "directory");
+    assert_eq!(output.content["kind"], "file");
+    assert_eq!(output.content["extension"], extension);
     assert!(output.content["size_bytes"].is_u64());
     assert!(output.content["modified"]["unix_seconds"].is_i64());
     assert!(output.content["modified"]["nanoseconds"].is_u64());
 
-    for parent in directories.iter().take(components.len()).rev() {
-        rustix::fs::unlinkat(parent.as_fd(), &component, AtFlags::REMOVEDIR).unwrap();
+    rustix::fs::unlinkat(
+        directories.last().unwrap().as_fd(),
+        &file_name,
+        AtFlags::empty(),
+    )
+    .unwrap();
+    for parent in directories.iter().take(16).rev() {
+        rustix::fs::unlinkat(parent.as_fd(), &directory_component, AtFlags::REMOVEDIR).unwrap();
     }
 }
