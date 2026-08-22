@@ -2,9 +2,10 @@
 
 Status: feature-branch candidate contract for the eleventh bounded Milestone 03
 slice. Production implementation, black-box tests, and candidate documentation
-are composed on the feature branch. Final adversarial rereview, exact-SHA remote
-gates, and delivery on `main` are pending. Milestone 03 remains `IN PROGRESS`.
-Exact candidate lineage is recorded in the
+are composed on the feature branch. Three fresh adversarial tracks and exact
+feature-branch CI and benchmark-evidence gates are green. Documentation seal
+and delivery on `main` are pending. Milestone 03 remains `IN PROGRESS`. Exact
+candidate lineage is recorded in the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 
 The native configuration loader is a bounded, synchronous, read-only

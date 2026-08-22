@@ -48,8 +48,9 @@ and benchmark run `32573320937` are green. Its exact boundary is in
 An eleventh bounded candidate advances the built-in and current native config
 schema to strict v2 while keeping exact strict v1 files read-compatible without
 rewrite or migration. Its production implementation, black-box tests, and
-candidate documentation are composed on the feature branch. Final adversarial
-rereview, exact remote gates, and delivery on `main` remain pending; see
+candidate documentation are composed on the feature branch. Three adversarial
+tracks and exact feature-branch gates are green. Documentation seal and
+delivery on `main` remain pending; see
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 

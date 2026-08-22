@@ -41,9 +41,9 @@ file remains read-compatible without rewrite or migration and remains
 observable as schema v1 after its in-memory projection. Credentials are in
 neither schema, and the new fields do not compose a provider, HTTP client,
 runtime, token, network request, or CLI path. The feature implementation,
-black-box tests, and candidate documentation are composed on its feature
-branch; final adversarial rereview, exact-SHA remote gates, and `main` delivery
-remain pending. See the
+black-box tests, candidate documentation, three adversarial tracks, and exact
+feature-branch gates are green. Documentation seal and `main` delivery remain
+pending. See the
 [native configuration contract](docs/configuration.md) and
 [candidate review record](docs/reviews/m03-native-host-config-review-01.md).
 The project is not yet production-ready. See the exact

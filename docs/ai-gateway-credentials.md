@@ -130,10 +130,11 @@ declarative provider, transport, and model data; it does not add a credential
 field or invoke this adapter. The broader M03 credential-and-configuration
 checklist item remains unchecked because configuration still has no bounded
 credential-source field and no reference-host composition invokes this
-adapter; the schema-v2 candidate's final adversarial rereview, exact remote
-gates, and `main` delivery also remain pending. Existing CLI bytes and benchmark
-workloads are unchanged. Zig remains only a build input for the pinned upstream
-benchmark; machine-god remains a Rust product.
+adapter. The schema-v2 candidate's adversarial and exact feature-branch gates
+are green, while its documentation seal and `main` delivery remain pending.
+Existing CLI bytes and benchmark workloads are unchanged. Zig remains only a
+build input for the pinned upstream benchmark; machine-god remains a Rust
+product.
 
 ## Delivery evidence
 

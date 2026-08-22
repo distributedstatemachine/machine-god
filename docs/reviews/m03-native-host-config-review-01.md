@@ -1,6 +1,6 @@
 # Milestone 03 native host configuration schema-v2 review 01
 
-Status: **FEATURE REVIEW GREEN — exact remote gates and `main` delivery
+Status: **FEATURE BRANCH GREEN — documentation seal and `main` delivery
 pending**
 
 ## Review lineage
@@ -25,6 +25,8 @@ pending**
   `0d8e4590d76a6e58207951ff9d746c0c95cde003`
 - Adversarially green candidate:
   `53645ce89997be82a28d98ea0bdf4d74ea4f0c4d`
+- Review record and exact feature-gate SHA:
+  `40adb062b32417463b8ba266e21ecd2b677082b4`
 - Documentation seal: `PENDING`
 - Exact `main` delivery SHA: `PENDING`
 - Integration branch: `agent/m03-native-host-config-v2`
@@ -33,9 +35,9 @@ pending**
 
 This is the eleventh bounded Milestone 03 candidate. The first ten slices are
 integrated. This slice's production implementation, tests, and documentation
-are composed on its feature branch, and three fresh adversarial tracks are
-green. Exact remote gates and `main` delivery remain pending. Milestone 03
-remains `IN PROGRESS`.
+are composed on its feature branch, three fresh adversarial tracks are green,
+and both exact feature-branch workflows are green. Documentation seal and
+`main` delivery remain pending. Milestone 03 remains `IN PROGRESS`.
 
 ## Reviewed behavior
 
@@ -145,12 +147,22 @@ The following passed on
   smoke; and
 - `git diff --check` and a clean worktree.
 
-## Pending delivery gates
+## Exact feature-branch delivery gates
 
-This review-record commit and the later documentation seal must pass exact
-feature-branch CI and benchmark-evidence workflows. The exact fast-forwarded
-`main` SHA must then pass both workflows. Remote and `main` results are pending
-at this record's current state.
+The reviewed behavior and its review record are feature-green at
+`40adb062b32417463b8ba266e21ecd2b677082b4`:
+
+- exact feature CI run
+  [`32575563407`](https://github.com/distributedstatemachine/machine-god/actions/runs/32575563407)
+  is green; and
+- exact feature benchmark-evidence run
+  [`32575563375`](https://github.com/distributedstatemachine/machine-god/actions/runs/32575563375)
+  is green.
+
+The documentation seal must pass both exact feature workflows before it can be
+fast-forwarded without force to `main`; that exact `main` SHA must then pass
+both workflows. Seal and `main` results are pending at this record's current
+state.
 
 ## Scope
 

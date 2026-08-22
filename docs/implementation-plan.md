@@ -194,7 +194,8 @@ contract and review lineage are in
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 Production implementation, black-box tests, and candidate documentation are
-composed on the feature branch. Final adversarial rereview, exact remote gates,
+composed on the feature branch. Three fresh adversarial tracks and exact
+feature-branch CI and benchmark-evidence gates are green. Documentation seal
 and delivery on `main` remain pending.
 
 ### Milestone 03 completion boundary
