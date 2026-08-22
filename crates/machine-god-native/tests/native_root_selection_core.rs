@@ -62,6 +62,16 @@ impl Drop for TemporaryDirectory {
     }
 }
 
+#[cfg(target_os = "macos")]
+struct MacAclCleanup(PathBuf);
+
+#[cfg(target_os = "macos")]
+impl Drop for MacAclCleanup {
+    fn drop(&mut self) {
+        let _ = Command::new("/bin/chmod").arg("-N").arg(&self.0).status();
+    }
+}
+
 fn environment(xdg_state_home: Option<&OsStr>, home: Option<&OsStr>) -> NativeEnvironment {
     NativeEnvironment::new(
         None,
@@ -393,6 +403,7 @@ fn preparation_accepts_a_deny_only_acl_on_a_home_base() {
         status.success(),
         "failed to install the DENY ACL fixture: {status}"
     );
+    let _acl_cleanup = MacAclCleanup(home.clone());
     assert_eq!(mode(&home), 0o700);
 
     let selection = NativeRootSelection::from_environment(

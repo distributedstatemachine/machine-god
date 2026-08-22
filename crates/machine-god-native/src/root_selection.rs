@@ -212,7 +212,7 @@ pub enum PreparedNativeRootsErrorKind {
     StateBase,
     /// A fixed state-root suffix could not be safely opened or created.
     StateRoot,
-    /// An existing or newly created state directory failed ownership or mode checks.
+    /// A state directory failed ownership, mode, or macOS ACL safety checks.
     UnsafeStateDirectory,
     /// The retained workspace and final state roots overlap.
     OverlappingRoots,
@@ -295,9 +295,10 @@ impl PreparedNativeRoots {
     ///
     /// # Errors
     ///
-    /// Returns a fixed, redacted error if a root cannot be retained, state
-    /// directory ownership or modes are unsafe, or descriptor identity proves
-    /// that the workspace and final state root overlap.
+    /// Returns a fixed, redacted error if a root cannot be retained, a state
+    /// directory fails ownership, mode, or macOS ACL safety validation, or
+    /// descriptor identity proves that the workspace and final state root
+    /// overlap.
     pub fn prepare(selection: NativeRootSelection) -> Result<Self, PreparedNativeRootsError> {
         let workspace = WorkspaceRoot::open(selection.workspace_root()).map_err(|_| {
             PreparedNativeRootsError::new(PreparedNativeRootsErrorKind::WorkspaceRoot)
@@ -471,7 +472,7 @@ fn prepare_suffix_directory(
                 PreparedNativeRootsErrorKind::UnsafeStateDirectory,
             ));
         }
-        validate_no_extended_acl(&descriptor)?;
+        validate_extended_acl(&descriptor)?;
     } else {
         validate_existing_directory(&descriptor, effective_uid, is_final)?;
     }
@@ -504,16 +505,22 @@ fn validate_existing_directory(
             PreparedNativeRootsErrorKind::UnsafeStateDirectory,
         ));
     }
-    validate_no_extended_acl(descriptor)?;
+    validate_extended_acl(descriptor)?;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn validate_no_extended_acl(descriptor: &OwnedFd) -> Result<(), PreparedNativeRootsError> {
+fn validate_extended_acl(descriptor: &OwnedFd) -> Result<(), PreparedNativeRootsError> {
     let acl = calcifer_macos_acl::read_acl(descriptor.as_fd()).map_err(|_| {
         PreparedNativeRootsError::new(PreparedNativeRootsErrorKind::UnsafeStateDirectory)
     })?;
-    if !acl.is_empty() {
+    if acl.flags != 0
+        || acl.entries.iter().any(|entry| {
+            entry.tag != calcifer_macos_acl::TAG_DENY
+                || entry.flags != 0
+                || entry.permissions != calcifer_macos_acl::PERMISSION_DELETE
+        })
+    {
         return Err(PreparedNativeRootsError::new(
             PreparedNativeRootsErrorKind::UnsafeStateDirectory,
         ));
@@ -522,7 +529,7 @@ fn validate_no_extended_acl(descriptor: &OwnedFd) -> Result<(), PreparedNativeRo
 }
 
 #[cfg(target_os = "linux")]
-const fn validate_no_extended_acl(_descriptor: &OwnedFd) -> Result<(), PreparedNativeRootsError> {
+const fn validate_extended_acl(_descriptor: &OwnedFd) -> Result<(), PreparedNativeRootsError> {
     Ok(())
 }
 
