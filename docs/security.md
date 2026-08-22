@@ -38,10 +38,12 @@ and benchmark run `32570197870` are green. Permission mode remains `ask`; CLI
 registration and a concrete prompt remain future work. The slice's exact
 security boundary and review evidence are in
 [`ask-permission.md`](ask-permission.md).
-A tenth bounded candidate adds opt-in native credential discovery behind the
-existing `ai-gateway-http` and non-WASM gate. It owns a separate secret snapshot
-and does not add credential authority to core, configuration schema v1, or the
-CLI. Its exact boundary is in
+A tenth integrated bounded slice adds opt-in native credential discovery
+behind the existing `ai-gateway-http` and non-WASM gate. It owns a separate
+secret snapshot and does not add credential authority to core, configuration
+schema v1, or the CLI. It is integrated on `main` at
+`ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
+and benchmark run `32573320937` are green. Its exact boundary is in
 [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -356,7 +358,7 @@ non-reflection guarantee, not a secure-memory-erasure claim; the injecting host
 remains responsible for credential acquisition, lifetime, rotation and origin
 scope.
 
-The tenth candidate supplies one separate optional acquisition path. An owned
+The tenth slice supplies one separate optional acquisition path. An owned
 snapshot contains only `VERCEL_OIDC_TOKEN` and `AI_GATEWAY_API_KEY`; a nonempty
 OIDC token has precedence, an exactly empty value is absent, and any selected
 nonempty invalid value fails closed without fallback. Non-Unicode selection is
@@ -366,7 +368,7 @@ diagnostic, or validator text. Debug and display surfaces are non-reflecting.
 At most two validated 4 KiB tokens are retained before selection, but process
 lookup may materialize a larger OS value before rejection. Drop clearing is
 best-effort and does not cover environment storage, allocator history, HTTP
-header copies, or other dependency internals. The candidate does not persist,
+header copies, or other dependency internals. The adapter does not persist,
 rotate, log, print, transmit, or configure a credential by itself.
 
 The Reqwest client disables redirects, proxy use, automatic response

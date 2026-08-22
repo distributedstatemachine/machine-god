@@ -10,7 +10,7 @@
 - [Native `list_files` tool](list-files.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
-- [Native AI Gateway credential discovery candidate](ai-gateway-credentials.md)
+- [Native AI Gateway credential discovery](ai-gateway-credentials.md)
 - [Native file session store](session-store.md)
 - [Native ask permission handler](ask-permission.md)
 - [Compatibility](compatibility.md)

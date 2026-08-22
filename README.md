@@ -27,10 +27,13 @@ explicitly injected prompter. It is integrated on `main` at
 `27e3f2b3ff170044732d9124ffb210beabcda206`; exact main CI run `32570197911`
 and benchmark run `32570197870` are green. It has no CLI or terminal authority.
 See its [contract](docs/ask-permission.md).
-A tenth bounded candidate adds opt-in native discovery of a validated AI
-Gateway bearer credential from an owned, redacted environment snapshot. It
-does not change configuration schema v1 or CLI behavior; see its
-[candidate contract](docs/ai-gateway-credentials.md).
+The tenth integrated bounded slice adds opt-in native discovery of a validated
+AI Gateway bearer credential from an owned, redacted environment snapshot. It
+is integrated on `main` at
+`ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
+and benchmark run `32573320937` are green. It does not change configuration
+schema v1 or CLI behavior; see its
+[contract](docs/ai-gateway-credentials.md).
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),

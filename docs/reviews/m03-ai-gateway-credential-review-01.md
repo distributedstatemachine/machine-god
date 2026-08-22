@@ -1,6 +1,6 @@
 # Milestone 03 native AI Gateway credential discovery review 01
 
-Status: **INTEGRATION READY — exact feature gates green; `main` delivery pending**
+Status: **DELIVERY GREEN — integrated on `main`**
 
 ## Reviewed lineage
 
@@ -129,9 +129,24 @@ The reviewed behavior and its documentation record are feature-green at
   [`32572692217`](https://github.com/distributedstatemachine/machine-god/actions/runs/32572692217)
   is green.
 
-This documentation-only seal must pass both exact feature workflows before it
-may be fast-forwarded without force to `main`. The exact `main` SHA must then
-pass both workflows before the candidate is recorded as delivered.
+The documentation-only seal was required to pass both exact feature workflows
+before it could be fast-forwarded without force to `main`; the exact `main`
+SHA was then required to pass both workflows before delivery could be recorded.
+
+The documentation seal at
+`ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0` passed exact feature CI run
+[`32573044224`](https://github.com/distributedstatemachine/machine-god/actions/runs/32573044224)
+and benchmark-evidence run
+[`32573044159`](https://github.com/distributedstatemachine/machine-god/actions/runs/32573044159).
+
+## Exact `main` delivery gates
+
+The seal was fast-forwarded without force to `main` at
+`ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`. Exact main CI run
+[`32573320962`](https://github.com/distributedstatemachine/machine-god/actions/runs/32573320962)
+and benchmark-evidence run
+[`32573320937`](https://github.com/distributedstatemachine/machine-god/actions/runs/32573320937)
+are green for that exact SHA.
 
 ## Scope
 

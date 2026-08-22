@@ -6,7 +6,7 @@ It adds an executor-neutral `AiGatewayProvider` codec to
 current CLI does not construct this provider or make network requests.
 The separate optional [`ai-gateway-http` transport](ai-gateway-http.md) is one
 possible native injection; custom transports remain supported. The separate
-[`native credential discovery candidate`](ai-gateway-credentials.md) can
+[`native credential discovery`](ai-gateway-credentials.md) can
 produce that transport's explicit bearer input without giving the codec ambient
 authority.
 
@@ -286,7 +286,7 @@ configuration.
 The optional native transport supplies only the separately documented bounded
 HTTP/TLS/authentication/status subset. It does not discover credentials or
 endpoints and does not compose the provider into the CLI. The separate native
-credential candidate discovers only the explicit bearer input; it does not
+credential adapter discovers only the explicit bearer input; it does not
 change this codec boundary or compose either component into the CLI.
 
 It also adds no compatibility or performance evidence. The pinned fx checkout

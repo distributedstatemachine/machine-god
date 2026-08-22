@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has nine integrated bounded slices and a tenth bounded candidate.
+Milestone 03 has ten integrated bounded slices.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -41,13 +41,15 @@ implemented, reviewed, and integrated on `main` at
 and benchmark run `32570197870` are green; the full lineage is recorded in the
 [`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
 Its fixed contract is in [`ask-permission.md`](ask-permission.md).
-The tenth candidate adds a separate, opt-in native credential snapshot. It
+The tenth slice adds a separate, opt-in native credential snapshot. It
 selects a nonempty `VERCEL_OIDC_TOKEN` before a nonempty `AI_GATEWAY_API_KEY`,
 validates the selected value through the existing bounded bearer-token type,
 and moves that token without cloning into an explicit result. It does not
-change core, configuration schema v1, the transport, or CLI behavior. Its fixed
-candidate contract is in
-[`ai-gateway-credentials.md`](ai-gateway-credentials.md).
+change core, configuration schema v1, the transport, or CLI behavior. It is
+integrated on `main` at
+`ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
+and benchmark run `32573320937` are green. Its fixed contract and evidence are
+in [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -66,7 +68,7 @@ separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
 [`native file session store`](session-store.md). The ask-handler slice is
 also a library surface and does not change CLI bytes or supply a concrete
-terminal prompt. The credential-discovery candidate is another separate
+terminal prompt. Credential discovery is another separate
 library surface and does not add configuration fields or CLI composition.
 
 ```text
@@ -216,7 +218,7 @@ drop. A concrete prompt UI, CLI composition, grant persistence, and permission
 modes beyond `ask` remain outside this slice. The complete contract and
 delivery evidence are in [`ask-permission.md`](ask-permission.md).
 
-The tenth candidate is a separate `ai-gateway-http`-gated credential adapter.
+The tenth slice is a separate `ai-gateway-http`-gated credential adapter.
 `AiGatewayCredentialEnvironment::new` accepts owned injected `OsString`
 values; `from_process` snapshots only `VERCEL_OIDC_TOKEN` and
 `AI_GATEWAY_API_KEY`. Discovery consumes the snapshot, treats only an exactly
@@ -231,8 +233,8 @@ moves into `DiscoveredAiGatewayCredential`, and the unused token is dropped.
 Snapshot, result, token, and error formatting do not reflect credentials.
 Process lookup may materialize a complete OS value before application
 validation, and clearing remains best-effort rather than a locked-memory or
-complete zeroization claim. The exact candidate contract and integration gate
-are in [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
+complete zeroization claim. The exact contract and delivery evidence are in
+[`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 
 The first concrete provider remains on the native side of core's explicit
 boundary but owns no network effect. `AiGatewayProvider` encodes the supported

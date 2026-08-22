@@ -42,7 +42,7 @@ Unknown or duplicate fields, missing fields, wrong JSON types or shapes,
 unsupported schema versions, and permission modes other than `ask` are errors.
 There is no forward-compatible field ignoring or value coercion in this slice.
 AI Gateway credentials are not schema-v1 fields. The separate opt-in
-[`native credential discovery candidate`](ai-gateway-credentials.md) owns a
+[`native credential discovery adapter`](ai-gateway-credentials.md) owns a
 dedicated non-cloneable secret snapshot and does not put secret values into
 `NativeConfig`, status output, or the configuration file.
 

@@ -43,7 +43,7 @@ The feature exposes these construction surfaces:
   endpoint and limits.
 
 The separate
-[`native credential discovery candidate`](ai-gateway-credentials.md) is gated
+[`native credential discovery`](ai-gateway-credentials.md) is gated
 the same way and can supply the explicit `AiGatewayBearerToken`. Discovery is
 not part of the transport and does not run during transport construction or a
 request.

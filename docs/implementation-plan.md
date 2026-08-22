@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with nine integrated bounded slices and a tenth bounded candidate. The first
+with ten integrated bounded slices. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -154,8 +154,8 @@ Exact main CI run `32570197911` and benchmark run `32570197870` are green. The
 complete lineage is recorded in the
 [`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
 
-The tenth bounded slice is a candidate, not an integrated slice. Under the
-existing native `ai-gateway-http` and non-WASM gate, it owns a separate
+The tenth integrated bounded slice uses the existing native
+`ai-gateway-http` and non-WASM gate. It owns a separate
 `AiGatewayCredentialEnvironment` snapshot containing only `VERCEL_OIDC_TOKEN`
 and `AI_GATEWAY_API_KEY`. A nonempty OIDC token has precedence over a nonempty
 API key; unset and exactly empty values are absent; and any selected nonempty
@@ -165,21 +165,21 @@ existing 1–4,096-byte RFC 6750 `AiGatewayBearerToken` without cloning it.
 Errors have fixed missing, invalid-environment, and invalid-bearer categories
 that retain and reflect no source or input. Accepted and retained data are
 bounded, while process lookup may materialize a complete OS value before the
-application can reject it. The exact candidate contract is in
+application can reject it. The exact contract is in
 [`ai-gateway-credentials.md`](ai-gateway-credentials.md). This slice does not
 change schema v1, core, the transport, or the CLI, so the broader acquisition-
 and-configuration checklist item remains open. Implementation, local gates,
 and three fresh adversarial tracks are green at
 `244e765713944b1bbe2ebca5bbbd02899c725e9f`. Exact feature CI run
-`32572692175` and benchmark-evidence run `32572692217` are green for the
-documentation record at `11b661b927365ab207f1a1e8157e50a63fd07be4`; the
-documentation seal and exact `main` delivery gates remain pending. The review
-lineage is in the
+`32573044224` and benchmark-evidence run `32573044159` are green for the
+documentation seal at `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`. That
+SHA is integrated on `main`; exact main CI run `32573320962` and
+benchmark-evidence run `32573320937` are green. The review lineage is in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
 ### Milestone 03 completion boundary
 
-The nine integrated slices and tenth candidate do not complete Milestone 03.
+The ten integrated slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -187,7 +187,7 @@ gate:
 - [x] Integrate and retain evidence for slices one through eight.
 - [x] Integrate the ninth ask-handler slice under its exact contract and
   retain feature, adversarial-review, exact-SHA CI, and `main` evidence.
-- [ ] Integrate the tenth credential-discovery candidate under its exact
+- [x] Integrate the tenth credential-discovery slice under its exact
   contract and retain feature, adversarial-review, exact-SHA CI, and `main`
   evidence.
 - [ ] Compose a useful native reference-host path through an explicitly selected
@@ -231,7 +231,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth candidate; Zig remains only the pinned upstream benchmark build
+by the tenth slice; Zig remains only the pinned upstream benchmark build
 input, not a machine-god product language or runtime dependency. The provider
 is explicitly scoped to a pinned wire shape and makes no current-protocol or
 full fx-equivalence claim. Help and status remain claim-ineligible and
