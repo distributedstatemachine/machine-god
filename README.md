@@ -15,7 +15,8 @@ policy. It also includes bounded Unix-only `read_file` and one-level
 `list_files` library capabilities rooted in host-injected workspaces. The
 seventeenth candidate adds bounded no-follow `file_info` metadata inspection
 under a distinct exact authorization kind. Its local gates are green; it
-remains under adversarial and remote review and is not delivered. The
+is green under all three replacement adversarial tracks and remains under
+remote review, so it is not delivered. The
 repository also includes a bounded AI Gateway codec over an injected host
 transport. An optional,
 native-only HTTPS transport for that codec is the seventh integrated bounded
@@ -172,9 +173,9 @@ isolated SHA `5c2d129`; independent tests are present at isolated SHA `ca0091c`
 and compose with production at `f228c06`, where the initial 34 focused tests are
 green. Review hardening composes at `b69ec4b`, bringing the independently owned
 focused suite to 36 green tests plus five private unit tests. Required local
-gates are green. Three replacement adversarial tracks and exact
-feature and `main` workflows remain pending, so the overall native-tool
-checklist stays open. See the
+gates and all three replacement adversarial tracks are green on exact candidate
+`4193ecc`. Exact feature and `main` workflows remain pending, so the overall
+native-tool checklist stays open. See the
 [`file_info` candidate contract](docs/file-info.md) and
 [review record](docs/reviews/m03-file-info-review-01.md).
 

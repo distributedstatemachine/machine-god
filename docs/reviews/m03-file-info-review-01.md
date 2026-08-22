@@ -1,7 +1,7 @@
 # Milestone 03 native `file_info` review 01
 
-Status: **REPLACEMENT CANDIDATE LOCAL GREEN — three replacement tracks and
-remote delivery pending**
+Status: **REPLACEMENT REVIEWS GREEN — exact feature and `main` delivery
+pending**
 
 ## Candidate
 
@@ -22,7 +22,7 @@ remote delivery pending**
 - Composed finding-fix behavior: `b69ec4b9dc46c4d43202a2c0c5ba499fa8fbd071`
 - Replacement local-gate precursor:
   `d445eb384ceafad1f107e78d456c93aecc0bc5a2`
-- Replacement review head: pending
+- Replacement review head: `4193eccea7d46929a4f2e789f20f508200a346a0`
 - Delivery branch: `agent/m03-file-info`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 
@@ -146,8 +146,31 @@ escaping-heavy exact result-bound, signed pre-epoch, and pure invalid-metadata
 conversion evidence. It composes as behavior head `b69ec4b`, bringing the
 focused direct/engine/root/host suite from 34 to 36 tests plus five private unit
 tests. Required replacement local gates are green at `d445eb3`. All three
-replacement tracks must review the same exact documentation-only descendant of
-that behavior SHA.
+replacement tracks reviewed the same exact documentation-only descendant
+`4193ecc` and are green.
+
+## Replacement rereview results
+
+All three fresh replacement tracks are green on exact candidate `4193ecc`:
+
+- **Correctness, API, portability, and independent evidence — GREEN.** The
+  decorated-root regressions pass, the successful escape-heavy 4,096-byte path
+  with non-null extension serializes below 17 KiB, signed pre-epoch output is
+  preserved, and the production-used pure conversion helper covers public
+  integer endpoints plus negative size and invalid nanoseconds.
+- **Filesystem security, resources, and concurrency — GREEN.** The finding
+  hardening does not regress authority, descriptor-relative no-follow access,
+  root liveness, TOCTOU boundaries, special-file behavior, redaction, bounds,
+  cancellation, descriptor ownership, or permission/execution agreement.
+- **Documentation, evidence, compatibility, and performance — GREEN.** The
+  three descriptor instances are described as the original plus two clones of
+  one retained identity, local status is current, all maintained links and
+  lineage resolve, CLI/benchmark/workflow surfaces remain unchanged, and the
+  Rust-product/Zig-upstream-only boundary is intact.
+
+Per the user's instruction, the documentation-only review seal that records
+these results does not receive another adversarial cycle. Exact feature and
+`main` delivery gates remain mandatory.
 
 ## Local and pending remote gates
 

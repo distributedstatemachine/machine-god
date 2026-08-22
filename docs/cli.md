@@ -31,8 +31,9 @@ It adds no `file_info`, workspace, or slash command and changes none of the
 accepted invocations, output bytes, diagnostics, or exit statuses below. Its
 production and independent tests compose at `f228c06`, where all 34 focused
 initial tests are green. Review hardening brings the focused total to 36 plus
-five private unit tests at `b69ec4b`. Three replacement adversarial tracks and
-exact remote delivery remain pending. Its metadata result is not exposed as
+five private unit tests at `b69ec4b`. All three replacement adversarial tracks
+are green on exact candidate `4193ecc`; exact remote delivery remains pending.
+Its metadata result is not exposed as
 CLI output.
 
 ## Accepted invocations

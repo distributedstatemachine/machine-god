@@ -36,8 +36,9 @@ Milestone 03 remains `IN PROGRESS`. Sixteen slices are delivered. Seventeenth-
 slice `file_info` production `5c2d129` and independent tests `ca0091c` compose
 at `f228c06`, where the initial 34 focused tests are green. Review hardening
 brings the focused total to 36 plus five private unit tests at `b69ec4b`. The
-first formal candidate was not green; three replacement tracks and exact remote
-delivery remain pending. The remaining
+first formal candidate was not green; all three replacement review tracks are
+green on exact candidate `4193ecc`, while exact remote delivery remains pending.
+The remaining
 native tools, CLI ownership, and composed end-to-end evidence also stay open.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and

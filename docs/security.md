@@ -127,8 +127,8 @@ themselves, while FIFO, socket, device, and other special objects can be
 classified without a blocking open. Production `5c2d129` and independent tests
 `ca0091c` compose at `f228c06`, where all 34 initial focused tests are green.
 Review hardening brings the focused total to 36 plus five private unit tests at
-`b69ec4b`. Three replacement tracks and exact feature and `main` delivery remain
-pending.
+`b69ec4b`. Three replacement tracks are green on exact candidate `4193ecc`;
+exact feature and `main` delivery remain pending.
 Its security contract is in [`file-info.md`](file-info.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG

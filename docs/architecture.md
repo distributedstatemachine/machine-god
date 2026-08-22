@@ -161,8 +161,8 @@ without opening them. The composed host candidate supplies exactly
 deterministic alphabetical order. Production `5c2d129` and independent tests
 `ca0091c` compose at `f228c06`, where all 34 initial focused tests are green.
 Review hardening brings the focused total to 36 plus five private unit tests at
-`b69ec4b`. Three replacement tracks and exact feature and `main` delivery remain
-pending.
+`b69ec4b`. Three replacement tracks are green on exact candidate `4193ecc`;
+exact feature and `main` delivery remain pending.
 The contract and review plan are in
 [`file-info.md`](file-info.md) and
 [`m03-file-info-review-01.md`](reviews/m03-file-info-review-01.md).
@@ -369,7 +369,8 @@ provider, permission, session-store, credential, transport, runtime, or CLI
 authority. Production is present at `5c2d129` / composed `1d93a65`;
 independent tests compose at `f228c06`, where all 34 initial focused tests are
 green. Review hardening brings the focused total to 36 plus five private unit
-tests at `b69ec4b`. Replacement review and exact remote delivery remain pending.
+tests at `b69ec4b`. All three replacement tracks are green on exact candidate
+`4193ecc`; exact remote delivery remains pending.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

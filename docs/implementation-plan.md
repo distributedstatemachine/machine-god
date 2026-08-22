@@ -445,8 +445,9 @@ gates are green through composed precursor `0973acf`. First formal candidate
 `8399ec7` was not green. Isolated finding-test hardening `7f2a292` composes as
 `b69ec4b`, bringing the focused total to 36 plus five private unit tests; the
 two documentation findings are corrected at `9dbd188`. Replacement local gates
-are green through `d445eb3`. Three replacement adversarial tracks, exact feature
-and `main` workflows, and final delivery evidence remain pending.
+are green through `d445eb3`, and all three replacement tracks are green on exact
+candidate `4193ecc`. Exact feature and `main` workflows and final delivery
+evidence remain pending.
 The slice adds no CLI behavior, non-Linux/macOS hardening, content or target
 reading, mutation, recursion, MIME/hash/ownership/mode/ACL/xattr reporting,
 extra timestamps, compatibility/equivalence claim, benchmark, or performance
@@ -513,8 +514,9 @@ gate:
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit
   tests at `b69ec4b`. The first formal candidate was not green; replacement
-  local gates are green through `d445eb3`. Replacement adversarial review and
-  exact remote delivery remain pending, so this combined item stays unchecked.
+  local gates are green through `d445eb3`, and all three replacement tracks are
+  green on exact candidate `4193ecc`. Exact remote delivery remains pending, so
+  this combined item stays unchecked.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

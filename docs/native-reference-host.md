@@ -6,7 +6,8 @@ Sixteen slices are delivered. Seventeenth-slice production `5c2d129` and
 independent tests `ca0091c` compose at `f228c06`, where all 34 focused tests are
 green. Review hardening composes at `b69ec4b`, bringing the focused total to 36
 plus five private unit tests. The first formal candidate was not green; three
-replacement tracks and exact remote delivery remain pending.
+replacement tracks are green on exact candidate `4193ecc`, and exact remote
+delivery remains pending.
 The first formal sixteenth candidate is composed
 through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
@@ -91,7 +92,8 @@ transport, permission, session, runtime, credential, or CLI authority. The
 candidate's production and independent tests compose at `f228c06`, where all 34
 initial focused tests are green. Review hardening composes at `b69ec4b`, bringing
 the focused total to 36 plus five private unit tests. Three replacement tracks
-and exact feature and `main` workflows remain pending.
+are green on exact candidate `4193ecc`; exact feature and `main` workflows
+remain pending.
 
 ## Feature and platform boundary
 
@@ -421,9 +423,10 @@ three replacement tracks are green. Portable behavior `17f1884` and seal
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining native-tool and CLI ownership, compatibility promotion, and
 product-performance claims remain open. Candidate `file_info` replacement
-review and exact remote delivery also remain open; its initial 34 focused tests
-are present at `f228c06`, and finding hardening brings the total to 36 plus five
-private unit tests at `b69ec4b`. The slice does not alter the pinned fx inventory,
+reviews are green on exact `4193ecc`; exact remote delivery remains open. Its
+initial 34 focused tests are present at `f228c06`, and finding hardening brings
+the total to 36 plus five private unit tests at `b69ec4b`. The slice does not
+alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
