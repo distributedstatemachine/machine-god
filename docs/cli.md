@@ -8,9 +8,11 @@ The separate [`native configuration schema-v3 candidate`](configuration.md)
 does not change that boundary or any CLI byte documented below. Its production
 implementation, independent tests, local gates, and all three adversarial tracks
 are green on exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
-Exact remote gates and `main` delivery remain pending. Provider, transport,
-model, and credential-source config fields remain invisible to this metadata-
-only surface.
+Exact feature CI run `32582210892` and benchmark-evidence run `32582210927` are
+green on documentation seal SHA `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`.
+Fast-forward integration and exact `main` delivery remain pending. Provider,
+transport, model, and credential-source config fields remain invisible to this
+metadata-only surface.
 
 ## Accepted invocations
 

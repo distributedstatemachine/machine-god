@@ -8,8 +8,10 @@ Twelve slices are integrated at final delivery-record SHA
 base. This candidate's production implementation, independent tests, focused
 and required local gates, and all three fresh adversarial tracks are green on
 exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
-Exact remote feature gates, the documentation seal, and `main` delivery remain
-pending. Milestone 03 remains `IN PROGRESS`.
+Exact feature CI run `32582210892` and benchmark-evidence run `32582210927` are
+green on documentation seal SHA `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`.
+Fast-forward integration and exact `main` delivery remain pending. Milestone 03
+remains `IN PROGRESS`.
 Candidate lineage is recorded in the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
@@ -204,5 +206,5 @@ workspace and state-root lifecycle, the remaining native tools, CLI and
 session expansion, release-binary end-to-end host evidence, and compatibility
 or performance claims remain open. All three adversarial tracks are green, but
 the combined credential-and-configuration checklist item remains unchecked
-until exact feature workflows, fast-forward integration, and exact `main`
-workflows all pass. Milestone 03 remains in progress.
+until fast-forward integration and exact `main` workflows pass. Exact feature
+workflows are green on seal SHA `5f4deac6`. Milestone 03 remains in progress.

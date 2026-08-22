@@ -65,8 +65,10 @@ one required closed, non-secret `environment` credential-source acquisition
 kind. Exact v1/v2 files remain readable and gain that projection only in
 memory. Production implementation, independent tests, local gates, and all
 three fresh adversarial tracks are green on exact behavior SHA
-`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact remote gates and `main`
-delivery remain pending.
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact feature CI run
+`32582210892` and benchmark-evidence run `32582210927` are green on seal SHA
+`5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`. Fast-forward integration and exact
+`main` delivery remain pending.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -196,7 +198,8 @@ raw error numbers are discarded. Host debug output is fixed to
 twelfth-slice behaviors are adversarially green and integrated on `main` under
 exact green workflows. The schema-v3 and configured-source validation changes
 remain candidate behavior with three fresh adversarial tracks green on exact
-SHA `35ce591e`; every remote delivery gate remains pending.
+SHA `35ce591e`. Exact feature workflows are green on seal SHA `5f4deac6`;
+fast-forward integration and exact `main` gates remain pending.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

@@ -1,7 +1,7 @@
 # Milestone 03 configured credential-source review 01
 
-Status: **ADVERSARIAL GREEN — exact behavior green; documentation seal,
-exact remote gates, and `main` delivery pending**
+Status: **FEATURE GREEN — exact behavior, adversarial review, local gates, and
+exact feature workflows green; fast-forward and `main` delivery pending**
 
 ## Candidate lineage
 
@@ -37,9 +37,16 @@ exact remote gates, and `main` delivery pending**
   `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`
 - Adversarially green behavior:
   `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`
-- Adversarial-green review record: this commit; exact SHA reported at handoff
-- Exact feature workflows: `PENDING`
-- Documentation seal: `PENDING`
+- Adversarial-green review record and documentation seal:
+  `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`
+- Exact feature-gate SHA:
+  `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`
+- Exact feature CI run:
+  [`32582210892`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582210892)
+- Exact feature benchmark-evidence run:
+  [`32582210927`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582210927)
+- Documentation-only feature evidence record: this commit; exact SHA reported
+  at handoff
 - Exact `main` delivery SHA: `PENDING`
 - Integration branch: `agent/m03-configured-credential-source`
 - Candidate-docs branch: `agent/m03-configured-credential-source-docs`
@@ -50,9 +57,9 @@ independently owned black-box tests, and candidate documentation for the
 thirteenth slice are composed on this branch. Focused checks and required local
 workspace gates are green. All three fresh adversarial tracks are green on
 exact behavior/finding-fix SHA
-`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. No exact candidate feature,
-documentation-seal, or `main` workflow has run. Milestone 03 remains
-`IN PROGRESS`.
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. The documentation seal and both
+exact feature workflows are green at `5f4deac6`; no exact `main` workflow has
+run. Milestone 03 remains `IN PROGRESS`.
 
 ## Adversarially green behavior
 
@@ -133,6 +140,9 @@ This documentation-only seal changes evidence and status text only. Per the
 delivery workflow and the user's explicit instruction, it does not require a
 new adversarial review after the production behavior is already green.
 
+This feature-evidence record is likewise documentation-only and is not
+adversarially reviewed under that same workflow and user instruction.
+
 ## Exact local checks
 
 The following are green on `a8467cc4`, exact behavior descendant `35ce591e`,
@@ -150,10 +160,11 @@ or both where the latter changes documentation only, with exact Rust and Cargo
   unchanged by the documentation-only `35ce591e` descendant; and
 - candidate and status-reconciliation Markdown link and diff checks.
 
-This documentation-only seal also passes exact Rust/Cargo 1.94.1 workspace doc
-tests (two passed, zero failed), 154 repository-relative links across 46
-Markdown files with none missing, and `git diff --check`. These local results
-are not exact remote or `main` evidence.
+This documentation-only seal and feature-evidence descendant pass exact
+Rust/Cargo 1.94.1 workspace doc tests (two passed, zero failed), 154 repository-
+relative links across 46 Markdown files with none missing, and
+`git diff --check`. These local results are distinct from the exact feature
+workflows below; they are not `main` evidence.
 
 ## Residual risk and deferred scope
 
@@ -164,10 +175,19 @@ library may materialize a complete OS value before bounded rejection. Runtime
 `credential_source()` remains concrete OIDC-token/API-key metadata, while
 `None` on the custom path does not prove a transport is secret-free.
 
+## Exact feature-branch gates
+
+Documentation seal `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`
+passed exact feature CI run
+[`32582210892`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582210892)
+and exact feature benchmark-evidence run
+[`32582210927`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582210927).
+Both runs report that exact `headSha`. This is feature-delivery and retained-
+evidence-path validation, not a product-performance claim.
+
 ## Remaining gates and scope
 
-Exact feature-branch CI and benchmark-evidence runs, the documentation seal SHA,
-fast-forward integration, and exact `main` CI and benchmark-evidence runs remain
+Fast-forward integration and exact `main` CI and benchmark-evidence runs remain
 pending.
 
 The combined credential-and-configuration checklist item remains unchecked

@@ -10,8 +10,10 @@ on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
 The separate schema-v3 configured credential-source extension is a thirteenth
 candidate whose production implementation, independent tests, local gates, and
 all three fresh adversarial tracks are green on exact behavior SHA
-`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact remote gates and `main`
-delivery remain pending. Milestone 03 remains
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact feature CI run
+`32582210892` and benchmark-evidence run `32582210927` are green on seal SHA
+`5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`. Fast-forward integration and exact
+`main` delivery remain pending. Milestone 03 remains
 `IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
@@ -242,7 +244,7 @@ The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature
 gates, fast-forward integration, and exact `main` gates are green. The combined
 credential-and-configuration item remains unchecked while the thirteenth
-candidate's exact feature gates, fast-forward integration, and exact `main`
-gates remain pending. Its three adversarial tracks are green on exact behavior
-SHA `35ce591e`. The item may be checked only after the remaining gates are green.
-Milestone 03 remains in progress.
+candidate's fast-forward integration and exact `main` gates remain pending. Its
+three adversarial tracks are green on exact behavior SHA `35ce591e`, and exact
+feature workflows are green on seal SHA `5f4deac6`. The item may be checked only
+after the remaining gates are green. Milestone 03 remains in progress.

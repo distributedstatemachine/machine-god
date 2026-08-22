@@ -74,7 +74,9 @@ its runtime observation still reports the concrete selected OIDC-token or
 API-key source. Production implementation, independent tests, focused and
 required local gates, and all three fresh adversarial tracks are green on exact
 behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact remote feature
-workflows, the documentation seal, and `main` delivery remain pending. See the
+CI run `32582210892` and benchmark-evidence run `32582210927` are green on
+documentation seal SHA `5f4deac672af85fe5c0b1be50c327ddbdd55ce9a`.
+Fast-forward integration and exact `main` delivery remain pending. See the
 [candidate configuration contract](docs/configuration.md) and
 [candidate review](docs/reviews/m03-configured-credential-source-review-01.md).
 

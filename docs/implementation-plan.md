@@ -250,9 +250,11 @@ migration, auth-source compatibility, CLI behavior, or performance claim are
 added. Production implementation, independent tests, and candidate docs are
 composed. Focused and required local gates and all three fresh adversarial tracks
 are green on exact behavior/finding-fix SHA
-`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Exact feature workflows, the
-documentation seal, fast-forward integration, and exact `main` workflows remain
-pending. The proposed contract and lineage are in
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Documentation seal
+`5f4deac672af85fe5c0b1be50c327ddbdd55ce9a` is feature-green under exact CI
+run `32582210892` and benchmark-evidence run `32582210927`. Fast-forward
+integration and exact `main` workflows remain pending. The proposed contract
+and lineage are in
 [`configuration.md`](configuration.md) and the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
@@ -282,9 +284,9 @@ gate:
   size limits, and secret non-reflection must be normative and tested; core
   receives no ambient credential or configuration authority. The thirteenth
   candidate supplies the missing bounded non-secret selection but this item
-  remains unchecked until exact feature gates, fast-forward integration, and
-  exact `main` gates are all green. All three fresh adversarial tracks are green
-  on exact behavior SHA `35ce591e`.
+  remains unchecked until fast-forward integration and exact `main` gates are
+  green. All three fresh adversarial tracks are green on exact behavior SHA
+  `35ce591e`, and exact feature workflows are green on seal SHA `5f4deac6`.
 - [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
