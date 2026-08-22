@@ -32,13 +32,16 @@ stricter optional-HTTP, non-WebAssembly, Linux/macOS gate. Prepared-root host
 composition uses the selected `machine-god` state root itself; legacy host
 composition uses the explicitly supplied existing session root.
 
-The lifecycle implementation and its default OS-random source receive no path,
-environment, configuration, network, terminal, process-execution, provider,
-permission, tool, event-sink, clock, or runtime authority. A custom
-`SessionIncarnationSource` is explicitly trusted host code: its implementor is
-responsible for its own authority, effects, latency, allocation, internal work,
-and globally unique ID contract. It must not be model- or configuration-
-controlled merely because the lifecycle exposes an injection boundary.
+The lifecycle takes no separate path, environment, configuration, network,
+terminal, process-execution, clock, or runtime authority. It does retain the
+engine and file store supplied by its host, so it transitively retains the
+engine's provider, permission, tool, and event-sink components; lifecycle
+operations never invoke those components. Its default incarnation source uses
+only OS randomness. A custom `SessionIncarnationSource` is explicitly trusted
+host code: its implementor is responsible for its own authority, effects,
+latency, allocation, internal work, and globally unique ID contract. It must
+not be model- or configuration-controlled merely because the lifecycle exposes
+an injection boundary.
 
 Store identity is an enforced invariant, not caller documentation. Every
 lifecycle constructor proves that the engine's configured session-store `Arc`
@@ -221,10 +224,12 @@ may already have been consulted; neither effect changes the durable record. The
 lifecycle does not cancel an active turn, revoke clones, mutate a live handle in
 place, or force it to adopt the new lifetime. The registry reservation also
 prevents a new local handle for the ID from being published across the reset
-check-and-commit window. A trusted custom source that deliberately returns the
-incarnation of an already registered inactive empty candidate may reuse that
-matching local state; such coordination is outside the default globally unique
-OS-random path and does not permit reuse of the currently durable incarnation.
+check-and-commit window. Defensively, a nonconforming custom source that
+returns the incarnation of an already registered inactive empty candidate can
+reuse that matching local state; deliberate reuse violates the source trait's
+globally unique ID contract and is not a supported custom-host coordination
+mechanism. Even that misconfiguration cannot reuse the currently durable
+incarnation through reset.
 
 This is a process-local safety rule, not distributed revocation. Another
 process may retain the old incarnation while reset succeeds under the shared

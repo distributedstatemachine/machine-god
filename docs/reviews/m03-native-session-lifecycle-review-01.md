@@ -90,7 +90,7 @@ inertness; source failure and exact collision bound; corrupt and exhausted
 revision preservation; exact shared-store identity and mismatch rejection;
 reference-host wiring; and fixed diagnostic redaction.
 
-The composed pre-review candidate is green under:
+The current finding-fix replacement candidate is green under:
 
 - `cargo +1.94.1 fmt --all -- --check`;
 - strict locked workspace all-target/all-feature Clippy with `-D warnings`;
