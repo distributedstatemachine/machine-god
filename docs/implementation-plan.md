@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with thirteen integrated bounded slices. The first
+with fourteen integrated bounded slices. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -269,7 +269,7 @@ green for that exact SHA. Per the delivery workflow and the user's explicit
 instruction, that documentation-only final record was not adversarially
 reviewed after the behavior was already green.
 
-The fourteenth bounded slice is a composed candidate for explicit
+The integrated fourteenth bounded slice adds explicit
 Linux/macOS native root selection and safe preparation. A
 `NativeRootSelection` derives an exact state root from an injected
 `NativeEnvironment` and an explicit absolute workspace. A
@@ -300,16 +300,19 @@ Portable lint normalization is present at `90d8f96`, with local macOS and Linux
 cross-target gates green. All three final adversarial tracks are green on exact
 candidate `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`. Replacement documentation
 seal `f08dbd9eb2da81848b8eefb2d218006a64575835` is green under exact feature CI
-run `32589778343` and benchmark-evidence run `32589778374`. The feature-evidence
-record, fast-forward integration, exact `main` workflows, and final delivery
-record remain pending. The
-candidate contract and review record are in
+run `32589778343` and benchmark-evidence run `32589778374`. Feature-evidence
+record `6f66b6e5972e78ba0f0ccae06b899158d99bc864` is green under exact feature CI
+`32590128235` and benchmark evidence `32590128233`, was fast-forwarded without
+force to `main`, and is green there under exact CI `32590429626` and benchmark
+evidence `32590429592`. This documentation-only commit is the final delivery
+record; its exact feature and `main` workflows are reported at handoff. The
+integrated contract and review record are in
 [`native-root-selection.md`](native-root-selection.md) and
 [`m03-native-root-selection-review-01.md`](reviews/m03-native-root-selection-review-01.md).
 
 ### Milestone 03 completion boundary
 
-The thirteen integrated slices do not complete Milestone 03.
+The fourteen integrated slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -338,8 +341,8 @@ gate:
 - [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
-  must allocate a new incarnation before reuse. The fourteenth candidate is
-  limited to the root-selection and safe-creation sub-boundary; this combined
+  must allocate a new incarnation before reuse. The delivered fourteenth slice
+  is limited to the root-selection and safe-creation sub-boundary; this combined
   item remains unchecked because lifecycle and reset/new-incarnation behavior
   are still open.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,

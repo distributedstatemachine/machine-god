@@ -1,8 +1,8 @@
 # Native root selection and preparation
 
-Status: adversarially green behavior contract for the fourteenth bounded
-Milestone 03 slice; replacement seal green and delivery gates pending.
-Thirteen slices are integrated through final delivery record
+Status: integrated behavior contract for the fourteenth bounded Milestone 03
+slice; exact final-record workflows are reported at handoff.
+The prior thirteen slices are integrated through final delivery record
 `f840576af241c58d1e55399e66ba92f7770cd50c`; exact feature CI run
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 `32583871385`, and main benchmark-evidence run `32583871368` are green for that
@@ -26,9 +26,13 @@ and documentation gates are green. Because production source changed after
 `72cf64f63e0dfa30bc1ee21d8aca16550e819c21` and are green together. A
 replacement documentation seal `f08dbd9eb2da81848b8eefb2d218006a64575835`
 is green under exact feature CI run `32589778343` and benchmark-evidence run
-`32589778374`. The feature-evidence record, fast-forward integration, exact
-`main` workflows, and final record remain pending.
-Milestone 03 remains `IN PROGRESS`.
+`32589778374`. Feature-evidence record
+`6f66b6e5972e78ba0f0ccae06b899158d99bc864` is green under exact feature CI
+`32590128235` and benchmark evidence `32590128233`; it is fast-forwarded without
+force to `main` and green there under exact CI `32590429626` and benchmark
+evidence `32590429592`. This documentation-only commit is the final record; its
+exact feature and `main` workflows are reported at handoff.
+Milestone 03 remains `IN PROGRESS` because session lifecycle is still open.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
@@ -242,7 +246,7 @@ Each error retains only its kind. `Debug` is exactly
 entry. It has no nested source. Paths, environment values, ownership and mode
 details, operating-system diagnostics, and raw error numbers are not retained
 or reflected. These selection and preparation types are exported only on Linux
-and macOS; other targets receive no public runtime API for this candidate.
+and macOS; other targets receive no public runtime API for this slice.
 
 ## Reference-host composition
 
@@ -306,7 +310,7 @@ or reset. It does not allocate a session ID or a new incarnation for reset,
 change the session record schema, migrate or encrypt state, add a cleanup or
 repair command, supply a terminal prompter, add native tools, or expand CLI
 ownership. The combined root-and-session-lifecycle checklist item therefore
-remains unchecked even after this candidate's root sub-boundary is delivered.
+remains unchecked after this slice's root sub-boundary is delivered.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and does not change the pinned fx inventory, benchmark workloads,

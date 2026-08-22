@@ -72,7 +72,7 @@ integrated on `main` at `f840576af241c58d1e55399e66ba92f7770cd50c`;
 exact feature CI run `32583585145`, feature benchmark-evidence run
 `32583585148`, main CI run `32583871385`, and main benchmark-evidence run
 `32583871368` are green for that exact SHA.
-A fourteenth composed candidate adds explicit Linux/macOS native root selection
+The integrated fourteenth slice adds explicit Linux/macOS native root selection
 and narrowly bounded safe preparation. It opens and retains the
 workspace before state work, may create only a fixed descriptor-relative state
 suffix under an existing selected base, validates rather than repairs existing
@@ -85,9 +85,10 @@ ambient-umask-dependent fixtures. All three formal tracks were green on exact
 behavior SHA `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`. The first seal exposed
 Linux-only strict-Clippy diagnostics, normalized at `90d8f96`; local macOS and
 Linux cross-target gates are green. All three final tracks are green on exact
-candidate `72cf64f6`. Replacement seal `f08dbd9e` is green under exact feature
-CI `32589778343` and benchmark evidence `32589778374`; feature-record delivery
-and `main` integration remain pending. Its candidate security boundary is in
+candidate `72cf64f6`. Replacement seal `f08dbd9e` and feature record `6f66b6e5`
+are feature-green; the latter is integrated on `main` under exact CI
+`32590429626` and benchmark evidence `32590429592`. Its integrated security
+boundary is in
 [`native-root-selection.md`](native-root-selection.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -221,7 +222,7 @@ are integrated through final record `f840576a`, with three fresh adversarial
 tracks green on exact SHA `35ce591e` and exact final-record feature and `main`
 workflows green.
 
-The composed fourteenth candidate leaves the existing path constructors
+The integrated fourteenth slice leaves the existing path constructors
 unchanged and adds `NativeRootSelection` plus `PreparedNativeRoots`. Selection
 is effect-free and consumes only an injected `NativeEnvironment` plus an
 explicit absolute workspace path. Preparation opens the existing workspace
@@ -258,11 +259,11 @@ while the winner normalizes an owner-bit-masked new directory; it never chmods
 the `EEXIST` entry.
 Prepared-root reference-host constructors consume the retained descriptors;
 production credential discovery follows acceptance of those roots. Production
-and focused tests cover this candidate behavior. Formal adversarial review was
+and focused tests cover this behavior. Formal adversarial review was
 green on exact behavior SHA `f1dc4751`; after the post-review Linux lint
 normalization at `90d8f96`, all three final tracks are green on exact candidate
-`72cf64f6`. Replacement seal `f08dbd9e` is feature-green; feature-record and
-delivery evidence remain pending.
+`72cf64f6`. Replacement seal `f08dbd9e`, feature record `6f66b6e5`, and exact
+`main` delivery evidence are green.
 
 The integrated file-session slice does not consume those status-derived state
 paths.

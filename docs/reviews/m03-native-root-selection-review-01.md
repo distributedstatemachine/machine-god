@@ -1,6 +1,6 @@
 # Milestone 03 native root-selection review 01
 
-Status: **REPLACEMENT SEAL GREEN — feature record and delivery pending**
+Status: **DELIVERED — final documentation-record workflows reported at handoff**
 
 ## Candidate lineage
 
@@ -93,10 +93,24 @@ Status: **REPLACEMENT SEAL GREEN — feature record and delivery pending**
 - Exact replacement-seal feature benchmark-evidence run
   [`32589778374`](https://github.com/distributedstatemachine/machine-god/actions/runs/32589778374):
   **GREEN**
-- Feature-evidence record and exact workflows: this documentation-only commit;
-  exact SHA and runs reported at handoff
-- Exact `main` delivery and workflows: pending
-- Final delivery record and workflows: pending
+- Feature-evidence record:
+  `6f66b6e5972e78ba0f0ccae06b899158d99bc864`
+- Exact feature-record CI run
+  [`32590128235`](https://github.com/distributedstatemachine/machine-god/actions/runs/32590128235):
+  **GREEN**
+- Exact feature-record benchmark-evidence run
+  [`32590128233`](https://github.com/distributedstatemachine/machine-god/actions/runs/32590128233):
+  **GREEN**
+- Fast-forward without force to `main`:
+  `6f66b6e5972e78ba0f0ccae06b899158d99bc864`
+- Exact `main` CI run
+  [`32590429626`](https://github.com/distributedstatemachine/machine-god/actions/runs/32590429626):
+  **GREEN**
+- Exact `main` benchmark-evidence run
+  [`32590429592`](https://github.com/distributedstatemachine/machine-god/actions/runs/32590429592):
+  **GREEN**
+- Final delivery record: this documentation-only commit; exact SHA and feature
+  and `main` workflows reported at handoff
 - Integration branch: `agent/m03-native-root-selection`
 - Candidate-docs branch: `agent/m03-native-root-selection-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
@@ -115,9 +129,12 @@ source normalization is present at `90d8f96`, and its full local macOS plus
 Linux cross-target lint gates are green. Because production source changed,
 all three tracks rereviewed exact candidate `72cf64f6`; all are green together.
 Replacement documentation seal `f08dbd9e` is green under exact feature CI run
-`32589778343` and benchmark-evidence run `32589778374`. The feature-evidence
-record, `main`, and final-delivery gates remain pending.
-Milestone 03 remains `IN PROGRESS`.
+`32589778343` and benchmark-evidence run `32589778374`. Feature record
+`6f66b6e5` is green under exact feature CI `32590128235` and benchmark evidence
+`32590128233`, was fast-forwarded without force to `main`, and is green there
+under exact CI `32590429626` and benchmark evidence `32590429592`. This
+documentation-only commit is the final delivery record. Milestone 03 remains
+`IN PROGRESS` because session lifecycle is still open.
 
 ## Candidate behavior
 
@@ -275,9 +292,7 @@ evidence.
 
 ## Remaining scope
 
-Exact feature-evidence-record workflows, a fast-forward without force to
-`main`, exact `main` workflows, and final delivery evidence remain pending.
-Session lifecycle and
-reset/new-incarnation behavior, the remaining
+The exact final-record feature and `main` workflows are reported at handoff.
+Session lifecycle and reset/new-incarnation behavior, the remaining
 native tools, CLI expansion, release-binary end-to-end host evidence, and
 compatibility promotion remain open. No package or GitHub release is authorized.

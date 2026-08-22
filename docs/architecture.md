@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has thirteen integrated bounded slices. The twelfth slice's
+Milestone 03 has fourteen integrated bounded slices. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record
@@ -89,7 +89,7 @@ green. Its final delivery record is integrated on `main` at
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 `32583871385`, and main benchmark-evidence run `32583871368` are green for
 that exact final-record SHA.
-The fourteenth slice is a composed candidate for explicit Linux/macOS native
+The integrated fourteenth slice adds explicit Linux/macOS native
 root selection and safe preparation. It derives state location from an
 injected environment snapshot, retains an explicit existing workspace, may
 create only a fixed descriptor-relative state suffix under an existing selected
@@ -103,9 +103,9 @@ extended ACLs and ambient-umask-dependent fixtures are fixed; all three formal
 tracks were green on exact behavior SHA `f1dc4751`. The first seal exposed
 Linux-only strict-Clippy diagnostics, normalized at `90d8f96`; local macOS and
 Linux cross-target gates are green. All three final tracks are green on exact
-candidate `72cf64f6`. Replacement seal `f08dbd9e` is green under exact feature
-CI `32589778343` and benchmark evidence `32589778374`; feature-record delivery
-and `main` integration remain pending. Its candidate contract is
+candidate `72cf64f6`. Replacement seal `f08dbd9e` and feature record `6f66b6e5`
+are feature-green; the latter is integrated on `main` under exact CI
+`32590429626` and benchmark evidence `32590429592`. Its integrated contract is
 in [`native-root-selection.md`](native-root-selection.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
@@ -178,7 +178,7 @@ paths produced are `<config-root>/machine-god/config.json` and
 `<state-root>/machine-god`, with `.config` and `.local/state` inserted for the
 respective `HOME` fallbacks.
 
-The fourteenth candidate reuses only the state-selection precedence, not status
+The fourteenth slice reuses only the state-selection precedence, not status
 inspection. Selection remains effect-free and rebuilds the accepted state base
 from lexical components so trailing separator or `.` decoration cannot bypass
 the final-component no-follow open. Preparation requires the selected
@@ -299,7 +299,7 @@ The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
 reach session artifacts beneath the workspace after permission is granted.
 
-The composed fourteenth candidate leaves those existing path constructors
+The integrated fourteenth slice leaves those existing path constructors
 unchanged and adds a stricter prepared-root path.
 `NativeRootSelection::from_environment`
 derives the fixed state path from injected values without I/O.
@@ -316,11 +316,11 @@ workspace identity to both tools and its state-root identity to
 `FileSessionStore` without reopening either path. Config selection is validated
 by the composing constructor, and production credential discovery remains after
 the already prepared retained roots are accepted. Production and focused tests
-for this candidate behavior are present. Formal adversarial review was green on
+for this behavior are present. Formal adversarial review was green on
 exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
 `90d8f96`, all three final tracks are green on exact candidate `72cf64f6`.
-Replacement seal `f08dbd9e` is feature-green; feature-record and delivery
-evidence remain pending.
+Replacement seal `f08dbd9e`, feature record `6f66b6e5`, and exact `main`
+delivery evidence are green.
 
 On the production path, both non-secret roots open before the consumed
 credential snapshot is discovered and its token moves into
@@ -346,8 +346,9 @@ through final record `f840576a`, with all three fresh adversarial tracks green
 on exact behavior SHA `35ce591e` and exact final-record feature and `main`
 workflows green. Root preparation was adversarially green on exact behavior SHA
 `f1dc4751`; after Linux lint normalization at `90d8f96`, all three final tracks
-are green on exact candidate `72cf64f6`. Replacement seal `f08dbd9e` is green
-under exact feature workflows; feature-record and delivery gates remain pending.
+are green on exact candidate `72cf64f6`. Replacement seal `f08dbd9e` and feature
+record `6f66b6e5` are feature-green, and the latter is integrated under exact
+green `main` workflows.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

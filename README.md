@@ -81,7 +81,7 @@ run `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 [configuration contract](docs/configuration.md) and
 [review record](docs/reviews/m03-configured-credential-source-review-01.md).
 
-The fourteenth bounded slice is now a composed candidate for explicit
+The integrated fourteenth bounded slice adds explicit
 Linux/macOS native root selection and safe preparation. It selects an existing
 absolute workspace plus a state location from an injected native-environment
 snapshot, opens and retains the workspace first, and may create only a fixed
@@ -100,9 +100,12 @@ macOS plus Linux cross-target gates are green. All three final adversarial
 tracks are green on exact candidate SHA
 `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`. Replacement documentation seal
 `f08dbd9eb2da81848b8eefb2d218006a64575835` is green under exact feature CI run
-`32589778343` and benchmark-evidence run `32589778374`. The feature-evidence
-record, `main` integration, and final delivery record remain pending. See the
-adversarially green candidate
+`32589778343` and benchmark-evidence run `32589778374`. Feature-evidence record
+`6f66b6e5972e78ba0f0ccae06b899158d99bc864` is green under exact feature CI
+`32590128235` and benchmark evidence `32590128233`; it is fast-forwarded without
+force to `main` and green there under exact CI `32590429626` and benchmark
+evidence `32590429592`. This documentation-only commit is the final delivery
+record; its exact workflows are reported at handoff. See the integrated
 [native root-selection contract](docs/native-root-selection.md) and
 [review record](docs/reviews/m03-native-root-selection-review-01.md).
 
@@ -115,9 +118,9 @@ The project is not yet production-ready. See the exact
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
 normative [native file session store](docs/session-store.md), the integrated
 [native reference-host composition](docs/native-reference-host.md), and the
-integrated [configured credential source](docs/configuration.md). The composed
-candidate [native root-selection boundary](docs/native-root-selection.md) is
-not yet delivered.
+integrated [configured credential source](docs/configuration.md), and the
+integrated [native root-selection boundary](docs/native-root-selection.md).
+Session lifecycle remains open.
 
 ## Development
 

@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
-Thirteen slices are now integrated. This slice's production implementation, an
+Fourteen slices are now integrated. This slice's production implementation, an
 independently owned seven-test black-box suite, three fresh adversarial tracks,
 and exact feature and `main` workflows are green. Its final delivery record is
 integrated on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
@@ -14,7 +14,7 @@ all three fresh adversarial tracks are green on exact behavior SHA
 integrated on `main` at `f840576af241c58d1e55399e66ba92f7770cd50c`; exact
 final-record feature CI run `32583585145`, feature benchmark-evidence run
 `32583585148`, main CI run `32583871385`, and main benchmark-evidence run
-`32583871368` are green. A separate composed fourteenth candidate adds safe
+`32583871368` are green. The integrated fourteenth slice adds safe
 selected-root preparation and consuming constructors without changing the
 integrated path-constructor contract below. Its production and 16 independently
 owned focused tests are present and their focused gates are green. Initial
@@ -26,8 +26,11 @@ Linux strict-Clippy portability diagnostics; their source normalization is
 present at `90d8f96`, with local macOS and Linux cross-target gates green. All
 three final tracks are green on exact candidate `72cf64f6`. Replacement seal
 `f08dbd9e` is green under exact feature CI `32589778343` and benchmark evidence
-`32589778374`; feature-record and delivery gates remain pending. Milestone 03
-remains `IN PROGRESS`. Full lineage is recorded in the
+`32589778374`. Feature record `6f66b6e5` is green under exact feature CI
+`32590128235` and benchmark evidence `32590128233`, and is green on `main` under
+CI `32590429626` and benchmark evidence `32590429592`. This documentation-only
+commit is the final delivery record. Milestone 03 remains `IN PROGRESS`. Full
+lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
 `NativeReferenceHost` composes the existing validated native configuration,
@@ -81,7 +84,7 @@ NativeReferenceHost::credential_source(&self)
     -> Option<AiGatewayCredentialSource>
 ```
 
-The composed fourteenth candidate adds these consuming constructors:
+The integrated fourteenth slice adds these consuming constructors:
 
 ```rust,ignore
 NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
@@ -104,8 +107,9 @@ These methods consume retained roots prepared under the separate
 reopening path arguments. Production and independent focused tests are present;
 formal adversarial review was green on exact behavior SHA `f1dc4751`; after the
 Linux lint normalization at `90d8f96`, all three final tracks are green on exact
-candidate `72cf64f6`. Replacement seal `f08dbd9e` is feature-green; the feature
-evidence record and delivery remain pending.
+candidate `72cf64f6`. Replacement seal `f08dbd9e` and feature record `6f66b6e5`
+are green, and the additions are integrated on `main` under exact green
+workflows.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -268,13 +272,14 @@ the earlier components have been constructed. The custom path cannot return
 ## Deferred scope and milestone boundary
 
 The integrated path constructors and `FileSessionStore::open` still do not
-select or create roots. The composed fourteenth candidate adds a separate
+select or create roots. The integrated fourteenth slice adds a separate
 selection/preparation boundary and consuming constructors. Formal review was
 green on exact behavior SHA `f1dc4751`; after the later Linux lint normalization
 at `90d8f96`, all three final tracks are green on exact candidate `72cf64f6`.
-Replacement seal `f08dbd9e` is feature-green; feature-record and delivery gates
-remain pending.
-Neither that candidate nor this integrated
+Replacement seal `f08dbd9e`, feature record `6f66b6e5`, and exact `main`
+workflows are green; this documentation-only commit is the final delivery
+record.
+Neither that root slice nor this integrated
 composition implements a concrete terminal `PermissionPrompter`, allocates a
 session ID or `SessionIncarnationId`, or adds create/list/resume/replay/reset
 session lifecycle commands. It does not add the remaining native tools, compose
@@ -294,6 +299,6 @@ credential-and-configuration item is also complete. The thirteenth slice's
 three adversarial tracks are green on exact behavior SHA `35ce591e`, and exact
 final-record feature and `main` workflows are green at integrated SHA
 `f840576a`. The combined root-and-session-lifecycle item remains unchecked:
-even delivery of the candidate root sub-boundary would leave create, list,
+delivery of the root sub-boundary leaves create, list,
 resume, replay, reset, and reset/new-incarnation behavior open. Milestone 03
 remains in progress.
