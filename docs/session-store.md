@@ -72,8 +72,9 @@ through `dec98e0`, whose three first formal tracks were not green. The fixes are
 composed into exact behavior candidate `3fa5463`; 18 focused tests, the required
 local gates, and all three replacement review tracks are green. Remote delivery
 evidence remains pending. First remote CI `32599591900` exposed the Linux
-removed-root gap; this remote-finding candidate adds the portable acquired-
-descriptor link check and awaits review.
+removed-root gap. Exact candidate `17f1884` adds the portable acquired-
+descriptor link check and is green under both executable review tracks; this
+seal resolves the documentation lineage finding.
 Listing processes/selects at
 most 1,024 non-dot entries plus one fetched/name-inspected overflow witness and
 accepts/decodes at most 64 MiB of aggregate canonical record bytes plus one

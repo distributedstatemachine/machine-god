@@ -6,7 +6,9 @@ through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
 `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
 green. First remote CI `32599591900` exposed the Linux removed-root gap; this
-portable remote-finding candidate awaits review and replacement remote gates.
+portable fix is exact behavior candidate `17f1884`, green under both executable
+review tracks, with its documentation lineage finding resolved in this seal.
+Replacement remote gates remain pending.
 This slice's production implementation, an
 independently owned seven-test black-box suite, three fresh adversarial tracks,
 and exact feature and `main` workflows are green. Its final delivery record is

@@ -9,8 +9,10 @@ behavior candidate `3fa54635dab00ebba78b233c69fd39e04e9be57e`. Its 18 focused
 tests, full all-target/all-feature workspace suite, and all three replacement
 review tracks are green. Exact feature-SHA remote workflows and delivery
 evidence remain pending. First remote CI run `32599591900` exposed a Linux-only
-removed-root liveness gap; this remote-finding candidate adds portable linked-
-descriptor validation and still requires review plus replacement remote gates.
+removed-root liveness gap. Exact portable-fix candidate
+`17f1884c20e84574561eb3cedd96b9aee6d37284` adds linked-descriptor validation
+and is green under both executable review tracks; this documentation seal
+resolves the remaining exact-lineage finding. Replacement remote gates remain.
 The fifteen earlier slices remain integrated through `9ada4b5`.
 
 The exact first-candidate lineage is: integrated base `9ada4b5`; isolated
@@ -19,8 +21,9 @@ composed as `87d7de0`; isolated tests `1b531297`, composed as `4b4e468`; and the
 removed-root finding fix plus first formal review candidate `dec98e0`. The
 isolated replacement source fix is `4b8d8b0`; isolated finding-test hardening is
 `446b495`; both are composed in exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`. Full lineage and non-green findings
-are recorded in the
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`. The Linux portable-fix behavior is
+exact candidate `17f1884c20e84574561eb3cedd96b9aee6d37284`. Full lineage and
+findings are recorded in the
 [`native session-listing review`](reviews/m03-native-session-listing-review-01.md).
 
 This slice adds `NativeSessionLifecycle::list_sessions` on supported Linux and

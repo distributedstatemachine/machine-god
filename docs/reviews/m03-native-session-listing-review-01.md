@@ -1,6 +1,6 @@
 # Milestone 03 native session-listing review 01
 
-Status: **REMOTE LINUX FINDING FIX CANDIDATE — REVIEW PENDING**
+Status: **PORTABLE FIX REVIEW GREEN — REPLACEMENT REMOTE GATES PENDING**
 
 All three first-round formal tracks reported confirmed findings on exact
 candidate `dec98e06e110be88317a2ba76c77e7ca872fed34`. Production and the
@@ -32,6 +32,9 @@ not waive any delivery gate; the required replacement rereview is now complete.
 | Isolated acquire-first replacement production fix | `4b8d8b0b38e081d1fd5ada3ba969f5b9af94eead` |
 | Isolated finding-test hardening | `446b49558b989edb399a8dabb33efe89beb490da` |
 | Composed replacement behavior candidate | `3fa54635dab00ebba78b233c69fd39e04e9be57e` |
+| Documentation correction head | `6689ab91d0d096eda9cf0aeb9dfb382887ff01dc` |
+| First remote feature head | `a70a864673e4df6c7555c06008d43ad802285437` |
+| Portable Linux remote-finding behavior candidate | `17f1884c20e84574561eb3cedd96b9aee6d37284` |
 
 The composed test commit contains 13 initial independently owned focused tests.
 The isolated test-hardening commit raises that focused suite to 18 tests, and
@@ -177,12 +180,20 @@ opening fresh `.` from an already removed retained descriptor succeeded and
 listing returned an empty success. The prior macOS identity validation did not
 run on Linux.
 
-This remote-finding candidate validates the acquired descriptor on both
-platforms: Linux rejects a zero link count, while macOS retains its parent/name
-identity validation. The acquire-then-unlink unit regression now compiles and
-runs on both platforms. Local macOS focused tests, strict native Clippy, and an
-x86_64 Linux target check are green. This executable change still requires all
-three review tracks and replacement exact-SHA remote workflows.
+Exact remote-finding behavior candidate
+`17f1884c20e84574561eb3cedd96b9aee6d37284` validates the acquired descriptor
+on both platforms: Linux rejects a zero link count, while macOS retains its
+parent/name identity validation. The acquire-then-unlink unit regression now
+compiles and runs on both platforms. Local macOS focused tests, the complete
+all-target/all-feature workspace suite, documentation tests, strict workspace
+Clippy, and an x86_64 Linux target check are green.
+
+The correctness/API and security/resource/concurrency tracks are green on exact
+`17f1884`. The documentation/evidence track found only that this executable
+commit could not name its own exact SHA; this documentation-only seal records
+that lineage and resolves the finding. Per the user's instruction, the seal
+does not receive another adversarial cycle. Replacement exact-SHA remote
+workflows remain mandatory.
 
 Exact replacement feature-branch CI and benchmark-evidence workflows, fast-
 forward integration, and exact `main` workflows remain pending. Until those

@@ -13,7 +13,9 @@ tests are composed through `dec98e0`, whose three first review tracks were not
 green. The isolated fixes and 18-test hardened suite are composed in exact
 behavior candidate `3fa5463`; all three replacement review tracks are green.
 First remote CI `32599591900` exposed the Linux removed-root gap; this portable
-remote-finding candidate awaits review and replacement remote gates. Milestone
+fix is exact behavior candidate `17f1884`, green under both executable review
+tracks, with its documentation lineage finding resolved in this seal.
+Replacement remote gates remain pending. Milestone
 03 remains `IN PROGRESS` because this delivery gate and other frozen scope
 remain open.
 

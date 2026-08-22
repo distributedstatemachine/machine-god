@@ -140,8 +140,10 @@ first review tracks were not green. Isolated fix `4b8d8b0` and test hardening
 corrected documentation; its 18 focused tests, required local gates, and all
 three replacement review tracks are green. Exact remote delivery evidence
 remains pending. First remote CI run `32599591900` exposed a Linux removed-root
-liveness gap; this remote-finding candidate applies the portable descriptor
-check and awaits review plus replacement remote gates. It adds no
+liveness gap. Exact portable-fix candidate `17f1884` applies the descriptor
+check and is green under both executable review tracks; the documentation
+lineage finding is resolved by this seal. Replacement remote gates remain
+pending. It adds no
 CLI behavior and makes no fx equivalence or performance claim. See the
 [native session-listing contract](docs/native-session-listing.md) and
 [review record](docs/reviews/m03-native-session-listing-review-01.md).
@@ -159,7 +161,7 @@ integrated [configured credential source](docs/configuration.md), and the
 integrated [native root-selection boundary](docs/native-root-selection.md).
 The [native session lifecycle](docs/native-session-lifecycle.md) is integrated;
 its bounded [session-listing extension](docs/native-session-listing.md) is a
-review-green replacement candidate awaiting exact remote delivery evidence.
+review-green portable-fix candidate awaiting exact remote delivery evidence.
 
 ## Development
 

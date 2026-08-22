@@ -115,8 +115,9 @@ and 13 initial independent tests are composed through first formal candidate
 hardened suite are composed in exact behavior candidate `3fa5463`; all three
 replacement review tracks are green. Remote delivery evidence remains pending;
 first remote CI `32599591900` exposed the Linux removed-root gap now fixed by
-this portable linked-descriptor candidate, which awaits review. Its security
-contract is in
+exact portable behavior candidate `17f1884`. Its correctness/API and security
+reviews are green; this seal resolves the documentation lineage finding. Its
+security contract is in
 [`native-session-listing.md`](native-session-listing.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
