@@ -160,7 +160,7 @@ fn assert_loaded_config(
 
 #[test]
 fn public_schema_constants_and_composition_names_are_stable() {
-    assert_eq!(CONFIG_SCHEMA_VERSION, 2);
+    assert_eq!(CONFIG_SCHEMA_VERSION, 3);
     assert_eq!(AI_GATEWAY_DEFAULT_MODEL, "zai/glm-5.2");
     assert_eq!(AI_GATEWAY_MAX_MODEL_BYTES, 128);
     assert_eq!(PermissionMode::Ask.as_str(), "ask");
@@ -175,7 +175,7 @@ fn public_schema_constants_and_composition_names_are_stable() {
 }
 
 #[test]
-fn missing_file_uses_schema_v2_built_in_defaults_without_creating_paths() {
+fn missing_file_uses_schema_v3_built_in_defaults_without_creating_paths() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("absent-xdg-root");
     let loaded = load_native_config(&environment(Some(&config_root), None)).unwrap();
@@ -183,20 +183,20 @@ fn missing_file_uses_schema_v2_built_in_defaults_without_creating_paths() {
     assert_loaded_config(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        2,
+        3,
         AI_GATEWAY_DEFAULT_MODEL,
     );
     assert!(!config_root.exists());
 }
 
 #[test]
-fn unavailable_home_uses_schema_v2_built_in_defaults() {
+fn unavailable_home_uses_schema_v3_built_in_defaults() {
     let loaded = load_native_config(&NativeEnvironment::new(None, None, None)).unwrap();
 
     assert_loaded_config(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        2,
+        3,
         AI_GATEWAY_DEFAULT_MODEL,
     );
 }
@@ -592,7 +592,7 @@ fn model_rejects_empty_space_control_delete_and_non_ascii_values() {
 fn unsupported_schema_version_has_a_distinct_error_kind() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("xdg");
-    let contents = r#"{"schema_version":3,"permission_mode":"ask"}"#;
+    let contents = r#"{"schema_version":4,"permission_mode":"ask"}"#;
 
     assert_contents_error(
         &config_root,
@@ -606,7 +606,7 @@ fn future_schema_is_classified_before_version_specific_fields() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("xdg");
     let cases = [
-        br#"{"schema_version":3,"permission_mode":"future","new_field":true}"#.as_slice(),
+        br#"{"schema_version":4,"permission_mode":"future","new_field":true}"#.as_slice(),
         br#"{"schema_version":18446744073709551616}"#.as_slice(),
         br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
     ];
@@ -646,7 +646,7 @@ fn invalid_utf8_precedes_future_version_classification() {
 
     assert_contents_error(
         &config_root,
-        b"{\"schema_version\":3,\"future\":\"\xff\"}",
+        b"{\"schema_version\":4,\"future\":\"\xff\"}",
         NativeConfigErrorKind::InvalidFormat,
     );
 }
@@ -783,7 +783,7 @@ fn loading_missing_config_writes_nothing_to_an_existing_root() {
     assert_loaded_config(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        2,
+        3,
         AI_GATEWAY_DEFAULT_MODEL,
     );
     assert_eq!(before, 0);
