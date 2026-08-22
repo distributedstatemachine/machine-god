@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -40,7 +41,10 @@ impl TemporaryDirectory {
                 std::process::id()
             ));
             match fs::create_dir(&path) {
-                Ok(()) => return Self { path },
+                Ok(()) => {
+                    set_mode(&path, 0o700);
+                    return Self { path };
+                }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => panic!("failed to create temporary directory: {error}"),
             }
@@ -65,6 +69,15 @@ impl Drop for TemporaryDirectory {
             Err(error) => panic!("failed to remove temporary directory: {error}"),
         }
     }
+}
+
+fn set_mode(path: &Path, value: u32) {
+    fs::set_permissions(path, fs::Permissions::from_mode(value)).unwrap();
+}
+
+fn create_private_dir(path: &Path) {
+    fs::create_dir(path).unwrap();
+    set_mode(path, 0o700);
 }
 
 struct TransportState {
@@ -136,8 +149,8 @@ fn built_in_config() -> machine_god_native::LoadedNativeConfig {
 fn prepared_roots(base: &Path) -> (PreparedNativeRoots, PathBuf, PathBuf) {
     let workspace = base.join("workspace");
     let state_base = base.join("state-base");
-    fs::create_dir(&workspace).unwrap();
-    fs::create_dir(&state_base).unwrap();
+    create_private_dir(&workspace);
+    create_private_dir(&state_base);
     let selection = NativeRootSelection::from_environment(
         &NativeEnvironment::new(None, Some(state_base.into_os_string()), None),
         &workspace,
@@ -214,7 +227,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
 
     let retained_workspace = temporary.path().join("retained-workspace");
     fs::rename(&workspace, &retained_workspace).unwrap();
-    fs::create_dir(&workspace).unwrap();
+    create_private_dir(&workspace);
     fs::write(
         workspace.join("note.txt"),
         "REPLACEMENT_WORKSPACE_CONTENT_SENTINEL",
@@ -223,7 +236,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
 
     let retained_state = temporary.path().join("retained-state");
     fs::rename(&state_root, &retained_state).unwrap();
-    fs::create_dir(&state_root).unwrap();
+    create_private_dir(&state_root);
 
     let transport = ScriptedTransport::new(retained_root_responses());
     let prompter = RecordingPrompter::default();
@@ -284,7 +297,7 @@ fn prepared_production_constructor_discovers_credentials_only_after_preparation(
     assert!(directory_is_empty(&state_root));
 
     let second = temporary.path().join("second");
-    fs::create_dir(&second).unwrap();
+    create_private_dir(&second);
     let (prepared, _, state_root) = prepared_roots(&second);
     let token = "PREPARED_PRODUCTION_TOKEN_SENTINEL";
     let host = NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
@@ -308,8 +321,8 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
     let temporary = TemporaryDirectory::new("legacy-paths");
     let workspace = temporary.path().join("workspace");
     let sessions = temporary.path().join("sessions");
-    fs::create_dir(&workspace).unwrap();
-    fs::create_dir(&sessions).unwrap();
+    create_private_dir(&workspace);
+    create_private_dir(&sessions);
     let transport = ScriptedTransport::new(Vec::<Vec<u8>>::new());
     let prompter = RecordingPrompter::default();
 

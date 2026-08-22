@@ -30,7 +30,10 @@ impl TemporaryDirectory {
                 std::process::id()
             ));
             match fs::create_dir(&path) {
-                Ok(()) => return Self { path },
+                Ok(()) => {
+                    set_mode(&path, 0o700);
+                    return Self { path };
+                }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => panic!("failed to create a temporary directory: {error}"),
             }
@@ -79,6 +82,11 @@ fn mode(path: &Path) -> u32 {
 
 fn set_mode(path: &Path, value: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(value)).unwrap();
+}
+
+fn create_private_dir(path: &Path) {
+    fs::create_dir(path).unwrap();
+    set_mode(path, 0o700);
 }
 
 #[test]
@@ -192,7 +200,7 @@ fn preparation_opens_workspace_first_and_never_creates_a_missing_state_base() {
     let temporary = TemporaryDirectory::new();
     let missing_workspace = temporary.path().join("missing-workspace");
     let existing_base = temporary.path().join("existing-state-base");
-    fs::create_dir(&existing_base).unwrap();
+    create_private_dir(&existing_base);
 
     let workspace_error =
         PreparedNativeRoots::prepare(select(&missing_workspace, &existing_base)).unwrap_err();
@@ -204,7 +212,7 @@ fn preparation_opens_workspace_first_and_never_creates_a_missing_state_base() {
 
     let workspace = temporary.path().join("workspace");
     let missing_base = temporary.path().join("missing-state-base");
-    fs::create_dir(&workspace).unwrap();
+    create_private_dir(&workspace);
     let base_error = PreparedNativeRoots::prepare(select(&workspace, &missing_base)).unwrap_err();
     assert_eq!(base_error.kind(), PreparedNativeRootsErrorKind::StateBase);
     assert!(!missing_base.exists());
@@ -215,8 +223,8 @@ fn preparation_creates_only_fixed_private_suffixes_and_does_not_repair_existing_
     let temporary = TemporaryDirectory::new();
     let workspace = temporary.path().join("workspace");
     let xdg = temporary.path().join("xdg");
-    fs::create_dir(&workspace).unwrap();
-    fs::create_dir(&xdg).unwrap();
+    create_private_dir(&workspace);
+    create_private_dir(&xdg);
 
     let prepared = PreparedNativeRoots::prepare(select(&workspace, &xdg)).unwrap();
     let state_root = xdg.join("machine-god");
@@ -238,7 +246,7 @@ fn preparation_creates_only_fixed_private_suffixes_and_does_not_repair_existing_
     assert_eq!(prepared_again.state_root(), state_root);
 
     let home = temporary.path().join("home");
-    fs::create_dir(&home).unwrap();
+    create_private_dir(&home);
     let fallback = NativeRootSelection::from_environment(
         &environment(None, Some(home.as_os_str())),
         &workspace,
@@ -255,12 +263,12 @@ fn preparation_creates_only_fixed_private_suffixes_and_does_not_repair_existing_
 fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
     let temporary = TemporaryDirectory::new();
     let workspace = temporary.path().join("workspace");
-    fs::create_dir(&workspace).unwrap();
+    create_private_dir(&workspace);
 
     let workspace_file = temporary.path().join("workspace-file");
     fs::write(&workspace_file, b"not a directory").unwrap();
     let usable_base = temporary.path().join("usable-base");
-    fs::create_dir(&usable_base).unwrap();
+    create_private_dir(&usable_base);
     let workspace_file_error =
         PreparedNativeRoots::prepare(select(&workspace_file, &usable_base)).unwrap_err();
     assert_eq!(
@@ -284,7 +292,7 @@ fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
 
     let real_base = temporary.path().join("real-base");
     let base_link = temporary.path().join("base-link");
-    fs::create_dir(&real_base).unwrap();
+    create_private_dir(&real_base);
     symlink(&real_base, &base_link).unwrap();
     let base_link_error = PreparedNativeRoots::prepare(select(&workspace, &base_link)).unwrap_err();
     assert_eq!(
@@ -293,7 +301,7 @@ fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
     );
 
     let file_base = temporary.path().join("file-base");
-    fs::create_dir(&file_base).unwrap();
+    create_private_dir(&file_base);
     fs::write(file_base.join("machine-god"), b"not a directory").unwrap();
     let final_file_error =
         PreparedNativeRoots::prepare(select(&workspace, &file_base)).unwrap_err();
@@ -303,7 +311,7 @@ fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
     );
 
     let link_base = temporary.path().join("link-base");
-    fs::create_dir(&link_base).unwrap();
+    create_private_dir(&link_base);
     symlink(&real_base, link_base.join("machine-god")).unwrap();
     let final_link_error =
         PreparedNativeRoots::prepare(select(&workspace, &link_base)).unwrap_err();
@@ -313,7 +321,7 @@ fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
     );
 
     let unsafe_base = temporary.path().join("unsafe-base");
-    fs::create_dir(&unsafe_base).unwrap();
+    create_private_dir(&unsafe_base);
     set_mode(&unsafe_base, 0o770);
     let unsafe_base_error =
         PreparedNativeRoots::prepare(select(&workspace, &unsafe_base)).unwrap_err();
@@ -325,8 +333,8 @@ fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
 
     let public_final_base = temporary.path().join("public-final-base");
     let public_final = public_final_base.join("machine-god");
-    fs::create_dir(&public_final_base).unwrap();
-    fs::create_dir(&public_final).unwrap();
+    create_private_dir(&public_final_base);
+    create_private_dir(&public_final);
     set_mode(&public_final, 0o750);
     let public_final_error =
         PreparedNativeRoots::prepare(select(&workspace, &public_final_base)).unwrap_err();
@@ -341,9 +349,10 @@ fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
 fn preparation_rejects_equal_and_both_ancestor_directions_by_identity() {
     let temporary = TemporaryDirectory::new();
 
-    let state_base_in_workspace = temporary.path().join("workspace/state-base");
-    fs::create_dir_all(&state_base_in_workspace).unwrap();
     let workspace = temporary.path().join("workspace");
+    let state_base_in_workspace = workspace.join("state-base");
+    create_private_dir(&workspace);
+    create_private_dir(&state_base_in_workspace);
     let workspace_ancestor =
         PreparedNativeRoots::prepare(select(&workspace, &state_base_in_workspace)).unwrap_err();
     assert_eq!(
@@ -354,8 +363,8 @@ fn preparation_rejects_equal_and_both_ancestor_directions_by_identity() {
 
     let equal_base = temporary.path().join("equal-base");
     let equal_root = equal_base.join("machine-god");
-    fs::create_dir(&equal_base).unwrap();
-    fs::create_dir(&equal_root).unwrap();
+    create_private_dir(&equal_base);
+    create_private_dir(&equal_root);
     set_mode(&equal_root, 0o700);
     let equal = PreparedNativeRoots::prepare(select(&equal_root, &equal_base)).unwrap_err();
     assert_eq!(equal.kind(), PreparedNativeRootsErrorKind::OverlappingRoots);
@@ -363,9 +372,9 @@ fn preparation_rejects_equal_and_both_ancestor_directions_by_identity() {
     let ancestor_base = temporary.path().join("state-ancestor-base");
     let state_ancestor = ancestor_base.join("machine-god");
     let workspace_below_state = state_ancestor.join("nested-workspace");
-    fs::create_dir(&ancestor_base).unwrap();
-    fs::create_dir(&state_ancestor).unwrap();
-    fs::create_dir(&workspace_below_state).unwrap();
+    create_private_dir(&ancestor_base);
+    create_private_dir(&state_ancestor);
+    create_private_dir(&workspace_below_state);
     set_mode(&state_ancestor, 0o700);
     let state_ancestor_error =
         PreparedNativeRoots::prepare(select(&workspace_below_state, &ancestor_base)).unwrap_err();
@@ -380,8 +389,8 @@ fn concurrent_preparers_share_the_same_private_fixed_root_under_normal_umask() {
     let temporary = TemporaryDirectory::new();
     let workspace = temporary.path().join("workspace");
     let state_base = temporary.path().join("state-base");
-    fs::create_dir(&workspace).unwrap();
-    fs::create_dir(&state_base).unwrap();
+    create_private_dir(&workspace);
+    create_private_dir(&state_base);
 
     let selection = Arc::new(select(&workspace, &state_base));
     let barrier = Arc::new(Barrier::new(8));
@@ -411,8 +420,8 @@ fn selected_paths_and_all_public_diagnostics_are_stable_and_redacted() {
     let temporary = TemporaryDirectory::new();
     let workspace = temporary.path().join("secret-workspace");
     let state_base = temporary.path().join("secret-state-base");
-    fs::create_dir(&workspace).unwrap();
-    fs::create_dir(&state_base).unwrap();
+    create_private_dir(&workspace);
+    create_private_dir(&state_base);
 
     let selection = select(&workspace, &state_base);
     assert_eq!(format!("{selection:?}"), "NativeRootSelection { .. }");
