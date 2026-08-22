@@ -419,6 +419,14 @@ names are ignored only after consuming scan budget. A hostile or nonregular
 derived lock entry for a present canonical record is corrupt; ordinary lock I/O
 failure is unavailable.
 
+The enumeration stream is built from a fresh descriptor-relative `.` open. On
+macOS, an unlinked directory descriptor can still reopen `.`, so listing also
+compares the retained descriptor identity with its kernel-reported basename in
+the descriptor-relative retained parent. A missing or replacement identity is
+unavailable; the comparison never authorizes the replacement or redirects
+enumeration away from the retained root. Renaming the retained directory keeps
+its identity and remains supported.
+
 There is no root-wide lock or multi-record snapshot. Each canonical candidate
 has an independent point-in-time validation, so concurrent changes to other IDs
 can be reflected at different instants. A candidate that disappears before its

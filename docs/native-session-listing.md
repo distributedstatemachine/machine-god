@@ -90,6 +90,15 @@ as a by-ID load:
 - exact agreement between the decoded `SessionId` and the digest in the
   candidate filename.
 
+Enumeration acquires a fresh `.` descriptor relative to the retained root.
+Linux reports a root removed before that acquisition as unavailable. On macOS,
+where an unlinked directory descriptor can still reopen `.`, listing first
+checks that the retained descriptor's kernel-reported basename still resolves
+to the same directory identity through its own retained parent. This check does
+not authorize or enumerate a path replacement: an absent or different identity
+is `Unavailable`, while a rename that preserves the retained directory remains
+valid.
+
 The operation uses the store's permanent per-ID advisory lock while validating
 each candidate. A successful listing can therefore create a missing fixed
 `.lock` sidecar with private `0600` mode. It never writes, repairs, replaces,
@@ -99,11 +108,13 @@ as records and do not cause sidecars to be created.
 A canonical symlink, directory, FIFO, device, socket, oversized record,
 malformed or unsupported envelope, invalid counter, or filename/decoded-ID
 mismatch is `Corrupt`. A hostile or nonregular derived lock entry for a present
-exact data candidate is also `Corrupt`. Corruption fails the complete call; the
-API does not skip it or return a partial successful list. Directory enumeration,
-record open/read, metadata, or ordinary lock I/O failures are `Unavailable`.
-These categories reuse the native lifecycle's fixed redacted operation-error
-boundary.
+exact data candidate is also `Corrupt`. Corruption reached within the bounded
+selected set fails the complete call; the API does not skip it or return a
+partial successful list. A candidate omitted beyond a truncation boundary is
+not inspected and cannot poison that successful partial result. Directory
+enumeration, record open/read, metadata, or ordinary lock I/O failures are
+`Unavailable`. These categories reuse the native lifecycle's fixed redacted
+operation-error boundary.
 
 ## Concurrency and snapshot semantics
 

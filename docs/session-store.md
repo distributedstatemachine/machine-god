@@ -70,6 +70,13 @@ regular-file, strict schema, fixed record bound, decoded-ID, and permanent
 per-ID locking rules. Production/test composition, formal review, and delivery
 evidence remain pending.
 
+Listing constructs its directory stream from a fresh retained-root-relative
+descriptor. Its macOS liveness check additionally requires the retained root's
+kernel-reported basename in its descriptor-relative parent to resolve to the
+same directory identity, because macOS otherwise permits reopening `.` on an
+unlinked directory descriptor. A removed or replacement identity is fixed
+`Unavailable`; a rename preserves identity and does not redirect enumeration.
+
 ## Stable v1 layout
 
 For a `SessionId`, the store hashes this exact byte sequence:

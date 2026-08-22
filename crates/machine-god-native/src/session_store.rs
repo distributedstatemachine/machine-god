@@ -300,6 +300,8 @@ impl FileSessionStore {
     }
 
     pub(crate) fn list_session_ids(&self) -> Result<FileSessionList, SessionStoreError> {
+        #[cfg(target_os = "macos")]
+        ensure_macos_root_is_linked(self.root.as_fd())?;
         let directory = rustix::fs::openat(
             self.root.as_fd(),
             ".",
@@ -440,6 +442,38 @@ impl FileSessionStore {
         publish_record(self.root.as_fd(), &names, record)?;
         Ok(revision)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_macos_root_is_linked(root: rustix::fd::BorrowedFd<'_>) -> Result<(), SessionStoreError> {
+    let root_metadata = rustix::fs::fstat(root).map_err(map_io_error)?;
+    let root_path = rustix::fs::getpath(root).map_err(map_io_error)?;
+    let root_path = root_path.as_bytes();
+    if root_path == b"/" {
+        return Ok(());
+    }
+    let name = root_path
+        .rsplit(|byte| *byte == b'/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| unavailable(true))?;
+    let name = std::ffi::CString::new(name).map_err(|_| unavailable(true))?;
+    let parent = rustix::fs::openat(
+        root,
+        "..",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map_err(map_io_error)?;
+    let linked_metadata =
+        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW).map_err(map_io_error)?;
+    if linked_metadata.st_dev != root_metadata.st_dev
+        || linked_metadata.st_ino != root_metadata.st_ino
+        || !FileType::from_raw_mode(linked_metadata.st_mode).is_dir()
+    {
+        return Err(unavailable(true));
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
