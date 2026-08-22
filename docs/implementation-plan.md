@@ -289,8 +289,10 @@ core-contract, and prepared-host suites are present at `85c99a8`, `85c4193`,
 and `236e3d4`, covering 2, 9, and 3 focused tests respectively. The formal
 portability finding is fixed by explicit fixture modes at `f5dbbca`; the formal
 macOS ACL finding is fixed by descriptor-bound rejection at `8ae17db` with its
-independent regression at `041c83c`. The focused suites are green, including
-10 core tests under default and all features. Formal rereview, full local gates,
+independent regression at `041c83c`. The protective macOS HOME deny-delete
+compatibility regression is `bb2a856`. The focused suites are green, including
+11 core tests under default and all features; its policy and Rustdoc fix is
+`fa94d8a`. Formal rereview, full local gates,
 exact feature workflows, fast-forward integration, exact `main` workflows, and
 the final delivery record remain pending. The candidate contract and review
 record are in

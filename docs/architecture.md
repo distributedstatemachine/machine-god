@@ -93,10 +93,11 @@ The fourteenth slice is a composed candidate for explicit Linux/macOS native
 root selection and safe preparation. It derives state location from an
 injected environment snapshot, retains an explicit existing workspace, may
 create only a fixed descriptor-relative state suffix under an existing selected
-base, rejects any macOS extended ACL through the retained directory descriptor,
-and rejects equality or ancestry of the retained roots. New
+base, accepts only empty or exact protective deny-delete macOS ACLs through the
+retained directory descriptor, and rejects equality or ancestry of the retained
+roots. New
 reference-host constructors consume those descriptors before production
-credential discovery. Production and 15 independently owned focused tests are
+credential discovery. Production and 16 independently owned focused tests are
 present, and their focused gates are green. Formal review findings for macOS
 extended ACLs and ambient-umask-dependent fixtures are fixed; all three formal
 tracks must rereview one exact finding-fix SHA. Full gates, remote workflows,
@@ -301,8 +302,9 @@ derives the fixed state path from injected values without I/O.
 `PreparedNativeRoots::prepare` opens the workspace first, requires the selected
 state base to exist, retains no-follow descriptors while walking or creating
 only the fixed suffix, validates existing state-directory ownership and modes
-without repair, rejects every macOS ACL entry/flag or descriptor ACL-read
-failure (including on a newly created suffix after normalization), and rejects
+without repair, accepts only empty or exact flag-free deny-delete macOS ACLs
+and rejects every other ACL or descriptor ACL-read failure (including on a
+newly created suffix after normalization), and rejects
 retained-root equality or ancestry by device/inode identity and
 descriptor-relative parent walking. New
 `NativeReferenceHost` constructors consume that prepared value and transfer its

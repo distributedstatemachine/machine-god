@@ -87,11 +87,13 @@ absolute workspace plus a state location from an injected native-environment
 snapshot, opens and retains the workspace first, and may create only a fixed
 descriptor-relative state suffix with private new-directory modes. It does not
 change schema v3, configuration bytes, the CLI, status, or session lifecycle.
-Production and 14 independently owned focused tests are present, and focused
-root-selection and prepared-composition gates are green. A preliminary audit is
-green but is not one of the required three fresh formal adversarial tracks.
-Those formal reviews, exact feature workflows, `main` integration, and a final
-delivery record remain pending. See the composed candidate
+Production and 16 independently owned focused tests are present, and focused
+root-selection and prepared-composition gates are green. Initial formal review
+found fixture-mode and macOS ACL issues; those fixes and their ALLOW-rejection
+and ordinary-HOME DENY-compatibility regressions are composed. All three tracks
+must be green together on the next exact finding-fix SHA. Exact feature
+workflows, `main` integration, and a final delivery record remain pending. See
+the composed candidate
 [native root-selection contract](docs/native-root-selection.md) and
 [review record](docs/reviews/m03-native-root-selection-review-01.md).
 

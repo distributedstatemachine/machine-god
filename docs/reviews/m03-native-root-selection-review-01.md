@@ -37,6 +37,9 @@ Status: **FINDING FIXES COMPOSED — exact-SHA formal rereview and delivery gate
 - Formal security finding fix for descriptor-bound macOS extended ACL
   rejection: `8ae17db`
 - Independent macOS ACL regression: `041c83c`
+- Formal compatibility finding regression for protective macOS deny-delete
+  ACLs: `bb2a856`
+- Protective macOS ACL policy and public Rustdoc finding fix: `fa94d8a`
 - Preliminary read-only audit: **GREEN**; explicitly not one of the required
   three fresh formal adversarial tracks
 - Initial formal documentation track on `d59c7a5`: **GREEN**
@@ -45,8 +48,18 @@ Status: **FINDING FIXES COMPOSED — exact-SHA formal rereview and delivery gate
 - Initial formal security/resources/authority track on `d59c7a5`: **NOT
   GREEN**; one high macOS ACL finding, fixed at `8ae17db` and covered at
   `041c83c`
-- Exact finding-fix behavior candidate: this documentation-reconciliation
-  commit; exact SHA reported at handoff
+- First exact finding-fix behavior candidate:
+  `107d43490ac3babdc32e55b3bb5b24ab2ef17329`
+- First API/tests/portability rereview on `107d434`: **NOT GREEN**; one low
+  public Rustdoc mismatch, fixed at `fa94d8a`
+- First security/resources/authority rereview on `107d434`: **NOT GREEN**;
+  one medium ordinary-macOS-HOME compatibility finding, covered at `bb2a856`
+  and fixed at `fa94d8a`
+- First documentation/evidence rereview on `107d434`: **NOT GREEN**; the same
+  medium HOME-ACL compatibility finding plus one medium stale README/reference-
+  host evidence finding, fixed in the next finding-fix candidate
+- Next exact finding-fix behavior candidate: this reconciliation commit; exact
+  SHA reported at handoff
 - Adversarially green behavior: pending
 - Exact feature-gate SHA and workflows: pending
 - Documentation seal and workflows: pending
@@ -57,11 +70,13 @@ Status: **FINDING FIXES COMPOSED — exact-SHA formal rereview and delivery gate
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
 Thirteen bounded Milestone 03 slices are integrated. The fourteenth slice's
-production, finding fixes, and 15 independently owned focused tests are now
+production, finding fixes, and 16 independently owned focused tests are now
 composed, and focused root-selection and prepared-host gates are green. The
-initial formal review was green for documentation and produced one confirmed
-portability finding plus one confirmed security finding; both are fixed. No
-required formal track is yet green on the same exact finding-fix behavior SHA,
+initial formal review produced one confirmed portability finding plus one
+confirmed security finding. First rereview produced a Rustdoc mismatch, a
+protective macOS HOME-ACL compatibility issue, and stale summary evidence. All
+are fixed in this candidate. No required formal track is yet green on the same
+exact finding-fix behavior SHA,
 and feature, `main`, and final-delivery gates remain pending. Milestone 03
 remains `IN PROGRESS`.
 
@@ -85,9 +100,10 @@ The composed candidate implements:
   no-group/other-write validation for the selected base and existing
   intermediates; complete group/other privacy for the existing final root; and
   validation rather than chmod or repair for any existing directory;
-- descriptor-bound rejection on macOS of any extended ACL flag or entry, and
-  of any ACL read failure, for the selected base and every retained existing or
-  newly created suffix directory;
+- descriptor-bound acceptance on macOS of only an empty ACL or exact flag-free
+  deny-delete entries with no ACL-level flags, rejecting every other entry,
+  malformed value, or ACL-read failure for the selected base and every retained
+  existing or newly created suffix directory;
 - retained workspace and state-root descriptors and mandatory device/inode plus
   descriptor-parent-walk rejection when their opened identities are equal or
   one is an ancestor of the other;
@@ -129,7 +145,7 @@ machine-god remains a Rust product.
 Production implementation, independent black-box tests, and candidate
 documentation were completed in isolated worktrees with non-overlapping
 ownership, then composed with the correctness and formal finding fixes. The
-focused regression, core-contract, and prepared-host suites run 2, 10, and 3
+focused regression, core-contract, and prepared-host suites run 2, 11, and 3
 tests respectively and are green. The macOS ACL test was demonstrably red on
 the old production and green on the descriptor-bound fix. A preliminary
 read-only audit reported green, but it is explicitly not one of the required
@@ -141,16 +157,26 @@ and could become group/other writable under `umask 000` or `002`; every valid
 fixture now receives explicit `0700`, with isolated `umask 000` validation.
 Security/resources/authority found that macOS mode `0700` does not exclude an
 extended ACL granting or inheriting non-owner authority. The fix exact-pins the
-target-macOS-only `calcifer-macos-acl` 0.1.0 descriptor API and rejects any ACL
-or ACL read failure on every retained state directory, including a new suffix
-after permission normalization. A real `everyone allow search` ACL regression
-keeps mode `0700`, was red before the fix, and is green after it.
+target-macOS-only `calcifer-macos-acl` 0.1.0 descriptor API. The initial fix
+rejected any ACL or ACL read failure on every retained state directory,
+including a new suffix after permission normalization. A real
+`everyone allow search` ACL regression keeps mode `0700`, was red before the
+fix, and is green after it.
 The exact-pinned crate has no normal dependencies, is locked to crates.io
 checksum `d623f1bbaccbe0d1c6a9e4d2366feef6e179ac4e235aa86342601caf29358df4`,
 and its published source at upstream commit `24a15cc4f7c46802d93d2f9cc93e45e1d5a5313e`
 was inspected in full. The product crate continues to forbid unsafe Rust; the
 dependency isolates its bounded native ACL parsing/FFI behind a safe
 `BorrowedFd` API. Dependency policy and vulnerability gates are green.
+
+The first finding-fix rereview then found that rejecting every entry also
+rejected the protective `group:everyone deny delete` ACL on an ordinary macOS
+`HOME`, breaking the documented fallback. The refined policy accepts only an
+empty ACL or entries with exact `DENY` tag, zero flags, and exact `DELETE`
+permission while requiring zero ACL-level flags. `ALLOW`, unknown tags/flags,
+other or combined permissions, malformed data, and read errors still fail
+closed. An independent HOME-fallback regression at `bb2a856` is red on the
+reject-any implementation and green on the refinement.
 
 All three tracks must now rereview this exact finding-fix candidate. Every
 additional confirmed finding must be fixed, and all three must report green

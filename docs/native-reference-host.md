@@ -16,9 +16,12 @@ final-record feature CI run `32583585145`, feature benchmark-evidence run
 `32583585148`, main CI run `32583871385`, and main benchmark-evidence run
 `32583871368` are green. A separate composed fourteenth candidate adds safe
 selected-root preparation and consuming constructors without changing the
-integrated path-constructor contract below. Its production and 14 independently
-owned focused tests are present and their focused gates are green. Three fresh
-formal adversarial tracks and delivery gates remain pending. Milestone 03 remains
+integrated path-constructor contract below. Its production and 16 independently
+owned focused tests are present and their focused gates are green. Initial
+formal review found fixture-mode and macOS ACL issues; their fixes bring the
+focused total to 16, including ALLOW-rejection and ordinary-HOME
+DENY-compatibility regressions. All three tracks must be green on the same next
+finding-fix SHA; delivery gates remain pending. Milestone 03 remains
 `IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 

@@ -7,12 +7,15 @@ Thirteen slices are integrated through final delivery record
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 `32583871385`, and main benchmark-evidence run `32583871368` are green for that
 record. Production is present at `050d253`, with focused correctness fixes at
-`7420a3a` and `fa5119a`. Independent 2-test regression, 10-test core-contract,
+`7420a3a` and `fa5119a`. Independent 2-test regression, 11-test core-contract,
 and 3-test prepared-host suites are present; their focused gates are green.
 Formal review of exact candidate `d59c7a5` found ambient-umask-dependent valid
 fixtures and a macOS extended-ACL authority gap. The fixture fix is `f5dbbca`;
 descriptor-bound ACL rejection and its independent regression are `8ae17db`
-and `041c83c`. All three formal tracks must now rereview one exact behavior SHA.
+and `041c83c`. First rereview found the protective macOS HOME deny-delete ACL
+compatibility issue and a Rustdoc mismatch; their finding-fix candidate includes
+the independent `bb2a856` regression and policy/Rustdoc fix `fa94d8a`. All
+three formal tracks must now rereview one exact behavior SHA.
 Full local gates, exact feature workflows, fast-forward integration, exact
 `main` workflows, and the final record remain pending. Milestone 03 remains
 `IN PROGRESS`.
@@ -114,8 +117,8 @@ supported Linux and macOS targets it performs these ordered operations:
    fixed suffix, opening every existing or newly created component relative to
    its parent without following symlinks;
 4. validate the ownership and permission rules for the selected state base and
-   every retained suffix component and, on macOS, reject any extended ACL or
-   descriptor-bound ACL read failure; and
+   every retained suffix component and, on macOS, reject any unsafe extended
+   ACL or descriptor-bound ACL read failure; and
 5. compare the retained workspace and final state-root identities and reject
    equality or either ancestor relationship.
 
@@ -137,11 +140,13 @@ owned by the process's effective user ID with no group-or-other write bit
 those rules and be private from group and other entirely
 (`mode & 0o077 == 0`). User permission bits are not repaired or otherwise
 normalized. On macOS, the retained descriptor for the base and every existing
-suffix component must also have an entirely empty extended ACL: any ACL-level
-flag, any entry (including deny or owner-oriented entries), malformed result,
-or operating-system read failure rejects the directory. This intentionally
-strict rule prevents an ACL from granting or inheriting authority that the
-POSIX mode bits do not show.
+suffix component must have either no extended ACL or only one or more entries
+whose tag is exactly `DENY`, flags are zero, and sole permission is exactly
+`DELETE`, with no ACL-level flags. This recognizes the protective
+`everyone deny delete` entry on ordinary macOS home directories without
+accepting authority-granting policy. Any `ALLOW` or unknown tag, entry flag,
+other or combined permission, ACL-level flag, malformed result, or
+operating-system read failure rejects the directory.
 
 Every directory created by preparation is requested with mode `0700`. Because
 the process umask may remove even owner access bits, the just-created fixed name
@@ -149,8 +154,9 @@ is first normalized descriptor-relatively to `0700` beneath the already
 effective-UID-owned, non-group/other-writable parent. It is then observed
 no-follow, reopened no-follow, checked so the path observation and opened
 descriptor have the same device/inode identity, and `fchmod`ed and verified at
-exact `0700`. On macOS, the opened new directory must additionally have an
-empty extended ACL after that normalization, so an inherited ACL fails closed.
+exact `0700`. On macOS, the opened new directory must additionally satisfy the
+same empty-or-exact-deny-delete ACL rule after normalization, so an inherited
+authority-granting or unknown ACL fails closed.
 The same-effective-UID account is the remaining trust boundary during that
 normalization; Linux cannot apply `AT_SYMLINK_NOFOLLOW` to this `fchmodat`
 operation. The resulting directory must be owned by the effective user ID and
