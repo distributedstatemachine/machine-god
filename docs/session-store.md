@@ -56,8 +56,8 @@ The composed fifteenth
 by the engine. It does not change this constructor, retained-root identity,
 flat file layout, current schema, ordinary `SessionStore::load`/`save`
 behavior, or direct-caller contract. Production, fourteen independently owned
-focused tests, and one formal finding regression are green; three-track
-rereview and delivery remain pending.
+focused tests, one formal finding regression, and all three adversarial tracks
+are green on exact candidate `e6a3804`; delivery remains pending.
 
 ## Stable v1 layout
 

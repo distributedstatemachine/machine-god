@@ -340,8 +340,9 @@ The production API and these semantics are normative in
 [`native-session-lifecycle.md`](native-session-lifecycle.md). Production,
 fourteen independently owned focused tests, and one formal finding regression
 are composed and green, including the allocation-address identity portability
-fix. Three-track rereview, exact feature workflows, fast-forward integration,
-exact `main` workflows, and final delivery evidence are pending. `list_sessions`, lifecycle
+fix. All three adversarial tracks are green together on exact candidate
+`e6a3804`. Exact feature workflows, fast-forward integration, exact `main`
+workflows, and final delivery evidence are pending. `list_sessions`, lifecycle
 CLI commands, migration,
 encryption, and non-Unix hardening are not part of this candidate.
 
@@ -380,9 +381,9 @@ gate:
   is limited to the root-selection and safe-creation sub-boundary. The
   fifteenth candidate implements by-ID create, resume, durable-record replay,
   and reset/new-incarnation behavior with fourteen independently owned focused
-  tests plus one formal finding regression, but three-track rereview and
-  delivery are pending and native session listing remains open. This combined
-  item therefore stays unchecked.
+  tests plus one formal finding regression, with all three adversarial tracks
+  green on exact candidate `e6a3804`; delivery is pending and native session
+  listing remains open. This combined item therefore stays unchecked.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
   `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,

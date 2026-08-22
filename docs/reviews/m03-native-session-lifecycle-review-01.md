@@ -1,6 +1,6 @@
 # Milestone 03 native session-lifecycle review 01
 
-Status: **REMAINING FINDING FIXED — FINAL THREE-TRACK REREVIEW PENDING**
+Status: **ADVERSARIALLY GREEN — FEATURE DELIVERY GATES PENDING**
 
 ## Candidate lineage
 
@@ -45,6 +45,13 @@ Status: **REMAINING FINDING FIXED — FINAL THREE-TRACK REREVIEW PENDING**
   remaining default-versus-custom incarnation-source wording defect
 - Remaining documentation finding fix:
   `33168e5cf23b0b652aebfde6392dafbc4a5746f5`
+- Final exact formal-review candidate:
+  `e6a38043457127f17b8fd621bd84243d938d3be5`
+- Final API/tests/portability rereview on `e6a3804`: **GREEN**
+- Final security/resources/authority rereview on `e6a3804`: **GREEN**
+- Final documentation/evidence rereview on `e6a3804`: **GREEN**
+- Adversarially green behavior and contract:
+  `e6a38043457127f17b8fd621bd84243d938d3be5`
 - Integration branch: `agent/m03-native-session-lifecycle`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
@@ -170,17 +177,22 @@ composition, states that standalone create uses its configured trusted source,
 and defines `IncarnationSource` for configured-source failure or reset attempt
 exhaustion, with OS entropy failure as the default production case.
 
-All three tracks must now rereview the same replacement candidate until all
-report green. Any confirmed finding changes that candidate and repeats this
-requirement. Once
-behavior is adversarially green, later documentation-only seal and delivery
-records update status and exact workflow evidence only. Per the user's explicit
-instruction, those documentation-only commits are not adversarially reviewed.
+All three tracks rereviewed exact replacement `e6a3804` and reported green
+together. API/tests/portability found no remaining API, correctness, test,
+portability, cfg, source-compatibility, identity, inertness, or error-contract
+defect. Security/resources/authority found no remaining authority, bound,
+randomness, atomicity, race, ambiguity, redaction, or retry-safety defect.
+Documentation/evidence confirmed the configured/default-source distinction,
+review lineage, exact 14+1 test count, maintained summaries, links, deferred
+scope, and Rust-product/Zig-benchmark boundary. Later documentation-only seal
+and delivery records update status and exact workflow evidence only. Per the
+user's explicit instruction, those documentation-only commits are not
+adversarially reviewed.
 
 ## Remaining scope
 
-Formal review, exact feature workflows, fast-forward integration without
-force, exact `main` workflows, and the final delivery record are pending.
+Exact feature workflows, fast-forward integration without force, exact `main`
+workflows, and the final delivery record are pending.
 Native `list_sessions` and all lifecycle CLI commands remain open, so the
 combined Milestone 03 root-and-lifecycle checklist item stays unchecked. No
 package publication or GitHub release is authorized.

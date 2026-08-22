@@ -43,9 +43,9 @@ The composed fifteenth-slice candidate adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
 the exact file-store instance shared with the engine; the caller still supplies
 the validated session ID and production native code supplies OS-random
-incarnations. Production, fourteen independently owned focused tests, and one
-formal finding regression are green; three-track rereview and exact delivery
-remain pending. Its normative behavior is in
+incarnations. Production, fourteen independently owned focused tests, one
+formal finding regression, and all three adversarial tracks are green on exact
+candidate `e6a3804`; exact delivery remains pending. Its normative behavior is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
 ## Feature and platform boundary
@@ -333,7 +333,7 @@ exact store shared with the engine, allocates new incarnations from production
 OS randomness, persists create before success, and resets by atomic
 current-record replacement with a checked advancing revision. It does not add
 session listing, session-ID generation, a UI/event replay, or any CLI command;
-formal review and delivery gates remain pending.
+delivery gates remain pending; formal review is green on `e6a3804`.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance

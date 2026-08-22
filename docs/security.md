@@ -95,9 +95,9 @@ exact file store shared with the composed engine. The caller supplies the
 validated session ID; only production OS cryptographic randomness supplies new
 incarnations. Create persists before success, replay returns a durable bounded
 record rather than UI/events, and reset atomically changes incarnation without
-a deletion gap. Production, fourteen independently owned focused tests, and
-one formal finding regression are green; three-track rereview and exact
-delivery remain pending. Its
+a deletion gap. Production, fourteen independently owned focused tests, one
+formal finding regression, and all three adversarial tracks are green on exact
+candidate `e6a3804`; exact delivery remains pending. Its
 security boundary is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
