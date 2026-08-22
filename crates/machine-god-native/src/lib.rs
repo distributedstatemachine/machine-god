@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 mod ai_gateway;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod ai_gateway_http;
+mod ask_permission;
 mod config;
 mod list_files;
 mod read_file;
@@ -30,6 +31,11 @@ pub use ai_gateway_http::{
     AI_GATEWAY_HTTP_MAX_RESPONSE_CHUNK_BYTES, AiGatewayBearerToken, AiGatewayHttpConfigError,
     AiGatewayHttpConfigErrorKind, AiGatewayHttpEndpoint, AiGatewayHttpLimits,
     AiGatewayHttpTransport,
+};
+pub use ask_permission::{
+    ASK_PERMISSION_DENIED_REASON, ASK_PERMISSION_PROMPT_ERROR_CODE,
+    ASK_PERMISSION_PROMPT_ERROR_MESSAGE, AskPermissionHandler, PermissionPromptDecision,
+    PermissionPromptError, PermissionPrompter,
 };
 
 pub use config::{
