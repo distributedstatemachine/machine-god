@@ -1,7 +1,7 @@
 # Milestone 03 native host configuration schema-v2 review 01
 
-Status: **CANDIDATE — adversarial review, exact remote gates, and `main`
-delivery pending**
+Status: **FEATURE REVIEW GREEN — exact remote gates and `main` delivery
+pending**
 
 ## Review lineage
 
@@ -21,25 +21,26 @@ delivery pending**
   `4ae2ceb93d375630569fef5f6bc47b647051fa60`
 - All-target Clippy test remediation:
   `f6f12fcb3288a2bcf45cd6049e19e9fd68bb1111`
-- String-only schema remediation and current behavior candidate:
+- String-only schema remediation:
   `0d8e4590d76a6e58207951ff9d746c0c95cde003`
-- Adversarially green candidate: `PENDING`
+- Adversarially green candidate:
+  `53645ce89997be82a28d98ea0bdf4d74ea4f0c4d`
 - Documentation seal: `PENDING`
 - Exact `main` delivery SHA: `PENDING`
 - Integration branch: `agent/m03-native-host-config-v2`
 - Candidate-docs branch: `agent/m03-native-host-config-v2-docs`
-- Toolchain gate: Rust and Cargo 1.94.1 exactly; results pending
+- Toolchain gate: Rust and Cargo 1.94.1 exactly; local results green
 
 This is the eleventh bounded Milestone 03 candidate. The first ten slices are
 integrated. This slice's production implementation, tests, and documentation
-are composed on its feature branch, while final adversarial rereview, exact
-remote gates, and `main` delivery remain pending. Milestone 03 remains
-`IN PROGRESS`.
+are composed on its feature branch, and three fresh adversarial tracks are
+green. Exact remote gates and `main` delivery remain pending. Milestone 03
+remains `IN PROGRESS`.
 
 ## Reviewed behavior
 
-The candidate presents the following behavior for adversarial review; no item
-in this section is yet an adversarial or delivery-green claim:
+Three fresh adversarial tracks reviewed the following behavior at exact SHA
+`53645ce89997be82a28d98ea0bdf4d74ea4f0c4d`:
 
 - `CONFIG_SCHEMA_VERSION` advances to `2`, and a missing file or unavailable
   config location returns this strict built-in object:
@@ -91,24 +92,65 @@ were developed in isolated worktrees with non-overlapping ownership and then
 composed at the exact commits recorded above. Composition preserves the already
 integrated credential slice and does not rewrite historical review records.
 
-## Pending adversarial review and gates
+## Adversarial rounds
 
-Three fresh adversarial tracks remain required for:
+### Round 1 — `4ae2ceb93d375630569fef5f6bc47b647051fa60`
 
-- schema/API compatibility, exact v1/v2 dispatch, model-validator sharing,
-  getters, trait surfaces, and tests;
-- filesystem/resource/security behavior, strict duplicate handling,
-  redaction, feature/target boundaries, and absence of credential or runtime
-  authority; and
-- documentation, plan/checklist honesty, unchanged CLI bytes, and evidence
-  boundaries.
+The three tracks reported three accepted **MEDIUM** findings:
 
-Every confirmed finding must be fixed and rereviewed until all three tracks are
-green. Focused tests must precede the required exact-toolchain workspace gates.
-The composed candidate and later documentation seal must pass exact feature-
-branch CI and benchmark-evidence workflows; the exact fast-forwarded `main`
-SHA must then pass both workflows. Candidate, adversarial, remote, and `main`
-results are all pending at this record's current state.
+- Serde's externally tagged unit-enum representation accepted object forms
+  such as `{"ask":null}` in addition to the contract's required string fields.
+  Both wire schemas now deserialize these fields as strings, compare exact
+  stable values, and test object rejection for v1 permission mode and every v2
+  enum-like field.
+- The required all-target/all-feature warnings-denied Clippy gate found five
+  test-helper lints. The helpers and negative trait assertion were made
+  Clippy-clean without changing production behavior.
+- Candidate status and lineage incorrectly described already composed
+  production code, tests, and documentation as pending. Every maintained page
+  now distinguishes present feature-branch work from pending remote and
+  `main` delivery evidence and records the exact isolated and composed commits.
+
+No finding was rejected.
+
+### Final round — `53645ce89997be82a28d98ea0bdf4d74ea4f0c4d`
+
+All three tracks reported **GREEN**. They independently confirmed string-only
+schema rejection, exact v1/v2 dispatch and values, model-validator parity,
+trait and getter surfaces, redaction, bounded filesystem behavior, feature and
+target separation, absence of credential/runtime/network/CLI authority, test
+coverage, exact lineage, and honest plan and scope wording.
+
+## Exact local checks
+
+The following passed on
+`53645ce89997be82a28d98ea0bdf4d74ea4f0c4d` with exact Rust/Cargo 1.94.1:
+
+- formatting;
+- locked workspace/all-target/all-feature Clippy with warnings denied;
+- locked default-feature and all-feature workspace tests, plus workspace
+  documentation tests;
+- all 29 config black-box tests, 14 focused config module tests, 35 provider
+  tests, and 11 CLI tests;
+- repo-wide Python tests: 129 run, 121 passed and 8 expected platform skips;
+- `cargo-deny` dependency policy, with only the accepted duplicate `syn` and
+  `windows-sys` warnings;
+- `cargo-audit` 0.22.2: 1,225 advisories checked across 174 dependencies with
+  no vulnerability finding;
+- `x86_64-unknown-freebsd` no-default native Clippy with warnings denied;
+- `wasm32-wasip1` no-default and all-feature compilation, with only the
+  pre-existing unrelated `read_file` dead-code warning;
+- `aarch64-apple-darwin` no-default compilation;
+- a fresh exact release CLI build plus bare, help, version, and JSON-status
+  smoke; and
+- `git diff --check` and a clean worktree.
+
+## Pending delivery gates
+
+This review-record commit and the later documentation seal must pass exact
+feature-branch CI and benchmark-evidence workflows. The exact fast-forwarded
+`main` SHA must then pass both workflows. Remote and `main` results are pending
+at this record's current state.
 
 ## Scope
 
