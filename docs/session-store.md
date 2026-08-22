@@ -60,6 +60,16 @@ focused tests, one formal finding regression, and all three adversarial tracks
 are green on exact candidate `e6a3804`. Feature record `dbba2c7` is green on the
 feature branch and `main` under exact CI and benchmark workflows.
 
+The composed sixteenth
+[`native session-listing candidate`](native-session-listing.md) observes the
+same retained flat root through `NativeSessionLifecycle`; it does not add a
+listing method to core's provider-neutral `SessionStore` trait or change the
+ordinary by-ID load/save contract on this page. It recognizes only exact
+canonical `.json` record names and validates them under the same no-follow
+regular-file, strict schema, fixed record bound, decoded-ID, and permanent
+per-ID locking rules. Production/test composition, formal review, and delivery
+evidence remain pending.
+
 ## Stable v1 layout
 
 For a `SessionId`, the store hashes this exact byte sequence:
@@ -273,15 +283,18 @@ otherwise isolate the synchronous store.
 
 ## Deferred scope
 
-This slice adds no CLI command or existing CLI-byte change, provider or
+This store slice adds no CLI command or existing CLI-byte change, provider or
 transport wiring, credential discovery, permission prompt or new permission
-mode, session listing, deletion, reset, or automatic cleanup. Environment-based
+mode, public store-trait listing, deletion, reset, or automatic cleanup.
+Environment-based
 state-root selection and fixed-suffix creation are integrated through the
 separate fourteenth slice and do not alter this path constructor. The composed
 fifteenth slice adds host-level by-ID create, resume, replay, and reset over
 the exact shared store, including a reset-specific atomic incarnation
 replacement; it does not change the ordinary store trait described by this
-page. Migration and legacy import,
+page. The composed sixteenth candidate adds bounded lifecycle-level IDs-only
+listing above the same retained root; it adds no index, rich summary, cursor,
+pagination, CLI, or global snapshot. Migration and legacy import,
 schema upgrades, encryption at rest, authenticated records, secure erasure,
 key management, backup/restore, multi-record transactions, cross-host
 coordination, and non-Unix hardening remain deferred. It adds no compatibility,

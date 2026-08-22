@@ -101,6 +101,15 @@ candidate `e6a3804`. Feature record `dbba2c7` is green on the feature branch and
 `main` under exact CI and benchmark workflows. Its
 security boundary is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
+The composed sixteenth candidate adds bounded IDs-only observation through that
+same lifecycle. It recognizes only exact canonical record names, uses the
+store's no-follow regular-file checks, existing per-ID lock protocol, strict
+current schema and decoded-ID/digest validation, and fails the whole call on a
+canonical corrupt candidate. It returns no more than 100 sorted unique IDs and
+is bounded by 1,024 visible directory entries and 64 MiB of aggregate canonical
+record bytes. All visible names consume scan budget. Production/test
+composition, formal review, and delivery evidence remain pending; its security
+contract is in [`native-session-listing.md`](native-session-listing.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -170,8 +179,8 @@ acquisition kind may appear in config debug output; the model remains redacted.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
-modes beyond `ask`, token fields in configuration, session lifecycle, CLI
-composition and expansion, native tools other than the bounded
+modes beyond `ask`, token fields in configuration, delivery of native session
+listing, CLI composition and expansion, native tools other than the bounded
 library-level `read_file` and `list_files`, composed release-binary end-to-end
 host evidence, and compatibility or performance claims remain open. The
 twelfth slice composes the existing library components only after an already
@@ -332,7 +341,9 @@ every sudden-power-loss/full-system failure mode preserves the last acknowledged
 version. The implementation requests `fsync`; on macOS it does not request
 `F_FULLFSYNC` and does not claim a successful save reached physical media.
 Record contents are plaintext; encryption, authentication, secure
-erasure, key management, migration, and listing remain deferred. Reset is
+erasure, key management, and migration remain deferred. Bounded IDs-only
+listing is defined by the separate sixteenth candidate and is not part of
+ordinary `SessionStore::load` or `save`. Reset is
 defined only by the separate fifteenth slice and is not part of ordinary
 `SessionStore::save`: it requires a new host-generated incarnation and a
 reset-specific atomic current-record replacement.
@@ -398,6 +409,36 @@ text. An unavailable create/reset may follow a completed rename whose directory
 sync failed; callers must resume or replay to reconcile and must not treat the
 category as blanket permission to retry. The complete delivered rules are in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
+
+The sixteenth candidate's listing future is inert before poll and performs its
+bounded synchronous enumeration, record validation, and advisory locking on the
+first polling thread without detached work. It can create a private `0600`
+permanent lock sidecar for a canonical record, but it cannot write, repair,
+replace, delete, migrate, or quarantine record data. Noncanonical and unrelated
+names are ignored only after consuming scan budget. A hostile or nonregular
+derived lock entry for a present canonical record is corrupt; ordinary lock I/O
+failure is unavailable.
+
+There is no root-wide lock or multi-record snapshot. Each canonical candidate
+has an independent point-in-time validation, so concurrent changes to other IDs
+can be reflected at different instants. A candidate that disappears before its
+locked read may be omitted and may leave its permanent private lock sidecar.
+Canonical filenames are sorted before validation; only a fired raw scan cap
+makes candidate selection filesystem-iteration-dependent. `truncated`
+discloses only that a fixed budget prevented complete observation; it is not a
+continuation capability, does not prove another valid ID exists, and does not
+promise the globally first ID or semantic subset. Returned IDs are intentionally
+disclosed to the trusted caller.
+Lifecycle errors and debug output retain no ID, digest, filename, path, record
+content, schema detail, parser or OS diagnostic.
+
+Listing receives no live-session registry, incarnation source, provider,
+permission, prompt, tool, network, workspace, configuration, environment, or
+runtime authority. Because the current schema has no authoritative summary,
+workspace, timestamp, latest-order, or index fields, the candidate invents none
+from file metadata, messages, metadata maps, or directory order. Full bounds
+and non-features are in
+[`native-session-listing.md`](native-session-listing.md).
 
 The ask-handler slice adds no ambient authority to core or native. The host
 must inject either an owned `PermissionPrompter` or an explicitly shared

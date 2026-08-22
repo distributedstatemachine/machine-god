@@ -43,7 +43,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with fifteen integrated bounded slices. The first
+with fifteen delivered bounded slices and a composed sixteenth candidate. The
+first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -350,9 +351,45 @@ record; its workflows are reported at handoff. `list_sessions`, lifecycle
 CLI commands, migration,
 encryption, and non-Unix hardening are not part of this slice.
 
+The composed sixteenth bounded candidate adds Linux/macOS library-only
+`NativeSessionLifecycle::list_sessions`. Its IDs-only `NativeSessionList`
+contains at most 100 sorted unique validated IDs plus `truncated`. Each call
+scans at most 1,024 visible entries and 64 MiB of aggregate canonical record
+bytes; all visible names count against the scan budget. Exact canonical record
+names are opened no-follow, locked with the existing per-ID protocol, and
+validated against the same current schema, bounds, positive counters, and
+decoded-ID/digest invariant. Canonical corruption fails the whole call as
+redacted `Corrupt`; enumeration, read, and lock failures are redacted
+`Unavailable`. Successful listing may create private permanent lock sidecars.
+
+`truncated` means only incomplete bounded observation. It is not pagination and
+does not imply `has_more`. Canonical filenames are sorted before validation;
+result and byte caps select from that sorted scanned set, while a fired raw scan
+cap can make the set filesystem-iteration-dependent. Returned IDs are sorted,
+but digest filename order is not a globally first ID or semantic ranking. There
+is no multi-record snapshot. A candidate that vanishes before its locked read
+may be omitted and may leave its private lock sidecar. A nonregular derived lock
+for a still-present canonical candidate is `Corrupt`; ordinary lock I/O is
+`Unavailable`. The
+future is inert before poll, performs bounded synchronous work on first poll,
+and detaches nothing. It consults no live registry, incarnation source,
+provider, permission handler, tool, network, workspace, configuration, or
+environment authority. The exact candidate contract and pending review lineage
+are in [`native-session-listing.md`](native-session-listing.md) and
+[`m03-native-session-listing-review-01.md`](reviews/m03-native-session-listing-review-01.md).
+Production composition, independently owned tests, formal review, and exact
+feature and delivery evidence remain pending.
+
+The current schema and store contain no authoritative summary, workspace,
+title, preview, language, timestamp, latest-order, or index fields. This slice
+therefore adds no rich summaries, workspace/latest filter, cursor, pagination,
+CLI or slash command, and makes no fx-equivalence claim. The `sessions-json`
+benchmark remains unimplemented and claim-ineligible.
+
 ### Milestone 03 completion boundary
 
-The fifteen integrated slices do not complete Milestone 03.
+The fifteen delivered slices plus the composed sixteenth candidate do not
+complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -378,7 +415,7 @@ gate:
   slice supplies the bounded non-secret selection. Implementation, independent
   tests, all three fresh adversarial tracks, exact feature gates, fast-forward
   integration, and exact `main` gates are green.
-- [ ] Add explicit workspace/state-root selection and safe required-root
+- [x] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
   must allocate a new incarnation before reuse. The delivered fourteenth slice
@@ -387,8 +424,10 @@ gate:
   and reset/new-incarnation behavior with fourteen independently owned focused
   tests plus one formal finding regression, with all three adversarial tracks
   green on exact candidate `e6a3804`; exact feature and `main` workflows are
-  green through record `dbba2c7`, but native session listing remains open.
-  This combined item therefore stays unchecked.
+  green through record `dbba2c7`. The composed sixteenth candidate supplies the
+  remaining bounded IDs-only native listing boundary. Its production/test
+  composition, formal review, and delivery evidence remain pending, but the
+  combined functional scope is complete after composition.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
   `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,
@@ -419,7 +458,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fifteenth slices; Zig
+by the tenth through sixteenth slices; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes

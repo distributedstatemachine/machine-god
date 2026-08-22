@@ -21,7 +21,8 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has fifteen integrated bounded slices. The twelfth slice's
+Milestone 03 has fifteen delivered bounded slices and a composed sixteenth
+candidate. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record
@@ -118,6 +119,17 @@ tracks are green on exact candidate `e6a3804`. Feature record `dbba2c7` is green
 on the feature branch and `main` under exact CI and benchmark workflows;
 the contract is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
+The sixteenth candidate extends that same lifecycle with bounded Linux/macOS
+session listing. It enumerates the retained store root and returns only up to
+100 sorted unique validated IDs plus `truncated`, bounded by 1,024 visible
+directory entries and 64 MiB of aggregate canonical record bytes. Every visible
+entry consumes scan budget. Canonical candidates use the existing per-ID lock,
+no-follow regular-file access, strict current schema, and filename/decoded-ID
+digest validation. There is no multi-record snapshot, live-registry lookup,
+rich summary, workspace/latest/cursor semantic, CLI path, or fx-equivalence
+claim. Production/test composition, formal review, and exact delivery evidence
+are pending; the contract is in
+[`native-session-listing.md`](native-session-listing.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -166,6 +178,7 @@ config credential_source: environment
 host-selected existing absolute state root -> retained directory descriptor
  SessionId -> domain-separated SHA-256 v1 name -> bounded file SessionStore
            -> NativeSessionLifecycle -> create / resume / record replay / reset
+ retained root -> bounded canonical scan -> sorted unique IDs + truncated
 
 core-owned bounded PermissionRequest -> AskPermissionHandler
                                      -> injected PermissionPrompter
@@ -269,9 +282,9 @@ skips discovery and reports `None`. Configuration mutation or migration,
 permission modes beyond `ask`, a concrete prompt UI, runtime ownership, token
 fields in config, CLI composition, executable native
 tools other than the bounded `read_file` and `list_files` library capabilities,
-session migration/encryption/listing, delivery of the candidate by-ID native
-session lifecycle, CLI expansion, and composed release-binary end-to-end
-evidence remain open.
+session migration/encryption, delivery of the candidate native session-listing
+extension, CLI expansion, and composed release-binary end-to-end evidence
+remain open. The by-ID lifecycle itself is delivered.
 
 ```text
                         machine-god-core
@@ -433,7 +446,26 @@ incarnation fences their later saves. A post-rename directory-sync failure is
 ambiguous and requires resume/replay reconciliation rather than blind reset
 retry. Complete concurrency, entropy, resource, and redaction rules are in
 [`native-session-lifecycle.md`](native-session-lifecycle.md). Formal review and
-delivery evidence are pending.
+delivery are green through behavior candidate `e6a3804` and feature record
+`dbba2c7`.
+
+The composed sixteenth candidate adds one independent bounded observation
+future to that lifecycle. It scans at most 1,024 visible entries and 64 MiB of
+aggregate canonical record bytes, validates exact candidates with the store's
+same per-ID lock and current-schema rules, and returns at most 100 sorted unique
+IDs. Canonical filenames are sorted before validation; only a fired raw scan
+cap makes candidate selection filesystem-iteration-dependent. It has no
+directory-wide lock or multi-record snapshot: per-candidate observations may
+occur at different instants, and a candidate that vanishes before its locked
+read may be omitted while leaving a private lock sidecar. A nonregular derived
+lock for a present canonical record is corrupt; ordinary lock I/O is
+unavailable. `truncated` reports incomplete bounded observation only, not a next
+page or globally first ID prefix. An unpolled
+future is inert; first poll performs bounded synchronous filesystem and lock
+work and detaches nothing. Full bounds, corruption behavior, authority limits,
+and deliberate non-features are in
+[`native-session-listing.md`](native-session-listing.md). Formal review and
+delivery evidence for this extension remain pending.
 
 The ninth slice is `machine_god_native::AskPermissionHandler`. It adapts
 core's existing provider-neutral `PermissionHandler` to an explicitly injected,

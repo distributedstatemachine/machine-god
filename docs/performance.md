@@ -182,7 +182,7 @@ equivalence. Schema 2 records the exact `fx help` / `machine-god help` and
 implementations set to `not-measured`, no samples, `equivalence:
 non-equivalent`, and `claim_eligible: false`. The current machine-god status is
 only read-only native configuration/runtime metadata, and neither its behavior
-nor its output contract has been shown equivalent to fx. Doctor, session-list,
+nor its output contract has been shown equivalent to fx. Doctor, `sessions-json`,
 and background-task workloads remain `unimplemented` for machine-god; their fx
 commands also remain unmeasured because an unpaired result is not a comparison.
 The validator fixes these distinct shapes and rejects commands, statuses,
@@ -190,6 +190,15 @@ sample fields, or eligibility that drift from them. No M03 performance or
 compatibility claim is made. A later milestone must define matching semantics
 and fixtures and introduce claim-eligible reviewed evidence rather than relabel
 this bootstrap artifact.
+
+The composed sixteenth
+[`native session-listing candidate`](native-session-listing.md) does not change
+that classification. Its library result contains only sorted validated IDs and a
+truncation flag; it has no CLI path and is not semantically equivalent to fx's
+workspace-aware rich `sessions --json` surface. The `sessions-json` workload
+therefore remains unimplemented and claim-ineligible, with no samples or
+threshold claim. No benchmark definition, evidence schema, inventory, workflow,
+or pinned Zig input changes in this slice.
 
 ## Milestone 02 orchestration note
 

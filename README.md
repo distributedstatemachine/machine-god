@@ -20,7 +20,7 @@ An eighth bounded slice implements a Unix file-backed session store under an
 explicit host-opened root. Its exact feature, documentation-seal, and `main`
 checks are green; it is integrated at
 `8f7b47db9580b14570bf9fb55763858f71a81271`. Provider/CLI wiring, a concrete
-prompt UI, broader session lifecycle features, the remaining
+prompt UI, remaining session-lifecycle delivery and hardening, the remaining
 native tools, and compatibility work remain planned. A ninth bounded slice
 defines an executor-neutral, fail-closed native `AskPermissionHandler` over an
 explicitly injected prompter. It is integrated on `main` at
@@ -125,6 +125,18 @@ evidence `32594846476`. This documentation-only commit is the final record; its
 workflows are reported at handoff. See the integrated
 [native session-lifecycle contract](docs/native-session-lifecycle.md).
 
+The composed sixteenth candidate adds bounded Linux/macOS library-only session
+listing. `NativeSessionLifecycle::list_sessions` returns at most 100 sorted,
+unique validated IDs plus a truncation flag while scanning at most 1,024 visible
+entries and 64 MiB of aggregate canonical record bytes. Canonical corruption
+fails closed; unrelated names are ignored but count against the scan budget.
+The result is neither a multi-record snapshot nor a pagination or summary
+surface. Production composition, independent tests, formal review, and exact
+delivery evidence remain pending. It adds no CLI behavior and makes no fx
+equivalence or performance claim. See the
+[native session-listing contract](docs/native-session-listing.md) and pending
+[review record](docs/reviews/m03-native-session-listing-review-01.md).
+
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
@@ -136,8 +148,10 @@ normative [native file session store](docs/session-store.md), the integrated
 [native reference-host composition](docs/native-reference-host.md), and the
 integrated [configured credential source](docs/configuration.md), and the
 integrated [native root-selection boundary](docs/native-root-selection.md).
-The [native session lifecycle](docs/native-session-lifecycle.md) is integrated,
-and session listing remains open.
+The [native session lifecycle](docs/native-session-lifecycle.md) is integrated;
+its bounded [session-listing extension](docs/native-session-listing.md) is a
+composed candidate pending implementation/test composition, formal review, and
+delivery evidence.
 
 ## Development
 

@@ -16,6 +16,7 @@
 - [Native reference-host composition](native-reference-host.md)
 - [Native root selection and preparation](native-root-selection.md)
 - [Native by-ID session lifecycle](native-session-lifecycle.md)
+- [Native session listing](native-session-listing.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)
@@ -29,3 +30,4 @@
 - [Milestone 03 configured credential-source review](reviews/m03-configured-credential-source-review-01.md)
 - [Milestone 03 native root-selection composed candidate](reviews/m03-native-root-selection-review-01.md)
 - [Milestone 03 native session-lifecycle review](reviews/m03-native-session-lifecycle-review-01.md)
+- [Milestone 03 native session-listing review candidate](reviews/m03-native-session-listing-review-01.md)

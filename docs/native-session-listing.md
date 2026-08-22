@@ -1,0 +1,182 @@
+# Native session listing
+
+Status: composed candidate for the sixteenth bounded Milestone 03 library
+slice. Production implementation, independently owned tests, formal review,
+exact feature-SHA workflows, and delivery evidence are pending. The fifteen
+earlier slices remain integrated through `9ada4b5`.
+
+This slice adds `NativeSessionLifecycle::list_sessions` on supported Linux and
+macOS targets. It returns an owned `NativeSessionList` containing only validated
+session IDs and a `truncated` flag. The operation is a bounded observation of
+the existing flat file-session root; it is not a search index, registry,
+pagination protocol, or multi-record snapshot.
+
+## Result contract
+
+The result owns:
+
+- no more than 100 validated session IDs;
+- IDs sorted in ascending lexical order and containing no duplicates; and
+- `truncated`, which is true when any scan, aggregate-byte, or result bound
+  prevents a complete observation of the directory.
+
+`truncated` means only that the bounded observation is incomplete. It is not
+`has_more`, does not promise another page, and supplies no cursor or continuation
+token. It also does not prove that another valid session exists: ignored entries
+consume the scan budget, and the bound can be reached before another canonical
+record is found.
+
+Recognized canonical candidate filenames are sorted before record validation.
+Result-count and aggregate-byte truncation therefore select deterministically
+from the sorted scanned candidate set. The filesystem chooses raw enumeration
+order, however, so only a fired 1,024-entry scan cap can make that candidate set
+iteration-order-dependent. Returned IDs are sorted after selection. Because
+candidate filename order is digest order, even an otherwise deterministic
+truncated result is not promised to contain the globally first 100 session IDs,
+the newest IDs, or any other semantic ranking.
+
+An empty accepted root returns an empty, non-truncated result. A complete
+non-truncated result means every visible entry observed during that enumeration
+fit within the fixed budgets and every canonical candidate still present at its
+locked read was validated. A candidate that concurrently vanishes can be
+omitted as described below. The result is still only a non-atomic observation;
+another process can change another record before, during, or after the call.
+
+## Fixed bounds
+
+One call has three independent ceilings:
+
+| Bound | Maximum | What consumes it |
+| --- | ---: | --- |
+| Returned IDs | 100 | Each distinct validated canonical record selected for the result. |
+| Visible directory entries scanned | 1,024 | Every visible entry encountered, including unrelated, lock, temporary, and noncanonical names. |
+| Aggregate canonical record bytes | 64 MiB | Bytes read from recognized canonical record candidates. |
+
+The implementation stops bounded observation when continuing would exceed a
+ceiling and returns the accepted subset with `truncated: true`. The existing
+per-record `MAX_FILE_SESSION_BYTES` limit remains authoritative: one recognized
+candidate that exceeds that fixed file bound is corrupt, not a benign aggregate
+truncation case.
+
+Counting all visible entries prevents an attacker from hiding unbounded scan
+work behind ignored names. Dot entries supplied by the directory API itself are
+not user-visible children and are not candidates. Successful work and retained
+application data are bounded; directory, file, and advisory-lock latency and
+the store's documented interrupted-system-call retries have no wall-clock
+bound.
+
+## Candidate recognition and validation
+
+Only an exact canonical record basename is a candidate:
+
+```text
+session-<64 lowercase hexadecimal ASCII characters>.json
+```
+
+The prefix, digest width, lowercase encoding, and `.json` suffix must all match.
+Lock sidecars, temporary artifacts, unrelated files, uppercase hashes,
+wrong-width hashes, nested directories, and other noncanonical names are
+ignored after consuming scan budget. Ignoring a name is not permission to
+follow it or interpret it as another record format.
+
+Each canonical candidate is validated through the same file-session invariants
+as a by-ID load:
+
+- descriptor-relative, no-follow access under the retained session root;
+- an authoritative regular-file check;
+- the current strict compact schema-v1 envelope and structural bounds;
+- positive revision and next-turn counters;
+- the fixed per-record byte ceiling; and
+- exact agreement between the decoded `SessionId` and the digest in the
+  candidate filename.
+
+The operation uses the store's permanent per-ID advisory lock while validating
+each candidate. A successful listing can therefore create a missing fixed
+`.lock` sidecar with private `0600` mode. It never writes, repairs, replaces,
+deletes, migrates, or quarantines a record. Noncanonical entries are not opened
+as records and do not cause sidecars to be created.
+
+A canonical symlink, directory, FIFO, device, socket, oversized record,
+malformed or unsupported envelope, invalid counter, or filename/decoded-ID
+mismatch is `Corrupt`. A hostile or nonregular derived lock entry for a present
+exact data candidate is also `Corrupt`. Corruption fails the complete call; the
+API does not skip it or return a partial successful list. Directory enumeration,
+record open/read, metadata, or ordinary lock I/O failures are `Unavailable`.
+These categories reuse the native lifecycle's fixed redacted operation-error
+boundary.
+
+## Concurrency and snapshot semantics
+
+Listing takes no root-wide lock and creates no multi-record transaction. Each
+candidate is locked and validated independently. A returned result can
+therefore contain IDs observed at different instants, and concurrent create or
+reset operations can race between candidates. Per-ID locking prevents a
+cooperating writer from exposing a partial record under that candidate's
+linearization point; it does not turn the directory into a consistent global
+snapshot.
+
+If a recognized candidate disappears between enumeration or probing and its
+locked record read, listing may omit it rather than fail the complete call. The
+lock acquisition can create or leave that candidate's permanent private
+sidecar even though no ID is returned. This rule is narrowly about concurrent
+absence; a still-present canonical candidate must pass the validation and
+failure rules above.
+
+IDs are deduplicated defensively before return even though canonical digest
+names normally provide one candidate per ID. The final ID sort is deterministic
+for the selected set. Candidate selection is filesystem-iteration-dependent
+only when the raw directory scan cap fires.
+
+## Polling and authority
+
+Constructing the returned future performs no directory read, record read,
+metadata call, lock creation or acquisition, allocation proportional to the
+unbounded directory, provider call, permission prompt, tool call, network
+request, registry access, runtime construction, or background work. Dropping
+the future before first poll is effect-free.
+
+The first poll performs the bounded directory enumeration, synchronous
+candidate I/O, and advisory locking on the polling thread. The implementation
+starts no task, thread, timer, retry worker, or detached effect. Once a
+synchronous call is running, dropping the future cannot preempt it. Hosts that
+must keep an asynchronous executor responsive must choose a suitable polling
+context.
+
+The listing operation receives only the `FileSessionStore` already retained by
+`NativeSessionLifecycle`. It does not inspect the engine's live-session
+registry or source, ask the provider for history, call tools, consult permission
+policy, read configuration or environment, access the workspace, allocate an
+incarnation, or discover another root. Returned IDs are deliberately visible to
+the trusted caller. Error and debug output retain no session ID, digest,
+filename, root or child path, record bytes, schema contents, operating-system
+diagnostic, or raw error number.
+
+The standalone lifecycle listing API is available on Linux and macOS without
+the optional HTTP feature. Observation through `NativeReferenceHost` inherits
+that wrapper's stricter `ai-gateway-http`, non-WebAssembly, Linux/macOS gate.
+
+## Deliberately absent semantics
+
+The current record schema does not contain authoritative workspace, title,
+preview, language, creation time, update time, or display-order fields, and the
+store has no authoritative session index. This slice does not derive those
+values from filesystem modification times, message contents, metadata maps,
+live registry state, or directory order.
+
+Consequently this slice adds no rich summaries, workspace filter, newest or
+latest selection, ordering other than lexical ID order, cursor, pagination,
+session-ID generation, deletion, cleanup, CLI command, slash command, or
+existing CLI-byte change. In particular, it does not implement fx's richer
+`sessions` behavior and makes no compatibility or upstream-equivalence claim.
+
+The `sessions-json` performance workload remains unimplemented for
+machine-god and claim-ineligible. This slice changes no benchmark workload,
+classification, inventory, workflow, or performance claim. Zig remains only
+the pinned toolchain used to build the upstream fx benchmark reference;
+machine-god remains a Rust product.
+
+With this candidate composed, the combined Milestone 03 root plus native
+create/list/resume/replay/reset library boundary is functionally complete.
+Milestone 03 remains in progress: the remaining native tools, top-level CLI and
+slash-command ownership, and composed freshly built release-binary end-to-end
+evidence are still open.

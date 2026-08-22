@@ -1,7 +1,8 @@
 # Native reference-host composition
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
-Fifteen slices are now integrated. This slice's production implementation, an
+Fifteen slices are delivered and a sixteenth candidate is composed. This
+slice's production implementation, an
 independently owned seven-test black-box suite, three fresh adversarial tracks,
 and exact feature and `main` workflows are green. Its final delivery record is
 integrated on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
@@ -49,6 +50,13 @@ candidate `e6a3804`. Feature record `dbba2c7` is green on the feature branch and
 `main` under exact CI and benchmark workflows. Its normative behavior is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
+The composed sixteenth candidate adds bounded IDs-only listing through that
+same retained lifecycle and store. It returns at most 100 sorted unique IDs plus
+`truncated`, scans at most 1,024 visible entries and 64 MiB of aggregate
+canonical record bytes, and adds no CLI behavior. Production/test composition,
+formal review, and delivery evidence remain pending. Its normative behavior is
+in [`native-session-listing.md`](native-session-listing.md).
+
 ## Feature and platform boundary
 
 The integrated composition API is exported only under this gate:
@@ -73,6 +81,10 @@ gate. The standalone lifecycle API is separately exported on Linux and macOS
 without requiring `ai-gateway-http`; it does not make the standalone core
 engine or session-store trait depend on OS randomness, a native filesystem,
 the HTTP feature, or a runtime.
+
+The sixteenth candidate's standalone `list_sessions` method uses that same
+Linux/macOS lifecycle gate without requiring `ai-gateway-http`. Listing through
+the composed wrapper inherits this page's stricter gate.
 
 The public composition and observation surface is:
 
@@ -230,6 +242,10 @@ session load, save, reset, engine registration, or lock-sidecar operation.
 Those effects are owned by a lifecycle future and remain inert until that
 future is first polled.
 
+The sixteenth candidate does not add construction effects. Creating its listing
+future is also inert; only first poll can enumerate the retained root, validate
+canonical records, acquire their per-ID locks, or create private lock sidecars.
+
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
 runtime with I/O and time enabled. The runtime must remain driven while
@@ -321,12 +337,12 @@ at `90d8f96`, all three final tracks are green on exact candidate `72cf64f6`.
 Replacement seal `f08dbd9e`, feature record `6f66b6e5`, and exact `main`
 workflows are green; this documentation-only commit is the final delivery
 record.
-Neither that root slice nor this integrated
-composition implements a concrete terminal `PermissionPrompter`, allocates a
-session ID or `SessionIncarnationId`, or adds create/list/resume/replay/reset
-session lifecycle commands. It does not add the remaining native tools, compose
-or run the CLI, or change any existing CLI byte. A reset under a reused session
-ID still requires a new host-generated incarnation before reuse.
+Neither that root slice nor this integrated composition implements a concrete
+terminal `PermissionPrompter`, allocates a session ID or
+`SessionIncarnationId`, or adds create/list/resume/replay/reset session
+lifecycle CLI commands. It does not add the remaining native tools, compose or
+run the CLI, or change any existing CLI byte. A reset under a reused session ID
+still requires a new host-generated incarnation before reuse.
 
 The delivered fifteenth slice fills the library-level by-ID create, resume,
 durable-record replay, and reset sub-boundary. `NativeSessionLifecycle` uses the
@@ -335,7 +351,12 @@ OS randomness, persists create before success, and resets by atomic
 current-record replacement with a checked advancing revision. It does not add
 session listing, session-ID generation, a UI/event replay, or any CLI command;
 delivery is green through feature record `dbba2c7`; formal review is green on
-`e6a3804`.
+`e6a3804`. The composed sixteenth candidate supplies bounded library-only
+listing through the same lifecycle. It adds no rich summaries,
+workspace/latest/cursor semantics, pagination, global snapshot, session-ID
+generation, UI replay, or CLI command. Its behavior and limits are in
+[`native-session-listing.md`](native-session-listing.md); production/test
+composition, formal review, and exact delivery evidence are pending.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
@@ -349,9 +370,10 @@ gates, fast-forward integration, and exact `main` gates are green. The combined
 credential-and-configuration item is also complete. The thirteenth slice's
 three adversarial tracks are green on exact behavior SHA `35ce591e`, and exact
 final-record feature and `main` workflows are green at integrated SHA
-`f840576a`. The combined root-and-session-lifecycle item remains unchecked:
-delivery of the root sub-boundary leaves create, list,
-resume, replay, reset, and reset/new-incarnation behavior open in the integrated
-baseline. The fifteenth slice covers create/resume/replay/reset but leaves
-native listing open, so the combined item remains unchecked. Milestone 03
-remains in progress.
+`f840576a`. The combined root-and-session-lifecycle functional item is complete
+after composition: the fourteenth slice supplies root selection/preparation,
+the fifteenth supplies create/resume/replay/reset, and the sixteenth candidate
+supplies bounded IDs-only listing. Listing review and delivery evidence remain
+pending. Milestone 03 remains in progress because the remaining native tools,
+top-level CLI/slash-command ownership, and composed release-binary end-to-end
+evidence remain open.

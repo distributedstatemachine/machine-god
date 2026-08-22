@@ -7,8 +7,10 @@ Feature record `dbba2c7` is green under exact feature CI `32594562796` and
 benchmark evidence `32594562785`, and on `main` under exact CI `32594846484`
 and benchmark evidence `32594846476`. This documentation-only commit is the
 final delivery record; its workflows are reported at handoff. Fifteen bounded
-slices are integrated. Milestone 03 remains `IN PROGRESS` because native
-session listing and other frozen scope remain open.
+slices are integrated. A composed sixteenth candidate extends this lifecycle
+with bounded IDs-only listing; production/test composition, formal review, and
+delivery evidence for that extension remain pending. Milestone 03 remains
+`IN PROGRESS` because other frozen scope remains open.
 
 This slice gives the Linux/macOS native reference host a durable, by-ID library
 boundary for creating, resuming, replaying, and resetting sessions in the
@@ -23,6 +25,11 @@ exposes lifecycle and session-store observation over the same shared
 `FileSessionStore` instance. The engine, lifecycle component, and store
 therefore use one retained state-root identity rather than reopening a path or
 constructing independent stores.
+
+The separate [`native session-listing contract`](native-session-listing.md)
+defines the candidate `list_sessions` operation. It enumerates that same
+retained store root but does not change the by-ID create, resume, replay, or
+reset semantics below.
 
 ## Platform and authority boundary
 
@@ -332,11 +339,15 @@ formats. Migration, explicit legacy import, encryption, record authentication,
 key management, secure erasure, stronger lifecycle concurrency hardening, and
 non-Unix support remain assigned to Milestone 04.
 
-This slice does not implement `list_sessions`, deletion, automatic cleanup,
-session-ID generation, CLI `session`/`sessions`/`resume`/`replay` commands, a UI
-replay, or CLI byte changes. The combined M03 root-and-lifecycle checklist item
-therefore remains unchecked after create/resume/replay/reset delivery because
-native session listing is still open.
+This delivered slice does not itself implement `list_sessions`, deletion,
+automatic cleanup, session-ID generation, CLI
+`session`/`sessions`/`resume`/`replay` commands, a UI replay, or CLI byte
+changes. The composed sixteenth candidate adds only bounded IDs-only
+library-level listing under the separate
+[`native session-listing contract`](native-session-listing.md). After that
+composition the combined M03 root plus create/list/resume/replay/reset
+functional checklist item is complete; production/test composition, formal
+review, and delivery evidence for listing remain pending.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and changes no benchmark workload or workflow. Zig remains solely the
