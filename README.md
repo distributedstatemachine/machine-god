@@ -125,7 +125,7 @@ evidence `32594846476`. This documentation-only commit is the final record; its
 workflows are reported at handoff. See the integrated
 [native session-lifecycle contract](docs/native-session-lifecycle.md).
 
-The composed sixteenth candidate adds bounded Linux/macOS library-only session
+The delivered sixteenth slice adds bounded Linux/macOS library-only session
 listing. `NativeSessionLifecycle::list_sessions` returns at most 100 sorted,
 unique validated IDs plus a truncation flag while processing at most 1,024
 non-dot entries plus one fetched/name-inspected overflow witness and accepting/
@@ -138,12 +138,14 @@ composed from base `9ada4b5` through first formal candidate `dec98e0`. All three
 first review tracks were not green. Isolated fix `4b8d8b0` and test hardening
 `446b495` are composed into exact behavior candidate `3fa5463` with the
 corrected documentation; its 18 focused tests, required local gates, and all
-three replacement review tracks are green. Exact remote delivery evidence
-remains pending. First remote CI run `32599591900` exposed a Linux removed-root
+three replacement review tracks are green. First remote CI run `32599591900`
+exposed a Linux removed-root
 liveness gap. Exact portable-fix candidate `17f1884` applies the descriptor
-check and is green under both executable review tracks; the documentation
-lineage finding is resolved by this seal. Replacement remote gates remain
-pending. It adds no
+check and is green under both executable review tracks. Documentation seal
+`d3312d7` resolves the lineage finding, passed exact feature CI `32600292770`
+and benchmark evidence `32600292779`, was fast-forwarded without force to
+`main`, and passed exact main CI `32600567094` and benchmark evidence
+`32600567090`. It adds no
 CLI behavior and makes no fx equivalence or performance claim. See the
 [native session-listing contract](docs/native-session-listing.md) and
 [review record](docs/reviews/m03-native-session-listing-review-01.md).
@@ -161,7 +163,7 @@ integrated [configured credential source](docs/configuration.md), and the
 integrated [native root-selection boundary](docs/native-root-selection.md).
 The [native session lifecycle](docs/native-session-lifecycle.md) is integrated;
 its bounded [session-listing extension](docs/native-session-listing.md) is a
-review-green portable-fix candidate awaiting exact remote delivery evidence.
+delivered and green under exact feature and `main` workflow evidence.
 
 ## Development
 

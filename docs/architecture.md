@@ -21,14 +21,16 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has fifteen delivered bounded slices. The first formal sixteenth
+Milestone 03 has sixteen delivered bounded slices. The first formal sixteenth
 candidate is composed through `dec98e0`, whose three review tracks were not
 green. Its source and test fixes are composed in exact behavior candidate
 `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
 green. First remote CI `32599591900` exposed the Linux removed-root gap; this
 portable fix is exact behavior candidate `17f1884`, green under both executable
-review tracks, with its documentation lineage finding resolved in this seal.
-Replacement remote gates remain pending.
+review tracks. Documentation seal `d3312d7` resolves its lineage finding,
+passed exact feature CI `32600292770` and benchmark evidence `32600292779`, was
+fast-forwarded without force to `main`, and passed exact main CI `32600567094`
+and benchmark evidence `32600567090`.
 The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
@@ -126,7 +128,7 @@ tracks are green on exact candidate `e6a3804`. Feature record `dbba2c7` is green
 on the feature branch and `main` under exact CI and benchmark workflows;
 the contract is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
-The sixteenth candidate extends that same lifecycle with bounded Linux/macOS
+The delivered sixteenth slice extends that same lifecycle with bounded Linux/macOS
 session listing. It enumerates the retained store root and returns only up to
 100 sorted unique validated IDs plus `truncated`, bounded by 1,024 processed or
 selected non-dot directory entries plus one fetched/name-inspected overflow
@@ -139,8 +141,9 @@ rich summary, workspace/latest/cursor semantic, CLI path, or fx-equivalence
 claim. Production and 13 initial independent tests are composed through
 `dec98e0`. All three first formal tracks were not green. Isolated fix `4b8d8b0`
 and test hardening `446b495` are composed in exact behavior candidate
-`3fa5463`, with 18 focused tests and all three replacement tracks green. Exact
-delivery evidence is pending.
+`3fa5463`, with 18 focused tests and all three replacement tracks green.
+Portable behavior `17f1884` and seal `d3312d7` passed exact feature and `main`
+delivery gates.
 The contract is in
 [`native-session-listing.md`](native-session-listing.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -462,7 +465,7 @@ retry. Complete concurrency, entropy, resource, and redaction rules are in
 delivery are green through behavior candidate `e6a3804` and feature record
 `dbba2c7`.
 
-The composed sixteenth candidate adds one independent bounded observation
+The delivered sixteenth slice adds one independent bounded observation
 future to that lifecycle. It processes/selects at most 1,024 non-dot entries
 plus one fetched/name-inspected overflow witness, and accepts/decodes at most
 64 MiB of aggregate canonical record bytes plus one transient transfer byte to
@@ -489,7 +492,8 @@ and deliberate non-features are in
 initial independent tests are composed through `dec98e0`; all three first
 formal tracks were not green. The fixes and 18-test hardened suite are composed
 in exact behavior candidate `3fa5463`; all three replacement tracks are green.
-Delivery evidence remains pending.
+Portable behavior `17f1884` and seal `d3312d7` passed exact feature and `main`
+delivery gates.
 
 The ninth slice is `machine_god_native::AskPermissionHandler`. It adapts
 core's existing provider-neutral `PermissionHandler` to an explicitly injected,

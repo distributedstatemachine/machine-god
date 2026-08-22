@@ -60,8 +60,8 @@ focused tests, one formal finding regression, and all three adversarial tracks
 are green on exact candidate `e6a3804`. Feature record `dbba2c7` is green on the
 feature branch and `main` under exact CI and benchmark workflows.
 
-The composed sixteenth
-[`native session-listing candidate`](native-session-listing.md) observes the
+The delivered sixteenth
+[`native session-listing slice`](native-session-listing.md) observes the
 same retained flat root through `NativeSessionLifecycle`; it does not add a
 listing method to core's provider-neutral `SessionStore` trait or change the
 ordinary by-ID load/save contract on this page. It recognizes only exact
@@ -70,11 +70,12 @@ regular-file, strict schema, fixed record bound, decoded-ID, and permanent
 per-ID locking rules. Production and 13 initial independent tests are composed
 through `dec98e0`, whose three first formal tracks were not green. The fixes are
 composed into exact behavior candidate `3fa5463`; 18 focused tests, the required
-local gates, and all three replacement review tracks are green. Remote delivery
-evidence remains pending. First remote CI `32599591900` exposed the Linux
+local gates, and all three replacement review tracks are green. First remote CI
+`32599591900` exposed the Linux
 removed-root gap. Exact candidate `17f1884` adds the portable acquired-
-descriptor link check and is green under both executable review tracks; this
-seal resolves the documentation lineage finding.
+descriptor link check and is green under both executable review tracks. Seal
+`d3312d7` resolves the documentation lineage finding and passed exact feature
+and `main` delivery gates.
 Listing processes/selects at
 most 1,024 non-dot entries plus one fetched/name-inspected overflow witness and
 accepts/decodes at most 64 MiB of aggregate canonical record bytes plus one
@@ -311,7 +312,7 @@ separate fourteenth slice and do not alter this path constructor. The composed
 fifteenth slice adds host-level by-ID create, resume, replay, and reset over
 the exact shared store, including a reset-specific atomic incarnation
 replacement; it does not change the ordinary store trait described by this
-page. The composed sixteenth candidate adds bounded lifecycle-level IDs-only
+page. The delivered sixteenth slice adds bounded lifecycle-level IDs-only
 listing above the same retained root; it adds no index, rich summary, cursor,
 pagination, CLI, or global snapshot. Migration and legacy import,
 schema upgrades, encryption at rest, authenticated records, secure erasure,

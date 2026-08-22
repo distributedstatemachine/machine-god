@@ -43,14 +43,16 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with fifteen delivered bounded slices. The first formal sixteenth-slice
+with sixteen delivered bounded slices. The first formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
 green. Its source and test fixes are composed in exact behavior candidate
 `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
 green. First remote CI `32599591900` exposed the Linux removed-root gap; this
 portable fix is exact behavior candidate `17f1884`, green under both executable
-review tracks, with its documentation lineage finding resolved in this seal.
-Replacement remote gates remain pending.
+review tracks. Documentation seal `d3312d7` resolves its lineage finding, is
+green under exact feature CI `32600292770` and benchmark evidence `32600292779`,
+was fast-forwarded without force to `main`, and is green there under exact CI
+`32600567094` and benchmark evidence `32600567090`.
 The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
@@ -358,7 +360,7 @@ record; its workflows are reported at handoff. `list_sessions`, lifecycle
 CLI commands, migration,
 encryption, and non-Unix hardening are not part of this slice.
 
-The composed sixteenth bounded candidate adds Linux/macOS library-only
+The delivered sixteenth bounded slice adds Linux/macOS library-only
 `NativeSessionLifecycle::list_sessions`. Its IDs-only `NativeSessionList`
 contains at most 100 sorted unique validated IDs plus `truncated`. Each call
 processes or selects at most 1,024 non-dot entries plus one fetched and name-
@@ -398,7 +400,8 @@ three first review tracks were not green. Isolated acquire-first source fix
 `4b8d8b0` and isolated test hardening `446b495` are composed in the replacement
 candidate, with 18 focused tests and the full all-target/all-feature workspace
 suite green locally. All three replacement tracks are green on exact behavior
-candidate `3fa5463`; exact feature and delivery evidence remain pending.
+candidate `3fa5463`; portable behavior `17f1884` and seal `d3312d7` are green
+under exact feature and `main` delivery workflows.
 
 The current schema and store contain no authoritative summary, workspace,
 title, preview, language, timestamp, latest-order, or index fields. This slice
@@ -408,8 +411,7 @@ benchmark remains unimplemented and claim-ineligible.
 
 ### Milestone 03 completion boundary
 
-The fifteen delivered slices plus the composed sixteenth candidate do not
-complete Milestone 03.
+The sixteen delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -435,7 +437,7 @@ gate:
   slice supplies the bounded non-secret selection. Implementation, independent
   tests, all three fresh adversarial tracks, exact feature gates, fast-forward
   integration, and exact `main` gates are green.
-- [ ] Add explicit workspace/state-root selection and safe required-root
+- [x] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
   must allocate a new incarnation before reuse. The delivered fourteenth slice
@@ -444,15 +446,17 @@ gate:
   and reset/new-incarnation behavior with fourteen independently owned focused
   tests plus one formal finding regression, with all three adversarial tracks
   green on exact candidate `e6a3804`; exact feature and `main` workflows are
-  green through record `dbba2c7`. The composed sixteenth candidate supplies the
+  green through record `dbba2c7`. The delivered sixteenth slice supplies the
   remaining bounded IDs-only native listing functional scope. Production and
   13 initial independent tests are composed through first formal candidate
   `dec98e0`, whose three first review tracks were not green. The replacement
   source fix and 18-test hardened suite from `4b8d8b0` and `446b495` are
   composed in exact behavior candidate
   `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
-  green. Remote exact-SHA gates remain pending. The combined item therefore stays
-  unchecked until those delivery gates are green.
+  green. Portable behavior `17f1884` is green under both executable reviews.
+  Documentation seal `d3312d7` passed exact feature CI `32600292770` and
+  benchmark evidence `32600292779`, was fast-forwarded without force to `main`,
+  and passed exact main CI `32600567094` and benchmark evidence `32600567090`.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
   `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,
@@ -483,7 +487,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fifteenth slices and the sixteenth candidate; Zig
+by the tenth through fifteenth slices and the delivered sixteenth slice; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes

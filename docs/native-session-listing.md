@@ -1,19 +1,21 @@
 # Native session listing
 
-Status: replacement candidate for the sixteenth bounded Milestone 03 library
-slice. Production, documentation, and 13 initial independently owned tests were
+Status: delivered sixteenth bounded Milestone 03 library slice. Production,
+documentation, and 13 initial independently owned tests were
 composed through `dec98e0`, but each first-round formal review track reported
 confirmed findings. Acquire-first production fix `4b8d8b0`, test hardening
 `446b495`, and the corrected contract are composed in this replacement
 behavior candidate `3fa54635dab00ebba78b233c69fd39e04e9be57e`. Its 18 focused
 tests, full all-target/all-feature workspace suite, and all three replacement
-review tracks are green. Exact feature-SHA remote workflows and delivery
-evidence remain pending. First remote CI run `32599591900` exposed a Linux-only
+review tracks are green. First remote CI run `32599591900` exposed a Linux-only
 removed-root liveness gap. Exact portable-fix candidate
 `17f1884c20e84574561eb3cedd96b9aee6d37284` adds linked-descriptor validation
-and is green under both executable review tracks; this documentation seal
-resolves the remaining exact-lineage finding. Replacement remote gates remain.
-The fifteen earlier slices remain integrated through `9ada4b5`.
+and is green under both executable review tracks. Documentation seal
+`d3312d7f402a162289524e987a4a1793c18528f5` resolves the remaining exact-lineage
+finding, passed exact feature CI `32600292770` and benchmark evidence
+`32600292779`, was fast-forwarded without force to `main`, and passed exact main
+CI `32600567094` and benchmark evidence `32600567090`. This documentation-only
+commit is the final delivery record; its workflows are reported at handoff.
 
 The exact first-candidate lineage is: integrated base `9ada4b5`; isolated
 production `0accfbf`, composed as `1bffac9`; isolated documentation `63d589c`,
@@ -216,11 +218,10 @@ classification, inventory, workflow, or performance claim. Zig remains only
 the pinned toolchain used to build the upstream fx benchmark reference;
 machine-god remains a Rust product.
 
-The functional code scope for the combined Milestone 03 root plus native
-create/list/resume/replay/reset library boundary exists in the first candidate,
-and replacement regressions plus all three formal rereviews are green. That
-checklist remains incomplete until exact feature and `main` remote gates are
-green. Milestone
-03 also remains in progress for the remaining native tools, top-level CLI and
+The combined Milestone 03 root plus native create/list/resume/replay/reset
+library boundary is delivered: replacement regressions, all three formal
+rereviews, exact feature workflows, fast-forward integration, and exact `main`
+workflows are green. Milestone 03 remains in progress for the remaining native
+tools, top-level CLI and
 slash-command ownership, and composed freshly built release-binary end-to-end
 evidence.

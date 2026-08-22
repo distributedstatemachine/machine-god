@@ -1,14 +1,16 @@
 # Native reference-host composition
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
-Fifteen slices are delivered. The first formal sixteenth candidate is composed
+Sixteen slices are delivered. The first formal sixteenth candidate is composed
 through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
 `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
 green. First remote CI `32599591900` exposed the Linux removed-root gap; this
 portable fix is exact behavior candidate `17f1884`, green under both executable
-review tracks, with its documentation lineage finding resolved in this seal.
-Replacement remote gates remain pending.
+review tracks. Documentation seal `d3312d7` resolves its lineage finding,
+passed exact feature CI `32600292770` and benchmark evidence `32600292779`, was
+fast-forwarded without force to `main`, and passed exact main CI `32600567094`
+and benchmark evidence `32600567090`.
 This slice's production implementation, an
 independently owned seven-test black-box suite, three fresh adversarial tracks,
 and exact feature and `main` workflows are green. Its final delivery record is
@@ -57,7 +59,7 @@ candidate `e6a3804`. Feature record `dbba2c7` is green on the feature branch and
 `main` under exact CI and benchmark workflows. Its normative behavior is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
-The composed sixteenth candidate adds bounded IDs-only listing through that
+The delivered sixteenth slice adds bounded IDs-only listing through that
 same retained lifecycle and store. It returns at most 100 sorted unique IDs plus
 `truncated`, processes/selects at most 1,024 non-dot entries plus one fetched
 and name-inspected overflow witness, and accepts/decodes at most 64 MiB of
@@ -65,8 +67,9 @@ aggregate canonical record bytes plus one transient transfer byte to detect
 concurrent growth. It adds no CLI behavior. Production and 13 initial
 independent tests are composed; all three first formal tracks were not green.
 The fixes are composed into exact behavior candidate `3fa5463`, with 18 focused
-tests and all three replacement review tracks green. Remote delivery evidence
-remains pending. Its normative behavior is in
+tests and all three replacement review tracks green. Portable behavior
+`17f1884` and seal `d3312d7` passed exact feature and `main` delivery gates. Its
+normative behavior is in
 [`native-session-listing.md`](native-session-listing.md).
 
 ## Feature and platform boundary
@@ -94,7 +97,7 @@ without requiring `ai-gateway-http`; it does not make the standalone core
 engine or session-store trait depend on OS randomness, a native filesystem,
 the HTTP feature, or a runtime.
 
-The sixteenth candidate's standalone `list_sessions` method uses that same
+The delivered sixteenth slice's standalone `list_sessions` method uses that same
 Linux/macOS lifecycle gate without requiring `ai-gateway-http`. Listing through
 the composed wrapper inherits this page's stricter gate.
 
@@ -254,7 +257,7 @@ session load, save, reset, engine registration, or lock-sidecar operation.
 Those effects are owned by a lifecycle future and remain inert until that
 future is first polled.
 
-The sixteenth candidate does not add construction effects. Creating its listing
+The delivered sixteenth slice does not add construction effects. Creating its listing
 future is also inert; only first poll can enumerate the retained root, validate
 canonical records, acquire their per-ID locks, or create private lock sidecars.
 
@@ -368,7 +371,7 @@ OS randomness, persists create before success, and resets by atomic
 current-record replacement with a checked advancing revision. It does not add
 session listing, session-ID generation, a UI/event replay, or any CLI command;
 delivery is green through feature record `dbba2c7`; formal review is green on
-`e6a3804`. The composed sixteenth candidate supplies bounded library-only
+`e6a3804`. The delivered sixteenth slice supplies bounded library-only
 listing through the same lifecycle. It adds no rich summaries,
 workspace/latest/cursor semantics, pagination, global snapshot, session-ID
 generation, UI replay, or CLI command. Its behavior and limits are in
@@ -376,7 +379,8 @@ generation, UI replay, or CLI command. Its behavior and limits are in
 composition is present through `dec98e0`, whose three first formal tracks were
 not green. Exact behavior candidate
 `3fa54635dab00ebba78b233c69fd39e04e9be57e` composes the replacement, and all
-three replacement tracks are green; exact delivery evidence is pending.
+three replacement tracks are green. Portable behavior `17f1884` and seal
+`d3312d7` passed exact feature and `main` delivery gates.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
@@ -391,11 +395,10 @@ credential-and-configuration item is also complete. The thirteenth slice's
 three adversarial tracks are green on exact behavior SHA `35ce591e`, and exact
 final-record feature and `main` workflows are green at integrated SHA
 `f840576a`. The fourteenth slice supplies root selection/preparation, the
-fifteenth supplies create/resume/replay/reset, and the sixteenth first candidate
-contains bounded IDs-only listing. The combined root-and-session-lifecycle item
-remains unchecked because exact composed behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e` still needs remote exact-SHA gates,
-despite all three replacement reviews being green. Milestone 03 remains in
+fifteenth supplies create/resume/replay/reset, and the delivered sixteenth
+slice supplies bounded IDs-only listing. The combined root-and-session-lifecycle
+item is complete: the replacement reviews and exact feature and `main` gates
+are green. Milestone 03 remains in
 progress because the remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.

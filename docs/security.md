@@ -101,7 +101,7 @@ candidate `e6a3804`. Feature record `dbba2c7` is green on the feature branch and
 `main` under exact CI and benchmark workflows. Its
 security boundary is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
-The composed sixteenth candidate adds bounded IDs-only observation through that
+The delivered sixteenth slice adds bounded IDs-only observation through that
 same lifecycle. It recognizes only exact canonical record names, uses the
 store's no-follow regular-file checks, existing per-ID lock protocol, strict
 current schema and decoded-ID/digest validation, and fails the whole call on a
@@ -113,11 +113,11 @@ concurrent growth. All non-dot names within the scan consume budget. Production
 and 13 initial independent tests are composed through first formal candidate
 `dec98e0`, whose three first review tracks were not green. The fixes and 18-test
 hardened suite are composed in exact behavior candidate `3fa5463`; all three
-replacement review tracks are green. Remote delivery evidence remains pending;
-first remote CI `32599591900` exposed the Linux removed-root gap now fixed by
+replacement review tracks are green. First remote CI `32599591900` exposed the
+Linux removed-root gap now fixed by
 exact portable behavior candidate `17f1884`. Its correctness/API and security
-reviews are green; this seal resolves the documentation lineage finding. Its
-security contract is in
+reviews are green; seal `d3312d7` resolves the documentation lineage finding
+and passed exact feature and `main` delivery gates. Its security contract is in
 [`native-session-listing.md`](native-session-listing.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -351,7 +351,7 @@ version. The implementation requests `fsync`; on macOS it does not request
 `F_FULLFSYNC` and does not claim a successful save reached physical media.
 Record contents are plaintext; encryption, authentication, secure
 erasure, key management, and migration remain deferred. Bounded IDs-only
-listing is defined by the separate sixteenth candidate and is not part of
+listing is defined by the separate delivered sixteenth slice and is not part of
 ordinary `SessionStore::load` or `save`. Reset is
 defined only by the separate fifteenth slice and is not part of ordinary
 `SessionStore::save`: it requires a new host-generated incarnation and a
@@ -419,7 +419,7 @@ sync failed; callers must resume or replay to reconcile and must not treat the
 category as blanket permission to retry. The complete delivered rules are in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
-The sixteenth candidate's listing future is inert before poll and performs its
+The delivered sixteenth slice's listing future is inert before poll and performs its
 bounded synchronous enumeration, record validation, and advisory locking on the
 first polling thread without detached work. It can create a private `0600`
 permanent lock sidecar for a canonical record, but it cannot write, repair,

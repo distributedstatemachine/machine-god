@@ -6,18 +6,19 @@ adversarial tracks are green; the tracks agree on exact candidate `e6a3804`.
 Feature record `dbba2c7` is green under exact feature CI `32594562796` and
 benchmark evidence `32594562785`, and on `main` under exact CI `32594846484`
 and benchmark evidence `32594846476`. This documentation-only commit is the
-final delivery record; its workflows are reported at handoff. Fifteen bounded
-slices are integrated. A first formal sixteenth candidate extends this
+final delivery record; its workflows are reported at handoff. Sixteen bounded
+slices are integrated. The delivered sixteenth slice extends this
 lifecycle with bounded IDs-only listing; production and 13 initial independent
 tests are composed through `dec98e0`, whose three first review tracks were not
 green. The isolated fixes and 18-test hardened suite are composed in exact
 behavior candidate `3fa5463`; all three replacement review tracks are green.
 First remote CI `32599591900` exposed the Linux removed-root gap; this portable
 fix is exact behavior candidate `17f1884`, green under both executable review
-tracks, with its documentation lineage finding resolved in this seal.
-Replacement remote gates remain pending. Milestone
-03 remains `IN PROGRESS` because this delivery gate and other frozen scope
-remain open.
+tracks. Documentation seal `d3312d7` resolves its lineage finding, passed exact
+feature CI `32600292770` and benchmark evidence `32600292779`, was fast-forwarded
+without force to `main`, and passed exact main CI `32600567094` and benchmark
+evidence `32600567090`. Milestone 03 remains `IN PROGRESS` because other frozen
+scope remains open.
 
 This slice gives the Linux/macOS native reference host a durable, by-ID library
 boundary for creating, resuming, replaying, and resetting sessions in the
@@ -346,17 +347,17 @@ formats. Migration, explicit legacy import, encryption, record authentication,
 key management, secure erasure, stronger lifecycle concurrency hardening, and
 non-Unix support remain assigned to Milestone 04.
 
-This delivered slice does not itself implement `list_sessions`, deletion,
+This delivered fifteenth slice does not itself implement `list_sessions`, deletion,
 automatic cleanup, session-ID generation, CLI
 `session`/`sessions`/`resume`/`replay` commands, a UI replay, or CLI byte
-changes. The composed sixteenth candidate adds only bounded IDs-only
+changes. The delivered sixteenth slice adds only bounded IDs-only
 library-level listing under the separate
 [`native session-listing contract`](native-session-listing.md). After that
 first composition the combined M03 root plus create/list/resume/replay/reset
-functional code scope exists, but the checklist item remains unchecked. All
-three replacement listing review tracks are green on exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`; remote exact-SHA delivery gates
-remain pending.
+functional code scope exists, and its checklist item is complete. All three
+replacement listing review tracks are green on exact behavior candidate
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`; portable behavior `17f1884` and
+seal `d3312d7` passed exact feature and `main` delivery gates.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and changes no benchmark workload or workflow. Zig remains solely the

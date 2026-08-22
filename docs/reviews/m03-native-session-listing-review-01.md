@@ -1,17 +1,19 @@
 # Milestone 03 native session-listing review 01
 
-Status: **PORTABLE FIX REVIEW GREEN — REPLACEMENT REMOTE GATES PENDING**
+Status: **DELIVERED — final documentation-record workflows reported at handoff**
 
 All three first-round formal tracks reported confirmed findings on exact
 candidate `dec98e06e110be88317a2ba76c77e7ca872fed34`. Production and the
 initial independent suite are composed; that first candidate was not green, and
-the slice remains undelivered until its remote gates pass.
+the slice remained undelivered until its remote gates passed.
 Replacement production work, test hardening, and corrected documentation are
 composed in this exact replacement candidate, with 18 focused tests and the
 full all-target/all-feature workspace suite green locally. All three replacement
 review tracks are green on exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`. Remote exact-SHA evidence remains
-pending.
+`3fa54635dab00ebba78b233c69fd39e04e9be57e`. Portable Linux fix behavior
+`17f1884c20e84574561eb3cedd96b9aee6d37284` and documentation seal
+`d3312d7f402a162289524e987a4a1793c18528f5` completed exact feature and `main`
+delivery gates.
 
 Per the user's instruction, a later documentation-only seal will not require a
 new adversarial review after one exact behavior candidate is green. That does
@@ -35,12 +37,13 @@ not waive any delivery gate; the required replacement rereview is now complete.
 | Documentation correction head | `6689ab91d0d096eda9cf0aeb9dfb382887ff01dc` |
 | First remote feature head | `a70a864673e4df6c7555c06008d43ad802285437` |
 | Portable Linux remote-finding behavior candidate | `17f1884c20e84574561eb3cedd96b9aee6d37284` |
+| Reviewed documentation seal and integrated feature record | `d3312d7f402a162289524e987a4a1793c18528f5` |
 
 The composed test commit contains 13 initial independently owned focused tests.
 The isolated test-hardening commit raises that focused suite to 18 tests, and
 those 18 focused tests are green. The source and test fixes are composed in this
 replacement candidate and are green under all three replacement review tracks.
-They are not yet remote evidence.
+Their exact remote delivery evidence is recorded below.
 
 ## Candidate boundary
 
@@ -170,7 +173,7 @@ skips. `cargo deny check` accepted advisories, bans, licenses, and sources;
 `cargo audit --no-fetch` scanned 1,225 cached advisories and 175 lockfile
 dependencies with no finding. Diff checks and the worktree are clean.
 
-## Pending delivery evidence
+## Delivery evidence
 
 Feature branch head `a70a864673e4df6c7555c06008d43ad802285437` passed exact
 benchmark-evidence run `32599591928`, both native macOS jobs, and dependency
@@ -192,13 +195,23 @@ The correctness/API and security/resource/concurrency tracks are green on exact
 `17f1884`. The documentation/evidence track found only that this executable
 commit could not name its own exact SHA; this documentation-only seal records
 that lineage and resolves the finding. Per the user's instruction, the seal
-does not receive another adversarial cycle. Replacement exact-SHA remote
-workflows remain mandatory.
+does not receive another adversarial cycle.
 
-Exact replacement feature-branch CI and benchmark-evidence workflows, fast-
-forward integration, and exact `main` workflows remain pending. Until those
-gates pass, the combined root plus native create/list/resume/replay/reset M03
-checklist item remains unchecked even though its functional code scope exists.
+Documentation seal `d3312d7f402a162289524e987a4a1793c18528f5` passed exact
+feature CI run
+[`32600292770`](https://github.com/distributedstatemachine/machine-god/actions/runs/32600292770)
+and exact feature benchmark-evidence run
+[`32600292779`](https://github.com/distributedstatemachine/machine-god/actions/runs/32600292779).
+It was fast-forwarded without force to `main` and passed exact main CI run
+[`32600567094`](https://github.com/distributedstatemachine/machine-god/actions/runs/32600567094)
+and exact main benchmark-evidence run
+[`32600567090`](https://github.com/distributedstatemachine/machine-god/actions/runs/32600567090).
+All four runs report the exact seal SHA. Benchmark-workflow success validates
+the retained evidence path and does not make a product-performance claim.
+
+This documentation-only commit is the final delivery record; its exact feature
+and `main` workflows are reported at handoff. The combined root plus native
+create/list/resume/replay/reset M03 checklist item is complete.
 
 Milestone 03 also remains in progress because the remaining native tool set,
 top-level CLI and slash-command ownership, and composed freshly built release-
