@@ -8,11 +8,14 @@ The separate integrated [`native configuration schema v3`](configuration.md)
 does not change that boundary or any CLI byte documented below. Its production
 implementation, independent tests, local gates, and all three adversarial tracks
 are green on exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
-The slice is integrated on `main` at
-`8755757da0da07e33af48d57f46bd9ea490b5449`; exact main CI run `32582978232`
-and benchmark-evidence run `32582978286` are green. Provider, transport, model,
+The slice is integrated on `main` through final delivery record
+`f840576af241c58d1e55399e66ba92f7770cd50c`; exact main CI run `32583871385`
+and benchmark-evidence run `32583871368` are green. Provider, transport, model,
 and credential-source config fields remain invisible to this metadata-only
-surface.
+surface. The separate fourteenth
+[`native root-selection candidate`](native-root-selection.md) likewise changes
+no invocation or output byte. Status does not call selection or preparation and
+remains metadata-only and no-create.
 
 ## Accepted invocations
 

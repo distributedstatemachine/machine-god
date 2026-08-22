@@ -67,7 +67,20 @@ memory. Production implementation, independent tests, local gates, and all
 three fresh adversarial tracks are green on exact behavior SHA
 `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. It is integrated on `main` at
 `8755757da0da07e33af48d57f46bd9ea490b5449`; exact main CI run `32582978232`
-and benchmark-evidence run `32582978286` are green.
+and benchmark-evidence run `32582978286` are green. Its final delivery record is
+integrated on `main` at `f840576af241c58d1e55399e66ba92f7770cd50c`;
+exact feature CI run `32583585145`, feature benchmark-evidence run
+`32583585148`, main CI run `32583871385`, and main benchmark-evidence run
+`32583871368` are green for that exact SHA.
+A fourteenth documentation-only candidate adds explicit Linux/macOS native root
+selection and narrowly bounded safe preparation. It opens and retains the
+workspace before state work, may create only a fixed descriptor-relative state
+suffix under an existing selected base, validates rather than repairs existing
+directories, rejects root equality or ancestry, and preserves credential
+discovery after retained-root preparation. Production, independent tests,
+adversarial review, remote gates, and `main` integration remain pending. Its
+candidate security boundary is in
+[`native-root-selection.md`](native-root-selection.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -137,8 +150,8 @@ acquisition kind may appear in config debug output; the model remains redacted.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
-modes beyond `ask`, token fields in configuration, required-root and session
-lifecycle, CLI composition and expansion, native tools other than the bounded
+modes beyond `ask`, token fields in configuration, session lifecycle, CLI
+composition and expansion, native tools other than the bounded
 library-level `read_file` and `list_files`, composed release-binary end-to-end
 host evidence, and compatibility or performance claims remain open. The
 twelfth slice composes the existing library components only after an already
@@ -196,10 +209,30 @@ raw error numbers are discarded. Host debug output is fixed to
 `NativeReferenceHost { .. }` and exposes no config structure or source. The
 twelfth-slice behaviors are adversarially green and integrated on `main` under
 exact green workflows. The schema-v3 and configured-source validation changes
-are integrated on `main` at `8755757d`, with three fresh adversarial tracks
-green on exact SHA `35ce591e` and exact feature and `main` workflows green.
+are integrated through final record `f840576a`, with three fresh adversarial
+tracks green on exact SHA `35ce591e` and exact final-record feature and `main`
+workflows green.
 
-The file-session slice does not consume those status-derived state paths.
+The fourteenth candidate leaves the existing path constructors unchanged and
+adds `NativeRootSelection` plus `PreparedNativeRoots`. Selection is effect-free
+and consumes only an injected `NativeEnvironment` plus an explicit absolute
+workspace path. Preparation opens the existing workspace first, requires the
+selected `XDG_STATE_HOME` or fallback `HOME` base to exist, and follows no
+suffix symlink while it opens or creates only `machine-god` or
+`.local/state/machine-god`. Newly created directories request `0700`. Existing
+directories are never chmodded, chowned, replaced, or removed. The selected
+base and existing intermediates must be owned by the effective UID with no
+group/other write; the existing final root permits no group/other permission;
+new directories are reopened and forced to exact `0700`. Opened workspace and
+final state identities must be disjoint in both directions under device/inode
+identity and descriptor-relative parent walking. Fixed errors and debug output
+reflect no path, environment, identity, ownership, mode, or OS diagnostic.
+Prepared-root reference-host constructors consume the retained descriptors;
+production credential discovery follows acceptance of those roots. This
+paragraph describes a candidate, not delivered behavior.
+
+The integrated file-session slice does not consume those status-derived state
+paths.
 The host explicitly supplies one existing absolute root. On supported Linux and
 macOS Unix targets, `FileSessionStore::open` opens the final component
 no-follow, verifies the resulting descriptor is a directory, and retains it.

@@ -84,7 +84,20 @@ tests, focused and required local gates, and all three fresh adversarial tracks
 are green on exact behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`.
 It is integrated on `main` at `8755757da0da07e33af48d57f46bd9ea490b5449`;
 exact main CI run `32582978232` and benchmark-evidence run `32582978286` are
-green.
+green. Its final delivery record is integrated on `main` at
+`f840576af241c58d1e55399e66ba92f7770cd50c`; exact feature CI run
+`32583585145`, feature benchmark-evidence run `32583585148`, main CI run
+`32583871385`, and main benchmark-evidence run `32583871368` are green for
+that exact final-record SHA.
+The fourteenth slice is a documentation-only candidate for explicit Linux/macOS
+native root selection and safe preparation. It derives state location from an
+injected environment snapshot, retains an explicit existing workspace, may
+create only a fixed descriptor-relative state suffix under an existing selected
+base, and rejects equality or ancestry of the retained roots. Proposed
+reference-host constructors consume those descriptors before production
+credential discovery. Production, independent tests, adversarial review,
+remote gates, and `main` integration remain pending. Its candidate contract is
+in [`native-root-selection.md`](native-root-selection.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -142,6 +155,10 @@ validated LoadedNativeConfig + existing workspace/session roots
  + credential snapshot -------------> production AI Gateway HTTP
  |                                    -> NativeReferenceHost -> Engine
  + trusted custom transport override -> credential_source: None
+
+injected NativeEnvironment + explicit absolute workspace
+ -> NativeRootSelection -> PreparedNativeRoots
+ -> retained disjoint workspace/state descriptors -> prepared-root host constructor
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -151,6 +168,19 @@ trying `HOME`. An empty XDG value falls back to a nonempty absolute-Unicode
 paths produced are `<config-root>/machine-god/config.json` and
 `<state-root>/machine-god`, with `.config` and `.local/state` inserted for the
 respective `HOME` fallbacks.
+
+The fourteenth candidate reuses only the state-selection precedence, not status
+inspection. Selection remains effect-free. Preparation requires the selected
+`XDG_STATE_HOME` or fallback `HOME` base to exist, opens the workspace first,
+and walks or creates only `machine-god` or `.local/state/machine-god` relative
+to the retained state-base descriptor with no-follow directory operations. New
+directories are reopened and set to exact `0700`; the base and existing
+intermediates require effective-UID ownership and no group/other write, while
+the existing final root permits no group/other permission. Existing directories
+are never chmodded or repaired. The final state and workspace roots remain
+retained and must be neither equal nor ancestors of one another by
+descriptor-identity and parent traversal. Native status still only
+inspects final-path metadata and creates nothing.
 
 Status inspection remains deliberately shallower than configuration loading. It
 uses `symlink_metadata` on the final path, reports
@@ -256,6 +286,21 @@ The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
 reach session artifacts beneath the workspace after permission is granted.
 
+The fourteenth candidate leaves those existing path constructors unchanged and
+adds a stricter prepared-root path. `NativeRootSelection::from_environment`
+derives the fixed state path from injected values without I/O.
+`PreparedNativeRoots::prepare` opens the workspace first, requires the selected
+state base to exist, retains no-follow descriptors while walking or creating
+only the fixed suffix, validates existing state-directory ownership and modes
+without repair, and rejects retained-root equality or ancestry by device/inode
+identity and descriptor-relative parent walking. New
+`NativeReferenceHost` constructors consume that prepared value and transfer its
+workspace identity to both tools and its state-root identity to
+`FileSessionStore` without reopening either path. Config selection is validated
+by the composing constructor, and production credential discovery remains after
+the already prepared retained roots are accepted. This candidate behavior is
+not yet production or delivery evidence.
+
 On the production path, both non-secret roots open before the consumed
 credential snapshot is discovered and its token moves into
 `AiGatewayHttpTransport`. On the custom path, the injected transport is a
@@ -276,8 +321,10 @@ config structure or source. Every nested construction error is reduced to one
 fixed redacted stage in the non-exhaustive reference-host error taxonomy. The
 twelfth-slice composition behaviors are adversarially green and integrated on
 `main`; the schema-v3 extension and credential-source validation are integrated
-at `8755757d`, with all three fresh adversarial tracks green on exact behavior
-SHA `35ce591e` and exact feature and `main` workflows green.
+through final record `f840576a`, with all three fresh adversarial tracks green
+on exact behavior SHA `35ce591e` and exact final-record feature and `main`
+workflows green. Root preparation remains a fourteenth documentation-only
+candidate.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

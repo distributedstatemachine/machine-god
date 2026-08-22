@@ -4,9 +4,10 @@ Status: integrated contract for the thirteenth bounded Milestone 03 slice.
 Thirteen slices are integrated. Production, independent tests, focused and
 required local gates, and all three fresh adversarial tracks are green on exact
 behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. The slice is integrated on
-`main` at `8755757da0da07e33af48d57f46bd9ea490b5449`; exact final feature CI
-run `32582687145`, feature benchmark-evidence run `32582687169`, main CI run
-`32582978232`, and main benchmark-evidence run `32582978286` are green.
+`main` through final delivery record
+`f840576af241c58d1e55399e66ba92f7770cd50c`; exact final-record feature CI
+run `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
+`32583871385`, and main benchmark-evidence run `32583871368` are green.
 Milestone 03 remains `IN PROGRESS`. Full lineage is recorded in the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
@@ -195,11 +196,17 @@ reports the concrete selected OIDC-token or API-key source, not the configured
 acquisition kind. The trusted custom-transport constructor skips native
 discovery and reports `None` as before.
 
+The separate fourteenth
+[`native root-selection candidate`](native-root-selection.md) derives a state
+root from the same injected snapshot but does not change configuration or use
+the loader. Its preparation authority remains independent of this read-only
+surface; schema-v3 built-in and file bytes are unchanged.
+
 Configuration mutation, a migration or rewrite command, a terminal permission
-prompter and modes beyond `ask`, runtime and CLI composition, required
-workspace and state-root lifecycle, the remaining native tools, CLI and
-session expansion, release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. The combined credential-and-configuration
+prompter and modes beyond `ask`, runtime and CLI composition, session lifecycle,
+the remaining native tools, CLI and session expansion, release-binary end-to-
+end host evidence, and compatibility or performance claims remain open. The
+combined credential-and-configuration
 checklist item is complete after implementation, independent tests, three green
 adversarial tracks, exact feature workflows, fast-forward integration, and
 exact `main` workflows all passed. Milestone 03 remains in progress.

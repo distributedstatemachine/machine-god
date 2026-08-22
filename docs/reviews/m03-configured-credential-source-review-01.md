@@ -56,8 +56,16 @@ Status: **DELIVERY GREEN — integrated on `main`**
   [`32582978232`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582978232)
 - Exact `main` benchmark-evidence run:
   [`32582978286`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582978286)
-- Final delivery record: this documentation-only commit; exact SHA reported at
-  handoff
+- Final delivery record:
+  `f840576af241c58d1e55399e66ba92f7770cd50c`
+- Exact final-record feature CI run:
+  [`32583585145`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583585145)
+- Exact final-record feature benchmark-evidence run:
+  [`32583585148`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583585148)
+- Exact final-record `main` CI run:
+  [`32583871385`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583871385)
+- Exact final-record `main` benchmark-evidence run:
+  [`32583871368`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583871368)
 - Integration branch: `agent/m03-configured-credential-source`
 - Candidate-docs branch: `agent/m03-configured-credential-source-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
@@ -69,8 +77,9 @@ exact behavior/finding-fix SHA
 `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. The documentation seal and both
 first exact feature workflows are green at `5f4deac6`. Feature-evidence record
 `8755757d` passed both exact feature workflows, was fast-forwarded without force
-to `main`, and passed both exact `main` workflows. Thirteen slices are
-integrated; Milestone 03 remains `IN PROGRESS`.
+to `main`, and passed both exact `main` workflows. Final documentation-only
+record `f840576a` then passed exact feature and `main` CI and benchmark-evidence
+workflows. Thirteen slices are integrated; Milestone 03 remains `IN PROGRESS`.
 
 ## Adversarially green behavior
 
@@ -212,6 +221,13 @@ and exact feature benchmark-evidence run
 [`32582687169`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582687169).
 Both runs report that exact `headSha`.
 
+Final delivery record `f840576af241c58d1e55399e66ba92f7770cd50c` then
+passed exact feature CI run
+[`32583585145`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583585145)
+and exact feature benchmark-evidence run
+[`32583585148`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583585148).
+Both runs report that exact `headSha`.
+
 ## Exact `main` delivery
 
 Feature-evidence record `8755757da0da07e33af48d57f46bd9ea490b5449` was
@@ -221,13 +237,21 @@ and benchmark-evidence run
 [`32582978286`](https://github.com/distributedstatemachine/machine-god/actions/runs/32582978286)
 are green for that exact SHA.
 
+Final delivery record `f840576af241c58d1e55399e66ba92f7770cd50c` was then
+fast-forwarded without force to `main`. Exact main CI run
+[`32583871385`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583871385)
+and benchmark-evidence run
+[`32583871368`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583871368)
+are green for that exact SHA.
+
 ## Remaining scope
 
-The combined credential-and-configuration checklist item is complete. Root
-selection and safe creation, session lifecycle behavior, the remaining native
-tools, CLI expansion and composition, deterministic release-binary end-to-end
-evidence, and compatibility promotion remain open. Milestone 03 remains in
-progress. No package or GitHub release is authorized.
+The combined credential-and-configuration checklist item is complete. A
+fourteenth documentation-only root-selection candidate is being developed
+separately; root-selection delivery, session lifecycle behavior, the remaining
+native tools, CLI expansion and composition, deterministic release-binary end-
+to-end evidence, and compatibility promotion remain open. Milestone 03 remains
+in progress. No package or GitHub release is authorized.
 
 Zig remains solely the pinned upstream benchmark build input; machine-god
 remains a Rust product.

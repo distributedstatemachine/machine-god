@@ -1,18 +1,22 @@
 # Native reference-host composition
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
-Twelve slices are integrated. Production implementation, an independently
-owned seven-test black-box suite, three fresh adversarial tracks, and exact
-feature and `main` workflows are green. Its final delivery record is integrated
-on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
+Thirteen slices are now integrated. This slice's production implementation, an
+independently owned seven-test black-box suite, three fresh adversarial tracks,
+and exact feature and `main` workflows are green. Its final delivery record is
+integrated on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
 `32579779134`, feature benchmark-evidence run `32579779123`, main CI run
 `32580066474`, and main benchmark-evidence run `32580066485` are green.
 The separate schema-v3 configured credential-source extension is a thirteenth
 slice whose production implementation, independent tests, local gates, and
 all three fresh adversarial tracks are green on exact behavior SHA
-`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. It is integrated on `main` at
-`8755757da0da07e33af48d57f46bd9ea490b5449`; exact main CI run `32582978232`
-and benchmark-evidence run `32582978286` are green. Milestone 03 remains
+`35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. Its final delivery record is
+integrated on `main` at `f840576af241c58d1e55399e66ba92f7770cd50c`; exact
+final-record feature CI run `32583585145`, feature benchmark-evidence run
+`32583585148`, main CI run `32583871385`, and main benchmark-evidence run
+`32583871368` are green. A separate fourteenth documentation-only candidate
+adds safe selected-root preparation and consuming constructors without changing
+the integrated path-constructor contract below. Milestone 03 remains
 `IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
@@ -24,7 +28,7 @@ every existing CLI output byte remain unchanged.
 
 ## Feature and platform boundary
 
-The complete composition API is exported only under this gate:
+The integrated composition API is exported only under this gate:
 
 ```text
 all(
@@ -67,10 +71,34 @@ NativeReferenceHost::credential_source(&self)
     -> Option<AiGatewayCredentialSource>
 ```
 
-Both constructors consume an already validated `LoadedNativeConfig`; neither
-loads configuration nor reads the process environment. The accepted selection
-is exactly permission mode `ask`, provider `vercel_ai_gateway`, and transport
-`ai_gateway_http`. The thirteenth slice additionally requires configured
+The fourteenth candidate proposes these additional consuming constructors:
+
+```rust,ignore
+NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
+    loaded_config: LoadedNativeConfig,
+    credential_environment: AiGatewayCredentialEnvironment,
+    prepared_roots: PreparedNativeRoots,
+    permission_prompter: Arc<dyn PermissionPrompter>,
+) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
+
+NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots(
+    loaded_config: LoadedNativeConfig,
+    transport: Arc<dyn AiGatewayTransport>,
+    prepared_roots: PreparedNativeRoots,
+    permission_prompter: Arc<dyn PermissionPrompter>,
+) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
+```
+
+These proposed methods consume retained roots prepared under the separate
+[`native root-selection contract`](native-root-selection.md), rather than
+reopening path arguments. Production, independent tests, adversarial review,
+and delivery of these additions remain pending.
+
+Both integrated path constructors consume an already validated
+`LoadedNativeConfig`; neither loads configuration nor reads the process
+environment. The accepted selection is exactly permission mode `ask`, provider
+`vercel_ai_gateway`, and transport `ai_gateway_http`. The thirteenth slice
+additionally requires configured
 `NativeCredentialSourceKind::Environment`. Any other future or otherwise
 unsupported selection fails
 closed before a root, credential, transport, provider, or engine is opened or
@@ -145,17 +173,18 @@ custom transport is unauthenticated or holds no secret.
 
 ## Synchronous construction and later polling
 
-Both constructors are synchronous. They perform only selection validation,
-bounded component construction, the documented root opens, and—on the
-production path—discovery from the already injected credential snapshot and
-HTTP client construction. They make no network request, poll no permission
+Both integrated path constructors are synchronous. They perform only selection
+validation, bounded component construction, the documented root opens, and—on
+the production path—discovery from the already injected credential snapshot
+and HTTP client construction. They make no network request, poll no permission
 prompt, load or save no session record, and create no file or directory. They
 do not create a Tokio runtime, task, thread, timer, channel, retry, or other
 background work.
 
-The constructors do not select or create the workspace or session root. They
-also do not call `AiGatewayCredentialEnvironment::from_process`; a caller that
-wants process discovery must take that explicit snapshot before composition.
+The integrated path constructors do not select or create the workspace or
+session root. They also do not call
+`AiGatewayCredentialEnvironment::from_process`; a caller that wants process
+discovery must take that explicit snapshot before composition.
 Constructing `AskPermissionHandler` does not invoke the injected prompter.
 Constructing `FileSessionStore` retains only its root and does not touch a
 session record or lock sidecar.
@@ -225,13 +254,15 @@ the earlier components have been constructed. The custom path cannot return
 
 ## Deferred scope and milestone boundary
 
-This composition and the thirteenth slice do not select or safely create
-required workspace or state roots, implement a concrete terminal
-`PermissionPrompter`, allocate a session
-ID or `SessionIncarnationId`, or add create/list/resume/replay/reset session
-lifecycle commands. It does not add the remaining native tools, compose or run
-the CLI, or change any existing CLI byte. A reset under a reused session ID
-still requires a new host-generated incarnation before reuse.
+The integrated path constructors and `FileSessionStore::open` still do not
+select or create roots. The fourteenth documentation-only candidate adds a
+separate selection/preparation boundary and consuming constructors, but its
+production and delivery are pending. Neither that candidate nor this integrated
+composition implements a concrete terminal `PermissionPrompter`, allocates a
+session ID or `SessionIncarnationId`, or adds create/list/resume/replay/reset
+session lifecycle commands. It does not add the remaining native tools, compose
+or run the CLI, or change any existing CLI byte. A reset under a reused session
+ID still requires a new host-generated incarnation before reuse.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
@@ -244,5 +275,8 @@ implementation, independent tests, composed adversarial review, exact feature
 gates, fast-forward integration, and exact `main` gates are green. The combined
 credential-and-configuration item is also complete. The thirteenth slice's
 three adversarial tracks are green on exact behavior SHA `35ce591e`, and exact
-feature and `main` workflows are green at integrated SHA `8755757d`. Milestone
-03 remains in progress.
+final-record feature and `main` workflows are green at integrated SHA
+`f840576a`. The combined root-and-session-lifecycle item remains unchecked:
+even delivery of the candidate root sub-boundary would leave create, list,
+resume, replay, reset, and reset/new-incarnation behavior open. Milestone 03
+remains in progress.

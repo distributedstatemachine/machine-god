@@ -261,6 +261,33 @@ lineage are in
 [`configuration.md`](configuration.md) and the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
+The thirteenth slice's final documentation-only delivery record is integrated
+on `main` at `f840576af241c58d1e55399e66ba92f7770cd50c`. Exact final-record
+feature CI run `32583585145`, feature benchmark-evidence run `32583585148`,
+main CI run `32583871385`, and main benchmark-evidence run `32583871368` are
+green for that exact SHA. Per the delivery workflow and the user's explicit
+instruction, that documentation-only final record was not adversarially
+reviewed after the behavior was already green.
+
+The fourteenth bounded slice is a documentation-only candidate for explicit
+Linux/macOS native root selection and safe preparation. A
+`NativeRootSelection` derives an exact state root from an injected
+`NativeEnvironment` and an explicit absolute workspace. A
+`PreparedNativeRoots` opens and retains the workspace first, requires the
+selected XDG state base or fallback `HOME` to exist, and can create only the
+fixed descriptor-relative `machine-god` or `.local/state/machine-god` suffix.
+New directories use private mode, existing directories are never repaired,
+and ownership, write, final privacy, no-follow, and root-disjointness checks
+fail closed. New consuming reference-host constructors preserve those retained
+identities and discover production credentials only after root preparation.
+Schema v3, configuration bytes, status and every CLI byte remain unchanged;
+the old reference-host path constructors and `FileSessionStore::open` remain
+no-create. Production, independent tests, three fresh adversarial tracks,
+exact feature workflows, fast-forward integration, and exact `main` workflows
+are pending. The candidate contract and review record are in
+[`native-root-selection.md`](native-root-selection.md) and
+[`m03-native-root-selection-review-01.md`](reviews/m03-native-root-selection-review-01.md).
+
 ### Milestone 03 completion boundary
 
 The thirteen integrated slices do not complete Milestone 03.
@@ -292,7 +319,10 @@ gate:
 - [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
-  must allocate a new incarnation before reuse.
+  must allocate a new incarnation before reuse. The fourteenth candidate is
+  limited to the root-selection and safe-creation sub-boundary; this combined
+  item remains unchecked because lifecycle and reset/new-incarnation behavior
+  are still open.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
   `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,
@@ -323,7 +353,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth, eleventh, twelfth, and thirteenth slices; Zig
+by the tenth through fourteenth slices; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes

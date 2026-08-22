@@ -40,6 +40,15 @@ there.
 Each category has fixed redacted `Display` and `Debug` output. The error retains
 no root path, operating-system diagnostic, or raw error number.
 
+The separate fourteenth
+[`native root-selection candidate`](native-root-selection.md) does not change
+`FileSessionStore::open`: direct callers must still supply one existing absolute
+root and the constructor still creates nothing. The candidate instead prepares
+and retains a private state root through a narrowly bounded descriptor-relative
+creation API, then lets new reference-host constructors transfer that retained
+descriptor into the store without reopening its path. Production, independent
+tests, adversarial review, and delivery of that addition remain pending.
+
 ## Stable v1 layout
 
 For a `SessionId`, the store hashes this exact byte sequence:
@@ -255,8 +264,10 @@ otherwise isolate the synchronous store.
 
 This slice adds no CLI command or existing CLI-byte change, provider or
 transport wiring, credential discovery, permission prompt or new permission
-mode, environment-based state-root discovery, directory creation, session
-listing, deletion, reset, or automatic cleanup. Migration and legacy import,
+mode, session listing, deletion, reset, or automatic cleanup. Environment-based
+state-root selection and fixed-suffix creation are proposed only by the
+separate fourteenth candidate and do not alter this path constructor. Migration
+and legacy import,
 schema upgrades, encryption at rest, authenticated records, secure erasure,
 key management, backup/restore, multi-record transactions, cross-host
 coordination, and non-Unix hardening remain deferred. It adds no compatibility,

@@ -14,6 +14,7 @@
 - [Native file session store](session-store.md)
 - [Native ask permission handler](ask-permission.md)
 - [Native reference-host composition](native-reference-host.md)
+- [Native root selection and preparation](native-root-selection.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)
@@ -25,3 +26,4 @@
 - [Milestone 03 native host configuration schema-v2 review](reviews/m03-native-host-config-review-01.md)
 - [Milestone 03 native reference-host composition review](reviews/m03-native-reference-host-review-01.md)
 - [Milestone 03 configured credential-source review](reviews/m03-configured-credential-source-review-01.md)
+- [Milestone 03 native root-selection review candidate](reviews/m03-native-root-selection-review-01.md)

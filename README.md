@@ -74,11 +74,23 @@ its runtime observation still reports the concrete selected OIDC-token or
 API-key source. Production implementation, independent tests, focused and
 required local gates, and all three fresh adversarial tracks are green on exact
 behavior SHA `35ce591e8ca6a8fef94485ff85d3e9c1397130a6`. It is integrated on
-`main` at `8755757da0da07e33af48d57f46bd9ea490b5449`; exact final feature CI
-run `32582687145`, feature benchmark-evidence run `32582687169`, main CI run
-`32582978232`, and main benchmark-evidence run `32582978286` are green. See the
+`main` through final delivery record
+`f840576af241c58d1e55399e66ba92f7770cd50c`; exact final-record feature CI
+run `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
+`32583871385`, and main benchmark-evidence run `32583871368` are green. See the
 [configuration contract](docs/configuration.md) and
 [review record](docs/reviews/m03-configured-credential-source-review-01.md).
+
+The fourteenth bounded slice is a documentation-only candidate for explicit
+Linux/macOS native root selection and safe preparation. It selects an existing
+absolute workspace plus a state location from an injected native-environment
+snapshot, opens and retains the workspace first, and may create only a fixed
+descriptor-relative state suffix with private new-directory modes. It does not
+change schema v3, configuration bytes, the CLI, status, or session lifecycle.
+Production, independent tests, adversarial review, exact remote gates, and
+`main` integration remain pending. See the candidate
+[native root-selection contract](docs/native-root-selection.md) and
+[review record](docs/reviews/m03-native-root-selection-review-01.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
@@ -89,7 +101,9 @@ The project is not yet production-ready. See the exact
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
 normative [native file session store](docs/session-store.md), the integrated
 [native reference-host composition](docs/native-reference-host.md), and the
-integrated [configured credential source](docs/configuration.md).
+integrated [configured credential source](docs/configuration.md). The candidate
+[native root-selection boundary](docs/native-root-selection.md) is not yet
+delivered.
 
 ## Development
 
