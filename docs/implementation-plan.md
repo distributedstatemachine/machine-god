@@ -190,11 +190,12 @@ config owns and redacts its model in debug output. Provider, transport, and
 model selections are declarative only and do not compose the codec, optional
 HTTP transport, runtime, credential, network, core, or CLI. Status remains
 metadata-only and existing CLI bytes are unchanged. The exact candidate
-contract and pending review lineage are in
+contract and review lineage are in
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
-Production integration, fresh adversarial review, exact remote gates, and
-delivery on `main` remain pending.
+Production implementation, black-box tests, and candidate documentation are
+composed on the feature branch. Final adversarial rereview, exact remote gates,
+and delivery on `main` remain pending.
 
 ### Milestone 03 completion boundary
 

@@ -54,8 +54,10 @@ and benchmark run `32573320937` are green. Its fixed contract and evidence are
 in [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 The eleventh candidate advances native configuration to a strict current
 schema v2 while retaining strict v1 reads without file rewrite or migration.
-It is a declarative library surface only: production integration, fresh
-adversarial review, exact remote gates, and delivery on `main` remain pending.
+It is a declarative library surface only. Its production implementation,
+black-box tests, and candidate documentation are composed on the feature
+branch; final adversarial rereview, exact remote gates, and delivery on `main`
+remain pending.
 Its contract and candidate lineage are in [`configuration.md`](configuration.md)
 and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).

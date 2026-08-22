@@ -128,10 +128,12 @@ or make a network request. The eleventh
 [`native configuration schema-v2 candidate`](configuration.md) adds only
 declarative provider, transport, and model data; it does not add a credential
 field or invoke this adapter. The broader M03 credential-and-configuration
-checklist item remains unchecked while that candidate's production,
-adversarial, remote, and `main` gates are pending. Existing CLI bytes and
-benchmark workloads are unchanged. Zig remains only a build input for the
-pinned upstream benchmark; machine-god remains a Rust product.
+checklist item remains unchecked because configuration still has no bounded
+credential-source field and no reference-host composition invokes this
+adapter; the schema-v2 candidate's final adversarial rereview, exact remote
+gates, and `main` delivery also remain pending. Existing CLI bytes and benchmark
+workloads are unchanged. Zig remains only a build input for the pinned upstream
+benchmark; machine-god remains a Rust product.
 
 ## Delivery evidence
 

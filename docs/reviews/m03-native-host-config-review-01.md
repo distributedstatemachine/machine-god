@@ -7,10 +7,22 @@ delivery pending**
 
 - Base and tenth-slice credential delivery:
   `446859f8ca66b2310c12a8506f1771f4711b2361`
-- Production implementation: `PENDING`
-- Independent black-box tests: `PENDING`
-- Candidate documentation: `PENDING`
-- Composed candidate: `PENDING`
+- Isolated production implementation:
+  `1c4b01d4e63bde9562ceb62de2fe45a9112d2d6b`
+- Composed production implementation:
+  `99327a8127442f7ae12bb7acb31beb73b954bdb6`
+- Isolated candidate documentation:
+  `6c59ee58700c41a740c6abb89ea4483f80a40d32`
+- Composed candidate documentation:
+  `09c2221effa03497021e55d424c7531f57ad6bfb`
+- Isolated independent black-box tests:
+  `85ee96c95a7a59b6756ccdee0174b193c9c8bd94`
+- Initial composed candidate:
+  `4ae2ceb93d375630569fef5f6bc47b647051fa60`
+- All-target Clippy test remediation:
+  `f6f12fcb3288a2bcf45cd6049e19e9fd68bb1111`
+- String-only schema remediation and current behavior candidate:
+  `0d8e4590d76a6e58207951ff9d746c0c95cde003`
 - Adversarially green candidate: `PENDING`
 - Documentation seal: `PENDING`
 - Exact `main` delivery SHA: `PENDING`
@@ -19,7 +31,10 @@ delivery pending**
 - Toolchain gate: Rust and Cargo 1.94.1 exactly; results pending
 
 This is the eleventh bounded Milestone 03 candidate. The first ten slices are
-integrated; this candidate is not. Milestone 03 remains `IN PROGRESS`.
+integrated. This slice's production implementation, tests, and documentation
+are composed on its feature branch, while final adversarial rereview, exact
+remote gates, and `main` delivery remain pending. Milestone 03 remains
+`IN PROGRESS`.
 
 ## Reviewed behavior
 
@@ -72,10 +87,9 @@ in this section is yet an adversarial or delivery-green claim:
 ## Parallel implementation
 
 Production, independent black-box tests, and candidate normative documentation
-are assigned to isolated worktrees with non-overlapping ownership. Their
-commits and the eventual composed SHA remain pending and will be recorded in
-the lineage above. Composition must preserve the already integrated credential
-slice and must not rewrite historical review records.
+were developed in isolated worktrees with non-overlapping ownership and then
+composed at the exact commits recorded above. Composition preserves the already
+integrated credential slice and does not rewrite historical review records.
 
 ## Pending adversarial review and gates
 
@@ -99,7 +113,9 @@ results are all pending at this record's current state.
 ## Scope
 
 This candidate does not complete the combined credential-and-configuration
-checklist item while integration and evidence remain pending. It adds no
+checklist item because it adds no bounded credential-source field and no
+reference-host composition invokes credential discovery; final adversarial and
+delivery evidence also remains pending. It adds no
 provider/HTTP/runtime/token/CLI composition, workspace or state-root creation,
 session lifecycle commands, remaining native tools, CLI expansion, deterministic
 end-to-end composed-host evidence, compatibility promotion, or package/release

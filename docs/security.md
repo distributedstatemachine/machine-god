@@ -47,8 +47,9 @@ and benchmark run `32573320937` are green. Its exact boundary is in
 [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
 An eleventh bounded candidate advances the built-in and current native config
 schema to strict v2 while keeping exact strict v1 files read-compatible without
-rewrite or migration. Production integration, fresh adversarial review, exact
-remote gates, and delivery on `main` remain pending; see
+rewrite or migration. Its production implementation, black-box tests, and
+candidate documentation are composed on the feature branch. Final adversarial
+rereview, exact remote gates, and delivery on `main` remain pending; see
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 
