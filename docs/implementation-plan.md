@@ -221,13 +221,14 @@ metadata; the custom-transport authority override reports no native-discovery
 source and exposes no secret getter. Fixed stage-only errors and host debug
 output are redacted. The CLI remains byte-unchanged and thin. Only the
 [`candidate contract`](native-reference-host.md) and
-[`candidate review record`](reviews/m03-native-reference-host-review-01.md) are
-present on this branch; implementation, tests, composition, adversarial review,
+[`candidate review record`](reviews/m03-native-reference-host-review-01.md),
+production implementation, and independent black-box tests are composed on
+this branch. Focused pinned-toolchain checks are green; adversarial review,
 exact remote feature gates, and `main` delivery remain pending.
 
 ### Milestone 03 completion boundary
 
-The eleven integrated slices and twelfth candidate documentation do not
+The eleven integrated slices and twelfth composed candidate do not
 complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
@@ -245,7 +246,7 @@ gate:
 - [ ] Compose a useful native reference-host path through an explicitly selected
   provider and transport, session store, permission handler and prompter, and
   registered tools. The CLI stays a thin host and owns no product state.
-  Candidate documentation alone does not satisfy this item; it may be checked
+  The composed candidate alone does not satisfy this item; it may be checked
   only after implementation, independent tests, composed adversarial review,
   exact feature-SHA gates, fast-forward integration, and exact `main` gates.
 - [ ] Add bounded, redacted credential acquisition and the configuration fields
@@ -288,7 +289,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth and eleventh slices and the twelfth candidate documentation; Zig
+by the tenth and eleventh slices and the twelfth candidate; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes

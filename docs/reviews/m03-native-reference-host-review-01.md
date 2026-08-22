@@ -1,7 +1,7 @@
 # Milestone 03 native reference-host composition review 01
 
-Status: **CANDIDATE DOCUMENTATION ONLY — implementation, tests, composition,
-adversarial review, exact remote gates, and `main` delivery pending**
+Status: **COMPOSED CANDIDATE — implementation and independent tests locally
+green; adversarial review, exact remote gates, and `main` delivery pending**
 
 ## Candidate lineage
 
@@ -11,11 +11,16 @@ adversarial review, exact remote gates, and `main` delivery pending**
   [`32576876769`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576876769)
 - Exact config-v2 `main` benchmark-evidence run:
   [`32576876780`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576876780)
-- Candidate normative documentation: this branch commit; exact SHA reported at
-  handoff
-- Isolated production implementation: `PENDING`
-- Isolated independent black-box tests: `PENDING`
-- Composed candidate: `PENDING`
+- Isolated candidate documentation:
+  `e03f0fe0e0759566f062b7987b5e9d51497c0b43`
+- Isolated production implementation:
+  `dd062636b38783ef4d7dc987e9b10a8a0e19c903`
+- Isolated independent black-box tests:
+  `b24741c6e9e3ccb8744c2f638735c03b949c8e68`
+- Initial composed candidate:
+  `c261e84471f0a94cc644be92a6053e16af3ff6d7`
+- Candidate state and security reconciliation: this branch commit; exact SHA
+  reported at handoff
 - Adversarially green behavior: `PENDING`
 - Review record and exact feature-gate SHA: `PENDING`
 - Documentation seal: `PENDING`
@@ -24,15 +29,15 @@ adversarial review, exact remote gates, and `main` delivery pending**
 - Candidate-docs branch: `agent/m03-native-reference-host-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
-The base contains eleven integrated bounded Milestone 03 slices. This document
-records only the proposed contract for the twelfth bounded library slice. It
-does not assert that production code or tests are present on this branch, that
-the candidate has been composed, that any reviewer is green, or that any exact
-feature or `main` workflow has run. Milestone 03 remains `IN PROGRESS`.
+The base contains eleven integrated bounded Milestone 03 slices. Production,
+independently owned tests, and candidate documentation for the twelfth bounded
+library slice are composed on this branch. No adversarial track is yet green on
+the reconciled exact candidate, and no exact feature or `main` workflow has run.
+Milestone 03 remains `IN PROGRESS`.
 
-## Proposed behavior awaiting composition and review
+## Implemented behavior awaiting adversarial review
 
-The candidate contract requires:
+The composed candidate implements:
 
 - a Linux/macOS-only API behind `ai-gateway-http` and the non-WebAssembly gate;
 - `NativeReferenceHost::{compose_ai_gateway_http,
@@ -71,36 +76,43 @@ The complete proposed normative behavior, order, failure strings, trust
 boundaries, and deferred scope are in
 [`native-reference-host.md`](../native-reference-host.md).
 
-## Parallel delivery state
+## Parallel delivery and composition state
 
-Production implementation and independent black-box tests are assigned to
-separate isolated worktrees with non-overlapping ownership. This candidate
-documentation must be reconciled with their exact composed API and behavior
-before review. Three fresh adversarial tracks must then review one exact
-composed commit for correctness/API, security/abuse, and
-performance/concurrency/documentation scope. Confirmed findings must be fixed
-and rereviewed until all three tracks are green.
+Production implementation, independent black-box tests, and candidate
+documentation were completed in separate isolated worktrees with non-overlapping
+ownership, then composed without conflicts. The seven tests exercise v1/v2
+projection, exact model and two-tool registration, normalized permissions,
+durable tool results, production credential precedence and inert construction,
+redacted stage failures, custom-transport inertness, and shared retained
+workspace identity after path replacement. Three fresh adversarial tracks must
+review one exact reconciled commit for correctness/API, security/abuse, and
+documentation/plan scope. Confirmed findings must be fixed and rereviewed until
+all three tracks are green.
 
-## Candidate documentation checks
+## Candidate and composition checks
 
-The following passed in the isolated candidate-docs worktree with exact
-`rustc 1.94.1` and `cargo 1.94.1`:
+The following passed with exact `rustc 1.94.1` and `cargo 1.94.1`:
 
+- `cargo +1.94.1 fmt --all -- --check`;
+- `cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings`;
+- `cargo +1.94.1 test -p machine-god-native --all-features --test reference_host`:
+  seven passed, zero failed;
+- `cargo +1.94.1 test --workspace`;
 - `cargo +1.94.1 test --doc --workspace`: two passed, zero failed;
 - repository-relative Markdown links: 144 checked across 44 Markdown files,
   with none missing; and
 - `git diff --check`.
 
-Pre-commit worktree status contained only the intended candidate documentation
-changes. These checks validate the candidate documents only; they are not
-implementation, adversarial-review, exact remote, or delivery evidence.
+The initial composed worktree was clean at `c261e844`. These checks are local
+candidate evidence only; they are not adversarial-review, exact remote, or
+delivery evidence.
 
 ## Remaining gates and scope
 
-Implementation, independent tests, composed local required checks, three fresh
-adversarial reviews, exact feature-branch CI and benchmark-evidence runs, the
-documentation seal, fast-forward integration, and exact `main` CI and
-benchmark-evidence runs all remain pending.
+Three fresh adversarial reviews, the remaining full local required checks,
+exact feature-branch CI and benchmark-evidence runs, the documentation seal,
+fast-forward integration, and exact `main` CI and benchmark-evidence runs all
+remain pending.
 
 Root selection and safe creation, a terminal prompter, session identifiers and
 lifecycle commands, the remaining native tools, CLI composition/execution, and
@@ -108,8 +120,8 @@ deterministic release-binary end-to-end evidence remain open. No compatibility,
 full fx-equivalence, or product-performance claim is made. Zig remains solely
 the pinned upstream benchmark build input; machine-god remains a Rust product.
 
-The frozen reference-host composition checklist item remains unchecked while
-this is documentation-only. It may be checked only after full delivery. The
+The frozen reference-host composition checklist item remains unchecked until
+full delivery. The
 combined credential-and-configuration item must remain unchecked after this
 slice because config v2 has no bounded credential-source field. Milestone 03
 remains in progress. No package or GitHub release is authorized.

@@ -1,11 +1,11 @@
 # Native reference-host composition
 
-Status: candidate normative contract for the twelfth bounded Milestone 03
-library slice. Eleven slices are integrated. Only candidate documentation is
-present on this branch; implementation, independent black-box tests, composed
-feature behavior, adversarial review, exact remote feature gates, and `main`
-delivery remain pending. Milestone 03 remains `IN PROGRESS`. Candidate lineage
-is recorded in the
+Status: composed candidate contract for the twelfth bounded Milestone 03
+library slice. Eleven slices are integrated. Production implementation and an
+independent seven-test black-box suite are composed on this feature branch;
+their focused Rust/Cargo 1.94.1 checks are green. Adversarial review, exact
+remote feature gates, and `main` delivery remain pending. Milestone 03 remains
+`IN PROGRESS`. Candidate lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
 `NativeReferenceHost` composes the existing validated native configuration,
@@ -102,9 +102,14 @@ tool construction steps. It does not make the workspace a sandbox against the
 host, change either tool's model-selected path rules, or freeze mounts beneath
 the retained directory.
 
-The session root is separate from the workspace. It must already exist and is
-opened through the existing `FileSessionStore::open` contract. The composition
-does not derive it from `LoadedNativeConfig` or native status.
+The session root is supplied separately from the workspace. It must already
+exist and is opened through the existing `FileSessionStore::open` contract.
+Composition does not compare the roots' opened identities or detect equality
+or ancestor relationships. Selecting disjoint roots is a trusted-host
+responsibility: if the session root equals or sits beneath the workspace,
+workspace tools can reach session artifacts within their normal bounded path
+rules after permission is granted. The composition does not derive either root
+from `LoadedNativeConfig` or native status.
 
 ## Explicit custom-transport override
 
@@ -223,7 +228,7 @@ benchmark build input; machine-god remains a Rust product.
 The frozen reference-host composition checklist item may become complete only
 after implementation, independent tests, composed adversarial review, exact
 feature-SHA gates, fast-forward integration, and exact `main` gates all pass.
-Candidate documentation alone does not satisfy it. The combined credential-
+The composed candidate alone does not satisfy it. The combined credential-
 and-configuration item remains unchecked even after this composition is
 delivered because schema v2 has no bounded credential-source field. Milestone
 03 remains in progress.

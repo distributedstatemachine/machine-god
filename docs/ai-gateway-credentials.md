@@ -128,11 +128,11 @@ or make a network request. The eleventh integrated
 [`native configuration schema-v2 slice`](configuration.md) adds only
 declarative provider, transport, and model data; it does not add a credential
 field or invoke this adapter. The separate twelfth
-[`native reference-host candidate`](native-reference-host.md) defines a
-production library constructor that would consume an explicitly injected
-snapshot and retain only the selected source metadata; only candidate
-documentation is present, so no delivered reference-host composition invokes
-the adapter yet. Its custom-transport authority override would skip discovery
+[`native reference-host candidate`](native-reference-host.md) implements a
+production library constructor that consumes an explicitly injected snapshot
+and retains only the selected source metadata. Its focused composed tests are
+green, while adversarial and delivery gates remain pending. Its custom-
+transport authority override skips discovery
 and report no native-discovery source. The broader M03 credential-and-
 configuration checklist item remains unchecked even after that candidate is
 delivered because configuration still has no bounded credential-source field.

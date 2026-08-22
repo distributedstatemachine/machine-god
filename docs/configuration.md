@@ -158,15 +158,15 @@ create or drive a Tokio runtime, discover or attach a credential, open a
 network connection, or compose any component into core or the CLI.
 
 The separate twelfth
-[`native reference-host candidate`](native-reference-host.md) would consume an
+[`native reference-host candidate`](native-reference-host.md) consumes an
 already loaded value without changing this loader. It retains the exact
 `LoadedNativeConfig`: an accepted file-backed v1 therefore remains observable
 with file origin and schema version `1`, while its existing fixed in-memory
 provider, transport, and model projection drives composition. The candidate's
 production constructor receives a separate injected credential snapshot; no
-credential enters this configuration value or loader. Only candidate
-documentation is present, so this relationship is not yet implementation or
-delivery evidence.
+credential enters this configuration value or loader. Production implementation
+and focused independent tests are composed; adversarial and delivery gates
+remain pending.
 
 Configuration mutation, a migration or rewrite command, a terminal permission
 prompter and modes beyond `ask`, runtime and CLI composition, required

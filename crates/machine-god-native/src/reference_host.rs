@@ -102,6 +102,8 @@ impl NativeReferenceHost {
     ///
     /// The roots must already exist. This function does not create a runtime,
     /// poll the permission prompt, touch session records, or perform network I/O.
+    /// The trusted host must select disjoint workspace and session roots; this
+    /// constructor does not compare their identity or ancestor relationships.
     ///
     /// # Errors
     ///
@@ -143,6 +145,8 @@ impl NativeReferenceHost {
     /// This path retains the same configuration, workspace, session-store, and
     /// permission selections as production composition, but performs no
     /// credential discovery or HTTP transport construction.
+    /// The trusted host must select disjoint workspace and session roots; this
+    /// constructor does not compare their identity or ancestor relationships.
     ///
     /// # Errors
     ///

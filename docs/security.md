@@ -52,11 +52,11 @@ without rewrite or migration. It is integrated on `main` at
 and benchmark-evidence run `32576876780` are green. See
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
-A twelfth bounded candidate defines Linux/macOS-only library composition behind
-the existing `ai-gateway-http` and non-WebAssembly gate. Only candidate
-documentation is present on this branch; implementation, tests, composition,
-adversarial review, exact remote gates, and `main` delivery remain pending. Its
-proposed boundary is in
+A twelfth bounded candidate implements Linux/macOS-only library composition
+behind the existing `ai-gateway-http` and non-WebAssembly gate. Production
+implementation and independent black-box tests are composed; adversarial
+review, exact remote gates, and `main` delivery remain pending. Its boundary is
+in
 [`native-reference-host.md`](native-reference-host.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -125,19 +125,23 @@ modes beyond `ask`, token fields in configuration, required-root and session
 lifecycle, CLI composition and expansion, native tools other than the bounded
 library-level `read_file` and `list_files`, composed release-binary end-to-end
 host evidence, and compatibility or performance claims remain open. The
-twelfth candidate would compose the existing library components only after an
+twelfth candidate composes the existing library components only after an
 already validated config value is supplied; it does not change config loading
 or CLI behavior.
 
-The candidate `NativeReferenceHost` must first reject any loaded selection
+The candidate `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. It then opens the
 existing absolute workspace once and clones that retained descriptor so
 exactly `list_files` and `read_file` share one opened directory identity. This
 prevents path replacement between separate tool-construction opens from giving
 the tools different roots. The same trusted-host ancestor and subordinate-mount
-limits as the individual tool contracts still apply. A separate existing
+limits as the individual tool contracts still apply. A separately supplied
 session root is retained through `FileSessionStore`; neither root is discovered
-from status or configuration, selected by model input, or created.
+from status or configuration, selected by model input, or created. Composition
+does not compare opened root identities or reject equality or ancestry. The
+trusted host must select disjoint roots. If the session root equals or sits
+beneath the workspace, workspace tools can reach session artifacts under their
+normal bounded path rules after permission is granted.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to
@@ -156,7 +160,7 @@ endpoint, network, authentication, status, retry, runtime, and diagnostic
 policy and must return only an accepted byte stream or an already redacted
 provider error under the existing injected-transport contract.
 
-Both proposed constructors are synchronous. Besides bounded construction and
+Both constructors are synchronous. Besides bounded construction and
 the root opens, they make no network request, poll no prompt, load or save no
 session record, create no root or runtime, and start no task, thread, timer,
 retry, or other background work. `AskPermissionHandler` retains but does not
@@ -170,7 +174,7 @@ transport, provider, or engine. Component errors, roots, config/model values,
 credential bytes and source, endpoint data, prompt data, OS diagnostics, and
 raw error numbers are discarded. Host debug output is fixed to
 `NativeReferenceHost { .. }` and exposes no config structure or source. These
-are candidate requirements, not delivered-code claims.
+are composed candidate behaviors awaiting adversarial and delivery gates.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and
