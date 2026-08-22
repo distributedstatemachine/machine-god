@@ -10,7 +10,7 @@
 - [Native `list_files` tool](list-files.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
-- [Native file session-store candidate](session-store.md)
+- [Native file session store](session-store.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

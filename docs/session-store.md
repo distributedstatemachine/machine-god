@@ -1,10 +1,10 @@
 # Native file session store
 
 This page is the normative contract for the eighth bounded Milestone 03 slice.
-`FileSessionStore` is the candidate library implementation of core's
-`SessionStore` contract in `machine-god-native`. Its exact feature-branch
-review, CI, and benchmark evidence are green; the final documentation seal and
-`main` integration remain pending. Review evidence is retained in the
+`FileSessionStore` is the integrated library implementation of core's
+`SessionStore` contract in `machine-god-native`. Its exact feature,
+documentation-seal, and `main` checks are green; it is integrated at
+`8f7b47db9580b14570bf9fb55763858f71a81271`. Review evidence is retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
 This is not a production-readiness claim.
 
@@ -253,7 +253,7 @@ otherwise isolate the synchronous store.
 
 ## Deferred scope
 
-This candidate adds no CLI command or existing CLI-byte change, provider or
+This slice adds no CLI command or existing CLI-byte change, provider or
 transport wiring, credential discovery, permission prompt or new permission
 mode, environment-based state-root discovery, directory creation, session
 listing, deletion, reset, or automatic cleanup. Migration and legacy import,

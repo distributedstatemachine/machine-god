@@ -13,7 +13,7 @@ stream codec behind an injected host transport; the codec itself receives no
 endpoint, credential, socket, TLS, status, retry, clock, or runtime authority.
 A seventh integrated slice adds one optional native implementation of that
 transport with a pinned production HTTPS endpoint and an explicitly injected
-bearer token. An eighth bounded candidate adds a Unix file-backed
+bearer token. An eighth integrated bounded slice adds a Unix file-backed
 `SessionStore` beneath one explicit retained host directory descriptor. The
 seventh slice's feature-branch review and exact remote runs are green and
 recorded in the
@@ -22,10 +22,12 @@ It is integrated on `main` at
 `508b0adbbe4447a85bd08f47095ae16c089c05d5`; exact main CI run `32535790803`
 and benchmark run `32535790824` are green. This is not a production-ready
 claim.
-The eighth candidate's exact feature-branch review, CI, and benchmark evidence
-are green, with evidence retained in the
+The eighth slice's exact feature, documentation-seal, and `main` checks are
+green, with evidence retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
-The final documentation seal and `main` integration remain pending.
+It is integrated on `main` at
+`8f7b47db9580b14570bf9fb55763858f71a81271`; exact main CI run `32541315998`
+and benchmark run `32541315997` are green.
 Permission mode remains `ask`; CLI registration, prompting, and the fail-closed
 behavior of a production permission handler remain future work.
 
@@ -73,7 +75,7 @@ provider/CLI composition, credential discovery, CLI expansion, native tools
 other than the bounded library-level `read_file` and `list_files`, and
 compatibility or performance claims remain outside the implemented slices.
 
-The file-session candidate does not consume those status-derived state paths.
+The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and
 macOS Unix targets, `FileSessionStore::open` opens the final component
 no-follow, verifies the resulting descriptor is a directory, and retains it.
@@ -140,7 +142,7 @@ can block the polling executor thread, and dropping the future cannot interrupt
 a synchronous call already in progress. Fixed errors never reflect session
 IDs, hashes, roots, child paths,
 record bytes, parser diagnostics, OS text, or raw error numbers. The complete
-candidate contract and fixed taxonomy are in
+contract and fixed taxonomy are in
 [`session-store.md`](session-store.md).
 
 Tool preflight closes the representation gap between a model's raw JSON call

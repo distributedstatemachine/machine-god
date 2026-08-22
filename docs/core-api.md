@@ -86,9 +86,9 @@ serialization, clone, retained-value destruction, and downstream extension
 paths that follow iterative validation. Builder-owned Schemas are still drained
 iteratively if this configuration check fails.
 
-## Native file-store candidate
+## Native file store
 
-The eighth bounded Milestone 03 candidate implements this unchanged
+The eighth bounded Milestone 03 slice implements this unchanged
 provider-neutral boundary as `machine_god_native::FileSessionStore` on Linux
 and macOS Unix targets. A host explicitly supplies one existing absolute root;
 the native constructor opens and retains its directory descriptor without
@@ -117,11 +117,12 @@ on filesystems honoring the assumed Unix semantics. A directory-sync error
 after rename has an ambiguous outcome and requires load-and-reconcile. This is
 not an NFS, multi-record transaction, hostile-writer, or full sudden-power-loss
 guarantee. The exact layout, failure taxonomy, trust boundary, and deferred
-scope are normative in [`session-store.md`](session-store.md). Its exact
-feature-branch review, CI, and benchmark evidence are green, with evidence
-retained in the
+scope are normative in [`session-store.md`](session-store.md). Its exact feature,
+documentation-seal, and `main` checks are green, with evidence retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
-The final documentation seal and `main` integration remain pending.
+It is integrated on `main` at
+`8f7b47db9580b14570bf9fb55763858f71a81271`; exact main CI run `32541315998`
+and benchmark run `32541315997` are green.
 
 ## Turn lifecycle
 

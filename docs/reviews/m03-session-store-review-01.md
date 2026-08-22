@@ -1,6 +1,6 @@
 # Milestone 03 native file session store review 01
 
-Status: **FEATURE-BRANCH GREEN — final documentation seal and `main` pending**
+Status: **DELIVERY GREEN — integrated on `main`**
 
 ## Reviewed lineage
 
@@ -8,6 +8,8 @@ Status: **FEATURE-BRANCH GREEN — final documentation seal and `main` pending**
 - Atomic feature: `c4b52c1f2a33af22eb3b59d7b54594753ebc5694`
 - Adversarial remediation: `2fa3fa74891189901affb10f8e0adc6f1c1f45f9`
 - Feature-branch evidence: `3f9496ee4b6716a0b607cd492f4c8427cc43b3c6`
+- Documentation seal and `main` delivery:
+  `8f7b47db9580b14570bf9fb55763858f71a81271`
 - Branch: `agent/m03-native-session-store`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 - Pinned reference: fx revision
@@ -152,14 +154,36 @@ Benchmark-workflow success validates this repository's evidence path. It does
 not promote the local observation above into a product-performance or
 compatibility claim.
 
-## Remaining gates and scope
+## Exact remote documentation-seal runs
 
-The exact feature branch is green. The documentation-seal commit that records
-that result and the eventual fast-forwarded `main` SHA must still pass their own
-exact remote CI and benchmark-evidence workflows before delivery is complete.
-Feature-branch green is not the final delivery seal. The benchmark workflow
-uses Zig only to build the pinned upstream fx comparison target; machine-god
-remains a Rust product.
+The exact documentation-seal SHA
+`8f7b47db9580b14570bf9fb55763858f71a81271` passed both required remote
+feature-branch workflows:
+
+- [CI run 32541009906](https://github.com/distributedstatemachine/machine-god/actions/runs/32541009906)
+  completed successfully for all six jobs; and
+- [Benchmark evidence run 32541009865](https://github.com/distributedstatemachine/machine-god/actions/runs/32541009865)
+  completed successfully for both evidence jobs.
+
+## Exact remote `main` runs
+
+`main` was fast-forwarded without a merge commit to exact SHA
+`8f7b47db9580b14570bf9fb55763858f71a81271`. Its independently triggered
+required workflows passed:
+
+- [CI run 32541315998](https://github.com/distributedstatemachine/machine-god/actions/runs/32541315998)
+  completed successfully for quality/tests, dependency policy and audit, and
+  all four native target jobs; and
+- [Benchmark evidence run 32541315997](https://github.com/distributedstatemachine/machine-god/actions/runs/32541315997)
+  completed successfully for pinned-upstream and bootstrap evidence.
+
+## Delivery status and scope
+
+The exact behavior, feature evidence, documentation seal, and fast-forwarded
+`main` delivery are green. Benchmark-workflow success validates the evidence
+path but does not establish a product-performance or compatibility claim. The
+workflow uses Zig only to build the pinned upstream fx comparison target;
+machine-god remains a Rust product.
 
 Milestone 03 remains in progress. This slice does not add credential discovery,
 provider/CLI wiring, permission prompting, session listing/reset/deletion,

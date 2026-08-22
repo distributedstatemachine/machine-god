@@ -21,18 +21,19 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has seven integrated bounded slices plus an eighth adversarially
-green bounded candidate. The first two are native-host slices;
+Milestone 03 has eight integrated bounded slices. The first two are native-host
+slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
 provides a bounded Gateway codec over an injected host byte transport. The
 seventh supplies one optional native HTTP implementation of that transport.
-The eighth candidate supplies a bounded Unix file implementation of core's
-session-store boundary under an explicitly opened host root. Its exact
-feature-branch review, CI, and benchmark evidence are green, with evidence
-retained in the
+The eighth slice supplies a bounded Unix file implementation of core's
+session-store boundary under an explicitly opened host root. Its exact feature,
+documentation-seal, and `main` checks are green, with evidence retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md);
-the final documentation seal and `main` integration remain pending.
+it is integrated on `main` at
+`8f7b47db9580b14570bf9fb55763858f71a81271`. Exact main CI run `32541315998`
+and benchmark run `32541315997` are green.
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -49,7 +50,7 @@ loader, and owns no product state. The exact surfaces are documented in
 [`list_files` contract](list-files.md) do not change either CLI surface. The
 separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
-[`native file session-store candidate`](session-store.md).
+[`native file session store`](session-store.md).
 
 ```text
 process environment -> resolved native paths
@@ -129,7 +130,7 @@ durable session-incarnation IDs, structured component errors, optimistic session
 revisions, monotonic event sequences, one-live-turn session leases, and
 idempotent cancellation form the initial cross-component invariants.
 
-The eighth candidate is `machine-god-native::FileSessionStore`. On supported
+The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The
 constructor opens the final root no-follow, verifies a directory, and retains
 that descriptor; it performs no environment discovery or root creation. Flat
