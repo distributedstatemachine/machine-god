@@ -1,8 +1,10 @@
 # Native AI Gateway credential discovery
 
-Status: Milestone 03 tenth-slice feature-green candidate. The implementation,
-tests, and three adversarial tracks are green at
-`244e765713944b1bbe2ebca5bbbd02899c725e9f`; exact remote feature gates and
+Status: Milestone 03 tenth-slice integration-ready candidate. The
+implementation, tests, and three adversarial tracks are green at
+`244e765713944b1bbe2ebca5bbbd02899c725e9f`; exact CI and benchmark-evidence
+runs are green for its documentation record at
+`11b661b927365ab207f1a1e8157e50a63fd07be4`. The documentation seal and
 integration on `main` remain pending. This does not mean that the CLI makes
 model requests today. Review details are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
@@ -133,7 +135,8 @@ Rust product.
 ## Integration gate
 
 This page remains a candidate contract. Production, independent black-box
-tests, required local checks, and three fresh adversarial tracks are green. The
-slice becomes integrated only after exact feature-branch CI and benchmark-
-evidence workflows are green, a documentation seal records that evidence, the
-branch is fast-forwarded to `main`, and exact `main` workflows are green.
+tests, required local checks, three fresh adversarial tracks, and the exact
+feature workflows for the documentation record are green. The slice becomes
+integrated only after this documentation seal passes exact feature-branch CI
+and benchmark evidence, the branch is fast-forwarded to `main`, and exact
+`main` workflows are green.

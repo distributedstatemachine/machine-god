@@ -1,6 +1,6 @@
 # Milestone 03 native AI Gateway credential discovery review 01
 
-Status: **FEATURE GREEN — exact remote and `main` delivery pending**
+Status: **INTEGRATION READY — exact feature gates green; `main` delivery pending**
 
 ## Reviewed lineage
 
@@ -117,14 +117,21 @@ The exploratory FreeBSD all-feature build requires a FreeBSD C sysroot for the
 optional AWS-LC dependency and is not an applicable local gate. Native Linux
 and macOS all-feature coverage remains owned by exact remote CI.
 
-## Pending delivery gates
+## Exact feature-branch delivery gates
 
-The reviewed behavior is feature-green, but it is not integrated yet. The
-feature branch must pass CI and benchmark evidence for one exact documentation
-record SHA, then an exact documentation seal SHA. That seal may be
-fast-forwarded without force to `main` only after both feature workflows are
-green. The exact `main` SHA must then pass both workflows before the candidate
-is recorded as delivered.
+The reviewed behavior and its documentation record are feature-green at
+`11b661b927365ab207f1a1e8157e50a63fd07be4`:
+
+- exact feature CI run
+  [`32572692175`](https://github.com/distributedstatemachine/machine-god/actions/runs/32572692175)
+  is green; and
+- exact feature benchmark-evidence run
+  [`32572692217`](https://github.com/distributedstatemachine/machine-god/actions/runs/32572692217)
+  is green.
+
+This documentation-only seal must pass both exact feature workflows before it
+may be fast-forwarded without force to `main`. The exact `main` SHA must then
+pass both workflows before the candidate is recorded as delivered.
 
 ## Scope
 

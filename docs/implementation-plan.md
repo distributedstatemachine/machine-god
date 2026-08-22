@@ -170,8 +170,11 @@ application can reject it. The exact candidate contract is in
 change schema v1, core, the transport, or the CLI, so the broader acquisition-
 and-configuration checklist item remains open. Implementation, local gates,
 and three fresh adversarial tracks are green at
-`244e765713944b1bbe2ebca5bbbd02899c725e9f`; exact feature and `main` remote
-delivery gates remain pending. The review lineage is in the
+`244e765713944b1bbe2ebca5bbbd02899c725e9f`. Exact feature CI run
+`32572692175` and benchmark-evidence run `32572692217` are green for the
+documentation record at `11b661b927365ab207f1a1e8157e50a63fd07be4`; the
+documentation seal and exact `main` delivery gates remain pending. The review
+lineage is in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
 ### Milestone 03 completion boundary
