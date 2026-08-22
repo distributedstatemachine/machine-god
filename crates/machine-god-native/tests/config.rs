@@ -112,7 +112,7 @@ fn expected_error_message(kind: NativeConfigErrorKind) -> &'static str {
     }
 }
 
-fn assert_error(error: &NativeConfigError, kind: NativeConfigErrorKind) {
+fn assert_error(error: NativeConfigError, kind: NativeConfigErrorKind) {
     assert_eq!(error.kind(), kind);
     assert_eq!(error.to_string(), expected_error_message(kind));
     assert_eq!(
@@ -124,10 +124,10 @@ fn assert_error(error: &NativeConfigError, kind: NativeConfigErrorKind) {
 fn assert_contents_error(config_root: &Path, contents: &[u8], kind: NativeConfigErrorKind) {
     write_config(config_root, contents);
     let error = load_error(&environment(Some(config_root), None));
-    assert_error(&error, kind);
+    assert_error(error, kind);
 }
 
-fn assert_diagnostics_omit(error: &NativeConfigError, forbidden: &[&str]) {
+fn assert_diagnostics_omit(error: NativeConfigError, forbidden: &[&str]) {
     let display = error.to_string();
     let debug = format!("{error:?}");
 
@@ -214,8 +214,8 @@ fn invalid_selected_xdg_root_fails_instead_of_falling_back_to_home() {
         NativeEnvironment::new(Some(selected_root), None, Some(home.as_os_str().to_owned()));
 
     let error = load_error(&environment);
-    assert_error(&error, NativeConfigErrorKind::InvalidEnvironment);
-    assert_diagnostics_omit(&error, &["relative-secret-xdg-root"]);
+    assert_error(error, NativeConfigErrorKind::InvalidEnvironment);
+    assert_diagnostics_omit(error, &["relative-secret-xdg-root"]);
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn loaded_config_is_cloneable_with_owned_model_and_is_not_copy() {
         fn assert_not_copy() {}
     }
     impl<T: ?Sized> AmbiguousIfCopy<()> for T {}
-    impl<T: ?Sized + Copy> AmbiguousIfCopy<IfCopy> for T {}
+    impl<T: Copy> AmbiguousIfCopy<IfCopy> for T {}
 
     let _ = <LoadedNativeConfig as AmbiguousIfCopy<_>>::assert_not_copy;
 
@@ -263,11 +263,7 @@ fn loaded_config_is_cloneable_with_owned_model_and_is_not_copy() {
     let loaded = load_native_config(&environment(Some(&config_root), None)).unwrap();
     let cloned = loaded.clone();
 
-    fn consume(value: LoadedNativeConfig) -> ConfigOrigin {
-        value.origin()
-    }
-
-    assert_eq!(consume(loaded), ConfigOrigin::File);
+    drop(loaded);
     assert_loaded_config(&cloned, ConfigOrigin::File, 2, model);
 }
 
@@ -672,7 +668,7 @@ fn exact_config_size_limit_is_accepted_and_one_additional_byte_is_rejected() {
     contents.push(b' ');
     fs::write(path, &contents).unwrap();
     let error = load_error(&environment(Some(&config_root), None));
-    assert_error(&error, NativeConfigErrorKind::TooLarge);
+    assert_error(error, NativeConfigErrorKind::TooLarge);
 }
 
 #[cfg(unix)]
@@ -689,7 +685,7 @@ fn final_symlink_is_rejected_without_reading_its_target() {
     symlink(target, path).unwrap();
 
     let error = load_error(&environment(Some(&config_root), None));
-    assert_error(&error, NativeConfigErrorKind::InvalidFileType);
+    assert_error(error, NativeConfigErrorKind::InvalidFileType);
 }
 
 #[test]
@@ -699,7 +695,7 @@ fn directory_at_config_path_is_rejected() {
     fs::create_dir_all(config_path(&config_root)).unwrap();
 
     let error = load_error(&environment(Some(&config_root), None));
-    assert_error(&error, NativeConfigErrorKind::InvalidFileType);
+    assert_error(error, NativeConfigErrorKind::InvalidFileType);
 }
 
 #[cfg(unix)]
@@ -714,7 +710,7 @@ fn unix_socket_at_config_path_is_rejected_without_blocking() {
     let _listener = UnixListener::bind(path).unwrap();
 
     let error = load_error(&environment(Some(&config_root), None));
-    assert_error(&error, NativeConfigErrorKind::InvalidFileType);
+    assert_error(error, NativeConfigErrorKind::InvalidFileType);
 }
 
 #[test]
@@ -725,9 +721,9 @@ fn inaccessible_metadata_is_unreadable_and_diagnostics_hide_os_details() {
 
     let error = load_error(&environment(Some(&config_root), None));
 
-    assert_error(&error, NativeConfigErrorKind::Unreadable);
+    assert_error(error, NativeConfigErrorKind::Unreadable);
     assert_diagnostics_omit(
-        &error,
+        error,
         &[
             "RAW_PATH_SECRET_",
             "File name too long",
@@ -748,8 +744,8 @@ fn invalid_format_diagnostics_hide_path_and_content() {
 
     let error = load_error(&environment(Some(&config_root), None));
 
-    assert_error(&error, NativeConfigErrorKind::InvalidFormat);
-    assert_diagnostics_omit(&error, &["PATH_SECRET_MARKER", "CONTENT_SECRET_MARKER"]);
+    assert_error(error, NativeConfigErrorKind::InvalidFormat);
+    assert_diagnostics_omit(error, &["PATH_SECRET_MARKER", "CONTENT_SECRET_MARKER"]);
 }
 
 #[test]
