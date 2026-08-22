@@ -55,17 +55,18 @@ is consulted. `NativeReferenceHost` constructs one concrete shared store and
 wires that same allocation into both components; an impossible internal
 mismatch maps to its existing redacted engine-construction stage.
 
-The only new native authority is a bounded operating-system random source used
-to allocate an incarnation for `create` and `reset`. Production uses the
-operating system's cryptographic random source. It must not fall back to a
-timestamp, process or thread ID, counter, model output, session ID hash, or
-general-purpose deterministic generator. Tests may inject a deterministic
-incarnation source at the trusted native boundary; production composition does
-not expose that override as ambient or model-controlled input.
+Default production composition through `NativeReferenceHost` adds only one new
+native authority: a bounded operating-system random source used to allocate an
+incarnation for `create` and `reset`. It must not fall back to a timestamp,
+process or thread ID, counter, model output, session ID hash, or general-purpose
+deterministic generator. Standalone constructors may instead receive a trusted
+custom-host source, whose additional authority and obligations are assigned
+above. Reference-host composition always selects the OS source and does not
+expose the override as ambient, model-controlled, or configuration input.
 
-Each production incarnation carries at least 128 bits from a fixed-size OS
-random draw and is encoded as a valid bounded `SessionIncarnationId`. Its exact
-textual encoding is not a public wire or file-format promise in this candidate.
+Each default production incarnation carries at least 128 bits from a fixed-size
+OS random draw and is encoded as a valid bounded `SessionIncarnationId`. Its
+exact textual encoding is not a public wire or file-format promise in this candidate.
 `MAX_SESSION_INCARNATION_ATTEMPTS` is `8`: reset considers at most eight source
 values and never accepts one equal to the currently stored incarnation. Failure
 to obtain an acceptable value within that bound fails closed before publication
@@ -93,7 +94,8 @@ Those effects remain behind a later explicit call to the core session.
 `create` starts from an exact empty `SessionRecord`:
 
 - the caller's `SessionId` is unchanged;
-- the host supplies a fresh OS-random incarnation;
+- the configured source supplies a fresh incarnation; default reference-host
+  composition uses OS randomness;
 - the unsaved candidate revision is the core zero sentinel;
 - `next_turn_sequence` is `1`; and
 - messages and metadata are empty.
@@ -293,7 +295,7 @@ are:
 | `AlreadyExists` | Atomic create found an existing durable record. |
 | `NotFound` | Resume, replay, or reset found no record. |
 | `LiveSession` | A locally live incompatible lifetime prevents the requested operation. |
-| `IncarnationSource` | Production OS randomness could not supply an acceptable bounded incarnation. |
+| `IncarnationSource` | The configured source failed, or reset exhausted its eight attempts without a value distinct from the durable incarnation. OS entropy failure is the default production case. |
 | `Conflict` | A stored revision/incarnation CAS changed before the requested update. |
 | `Corrupt` | The current file, schema, identity, counters, type, or bounds are invalid. |
 | `Unavailable` | Store I/O, locking, rename, or synchronization failed, possibly after publication. |
