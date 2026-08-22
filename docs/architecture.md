@@ -112,8 +112,9 @@ The composed fifteenth candidate adds a Linux/macOS
 lifecycle share one `Arc<FileSessionStore>` and therefore one retained state
 root. Caller-supplied IDs drive durable create, resume, current-schema record
 replay, and atomic reset; production OS randomness supplies new incarnations.
-No session listing or CLI path is added. Production and fourteen independently
-owned focused tests are green; formal review and exact delivery remain pending;
+No session listing or CLI path is added. Production, fourteen independently
+owned focused tests, and one formal finding regression are green; three-track
+rereview and exact delivery remain pending;
 the contract is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 The seventh slice's exact feature-branch evidence is retained in the

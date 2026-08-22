@@ -43,8 +43,9 @@ The composed fifteenth-slice candidate adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
 the exact file-store instance shared with the engine; the caller still supplies
 the validated session ID and production native code supplies OS-random
-incarnations. Production and fourteen independently owned focused tests are
-green; formal review and exact delivery remain pending. Its normative behavior is in
+incarnations. Production, fourteen independently owned focused tests, and one
+formal finding regression are green; three-track rereview and exact delivery
+remain pending. Its normative behavior is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
 ## Feature and platform boundary
@@ -66,9 +67,11 @@ the composed host always contains the Linux/macOS descriptor-rooted tools and
 file session store. It does not broaden the existing standalone portability of
 core, the AI Gateway codec, custom transports, or the ask adapter.
 
-The fifteenth candidate retains this exact gate. It does not make the
-standalone core engine or session-store trait depend on OS randomness, a native
-filesystem, the HTTP feature, or a runtime.
+The fifteenth candidate's `NativeReferenceHost` integration retains this exact
+gate. The standalone lifecycle API is separately exported on Linux and macOS
+without requiring `ai-gateway-http`; it does not make the standalone core
+engine or session-store trait depend on OS randomness, a native filesystem,
+the HTTP feature, or a runtime.
 
 The public composition and observation surface is:
 

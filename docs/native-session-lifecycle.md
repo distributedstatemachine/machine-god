@@ -1,9 +1,10 @@
 # Native by-ID session lifecycle
 
 Status: composed formal-review candidate for the fifteenth bounded Milestone 03
-slice. Production and fourteen independently owned focused tests are green.
-Three fresh adversarial tracks, exact feature workflows, fast-forward
-integration, exact `main` workflows, and the final delivery record are pending.
+slice. Production, fourteen independently owned focused tests, and one formal
+finding regression are green. Three-track rereview, exact feature workflows,
+fast-forward integration, exact `main` workflows, and the final delivery record
+are pending.
 Fourteen bounded slices are integrated through root-selection final record
 `d6b1b21`; Milestone 03 remains `IN PROGRESS`.
 

@@ -1,6 +1,6 @@
 # Milestone 03 native session-lifecycle review 01
 
-Status: **COMPOSED CANDIDATE — THREE FRESH ADVERSARIAL TRACKS PENDING**
+Status: **INITIAL FINDINGS FIXED — THREE-TRACK REREVIEW PENDING**
 
 ## Candidate lineage
 
@@ -20,6 +20,15 @@ Status: **COMPOSED CANDIDATE — THREE FRESH ADVERSARIAL TRACKS PENDING**
   `81fb0945bb3decf763d7fd9f64cba3773508ee2f`
 - Strict test-lint normalization:
   `d64fe0c6e99f68abadef1fe5df10c3a78795c5f6`
+- Initial exact formal-review candidate:
+  `d223df75a840e4bed816a56017d2a9501882d285`
+- Initial formal API/tests/portability track: **NOT GREEN**; concurrent-create
+  error overclaim, corrected with a deterministic regression at `963f21e`
+- Initial formal security/resources/authority track: **GREEN**
+- Initial formal documentation/evidence track: **NOT GREEN**; five maintained-
+  contract findings corrected at `963f21e`
+- Formal finding regression and documentation fixes:
+  `963f21e9a1c1162599378c3ef2852f16b9d1032f`
 - Integration branch: `agent/m03-native-session-lifecycle`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
@@ -52,8 +61,10 @@ fresh incarnation, revision `old + 1`, next turn sequence `1`, and empty
 messages and metadata. It has no deliberate missing-record interval. A stale
 old handle is fenced by incarnation on its next save.
 
-All lifecycle futures are inert before first poll and detach no work. Polled
-filesystem and entropy work is bounded but synchronous on the polling thread.
+All lifecycle futures are inert before first poll. Lifecycle-owned work and the
+default source detach nothing; polled filesystem and default-source entropy
+work is bounded but synchronous on the polling thread. A trusted custom source
+owns its own effects, latency, allocation, detachment, and uniqueness contract.
 Present loads may create the fixed permanent lock sidecar. A post-rename
 directory-sync failure remains an ambiguous `Unavailable`; callers must
 reconcile by resume or replay instead of blindly retrying a mutating operation.
@@ -69,7 +80,9 @@ machine-god remains a Rust product.
 ## Independent coverage and local gates
 
 The independently owned focused suite contains thirteen standalone lifecycle
-tests and one composed-reference-host test. It covers durable create and
+tests and one composed-reference-host test. The initial formal review adds one
+deterministic standalone local-create-reservation regression, for fifteen
+focused tests total. Coverage includes durable create and
 duplicate preservation; exact resume and turn continuation; bounded read-only
 replay; reset rotation, clearing, revision monotonicity, stale-handle fencing,
 local-live rejection, stale CAS, and prompt/reset races; missing and unpolled
@@ -83,7 +96,7 @@ The composed pre-review candidate is green under:
 - strict locked workspace all-target/all-feature Clippy with `-D warnings`;
 - locked default and all-target/all-feature workspace tests;
 - workspace documentation tests;
-- all fourteen focused lifecycle tests;
+- all fifteen focused lifecycle tests;
 - 129 Python tests with eight expected platform skips on macOS;
 - `cargo deny check` and `cargo audit --no-fetch` against 1,225 cached
   advisories;
@@ -95,7 +108,7 @@ These local checks do not replace exact feature-branch, benchmark-evidence, or
 
 ## Formal adversarial tracks
 
-Three fresh read-only reviewers must inspect one exact candidate SHA:
+Three fresh read-only reviewers inspected exact candidate `d223df75`:
 
 1. public API, independent tests, portability, source compatibility, and
    all-target behavior;
@@ -104,8 +117,27 @@ Three fresh read-only reviewers must inspect one exact candidate SHA:
 3. documentation, evidence, contract consistency, maintained summaries,
    deferred scope, and the Rust-product/Zig-benchmark boundary.
 
-Any confirmed finding changes the behavior candidate and requires all three
-tracks to rereview the same replacement SHA until all report green. Once
+The API track and documentation track both confirmed that the same-engine local
+registry reservation can make a concurrent create return `LiveSession` before
+it reaches the durable CAS, contradicting an `AlreadyExists`-for-every-loser
+documentation promise. Fix `963f21e` distinguishes local registry contention
+from a store-CAS loser and adds a deterministic regression that holds the
+permanent store lock while two same-engine create attempts overlap.
+
+The documentation track also found that maintained prose conflated standalone
+Linux/macOS lifecycle exports with the feature-gated reference host, omitted
+the new host getters from its declared public surface, overclaimed that every
+local handle blocks reset, and assigned arbitrary trusted custom incarnation
+sources the default source's authority and resource guarantees. Fix `963f21e`
+states the standalone/host gates separately, lists both getters, describes the
+actual incompatible/active/divergent local-state rule, and assigns a custom
+source's effects, resource use, latency, detachment, and uniqueness compliance
+to its trusted implementor. No production behavior changed for these contract
+corrections.
+
+All three tracks must now rereview the same replacement candidate until all
+report green. Any confirmed finding changes that candidate and repeats this
+requirement. Once
 behavior is adversarially green, later documentation-only seal and delivery
 records update status and exact workflow evidence only. Per the user's explicit
 instruction, those documentation-only commits are not adversarially reviewed.

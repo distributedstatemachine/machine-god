@@ -55,8 +55,9 @@ The composed fifteenth
 `NativeSessionLifecycle` over the exact shared `FileSessionStore` already used
 by the engine. It does not change this constructor, retained-root identity,
 flat file layout, current schema, ordinary `SessionStore::load`/`save`
-behavior, or direct-caller contract. Production and fourteen independently
-owned focused tests are green; formal review and delivery remain pending.
+behavior, or direct-caller contract. Production, fourteen independently owned
+focused tests, and one formal finding regression are green; three-track
+rereview and delivery remain pending.
 
 ## Stable v1 layout
 
