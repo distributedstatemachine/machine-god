@@ -8,7 +8,9 @@ on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
 `32579779134`, feature benchmark-evidence run `32579779123`, main CI run
 `32580066474`, and main benchmark-evidence run `32580066485` are green.
 The separate schema-v3 configured credential-source extension is a thirteenth
-candidate whose implementation and gates remain pending. Milestone 03 remains
+candidate whose production implementation and independent tests are composed
+and locally green. Adversarial review is in progress; exact remote gates and
+`main` delivery remain pending. Milestone 03 remains
 `IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
@@ -239,7 +241,6 @@ The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature
 gates, fast-forward integration, and exact `main` gates are green. The combined
 credential-and-configuration item remains unchecked while the thirteenth
-candidate's implementation, independent tests, three adversarial tracks, exact
-feature gates, fast-forward integration, and exact `main` gates remain pending.
-It may be checked only after all those gates are green. Milestone 03 remains in
-progress.
+candidate's three adversarial tracks, exact feature gates, fast-forward
+integration, and exact `main` gates remain pending. It may be checked only
+after all those gates are green. Milestone 03 remains in progress.

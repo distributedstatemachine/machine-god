@@ -5,8 +5,9 @@ engine. This page defines the exact Milestone 03 config/status slice. The
 commands inspect process environment and filesystem metadata only; they do not
 parse configuration, create directories, write files, or start the engine.
 The separate [`native configuration schema-v3 candidate`](configuration.md)
-does not change that boundary or any CLI byte documented below. Its
-implementation, tests, adversarial review, remote gates, and `main` delivery
+does not change that boundary or any CLI byte documented below. Its production
+implementation and independent tests are composed and locally green;
+adversarial review is in progress, while exact remote gates and `main` delivery
 remain pending. Provider, transport, model, and credential-source config fields
 remain invisible to this metadata-only surface.
 
