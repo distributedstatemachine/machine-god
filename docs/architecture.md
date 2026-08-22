@@ -100,8 +100,9 @@ reference-host constructors consume those descriptors before production
 credential discovery. Production and 16 independently owned focused tests are
 present, and their focused gates are green. Formal review findings for macOS
 extended ACLs and ambient-umask-dependent fixtures are fixed; all three formal
-tracks must rereview one exact finding-fix SHA. Full gates, remote workflows,
-and `main` integration remain pending. Its candidate contract is
+tracks and full local gates are green on exact behavior SHA `f1dc4751`. Remote
+documentation-seal and delivery workflows plus `main` integration remain
+pending. Its candidate contract is
 in [`native-root-selection.md`](native-root-selection.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
@@ -312,8 +313,9 @@ workspace identity to both tools and its state-root identity to
 `FileSessionStore` without reopening either path. Config selection is validated
 by the composing constructor, and production credential discovery remains after
 the already prepared retained roots are accepted. Production and focused tests
-for this candidate behavior are present; formal adversarial and delivery
-evidence remain pending.
+for this candidate behavior are present; formal adversarial review and full
+local gates are green on exact behavior SHA `f1dc4751`, while delivery evidence
+remains pending.
 
 On the production path, both non-secret roots open before the consumed
 credential snapshot is discovered and its token moves into
@@ -337,8 +339,9 @@ twelfth-slice composition behaviors are adversarially green and integrated on
 `main`; the schema-v3 extension and credential-source validation are integrated
 through final record `f840576a`, with all three fresh adversarial tracks green
 on exact behavior SHA `35ce591e` and exact final-record feature and `main`
-workflows green. Root preparation is a composed fourteenth candidate with
-formal adversarial and delivery gates still pending.
+workflows green. Root preparation is an adversarially green fourteenth
+candidate on exact behavior SHA `f1dc4751`; documentation-seal and delivery
+gates remain pending.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

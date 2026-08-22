@@ -292,10 +292,11 @@ macOS ACL finding is fixed by descriptor-bound rejection at `8ae17db` with its
 independent regression at `041c83c`. The protective macOS HOME deny-delete
 compatibility regression is `bb2a856`. The focused suites are green, including
 11 core tests under default and all features; its policy and Rustdoc fix is
-`fa94d8a`. Formal rereview, full local gates,
-exact feature workflows, fast-forward integration, exact `main` workflows, and
-the final delivery record remain pending. The candidate contract and review
-record are in
+`fa94d8a`. All three formal tracks and full local gates are green on exact
+behavior SHA `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`.
+Documentation-seal workflows, exact feature delivery, fast-forward integration,
+exact `main` workflows, and the final delivery record remain pending. The
+candidate contract and review record are in
 [`native-root-selection.md`](native-root-selection.md) and
 [`m03-native-root-selection-review-01.md`](reviews/m03-native-root-selection-review-01.md).
 

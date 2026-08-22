@@ -1,6 +1,6 @@
 # Milestone 03 native root-selection review 01
 
-Status: **FINDING FIXES COMPOSED — exact-SHA formal rereview and delivery gates pending**
+Status: **ADVERSARIALLY GREEN — documentation-seal and delivery gates pending**
 
 ## Candidate lineage
 
@@ -57,12 +57,18 @@ Status: **FINDING FIXES COMPOSED — exact-SHA formal rereview and delivery gate
   and fixed at `fa94d8a`
 - First documentation/evidence rereview on `107d434`: **NOT GREEN**; the same
   medium HOME-ACL compatibility finding plus one medium stale README/reference-
-  host evidence finding, fixed in the next finding-fix candidate
-- Next exact finding-fix behavior candidate: this reconciliation commit; exact
-  SHA reported at handoff
-- Adversarially green behavior: pending
+  host evidence finding, fixed at `f1dc4751`
+- Second exact finding-fix behavior candidate:
+  `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`
+- Second API/tests/portability rereview on `f1dc4751`: **GREEN**
+- Second security/resources/authority rereview on `f1dc4751`: **GREEN**
+- Second documentation/evidence rereview on `f1dc4751`: **GREEN**
+- Adversarially green behavior:
+  `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`
+- Full local gates on `f1dc4751`: **GREEN**
 - Exact feature-gate SHA and workflows: pending
-- Documentation seal and workflows: pending
+- Documentation seal: this documentation-only commit; exact SHA and workflows
+  reported at handoff
 - Exact `main` delivery and workflows: pending
 - Final delivery record and workflows: pending
 - Integration branch: `agent/m03-native-root-selection`
@@ -75,10 +81,10 @@ composed, and focused root-selection and prepared-host gates are green. The
 initial formal review produced one confirmed portability finding plus one
 confirmed security finding. First rereview produced a Rustdoc mismatch, a
 protective macOS HOME-ACL compatibility issue, and stale summary evidence. All
-are fixed in this candidate. No required formal track is yet green on the same
-exact finding-fix behavior SHA,
-and feature, `main`, and final-delivery gates remain pending. Milestone 03
-remains `IN PROGRESS`.
+are fixed. All three formal tracks are green together on exact behavior SHA
+`f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`, and full local gates are green.
+Documentation-seal, feature, `main`, and final-delivery gates remain pending.
+Milestone 03 remains `IN PROGRESS`.
 
 ## Candidate behavior
 
@@ -178,9 +184,14 @@ other or combined permissions, malformed data, and read errors still fail
 closed. An independent HOME-fallback regression at `bb2a856` is red on the
 reject-any implementation and green on the refinement.
 
-All three tracks must now rereview this exact finding-fix candidate. Every
-additional confirmed finding must be fixed, and all three must report green
-together on the same exact behavior SHA before feature delivery.
+All three tracks rereviewed exact finding-fix SHA `f1dc4751` and reported green
+together. API/portability confirmed the Rustdoc, ambient-umask, source-
+compatibility, platform-cfg, and both ACL regression boundaries. Security
+confirmed the exact deny-delete policy restores ordinary macOS `HOME` without
+granting authority and that ALLOW, unknown, malformed, and read-error policy
+remains descriptor-bound and fail-closed. Documentation confirmed the contract,
+test counts, maintained summaries, evidence, deferred scope, links, and
+Rust-product/Zig-benchmark boundary.
 
 The later documentation-only seal and delivery records will update evidence and
 status text only. Per the delivery workflow and the user's explicit instruction,
@@ -189,21 +200,23 @@ production behavior is already green.
 
 ## Candidate documentation checks
 
-This composed documentation reconciliation passes:
+The exact behavior candidate's local gates pass:
 
-- exact Rust/Cargo 1.94.1 workspace doc tests: two passed, zero failed;
 - `cargo +1.94.1 fmt --all -- --check`;
-- 169 repository-relative links across 48 Markdown files with none missing; and
+- exact Rust/Cargo 1.94.1 strict workspace all-target/all-feature Clippy;
+- default and all-feature workspace tests plus workspace documentation tests;
+- 129 Python tests with eight expected macOS skips;
+- both dependency-policy and vulnerability audits;
+- native macOS focused ACL tests, available Apple/FreeBSD/WASI checks, and the
+  release CLI smoke test; and
 - `git diff --check`.
 
-These checks and the focused production tests are not formal adversarial-
-review, feature-workflow, benchmark, or `main` evidence.
+These local checks are not feature-workflow, benchmark, or `main` evidence.
 
 ## Remaining scope
 
-Three exact-SHA formal rereviews, any resulting fixes and further rereviews,
-full local gates, exact feature workflows, a fast-forward without force to `main`,
-exact `main` workflows, and final delivery evidence remain pending. Session
-lifecycle and reset/new-incarnation behavior, the remaining native tools, CLI
-expansion, release-binary end-to-end host evidence, and compatibility promotion
-remain open. No package or GitHub release is authorized.
+Documentation-seal workflows, exact feature workflows, a fast-forward without
+force to `main`, exact `main` workflows, and final delivery evidence remain
+pending. Session lifecycle and reset/new-incarnation behavior, the remaining
+native tools, CLI expansion, release-binary end-to-end host evidence, and
+compatibility promotion remain open. No package or GitHub release is authorized.

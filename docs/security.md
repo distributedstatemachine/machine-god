@@ -81,9 +81,10 @@ extended ACL through the retained descriptor, and preserves credential
 discovery after retained-root preparation. Production and 16 independently
 owned focused tests are present, and focused gates are green. Formal review of
 the initial exact candidate found and drove fixes for macOS extended ACLs and
-ambient-umask-dependent fixtures. All three formal tracks must rereview the same
-finding-fix SHA; full gates, remote workflows, and `main` integration remain
-pending. Its candidate security boundary is in
+ambient-umask-dependent fixtures. All three formal tracks and full local gates
+are green on exact behavior SHA `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`;
+documentation-seal workflows, exact feature delivery, and `main` integration
+remain pending. Its candidate security boundary is in
 [`native-root-selection.md`](native-root-selection.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -254,8 +255,9 @@ while the winner normalizes an owner-bit-masked new directory; it never chmods
 the `EEXIST` entry.
 Prepared-root reference-host constructors consume the retained descriptors;
 production credential discovery follows acceptance of those roots. Production
-and focused tests cover this candidate behavior; formal adversarial and delivery
-evidence remain pending.
+and focused tests cover this candidate behavior; formal adversarial review and
+full local gates are green on exact behavior SHA `f1dc4751`, while delivery
+evidence remains pending.
 
 The integrated file-session slice does not consume those status-derived state
 paths.
