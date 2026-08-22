@@ -1,10 +1,11 @@
 # Native ask permission handler
 
-Status: Milestone 03 ninth-slice candidate. The implementation and black-box
-tests are present on the feature branch. This document fixes their intended
-contract while adversarial-review remediation, exact feature-SHA remote CI, and
-integration and verification on `main` remain required. It is not evidence
-that the slice is integrated or that the CLI prompts today.
+Status: Milestone 03 ninth-slice candidate. The implementation, black-box
+tests, three-track adversarial review, and exact feature-SHA remote workflows
+are green at `144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`. This document fixes the
+intended contract while its documentation seal and integration and verification
+on `main` remain required. It is not evidence that the slice is integrated or
+that the CLI prompts today.
 
 `AskPermissionHandler` is an executor-neutral native adapter from core's
 `PermissionHandler` boundary to an explicitly injected `PermissionPrompter`.
@@ -141,10 +142,11 @@ grant decisions.
 
 ## Integration gate
 
-Feature-branch code, tests, and local checks do not by themselves make this an
-integrated slice. This slice may be described as the ninth integrated
-Milestone 03 slice only after three fresh adversarial reviews have no confirmed
-open findings, remote CI is green for the exact reviewed feature SHA, the
-feature is fast-forwarded to `main`, and the exact `main` checks are green.
-Until then, this document is a candidate contract and all existing CLI bytes
-remain unchanged.
+Feature-branch code, tests, local checks, adversarial review, and remote checks
+do not by themselves make this an integrated slice. The first four gates are
+green and recorded in the
+[`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
+This slice may be described as the ninth integrated Milestone 03 slice only
+after the documentation seal is green, the feature is fast-forwarded to
+`main`, and the exact `main` checks are green. Until then, this document is a
+candidate contract and all existing CLI bytes remain unchanged.

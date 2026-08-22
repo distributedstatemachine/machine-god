@@ -23,8 +23,10 @@ checks are green; it is integrated at
 wiring, a concrete prompt UI, broader session lifecycle features, the remaining
 native tools, and compatibility work remain planned. A ninth bounded candidate
 defines an executor-neutral, fail-closed native `AskPermissionHandler` over an
-explicitly injected prompter. It has no CLI or terminal authority and is not an
-integrated-slice claim; see its [candidate contract](docs/ask-permission.md).
+explicitly injected prompter. Its adversarial review and exact feature-SHA
+remote workflows are green, but its documentation seal and `main` gates remain;
+it has no CLI or terminal authority and is not yet an integrated-slice claim.
+See its [candidate contract](docs/ask-permission.md).
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),

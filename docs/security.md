@@ -31,10 +31,13 @@ and benchmark run `32541315997` are green.
 A ninth bounded candidate defines the fail-closed native
 `AskPermissionHandler` over an explicitly injected `PermissionPrompter`. It
 does not contain a prompt UI or change CLI behavior. Its implementation and
-black-box tests are present on the feature branch, but it is not an integrated
-slice until adversarial-review remediation, exact feature-SHA remote CI, and
-`main` integration and verification evidence are available. Permission mode
-remains `ask`; CLI registration and a concrete prompt remain future work. The
+black-box tests are present on the feature branch. Its three-track adversarial
+review and exact feature-SHA remote workflows are green at
+`144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`, as recorded in the
+[`ask permission handler review`](reviews/m03-ask-permission-review-01.md), but
+it is not an integrated slice until the documentation seal and `main`
+integration and verification evidence are available. Permission mode remains
+`ask`; CLI registration and a concrete prompt remain future work. The
 candidate's exact security boundary is in
 [`ask-permission.md`](ask-permission.md).
 

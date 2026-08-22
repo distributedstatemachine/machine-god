@@ -36,9 +36,12 @@ it is integrated on `main` at
 and benchmark run `32541315997` are green.
 The ninth candidate supplies an executor-neutral, fail-closed native
 `AskPermissionHandler` over an explicitly injected `PermissionPrompter`. It is
-implemented and covered by black-box tests on its feature branch, but is not
-yet an integrated-slice claim: adversarial-review remediation, exact
-feature-SHA remote CI, and `main` integration and verification remain required.
+implemented and covered by black-box tests on its feature branch. Its
+three-track adversarial review and exact feature-SHA remote workflows are green
+at `144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`, as recorded in the
+[`ask permission handler review`](reviews/m03-ask-permission-review-01.md), but
+it is not yet an integrated-slice claim: the documentation seal and `main`
+integration and verification remain required.
 Its fixed candidate contract is in [`ask-permission.md`](ask-permission.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);

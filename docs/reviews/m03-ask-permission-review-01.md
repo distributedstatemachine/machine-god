@@ -1,6 +1,6 @@
 # Milestone 03 native ask permission handler review 01
 
-Status: **FEATURE REVIEW GREEN — remote and `main` gates pending**
+Status: **FEATURE GREEN — documentation seal and `main` delivery pending**
 
 ## Reviewed lineage
 
@@ -112,13 +112,21 @@ AWS-LC dependency and is not an applicable portability gate for this
 unconditional standard-library-only slice. Native Linux and macOS all-feature
 coverage remains owned by remote CI.
 
-## Pending remote gates
+## Exact feature-branch remote gates
 
-The exact reviewed feature SHA has not yet been pushed or exercised by remote
-CI. The slice remains a candidate until the feature branch passes exact-SHA CI
-and benchmark-evidence workflows, is fast-forwarded to `main`, and exact `main`
-workflows pass. This section must be updated with those run IDs before the
-slice is described as delivered.
+The exact reviewed feature SHA
+`144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396` passed both required remote
+workflows on the feature branch:
+
+- [CI run 32569389987](https://github.com/distributedstatemachine/machine-god/actions/runs/32569389987)
+  is green for quality and tests, dependency audit, and all four native target
+  jobs.
+- [Benchmark evidence run 32569389964](https://github.com/distributedstatemachine/machine-god/actions/runs/32569389964)
+  is green for the pinned-upstream and bootstrap-evidence jobs.
+
+The slice remains a candidate until this documentation seal also passes its
+exact feature-branch workflows, the branch is fast-forwarded to `main`, and
+the exact `main` workflows pass.
 
 ## Scope
 
