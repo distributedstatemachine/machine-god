@@ -7,6 +7,8 @@ use std::io;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 
@@ -343,6 +345,34 @@ fn preparation_rejects_wrong_kinds_symlinks_and_unsafe_existing_modes() {
         PreparedNativeRootsErrorKind::UnsafeStateDirectory
     );
     assert_eq!(mode(&public_final), 0o750);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn preparation_rejects_a_state_base_acl_without_creating_the_fixed_suffix() {
+    let temporary = TemporaryDirectory::new();
+    let workspace = temporary.path().join("workspace");
+    let state_base = temporary.path().join("state-base-with-acl");
+    create_private_dir(&workspace);
+    create_private_dir(&state_base);
+
+    let status = Command::new("/bin/chmod")
+        .args(["+a", "everyone allow search"])
+        .arg(&state_base)
+        .status()
+        .expect("macOS chmod executable is available");
+    assert!(
+        status.success(),
+        "failed to install the ACL fixture: {status}"
+    );
+    assert_eq!(mode(&state_base), 0o700);
+
+    let error = PreparedNativeRoots::prepare(select(&workspace, &state_base)).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        PreparedNativeRootsErrorKind::UnsafeStateDirectory
+    );
+    assert!(!state_base.join("machine-god").exists());
 }
 
 #[test]
