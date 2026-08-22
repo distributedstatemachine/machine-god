@@ -1,7 +1,7 @@
 # Milestone 03 native `file_info` review 01
 
-Status: **PRODUCTION AND TEST CANDIDATE PRESENT — three adversarial tracks,
-required full local gates, and remote delivery pending**
+Status: **LOCAL CANDIDATE GREEN — three adversarial tracks and remote delivery
+pending**
 
 ## Candidate
 
@@ -12,7 +12,9 @@ required full local gates, and remote delivery pending**
 - Production-and-test composed head: `f228c06bbda5d01b50905c66f378a2b29e0560bf`
 - Documentation component: `b5d30d617378d09ec24552844c6233ef25ba1aa4`
 - First fully composed candidate: `8ceef6d2c4193902c5750baea663dfe5bc396863`
-- Test-evidence documentation follow-up: pending
+- Isolated test-evidence documentation follow-up:
+  `039dd03ce285c46a677062e18e8953776afcdc6d`
+- Composed local-gate precursor: `0973acfaa41b198f952fbdc204ee3d3cc462f2f4`
 - Formal review head: pending
 - Delivery branch: `agent/m03-file-info`
 - Toolchain: Rust and Cargo 1.94.1 exactly
@@ -86,9 +88,11 @@ The coordinator will compose those component commits onto
 documentation must be present together before formal review begins.
 
 All 34 focused direct, real-engine, root-preparation, and reference-host tests
-are green at production-and-test composed head `f228c06`. Required full local
-gates and the final exact composed behavior SHA remain pending until the
-documentation component is integrated.
+are green at production-and-test composed head `f228c06`. The documentation
+component and its test-evidence follow-up compose through `0973acf`, where the
+required local gates below are green. The formal-review SHA is the
+documentation-only descendant that records this evidence; reviewers receive
+that exact SHA directly.
 
 ## Required adversarial tracks
 
@@ -106,14 +110,16 @@ green on the same exact behavior SHA. Per the user's delivery instruction, a
 later documentation-only seal or delivery-evidence commit does not require an
 additional adversarial cycle after production behavior is green.
 
-## Pending local and remote gates
+## Local and pending remote gates
 
-Focused direct and real-engine tests run first. The exact composed candidate
-must then pass formatting, workspace/all-target/all-feature warnings-denied
-Clippy, workspace tests, documentation tests, repo-wide Python tests,
-dependency policy and vulnerability checks, the pinned compatibility-inventory
-check, and release-binary bare/help/status smoke checks under Rust and Cargo
-1.94.1 exactly.
+The 34 focused tests, formatting, workspace/all-target/all-feature
+warnings-denied Clippy, workspace tests, documentation tests, dependency policy
+and vulnerability checks, pinned compatibility-inventory check, and
+release-binary bare/help/status smoke checks are green under Rust and Cargo
+1.94.1 exactly. The 129-test repository Python gate initially had one
+load-induced two-second timeout while a release build ran in parallel; that
+same regression reran green in isolation before the complete suite was rerun
+serially. This candidate changes no benchmark behavior.
 
 After all three adversarial tracks are green, the coordinator must push the
 feature branch without force and wait for exact feature-SHA CI and benchmark-

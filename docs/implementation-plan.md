@@ -439,10 +439,10 @@ deterministic alphabetical order. Prepared roots transfer descriptor clones of
 the same retained workspace identity so all three tools receive one descriptor
 instance. Production is present at isolated SHA `5c2d129`; independent direct
 and engine tests are present at isolated SHA `ca0091c` and compose with
-production at `f228c06`, where all 34 focused tests are green. Three fresh
-adversarial tracks, required full local gates, exact feature and `main`
-workflows, and final delivery evidence remain pending. The first fully composed
-candidate is `8ceef6d`.
+production at `f228c06`, where all 34 focused tests are green. Required local
+gates are green through composed precursor `0973acf`. Three fresh adversarial
+tracks, exact feature and `main` workflows, and final delivery evidence remain
+pending. The first fully composed candidate is `8ceef6d`.
 The slice adds no CLI behavior, non-Linux/macOS hardening, content or target
 reading, mutation, recursion, MIME/hash/ownership/mode/ACL/xattr reporting,
 extra timestamps, compatibility/equivalence claim, benchmark, or performance
@@ -507,8 +507,9 @@ gate:
   diagnostics, cancellation/drop tests, and platform scope stated before
   integration. The seventeenth candidate supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
-  but adversarial review, required full local gates, and exact remote delivery
-  remain pending, so this combined item stays unchecked.
+  and required local gates are green through composed precursor `0973acf`.
+  Adversarial review and exact remote delivery remain pending, so this combined
+  item stays unchecked.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

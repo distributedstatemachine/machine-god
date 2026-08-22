@@ -125,9 +125,9 @@ workspace identity with `list_files` and `read_file`, follows no selected
 symlink, and does not open the final component. Final symlinks therefore report
 themselves, while FIFO, socket, device, and other special objects can be
 classified without a blocking open. Production `5c2d129` and independent tests
-`ca0091c` compose at `f228c06`, where all 34 focused tests are green. Three
-fresh adversarial tracks, required full local gates, and exact feature and
-`main` delivery remain pending.
+`ca0091c` compose at `f228c06`, where all 34 focused tests are green, and the
+required local gates are green through composed precursor `0973acf`. Three
+fresh adversarial tracks and exact feature and `main` delivery remain pending.
 Its security contract is in [`file-info.md`](file-info.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
