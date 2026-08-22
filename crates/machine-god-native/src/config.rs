@@ -13,8 +13,8 @@ use serde_json::value::RawValue;
 use super::ai_gateway::{AI_GATEWAY_DEFAULT_MODEL, valid_model};
 use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file};
 
-/// Configuration schema version understood by this native host.
-pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+/// Current configuration schema version used by this native host.
+pub const CONFIG_SCHEMA_VERSION: u32 = 3;
 
 /// Maximum number of bytes retained while loading a native configuration.
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -53,6 +53,23 @@ impl NativeTransportKind {
     }
 }
 
+/// Credential source selected by a native host configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeCredentialSourceKind {
+    /// Discover credentials from the native host environment snapshot.
+    Environment,
+}
+
+impl NativeCredentialSourceKind {
+    /// Returns the stable, machine-readable credential-source name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Environment => "environment",
+        }
+    }
+}
+
 /// Validated native host configuration.
 #[derive(Clone, Eq, PartialEq)]
 pub struct NativeConfig {
@@ -61,6 +78,7 @@ pub struct NativeConfig {
     provider: NativeProviderKind,
     transport: NativeTransportKind,
     model: String,
+    credential_source: NativeCredentialSourceKind,
 }
 
 impl NativeConfig {
@@ -93,6 +111,12 @@ impl NativeConfig {
     pub fn model(&self) -> &str {
         &self.model
     }
+
+    /// Returns the configured credential source.
+    #[must_use]
+    pub const fn credential_source(&self) -> NativeCredentialSourceKind {
+        self.credential_source
+    }
 }
 
 impl Default for NativeConfig {
@@ -103,6 +127,7 @@ impl Default for NativeConfig {
             provider: NativeProviderKind::VercelAiGateway,
             transport: NativeTransportKind::AiGatewayHttp,
             model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
+            credential_source: NativeCredentialSourceKind::Environment,
         }
     }
 }
@@ -116,6 +141,7 @@ impl fmt::Debug for NativeConfig {
             .field("provider", &self.provider)
             .field("transport", &self.transport)
             .field("model", &"<redacted>")
+            .field("credential_source", &self.credential_source)
             .finish()
     }
 }
@@ -297,7 +323,8 @@ fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError
     let schema_version = validate_schema_version(&bytes)?;
     let config = match schema_version {
         1 => parse_v1_config(&bytes)?,
-        CONFIG_SCHEMA_VERSION => parse_v2_config(&bytes)?,
+        2 => parse_v2_config(&bytes)?,
+        3 => parse_v3_config(&bytes)?,
         _ => unreachable!("validated schema version is supported"),
     };
     Ok(LoadedNativeConfig::from_file(config))
@@ -308,8 +335,13 @@ fn validate_schema_version(bytes: &[u8]) -> Result<u32, NativeConfigError> {
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
     let version = envelope.schema_version.get();
     if is_json_integer(version) {
-        if let Ok(version @ (1 | CONFIG_SCHEMA_VERSION)) = version.parse::<u32>() {
-            return Ok(version);
+        if let Ok(version) = version.parse::<u32>() {
+            match version {
+                1 => return Ok(1),
+                2 => return Ok(2),
+                3 => return Ok(3),
+                _ => {}
+            }
         }
         return Err(NativeConfigError::new(
             NativeConfigErrorKind::UnsupportedSchemaVersion,
@@ -331,13 +363,14 @@ fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
+        credential_source: NativeCredentialSourceKind::Environment,
     })
 }
 
 fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     let wire: WireNativeConfigV2 = serde_json::from_slice(bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
-    debug_assert_eq!(wire.schema_version, CONFIG_SCHEMA_VERSION);
+    debug_assert_eq!(wire.schema_version, 2);
     if wire.permission_mode != "ask"
         || wire.provider != "vercel_ai_gateway"
         || wire.transport != "ai_gateway_http"
@@ -351,6 +384,29 @@ fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
+        credential_source: NativeCredentialSourceKind::Environment,
+    })
+}
+
+fn parse_v3_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    let wire: WireNativeConfigV3 = serde_json::from_slice(bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    debug_assert_eq!(wire.schema_version, CONFIG_SCHEMA_VERSION);
+    if wire.permission_mode != "ask"
+        || wire.provider != "vercel_ai_gateway"
+        || wire.transport != "ai_gateway_http"
+        || !valid_model(&wire.model)
+        || wire.credential_source != "environment"
+    {
+        return Err(NativeConfigError::new(NativeConfigErrorKind::InvalidFormat));
+    }
+    Ok(NativeConfig {
+        schema_version: wire.schema_version,
+        permission_mode: PermissionMode::Ask,
+        provider: NativeProviderKind::VercelAiGateway,
+        transport: NativeTransportKind::AiGatewayHttp,
+        model: wire.model,
+        credential_source: NativeCredentialSourceKind::Environment,
     })
 }
 
@@ -414,6 +470,17 @@ struct WireNativeConfigV2 {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireNativeConfigV3 {
+    schema_version: u32,
+    permission_mode: String,
+    provider: String,
+    transport: String,
+    model: String,
+    credential_source: String,
+}
+
+#[derive(Deserialize)]
 struct WireSchemaEnvelope<'a> {
     #[serde(borrow)]
     schema_version: &'a RawValue,
@@ -423,7 +490,7 @@ struct WireSchemaEnvelope<'a> {
 mod tests {
     use super::{
         CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES, NativeConfig, NativeConfigErrorKind,
-        NativeProviderKind, NativeTransportKind, load_native_config,
+        NativeCredentialSourceKind, NativeProviderKind, NativeTransportKind, load_native_config,
     };
     use crate::ai_gateway::valid_model;
     use crate::{
@@ -495,6 +562,18 @@ mod tests {
         .unwrap()
     }
 
+    fn valid_v3_document(model: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 3,
+            "permission_mode": "ask",
+            "provider": "vercel_ai_gateway",
+            "transport": "ai_gateway_http",
+            "model": model,
+            "credential_source": "environment",
+        }))
+        .unwrap()
+    }
+
     fn assert_config(config: &NativeConfig, schema_version: u32, model: &str) {
         assert_eq!(config.schema_version(), schema_version);
         assert_eq!(config.permission_mode(), PermissionMode::Ask);
@@ -503,6 +582,11 @@ mod tests {
         assert_eq!(config.transport(), NativeTransportKind::AiGatewayHttp);
         assert_eq!(config.transport().as_str(), "ai_gateway_http");
         assert_eq!(config.model(), model);
+        assert_eq!(
+            config.credential_source(),
+            NativeCredentialSourceKind::Environment
+        );
+        assert_eq!(config.credential_source().as_str(), "environment");
     }
 
     #[test]
@@ -545,7 +629,19 @@ mod tests {
         );
 
         let loaded = load_native_config(&temporary.environment()).unwrap();
-        assert_eq!(CONFIG_SCHEMA_VERSION, 2);
+        assert_eq!(loaded.origin(), ConfigOrigin::File);
+        assert_config(loaded.config(), 2, "custom/model");
+    }
+
+    #[test]
+    fn exact_v3_schema_loads_all_selected_fields() {
+        let temporary = TestDirectory::new("valid-v3");
+        temporary.write_config(
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"custom/model","credential_source":"environment"}"#,
+        );
+
+        let loaded = load_native_config(&temporary.environment()).unwrap();
+        assert_eq!(CONFIG_SCHEMA_VERSION, 3);
         assert_eq!(loaded.origin(), ConfigOrigin::File);
         assert_config(loaded.config(), CONFIG_SCHEMA_VERSION, "custom/model");
     }
@@ -553,7 +649,7 @@ mod tests {
     #[test]
     fn config_debug_redacts_the_model_but_reports_structure() {
         let temporary = TestDirectory::new("debug-redaction");
-        temporary.write_config(&valid_v2_document("private-model-marker"));
+        temporary.write_config(&valid_v3_document("private-model-marker"));
 
         let loaded = load_native_config(&temporary.environment()).unwrap();
         let config_debug = format!("{:?}", loaded.config());
@@ -576,6 +672,7 @@ mod tests {
             br#"{"schema_version":1,"schema_version":1,"permission_mode":"ask"}"#,
             br#"{"schema_version":"1","permission_mode":"ask"}"#,
             br#"{"schema_version":1,"permission_mode":"deny"}"#,
+            br#"{"schema_version":1,"permission_mode":"ask","credential_source":"environment"}"#,
             br#"{"schema_version":1,"permission_mode":"ask"} trailing"#,
             b"{\"schema_version\":1,\"permission_mode\":\"ask\xff\"}",
         ];
@@ -599,6 +696,7 @@ mod tests {
             br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":1}"#,
             br#"{"schema_version":2,"permission_mode":"ask"}"#,
             br#"{"schema_version":1,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model"}"#,
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","credential_source":"environment"}"#,
         ];
 
         for (index, document) in invalid_documents.iter().enumerate() {
@@ -610,9 +708,27 @@ mod tests {
     }
 
     #[test]
+    fn strict_v3_schema_requires_exact_credential_source_and_shape() {
+        let invalid_documents: &[&[u8]] = &[
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model"}"#,
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","credential_source":"other"}"#,
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","credential_source":true}"#,
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","credential_source":"environment","extra":true}"#,
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","credential_source":"environment","credential_source":"environment"}"#,
+        ];
+
+        for (index, document) in invalid_documents.iter().enumerate() {
+            let temporary = TestDirectory::new(&format!("invalid-v3-{index}"));
+            temporary.write_config(document);
+            let error = load_native_config(&temporary.environment()).unwrap_err();
+            assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFormat);
+        }
+    }
+
+    #[test]
     fn unsupported_schema_version_has_its_own_kind() {
         let temporary = TestDirectory::new("unsupported-version");
-        temporary.write_config(br#"{"schema_version":3,"permission_mode":"ask"}"#);
+        temporary.write_config(br#"{"schema_version":4,"permission_mode":"ask"}"#);
 
         let error = load_native_config(&temporary.environment()).unwrap_err();
         assert_eq!(
@@ -624,7 +740,7 @@ mod tests {
     #[test]
     fn future_and_arbitrary_size_integer_versions_are_classified_before_v1_fields() {
         for (index, document) in [
-            br#"{"schema_version":3,"permission_mode":"future","new_field":true}"#.as_slice(),
+            br#"{"schema_version":4,"permission_mode":"future","new_field":true}"#.as_slice(),
             br#"{"schema_version":18446744073709551616}"#.as_slice(),
             br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
         ]
@@ -645,7 +761,7 @@ mod tests {
     #[test]
     fn invalid_utf8_in_an_ignored_future_field_is_still_invalid_format() {
         let temporary = TestDirectory::new("future-invalid-utf8");
-        temporary.write_config(b"{\"schema_version\":3,\"future\":\"\xff\"}");
+        temporary.write_config(b"{\"schema_version\":4,\"future\":\"\xff\"}");
 
         assert_eq!(
             load_native_config(&temporary.environment())
@@ -708,7 +824,7 @@ mod tests {
 
     #[test]
     fn retained_read_is_bounded_at_limit_plus_one() {
-        let valid = valid_v2_document(AI_GATEWAY_DEFAULT_MODEL);
+        let valid = valid_v3_document(AI_GATEWAY_DEFAULT_MODEL);
         let temporary = TestDirectory::new("exact-limit");
         let mut exact_limit = Vec::with_capacity(MAX_CONFIG_BYTES);
         exact_limit.extend_from_slice(&valid);

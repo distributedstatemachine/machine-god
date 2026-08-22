@@ -60,8 +60,8 @@ pub use ask_permission::{
 
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
-    NativeConfigError, NativeConfigErrorKind, NativeProviderKind, NativeTransportKind,
-    load_native_config, load_process_config,
+    NativeConfigError, NativeConfigErrorKind, NativeCredentialSourceKind, NativeProviderKind,
+    NativeTransportKind, load_native_config, load_process_config,
 };
 pub use list_files::{
     LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,

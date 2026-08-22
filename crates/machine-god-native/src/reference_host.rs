@@ -9,8 +9,8 @@ use crate::workspace::WorkspaceRoot;
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AskPermissionHandler, FileSessionStore,
-    LoadedNativeConfig, NativeProviderKind, NativeTransportKind, PermissionMode,
-    PermissionPrompter, discover_ai_gateway_credential,
+    LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind, NativeTransportKind,
+    PermissionMode, PermissionPrompter, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -244,7 +244,8 @@ fn validate_selections(
     loaded_config: &LoadedNativeConfig,
 ) -> Result<(), NativeReferenceHostBuildError> {
     let config = loaded_config.config();
-    if config.provider() != NativeProviderKind::VercelAiGateway
+    if config.credential_source() != NativeCredentialSourceKind::Environment
+        || config.provider() != NativeProviderKind::VercelAiGateway
         || config.transport() != NativeTransportKind::AiGatewayHttp
         || config.permission_mode() != PermissionMode::Ask
     {
