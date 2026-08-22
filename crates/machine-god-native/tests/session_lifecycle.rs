@@ -1,6 +1,6 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::fs;
 use std::future::Future;
@@ -296,7 +296,7 @@ fn create_is_durable_and_duplicate_create_preserves_the_original_record() {
         revision: SessionRevision(1),
         next_turn_sequence: 1,
         messages: Vec::new(),
-        metadata: Default::default(),
+        metadata: BTreeMap::default(),
     };
     assert_eq!(created.record(), expected);
     assert_eq!(load(&store, session_id.clone()), Some(expected));
@@ -654,7 +654,7 @@ fn concurrent_prompt_and_reset_publish_one_complete_lifetime() {
     assert!(
         directory_entries(temporary.path())
             .iter()
-            .all(|name| !name.ends_with(".tmp"))
+            .all(|name| { Path::new(name).extension() != Some(std::ffi::OsStr::new("tmp")) })
     );
 }
 
