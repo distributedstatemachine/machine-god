@@ -9,8 +9,9 @@ use crate::workspace::WorkspaceRoot;
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AskPermissionHandler, FileSessionStore,
-    LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind, NativeTransportKind,
-    PermissionMode, PermissionPrompter, PreparedNativeRoots, discover_ai_gateway_credential,
+    LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
+    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots,
+    discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -93,6 +94,8 @@ impl Error for NativeReferenceHostBuildError {}
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
     engine: Engine,
+    session_store: Arc<FileSessionStore>,
+    session_lifecycle: NativeSessionLifecycle,
     loaded_config: LoadedNativeConfig,
     credential_source: Option<AiGatewayCredentialSource>,
 }
@@ -252,6 +255,19 @@ impl NativeReferenceHost {
         &self.engine
     }
 
+    /// Returns the concrete store shared exactly with the composed engine.
+    #[must_use]
+    pub const fn session_store(&self) -> &Arc<FileSessionStore> {
+        &self.session_store
+    }
+
+    /// Returns by-ID durable lifecycle operations over this host's engine and
+    /// exact concrete store.
+    #[must_use]
+    pub const fn session_lifecycle(&self) -> &NativeSessionLifecycle {
+        &self.session_lifecycle
+    }
+
     /// Returns the exact loaded native configuration retained by this host.
     #[must_use]
     pub const fn loaded_config(&self) -> &LoadedNativeConfig {
@@ -285,9 +301,12 @@ impl NativeReferenceHost {
                 NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
             })?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
+        let session_store = Arc::new(session_store);
+        let engine_session_store: Arc<dyn machine_god_core::SessionStore> =
+            Arc::clone(&session_store) as Arc<dyn machine_god_core::SessionStore>;
         let engine = Engine::builder()
             .provider(provider)
-            .session_store(session_store)
+            .shared_session_store(engine_session_store)
             .permission_handler(permission_handler)
             .tool(list_files)
             .tool(read_file)
@@ -295,9 +314,15 @@ impl NativeReferenceHost {
             .map_err(|_| {
                 NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine)
             })?;
+        let session_lifecycle =
+            NativeSessionLifecycle::new(engine.clone(), Arc::clone(&session_store)).map_err(
+                |_| NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine),
+            )?;
 
         Ok(Self {
             engine,
+            session_store,
+            session_lifecycle,
             loaded_config,
             credential_source,
         })

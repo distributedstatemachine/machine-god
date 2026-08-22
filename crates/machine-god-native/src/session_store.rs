@@ -217,6 +217,57 @@ impl FileSessionStore {
         Self { root }
     }
 
+    pub(crate) fn create_empty_record(
+        &self,
+        mut record: SessionRecord,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        if !is_empty_unsaved_record(&record) || validate_record_json(&record).is_err() {
+            return Err(serialization_failed());
+        }
+        let names = SessionNames::for_id(&record.id);
+        let lock = open_lock(self.root.as_fd(), &names.lock)?;
+        lock_exclusive(&lock)?;
+        if read_record(self.root.as_fd(), &names.data, &record.id)?.is_some() {
+            return Err(revision_conflict());
+        }
+        record.revision = SessionRevision(1);
+        publish_record(self.root.as_fd(), &names, &record)?;
+        Ok(record)
+    }
+
+    pub(crate) fn reset_record(
+        &self,
+        observed: &SessionRecord,
+        mut replacement: SessionRecord,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        if observed.id != replacement.id
+            || !is_empty_unsaved_record(&replacement)
+            || validate_record_json(&replacement).is_err()
+        {
+            return Err(serialization_failed());
+        }
+        let names = SessionNames::for_id(&observed.id);
+        let lock = open_lock(self.root.as_fd(), &names.lock)?;
+        lock_exclusive(&lock)?;
+        let Some(current) = read_record(self.root.as_fd(), &names.data, &observed.id)? else {
+            return Err(revision_conflict());
+        };
+        if current.incarnation_id != observed.incarnation_id
+            || current.revision != observed.revision
+        {
+            return Err(revision_conflict());
+        }
+        replacement.revision = SessionRevision(
+            observed
+                .revision
+                .0
+                .checked_add(1)
+                .ok_or_else(revision_exhausted)?,
+        );
+        publish_record(self.root.as_fd(), &names, &replacement)?;
+        Ok(replacement)
+    }
+
     fn load_unix(&self, id: &SessionId) -> Result<Option<SessionRecord>, SessionStoreError> {
         let names = SessionNames::for_id(id);
         if !probe_data(self.root.as_fd(), &names.data)? {
@@ -264,26 +315,39 @@ impl FileSessionStore {
                 .ok_or_else(revision_exhausted)?,
         );
         record.revision = revision;
-        let bytes = serialize_record(record)?;
-        let temp = create_temp(self.root.as_fd(), &names.temp)?;
-        if let Err(error) = write_all(&temp, &bytes).and_then(|()| sync_file(&temp)) {
-            let _ = rustix::fs::unlinkat(self.root.as_fd(), &names.temp, AtFlags::empty());
-            return Err(map_io_error(error));
-        }
-        if let Err(error) = rustix::fs::renameat(
-            self.root.as_fd(),
-            &names.temp,
-            self.root.as_fd(),
-            &names.data,
-        ) {
-            let _ = rustix::fs::unlinkat(self.root.as_fd(), &names.temp, AtFlags::empty());
-            return Err(map_io_error(error));
-        }
-        if sync_file(&self.root).is_err() {
-            return Err(save_ambiguous());
-        }
+        publish_record(self.root.as_fd(), &names, record)?;
         Ok(revision)
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn is_empty_unsaved_record(record: &SessionRecord) -> bool {
+    record.revision == SessionRevision(0)
+        && record.next_turn_sequence == 1
+        && record.messages.is_empty()
+        && record.metadata.is_empty()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn publish_record(
+    root: rustix::fd::BorrowedFd<'_>,
+    names: &SessionNames,
+    record: &SessionRecord,
+) -> Result<(), SessionStoreError> {
+    let bytes = serialize_record(record)?;
+    let temp = create_temp(root, &names.temp)?;
+    if let Err(error) = write_all(&temp, &bytes).and_then(|()| sync_file(&temp)) {
+        let _ = rustix::fs::unlinkat(root, &names.temp, AtFlags::empty());
+        return Err(map_io_error(error));
+    }
+    if let Err(error) = rustix::fs::renameat(root, &names.temp, root, &names.data) {
+        let _ = rustix::fs::unlinkat(root, &names.temp, AtFlags::empty());
+        return Err(map_io_error(error));
+    }
+    if sync_file(root).is_err() {
+        return Err(save_ambiguous());
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -533,8 +597,8 @@ fn write_all(file: &OwnedFd, mut bytes: &[u8]) -> Result<(), rustix::io::Errno> 
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn sync_file(file: &OwnedFd) -> Result<(), rustix::io::Errno> {
-    retry_interrupted(|| rustix::fs::fsync(file))
+fn sync_file(file: impl AsFd) -> Result<(), rustix::io::Errno> {
+    retry_interrupted(|| rustix::fs::fsync(file.as_fd()))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

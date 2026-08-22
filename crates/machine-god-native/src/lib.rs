@@ -23,6 +23,8 @@ mod read_file;
 mod reference_host;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod root_selection;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod session_lifecycle;
 mod session_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace;
@@ -81,6 +83,12 @@ pub use reference_host::{
 pub use root_selection::{
     NativeRootSelection, NativeRootSelectionError, NativeRootSelectionErrorKind,
     PreparedNativeRoots, PreparedNativeRootsError, PreparedNativeRootsErrorKind,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use session_lifecycle::{
+    MAX_SESSION_INCARNATION_ATTEMPTS, NativeSessionLifecycle, NativeSessionLifecycleBuildError,
+    NativeSessionLifecycleBuildErrorKind, NativeSessionLifecycleError,
+    NativeSessionLifecycleErrorKind, SessionIncarnationSource, SessionIncarnationSourceError,
 };
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,

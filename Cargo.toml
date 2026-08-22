@@ -20,6 +20,7 @@ publish = false
 bytes = { version = "1.12.1", default-features = false, features = ["std"] }
 calcifer-macos-acl = "=0.1.0"
 futures-core = "0.3.31"
+getrandom = "=0.4.3"
 hyper = { version = "=1.11.0", default-features = false }
 libc = "0.2.189"
 machine-god-core = { version = "0.1.0", path = "crates/machine-god-core" }

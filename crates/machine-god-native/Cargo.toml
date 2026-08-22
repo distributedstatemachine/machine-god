@@ -25,6 +25,7 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+getrandom.workspace = true
 sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
