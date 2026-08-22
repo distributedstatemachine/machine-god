@@ -323,6 +323,7 @@ fn strict_schema_v1_rejects_unknown_duplicate_missing_and_wrong_types() {
         r#"{"schema_version":1,"permission_mode":true}"#,
         r#"{"schema_version":1,"permission_mode":1}"#,
         r#"{"schema_version":1,"permission_mode":["ask"]}"#,
+        r#"{"schema_version":1,"permission_mode":{"ask":null}}"#,
     ];
 
     for contents in cases {
@@ -412,6 +413,13 @@ fn strict_schema_v2_rejects_wrong_field_types() {
         ),
         raw_v2_config_json(
             "2",
+            r#"{"ask":null}"#,
+            r#""vercel_ai_gateway""#,
+            r#""ai_gateway_http""#,
+            r#""zai/glm-5.2""#,
+        ),
+        raw_v2_config_json(
+            "2",
             r#""ask""#,
             "1",
             r#""ai_gateway_http""#,
@@ -420,8 +428,22 @@ fn strict_schema_v2_rejects_wrong_field_types() {
         raw_v2_config_json(
             "2",
             r#""ask""#,
+            r#"{"vercel_ai_gateway":null}"#,
+            r#""ai_gateway_http""#,
+            r#""zai/glm-5.2""#,
+        ),
+        raw_v2_config_json(
+            "2",
+            r#""ask""#,
             r#""vercel_ai_gateway""#,
             "[]",
+            r#""zai/glm-5.2""#,
+        ),
+        raw_v2_config_json(
+            "2",
+            r#""ask""#,
+            r#""vercel_ai_gateway""#,
+            r#"{"ai_gateway_http":null}"#,
             r#""zai/glm-5.2""#,
         ),
         raw_v2_config_json(

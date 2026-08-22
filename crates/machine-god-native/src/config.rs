@@ -322,9 +322,12 @@ fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     let wire: WireNativeConfigV1 = serde_json::from_slice(bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
     debug_assert_eq!(wire.schema_version, 1);
+    if wire.permission_mode != "ask" {
+        return Err(NativeConfigError::new(NativeConfigErrorKind::InvalidFormat));
+    }
     Ok(NativeConfig {
         schema_version: wire.schema_version,
-        permission_mode: wire.permission_mode.into(),
+        permission_mode: PermissionMode::Ask,
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
@@ -335,14 +338,18 @@ fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     let wire: WireNativeConfigV2 = serde_json::from_slice(bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
     debug_assert_eq!(wire.schema_version, CONFIG_SCHEMA_VERSION);
-    if !valid_model(&wire.model) {
+    if wire.permission_mode != "ask"
+        || wire.provider != "vercel_ai_gateway"
+        || wire.transport != "ai_gateway_http"
+        || !valid_model(&wire.model)
+    {
         return Err(NativeConfigError::new(NativeConfigErrorKind::InvalidFormat));
     }
     Ok(NativeConfig {
         schema_version: wire.schema_version,
-        permission_mode: wire.permission_mode.into(),
-        provider: wire.provider.into(),
-        transport: wire.transport.into(),
+        permission_mode: PermissionMode::Ask,
+        provider: NativeProviderKind::VercelAiGateway,
+        transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
     })
 }
@@ -393,16 +400,16 @@ fn read_bounded(file: &mut File) -> Result<Vec<u8>, NativeConfigError> {
 #[serde(deny_unknown_fields)]
 struct WireNativeConfigV1 {
     schema_version: u32,
-    permission_mode: WirePermissionMode,
+    permission_mode: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireNativeConfigV2 {
     schema_version: u32,
-    permission_mode: WirePermissionMode,
-    provider: WireProviderKind,
-    transport: WireTransportKind,
+    permission_mode: String,
+    provider: String,
+    transport: String,
     model: String,
 }
 
@@ -410,48 +417,6 @@ struct WireNativeConfigV2 {
 struct WireSchemaEnvelope<'a> {
     #[serde(borrow)]
     schema_version: &'a RawValue,
-}
-
-#[derive(Deserialize)]
-enum WirePermissionMode {
-    #[serde(rename = "ask")]
-    Ask,
-}
-
-impl From<WirePermissionMode> for PermissionMode {
-    fn from(value: WirePermissionMode) -> Self {
-        match value {
-            WirePermissionMode::Ask => Self::Ask,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-enum WireProviderKind {
-    #[serde(rename = "vercel_ai_gateway")]
-    VercelAiGateway,
-}
-
-impl From<WireProviderKind> for NativeProviderKind {
-    fn from(value: WireProviderKind) -> Self {
-        match value {
-            WireProviderKind::VercelAiGateway => Self::VercelAiGateway,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-enum WireTransportKind {
-    #[serde(rename = "ai_gateway_http")]
-    AiGatewayHttp,
-}
-
-impl From<WireTransportKind> for NativeTransportKind {
-    fn from(value: WireTransportKind) -> Self {
-        match value {
-            WireTransportKind::AiGatewayHttp => Self::AiGatewayHttp,
-        }
-    }
 }
 
 #[cfg(test)]
