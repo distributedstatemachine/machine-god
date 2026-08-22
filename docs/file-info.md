@@ -5,10 +5,12 @@ Production is present at isolated SHA
 `5c2d129a3755dca0c8f7913b27614b70352fe2a4`; independent tests are present at
 isolated SHA `ca0091c181d8ffbecda008ee0f981516dc5cff7b` and compose with
 production at `f228c06bbda5d01b50905c66f378a2b29e0560bf`, where all 34
-focused tests are green. The first fully composed candidate is `8ceef6d`, and
-required local gates are green through composed precursor `0973acf`. Three
-fresh adversarial review tracks and exact feature and `main` delivery workflows
-remain pending. `file_info` is a library
+initial focused tests are green. Finding-test hardening composes at `b69ec4b`,
+bringing the focused total to 36 plus five private unit tests. The first formal
+candidate is `8399ec7`; its three tracks were not all green. Required local
+gates were green through precursor `0973acf` and are being rerun on the
+replacement. Three replacement adversarial review tracks and exact feature and
+`main` delivery workflows remain pending. `file_info` is a library
 capability in `machine-god-native`; the current CLI does not construct an engine,
 register this tool, prompt for permission, or change any invocation or output
 byte.

@@ -4,8 +4,9 @@ Status: integrated contract for the twelfth bounded Milestone 03 library slice,
 with its workspace-tool composition extended by a seventeenth candidate.
 Sixteen slices are delivered. Seventeenth-slice production `5c2d129` and
 independent tests `ca0091c` compose at `f228c06`, where all 34 focused tests are
-green, and required local gates are green through composed precursor `0973acf`.
-Three fresh adversarial tracks and exact remote delivery remain pending.
+green. Review hardening composes at `b69ec4b`, bringing the focused total to 36
+plus five private unit tests. The first formal candidate was not green; three
+replacement tracks and exact remote delivery remain pending.
 The first formal sixteenth candidate is composed
 through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
@@ -88,9 +89,9 @@ it. Its bounded structured result and fixed redacted behavior are normative in
 [`file-info.md`](file-info.md). It changes no constructor arguments, provider,
 transport, permission, session, runtime, credential, or CLI authority. The
 candidate's production and independent tests compose at `f228c06`, where all 34
-focused tests are green, and required local gates are green through composed
-precursor `0973acf`. Three fresh adversarial tracks and exact feature and `main`
-workflows remain pending.
+initial focused tests are green. Review hardening composes at `b69ec4b`, bringing
+the focused total to 36 plus five private unit tests. Three replacement tracks
+and exact feature and `main` workflows remain pending.
 
 ## Feature and platform boundary
 
@@ -419,10 +420,10 @@ three replacement tracks are green. Portable behavior `17f1884` and seal
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining native-tool and CLI ownership, compatibility promotion, and
-product-performance claims remain open. Candidate `file_info` adversarial
-review and exact remote delivery also remain open; its required local gates are
-green through composed precursor `0973acf`;
-its production and 34 focused tests are present at `f228c06`. The slice does not alter the pinned fx inventory,
+product-performance claims remain open. Candidate `file_info` replacement
+review and exact remote delivery also remain open; its initial 34 focused tests
+are present at `f228c06`, and finding hardening brings the total to 36 plus five
+private unit tests at `b69ec4b`. The slice does not alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 

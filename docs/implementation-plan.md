@@ -441,9 +441,12 @@ descriptor instances: the original plus two clones. Production is present at
 isolated SHA `5c2d129`; independent direct
 and engine tests are present at isolated SHA `ca0091c` and compose with
 production at `f228c06`, where all 34 focused tests are green. Required local
-gates are green through composed precursor `0973acf`. Three fresh adversarial
-tracks, exact feature and `main` workflows, and final delivery evidence remain
-pending. The first fully composed candidate is `8ceef6d`.
+gates are green through composed precursor `0973acf`. First formal candidate
+`8399ec7` was not green. Isolated finding-test hardening `7f2a292` composes as
+`b69ec4b`, bringing the focused total to 36 plus five private unit tests; the
+two documentation findings are corrected at `9dbd188`. Replacement local gates
+and three replacement adversarial tracks, exact feature and `main` workflows,
+and final delivery evidence remain pending.
 The slice adds no CLI behavior, non-Linux/macOS hardening, content or target
 reading, mutation, recursion, MIME/hash/ownership/mode/ACL/xattr reporting,
 extra timestamps, compatibility/equivalence claim, benchmark, or performance
@@ -508,9 +511,10 @@ gate:
   diagnostics, cancellation/drop tests, and platform scope stated before
   integration. The seventeenth candidate supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
-  and required local gates are green through composed precursor `0973acf`.
-  Adversarial review and exact remote delivery remain pending, so this combined
-  item stays unchecked.
+  with review hardening bringing the focused total to 36 plus five private unit
+  tests at `b69ec4b`. The first formal candidate was not green; replacement
+  local gates, adversarial review, and exact remote delivery remain pending, so
+  this combined item stays unchecked.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

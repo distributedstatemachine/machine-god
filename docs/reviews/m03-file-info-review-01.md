@@ -16,7 +16,10 @@ tracks pending**
   `039dd03ce285c46a677062e18e8953776afcdc6d`
 - Composed local-gate precursor: `0973acfaa41b198f952fbdc204ee3d3cc462f2f4`
 - First formal review head: `8399ec78450d258570e376e0989639d3f70fc976`
-- Finding-fix component: pending
+- Documentation finding record: `9dbd1881e511f30998af66ff643a6ccb6757e04b`
+- Isolated finding-test hardening:
+  `7f2a2924b8e30abdfe572f54dfc51c1bd605a649`
+- Composed finding-fix behavior: `b69ec4b9dc46c4d43202a2c0c5ba499fa8fbd071`
 - Replacement review head: pending
 - Delivery branch: `agent/m03-file-info`
 - Toolchain: Rust and Cargo 1.94.1 exactly
@@ -135,14 +138,17 @@ The documentation/evidence track confirmed two low-severity inconsistencies:
   even though they receive the original plus two clones of one identity; and
 - the README still called the already-green local gates pending.
 
-This finding-fix candidate corrects the two documentation statements. An
-independently owned test hardening component and its exact composed replacement
-SHA will be recorded after that component completes its gates. All three
-replacement tracks must review that same replacement SHA.
+Documentation record `9dbd188` corrects the two documentation statements.
+Independently owned hardening `7f2a292` adds the required decorated-root,
+escaping-heavy exact result-bound, signed pre-epoch, and pure invalid-metadata
+conversion evidence. It composes as behavior head `b69ec4b`, bringing the
+focused direct/engine/root/host suite from 34 to 36 tests plus five private unit
+tests. All three replacement tracks must review the same exact replacement SHA
+after its local gates and maintained documentation are composed.
 
 ## Local and pending remote gates
 
-The 34 focused tests, formatting, workspace/all-target/all-feature
+The initial 34 focused tests, formatting, workspace/all-target/all-feature
 warnings-denied Clippy, workspace tests, documentation tests, dependency policy
 and vulnerability checks, pinned compatibility-inventory check, and
 release-binary bare/help/status smoke checks are green under Rust and Cargo

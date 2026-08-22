@@ -30,9 +30,9 @@ The seventeenth [`file_info` candidate](file-info.md) is likewise library-only.
 It adds no `file_info`, workspace, or slash command and changes none of the
 accepted invocations, output bytes, diagnostics, or exit statuses below. Its
 production and independent tests compose at `f228c06`, where all 34 focused
-tests are green, and required local gates are green through composed precursor
-`0973acf`. Three fresh adversarial tracks and exact remote delivery remain
-pending. Its metadata result is not exposed as
+initial tests are green. Review hardening brings the focused total to 36 plus
+five private unit tests at `b69ec4b`. Three replacement adversarial tracks and
+exact remote delivery remain pending. Its metadata result is not exposed as
 CLI output.
 
 ## Accepted invocations

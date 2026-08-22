@@ -159,9 +159,10 @@ reports final symlinks rather than their targets and classifies special files
 without opening them. The composed host candidate supplies exactly
 `file_info`, `list_files`, and `read_file`; core exposes the catalog in
 deterministic alphabetical order. Production `5c2d129` and independent tests
-`ca0091c` compose at `f228c06`, where all 34 focused tests are green, and the
-required local gates are green through composed precursor `0973acf`. Three
-fresh adversarial tracks and exact feature and `main` delivery remain pending.
+`ca0091c` compose at `f228c06`, where all 34 initial focused tests are green.
+Review hardening brings the focused total to 36 plus five private unit tests at
+`b69ec4b`. Three replacement tracks and exact feature and `main` delivery remain
+pending.
 The contract and review plan are in
 [`file-info.md`](file-info.md) and
 [`m03-file-info-review-01.md`](reviews/m03-file-info-review-01.md).
@@ -366,9 +367,9 @@ two clones. Both path and prepared-root constructors supply exactly `file_info`,
 execution receive the same normalized path. This candidate does not change
 provider, permission, session-store, credential, transport, runtime, or CLI
 authority. Production is present at `5c2d129` / composed `1d93a65`;
-independent tests compose at `f228c06`, where all 34 focused tests are green;
-required local gates are green through composed precursor `0973acf`.
-Adversarial review and exact remote delivery remain pending.
+independent tests compose at `f228c06`, where all 34 initial focused tests are
+green. Review hardening brings the focused total to 36 plus five private unit
+tests at `b69ec4b`. Replacement review and exact remote delivery remain pending.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
