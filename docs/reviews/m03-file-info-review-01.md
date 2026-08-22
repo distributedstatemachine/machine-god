@@ -1,16 +1,19 @@
 # Milestone 03 native `file_info` review 01
 
-Status: **PRODUCTION CANDIDATE PRESENT — tests, three adversarial tracks, and
-remote delivery pending**
+Status: **PRODUCTION AND TEST CANDIDATE PRESENT — three adversarial tracks,
+required full local gates, and remote delivery pending**
 
 ## Candidate
 
 - Base: `41859e5b232f1d8d285af2df082529125f8c004a`
 - Production component: `5c2d129a3755dca0c8f7913b27614b70352fe2a4`
 - Production-only composed head: `1d93a650afdd022964b657fc93352872b8d380df`
-- Independent-test component: pending
-- Documentation component: pending
-- Composed behavior candidate: pending
+- Independent-test component: `ca0091c181d8ffbecda008ee0f981516dc5cff7b`
+- Production-and-test composed head: `f228c06bbda5d01b50905c66f378a2b29e0560bf`
+- Documentation component: `b5d30d617378d09ec24552844c6233ef25ba1aa4`
+- First fully composed candidate: `8ceef6d2c4193902c5750baea663dfe5bc396863`
+- Test-evidence documentation follow-up: pending
+- Formal review head: pending
 - Delivery branch: `agent/m03-file-info`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 
@@ -81,6 +84,11 @@ Three isolated worktrees own non-overlapping surfaces from exact base
 The coordinator will compose those component commits onto
 `agent/m03-file-info` without reverting unrelated work. Behavior and its
 documentation must be present together before formal review begins.
+
+All 34 focused direct, real-engine, root-preparation, and reference-host tests
+are green at production-and-test composed head `f228c06`. Required full local
+gates and the final exact composed behavior SHA remain pending until the
+documentation component is integrated.
 
 ## Required adversarial tracks
 

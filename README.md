@@ -167,9 +167,10 @@ themselves; FIFO, socket, device, and other special objects are classified
 without being opened. Reference-host composition grows from two to exactly
 three workspace tools: `file_info`, `list_files`, and `read_file`. Core exposes
 that catalog in deterministic alphabetical order. Production is present at
-isolated SHA `5c2d129` and production-only composed SHA `1d93a65`; independent
-tests, three fresh adversarial tracks, and exact feature and `main` workflows
-remain pending, so the overall native-tool checklist stays open. See the
+isolated SHA `5c2d129`; independent tests are present at isolated SHA `ca0091c`
+and compose with production at `f228c06`, where all 34 focused tests are green.
+Three fresh adversarial tracks, required full local gates, and exact feature and
+`main` workflows remain pending, so the overall native-tool checklist stays open. See the
 [`file_info` candidate contract](docs/file-info.md) and
 [review record](docs/reviews/m03-file-info-review-01.md).
 

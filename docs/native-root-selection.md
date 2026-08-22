@@ -33,9 +33,9 @@ force to `main` and green there under exact CI `32590429626` and benchmark
 evidence `32590429592`. This documentation-only commit is the final record; its
 exact feature and `main` workflows are reported at handoff.
 Milestone 03 remains `IN PROGRESS`. Sixteen slices are delivered. Seventeenth-
-slice `file_info` production is present at isolated SHA `5c2d129` and
-production-only composed SHA `1d93a65`; independent tests, three fresh
-adversarial tracks, and exact remote delivery remain pending. The remaining
+slice `file_info` production `5c2d129` and independent tests `ca0091c` compose
+at `f228c06`, where all 34 focused tests are green. Three fresh adversarial
+tracks, required full local gates, and exact remote delivery remain pending. The remaining
 native tools, CLI ownership, and composed end-to-end evidence also stay open.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and

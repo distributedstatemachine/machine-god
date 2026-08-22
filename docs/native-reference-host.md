@@ -2,9 +2,10 @@
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice,
 with its workspace-tool composition extended by a seventeenth candidate.
-Sixteen slices are delivered. Seventeenth-slice production is present at
-isolated SHA `5c2d129` and production-only composed SHA `1d93a65`; independent
-tests, three fresh adversarial tracks, and exact remote delivery remain pending.
+Sixteen slices are delivered. Seventeenth-slice production `5c2d129` and
+independent tests `ca0091c` compose at `f228c06`, where all 34 focused tests are
+green. Three fresh adversarial tracks, required full local gates, and exact
+remote delivery remain pending.
 The first formal sixteenth candidate is composed
 through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
@@ -86,9 +87,9 @@ symlinks, and inspects the final object with no-follow metadata without opening
 it. Its bounded structured result and fixed redacted behavior are normative in
 [`file-info.md`](file-info.md). It changes no constructor arguments, provider,
 transport, permission, session, runtime, credential, or CLI authority. The
-candidate's production is present at `5c2d129` / composed `1d93a65`;
-independent tests, three fresh adversarial tracks, and exact feature and `main`
-workflows remain pending.
+candidate's production and independent tests compose at `f228c06`, where all 34
+focused tests are green. Three fresh adversarial tracks, required full local
+gates, and exact feature and `main` workflows remain pending.
 
 ## Feature and platform boundary
 
@@ -417,9 +418,9 @@ three replacement tracks are green. Portable behavior `17f1884` and seal
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining native-tool and CLI ownership, compatibility promotion, and
-product-performance claims remain open. Candidate `file_info` production,
-independent tests, adversarial review, and exact remote delivery also remain
-open. The slice does not alter the pinned fx inventory,
+product-performance claims remain open. Candidate `file_info` adversarial
+review, required full local gates, and exact remote delivery also remain open;
+its production and 34 focused tests are present at `f228c06`. The slice does not alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
