@@ -1,6 +1,6 @@
 # Milestone 03 native session-lifecycle review 01
 
-Status: **INITIAL FINDINGS FIXED — THREE-TRACK REREVIEW PENDING**
+Status: **RESIDUAL FINDINGS FIXED — FINAL THREE-TRACK REREVIEW PENDING**
 
 ## Candidate lineage
 
@@ -29,6 +29,14 @@ Status: **INITIAL FINDINGS FIXED — THREE-TRACK REREVIEW PENDING**
   contract findings corrected at `963f21e`
 - Formal finding regression and documentation fixes:
   `963f21e9a1c1162599378c3ef2852f16b9d1032f`
+- First replacement review candidate:
+  `ec17d526a0725ed13a9d523d81cca3882895e969`
+- First API/tests/portability rereview on `ec17d52`: **GREEN**
+- First security/resources/authority rereview on `ec17d52`: **GREEN**
+- First documentation/evidence rereview on `ec17d52`: **NOT GREEN**; one
+  engine-authority overclaim plus two low source-contract/evidence findings
+- Residual documentation finding fixes:
+  `ea9aa89b12a3950414189fbe0ace720f42c64fa4`
 - Integration branch: `agent/m03-native-session-lifecycle`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
@@ -134,6 +142,16 @@ actual incompatible/active/divergent local-state rule, and assigns a custom
 source's effects, resource use, latency, detachment, and uniqueness compliance
 to its trusted implementor. No production behavior changed for these contract
 corrections.
+
+API/tests/portability and security/resources/authority were green on first
+replacement `ec17d52`. Documentation/evidence confirmed the original five
+findings were materially resolved but found three residual wording defects.
+Fix `ea9aa89` now acknowledges that the retained engine transitively owns its
+provider, permission, tools, and event sink while lifecycle operations do not
+invoke them; labels matching-incarnation reuse as defensive behavior under a
+nonconforming source rather than supported coordination; and attributes the
+fifteen-test gate to the finding-fix replacement rather than the fourteen-test
+initial candidate.
 
 All three tracks must now rereview the same replacement candidate until all
 report green. Any confirmed finding changes that candidate and repeats this
