@@ -28,6 +28,8 @@ Status: **DELIVERY GREEN — integrated on `main`**
   `86627d7834e418d5e7b65f6b8497e4bddfa53395`
 - Exact `main` delivery SHA:
   `86627d7834e418d5e7b65f6b8497e4bddfa53395`
+- Final delivery record:
+  `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`
 - Integration branch: `agent/m03-native-reference-host`
 - Candidate-docs branch: `agent/m03-native-reference-host-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
@@ -158,6 +160,12 @@ The documentation seal at
 and benchmark-evidence run
 [`32579006421`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579006421).
 
+The final delivery record at
+`ac3984fb16dbab3adf86a949c7555ceca7c3e8df` passed exact feature CI run
+[`32579779134`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579779134)
+and benchmark-evidence run
+[`32579779123`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579779123).
+
 ## Exact `main` delivery gates
 
 The seal was fast-forwarded without force to `main` at
@@ -165,6 +173,13 @@ The seal was fast-forwarded without force to `main` at
 [`32579366049`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579366049)
 and benchmark-evidence run
 [`32579366055`](https://github.com/distributedstatemachine/machine-god/actions/runs/32579366055)
+are green for that exact SHA.
+
+The final delivery record was fast-forwarded without force to `main` at
+`ac3984fb16dbab3adf86a949c7555ceca7c3e8df`. Exact main CI run
+[`32580066474`](https://github.com/distributedstatemachine/machine-god/actions/runs/32580066474)
+and benchmark-evidence run
+[`32580066485`](https://github.com/distributedstatemachine/machine-god/actions/runs/32580066485)
 are green for that exact SHA.
 
 ## Scope
@@ -175,7 +190,9 @@ deterministic release-binary end-to-end evidence remain open. No compatibility,
 full fx-equivalence, or product-performance claim is made. Zig remains solely
 the pinned upstream benchmark build input; machine-god remains a Rust product.
 
-The frozen reference-host composition checklist item is complete. The combined
-credential-and-configuration item remains unchecked because config v2 has no
-bounded credential-source field. Milestone 03 remains in progress. No package
-or GitHub release is authorized.
+The frozen reference-host composition checklist item is complete. At this
+review's final delivery record, the combined credential-and-configuration item
+remains unchecked because config v2 has no bounded credential-source field. A
+separate schema-v3 candidate may satisfy that missing field only after its own
+implementation, review, and exact delivery gates are green. Milestone 03
+remains in progress. No package or GitHub release is authorized.

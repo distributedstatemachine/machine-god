@@ -1,16 +1,20 @@
 # Native configuration
 
-Status: eleventh bounded Milestone 03 slice integrated on `main` at
-`a10f24edde80a225f89e6c7068ec035cb70f80a8`. Exact main CI run `32576876769`
-and benchmark-evidence run `32576876780` are green. Milestone 03 remains
-`IN PROGRESS`. Exact lineage is recorded in the
-[`native host configuration review`](reviews/m03-native-host-config-review-01.md).
+Status: candidate contract for the thirteenth bounded Milestone 03 slice.
+Twelve slices are integrated at final delivery-record SHA
+`ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
+`32579779134`, feature benchmark-evidence run `32579779123`, main CI run
+`32580066474`, and main benchmark-evidence run `32580066485` are green for that
+base. This candidate's implementation, tests, adversarial review, exact remote
+gates, and `main` delivery remain pending. Milestone 03 remains `IN PROGRESS`.
+Candidate lineage is recorded in the
+[`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
 The native configuration loader is a bounded, synchronous, read-only
 `machine-god-native` authority. Core remains independent of the process
 environment and filesystem, and the CLI does not invoke the loader. This
-slice advances the built-in and current file schema to v2 while retaining
-strict read compatibility for the exact legacy v1 object.
+candidate advances the built-in and current file schema to v3 while retaining
+strict read compatibility for the exact legacy v1 and v2 objects.
 
 ## Location and defaults
 
@@ -25,29 +29,30 @@ native status:
   without trying a different environment value.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
-the explicit built-in schema-v2 configuration. A resolved file that is missing
+the explicit built-in schema-v3 configuration. A resolved file that is missing
 also produces this configuration:
 
 ```json
-{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2"}
+{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment"}
 ```
 
 Invalid selected environment input is not treated as absence and fails closed.
 Likewise, an inaccessible resolved path is an error rather than a reason to
 silently use defaults.
 
-## Strict schema v2
+## Strict schema v3
 
-A present schema-v2 configuration is one JSON object containing exactly these
-five required fields:
+A present schema-v3 configuration is one JSON object containing exactly these
+six required fields:
 
 | Field | Required value |
 | --- | --- |
-| `schema_version` | JSON integer `2` |
+| `schema_version` | JSON integer `3` |
 | `permission_mode` | JSON string `"ask"` |
 | `provider` | JSON string `"vercel_ai_gateway"` |
 | `transport` | JSON string `"ai_gateway_http"` |
 | `model` | JSON string of 1–128 visible ASCII bytes |
+| `credential_source` | JSON string `"environment"` |
 
 The model byte range is `0x21` through `0x7e`, inclusive. Empty models, spaces,
 controls, non-ASCII text, and values longer than 128 bytes are invalid. The
@@ -61,46 +66,63 @@ field ignoring, coercion, alias, case folding, or schema-specific fallback.
 JSON object field order and insignificant JSON whitespace do not alter the
 decoded object.
 
-## Strict schema-v1 read compatibility
+`credential_source` is a closed, non-secret acquisition-kind selection. It
+does not contain a token, select an arbitrary environment-variable name, or
+grant the loader process-environment authority.
 
-The only legacy input accepted is the exact two-field schema-v1 object:
+## Strict schema-v1 and schema-v2 read compatibility
+
+The exact two-field schema-v1 object remains accepted:
 
 ```json
 {"schema_version":1,"permission_mode":"ask"}
 ```
 
-Schema-v1 unknown or duplicate fields, missing fields, wrong types or shapes,
-and a permission mode other than `"ask"` remain invalid. An accepted v1 file is
-projected in memory to permission mode `ask`, provider `vercel_ai_gateway`,
-transport `ai_gateway_http`, and model `zai/glm-5.2`. Its observable
-`schema_version()` remains `1`; it is not relabelled as v2. Loading never
-rewrites, expands, or migrates the file. Consequently, a caller can distinguish
-an exact legacy file from a built-in or file-backed v2 configuration while
-using the same fixed declarative provider, transport, and model projection.
+The exact five-field schema-v2 object also remains accepted:
 
-Every integer schema version other than `1` or `2` is unsupported. A missing,
-duplicate, non-integer, or otherwise malformed schema-version field is invalid
-format. Full-buffer UTF-8 validation still precedes schema dispatch.
+```json
+{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2"}
+```
+
+Its model may be any value accepted by the same bounded validator as v3.
+Schema-v1 and schema-v2 unknown or duplicate fields, missing fields, wrong
+types or shapes, and unsupported values remain invalid. In particular, a v1
+or v2 object containing `credential_source` is rejected as an unknown-field
+error; accepting that field requires explicit schema version `3`.
+
+An accepted v1 file is projected in memory to permission mode `ask`, provider
+`vercel_ai_gateway`, transport `ai_gateway_http`, model `zai/glm-5.2`, and
+credential source `environment`. An accepted v2 file retains its validated
+model and gains only the same in-memory `environment` credential-source
+projection. Their observable `schema_version()` values remain `1` and `2`
+respectively; neither is relabelled as v3. Loading never rewrites, expands, or
+migrates either file.
+
+Every integer schema version other than `1`, `2`, or `3` is unsupported. A
+missing, duplicate, non-integer, or otherwise malformed schema-version field is
+invalid format. Full-buffer UTF-8 validation still precedes schema dispatch.
 
 ## Public data boundary
 
-`CONFIG_SCHEMA_VERSION` is `2`. `AI_GATEWAY_DEFAULT_MODEL` is
+`CONFIG_SCHEMA_VERSION` is `3`. `AI_GATEWAY_DEFAULT_MODEL` is
 `"zai/glm-5.2"`, and `AI_GATEWAY_MAX_MODEL_BYTES` is `128`.
 `NativeProviderKind::VercelAiGateway` has stable machine name
 `vercel_ai_gateway`; `NativeTransportKind::AiGatewayHttp` has stable machine
-name `ai_gateway_http`. Their `as_str` accessors return those names. They do not
-imply that an optional implementation is compiled or usable in the current
-build.
+name `ai_gateway_http`; and `NativeCredentialSourceKind::Environment` has stable
+machine name `environment`. Their `as_str` accessors return those names. They
+do not imply that an optional implementation is compiled or usable in the
+current build.
 
 `NativeConfig` exposes read-only `schema_version`, `permission_mode`,
-`provider`, `transport`, and `model` getters. The schema version remains the
-version actually loaded, including `1` for a legacy file. Provider and
-transport return the closed native enums; model returns the validated string.
+`provider`, `transport`, `model`, and `credential_source` getters. The schema
+version remains the version actually loaded, including `1` or `2` for a legacy
+file. Provider, transport, and credential source return closed native enums;
+model returns the validated string.
 `NativeConfig` and `LoadedNativeConfig` implement `Clone`, but not `Copy`,
 because configuration owns its bounded model string. `NativeConfig` debug
-output exposes the non-secret schema, permission, provider, and transport
-fields but renders the model as `"<redacted>"`; `LoadedNativeConfig` inherits
-that redaction through its nested configuration.
+output exposes the non-secret schema, permission, provider, transport, and
+credential-source fields but renders the model as `"<redacted>"`;
+`LoadedNativeConfig` inherits that redaction through its nested configuration.
 
 `ai_gateway_http` is a declarative transport selection in the configuration
 schema. Its enum exists independently of the optional `ai-gateway-http` Cargo
@@ -109,7 +131,7 @@ are absent, including WebAssembly. Parsing this value therefore proves only
 that configuration is valid; it does not prove transport availability,
 construct a Tokio runtime, or make a network path usable.
 
-Vercel AI Gateway credentials are fields in neither schema. The separately
+Vercel AI Gateway credential bytes are fields in no schema. The separately
 integrated [`native credential discovery adapter`](ai-gateway-credentials.md)
 owns its non-cloneable secret snapshot and does not put secret values into
 `NativeConfig`, debug output, status output, or the configuration file.
@@ -118,10 +140,10 @@ owns its non-cloneable secret snapshot and does not put secret values into
 
 The raw file limit remains 64 KiB (65,536 bytes). A file of exactly that length
 can be considered for parsing; any additional byte makes it oversized. Bytes
-must be valid UTF-8 and then valid strict v1 or v2 JSON. The loader retains at
-most 64 KiB plus one byte while deciding whether input fits, so neither a stale
-size observation nor concurrent file growth turns loading into an unbounded
-read.
+must be valid UTF-8 and then valid strict v1, v2, or v3 JSON. The loader retains
+at most 64 KiB plus one byte while deciding whether input fits, so neither a
+stale size observation nor concurrent file growth turns loading into an
+unbounded read.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path with no-follow and nonblocking behavior. It performs a preliminary
@@ -139,10 +161,10 @@ final-component no-follow plus descriptor regularity.
 Errors remain typed so callers can distinguish invalid environment input,
 open/read failure, invalid file kind, size overflow, invalid format, and an
 unsupported schema version. Invalid UTF-8, malformed JSON, schema-shape errors,
-invalid model values, and unsupported permission/provider/transport values are
-grouped as invalid format. Diagnostics do not reflect environment-derived
-paths, configuration bytes, model values, or operating-system error text. All
-listed failures fail closed.
+invalid model values, and unsupported permission/provider/transport/credential-
+source values are grouped as invalid format. Diagnostics do not reflect
+environment-derived paths, configuration bytes, model values, or operating-
+system error text. All listed failures fail closed.
 
 ## Relationship to status and deferred work
 
@@ -152,27 +174,33 @@ read or parse `config.json`, and reports permission mode `ask`. Existing CLI
 help, version, status, error, and bare-invocation bytes remain unchanged; no CLI
 command loads configuration in this slice.
 
-Provider, transport, and model fields are declarative data only. This slice
-does not instantiate `AiGatewayProvider`, select or construct an HTTP client,
-create or drive a Tokio runtime, discover or attach a credential, open a
-network connection, or compose any component into core or the CLI.
+Provider, transport, model, and credential-source fields are declarative data
+only. `environment` tells the production reference-host constructor which
+already injected acquisition adapter is compatible with this configuration; it
+does not read the process environment. This candidate does not instantiate
+`AiGatewayProvider`, select or construct an HTTP client, create or drive a
+Tokio runtime, discover or attach a credential, open a network connection, or
+compose any component into core or the CLI.
 
 The separate twelfth
 [`native reference-host slice`](native-reference-host.md) consumes an
 already loaded value without changing this loader. It retains the exact
-`LoadedNativeConfig`: an accepted file-backed v1 therefore remains observable
-with file origin and schema version `1`, while its existing fixed in-memory
-provider, transport, and model projection drives composition. The candidate's
-production constructor receives a separate injected credential snapshot; no
-credential enters this configuration value or loader. Its production
-implementation, independent tests, three fresh adversarial tracks, and exact
-feature and `main` workflows are green; it is integrated at `86627d78`.
+`LoadedNativeConfig`: accepted file-backed v1 and v2 values therefore remain
+observable with their exact origins and schema versions while their in-memory
+`environment` projection drives the same production composition path. That
+constructor validates `NativeCredentialSourceKind::Environment` and consumes a
+separately injected `AiGatewayCredentialEnvironment`; the config loader never
+calls `from_process`. Runtime `NativeReferenceHost::credential_source()` still
+reports the concrete selected OIDC-token or API-key source, not the configured
+acquisition kind. The trusted custom-transport constructor skips native
+discovery and reports `None` as before.
 
 Configuration mutation, a migration or rewrite command, a terminal permission
 prompter and modes beyond `ask`, runtime and CLI composition, required
 workspace and state-root lifecycle, the remaining native tools, CLI and
 session expansion, release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. This slice and the twelfth composition
-slice do not complete the combined credential-and-configuration checklist
-item because v2 has no bounded credential-source field. Milestone 03 remains
-in progress.
+or performance claims remain open. This thirteenth candidate may complete the
+combined credential-and-configuration checklist item only after implementation,
+independent tests, three green adversarial tracks, exact feature workflows,
+fast-forward integration, and exact `main` workflows all pass. It remains
+unchecked while those gates are pending. Milestone 03 remains in progress.

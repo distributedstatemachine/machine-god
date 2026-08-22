@@ -21,11 +21,14 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twelve integrated bounded slices. The twelfth slice's
+Milestone 03 has twelve integrated bounded slices and a thirteenth bounded
+candidate. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
-`main` at `86627d7834e418d5e7b65f6b8497e4bddfa53395`; exact main CI run
-`32579366049` and benchmark-evidence run `32579366055` are green.
+`main` through final delivery record
+`ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
+`32579779134`, feature benchmark-evidence run `32579779123`, main CI run
+`32580066474`, and main benchmark-evidence run `32580066485` are green.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -74,6 +77,11 @@ remains byte-unchanged and thin. The contract and lineage are
 in [`native-reference-host.md`](native-reference-host.md) and its
 [`review record`](reviews/m03-native-reference-host-review-01.md). It is
 integrated at the exact green `main` SHA and runs recorded above.
+The thirteenth candidate advances current native configuration to strict v3 by
+adding the closed non-secret `environment` credential-source acquisition kind.
+It retains exact strict v1/v2 reads and their observable versions, projecting
+that acquisition kind only in memory. Candidate implementation, independent
+tests, adversarial review, remote gates, and `main` delivery are pending.
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -93,7 +101,7 @@ surface and does not change CLI bytes. The same is true of the normative
 [`native file session store`](session-store.md). The ask-handler slice is
 also a library surface and does not change CLI bytes or supply a concrete
 terminal prompt. Credential discovery is another separate
-library surface; credentials are fields in neither supported configuration
+library surface; bearer credentials are fields in no supported configuration
 schema, and discovery by itself does not add CLI composition. The twelfth
 slice's production library constructor consumes an explicitly
 injected credential snapshot; it does not give the config loader or CLI ambient
@@ -102,7 +110,7 @@ credential authority.
 ```text
 process environment -> resolved native paths
  config path --+-> final metadata -----------> status -> CLI text/JSON
-               +-> bounded read-only loader -> strict v1/v2 config data
+               +-> bounded read-only loader -> strict v1/v2/v3 config data
  state path ------> final metadata -----------> status -> CLI text/JSON
 
 host-selected absolute workspace -> retained directory authority
@@ -115,7 +123,8 @@ host-selected endpoint/auth/status/retry transport
 host-injected bearer token -> optional bounded native HTTP transport
                            -> the same injected AI Gateway codec boundary
 
-owned VERCEL_OIDC_TOKEN / AI_GATEWAY_API_KEY snapshot
+config credential_source: environment
+ + explicitly owned VERCEL_OIDC_TOKEN / AI_GATEWAY_API_KEY snapshot
  -> bounded native credential discovery -> explicit bearer token -> transport
 
 host-selected existing absolute state root -> retained directory descriptor
@@ -151,26 +160,29 @@ invocation keeps the bootstrap identity contract. Help, version, status, and
 argument errors remain byte-stable presentation behavior, not an engine-owned
 command model.
 
-The synchronous loader resolves only the config location. In the eleventh
-slice, an unavailable location or missing file yields the explicit built-in
-schema-v2 object
-`{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2"}`.
+The synchronous loader resolves only the config location. In the thirteenth
+candidate, an unavailable location or missing file yields the explicit built-in
+schema-v3 object
+`{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment"}`.
 Invalid selected environment input and all other load failures fail closed. A
-present file must be at most 64 KiB of valid UTF-8 and must be either that exact
-five-field v2 shape, with any 1–128-byte visible-ASCII model, or the exact strict
-legacy v1 shape
-`{"schema_version":1,"permission_mode":"ask"}`. Unknown, duplicate, missing,
-wrong-type, or unsupported fields and values are rejected in each schema.
+present file must be at most 64 KiB of valid UTF-8. It must be that exact
+six-field v3 shape, with any 1–128-byte visible-ASCII model, the exact strict
+five-field v2 shape without `credential_source`, or the exact strict legacy v1
+shape `{"schema_version":1,"permission_mode":"ask"}`. Unknown, duplicate,
+missing, wrong-type, or unsupported fields and values are rejected in each
+schema; in particular, v2 rejects `credential_source` as unknown.
 
-An accepted v1 file maps only in memory to provider `vercel_ai_gateway`,
-transport `ai_gateway_http`, and model `zai/glm-5.2`; its observable
-`schema_version()` stays `1`. Loading does not migrate or rewrite the file.
+Accepted v1 and v2 files map only in memory to credential source `environment`;
+v1 also projects provider `vercel_ai_gateway`, transport `ai_gateway_http`, and
+model `zai/glm-5.2`. Their observable `schema_version()` values stay `1` and
+`2`. Loading does not migrate or rewrite either file.
 `NativeConfig` exposes `schema_version`, `permission_mode`, `provider`,
-`transport`, and `model` getters and owns the bounded model string, so it and
-`LoadedNativeConfig` are cloneable but not copyable. Debug output redacts the
-model. `CONFIG_SCHEMA_VERSION` is `2`, `AI_GATEWAY_DEFAULT_MODEL` is
-`zai/glm-5.2`, and `AI_GATEWAY_MAX_MODEL_BYTES` is `128`. The config model and
-AI Gateway provider use one visible-ASCII model validator.
+`transport`, `model`, and `credential_source` getters and owns the bounded model
+string, so it and `LoadedNativeConfig` are cloneable but not copyable. Debug
+output redacts the model and may show the non-secret acquisition kind.
+`CONFIG_SCHEMA_VERSION` is `3`, `AI_GATEWAY_DEFAULT_MODEL` is `zai/glm-5.2`,
+and `AI_GATEWAY_MAX_MODEL_BYTES` is `128`. The config model and AI Gateway
+provider use one visible-ASCII model validator.
 
 The closed `NativeProviderKind::VercelAiGateway` and
 `NativeTransportKind::AiGatewayHttp` values expose the stable names
@@ -178,6 +190,9 @@ The closed `NativeProviderKind::VercelAiGateway` and
 particular, the HTTP enum is present when the optional concrete
 `ai-gateway-http` feature is disabled and on WebAssembly, where that transport
 is unavailable; valid config does not prove a usable transport implementation.
+`NativeCredentialSourceKind::Environment` likewise exposes only the stable
+non-secret name `environment`; it cannot carry a token or arbitrary environment
+name and does not make the loader read process state.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path no-follow and nonblocking. A preliminary path-kind check is followed
@@ -185,12 +200,16 @@ by authoritative opened-descriptor regularity validation. The loader retains at
 most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
-model values, or operating-system error text. Credentials are deliberately in
-neither schema. The separate twelfth slice consumes this already
-loaded value without changing the loader: a file-backed v1 remains observable
-as version `1` while its fixed projected values drive composition. Configuration
-mutation or migration, permission modes beyond `ask`, a concrete prompt UI,
-runtime ownership, token fields in config, CLI composition, executable native
+model values, or operating-system error text. Credential bytes remain in no
+schema. The separate twelfth slice consumes this already loaded value without
+changing the loader: file-backed v1 and v2 values remain observable as their
+original versions while projected values drive composition. The production
+constructor validates configured `Environment` before using the already
+injected credential snapshot. Its runtime `credential_source()` remains the
+concrete selected OIDC-token or API-key source; the custom-transport override
+skips discovery and reports `None`. Configuration mutation or migration,
+permission modes beyond `ask`, a concrete prompt UI, runtime ownership, token
+fields in config, CLI composition, executable native
 tools other than the bounded `read_file` and `list_files` library capabilities,
 session migration/encryption/reset/listing, required-root lifecycle, CLI
 expansion, and composed release-binary end-to-end evidence remain open.
@@ -225,6 +244,11 @@ injected `PermissionPrompter` is wrapped by `AskPermissionHandler`, and
 or custom transport. `EngineBuilder` receives no explicit limits or event sink,
 so the documented defaults and `NoopEventSink` apply.
 
+The thirteenth candidate extends that first validation stage to require
+`NativeCredentialSourceKind::Environment`. It does not change constructor
+arguments: the production path still consumes the host-injected snapshot, and
+the custom transport remains an explicit trusted authority override.
+
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
 reach session artifacts beneath the workspace after permission is granted.
@@ -242,12 +266,14 @@ Construction opens roots and creates bounded component values synchronously but
 makes no network request, prompts no user, touches no session record, creates
 no root or runtime, and starts no background task. Production HTTP work later
 must be polled on a live host-owned Tokio runtime with I/O and time enabled.
-The wrapper retains the exact `LoadedNativeConfig`, including a file-backed v1
-origin and observable version `1` while using its projected provider,
-transport, and model values. Its fixed debug form exposes no config structure
-or source. Every nested construction error is reduced to one fixed redacted
-stage in the non-exhaustive reference-host error taxonomy. These behaviors are
-adversarially green and integrated on `main` under exact green workflows.
+The wrapper retains the exact `LoadedNativeConfig`, including file-backed v1
+and v2 origins and observable versions while using their projected provider,
+transport, model, and credential-source values. Its fixed debug form exposes no
+config structure or source. Every nested construction error is reduced to one
+fixed redacted stage in the non-exhaustive reference-host error taxonomy. The
+twelfth-slice composition behaviors are adversarially green and integrated on
+`main`; the schema-v3 extension and credential-source validation remain
+candidate behavior pending implementation and all delivery gates.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

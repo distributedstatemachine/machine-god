@@ -4,10 +4,11 @@ The `machine-god` binary is the thin native reference host for the embeddable
 engine. This page defines the exact Milestone 03 config/status slice. The
 commands inspect process environment and filesystem metadata only; they do not
 parse configuration, create directories, write files, or start the engine.
-The separate integrated [`native configuration schema v2`](configuration.md)
-does not change that boundary or any CLI byte documented below. Provider,
-transport, and model config fields remain invisible to this metadata-only
-surface.
+The separate [`native configuration schema-v3 candidate`](configuration.md)
+does not change that boundary or any CLI byte documented below. Its
+implementation, tests, adversarial review, remote gates, and `main` delivery
+remain pending. Provider, transport, model, and credential-source config fields
+remain invisible to this metadata-only surface.
 
 ## Accepted invocations
 
@@ -91,8 +92,9 @@ missing, inaccessible, or the wrong kind. The path is `null` only for
 
 Permission mode is always `ask` in this slice. It reports the native host's
 fixed safe default; no permission prompt or permission-gated native tool is
-implemented here. Status does not load a v1 or v2 config and therefore does not
-report its observable schema version, provider, transport, or model.
+implemented here. Status does not load a legacy v1 or v2 config or a candidate
+current v3 config and therefore does not report its observable schema version,
+provider, transport, model, or credential source.
 
 ## Config and state locations
 

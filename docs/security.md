@@ -55,9 +55,16 @@ and benchmark-evidence run `32576876780` are green. See
 A twelfth bounded slice implements Linux/macOS-only library composition
 behind the existing `ai-gateway-http` and non-WebAssembly gate. Production
 implementation, independent black-box tests, three fresh adversarial tracks,
-and exact feature and `main` workflows are green; it is integrated at
-`86627d78`. Its boundary is in
-[`native-reference-host.md`](native-reference-host.md).
+and exact feature and `main` workflows are green; its final delivery record is
+`ac3984fb16dbab3adf86a949c7555ceca7c3e8df`, with exact feature CI run
+`32579779134`, feature benchmark-evidence run `32579779123`, main CI run
+`32580066474`, and main benchmark-evidence run `32580066485` green. Its
+boundary is in [`native-reference-host.md`](native-reference-host.md).
+A thirteenth bounded candidate advances native configuration to strict v3 with
+one required closed, non-secret `environment` credential-source acquisition
+kind. Exact v1/v2 files remain readable and gain that projection only in
+memory. Candidate implementation, tests, adversarial review, remote gates, and
+`main` delivery remain pending.
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -77,13 +84,13 @@ CLI arguments are rejected as invalid. Output errors use a fixed diagnostic
 rather than reflecting path or OS-error text.
 
 Configuration loading uses the same config-location selection. In the
-eleventh slice, missing and unavailable locations yield the explicit strict
-schema-v2 built-in values: permission mode `ask`, provider
-`vercel_ai_gateway`, transport `ai_gateway_http`, and model `zai/glm-5.2`.
-The only legacy form is the exact two-field schema-v1 object; it maps in memory
-to those fixed provider, transport, and model values while remaining observable
-as schema version `1`. The loader never rewrites or migrates it. An invalid
-selected environment value does not fall back.
+thirteenth candidate, missing and unavailable locations yield the explicit
+strict schema-v3 built-in values: permission mode `ask`, provider
+`vercel_ai_gateway`, transport `ai_gateway_http`, model `zai/glm-5.2`, and the
+non-secret credential-source kind `environment`. Exact legacy schema-v1 and
+schema-v2 objects map in memory to that acquisition kind while remaining
+observable as versions `1` and `2`. The loader never rewrites or migrates them.
+An invalid selected config-location environment value does not fall back.
 
 On the supported Unix targets exercised by Milestone 03, a present path is
 opened no-follow and nonblocking. A preliminary path-kind check is followed by
@@ -96,10 +103,12 @@ that the complete ancestor path is frozen.
 
 The raw configuration bound remains 64 KiB, with at most one additional byte
 retained to detect overflow or growth. Accepted bytes must be valid UTF-8 and
-then one strict schema. V2 has exactly five fields: integer
+then one strict schema. V3 has the exact five v2 fields plus required string
+`credential_source: "environment"`. V2 has exactly five fields: integer
 `schema_version: 2`; strings `permission_mode: "ask"`,
 `provider: "vercel_ai_gateway"`, and `transport: "ai_gateway_http"`; and a
-1–128-byte visible-ASCII model. V1 has exactly integer `schema_version: 1` and
+1–128-byte visible-ASCII model and rejects `credential_source` as unknown. V1
+has exactly integer `schema_version: 1` and
 string `permission_mode: "ask"`. Oversize files, invalid UTF-8, malformed JSON,
 unknown or duplicate fields, missing or wrong fields, unsupported versions or
 enum values, and invalid models are rejected.
@@ -111,13 +120,17 @@ is cloneable but not copyable. Its debug output replaces the model with
 configuration contents, model values, or operating-system error text.
 Inaccessible paths and read errors are not converted into defaults.
 
-Credentials are fields in neither v1 nor v2 and never enter config debug
-output. Provider and transport enums contain only public declarative identity.
+Bearer credential bytes are fields in none of v1, v2, or v3 and never enter
+config debug output. Provider, transport, and credential-source enums contain
+only public declarative identity. `NativeCredentialSourceKind::Environment`
+cannot carry a token or arbitrary variable name and grants no process authority
+to the loader.
 In particular, `NativeTransportKind::AiGatewayHttp` exists when the optional
 concrete transport is disabled and on WebAssembly; it is not evidence that an
 HTTP implementation or required runtime is available. Loading valid config
 does not instantiate the provider or transport, create a Tokio runtime,
-discover or attach a bearer token, or perform network I/O.
+discover or attach a bearer token, or perform network I/O. The non-secret
+acquisition kind may appear in config debug output; the model remains redacted.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
@@ -125,13 +138,15 @@ modes beyond `ask`, token fields in configuration, required-root and session
 lifecycle, CLI composition and expansion, native tools other than the bounded
 library-level `read_file` and `list_files`, composed release-binary end-to-end
 host evidence, and compatibility or performance claims remain open. The
-twelfth slice composes the existing library components only after an
-already validated config value is supplied; it does not change config loading
-or CLI behavior.
+twelfth slice composes the existing library components only after an already
+validated config value is supplied; the thirteenth candidate adds validation
+that its configured acquisition kind is `Environment` without changing loader
+or CLI authority.
 
 The integrated `NativeReferenceHost` first rejects any loaded selection
-other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. It then opens the
-existing absolute workspace once and clones that retained descriptor so
+other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. The thirteenth
+candidate also requires configured credential source `environment`. It then
+opens the existing absolute workspace once and clones that retained descriptor so
 exactly `list_files` and `read_file` share one opened directory identity. This
 prevents path replacement between separate tool-construction opens from giving
 the tools different roots. The same trusted-host ancestor and subordinate-mount
@@ -149,8 +164,10 @@ injected credential snapshot, discovers a bearer token, and hands that token to
 therefore occur without discovering or handing off a credential. The wrapper
 retains only non-secret selected-source metadata and has no secret getter. It
 retains the exact loaded configuration, including file origin and observable
-schema version `1` for an accepted legacy file, while the existing fixed v1
-projection supplies its provider, transport, and model.
+schema version `1` or `2` for an accepted legacy file, while the in-memory
+projection supplies its provider, transport, model, and acquisition kind.
+`NativeReferenceHost::credential_source()` remains a different runtime
+observation: it reports the concrete selected OIDC-token or API-key source.
 
 The custom-transport constructor is an explicit trusted authority override. It
 performs no native credential discovery or production HTTP construction and
@@ -173,9 +190,10 @@ unsupported selection, workspace root, session store, credential, HTTP
 transport, provider, or engine. Component errors, roots, config/model values,
 credential bytes and source, endpoint data, prompt data, OS diagnostics, and
 raw error numbers are discarded. Host debug output is fixed to
-`NativeReferenceHost { .. }` and exposes no config structure or source. These
-are adversarially green behaviors integrated on `main` under exact green
-workflows.
+`NativeReferenceHost { .. }` and exposes no config structure or source. The
+twelfth-slice behaviors are adversarially green and integrated on `main` under
+exact green workflows. The schema-v3 and configured-source validation changes
+remain candidate behavior pending every implementation and delivery gate.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

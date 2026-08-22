@@ -56,12 +56,25 @@ trusted injected custom transport, one shared retained workspace feeding
 exactly `list_files` and `read_file`, the existing file session store, and the
 ask handler over an injected prompter. Construction remains synchronous and
 creates no root, runtime, network request, prompt operation, session record, or
-background work. Production implementation and independent black-box tests are
-integrated on `main` at `86627d7834e418d5e7b65f6b8497e4bddfa53395`.
-Exact main CI run `32579366049` and benchmark-evidence run `32579366055` are
-green. The CLI is byte-unchanged and remains thin. See the
+background work. Its final delivery record is integrated on `main` at
+`ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
+`32579779134`, feature benchmark-evidence run `32579779123`, main CI run
+`32580066474`, and main benchmark-evidence run `32580066485` are green. The CLI
+is byte-unchanged and remains thin. See the
 [composition contract](docs/native-reference-host.md) and
 [review record](docs/reviews/m03-native-reference-host-review-01.md).
+
+A thirteenth bounded candidate advances the strict current native
+configuration to schema v3 by adding the required non-secret
+`credential_source: "environment"` selection. Exact v1 and v2 files remain
+strictly readable without rewrite and project the same acquisition kind only
+in memory. The loader receives no token or process authority; the production
+reference host still consumes an explicitly injected credential snapshot, and
+its runtime observation still reports the concrete selected OIDC-token or
+API-key source. Candidate implementation, tests, adversarial review, remote
+gates, and `main` delivery are pending. See the
+[candidate configuration contract](docs/configuration.md) and
+[candidate review](docs/reviews/m03-configured-credential-source-review-01.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
@@ -70,8 +83,9 @@ The project is not yet production-ready. See the exact
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
-normative [native file session store](docs/session-store.md) plus the candidate
-[native reference-host composition](docs/native-reference-host.md).
+normative [native file session store](docs/session-store.md), the integrated
+[native reference-host composition](docs/native-reference-host.md), and the
+candidate [configured credential source](docs/configuration.md).
 
 ## Development
 

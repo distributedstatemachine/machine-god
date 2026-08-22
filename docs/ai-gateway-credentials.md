@@ -8,9 +8,11 @@ CLI makes model requests today. Review details are in the
 
 The adapter discovers one Vercel AI Gateway bearer credential from an
 explicitly owned environment snapshot. It is separate from core, the CLI, and
-native configuration. Credentials are fields in neither the exact legacy v1
-schema nor the integrated current v2 schema. The only ambient lookup is the
-explicitly named process-snapshot constructor or process convenience function.
+native configuration. Bearer-token bytes are fields in no schema. The
+thirteenth candidate's schema v3 adds only the closed non-secret acquisition
+kind `credential_source: "environment"`; exact v1/v2 files project that kind
+only in memory. The only ambient lookup remains the explicitly named process-
+snapshot constructor or process convenience function.
 
 ## Feature and public boundary
 
@@ -124,19 +126,23 @@ origin, redirect, proxy, status, timeout, and cancellation policy.
 
 This integrated adapter does not store or rotate credentials, write environment
 variables, add a setup command, compose a provider into the CLI, select a model,
-or make a network request. The eleventh integrated
-[`native configuration schema-v2 slice`](configuration.md) adds only
-declarative provider, transport, and model data; it does not add a credential
-field or invoke this adapter. The separate twelfth
+or make a network request. The thirteenth candidate
+[`native configuration schema-v3 contract`](configuration.md) adds a
+declarative non-secret acquisition-kind field; it adds no bearer value,
+arbitrary environment name, or ambient lookup and does not invoke this adapter.
+The separate twelfth
 [`native reference-host slice`](native-reference-host.md) implements a
 production library constructor that consumes an explicitly injected snapshot
 and retains only the selected source metadata. Its implementation, independent
 tests, three fresh adversarial tracks, and exact feature and `main` workflows
-are green; it is integrated at `86627d78`. Its custom-
+are green; its final delivery record is `ac3984fb`. Its custom-
 transport authority override skips discovery
-and reports no native-discovery source. The broader M03 credential-and-
-configuration checklist item remains unchecked because configuration still has
-no bounded credential-source field.
+and reports no native-discovery source. The production constructor validates
+configured `Environment` and then consumes its already injected snapshot;
+`NativeReferenceHost::credential_source()` still reports the concrete selected
+OIDC-token or API-key source. The broader M03 credential-and-configuration
+checklist item remains unchecked until the thirteenth candidate passes every
+implementation, review, feature, integration, and exact `main` gate.
 This adapter's adversarial, feature-branch, documentation-seal, and `main` gates
 are green at the exact lineage recorded in its review. Existing CLI bytes and
 benchmark workloads are unchanged. Zig remains only a build input for the

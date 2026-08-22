@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twelve integrated bounded slices. The first
+with twelve integrated bounded slices and a thirteenth bounded candidate. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -223,13 +223,40 @@ output are redacted. The CLI remains byte-unchanged and thin. The
 [`composition contract`](native-reference-host.md),
 [`review record`](reviews/m03-native-reference-host-review-01.md), production
 implementation, independent black-box tests, three fresh adversarial tracks,
-and exact feature and `main` workflows are green. The slice is integrated on
-`main` at `86627d7834e418d5e7b65f6b8497e4bddfa53395`; exact main CI run
-`32579366049` and benchmark-evidence run `32579366055` are green.
+and exact feature and `main` workflows are green. Its final delivery record is
+integrated on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`;
+exact feature CI run `32579779134`, feature benchmark-evidence run
+`32579779123`, main CI run `32580066474`, and main benchmark-evidence run
+`32580066485` are green.
+
+The thirteenth bounded candidate advances the strict current native
+configuration to schema v3. Its exact six-field object is the strict v2 shape
+plus required non-secret `credential_source: "environment"` selection.
+`NativeCredentialSourceKind::Environment`, its stable `environment` name, and
+the `NativeConfig::credential_source` getter expose only that closed
+acquisition kind. The built-in configuration is v3. Exact strict v1 and v2
+files remain readable without rewrite or migration, retain their observable
+schema versions, and project `Environment` only in memory; v2 rejects the new
+field as unknown. The existing 64 KiB input cap, strict duplicate and unknown-
+field failures, model bounds, and redacted diagnostics remain unchanged.
+
+The production reference-host path validates `Environment` and then consumes
+the already injected `AiGatewayCredentialEnvironment`. The loader gains no
+process authority. Runtime `NativeReferenceHost::credential_source()` still
+reports the concrete selected `VERCEL_OIDC_TOKEN` or `AI_GATEWAY_API_KEY`
+source; the trusted custom-transport path still skips discovery and reports
+`None`. No token bytes, arbitrary environment-variable names, persistence,
+migration, auth-source compatibility, CLI behavior, or performance claim are
+added. Only the candidate contract and review record are present on this docs
+branch; implementation, independent tests, composition, three fresh
+adversarial tracks, exact feature workflows, fast-forward integration, and
+exact `main` workflows remain pending. The proposed contract and lineage are in
+[`configuration.md`](configuration.md) and the
+[`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
 ### Milestone 03 completion boundary
 
-The twelve integrated slices do not complete Milestone 03.
+The twelve integrated slices and thirteenth candidate do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -251,8 +278,11 @@ gate:
 - [ ] Add bounded, redacted credential acquisition and the configuration fields
   required by that composition. Source precedence, missing/invalid behavior,
   size limits, and secret non-reflection must be normative and tested; core
-  receives no ambient credential or configuration authority. This item remains
-  unchecked because config v2 has no bounded credential-source field.
+  receives no ambient credential or configuration authority. The thirteenth
+  candidate supplies the missing bounded non-secret selection but this item
+  remains unchecked until implementation, independent tests, adversarial
+  review, exact feature gates, fast-forward integration, and exact `main` gates
+  are all green.
 - [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
@@ -287,7 +317,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth, eleventh, and twelfth slices; Zig
+by the tenth, eleventh, and twelfth slices and the thirteenth candidate; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes

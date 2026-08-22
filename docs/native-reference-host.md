@@ -3,9 +3,12 @@
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
 Twelve slices are integrated. Production implementation, an independently
 owned seven-test black-box suite, three fresh adversarial tracks, and exact
-feature and `main` workflows are green. The slice is integrated on `main` at
-`86627d7834e418d5e7b65f6b8497e4bddfa53395`; exact main CI run `32579366049`
-and benchmark-evidence run `32579366055` are green. Milestone 03 remains
+feature and `main` workflows are green. Its final delivery record is integrated
+on `main` at `ac3984fb16dbab3adf86a949c7555ceca7c3e8df`; exact feature CI run
+`32579779134`, feature benchmark-evidence run `32579779123`, main CI run
+`32580066474`, and main benchmark-evidence run `32580066485` are green.
+The separate schema-v3 configured credential-source extension is a thirteenth
+candidate whose implementation and gates remain pending. Milestone 03 remains
 `IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
@@ -63,7 +66,9 @@ NativeReferenceHost::credential_source(&self)
 Both constructors consume an already validated `LoadedNativeConfig`; neither
 loads configuration nor reads the process environment. The accepted selection
 is exactly permission mode `ask`, provider `vercel_ai_gateway`, and transport
-`ai_gateway_http`. Any other future or otherwise unsupported selection fails
+`ai_gateway_http`. The thirteenth candidate additionally requires configured
+`NativeCredentialSourceKind::Environment`; this validation change is not yet
+delivered. Any other future or otherwise unsupported selection fails
 closed before a root, credential, transport, provider, or engine is opened or
 constructed.
 
@@ -72,7 +77,8 @@ constructed.
 `compose_ai_gateway_http` performs these synchronous construction stages in
 this order:
 
-1. validate the loaded permission, provider, and transport selections;
+1. validate the loaded permission, provider, transport, and—after delivery of
+   the thirteenth candidate—credential-source selections;
 2. open the existing absolute workspace once and retain that directory
    identity for the two tools;
 3. open the existing absolute session root as `FileSessionStore`;
@@ -160,15 +166,17 @@ the explicit custom-transport boundary remain executor-neutral.
 ## Retained observation and secret boundary
 
 `loaded_config()` returns the exact `LoadedNativeConfig` consumed by the
-constructor. In particular, an accepted file-backed schema-v1 value remains
-observable with `ConfigOrigin::File` and `schema_version() == 1`; the host does
-not relabel or migrate it. Its already defined in-memory projection supplies
+constructor. In particular, accepted file-backed schema-v1 and schema-v2 values
+remain observable with `ConfigOrigin::File` and their respective
+`schema_version()` values; the host does not relabel or migrate them. Their
+in-memory projections supply credential source `environment`; v1 also projects
 permission mode `ask`, provider `vercel_ai_gateway`, transport
-`ai_gateway_http`, and model `zai/glm-5.2` to composition. Built-in and
-file-backed schema-v2 origins and values are likewise retained exactly.
+`ai_gateway_http`, and model `zai/glm-5.2`. Built-in and file-backed schema-v3
+origins and values are retained exactly after this candidate is delivered.
 
-The production constructor retains only the non-secret
-`AiGatewayCredentialSource` selected during discovery. Its stable metadata is
+The configured `NativeCredentialSourceKind::Environment` is an acquisition
+kind, not this runtime observation. The production constructor retains only the
+non-secret `AiGatewayCredentialSource` selected during discovery. Its stable metadata is
 available as `Some(source)` through `credential_source()`. The custom transport
 constructor returns `None`. `NativeReferenceHost` has no bearer-token getter,
 and the credential-source observation exposes no secret value. The production
@@ -213,8 +221,9 @@ the earlier components have been constructed. The custom path cannot return
 
 ## Deferred scope and milestone boundary
 
-This candidate does not select or safely create required workspace or state
-roots, implement a concrete terminal `PermissionPrompter`, allocate a session
+This composition and the thirteenth candidate do not select or safely create
+required workspace or state roots, implement a concrete terminal
+`PermissionPrompter`, allocate a session
 ID or `SessionIncarnationId`, or add create/list/resume/replay/reset session
 lifecycle commands. It does not add the remaining native tools, compose or run
 the CLI, or change any existing CLI byte. A reset under a reused session ID
@@ -222,12 +231,15 @@ still requires a new host-generated incarnation before reuse.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance
-claims remain open. This slice does not alter the pinned fx inventory,
+claims remain open. The candidate does not alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature
 gates, fast-forward integration, and exact `main` gates are green. The combined
-credential-and-configuration item remains unchecked because schema v2 has no
-bounded credential-source field. Milestone 03 remains in progress.
+credential-and-configuration item remains unchecked while the thirteenth
+candidate's implementation, independent tests, three adversarial tracks, exact
+feature gates, fast-forward integration, and exact `main` gates remain pending.
+It may be checked only after all those gates are green. Milestone 03 remains in
+progress.
