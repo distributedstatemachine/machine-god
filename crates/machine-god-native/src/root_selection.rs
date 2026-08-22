@@ -199,7 +199,7 @@ fn validated_state_base(value: &OsStr) -> Result<PathBuf, NativeRootSelectionErr
             NativeRootSelectionErrorKind::InvalidStateEnvironment,
         ));
     }
-    Ok(path.to_path_buf())
+    Ok(path.components().collect())
 }
 
 /// Stable category for native-root preparation failure.
