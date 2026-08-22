@@ -96,9 +96,11 @@ tracks were green together on exact behavior SHA
 exposed three Linux-only strict-Clippy diagnostics in feature CI run
 `32588948956`; its native Linux/macOS tests and benchmark run `32588948975`
 were green. Portable lint normalization is present at `90d8f96`, and local
-macOS plus Linux cross-target gates are green. Final same-SHA adversarial
-rereview, a replacement documentation seal, exact feature workflows, `main`
-integration, and a final delivery record remain pending. See the candidate
+macOS plus Linux cross-target gates are green. All three final adversarial
+tracks are green on exact candidate SHA
+`72cf64f63e0dfa30bc1ee21d8aca16550e819c21`. A replacement documentation seal,
+exact feature workflows, `main` integration, and a final delivery record remain
+pending. See the adversarially green candidate
 [native root-selection contract](docs/native-root-selection.md) and
 [review record](docs/reviews/m03-native-root-selection-review-01.md).
 

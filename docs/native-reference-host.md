@@ -23,9 +23,10 @@ focused total to 16, including ALLOW-rejection and ordinary-HOME
 DENY-compatibility regressions. All three tracks were green on exact behavior
 SHA `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`. The first seal exposed only
 Linux strict-Clippy portability diagnostics; their source normalization is
-present at `90d8f96`, with local macOS and Linux cross-target gates green.
-Final same-SHA rereview, replacement documentation-seal, and delivery gates
-remain pending. Milestone 03 remains `IN PROGRESS`. Full lineage is recorded in the
+present at `90d8f96`, with local macOS and Linux cross-target gates green. All
+three final tracks are green on exact candidate `72cf64f6`; replacement
+documentation-seal and delivery gates remain pending. Milestone 03 remains
+`IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
 `NativeReferenceHost` composes the existing validated native configuration,
@@ -100,9 +101,9 @@ NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots(
 These methods consume retained roots prepared under the separate
 [`native root-selection contract`](native-root-selection.md), rather than
 reopening path arguments. Production and independent focused tests are present;
-formal adversarial review was green on exact behavior SHA `f1dc4751`; the
-post-review Linux lint normalization at `90d8f96` is locally green and awaits
-final same-SHA rereview plus replacement documentation-seal and delivery.
+formal adversarial review was green on exact behavior SHA `f1dc4751`; after the
+Linux lint normalization at `90d8f96`, all three final tracks are green on exact
+candidate `72cf64f6`. Replacement documentation-seal and delivery remain pending.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -267,8 +268,9 @@ the earlier components have been constructed. The custom path cannot return
 The integrated path constructors and `FileSessionStore::open` still do not
 select or create roots. The composed fourteenth candidate adds a separate
 selection/preparation boundary and consuming constructors. Formal review was
-green on exact behavior SHA `f1dc4751`; the later Linux lint normalization at
-`90d8f96` is locally green and awaits final same-SHA rereview and delivery.
+green on exact behavior SHA `f1dc4751`; after the later Linux lint normalization
+at `90d8f96`, all three final tracks are green on exact candidate `72cf64f6` and
+delivery remains pending.
 Neither that candidate nor this integrated
 composition implements a concrete terminal `PermissionPrompter`, allocates a
 session ID or `SessionIncarnationId`, or adds create/list/resume/replay/reset

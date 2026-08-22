@@ -1,6 +1,6 @@
 # Milestone 03 native root-selection review 01
 
-Status: **FINAL REREVIEW PENDING — Linux lint fix locally green**
+Status: **ADVERSARIALLY GREEN — replacement seal and delivery gates pending**
 
 ## Candidate lineage
 
@@ -78,7 +78,13 @@ Status: **FINAL REREVIEW PENDING — Linux lint fix locally green**
 - Cross-platform lint normalization: `90d8f96e934d39b918ba7c627ecd08b5dd7152c5`
 - Linux no-feature cross-target strict Clippy and full local macOS gates after
   `90d8f96`: **GREEN**
-- Final same-SHA formal rereview after `90d8f96`: pending
+- Exact final rereview candidate:
+  `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`
+- Final API/tests/portability rereview on `72cf64f6`: **GREEN**
+- Final security/resources/authority rereview on `72cf64f6`: **GREEN**
+- Final documentation/evidence rereview on `72cf64f6`: **GREEN**
+- Adversarially green post-lint candidate:
+  `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`
 - Exact feature-gate SHA and workflows: pending
 - Replacement documentation seal and workflows: pending
 - Exact `main` delivery and workflows: pending
@@ -99,8 +105,9 @@ Linux feature CI then found three target-specific lint diagnostics while every
 native Linux/macOS test job and benchmark evidence remained green. The portable
 source normalization is present at `90d8f96`, and its full local macOS plus
 Linux cross-target lint gates are green. Because production source changed,
-all three tracks must rereview one new exact candidate before the replacement
-documentation seal, feature, `main`, and final-delivery gates.
+all three tracks rereviewed exact candidate `72cf64f6`; all are green together.
+The replacement documentation seal, feature, `main`, and final-delivery gates
+remain pending.
 Milestone 03 remains `IN PROGRESS`.
 
 ## Candidate behavior
@@ -219,8 +226,19 @@ portable mode comparison to `u64` and compiles descriptor ACL validation only
 on macOS; it changes no accepted path, mode, ACL, error, or public API behavior.
 The exact failing Linux cross-target Clippy command, strict all-target/all-
 feature local Clippy, all-feature workspace tests, and workspace documentation
-are green. The required three-track final rereview will inspect the same exact
-post-fix candidate SHA.
+are green. The required three-track final rereview inspected exact post-fix
+candidate `72cf64f63e0dfa30bc1ee21d8aca16550e819c21`. API/tests/portability
+confirmed the widening preserves unsigned permission masks on Linux and macOS,
+the exact formerly failing Linux Clippy command is green, all 16 focused tests
+pass, and public API, cfg resolution, error/debug contracts, and source
+compatibility are unchanged. Security/resources/authority confirmed macOS ACL
+validation remains active and fail-closed at both call sites while Linux only
+loses its semantic no-op, with retained descriptors, bounded creation, root
+disjointness, credential ordering, and redaction unchanged. Documentation and
+evidence review confirmed the historical lineage, exact workflow outcomes,
+test counts, maintained summaries, pending delivery status, and documentation-
+only review exemption. All three tracks reported **GREEN** on the same exact
+SHA and edited no files.
 
 The replacement documentation-only seal and delivery records will update evidence and
 status text only. Per the delivery workflow and the user's explicit instruction,
@@ -248,9 +266,9 @@ evidence.
 
 ## Remaining scope
 
-Final same-SHA adversarial rereview, replacement documentation-seal workflows,
-exact feature workflows, a fast-forward without force to `main`, exact `main`
-workflows, and final delivery evidence remain pending. Session lifecycle and
+Replacement documentation-seal workflows, exact feature workflows, a fast-
+forward without force to `main`, exact `main` workflows, and final delivery
+evidence remain pending. Session lifecycle and
 reset/new-incarnation behavior, the remaining
 native tools, CLI expansion, release-binary end-to-end host evidence, and
 compatibility promotion remain open. No package or GitHub release is authorized.

@@ -1,7 +1,7 @@
 # Native root selection and preparation
 
-Status: final-rereview candidate contract for the fourteenth bounded Milestone
-03 slice; replacement documentation-seal and delivery gates pending.
+Status: adversarially green behavior contract for the fourteenth bounded
+Milestone 03 slice; replacement documentation-seal and delivery gates pending.
 Thirteen slices are integrated through final delivery record
 `f840576af241c58d1e55399e66ba92f7770cd50c`; exact feature CI run
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
@@ -22,9 +22,10 @@ then produced green Linux/macOS native-test jobs and green benchmark run
 strict-Clippy diagnostics. Portable lint normalization is present at
 `90d8f96`; local macOS and Linux cross-target strict Clippy plus the full test
 and documentation gates are green. Because production source changed after
-`f1dc4751`, final same-SHA adversarial rereview, a replacement documentation
-seal, exact feature delivery, fast-forward integration, exact `main` workflows,
-and the final record remain pending.
+`f1dc4751`, all three tracks rereviewed exact candidate
+`72cf64f63e0dfa30bc1ee21d8aca16550e819c21` and are green together. A
+replacement documentation seal, exact feature delivery, fast-forward
+integration, exact `main` workflows, and the final record remain pending.
 Milestone 03 remains `IN PROGRESS`.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
