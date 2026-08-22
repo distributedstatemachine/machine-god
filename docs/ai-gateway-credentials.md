@@ -133,7 +133,7 @@ production library constructor that consumes an explicitly injected snapshot
 and retains only the selected source metadata. Its focused composed tests are
 green, while adversarial and delivery gates remain pending. Its custom-
 transport authority override skips discovery
-and report no native-discovery source. The broader M03 credential-and-
+and reports no native-discovery source. The broader M03 credential-and-
 configuration checklist item remains unchecked even after that candidate is
 delivered because configuration still has no bounded credential-source field.
 This adapter's adversarial, feature-branch, documentation-seal, and `main` gates
