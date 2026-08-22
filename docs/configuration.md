@@ -165,8 +165,9 @@ with file origin and schema version `1`, while its existing fixed in-memory
 provider, transport, and model projection drives composition. The candidate's
 production constructor receives a separate injected credential snapshot; no
 credential enters this configuration value or loader. Production implementation
-and focused independent tests are composed; adversarial and delivery gates
-remain pending.
+and focused independent tests are composed, and three fresh adversarial tracks
+are green on exact behavior SHA `5afda631`; remote delivery gates remain
+pending.
 
 Configuration mutation, a migration or rewrite command, a terminal permission
 prompter and modes beyond `ask`, runtime and CLI composition, required

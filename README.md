@@ -57,9 +57,10 @@ exactly `list_files` and `read_file`, the existing file session store, and the
 ask handler over an injected prompter. Construction remains synchronous and
 creates no root, runtime, network request, prompt operation, session record, or
 background work. Production implementation and independent black-box tests are
-composed on this feature branch and their focused pinned-toolchain checks are
-green; adversarial review, exact remote gates, and `main` delivery remain
-pending. The CLI is byte-unchanged and remains thin. See
+composed on this feature branch, their focused pinned-toolchain checks are
+green, and three fresh adversarial tracks are green on exact behavior SHA
+`5afda631`. Exact remote gates and `main` delivery remain pending. The CLI is
+byte-unchanged and remains thin. See
 the [candidate contract](docs/native-reference-host.md) and
 [candidate review record](docs/reviews/m03-native-reference-host-review-01.md).
 

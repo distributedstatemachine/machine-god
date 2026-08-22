@@ -54,9 +54,9 @@ and benchmark-evidence run `32576876780` are green. See
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 A twelfth bounded candidate implements Linux/macOS-only library composition
 behind the existing `ai-gateway-http` and non-WebAssembly gate. Production
-implementation and independent black-box tests are composed; adversarial
-review, exact remote gates, and `main` delivery remain pending. Its boundary is
-in
+implementation and independent black-box tests are composed, and three fresh
+adversarial tracks are green on exact behavior SHA `5afda631`. Exact remote
+gates and `main` delivery remain pending. Its boundary is in
 [`native-reference-host.md`](native-reference-host.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -174,7 +174,7 @@ transport, provider, or engine. Component errors, roots, config/model values,
 credential bytes and source, endpoint data, prompt data, OS diagnostics, and
 raw error numbers are discarded. Host debug output is fixed to
 `NativeReferenceHost { .. }` and exposes no config structure or source. These
-are composed candidate behaviors awaiting adversarial and delivery gates.
+are adversarially green candidate behaviors awaiting remote delivery gates.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and

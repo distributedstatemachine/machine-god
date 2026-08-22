@@ -3,9 +3,10 @@
 Status: composed candidate contract for the twelfth bounded Milestone 03
 library slice. Eleven slices are integrated. Production implementation and an
 independent seven-test black-box suite are composed on this feature branch;
-their focused Rust/Cargo 1.94.1 checks are green. Adversarial review, exact
-remote feature gates, and `main` delivery remain pending. Milestone 03 remains
-`IN PROGRESS`. Candidate lineage is recorded in the
+their focused Rust/Cargo 1.94.1 checks and three fresh adversarial tracks are
+green on exact behavior SHA `5afda631`. Exact remote feature gates and `main`
+delivery remain pending. Milestone 03 remains `IN PROGRESS`. Candidate lineage
+is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
 `NativeReferenceHost` composes the existing validated native configuration,

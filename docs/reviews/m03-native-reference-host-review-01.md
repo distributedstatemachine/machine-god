@@ -1,7 +1,7 @@
 # Milestone 03 native reference-host composition review 01
 
-Status: **COMPOSED CANDIDATE — implementation and independent tests locally
-green; adversarial review, exact remote gates, and `main` delivery pending**
+Status: **ADVERSARIALLY GREEN — implementation, independent tests, and local
+gates green; exact remote feature gates and `main` delivery pending**
 
 ## Candidate lineage
 
@@ -19,10 +19,12 @@ green; adversarial review, exact remote gates, and `main` delivery pending**
   `b24741c6e9e3ccb8744c2f638735c03b949c8e68`
 - Initial composed candidate:
   `c261e84471f0a94cc644be92a6053e16af3ff6d7`
-- Candidate state and security reconciliation: this branch commit; exact SHA
+- Candidate state and security reconciliation:
+  `25089e9765b313b27742da3f4342b90647d0a1af`
+- Adversarially green behavior:
+  `5afda631b83ee0ebd65ddc0e1d49079739b4914d`
+- Review record and exact feature-gate SHA: this branch commit; exact SHA
   reported at handoff
-- Adversarially green behavior: `PENDING`
-- Review record and exact feature-gate SHA: `PENDING`
 - Documentation seal: `PENDING`
 - Exact `main` delivery SHA: `PENDING`
 - Integration branch: `agent/m03-native-reference-host`
@@ -31,11 +33,11 @@ green; adversarial review, exact remote gates, and `main` delivery pending**
 
 The base contains eleven integrated bounded Milestone 03 slices. Production,
 independently owned tests, and candidate documentation for the twelfth bounded
-library slice are composed on this branch. No adversarial track is yet green on
-the reconciled exact candidate, and no exact feature or `main` workflow has run.
-Milestone 03 remains `IN PROGRESS`.
+library slice are composed on this branch. All three fresh adversarial tracks
+are green on exact behavior SHA `5afda631`; no exact feature or `main` workflow
+has run. Milestone 03 remains `IN PROGRESS`.
 
-## Implemented behavior awaiting adversarial review
+## Adversarially green behavior
 
 The composed candidate implements:
 
@@ -47,7 +49,9 @@ The composed candidate implements:
   `ai_gateway_http` selection before any other construction stage;
 - one workspace open whose shared retained directory identity feeds exactly
   `list_files` and `read_file`;
-- the existing `FileSessionStore` opened over a separate existing session root;
+- the existing `FileSessionStore` opened over a separately supplied existing
+  session root, with disjoint selection assigned to the trusted host because
+  composition does not compare identity or ancestry;
 - `AskPermissionHandler` over an explicitly injected shared
   `PermissionPrompter`;
 - `AiGatewayProvider` over either production `AiGatewayHttpTransport` built
@@ -72,11 +76,11 @@ The composed candidate implements:
   `UnsupportedSelection`, `WorkspaceRoot`, `SessionStore`, `Credential`,
   `HttpTransport`, `Provider`, or `Engine`.
 
-The complete proposed normative behavior, order, failure strings, trust
+The complete normative behavior, order, failure strings, trust
 boundaries, and deferred scope are in
 [`native-reference-host.md`](../native-reference-host.md).
 
-## Parallel delivery and composition state
+## Parallel delivery and adversarial review
 
 Production implementation, independent black-box tests, and candidate
 documentation were completed in separate isolated worktrees with non-overlapping
@@ -84,14 +88,33 @@ ownership, then composed without conflicts. The seven tests exercise v1/v2
 projection, exact model and two-tool registration, normalized permissions,
 durable tool results, production credential precedence and inert construction,
 redacted stage failures, custom-transport inertness, and shared retained
-workspace identity after path replacement. Three fresh adversarial tracks must
-review one exact reconciled commit for correctness/API, security/abuse, and
-documentation/plan scope. Confirmed findings must be fixed and rereviewed until
-all three tracks are green.
+workspace identity after path replacement.
 
-## Candidate and composition checks
+Three fresh adversarial tracks reviewed exact committed candidates for
+correctness/API/tests/portability, security/resources/authority, and maintained
+documentation/plan scope:
 
-The following passed with exact `rustc 1.94.1` and `cargo 1.94.1`:
+- On initial composed SHA `c261e844`, the API/test track was green. The security
+  track found one low-severity documentation gap: root disjointness was implied
+  but not enforced or assigned to the trusted host. The documentation track
+  found one medium-severity state gap: maintained pages still described the
+  already composed branch as documentation-only.
+- SHA `25089e97` fixed both findings by reconciling all maintained status pages
+  and explicitly documenting that composition does not compare root identity or
+  ancestry, the trusted host must select disjoint roots, and overlap can expose
+  session artifacts to workspace tools after permission. Security and API/test
+  rereviews were green; the documentation rereview found one low-severity
+  singular-verb typo.
+- SHA `5afda631` fixed that typo. All three tracks independently reported
+  **GREEN** on that exact final behavior SHA with no remaining finding.
+
+No finding was rejected.
+
+## Exact local checks
+
+The following passed on adversarially green behavior SHA `5afda631` or its
+code-identical documentation descendants with exact `rustc 1.94.1` and
+`cargo 1.94.1`:
 
 - `cargo +1.94.1 fmt --all -- --check`;
 - `cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings`;
@@ -99,20 +122,29 @@ The following passed with exact `rustc 1.94.1` and `cargo 1.94.1`:
   seven passed, zero failed;
 - `cargo +1.94.1 test --workspace`;
 - `cargo +1.94.1 test --doc --workspace`: two passed, zero failed;
+- repo-wide Python tests: 129 run, 121 passed and 8 expected platform skips;
+- `cargo-deny` dependency policy, with only the accepted duplicate `syn` and
+  `windows-sys` warnings;
+- `cargo-audit` 0.22.2: 1,225 advisories checked across 174 dependencies with
+  no vulnerability finding;
+- `x86_64-unknown-freebsd` no-default native Clippy with warnings denied;
+- `wasm32-wasip1` no-default and all-feature compilation, with only the
+  pre-existing unrelated `read_file` dead-code warning;
+- `aarch64-apple-darwin` no-default compilation;
+- a fresh exact release CLI build plus bare, help, version, and JSON-status
+  smoke;
 - repository-relative Markdown links: 144 checked across 44 Markdown files,
   with none missing; and
-- `git diff --check`.
+- `git diff --check` and a clean worktree.
 
-The initial composed worktree was clean at `c261e844`. These checks are local
-candidate evidence only; they are not adversarial-review, exact remote, or
-delivery evidence.
+These checks and the three green review tracks are local exact-SHA evidence;
+they are not remote or `main` delivery evidence.
 
 ## Remaining gates and scope
 
-Three fresh adversarial reviews, the remaining full local required checks,
-exact feature-branch CI and benchmark-evidence runs, the documentation seal,
-fast-forward integration, and exact `main` CI and benchmark-evidence runs all
-remain pending.
+Exact feature-branch CI and benchmark-evidence runs, the documentation seal,
+fast-forward integration, and exact `main` CI and benchmark-evidence runs remain
+pending.
 
 Root selection and safe creation, a terminal prompter, session identifiers and
 lifecycle commands, the remaining native tools, CLI composition/execution, and
