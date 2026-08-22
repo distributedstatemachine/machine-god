@@ -172,6 +172,79 @@ fn json_status_is_compact_valid_and_has_fixed_shape() {
 }
 
 #[test]
+fn schema_v2_composition_does_not_change_status_bytes_or_rewrite_config() {
+    let temporary = TestDirectory::new("schema-v2-status");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("state");
+    let config_path = config_root.join("machine-god/config.json");
+    let state_path = state_root.join("machine-god");
+    let distinctive_model = "CLI_DISTINCTIVE_MODEL_MARKER";
+    let contents = format!(
+        concat!(
+            "{{\"schema_version\":2,\"permission_mode\":\"ask\",",
+            "\"provider\":\"vercel_ai_gateway\",",
+            "\"transport\":\"ai_gateway_http\",",
+            "\"model\":\"{distinctive_model}\"}}",
+        ),
+        distinctive_model = distinctive_model,
+    )
+    .into_bytes();
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(&state_path).unwrap();
+    fs::write(&config_path, &contents).unwrap();
+
+    let text = run_with_roots(&["status"], config_root.as_os_str(), state_root.as_os_str());
+    let expected_text = format!(
+        concat!(
+            "{IDENTITY}",
+            "permission_mode: ask\n",
+            "config_file: state=file path={config_path:?}\n",
+            "state_directory: state=directory path={state_path:?}\n",
+        ),
+        IDENTITY = IDENTITY,
+        config_path = config_path.to_str().unwrap(),
+        state_path = state_path.to_str().unwrap(),
+    );
+    assert_success(&text, &expected_text);
+
+    let json = run_with_roots(
+        &["status", "--json"],
+        config_root.as_os_str(),
+        state_root.as_os_str(),
+    );
+    let expected_json = format!(
+        concat!(
+            "{{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
+            "\"engine_api_version\":1,\"permission_mode\":\"ask\",",
+            "\"config_file\":{{\"path\":{config_path:?},\"state\":\"file\"}},",
+            "\"state_directory\":{{\"path\":{state_path:?},\"state\":\"directory\"}}}}\n",
+        ),
+        config_path = config_path.to_str().unwrap(),
+        state_path = state_path.to_str().unwrap(),
+    );
+    assert_success(&json, &expected_json);
+
+    for output in [&text.stdout, &json.stdout] {
+        assert!(
+            !output
+                .windows(distinctive_model.len())
+                .any(|window| window == distinctive_model.as_bytes())
+        );
+        assert!(
+            !output
+                .windows("vercel_ai_gateway".len())
+                .any(|window| window == b"vercel_ai_gateway")
+        );
+        assert!(
+            !output
+                .windows("ai_gateway_http".len())
+                .any(|window| window == b"ai_gateway_http")
+        );
+    }
+    assert_eq!(fs::read(config_path).unwrap(), contents);
+}
+
+#[test]
 fn unavailable_environment_uses_null_paths() {
     let output = machine_god()
         .args(["status", "--json"])
