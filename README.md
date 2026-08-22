@@ -81,14 +81,17 @@ run `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 [configuration contract](docs/configuration.md) and
 [review record](docs/reviews/m03-configured-credential-source-review-01.md).
 
-The fourteenth bounded slice is a documentation-only candidate for explicit
+The fourteenth bounded slice is now a composed candidate for explicit
 Linux/macOS native root selection and safe preparation. It selects an existing
 absolute workspace plus a state location from an injected native-environment
 snapshot, opens and retains the workspace first, and may create only a fixed
 descriptor-relative state suffix with private new-directory modes. It does not
 change schema v3, configuration bytes, the CLI, status, or session lifecycle.
-Production, independent tests, adversarial review, exact remote gates, and
-`main` integration remain pending. See the candidate
+Production and 14 independently owned focused tests are present, and focused
+root-selection and prepared-composition gates are green. A preliminary audit is
+green but is not one of the required three fresh formal adversarial tracks.
+Those formal reviews, exact feature workflows, `main` integration, and a final
+delivery record remain pending. See the composed candidate
 [native root-selection contract](docs/native-root-selection.md) and
 [review record](docs/reviews/m03-native-root-selection-review-01.md).
 
@@ -101,9 +104,9 @@ The project is not yet production-ready. See the exact
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
 normative [native file session store](docs/session-store.md), the integrated
 [native reference-host composition](docs/native-reference-host.md), and the
-integrated [configured credential source](docs/configuration.md). The candidate
-[native root-selection boundary](docs/native-root-selection.md) is not yet
-delivered.
+integrated [configured credential source](docs/configuration.md). The composed
+candidate [native root-selection boundary](docs/native-root-selection.md) is
+not yet delivered.
 
 ## Development
 

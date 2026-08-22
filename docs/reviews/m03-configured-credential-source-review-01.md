@@ -247,8 +247,9 @@ are green for that exact SHA.
 ## Remaining scope
 
 The combined credential-and-configuration checklist item is complete. A
-fourteenth documentation-only root-selection candidate is being developed
-separately; root-selection delivery, session lifecycle behavior, the remaining
+fourteenth root-selection candidate is composed separately with production and
+independent focused tests present; its formal review and delivery, session
+lifecycle behavior, the remaining
 native tools, CLI expansion and composition, deterministic release-binary end-
 to-end evidence, and compatibility promotion remain open. Milestone 03 remains
 in progress. No package or GitHub release is authorized.

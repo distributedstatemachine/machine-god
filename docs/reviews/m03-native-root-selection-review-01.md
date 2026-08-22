@@ -1,6 +1,6 @@
 # Milestone 03 native root-selection review 01
 
-Status: **CANDIDATE — documentation only; production and delivery pending**
+Status: **COMPOSED CANDIDATE — formal adversarial and delivery gates pending**
 
 ## Candidate lineage
 
@@ -14,10 +14,26 @@ Status: **CANDIDATE — documentation only; production and delivery pending**
   [`32583871385`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583871385)
 - Exact base `main` benchmark-evidence run:
   [`32583871368`](https://github.com/distributedstatemachine/machine-god/actions/runs/32583871368)
-- Candidate documentation: this isolated commit; exact SHA reported at handoff
-- Production implementation: pending
-- Independent black-box tests: pending
-- Initial composed candidate: pending
+- Isolated candidate documentation:
+  `9ee2bbf3300fbbbdb7d9c13d5610c1b01da44522`
+- Candidate documentation as composed:
+  `41f177c6a35e1b456dff39040a2c536ed5a0f9f8`
+- Production implementation as composed:
+  `050d253e9cdd901996883c7130508488f9aabdbb`
+- Created-directory normalization fix:
+  `7420a3a2664144900bb2eb688c601d9f41480e53`
+- Selected-state-base normalization fix:
+  `fa5119a91102159392e639ecba473cb01495af44`
+- Independent two-test root-preparation regression suite:
+  `85c99a86889e38c3a8671a30ee320224744bed2d`
+- Independent nine-test root-selection core-contract suite:
+  `85c4193cbf7efabb7916a2a75d3a9e0e3bae3440`
+- Independent three-test all-feature prepared-host suite:
+  `236e3d45f71074d6f3fe2817958f8b89bf9a3ac9`
+- Preliminary read-only audit: **GREEN**; explicitly not one of the required
+  three fresh formal adversarial tracks
+- Initial composed candidate: this documentation-reconciliation commit; exact
+  SHA reported at handoff
 - Adversarially green behavior: pending
 - Exact feature-gate SHA and workflows: pending
 - Documentation seal and workflows: pending
@@ -27,27 +43,31 @@ Status: **CANDIDATE — documentation only; production and delivery pending**
 - Candidate-docs branch: `agent/m03-native-root-selection-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
-Thirteen bounded Milestone 03 slices are integrated. This file records the
-documentation-only candidate for the fourteenth slice; it is not evidence that
-the described production API exists, that independent tests pass, that any
-adversarial track is green, or that the slice has passed remote or `main`
-delivery gates. Milestone 03 remains `IN PROGRESS`.
+Thirteen bounded Milestone 03 slices are integrated. The fourteenth slice's
+production, two correctness fixes, and 14 independently owned focused tests are
+now composed, and focused root-selection and prepared-host gates are green. A
+preliminary read-only audit is green but is not formal review evidence. No
+required fresh adversarial track is yet green on this exact composed candidate,
+and feature, `main`, and final-delivery gates remain pending. Milestone 03
+remains `IN PROGRESS`.
 
 ## Candidate behavior
 
-The proposed slice adds:
+The composed candidate implements:
 
 - `NativeRootSelection::from_environment` over an explicitly injected
   `NativeEnvironment` and absolute, parent-component-free workspace path,
   without imposing Unicode on that explicit operating-system path;
 - exact nonempty-XDG, empty-XDG fallback, and `HOME` state-root derivation with
-  fixed `machine-god` and `.local/state/machine-god` suffixes;
+  lexical-component rebuilding of the accepted base and fixed `machine-god`
+  and `.local/state/machine-god` suffixes;
 - fixed redacted selection categories for invalid workspace, unavailable state
   input, and invalid selected state environment;
 - `PreparedNativeRoots::prepare`, which opens the existing workspace first,
   requires the selected XDG or `HOME` base to exist, and creates only the fixed
   suffix through retained descriptor-relative no-follow operations;
-- exact post-open `0700` enforcement for new directories; effective-UID and
+- descriptor-relative pre-open normalization followed by post-open identity and
+  exact `0700` enforcement for new directories; effective-UID and
   no-group/other-write validation for the selected base and existing
   intermediates; complete group/other privacy for the existing final root; and
   validation rather than chmod or repair for any existing directory;
@@ -87,11 +107,16 @@ This slice adds no compatibility, upstream-equivalence, or product-performance
 claim. Zig remains solely the pinned upstream benchmark build input;
 machine-god remains a Rust product.
 
-## Planned parallel delivery and review
+## Parallel delivery and pending formal review
 
 Production implementation, independent black-box tests, and candidate
-documentation use isolated worktrees with non-overlapping ownership. After
-composition, three fresh read-only adversarial tracks will inspect the exact
+documentation were completed in isolated worktrees with non-overlapping
+ownership, then composed with both correctness fixes. The focused regression,
+core-contract, and prepared-host suites run 2, 9, and 3 tests respectively and
+are green. A preliminary read-only audit reported green, but it is explicitly
+not one of the required formal tracks.
+
+Three fresh read-only adversarial tracks must still inspect the exact composed
 candidate for correctness/API/tests/portability, security/resources/authority,
 and maintained documentation/evidence scope. Every confirmed finding must be
 fixed and all three tracks must report green together on the same exact
@@ -104,16 +129,21 @@ production behavior is already green.
 
 ## Candidate documentation checks
 
-The isolated documentation commit is checked with exact Rust/Cargo 1.94.1
-workspace doc tests, repository-relative Markdown-link validation, and
-`git diff --check`. Exact results are reported at handoff. These checks are not
-production, adversarial-review, feature-workflow, benchmark, or `main` evidence.
+This composed documentation reconciliation passes:
+
+- exact Rust/Cargo 1.94.1 workspace doc tests: two passed, zero failed;
+- `cargo +1.94.1 fmt --all -- --check`;
+- 169 repository-relative links across 48 Markdown files with none missing; and
+- `git diff --check`.
+
+These checks and the focused production tests are not formal adversarial-
+review, feature-workflow, benchmark, or `main` evidence.
 
 ## Remaining scope
 
-Production, independent tests, composed local gates, all three adversarial
-tracks, exact feature workflows, a fast-forward without force to `main`, exact
-`main` workflows, and final delivery evidence remain pending. Session lifecycle
-and reset/new-incarnation behavior, the remaining native tools, CLI expansion,
-release-binary end-to-end host evidence, and compatibility promotion remain
-open. No package or GitHub release is authorized.
+Three fresh formal adversarial tracks, any resulting fixes and rereviews, full
+local gates, exact feature workflows, a fast-forward without force to `main`,
+exact `main` workflows, and final delivery evidence remain pending. Session
+lifecycle and reset/new-incarnation behavior, the remaining native tools, CLI
+expansion, release-binary end-to-end host evidence, and compatibility promotion
+remain open. No package or GitHub release is authorized.

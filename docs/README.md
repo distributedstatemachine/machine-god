@@ -26,4 +26,4 @@
 - [Milestone 03 native host configuration schema-v2 review](reviews/m03-native-host-config-review-01.md)
 - [Milestone 03 native reference-host composition review](reviews/m03-native-reference-host-review-01.md)
 - [Milestone 03 configured credential-source review](reviews/m03-configured-credential-source-review-01.md)
-- [Milestone 03 native root-selection review candidate](reviews/m03-native-root-selection-review-01.md)
+- [Milestone 03 native root-selection composed candidate](reviews/m03-native-root-selection-review-01.md)

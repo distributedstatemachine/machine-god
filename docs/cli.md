@@ -12,7 +12,7 @@ The slice is integrated on `main` through final delivery record
 `f840576af241c58d1e55399e66ba92f7770cd50c`; exact main CI run `32583871385`
 and benchmark-evidence run `32583871368` are green. Provider, transport, model,
 and credential-source config fields remain invisible to this metadata-only
-surface. The separate fourteenth
+surface. The separate fourteenth composed
 [`native root-selection candidate`](native-root-selection.md) likewise changes
 no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.

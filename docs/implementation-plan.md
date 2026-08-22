@@ -269,7 +269,7 @@ green for that exact SHA. Per the delivery workflow and the user's explicit
 instruction, that documentation-only final record was not adversarially
 reviewed after the behavior was already green.
 
-The fourteenth bounded slice is a documentation-only candidate for explicit
+The fourteenth bounded slice is a composed candidate for explicit
 Linux/macOS native root selection and safe preparation. A
 `NativeRootSelection` derives an exact state root from an injected
 `NativeEnvironment` and an explicit absolute workspace. A
@@ -282,9 +282,15 @@ fail closed. New consuming reference-host constructors preserve those retained
 identities and discover production credentials only after root preparation.
 Schema v3, configuration bytes, status and every CLI byte remain unchanged;
 the old reference-host path constructors and `FileSessionStore::open` remain
-no-create. Production, independent tests, three fresh adversarial tracks,
-exact feature workflows, fast-forward integration, and exact `main` workflows
-are pending. The candidate contract and review record are in
+no-create. Production is present at `050d253`, with creation-normalization fix
+`7420a3a` and selected-base normalization fix `fa5119a`. Independent regression,
+core-contract, and prepared-host suites are present at `85c99a8`, `85c4193`,
+and `236e3d4`, covering 2, 9, and 3 focused tests respectively. Those focused
+gates are green. A preliminary audit is green but does not count as any of the
+required three fresh formal adversarial tracks. Formal review, full local gates,
+exact feature workflows, fast-forward integration, exact `main` workflows, and
+the final delivery record remain pending. The candidate contract and review
+record are in
 [`native-root-selection.md`](native-root-selection.md) and
 [`m03-native-root-selection-review-01.md`](reviews/m03-native-root-selection-review-01.md).
 

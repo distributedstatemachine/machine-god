@@ -1,13 +1,19 @@
 # Native root selection and preparation
 
-Status: candidate contract for the fourteenth bounded Milestone 03 slice.
+Status: composed candidate contract for the fourteenth bounded Milestone 03
+slice.
 Thirteen slices are integrated through final delivery record
 `f840576af241c58d1e55399e66ba92f7770cd50c`; exact feature CI run
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 `32583871385`, and main benchmark-evidence run `32583871368` are green for that
-record. This candidate's production implementation, independent tests, three
-fresh adversarial tracks, exact feature workflows, fast-forward integration,
-and exact `main` workflows remain pending. Milestone 03 remains `IN PROGRESS`.
+record. Production is present at `050d253`, with focused correctness fixes at
+`7420a3a` and `fa5119a`. Independent 2-test regression, 9-test core-contract,
+and 3-test prepared-host suites are present at `85c99a8`, `85c4193`, and
+`236e3d4`; their focused gates are green. A preliminary audit is green but is
+not one of the three required fresh formal adversarial tracks. Those tracks,
+full local gates, exact feature workflows, fast-forward integration, exact
+`main` workflows, and the final record remain pending. Milestone 03 remains
+`IN PROGRESS`.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
@@ -47,6 +53,11 @@ State selection exactly reuses the existing state-location precedence:
 - an invalid selected nonempty `XDG_STATE_HOME` fails without falling back;
 - a missing or empty needed `HOME` makes state selection unavailable; and
 - a selected nonempty relative or non-Unicode `HOME` is invalid.
+
+An accepted state base is rebuilt from its lexical components before it is
+retained. This removes redundant separators and `.` decorations so the later
+`O_NOFOLLOW` open applies to the actual final component; lexical `..` remains
+unchanged and is resolved only by the operating system during that open.
 
 The selected state root path is exactly
 `<XDG_STATE_HOME>/machine-god`, or
@@ -124,15 +135,26 @@ those rules and be private from group and other entirely
 (`mode & 0o077 == 0`). User permission bits are not repaired or otherwise
 normalized.
 
-Every directory created by preparation is made with mode `0700`, reopened
-no-follow, checked so the no-follow path observation and opened descriptor have
-the same device/inode identity, then `fchmod`ed to exact `0700` so a restrictive
-umask cannot leave a different final mode. The resulting directory must be
-owned by the effective user ID and still have exact `0700`. Existing components
-are never chmodded, chowned, replaced, removed, or otherwise repaired. A
-failure after one or more successful creates may leave those safe fixed
-directories present; preparation supplies no rollback transaction or removal
-authority.
+Every directory created by preparation is requested with mode `0700`. Because
+the process umask may remove even owner access bits, the just-created fixed name
+is first normalized descriptor-relatively to `0700` beneath the already
+effective-UID-owned, non-group/other-writable parent. It is then observed
+no-follow, reopened no-follow, checked so the path observation and opened
+descriptor have the same device/inode identity, and `fchmod`ed and verified at
+exact `0700`. The same-effective-UID account is the remaining trust boundary
+during that normalization; Linux cannot apply `AT_SYMLINK_NOFOLLOW` to this
+`fchmodat` operation. The resulting directory must be owned by the effective
+user ID and still have exact `0700`. Existing components are never chmodded,
+chowned, replaced, removed, or otherwise repaired. A failure after one or more
+successful creates may leave those safe fixed directories present; preparation
+supplies no rollback transaction or removal authority.
+
+Concurrent preparers never widen an existing directory or treat `EEXIST` as
+proof that they created it. A caller that loses the create race while the winner
+is still normalizing owner access may fail closed and retry; the API does not
+promise that every simultaneous caller succeeds on its first attempt under an
+owner-bit-masking umask. This preserves the rule that an `EEXIST` entry is
+validated as existing and is never chmodded or repaired by the losing caller.
 
 Preparation performs its filesystem operations synchronously on the caller's
 thread. It creates no future, runtime, task, thread, timer, or background work

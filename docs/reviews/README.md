@@ -23,4 +23,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native host configuration schema-v2 review](m03-native-host-config-review-01.md)
 - [Milestone 03 native reference-host composition review](m03-native-reference-host-review-01.md)
 - [Milestone 03 configured credential-source review](m03-configured-credential-source-review-01.md)
-- [Milestone 03 native root-selection review candidate](m03-native-root-selection-review-01.md)
+- [Milestone 03 native root-selection composed candidate](m03-native-root-selection-review-01.md)

@@ -196,7 +196,7 @@ reports the concrete selected OIDC-token or API-key source, not the configured
 acquisition kind. The trusted custom-transport constructor skips native
 discovery and reports `None` as before.
 
-The separate fourteenth
+The separate fourteenth composed
 [`native root-selection candidate`](native-root-selection.md) derives a state
 root from the same injected snapshot but does not change configuration or use
 the loader. Its preparation authority remains independent of this read-only

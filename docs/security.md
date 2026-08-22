@@ -72,14 +72,16 @@ integrated on `main` at `f840576af241c58d1e55399e66ba92f7770cd50c`;
 exact feature CI run `32583585145`, feature benchmark-evidence run
 `32583585148`, main CI run `32583871385`, and main benchmark-evidence run
 `32583871368` are green for that exact SHA.
-A fourteenth documentation-only candidate adds explicit Linux/macOS native root
-selection and narrowly bounded safe preparation. It opens and retains the
+A fourteenth composed candidate adds explicit Linux/macOS native root selection
+and narrowly bounded safe preparation. It opens and retains the
 workspace before state work, may create only a fixed descriptor-relative state
 suffix under an existing selected base, validates rather than repairs existing
 directories, rejects root equality or ancestry, and preserves credential
-discovery after retained-root preparation. Production, independent tests,
-adversarial review, remote gates, and `main` integration remain pending. Its
-candidate security boundary is in
+discovery after retained-root preparation. Production and 14 independently
+owned focused tests are present, and focused gates are green. A preliminary
+audit is green but does not satisfy any of the required three fresh formal
+adversarial tracks. Those formal tracks, full gates, remote workflows, and
+`main` integration remain pending. Its candidate security boundary is in
 [`native-root-selection.md`](native-root-selection.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -213,23 +215,33 @@ are integrated through final record `f840576a`, with three fresh adversarial
 tracks green on exact SHA `35ce591e` and exact final-record feature and `main`
 workflows green.
 
-The fourteenth candidate leaves the existing path constructors unchanged and
-adds `NativeRootSelection` plus `PreparedNativeRoots`. Selection is effect-free
-and consumes only an injected `NativeEnvironment` plus an explicit absolute
-workspace path. Preparation opens the existing workspace first, requires the
-selected `XDG_STATE_HOME` or fallback `HOME` base to exist, and follows no
+The composed fourteenth candidate leaves the existing path constructors
+unchanged and adds `NativeRootSelection` plus `PreparedNativeRoots`. Selection
+is effect-free and consumes only an injected `NativeEnvironment` plus an
+explicit absolute workspace path. Preparation opens the existing workspace
+first, requires the selected `XDG_STATE_HOME` or fallback `HOME` base to exist,
+and follows no
 suffix symlink while it opens or creates only `machine-god` or
 `.local/state/machine-god`. Newly created directories request `0700`. Existing
 directories are never chmodded, chowned, replaced, or removed. The selected
 base and existing intermediates must be owned by the effective UID with no
-group/other write; the existing final root permits no group/other permission;
-new directories are reopened and forced to exact `0700`. Opened workspace and
+group/other write; the existing final root permits no group/other permission.
+A just-created fixed name is normalized descriptor-relatively to `0700` before
+the permission-requiring reopen, then identity-checked, `fchmod`ed, and verified
+at exact `0700`; the same-effective-UID account is the remaining normalization
+trust boundary. Opened workspace and
 final state identities must be disjoint in both directions under device/inode
 identity and descriptor-relative parent walking. Fixed errors and debug output
 reflect no path, environment, identity, ownership, mode, or OS diagnostic.
+Accepted state bases are rebuilt from lexical components before the no-follow
+open, preventing a trailing slash or `/.` from moving a symlink out of the
+final lookup position. A simultaneous create loser can fail closed and retry
+while the winner normalizes an owner-bit-masked new directory; it never chmods
+the `EEXIST` entry.
 Prepared-root reference-host constructors consume the retained descriptors;
-production credential discovery follows acceptance of those roots. This
-paragraph describes a candidate, not delivered behavior.
+production credential discovery follows acceptance of those roots. Production
+and focused tests cover this candidate behavior; formal adversarial and delivery
+evidence remain pending.
 
 The integrated file-session slice does not consume those status-derived state
 paths.

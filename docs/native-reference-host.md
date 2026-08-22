@@ -14,9 +14,11 @@ all three fresh adversarial tracks are green on exact behavior SHA
 integrated on `main` at `f840576af241c58d1e55399e66ba92f7770cd50c`; exact
 final-record feature CI run `32583585145`, feature benchmark-evidence run
 `32583585148`, main CI run `32583871385`, and main benchmark-evidence run
-`32583871368` are green. A separate fourteenth documentation-only candidate
-adds safe selected-root preparation and consuming constructors without changing
-the integrated path-constructor contract below. Milestone 03 remains
+`32583871368` are green. A separate composed fourteenth candidate adds safe
+selected-root preparation and consuming constructors without changing the
+integrated path-constructor contract below. Its production and 14 independently
+owned focused tests are present and their focused gates are green. Three fresh
+formal adversarial tracks and delivery gates remain pending. Milestone 03 remains
 `IN PROGRESS`. Full lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
@@ -71,7 +73,7 @@ NativeReferenceHost::credential_source(&self)
     -> Option<AiGatewayCredentialSource>
 ```
 
-The fourteenth candidate proposes these additional consuming constructors:
+The composed fourteenth candidate adds these consuming constructors:
 
 ```rust,ignore
 NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
@@ -89,10 +91,10 @@ NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots(
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 ```
 
-These proposed methods consume retained roots prepared under the separate
+These methods consume retained roots prepared under the separate
 [`native root-selection contract`](native-root-selection.md), rather than
-reopening path arguments. Production, independent tests, adversarial review,
-and delivery of these additions remain pending.
+reopening path arguments. Production and independent focused tests are present;
+formal adversarial review and delivery of these additions remain pending.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -255,9 +257,9 @@ the earlier components have been constructed. The custom path cannot return
 ## Deferred scope and milestone boundary
 
 The integrated path constructors and `FileSessionStore::open` still do not
-select or create roots. The fourteenth documentation-only candidate adds a
-separate selection/preparation boundary and consuming constructors, but its
-production and delivery are pending. Neither that candidate nor this integrated
+select or create roots. The composed fourteenth candidate adds a separate
+selection/preparation boundary and consuming constructors, but formal review
+and delivery are pending. Neither that candidate nor this integrated
 composition implements a concrete terminal `PermissionPrompter`, allocates a
 session ID or `SessionIncarnationId`, or adds create/list/resume/replay/reset
 session lifecycle commands. It does not add the remaining native tools, compose

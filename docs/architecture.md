@@ -89,14 +89,16 @@ green. Its final delivery record is integrated on `main` at
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 `32583871385`, and main benchmark-evidence run `32583871368` are green for
 that exact final-record SHA.
-The fourteenth slice is a documentation-only candidate for explicit Linux/macOS
-native root selection and safe preparation. It derives state location from an
+The fourteenth slice is a composed candidate for explicit Linux/macOS native
+root selection and safe preparation. It derives state location from an
 injected environment snapshot, retains an explicit existing workspace, may
 create only a fixed descriptor-relative state suffix under an existing selected
-base, and rejects equality or ancestry of the retained roots. Proposed
+base, and rejects equality or ancestry of the retained roots. New
 reference-host constructors consume those descriptors before production
-credential discovery. Production, independent tests, adversarial review,
-remote gates, and `main` integration remain pending. Its candidate contract is
+credential discovery. Production and 14 independently owned focused tests are
+present, and their focused gates are green. A preliminary audit is green but is
+not a formal adversarial track. Three fresh formal tracks, full gates, remote
+workflows, and `main` integration remain pending. Its candidate contract is
 in [`native-root-selection.md`](native-root-selection.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
@@ -170,11 +172,15 @@ paths produced are `<config-root>/machine-god/config.json` and
 respective `HOME` fallbacks.
 
 The fourteenth candidate reuses only the state-selection precedence, not status
-inspection. Selection remains effect-free. Preparation requires the selected
+inspection. Selection remains effect-free and rebuilds the accepted state base
+from lexical components so trailing separator or `.` decoration cannot bypass
+the final-component no-follow open. Preparation requires the selected
 `XDG_STATE_HOME` or fallback `HOME` base to exist, opens the workspace first,
 and walks or creates only `machine-god` or `.local/state/machine-god` relative
-to the retained state-base descriptor with no-follow directory operations. New
-directories are reopened and set to exact `0700`; the base and existing
+to the retained state-base descriptor with no-follow directory operations. A
+new fixed name is normalized descriptor-relatively to `0700` beneath its
+validated parent before the permission-requiring reopen, then identity-checked,
+`fchmod`ed, and verified at exact `0700`; the base and existing
 intermediates require effective-UID ownership and no group/other write, while
 the existing final root permits no group/other permission. Existing directories
 are never chmodded or repaired. The final state and workspace roots remain
@@ -286,8 +292,9 @@ The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
 reach session artifacts beneath the workspace after permission is granted.
 
-The fourteenth candidate leaves those existing path constructors unchanged and
-adds a stricter prepared-root path. `NativeRootSelection::from_environment`
+The composed fourteenth candidate leaves those existing path constructors
+unchanged and adds a stricter prepared-root path.
+`NativeRootSelection::from_environment`
 derives the fixed state path from injected values without I/O.
 `PreparedNativeRoots::prepare` opens the workspace first, requires the selected
 state base to exist, retains no-follow descriptors while walking or creating
@@ -298,8 +305,9 @@ identity and descriptor-relative parent walking. New
 workspace identity to both tools and its state-root identity to
 `FileSessionStore` without reopening either path. Config selection is validated
 by the composing constructor, and production credential discovery remains after
-the already prepared retained roots are accepted. This candidate behavior is
-not yet production or delivery evidence.
+the already prepared retained roots are accepted. Production and focused tests
+for this candidate behavior are present; formal adversarial and delivery
+evidence remain pending.
 
 On the production path, both non-secret roots open before the consumed
 credential snapshot is discovered and its token moves into
@@ -323,8 +331,8 @@ twelfth-slice composition behaviors are adversarially green and integrated on
 `main`; the schema-v3 extension and credential-source validation are integrated
 through final record `f840576a`, with all three fresh adversarial tracks green
 on exact behavior SHA `35ce591e` and exact final-record feature and `main`
-workflows green. Root preparation remains a fourteenth documentation-only
-candidate.
+workflows green. Root preparation is a composed fourteenth candidate with
+formal adversarial and delivery gates still pending.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The
