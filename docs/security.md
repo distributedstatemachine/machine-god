@@ -22,8 +22,10 @@ It is integrated on `main` at
 `508b0adbbe4447a85bd08f47095ae16c089c05d5`; exact main CI run `32535790803`
 and benchmark run `32535790824` are green. This is not a production-ready
 claim.
-The eighth candidate's adversarial review, exact-commit CI, and `main`
-integration are also pending.
+The eighth candidate's behavior and local gates are adversarially green, with
+evidence retained in the
+[`native file session store review`](reviews/m03-session-store-review-01.md).
+Feature-branch remote gates and `main` integration remain pending.
 Permission mode remains `ask`; CLI registration, prompting, and the fail-closed
 behavior of a production permission handler remain future work.
 

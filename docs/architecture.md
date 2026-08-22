@@ -21,14 +21,17 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has seven integrated bounded slices plus an eighth bounded
-candidate. The first two are native-host slices;
+Milestone 03 has seven integrated bounded slices plus an eighth adversarially
+green bounded candidate. The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
 provides a bounded Gateway codec over an injected host byte transport. The
 seventh supplies one optional native HTTP implementation of that transport.
 The eighth candidate supplies a bounded Unix file implementation of core's
-session-store boundary under an explicitly opened host root.
+session-store boundary under an explicitly opened host root. Its behavior and
+local gates are adversarially green, with evidence retained in the
+[`native file session store review`](reviews/m03-session-store-review-01.md);
+feature-branch remote gates and `main` integration remain pending.
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -158,8 +161,7 @@ Store futures are effect-free until first poll and detach no background work.
 The first poll performs bounded synchronous serialization, I/O, advisory-lock
 acquisition, and sync work inline and can block the executor thread. Full
 format, polling, error, trust, and deferred-scope details are in
-[`session-store.md`](session-store.md). This candidate's adversarial review,
-exact-commit CI, and `main` integration remain pending.
+[`session-store.md`](session-store.md).
 
 The first concrete provider remains on the native side of core's explicit
 boundary but owns no network effect. `AiGatewayProvider` encodes the supported
