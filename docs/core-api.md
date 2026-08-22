@@ -117,10 +117,11 @@ on filesystems honoring the assumed Unix semantics. A directory-sync error
 after rename has an ambiguous outcome and requires load-and-reconcile. This is
 not an NFS, multi-record transaction, hostile-writer, or full sudden-power-loss
 guarantee. The exact layout, failure taxonomy, trust boundary, and deferred
-scope are normative in [`session-store.md`](session-store.md). The exact
-behavior SHA and local gates are adversarially green, with evidence in the
+scope are normative in [`session-store.md`](session-store.md). Its exact
+feature-branch review, CI, and benchmark evidence are green, with evidence
+retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
-Feature-branch remote gates and `main` integration remain pending.
+The final documentation seal and `main` integration remain pending.
 
 ## Turn lifecycle
 

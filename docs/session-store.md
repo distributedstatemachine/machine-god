@@ -2,9 +2,9 @@
 
 This page is the normative contract for the eighth bounded Milestone 03 slice.
 `FileSessionStore` is the candidate library implementation of core's
-`SessionStore` contract in `machine-god-native`. Its exact behavior SHA and
-local gates are adversarially green; feature-branch remote gates and `main`
-integration remain pending. Review evidence is retained in the
+`SessionStore` contract in `machine-god-native`. Its exact feature-branch
+review, CI, and benchmark evidence are green; the final documentation seal and
+`main` integration remain pending. Review evidence is retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
 This is not a production-readiness claim.
 

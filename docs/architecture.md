@@ -28,10 +28,11 @@ use that contract for bounded executable native capabilities, and the sixth
 provides a bounded Gateway codec over an injected host byte transport. The
 seventh supplies one optional native HTTP implementation of that transport.
 The eighth candidate supplies a bounded Unix file implementation of core's
-session-store boundary under an explicitly opened host root. Its behavior and
-local gates are adversarially green, with evidence retained in the
+session-store boundary under an explicitly opened host root. Its exact
+feature-branch review, CI, and benchmark evidence are green, with evidence
+retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md);
-feature-branch remote gates and `main` integration remain pending.
+the final documentation seal and `main` integration remain pending.
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at

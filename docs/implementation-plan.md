@@ -122,10 +122,10 @@ reads and `0600` exclusive temporary writes, file sync, same-directory atomic
 rename, and directory sync fail closed without repairing corrupt or nonregular
 artifacts. Its futures are inert until polled but execute bounded synchronous
 I/O, locking, and sync calls on the first polling thread. The exact candidate
-contract is in [`session-store.md`](session-store.md). Its exact behavior SHA
-and local gates are adversarially green, with evidence in the
+contract is in [`session-store.md`](session-store.md). Its exact feature-branch
+review, CI, and benchmark evidence are green, with evidence in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
-Feature-branch remote gates and `main` integration remain pending.
+The final documentation seal and `main` integration remain pending.
 
 These slices do not complete Milestone 03. Permission prompting and modes
 beyond `ask`, credential discovery and broader configuration, durable native

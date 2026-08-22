@@ -1,12 +1,13 @@
 # Milestone 03 native file session store review 01
 
-Status: **ADVERSARIAL GREEN — feature-branch remote gates and `main` pending**
+Status: **FEATURE-BRANCH GREEN — final documentation seal and `main` pending**
 
 ## Reviewed lineage
 
 - Base: `508b0adbbe4447a85bd08f47095ae16c089c05d5`
 - Atomic feature: `c4b52c1f2a33af22eb3b59d7b54594753ebc5694`
 - Adversarial remediation: `2fa3fa74891189901affb10f8e0adc6f1c1f45f9`
+- Feature-branch evidence: `3f9496ee4b6716a0b607cd492f4c8427cc43b3c6`
 - Branch: `agent/m03-native-session-store`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 - Pinned reference: fx revision
@@ -135,14 +136,30 @@ The local release CLI remains 319,152 bytes. This is a local regression
 observation only, not retained benchmark evidence or a product-performance
 claim.
 
+## Exact remote feature-branch runs
+
+The exact feature-branch evidence SHA
+`3f9496ee4b6716a0b607cd492f4c8427cc43b3c6` passed both required remote
+workflows:
+
+- [CI run 32540570112](https://github.com/distributedstatemachine/machine-god/actions/runs/32540570112)
+  completed successfully, including quality/tests, dependency policy and
+  vulnerability audit, and all four native target jobs; and
+- [Benchmark evidence run 32540570125](https://github.com/distributedstatemachine/machine-god/actions/runs/32540570125)
+  completed successfully for both pinned-upstream and bootstrap evidence jobs.
+
+Benchmark-workflow success validates this repository's evidence path. It does
+not promote the local observation above into a product-performance or
+compatibility claim.
+
 ## Remaining gates and scope
 
-The adversarial behavior review and local gates are green. This documentation
-evidence commit, its eventual feature-branch documentation seal, and the
-fast-forwarded `main` SHA must each pass the required exact remote CI and
-benchmark-evidence workflows before delivery is complete. The benchmark
-workflow uses Zig only to build the pinned upstream fx comparison target;
-machine-god remains a Rust product.
+The exact feature branch is green. The documentation-seal commit that records
+that result and the eventual fast-forwarded `main` SHA must still pass their own
+exact remote CI and benchmark-evidence workflows before delivery is complete.
+Feature-branch green is not the final delivery seal. The benchmark workflow
+uses Zig only to build the pinned upstream fx comparison target; machine-god
+remains a Rust product.
 
 Milestone 03 remains in progress. This slice does not add credential discovery,
 provider/CLI wiring, permission prompting, session listing/reset/deletion,

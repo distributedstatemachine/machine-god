@@ -17,8 +17,8 @@ native-only HTTPS transport for that codec is the seventh integrated bounded
 slice. It uses one pinned production endpoint and an explicitly injected,
 redacted bearer token.
 An eighth bounded candidate implements a Unix file-backed session store under
-an explicit host-opened root. Its exact behavior SHA and local gates are
-adversarially green; feature-branch remote gates and `main` integration remain
+an explicit host-opened root. Its exact feature-branch review, CI, and benchmark
+evidence are green; the final documentation seal and `main` integration remain
 pending. Credential discovery, provider/CLI wiring,
 permission prompting, broader session lifecycle features, the remaining native tools, and
 compatibility work remain planned; the project is not yet production-ready. See
