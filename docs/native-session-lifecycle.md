@@ -7,10 +7,14 @@ Feature record `dbba2c7` is green under exact feature CI `32594562796` and
 benchmark evidence `32594562785`, and on `main` under exact CI `32594846484`
 and benchmark evidence `32594846476`. This documentation-only commit is the
 final delivery record; its workflows are reported at handoff. Fifteen bounded
-slices are integrated. A composed sixteenth candidate extends this lifecycle
-with bounded IDs-only listing; production/test composition, formal review, and
-delivery evidence for that extension remain pending. Milestone 03 remains
-`IN PROGRESS` because other frozen scope remains open.
+slices are integrated. A first formal sixteenth candidate extends this
+lifecycle with bounded IDs-only listing; production and 13 initial independent
+tests are composed through `dec98e0`, but all three first review tracks are not
+green. The isolated fixes and 18-test hardened suite are now composed in the
+replacement candidate. Formal rereview and
+delivery evidence remain pending. Milestone
+03 remains `IN PROGRESS` because this delivery gate and other frozen scope
+remain open.
 
 This slice gives the Linux/macOS native reference host a durable, by-ID library
 boundary for creating, resuming, replaying, and resetting sessions in the
@@ -345,9 +349,10 @@ automatic cleanup, session-ID generation, CLI
 changes. The composed sixteenth candidate adds only bounded IDs-only
 library-level listing under the separate
 [`native session-listing contract`](native-session-listing.md). After that
-composition the combined M03 root plus create/list/resume/replay/reset
-functional checklist item is complete; production/test composition, formal
-review, and delivery evidence for listing remain pending.
+first composition the combined M03 root plus create/list/resume/replay/reset
+functional code scope exists, but the checklist item remains unchecked. All
+three first listing review tracks are not green, and replacement composition,
+formal rereview, and remote exact-SHA delivery gates remain pending.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and changes no benchmark workload or workflow. Zig remains solely the

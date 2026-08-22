@@ -17,12 +17,14 @@ surface. The separate fourteenth composed
 no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
-The delivered by-ID native lifecycle and composed sixteenth
+The delivered by-ID native lifecycle and first formal sixteenth
 [`native session-listing candidate`](native-session-listing.md) are also
 library-only. They add no `session`, `sessions`, `resume`, `replay`, workspace,
 or slash command and change none of the accepted invocations, output bytes,
 diagnostics, or exit statuses below. In particular, the candidate's IDs-only
-bounded result is not exposed as fx-compatible CLI output.
+bounded result is not exposed as fx-compatible CLI output. That first formal
+candidate was not green; its composed replacement now awaits rereview. Neither
+state changes this CLI contract.
 
 ## Accepted invocations
 

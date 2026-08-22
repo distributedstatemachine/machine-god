@@ -43,8 +43,9 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with fifteen delivered bounded slices and a composed sixteenth candidate. The
-first
+with fifteen delivered bounded slices. The first formal sixteenth-slice
+candidate is composed through `dec98e0`, but all three review tracks are not
+green and its replacement is pending. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -354,9 +355,12 @@ encryption, and non-Unix hardening are not part of this slice.
 The composed sixteenth bounded candidate adds Linux/macOS library-only
 `NativeSessionLifecycle::list_sessions`. Its IDs-only `NativeSessionList`
 contains at most 100 sorted unique validated IDs plus `truncated`. Each call
-scans at most 1,024 visible entries and 64 MiB of aggregate canonical record
-bytes; all visible names count against the scan budget. Exact canonical record
-names are opened no-follow, locked with the existing per-ID protocol, and
+processes or selects at most 1,024 non-dot entries plus one fetched and name-
+inspected overflow witness, and accepts/decodes at most 64 MiB of aggregate
+canonical record bytes plus one transient transfer byte used only to detect
+concurrent growth; all non-dot names within the scan count against its budget.
+Exact canonical record names are opened no-follow, locked with the existing
+per-ID protocol, and
 validated against the same current schema, bounds, positive counters, and
 decoded-ID/digest invariant. Canonical corruption fails the whole call as
 redacted `Corrupt`; enumeration, read, and lock failures are redacted
@@ -370,15 +374,25 @@ but digest filename order is not a globally first ID or semantic ranking. There
 is no multi-record snapshot. A candidate that vanishes before its locked read
 may be omitted and may leave its private lock sidecar. A nonregular derived lock
 for a still-present canonical candidate is `Corrupt`; ordinary lock I/O is
-`Unavailable`. The
+`Unavailable`. On macOS the replacement must acquire a fresh `.` descriptor
+first, then validate that exact acquired descriptor's linked identity. A stable
+completed rename retains identity; removal before acquisition or validation is
+unavailable; and a concurrent rename/removal may conservatively be unavailable
+or observe the acquired identity without creating a global snapshot. The
 future is inert before poll, performs bounded synchronous work on first poll,
 and detaches nothing. It consults no live registry, incarnation source,
 provider, permission handler, tool, network, workspace, configuration, or
-environment authority. The exact candidate contract and pending review lineage
+environment authority. The exact candidate contract and non-green review lineage
 are in [`native-session-listing.md`](native-session-listing.md) and
 [`m03-native-session-listing-review-01.md`](reviews/m03-native-session-listing-review-01.md).
-Production composition, independently owned tests, formal review, and exact
-feature and delivery evidence remain pending.
+Production `0accfbf` is composed as `1bffac9`, documentation `63d589c` as
+`87d7de0`, and 13 initial independent tests `1b531297` as `4b4e468`, from base
+`9ada4b5`. The removed-root fix and first formal candidate are `dec98e0`. All
+three first review tracks are not green. Isolated acquire-first source fix
+`4b8d8b0` and isolated test hardening `446b495` are composed in the replacement
+candidate, with 18 focused tests and the full all-target/all-feature workspace
+suite green locally. Formal rereview and exact feature and delivery evidence
+remain pending.
 
 The current schema and store contain no authoritative summary, workspace,
 title, preview, language, timestamp, latest-order, or index fields. This slice
@@ -415,7 +429,7 @@ gate:
   slice supplies the bounded non-secret selection. Implementation, independent
   tests, all three fresh adversarial tracks, exact feature gates, fast-forward
   integration, and exact `main` gates are green.
-- [x] Add explicit workspace/state-root selection and safe required-root
+- [ ] Add explicit workspace/state-root selection and safe required-root
   creation, plus native create, list, resume, replay, and reset session
   lifecycle behavior for the current schema. A reset under a reused session ID
   must allocate a new incarnation before reuse. The delivered fourteenth slice
@@ -425,9 +439,13 @@ gate:
   tests plus one formal finding regression, with all three adversarial tracks
   green on exact candidate `e6a3804`; exact feature and `main` workflows are
   green through record `dbba2c7`. The composed sixteenth candidate supplies the
-  remaining bounded IDs-only native listing boundary. Its production/test
-  composition, formal review, and delivery evidence remain pending, but the
-  combined functional scope is complete after composition.
+  remaining bounded IDs-only native listing functional scope. Production and
+  13 initial independent tests are composed through first formal candidate
+  `dec98e0`, but all three first review tracks are not green. The replacement
+  source fix and 18-test hardened suite exist in isolation at `4b8d8b0` and
+  `446b495`, but their shared composition, formal rereview, and remote exact-SHA
+  gates remain pending. The combined item therefore stays
+  unchecked until those delivery gates are green.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
   `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,
@@ -458,7 +476,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through sixteenth slices; Zig
+by the tenth through fifteenth slices and the sixteenth candidate; Zig
 remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes

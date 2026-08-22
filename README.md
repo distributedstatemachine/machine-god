@@ -127,14 +127,21 @@ workflows are reported at handoff. See the integrated
 
 The composed sixteenth candidate adds bounded Linux/macOS library-only session
 listing. `NativeSessionLifecycle::list_sessions` returns at most 100 sorted,
-unique validated IDs plus a truncation flag while scanning at most 1,024 visible
-entries and 64 MiB of aggregate canonical record bytes. Canonical corruption
-fails closed; unrelated names are ignored but count against the scan budget.
+unique validated IDs plus a truncation flag while processing at most 1,024
+non-dot entries plus one fetched/name-inspected overflow witness and accepting/
+decoding at most 64 MiB of aggregate canonical record bytes plus one transient
+transfer byte used only to detect concurrent growth. Canonical corruption fails
+closed; unrelated names are ignored but count against the scan budget.
 The result is neither a multi-record snapshot nor a pagination or summary
-surface. Production composition, independent tests, formal review, and exact
-delivery evidence remain pending. It adds no CLI behavior and makes no fx
-equivalence or performance claim. See the
-[native session-listing contract](docs/native-session-listing.md) and pending
+surface. Production, documentation, and 13 initial independent tests are
+composed from base `9ada4b5` through first formal candidate `dec98e0`. All three
+first review tracks are not green. Isolated fix `4b8d8b0` and test hardening
+`446b495` are composed into the replacement candidate with the corrected
+documentation; its 18 focused tests and full all-target/all-feature workspace
+suite are green locally. Formal rereview and exact remote delivery evidence
+remain pending. It adds no
+CLI behavior and makes no fx equivalence or performance claim. See the
+[native session-listing contract](docs/native-session-listing.md) and non-green
 [review record](docs/reviews/m03-native-session-listing-review-01.md).
 
 The project is not yet production-ready. See the exact
@@ -150,8 +157,8 @@ integrated [configured credential source](docs/configuration.md), and the
 integrated [native root-selection boundary](docs/native-root-selection.md).
 The [native session lifecycle](docs/native-session-lifecycle.md) is integrated;
 its bounded [session-listing extension](docs/native-session-listing.md) is a
-composed candidate pending implementation/test composition, formal review, and
-delivery evidence.
+replacement candidate awaiting rereview and delivery evidence after a non-green
+first formal review.
 
 ## Development
 

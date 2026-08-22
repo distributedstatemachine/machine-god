@@ -21,8 +21,9 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has fifteen delivered bounded slices and a composed sixteenth
-candidate. The twelfth slice's
+Milestone 03 has fifteen delivered bounded slices. The first formal sixteenth
+candidate is composed through `dec98e0`, but all three review tracks are not
+green and its replacement is pending. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record
@@ -121,14 +122,19 @@ the contract is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 The sixteenth candidate extends that same lifecycle with bounded Linux/macOS
 session listing. It enumerates the retained store root and returns only up to
-100 sorted unique validated IDs plus `truncated`, bounded by 1,024 visible
-directory entries and 64 MiB of aggregate canonical record bytes. Every visible
-entry consumes scan budget. Canonical candidates use the existing per-ID lock,
+100 sorted unique validated IDs plus `truncated`, bounded by 1,024 processed or
+selected non-dot directory entries plus one fetched/name-inspected overflow
+witness and 64 MiB of accepted/decoded aggregate canonical record bytes plus one
+transient transfer byte to detect concurrent growth. Every non-dot entry within
+the scan consumes budget. Canonical candidates use the existing per-ID lock,
 no-follow regular-file access, strict current schema, and filename/decoded-ID
 digest validation. There is no multi-record snapshot, live-registry lookup,
 rich summary, workspace/latest/cursor semantic, CLI path, or fx-equivalence
-claim. Production/test composition, formal review, and exact delivery evidence
-are pending; the contract is in
+claim. Production and 13 initial independent tests are composed through
+`dec98e0`. All three first formal tracks are not green. Isolated fix `4b8d8b0`
+and test hardening `446b495` are composed in the replacement candidate, with 18
+focused tests green locally. Rereview and exact delivery evidence are pending.
+The contract is in
 [`native-session-listing.md`](native-session-listing.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
@@ -450,22 +456,33 @@ delivery are green through behavior candidate `e6a3804` and feature record
 `dbba2c7`.
 
 The composed sixteenth candidate adds one independent bounded observation
-future to that lifecycle. It scans at most 1,024 visible entries and 64 MiB of
-aggregate canonical record bytes, validates exact candidates with the store's
-same per-ID lock and current-schema rules, and returns at most 100 sorted unique
-IDs. Canonical filenames are sorted before validation; only a fired raw scan
+future to that lifecycle. It processes/selects at most 1,024 non-dot entries
+plus one fetched/name-inspected overflow witness, and accepts/decodes at most
+64 MiB of aggregate canonical record bytes plus one transient transfer byte to
+detect concurrent growth. It validates exact candidates with the store's same
+per-ID lock and current-schema rules and returns at most 100 sorted unique IDs.
+Canonical filenames are sorted before validation; only a fired raw scan
 cap makes candidate selection filesystem-iteration-dependent. It has no
 directory-wide lock or multi-record snapshot: per-candidate observations may
 occur at different instants, and a candidate that vanishes before its locked
 read may be omitted while leaving a private lock sidecar. A nonregular derived
 lock for a present canonical record is corrupt; ordinary lock I/O is
 unavailable. `truncated` reports incomplete bounded observation only, not a next
-page or globally first ID prefix. An unpolled
+page or globally first ID prefix. The replacement macOS path acquires its fresh
+`.` descriptor first and then validates that exact acquired linked identity.
+A stable completed rename remains valid; removal before acquisition or checking
+is unavailable; and concurrent rename/removal may conservatively fail or
+observe the acquired identity without a global snapshot. `NativeSessionList`
+and its `Debug` deliberately expose IDs; only lifecycle error `Display` and
+`Debug` are ID/path/content-redacted. An unpolled
 future is inert; first poll performs bounded synchronous filesystem and lock
 work and detaches nothing. Full bounds, corruption behavior, authority limits,
 and deliberate non-features are in
-[`native-session-listing.md`](native-session-listing.md). Formal review and
-delivery evidence for this extension remain pending.
+[`native-session-listing.md`](native-session-listing.md). Production and the 13
+initial independent tests are composed through `dec98e0`; all three first
+formal tracks are not green. Isolated fixes have 18 focused tests green, but
+are now composed in the replacement candidate. Formal rereview and delivery
+evidence remain pending.
 
 The ninth slice is `machine_god_native::AskPermissionHandler`. It adapts
 core's existing provider-neutral `PermissionHandler` to an explicitly injected,

@@ -191,10 +191,12 @@ compatibility claim is made. A later milestone must define matching semantics
 and fixtures and introduce claim-eligible reviewed evidence rather than relabel
 this bootstrap artifact.
 
-The composed sixteenth
+The first formal sixteenth
 [`native session-listing candidate`](native-session-listing.md) does not change
-that classification. Its library result contains only sorted validated IDs and a
-truncation flag; it has no CLI path and is not semantically equivalent to fx's
+that classification. Its first formal candidate was not green; the composed
+replacement awaits rereview. Its
+library result contains only sorted validated IDs and a truncation flag; it has
+no CLI path and is not semantically equivalent to fx's
 workspace-aware rich `sessions --json` surface. The `sessions-json` workload
 therefore remains unimplemented and claim-ineligible, with no samples or
 threshold claim. No benchmark definition, evidence schema, inventory, workflow,

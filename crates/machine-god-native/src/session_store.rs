@@ -35,10 +35,15 @@ pub const MAX_FILE_SESSION_BYTES: usize = 8_651_165;
 /// Maximum number of session IDs returned by one native listing.
 pub const MAX_LIST_SESSIONS: usize = 100;
 
-/// Maximum number of non-dot directory entries inspected by one native listing.
+/// Maximum number of non-dot directory entries processed by one native listing.
+///
+/// One additional entry name may be fetched solely to prove overflow.
 pub const MAX_LIST_SESSION_DIRECTORY_ENTRIES: usize = 1_024;
 
-/// Maximum aggregate record bytes read by one native listing.
+/// Maximum aggregate record bytes accepted and decoded by one native listing.
+///
+/// Concurrent file growth may transfer one additional byte solely to prove
+/// overflow; that witness is neither retained nor decoded.
 pub const MAX_LIST_SESSION_TOTAL_RECORD_BYTES: usize = 64 * 1_024 * 1_024;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -300,8 +305,13 @@ impl FileSessionStore {
     }
 
     pub(crate) fn list_session_ids(&self) -> Result<FileSessionList, SessionStoreError> {
-        #[cfg(target_os = "macos")]
-        ensure_macos_root_is_linked(self.root.as_fd())?;
+        self.list_session_ids_after_directory_open(|| {})
+    }
+
+    fn list_session_ids_after_directory_open(
+        &self,
+        after_directory_open: impl FnOnce(),
+    ) -> Result<FileSessionList, SessionStoreError> {
         let directory = rustix::fs::openat(
             self.root.as_fd(),
             ".",
@@ -313,6 +323,9 @@ impl FileSessionStore {
             Mode::empty(),
         )
         .map_err(map_io_error)?;
+        after_directory_open();
+        #[cfg(target_os = "macos")]
+        ensure_macos_root_is_linked(directory.as_fd())?;
         let mut stream = Dir::new(directory).map_err(map_io_error)?;
         let mut candidates = Vec::new();
         let mut scanned_entries = 0_usize;
@@ -1275,7 +1288,45 @@ fn save_ambiguous() -> SessionStoreError {
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[cfg(target_os = "macos")]
+    use machine_god_core::SessionStoreErrorKind;
+
+    #[cfg(target_os = "macos")]
+    use super::FileSessionStore;
     use super::retry_interrupted;
+
+    #[cfg(target_os = "macos")]
+    static NEXT_LISTING_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn freshly_acquired_listing_descriptor_is_revalidated_after_unlink() {
+        let root = loop {
+            let sequence = NEXT_LISTING_ROOT.fetch_add(1, Ordering::Relaxed);
+            let candidate = std::env::temp_dir().join(format!(
+                "mg-session-listing-acquired-root-{}-{sequence}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("failed to create listing test root: {error}"),
+            }
+        };
+        let store = FileSessionStore::open(&root).unwrap();
+
+        let Err(error) =
+            store.list_session_ids_after_directory_open(|| std::fs::remove_dir(&root).unwrap())
+        else {
+            panic!("an acquired descriptor unlinked before validation must be unavailable")
+        };
+
+        assert_eq!(error.kind, SessionStoreErrorKind::Unavailable);
+        assert!(!root.exists());
+    }
 
     #[test]
     fn interrupted_operations_retry_until_success_but_other_errors_return() {

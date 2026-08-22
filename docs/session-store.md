@@ -67,15 +67,24 @@ listing method to core's provider-neutral `SessionStore` trait or change the
 ordinary by-ID load/save contract on this page. It recognizes only exact
 canonical `.json` record names and validates them under the same no-follow
 regular-file, strict schema, fixed record bound, decoded-ID, and permanent
-per-ID locking rules. Production/test composition, formal review, and delivery
-evidence remain pending.
+per-ID locking rules. Production and 13 initial independent tests are composed
+through `dec98e0`, but all three first formal tracks are not green. Isolated
+fixes are composed into the replacement candidate with 18 focused tests and the
+full all-target/all-feature workspace suite green locally; formal rereview and
+delivery evidence remain pending.
+Listing processes/selects at
+most 1,024 non-dot entries plus one fetched/name-inspected overflow witness and
+accepts/decodes at most 64 MiB of aggregate canonical record bytes plus one
+transient transfer byte used only to detect concurrent growth.
 
-Listing constructs its directory stream from a fresh retained-root-relative
-descriptor. Its macOS liveness check additionally requires the retained root's
-kernel-reported basename in its descriptor-relative parent to resolve to the
-same directory identity, because macOS otherwise permits reopening `.` on an
-unlinked directory descriptor. A removed or replacement identity is fixed
-`Unavailable`; a rename preserves identity and does not redirect enumeration.
+The replacement listing path first acquires a fresh retained-root-relative `.`
+descriptor and then validates that exact acquired descriptor's linked identity.
+This order closes the macOS time-of-check/time-of-use gap where an unlinked
+retained descriptor can still reopen `.`. A stable completed rename preserves
+identity. Removal before acquisition or validation is `Unavailable`.
+Concurrent rename/removal may conservatively return `Unavailable` or observe
+the acquired identity; it never redirects enumeration to a replacement and is
+not a global snapshot.
 
 ## Stable v1 layout
 

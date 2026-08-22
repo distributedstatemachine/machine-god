@@ -3,18 +3,23 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::future::Future;
 use std::io;
+use std::os::fd::AsFd;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
 
-use machine_god_core::{Engine, SessionId, SessionIncarnationId, SessionRecord, SessionStore};
+use machine_god_core::{
+    Engine, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+};
 use machine_god_native::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, MAX_FILE_SESSION_BYTES,
     MAX_LIST_SESSION_DIRECTORY_ENTRIES, MAX_LIST_SESSION_TOTAL_RECORD_BYTES, MAX_LIST_SESSIONS,
@@ -22,9 +27,12 @@ use machine_god_native::{
     SessionIncarnationSource, SessionIncarnationSourceError,
 };
 use machine_god_testkit::{ScriptedModelProvider, ScriptedPermissionHandler};
+use rustix::fs::{FlockOperation, flock};
 use serde_json::json;
 
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+const BLOCKED_CHECK: Duration = Duration::from_millis(250);
+const COMPLETION_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct TemporaryDirectory {
     path: PathBuf,
@@ -148,6 +156,12 @@ fn record(value: &str) -> SessionRecord {
     SessionRecord::empty(id(value), incarnation("listing-original-life"))
 }
 
+fn stored_record(value: &str) -> SessionRecord {
+    let mut record = record(value);
+    record.revision = SessionRevision(1);
+    record
+}
+
 fn save(store: &FileSessionStore, value: &str) {
     ready(store.save(record(value), None)).expect("test record save succeeds");
 }
@@ -218,6 +232,29 @@ fn assert_corrupt(error: NativeSessionLifecycleError) {
     assert_eq!(error.kind(), NativeSessionLifecycleErrorKind::Corrupt);
     assert_eq!(error.kind().as_str(), "corrupt");
     assert_eq!(error.to_string(), "native session record is corrupt");
+}
+
+fn assert_unavailable(error: NativeSessionLifecycleError) {
+    assert_eq!(error.kind(), NativeSessionLifecycleErrorKind::Unavailable);
+    assert_eq!(error.kind().as_str(), "unavailable");
+    assert_eq!(
+        error.to_string(),
+        "native session persistence is unavailable"
+    );
+}
+
+fn externally_lock(path: &Path) -> fs::File {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    flock(lock.as_fd(), FlockOperation::LockExclusive).unwrap();
+    lock
+}
+
+fn unlock(lock: &fs::File) {
+    flock(lock.as_fd(), FlockOperation::Unlock).unwrap();
 }
 
 fn listed_strings(lifecycle: &NativeSessionLifecycle) -> (Vec<String>, bool) {
@@ -341,6 +378,41 @@ fn directory_scan_limit_is_exact_and_counts_ignored_artifacts() {
 }
 
 #[test]
+fn raw_scan_truncation_returns_only_valid_sorted_candidates_from_the_observed_subset() {
+    const VALID_RECORDS: usize = 10;
+    const IGNORED_ARTIFACTS: usize = MAX_LIST_SESSION_DIRECTORY_ENTRIES + 1 - (VALID_RECORDS * 2);
+    let temporary = TemporaryDirectory::new("raw-cap-valid-subset");
+    let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    let expected = (0..VALID_RECORDS)
+        .map(|index| format!("raw-cap-session-{index:02}"))
+        .collect::<BTreeSet<_>>();
+    for value in &expected {
+        save(&store, value);
+    }
+    for index in 0..IGNORED_ARTIFACTS {
+        fs::write(
+            temporary.path().join(format!("raw-cap-ignored-{index:04}")),
+            b"ignored",
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        directory_entries(temporary.path()).len(),
+        MAX_LIST_SESSION_DIRECTORY_ENTRIES + 1
+    );
+    let test = test_lifecycle(&store);
+
+    let (values, truncated) = listed_strings(&test.lifecycle);
+    assert!(truncated);
+    assert!(
+        (VALID_RECORDS - 1..=VALID_RECORDS).contains(&values.len()),
+        "with only one unscanned raw entry, at least nine data candidates must be observed"
+    );
+    assert!(values.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(values.iter().all(|value| expected.contains(value)));
+}
+
+#[test]
 fn unrelated_non_utf8_lock_and_temp_artifacts_are_ignored_and_preserved() {
     let temporary = TemporaryDirectory::new("ignored-artifacts");
     let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
@@ -438,19 +510,48 @@ fn malformed_future_schema_wrong_digest_and_oversize_records_are_corrupt_and_pre
         WrongDigest,
     }
 
-    let future_record = record("corrupt-record");
+    let valid_record = stored_record("corrupt-record");
+    let valid_record_json = serde_json::to_string(&valid_record).unwrap();
     let future_schema = format!(
         "{{\"schema_version\":{},\"record\":{}}}",
         FILE_SESSION_SCHEMA_VERSION + 1,
-        serde_json::to_string(&future_record).unwrap()
+        valid_record_json
     )
     .into_bytes();
+    let unknown_field = format!(
+        "{{\"schema_version\":{FILE_SESSION_SCHEMA_VERSION},\"record\":{valid_record_json},\"unknown\":true}}"
+    )
+    .into_bytes();
+    let duplicate_field = format!(
+        "{{\"schema_version\":{FILE_SESSION_SCHEMA_VERSION},\"record\":{valid_record_json},\"record\":{valid_record_json}}}"
+    )
+    .into_bytes();
+    let invalid_id = format!(
+        "{{\"schema_version\":{FILE_SESSION_SCHEMA_VERSION},\"record\":{}}}",
+        valid_record_json.replacen(
+            "\"id\":\"corrupt-record\"",
+            "\"id\":\"invalid/session/id\"",
+            1
+        )
+    )
+    .into_bytes();
+    let zero_revision = persisted_bytes(&record("corrupt-record"));
+    let mut zero_next_turn = stored_record("corrupt-record");
+    zero_next_turn.next_turn_sequence = 0;
     let cases = [
         (
             "malformed",
             Corruption::Bytes(b"PRIVATE_MALFORMED_RECORD_SECRET".to_vec()),
         ),
         ("future-schema", Corruption::Bytes(future_schema)),
+        ("unknown-field", Corruption::Bytes(unknown_field)),
+        ("duplicate-field", Corruption::Bytes(duplicate_field)),
+        ("invalid-id", Corruption::Bytes(invalid_id)),
+        ("zero-revision", Corruption::Bytes(zero_revision)),
+        (
+            "zero-next-turn",
+            Corruption::Bytes(persisted_bytes(&zero_next_turn)),
+        ),
         ("wrong-digest", Corruption::WrongDigest),
         (
             "oversize",
@@ -467,7 +568,7 @@ fn malformed_future_schema_wrong_digest_and_oversize_records_are_corrupt_and_pre
         let data_path = entry_with_suffix(&private_root, ".json");
         let bytes = match corruption {
             Corruption::Bytes(bytes) => bytes,
-            Corruption::WrongDigest => persisted_bytes(&record("different-record-id")),
+            Corruption::WrongDigest => persisted_bytes(&stored_record("different-record-id")),
         };
         fs::write(&data_path, &bytes).unwrap();
         let test = test_lifecycle(&store);
@@ -533,6 +634,150 @@ fn a_hostile_derived_lock_sidecar_is_corrupt_and_preserved() {
 }
 
 #[test]
+fn polling_listing_on_a_worker_blocks_on_the_exact_lock_until_release() {
+    let temporary = TemporaryDirectory::new("blocking-lock");
+    let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    save(&store, "blocked-listing");
+    let lock_path = entry_with_suffix(temporary.path(), ".lock");
+    let external_lock = externally_lock(&lock_path);
+    let test = test_lifecycle(&store);
+    let (started_sender, started_receiver) = mpsc::sync_channel(0);
+    let (done_sender, done_receiver) = mpsc::channel();
+    let lifecycle = test.lifecycle.clone();
+    let worker = std::thread::spawn(move || {
+        let future = lifecycle.list_sessions();
+        started_sender.send(()).unwrap();
+        done_sender.send(ready(future)).unwrap();
+    });
+
+    started_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("listing worker did not start");
+    assert_eq!(
+        done_receiver.recv_timeout(BLOCKED_CHECK),
+        Err(RecvTimeoutError::Timeout),
+        "polling completed while the exact session lock remained held"
+    );
+    unlock(&external_lock);
+    let listed = done_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("listing did not complete after lock release")
+        .unwrap();
+    worker.join().unwrap();
+    assert_eq!(listed.session_ids(), [id("blocked-listing")]);
+    assert!(!listed.truncated());
+
+    let again = ready(test.lifecycle.list_sessions()).unwrap();
+    assert_eq!(again.session_ids(), [id("blocked-listing")]);
+}
+
+#[test]
+fn data_disappearance_while_listing_waits_on_the_lock_is_an_omission() {
+    let temporary = TemporaryDirectory::new("disappearing-data");
+    let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    save(&store, "disappearing-session");
+    let data_path = entry_with_suffix(temporary.path(), ".json");
+    let lock_path = entry_with_suffix(temporary.path(), ".lock");
+    let external_lock = externally_lock(&lock_path);
+    let test = test_lifecycle(&store);
+    let (started_sender, started_receiver) = mpsc::sync_channel(0);
+    let (done_sender, done_receiver) = mpsc::channel();
+    let lifecycle = test.lifecycle.clone();
+    let worker = std::thread::spawn(move || {
+        started_sender.send(()).unwrap();
+        done_sender.send(ready(lifecycle.list_sessions())).unwrap();
+    });
+
+    started_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("listing worker did not start");
+    assert_eq!(
+        done_receiver.recv_timeout(BLOCKED_CHECK),
+        Err(RecvTimeoutError::Timeout),
+        "listing did not wait on the held permanent lock"
+    );
+    fs::remove_file(&data_path).unwrap();
+    unlock(&external_lock);
+    let listed = done_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("listing did not finish after disappearance and unlock")
+        .unwrap();
+    worker.join().unwrap();
+    assert!(listed.session_ids().is_empty());
+    assert!(!listed.truncated());
+    assert!(lock_path.is_file(), "the permanent lock was removed");
+}
+
+#[test]
+fn a_cooperating_save_racing_listing_yields_a_coherent_id_and_commit() {
+    let temporary = TemporaryDirectory::new("save-race");
+    let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    save(&store, "racing-session");
+    let lock_path = entry_with_suffix(temporary.path(), ".lock");
+    let external_lock = externally_lock(&lock_path);
+    let second_store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    let test = test_lifecycle(&store);
+    let mut update = stored_record("racing-session");
+    update
+        .metadata
+        .insert("committed".to_owned(), json!("coherent-update"));
+
+    let (list_started_sender, list_started_receiver) = mpsc::sync_channel(0);
+    let (list_done_sender, list_done_receiver) = mpsc::channel();
+    let lifecycle = test.lifecycle.clone();
+    let listing_worker = std::thread::spawn(move || {
+        list_started_sender.send(()).unwrap();
+        list_done_sender
+            .send(ready(lifecycle.list_sessions()))
+            .unwrap();
+    });
+    let (save_started_sender, save_started_receiver) = mpsc::sync_channel(0);
+    let (save_done_sender, save_done_receiver) = mpsc::channel();
+    let save_worker = std::thread::spawn(move || {
+        save_started_sender.send(()).unwrap();
+        save_done_sender
+            .send(ready(second_store.save(update, Some(SessionRevision(1)))))
+            .unwrap();
+    });
+
+    list_started_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("listing worker did not start");
+    save_started_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("save worker did not start");
+    assert_eq!(
+        list_done_receiver.recv_timeout(BLOCKED_CHECK),
+        Err(RecvTimeoutError::Timeout)
+    );
+    assert_eq!(
+        save_done_receiver.recv_timeout(BLOCKED_CHECK),
+        Err(RecvTimeoutError::Timeout)
+    );
+    unlock(&external_lock);
+
+    let listed = list_done_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("racing listing did not finish")
+        .unwrap();
+    let saved_revision = save_done_receiver
+        .recv_timeout(COMPLETION_TIMEOUT)
+        .expect("racing save did not finish")
+        .unwrap();
+    listing_worker.join().unwrap();
+    save_worker.join().unwrap();
+    assert_eq!(listed.session_ids(), [id("racing-session")]);
+    assert!(!listed.truncated());
+    assert_eq!(saved_revision, SessionRevision(2));
+    let committed = ready(store.load(id("racing-session"))).unwrap().unwrap();
+    assert_eq!(committed.revision, SessionRevision(2));
+    assert_eq!(
+        committed.metadata.get("committed"),
+        Some(&json!("coherent-update"))
+    );
+}
+
+#[test]
 fn a_missing_lock_sidecar_is_created_with_owner_only_permissions() {
     let temporary = TemporaryDirectory::new("missing-lock");
     let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
@@ -546,6 +791,58 @@ fn a_missing_lock_sidecar_is_created_with_owner_only_permissions() {
     assert!(!truncated);
     let mode = fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
+}
+
+#[test]
+fn ordinary_data_and_lock_permission_failures_are_identical_fixed_unavailable() {
+    fn denied_case(label: &str, suffix: &str) -> Option<NativeSessionLifecycleError> {
+        let temporary = TemporaryDirectory::new(label);
+        let private_root = temporary
+            .path()
+            .join(format!("PRIVATE_{label}_ROOT_SECRET"));
+        fs::create_dir(&private_root).unwrap();
+        let store = Arc::new(FileSessionStore::open(&private_root).unwrap());
+        save(&store, "permission-denied-session");
+        let path = entry_with_suffix(&private_root, suffix);
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        let mode_is_enforced = if suffix == ".json" {
+            fs::File::open(&path).is_err()
+        } else {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .is_err()
+        };
+        let test = test_lifecycle(&store);
+        let outcome = ready(test.lifecycle.list_sessions());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        if !mode_is_enforced {
+            assert!(
+                outcome.is_ok(),
+                "listing failed even though this platform privilege bypassed mode bits"
+            );
+            return None;
+        }
+        let error = outcome.expect_err("mode-denied listing unexpectedly succeeded");
+        assert_unavailable(error);
+        let rendered = format!("{error:?} {error}");
+        assert!(!rendered.contains(label));
+        assert!(!rendered.contains("PRIVATE_"));
+        Some(error)
+    }
+
+    let data_error = denied_case("DATA_PERMISSION", ".json");
+    let lock_error = denied_case("LOCK_PERMISSION", ".lock");
+    if let (Some(data_error), Some(lock_error)) = (data_error, lock_error) {
+        assert_eq!(data_error, lock_error);
+        assert_eq!(
+            format!("{data_error:?} {data_error}"),
+            format!("{lock_error:?} {lock_error}")
+        );
+    }
 }
 
 #[test]

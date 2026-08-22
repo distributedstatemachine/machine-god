@@ -106,10 +106,15 @@ same lifecycle. It recognizes only exact canonical record names, uses the
 store's no-follow regular-file checks, existing per-ID lock protocol, strict
 current schema and decoded-ID/digest validation, and fails the whole call on a
 canonical corrupt candidate. It returns no more than 100 sorted unique IDs and
-is bounded by 1,024 visible directory entries and 64 MiB of aggregate canonical
-record bytes. All visible names consume scan budget. Production/test
-composition, formal review, and delivery evidence remain pending; its security
-contract is in [`native-session-listing.md`](native-session-listing.md).
+processes/selects at most 1,024 non-dot directory entries plus one fetched and
+name-inspected overflow witness. It accepts/decodes at most 64 MiB of aggregate
+canonical record bytes plus one transient transfer byte solely to detect
+concurrent growth. All non-dot names within the scan consume budget. Production
+and 13 initial independent tests are composed through first formal candidate
+`dec98e0`, but all three first review tracks are not green. Isolated fixes have
+18 focused tests green and are composed in the replacement candidate. Formal
+rereview and delivery evidence remain pending; its security contract is in
+[`native-session-listing.md`](native-session-listing.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -419,13 +424,16 @@ names are ignored only after consuming scan budget. A hostile or nonregular
 derived lock entry for a present canonical record is corrupt; ordinary lock I/O
 failure is unavailable.
 
-The enumeration stream is built from a fresh descriptor-relative `.` open. On
-macOS, an unlinked directory descriptor can still reopen `.`, so listing also
-compares the retained descriptor identity with its kernel-reported basename in
-the descriptor-relative retained parent. A missing or replacement identity is
-unavailable; the comparison never authorizes the replacement or redirects
-enumeration away from the retained root. Renaming the retained directory keeps
-its identity and remains supported.
+The replacement enumeration path first acquires a fresh descriptor-relative
+`.` descriptor, then validates the linked identity of that exact acquired
+descriptor. On macOS an unlinked retained directory can otherwise reopen `.`;
+checking the retained descriptor before the fresh acquisition leaves a liveness
+time-of-check/time-of-use gap and is not the replacement contract. A stable
+completed rename preserves identity and remains supported. Removal before
+acquisition or before the acquired-identity check is unavailable. Concurrent
+rename or removal may conservatively yield unavailable or an observation of the
+exact acquired identity; it never redirects to a replacement and is not a
+global snapshot.
 
 There is no root-wide lock or multi-record snapshot. Each canonical candidate
 has an independent point-in-time validation, so concurrent changes to other IDs
@@ -436,9 +444,10 @@ makes candidate selection filesystem-iteration-dependent. `truncated`
 discloses only that a fixed budget prevented complete observation; it is not a
 continuation capability, does not prove another valid ID exists, and does not
 promise the globally first ID or semantic subset. Returned IDs are intentionally
-disclosed to the trusted caller.
-Lifecycle errors and debug output retain no ID, digest, filename, path, record
-content, schema detail, parser or OS diagnostic.
+disclosed to the trusted caller, and `NativeSessionList`'s derived `Debug`
+deliberately exposes the same IDs and `truncated`. Only lifecycle error
+`Display` and `Debug` are redacted; they retain no ID, digest, filename, path,
+record content, schema detail, parser or OS diagnostic.
 
 Listing receives no live-session registry, incarnation source, provider,
 permission, prompt, tool, network, workspace, configuration, environment, or
