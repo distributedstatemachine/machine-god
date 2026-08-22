@@ -18,3 +18,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 injected-transport AI Gateway review](m03-ai-gateway-review-01.md)
 - [Milestone 03 native AI Gateway HTTP transport review](m03-ai-gateway-http-review-01.md)
 - [Milestone 03 native file session store review](m03-session-store-review-01.md)
+- [Milestone 03 native ask permission handler review](m03-ask-permission-review-01.md)
