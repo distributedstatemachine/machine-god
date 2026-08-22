@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with fourteen integrated bounded slices. The first
+with fifteen integrated bounded slices. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -310,11 +310,12 @@ integrated contract and review record are in
 [`native-root-selection.md`](native-root-selection.md) and
 [`m03-native-root-selection-review-01.md`](reviews/m03-native-root-selection-review-01.md).
 
-The composed fifteenth bounded candidate implements a Linux/macOS native by-ID
+The delivered fifteenth bounded slice implements a Linux/macOS native by-ID
 session lifecycle over the exact `Arc<FileSessionStore>` shared by
 `NativeReferenceHost` and its engine. The caller supplies each validated
-`SessionId`; production native code allocates a bounded incarnation from OS
-cryptographic randomness, with only a deterministic trusted source for tests.
+`SessionId`; default reference-host composition allocates a bounded incarnation
+from OS cryptographic randomness, while standalone construction may inject an
+explicitly trusted custom-host source.
 Every lifecycle constructor validates exact shared-store `Arc` identity and
 returns fixed redacted `MismatchedSessionStore` before entropy or filesystem
 effects if an engine and concrete store do not share one allocation.
@@ -339,18 +340,19 @@ synchronous first-poll I/O and ambiguous post-rename directory-sync boundary.
 The production API and these semantics are normative in
 [`native-session-lifecycle.md`](native-session-lifecycle.md). Production,
 fourteen independently owned focused tests, and one formal finding regression
-are composed and green, including the allocation-address identity portability
+are integrated and green, including the allocation-address identity portability
 fix. All three adversarial tracks are green together on exact candidate
-`e6a3804`. Documentation seal `54d8c6d` is green under exact feature CI
-`32594235560` and benchmark evidence `32594235555`. Feature-evidence-record
-workflows, fast-forward integration, exact `main` workflows, and final delivery
-evidence are pending. `list_sessions`, lifecycle
+`e6a3804`. Feature record `dbba2c7` is green under exact feature CI
+`32594562796` and benchmark evidence `32594562785`, was fast-forwarded without
+force to `main`, and is green there under exact CI `32594846484` and benchmark
+evidence `32594846476`. This documentation-only commit is the final delivery
+record; its workflows are reported at handoff. `list_sessions`, lifecycle
 CLI commands, migration,
-encryption, and non-Unix hardening are not part of this candidate.
+encryption, and non-Unix hardening are not part of this slice.
 
 ### Milestone 03 completion boundary
 
-The fourteen integrated slices do not complete Milestone 03.
+The fifteen integrated slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -381,11 +383,12 @@ gate:
   lifecycle behavior for the current schema. A reset under a reused session ID
   must allocate a new incarnation before reuse. The delivered fourteenth slice
   is limited to the root-selection and safe-creation sub-boundary. The
-  fifteenth candidate implements by-ID create, resume, durable-record replay,
+  delivered fifteenth slice implements by-ID create, resume, durable-record replay,
   and reset/new-incarnation behavior with fourteen independently owned focused
   tests plus one formal finding regression, with all three adversarial tracks
-  green on exact candidate `e6a3804`; delivery is pending and native session
-  listing remains open. This combined item therefore stays unchecked.
+  green on exact candidate `e6a3804`; exact feature and `main` workflows are
+  green through record `dbba2c7`, but native session listing remains open.
+  This combined item therefore stays unchecked.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
   `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
   `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,

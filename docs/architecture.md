@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has fourteen integrated bounded slices. The twelfth slice's
+Milestone 03 has fifteen integrated bounded slices. The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record
@@ -107,14 +107,15 @@ candidate `72cf64f6`. Replacement seal `f08dbd9e` and feature record `6f66b6e5`
 are feature-green; the latter is integrated on `main` under exact CI
 `32590429626` and benchmark evidence `32590429592`. Its integrated contract is
 in [`native-root-selection.md`](native-root-selection.md).
-The composed fifteenth candidate adds a Linux/macOS
+The delivered fifteenth slice adds a Linux/macOS
 `NativeSessionLifecycle` owned by `NativeReferenceHost`. The host, engine, and
 lifecycle share one `Arc<FileSessionStore>` and therefore one retained state
 root. Caller-supplied IDs drive durable create, resume, current-schema record
 replay, and atomic reset; production OS randomness supplies new incarnations.
 No session listing or CLI path is added. Production, fourteen independently
 owned focused tests, one formal finding regression, and all three adversarial
-tracks are green on exact candidate `e6a3804`; exact delivery remains pending;
+tracks are green on exact candidate `e6a3804`. Feature record `dbba2c7` is green
+on the feature branch and `main` under exact CI and benchmark workflows;
 the contract is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -397,7 +398,7 @@ acquisition, and sync work inline and can block the executor thread. Full
 format, polling, error, trust, and deferred-scope details are in
 [`session-store.md`](session-store.md).
 
-The composed fifteenth candidate adds `NativeSessionLifecycle` above that exact store
+The delivered fifteenth slice adds `NativeSessionLifecycle` above that exact store
 without changing core's provider-neutral `SessionStore` trait. The engine,
 lifecycle, and `NativeReferenceHost::session_store()` observation share the
 same store allocation and retained directory descriptor. Lifecycle

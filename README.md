@@ -109,7 +109,7 @@ record; its exact workflows are reported at handoff. See the integrated
 [native root-selection contract](docs/native-root-selection.md) and
 [review record](docs/reviews/m03-native-root-selection-review-01.md).
 
-The composed fifteenth-slice candidate implements a Linux/macOS native by-ID
+The delivered fifteenth slice implements a Linux/macOS native by-ID
 session lifecycle over the exact `FileSessionStore` shared with the composed
 engine. The caller supplies a validated session ID; the native host uses OS
 randomness for each new incarnation. Create durably publishes an empty record,
@@ -119,9 +119,10 @@ publishes an empty new incarnation while advancing the durable revision. It
 does not add session listing or any CLI behavior. Production, fourteen
 independently owned focused tests, and one formal finding regression are green;
 all three adversarial tracks are green together on exact candidate `e6a3804`.
-Documentation seal `54d8c6d` is green under exact feature CI `32594235560` and
-benchmark evidence `32594235555`; feature-record and `main` delivery gates
-remain pending. See the candidate
+Feature record `dbba2c7` is green under feature CI `32594562796`, feature
+benchmark evidence `32594562785`, `main` CI `32594846484`, and `main` benchmark
+evidence `32594846476`. This documentation-only commit is the final record; its
+workflows are reported at handoff. See the integrated
 [native session-lifecycle contract](docs/native-session-lifecycle.md).
 
 The project is not yet production-ready. See the exact
@@ -135,8 +136,8 @@ normative [native file session store](docs/session-store.md), the integrated
 [native reference-host composition](docs/native-reference-host.md), and the
 integrated [configured credential source](docs/configuration.md), and the
 integrated [native root-selection boundary](docs/native-root-selection.md).
-The composed [native session lifecycle](docs/native-session-lifecycle.md)
-remains under formal review, and session listing remains open.
+The [native session lifecycle](docs/native-session-lifecycle.md) is integrated,
+and session listing remains open.
 
 ## Development
 

@@ -1,6 +1,6 @@
 # Milestone 03 native session-lifecycle review 01
 
-Status: **FEATURE SEAL GREEN — FEATURE EVIDENCE-RECORD GATES PENDING**
+Status: **DELIVERED — FINAL DOCUMENTATION-RECORD WORKFLOWS REPORTED AT HANDOFF**
 
 ## Candidate lineage
 
@@ -60,6 +60,24 @@ Status: **FEATURE SEAL GREEN — FEATURE EVIDENCE-RECORD GATES PENDING**
 - Exact seal feature benchmark-evidence run
   [`32594235555`](https://github.com/distributedstatemachine/machine-god/actions/runs/32594235555):
   **GREEN**
+- Feature-evidence record:
+  `dbba2c74b9448c679c2e8e6129d30c3219852d64`
+- Exact feature-record CI run
+  [`32594562796`](https://github.com/distributedstatemachine/machine-god/actions/runs/32594562796):
+  **GREEN**
+- Exact feature-record benchmark-evidence run
+  [`32594562785`](https://github.com/distributedstatemachine/machine-god/actions/runs/32594562785):
+  **GREEN**
+- Fast-forward without force to `main`:
+  `dbba2c74b9448c679c2e8e6129d30c3219852d64`
+- Exact `main` CI run
+  [`32594846484`](https://github.com/distributedstatemachine/machine-god/actions/runs/32594846484):
+  **GREEN**
+- Exact `main` benchmark-evidence run
+  [`32594846476`](https://github.com/distributedstatemachine/machine-god/actions/runs/32594846476):
+  **GREEN**
+- Final delivery record: this documentation-only commit; exact SHA and feature
+  and `main` workflows reported at handoff
 - Integration branch: `agent/m03-native-session-lifecycle`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
@@ -199,9 +217,11 @@ adversarially reviewed.
 
 ## Remaining scope
 
-The documentation-only feature-evidence record's exact workflows,
-fast-forward integration without force, exact `main` workflows, and the final
-delivery record are pending.
+Feature record `dbba2c7` is green under exact feature CI `32594562796` and
+benchmark evidence `32594562785`, was fast-forwarded without force to `main`,
+and is green there under exact CI `32594846484` and benchmark evidence
+`32594846476`. This documentation-only commit is the final delivery record; its
+exact feature and `main` workflows are reported at handoff.
 Native `list_sessions` and all lifecycle CLI commands remain open, so the
 combined Milestone 03 root-and-lifecycle checklist item stays unchecked. No
 package publication or GitHub release is authorized.

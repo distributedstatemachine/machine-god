@@ -1,14 +1,14 @@
 # Native by-ID session lifecycle
 
-Status: adversarially green candidate for the fifteenth bounded Milestone 03
-slice. Production, fourteen independently owned focused tests, and one formal
-finding regression are green. All three adversarial tracks are green together
-on exact candidate `e6a3804`. Documentation seal `54d8c6d` is green under exact
-feature CI `32594235560` and benchmark evidence `32594235555`. The feature-
-evidence-record workflows, fast-forward integration, exact `main` workflows,
-and the final delivery record are pending.
-Fourteen bounded slices are integrated through root-selection final record
-`d6b1b21`; Milestone 03 remains `IN PROGRESS`.
+Status: delivered fifteenth bounded Milestone 03 slice. Production, fourteen
+independently owned focused tests, one formal finding regression, and all three
+adversarial tracks are green; the tracks agree on exact candidate `e6a3804`.
+Feature record `dbba2c7` is green under exact feature CI `32594562796` and
+benchmark evidence `32594562785`, and on `main` under exact CI `32594846484`
+and benchmark evidence `32594846476`. This documentation-only commit is the
+final delivery record; its workflows are reported at handoff. Fifteen bounded
+slices are integrated. Milestone 03 remains `IN PROGRESS` because native
+session listing and other frozen scope remain open.
 
 This slice gives the Linux/macOS native reference host a durable, by-ID library
 boundary for creating, resuming, replaying, and resetting sessions in the
@@ -332,12 +332,11 @@ formats. Migration, explicit legacy import, encryption, record authentication,
 key management, secure erasure, stronger lifecycle concurrency hardening, and
 non-Unix support remain assigned to Milestone 04.
 
-This candidate does not implement `list_sessions`, deletion, automatic cleanup,
+This slice does not implement `list_sessions`, deletion, automatic cleanup,
 session-ID generation, CLI `session`/`sessions`/`resume`/`replay` commands, a UI
 replay, or CLI byte changes. The combined M03 root-and-lifecycle checklist item
-therefore remains unchecked even after create/resume/replay/reset delivery:
-native session listing is still open, and this candidate itself still requires
-formal review and exact delivery gates.
+therefore remains unchecked after create/resume/replay/reset delivery because
+native session listing is still open.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and changes no benchmark workload or workflow. Zig remains solely the

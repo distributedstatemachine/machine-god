@@ -90,14 +90,15 @@ are feature-green; the latter is integrated on `main` under exact CI
 `32590429626` and benchmark evidence `32590429592`. Its integrated security
 boundary is in
 [`native-root-selection.md`](native-root-selection.md).
-The composed fifteenth candidate adds a by-ID native session lifecycle above the
+The delivered fifteenth slice adds a by-ID native session lifecycle above the
 exact file store shared with the composed engine. The caller supplies the
 validated session ID; only production OS cryptographic randomness supplies new
 incarnations. Create persists before success, replay returns a durable bounded
 record rather than UI/events, and reset atomically changes incarnation without
 a deletion gap. Production, fourteen independently owned focused tests, one
 formal finding regression, and all three adversarial tracks are green on exact
-candidate `e6a3804`; exact delivery remains pending. Its
+candidate `e6a3804`. Feature record `dbba2c7` is green on the feature branch and
+`main` under exact CI and benchmark workflows. Its
 security boundary is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
@@ -332,7 +333,7 @@ version. The implementation requests `fsync`; on macOS it does not request
 `F_FULLFSYNC` and does not claim a successful save reached physical media.
 Record contents are plaintext; encryption, authentication, secure
 erasure, key management, migration, and listing remain deferred. Reset is
-defined only by the separate fifteenth candidate and is not part of ordinary
+defined only by the separate fifteenth slice and is not part of ordinary
 `SessionStore::save`: it requires a new host-generated incarnation and a
 reset-specific atomic current-record replacement.
 
@@ -349,7 +350,7 @@ record bytes, parser diagnostics, OS text, or raw error numbers. The complete
 contract and fixed taxonomy are in
 [`session-store.md`](session-store.md).
 
-The composed fifteenth candidate gives `NativeReferenceHost` one
+The delivered fifteenth slice gives `NativeReferenceHost` one
 `NativeSessionLifecycle` backed by the exact `Arc<FileSessionStore>` already
 given to its engine. Lifecycle and session-store observations do not reopen a
 path or select another state root. Construction performs no entropy read or
@@ -395,7 +396,7 @@ distinct fixed lifecycle categories. Diagnostics and debug output expose no
 ID, incarnation, revision, record content, random bytes, path, parser or OS
 text. An unavailable create/reset may follow a completed rename whose directory
 sync failed; callers must resume or replay to reconcile and must not treat the
-category as blanket permission to retry. The complete candidate rules are in
+category as blanket permission to retry. The complete delivered rules are in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
 The ask-handler slice adds no ambient authority to core or native. The host
