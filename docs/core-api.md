@@ -86,9 +86,9 @@ serialization, clone, retained-value destruction, and downstream extension
 paths that follow iterative validation. Builder-owned Schemas are still drained
 iteratively if this configuration check fails.
 
-## Native ask handler candidate
+## Native ask handler
 
-The ninth bounded Milestone 03 candidate implements the existing
+The integrated ninth bounded Milestone 03 slice implements the existing
 provider-neutral `PermissionHandler` boundary as
 `machine_god_native::AskPermissionHandler`. It does not change core's trait or
 give core terminal, UI, environment, filesystem, process, network, clock, or
@@ -114,8 +114,10 @@ authorization future is inert until polled and creates no detached work.
 Dropping it before first poll does not call the prompter; dropping it while
 pending drops the underlying prompt future. Core cancellation relies on that
 drop behavior and supplies no permission-specific cancellation token. The
-complete candidate contract, host obligations, and integration gate are in
-[`ask-permission.md`](ask-permission.md). Existing CLI behavior is unchanged.
+complete contract and host obligations are in
+[`ask-permission.md`](ask-permission.md), with delivery evidence in the
+[`ask handler review`](reviews/m03-ask-permission-review-01.md). Existing CLI
+behavior is unchanged.
 
 ## Native file store
 
