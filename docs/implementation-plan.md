@@ -341,8 +341,10 @@ The production API and these semantics are normative in
 fourteen independently owned focused tests, and one formal finding regression
 are composed and green, including the allocation-address identity portability
 fix. All three adversarial tracks are green together on exact candidate
-`e6a3804`. Exact feature workflows, fast-forward integration, exact `main`
-workflows, and final delivery evidence are pending. `list_sessions`, lifecycle
+`e6a3804`. Documentation seal `54d8c6d` is green under exact feature CI
+`32594235560` and benchmark evidence `32594235555`. Feature-evidence-record
+workflows, fast-forward integration, exact `main` workflows, and final delivery
+evidence are pending. `list_sessions`, lifecycle
 CLI commands, migration,
 encryption, and non-Unix hardening are not part of this candidate.
 

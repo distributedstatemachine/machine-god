@@ -3,8 +3,10 @@
 Status: adversarially green candidate for the fifteenth bounded Milestone 03
 slice. Production, fourteen independently owned focused tests, and one formal
 finding regression are green. All three adversarial tracks are green together
-on exact candidate `e6a3804`. Exact feature workflows, fast-forward integration,
-exact `main` workflows, and the final delivery record are pending.
+on exact candidate `e6a3804`. Documentation seal `54d8c6d` is green under exact
+feature CI `32594235560` and benchmark evidence `32594235555`. The feature-
+evidence-record workflows, fast-forward integration, exact `main` workflows,
+and the final delivery record are pending.
 Fourteen bounded slices are integrated through root-selection final record
 `d6b1b21`; Milestone 03 remains `IN PROGRESS`.
 

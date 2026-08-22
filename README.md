@@ -119,7 +119,9 @@ publishes an empty new incarnation while advancing the durable revision. It
 does not add session listing or any CLI behavior. Production, fourteen
 independently owned focused tests, and one formal finding regression are green;
 all three adversarial tracks are green together on exact candidate `e6a3804`.
-Exact feature and `main` delivery gates remain pending. See the candidate
+Documentation seal `54d8c6d` is green under exact feature CI `32594235560` and
+benchmark evidence `32594235555`; feature-record and `main` delivery gates
+remain pending. See the candidate
 [native session-lifecycle contract](docs/native-session-lifecycle.md).
 
 The project is not yet production-ready. See the exact

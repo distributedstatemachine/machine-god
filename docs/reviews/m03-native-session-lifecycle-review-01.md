@@ -1,6 +1,6 @@
 # Milestone 03 native session-lifecycle review 01
 
-Status: **ADVERSARIALLY GREEN — FEATURE DELIVERY GATES PENDING**
+Status: **FEATURE SEAL GREEN — FEATURE EVIDENCE-RECORD GATES PENDING**
 
 ## Candidate lineage
 
@@ -52,6 +52,14 @@ Status: **ADVERSARIALLY GREEN — FEATURE DELIVERY GATES PENDING**
 - Final documentation/evidence rereview on `e6a3804`: **GREEN**
 - Adversarially green behavior and contract:
   `e6a38043457127f17b8fd621bd84243d938d3be5`
+- Documentation-only adversarially green seal:
+  `54d8c6db3459e52b423be9d7bea3bbd9f25b6902`
+- Exact seal feature CI run
+  [`32594235560`](https://github.com/distributedstatemachine/machine-god/actions/runs/32594235560):
+  **GREEN**
+- Exact seal feature benchmark-evidence run
+  [`32594235555`](https://github.com/distributedstatemachine/machine-god/actions/runs/32594235555):
+  **GREEN**
 - Integration branch: `agent/m03-native-session-lifecycle`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
@@ -191,8 +199,9 @@ adversarially reviewed.
 
 ## Remaining scope
 
-Exact feature workflows, fast-forward integration without force, exact `main`
-workflows, and the final delivery record are pending.
+The documentation-only feature-evidence record's exact workflows,
+fast-forward integration without force, exact `main` workflows, and the final
+delivery record are pending.
 Native `list_sessions` and all lifecycle CLI commands remain open, so the
 combined Milestone 03 root-and-lifecycle checklist item stays unchecked. No
 package publication or GitHub release is authorized.
