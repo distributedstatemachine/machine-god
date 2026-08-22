@@ -1,11 +1,11 @@
 # Native ask permission handler
 
-Status: Milestone 03 ninth-slice candidate. The implementation, black-box
-tests, three-track adversarial review, and exact feature-SHA remote workflows
-are green at `144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`. This document fixes the
-intended contract while its documentation seal and integration and verification
-on `main` remain required. It is not evidence that the slice is integrated or
-that the CLI prompts today.
+Status: Milestone 03 ninth integrated slice. The implementation, black-box
+tests, three-track adversarial review, documentation seal, and exact feature and
+`main` workflows are green. It is integrated on `main` at
+`27e3f2b3ff170044732d9124ffb210beabcda206`; exact main CI run `32570197911`
+and benchmark run `32570197870` are green. This remains a library surface and
+is not evidence that the CLI prompts today.
 
 `AskPermissionHandler` is an executor-neutral native adapter from core's
 `PermissionHandler` boundary to an explicitly injected `PermissionPrompter`.
@@ -111,7 +111,7 @@ The adapter discards the prompt error value and constructs a core
 | `ASK_PERMISSION_PROMPT_ERROR_MESSAGE` | `permission prompt failed` |
 | `ASK_PERMISSION_DENIED_REASON` | `permission denied` |
 
-`PermissionError` has only a code and message, so this candidate makes no retry
+`PermissionError` has only a code and message, so this slice makes no retry
 classification claim. `AskPermissionHandler` debugging is exactly
 `AskPermissionHandler { .. }`; it does not format the injected prompter.
 
@@ -136,17 +136,15 @@ The adapter is executor-neutral and does not read terminal input, write terminal
 output, inspect environment variables, access files, start processes, contact a
 network, discover configuration, or select a runtime. All presentation,
 interaction, scheduling, and any associated authority belong to the explicitly
-injected prompter. This candidate does not provide a concrete prompter, wire the
+injected prompter. This slice does not provide a concrete prompter, wire the
 CLI, change the configured `ask` mode, implement modes beyond `ask`, or persist
 grant decisions.
 
-## Integration gate
+## Delivery evidence
 
-Feature-branch code, tests, local checks, adversarial review, and remote checks
-do not by themselves make this an integrated slice. The first four gates are
-green and recorded in the
+Feature implementation, black-box tests, local checks, three-track adversarial
+review, the documentation seal, exact feature-branch workflows, fast-forward
+integration, and exact `main` workflows are green. The exact lineage and run
+links are retained in the
 [`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
-This slice may be described as the ninth integrated Milestone 03 slice only
-after the documentation seal is green, the feature is fast-forwarded to
-`main`, and the exact `main` checks are green. Until then, this document is a
-candidate contract and all existing CLI bytes remain unchanged.
+This delivery did not change existing CLI bytes.

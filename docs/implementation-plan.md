@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with eight integrated bounded slices. The first
+with nine integrated bounded slices. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -128,7 +128,7 @@ It is integrated on `main` at
 `8f7b47db9580b14570bf9fb55763858f71a81271`; exact main CI run `32541315998`
 and benchmark run `32541315997` are green.
 
-The ninth bounded slice is a candidate, not an integrated slice. It defines a
+The ninth integrated bounded slice defines a
 native, executor-neutral `AskPermissionHandler` over an explicitly injected
 `PermissionPrompter`. `AskPermissionHandler::new` accepts an owned concrete
 prompter and `AskPermissionHandler::shared_prompter` accepts an
@@ -145,16 +145,14 @@ adapter future, and drop supplies cancellation by dropping that prompt future.
 The adapter detaches no work and supplies no second cancellation token, so an
 injected prompter must not leave a detached approval operation behind. It owns
 no terminal, UI, environment, filesystem, process, network, configuration, or
-runtime authority. The exact candidate contract is in
+runtime authority. The exact contract is in
 [`ask-permission.md`](ask-permission.md). The implementation and black-box tests
-are present on the feature branch. Three fresh adversarial reviews have no
-confirmed open findings and exact feature-SHA remote CI and benchmark evidence
-are green at `144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`, as recorded in the
+are present. Three fresh adversarial reviews have no confirmed open findings;
+the documentation seal and exact feature-SHA workflows are green; and the slice
+is integrated on `main` at `27e3f2b3ff170044732d9124ffb210beabcda206`.
+Exact main CI run `32570197911` and benchmark run `32570197870` are green. The
+complete lineage is recorded in the
 [`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
-This plan must continue to say "eight integrated slices and a ninth candidate"
-until the documentation seal, fast-forward integration, and exact checks on
-`main` are evidenced. Only then may the milestone summary be updated to nine
-integrated slices.
 
 ### Milestone 03 completion boundary
 
@@ -163,7 +161,7 @@ the frozen M03 boundary; changing ownership requires an explicit plan change in
 a reviewed commit rather than silently deferring a gate:
 
 - [x] Integrate and retain evidence for slices one through eight.
-- [ ] Integrate the ninth ask-handler candidate under its exact contract and
+- [x] Integrate the ninth ask-handler slice under its exact contract and
   retain feature, adversarial-review, exact-SHA CI, and `main` evidence.
 - [ ] Compose a useful native reference-host path through an explicitly selected
   provider and transport, session store, permission handler and prompter, and
@@ -206,7 +204,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the ninth candidate; Zig remains only the pinned upstream benchmark build
+by the ninth slice; Zig remains only the pinned upstream benchmark build
 input, not a machine-god product language or runtime dependency. The provider
 is explicitly scoped to a pinned wire shape and makes no current-protocol or
 full fx-equivalence claim. Help and status remain claim-ineligible and

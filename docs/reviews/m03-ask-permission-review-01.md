@@ -1,6 +1,6 @@
 # Milestone 03 native ask permission handler review 01
 
-Status: **FEATURE GREEN — documentation seal and `main` delivery pending**
+Status: **DELIVERY GREEN — integrated on `main`**
 
 ## Reviewed lineage
 
@@ -10,10 +10,13 @@ Status: **FEATURE GREEN — documentation seal and `main` delivery pending**
 - Candidate documentation: `bfbb76fa7d02b56aed8aa84a0815ec21ba26c3e9`
 - Adversarial remediation and green feature behavior:
   `f25111fefce201a9dd3c2f581d49adeef5a07268`
+- Review record: `144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`
+- Documentation seal and integrated `main` behavior:
+  `27e3f2b3ff170044732d9124ffb210beabcda206`
 - Branch: `agent/m03-ask-permission-handler`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 
-The candidate adds an executor-neutral native adapter from core's existing
+The slice adds an executor-neutral native adapter from core's existing
 `PermissionHandler` contract to an explicitly injected asynchronous
 `PermissionPrompter`. It adds no concrete prompt UI, CLI wiring, ambient
 authority, runtime, or grant cache.
@@ -124,9 +127,18 @@ workflows on the feature branch:
 - [Benchmark evidence run 32569389964](https://github.com/distributedstatemachine/machine-god/actions/runs/32569389964)
   is green for the pinned-upstream and bootstrap-evidence jobs.
 
-The slice remains a candidate until this documentation seal also passes its
-exact feature-branch workflows, the branch is fast-forwarded to `main`, and
-the exact `main` workflows pass.
+The documentation seal and integrated behavior SHA
+`27e3f2b3ff170044732d9124ffb210beabcda206` also passed both exact
+feature-branch workflows:
+
+- [CI run 32569952454](https://github.com/distributedstatemachine/machine-god/actions/runs/32569952454)
+- [Benchmark evidence run 32569952452](https://github.com/distributedstatemachine/machine-god/actions/runs/32569952452)
+
+The branch was fast-forwarded without force to `main`, where the same exact SHA
+passed both required workflows:
+
+- [Main CI run 32570197911](https://github.com/distributedstatemachine/machine-god/actions/runs/32570197911)
+- [Main benchmark evidence run 32570197870](https://github.com/distributedstatemachine/machine-god/actions/runs/32570197870)
 
 ## Scope
 

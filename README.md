@@ -21,12 +21,12 @@ explicit host-opened root. Its exact feature, documentation-seal, and `main`
 checks are green; it is integrated at
 `8f7b47db9580b14570bf9fb55763858f71a81271`. Credential discovery, provider/CLI
 wiring, a concrete prompt UI, broader session lifecycle features, the remaining
-native tools, and compatibility work remain planned. A ninth bounded candidate
+native tools, and compatibility work remain planned. A ninth bounded slice
 defines an executor-neutral, fail-closed native `AskPermissionHandler` over an
-explicitly injected prompter. Its adversarial review and exact feature-SHA
-remote workflows are green, but its documentation seal and `main` gates remain;
-it has no CLI or terminal authority and is not yet an integrated-slice claim.
-See its [candidate contract](docs/ask-permission.md).
+explicitly injected prompter. It is integrated on `main` at
+`27e3f2b3ff170044732d9124ffb210beabcda206`; exact main CI run `32570197911`
+and benchmark run `32570197870` are green. It has no CLI or terminal authority.
+See its [contract](docs/ask-permission.md).
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),

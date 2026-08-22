@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has eight integrated bounded slices and a ninth bounded candidate.
+Milestone 03 has nine integrated bounded slices.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -34,15 +34,13 @@ documentation-seal, and `main` checks are green, with evidence retained in the
 it is integrated on `main` at
 `8f7b47db9580b14570bf9fb55763858f71a81271`. Exact main CI run `32541315998`
 and benchmark run `32541315997` are green.
-The ninth candidate supplies an executor-neutral, fail-closed native
+The ninth slice supplies an executor-neutral, fail-closed native
 `AskPermissionHandler` over an explicitly injected `PermissionPrompter`. It is
-implemented and covered by black-box tests on its feature branch. Its
-three-track adversarial review and exact feature-SHA remote workflows are green
-at `144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`, as recorded in the
-[`ask permission handler review`](reviews/m03-ask-permission-review-01.md), but
-it is not yet an integrated-slice claim: the documentation seal and `main`
-integration and verification remain required.
-Its fixed candidate contract is in [`ask-permission.md`](ask-permission.md).
+implemented, reviewed, and integrated on `main` at
+`27e3f2b3ff170044732d9124ffb210beabcda206`. Exact main CI run `32570197911`
+and benchmark run `32570197870` are green; the full lineage is recorded in the
+[`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
+Its fixed contract is in [`ask-permission.md`](ask-permission.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -59,7 +57,7 @@ loader, and owns no product state. The exact surfaces are documented in
 [`list_files` contract](list-files.md) do not change either CLI surface. The
 separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
-[`native file session store`](session-store.md). The ask-handler candidate is
+[`native file session store`](session-store.md). The ask-handler slice is
 also a library surface and does not change CLI bytes or supply a concrete
 terminal prompt.
 
@@ -180,7 +178,7 @@ acquisition, and sync work inline and can block the executor thread. Full
 format, polling, error, trust, and deferred-scope details are in
 [`session-store.md`](session-store.md).
 
-The ninth candidate is `machine_god_native::AskPermissionHandler`. It adapts
+The ninth slice is `machine_god_native::AskPermissionHandler`. It adapts
 core's existing provider-neutral `PermissionHandler` to an explicitly injected,
 object-safe `PermissionPrompter`. `new` accepts an owned concrete prompter;
 `shared_prompter` accepts an `Arc<dyn PermissionPrompter>`. The native adapter
@@ -204,8 +202,8 @@ exactly once; dropping a pending authorization drops the prompt future. The
 adapter detaches nothing and has no separate cancellation signal, so a
 conforming prompter must keep its work owned by that future or clean it up on
 drop. A concrete prompt UI, CLI composition, grant persistence, and permission
-modes beyond `ask` remain outside this candidate. The complete candidate
-contract and integration gate are in [`ask-permission.md`](ask-permission.md).
+modes beyond `ask` remain outside this slice. The complete contract and
+delivery evidence are in [`ask-permission.md`](ask-permission.md).
 
 The first concrete provider remains on the native side of core's explicit
 boundary but owns no network effect. `AiGatewayProvider` encodes the supported

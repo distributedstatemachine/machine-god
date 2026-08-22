@@ -28,17 +28,15 @@ green, with evidence retained in the
 It is integrated on `main` at
 `8f7b47db9580b14570bf9fb55763858f71a81271`; exact main CI run `32541315998`
 and benchmark run `32541315997` are green.
-A ninth bounded candidate defines the fail-closed native
+A ninth integrated bounded slice defines the fail-closed native
 `AskPermissionHandler` over an explicitly injected `PermissionPrompter`. It
 does not contain a prompt UI or change CLI behavior. Its implementation and
-black-box tests are present on the feature branch. Its three-track adversarial
-review and exact feature-SHA remote workflows are green at
-`144c3512ef1f3d0e457f3a1c7b16bd8d0c2fb396`, as recorded in the
-[`ask permission handler review`](reviews/m03-ask-permission-review-01.md), but
-it is not an integrated slice until the documentation seal and `main`
-integration and verification evidence are available. Permission mode remains
-`ask`; CLI registration and a concrete prompt remain future work. The
-candidate's exact security boundary is in
+black-box tests, three-track adversarial review, documentation seal, and exact
+feature and `main` workflows are green. It is integrated on `main` at
+`27e3f2b3ff170044732d9124ffb210beabcda206`; exact main CI run `32570197911`
+and benchmark run `32570197870` are green. Permission mode remains `ask`; CLI
+registration and a concrete prompt remain future work. The slice's exact
+security boundary and review evidence are in
 [`ask-permission.md`](ask-permission.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -155,7 +153,7 @@ record bytes, parser diagnostics, OS text, or raw error numbers. The complete
 contract and fixed taxonomy are in
 [`session-store.md`](session-store.md).
 
-The ask-handler candidate adds no ambient authority to core or native. The host
+The ask-handler slice adds no ambient authority to core or native. The host
 must inject either an owned `PermissionPrompter` or an explicitly shared
 `Arc<dyn PermissionPrompter>`. The adapter never reads terminal input, writes
 terminal output, inspects environment or configuration, accesses a file or
