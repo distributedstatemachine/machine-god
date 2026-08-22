@@ -91,10 +91,14 @@ Production and 16 independently owned focused tests are present, and focused
 root-selection and prepared-composition gates are green. Initial formal review
 found fixture-mode and macOS ACL issues; those fixes and their ALLOW-rejection
 and ordinary-HOME DENY-compatibility regressions are composed. All three formal
-tracks are green together on exact behavior SHA `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`,
-and full local gates are green. Documentation-seal and exact feature workflows,
-`main` integration, and a final delivery record remain pending. See the
-adversarially green candidate
+tracks were green together on exact behavior SHA
+`f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`. The first documentation seal then
+exposed three Linux-only strict-Clippy diagnostics in feature CI run
+`32588948956`; its native Linux/macOS tests and benchmark run `32588948975`
+were green. Portable lint normalization is present at `90d8f96`, and local
+macOS plus Linux cross-target gates are green. Final same-SHA adversarial
+rereview, a replacement documentation seal, exact feature workflows, `main`
+integration, and a final delivery record remain pending. See the candidate
 [native root-selection contract](docs/native-root-selection.md) and
 [review record](docs/reviews/m03-native-root-selection-review-01.md).
 

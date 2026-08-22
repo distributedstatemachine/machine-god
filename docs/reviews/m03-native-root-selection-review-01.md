@@ -1,6 +1,6 @@
 # Milestone 03 native root-selection review 01
 
-Status: **ADVERSARIALLY GREEN — documentation-seal and delivery gates pending**
+Status: **FINAL REREVIEW PENDING — Linux lint fix locally green**
 
 ## Candidate lineage
 
@@ -66,9 +66,21 @@ Status: **ADVERSARIALLY GREEN — documentation-seal and delivery gates pending*
 - Adversarially green behavior:
   `f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`
 - Full local gates on `f1dc4751`: **GREEN**
+- First documentation seal: `03fa9bae4a51ed3c0850ea6a777ddc093648449a`
+- First-seal feature CI run
+  [`32588948956`](https://github.com/distributedstatemachine/machine-god/actions/runs/32588948956):
+  **NOT GREEN**; all four native Linux/macOS test jobs and dependency gates
+  passed, but the Linux quality job found three target-specific strict-Clippy
+  diagnostics
+- First-seal benchmark-evidence run
+  [`32588948975`](https://github.com/distributedstatemachine/machine-god/actions/runs/32588948975):
+  **GREEN**
+- Cross-platform lint normalization: `90d8f96e934d39b918ba7c627ecd08b5dd7152c5`
+- Linux no-feature cross-target strict Clippy and full local macOS gates after
+  `90d8f96`: **GREEN**
+- Final same-SHA formal rereview after `90d8f96`: pending
 - Exact feature-gate SHA and workflows: pending
-- Documentation seal: this documentation-only commit; exact SHA and workflows
-  reported at handoff
+- Replacement documentation seal and workflows: pending
 - Exact `main` delivery and workflows: pending
 - Final delivery record and workflows: pending
 - Integration branch: `agent/m03-native-root-selection`
@@ -81,9 +93,14 @@ composed, and focused root-selection and prepared-host gates are green. The
 initial formal review produced one confirmed portability finding plus one
 confirmed security finding. First rereview produced a Rustdoc mismatch, a
 protective macOS HOME-ACL compatibility issue, and stale summary evidence. All
-are fixed. All three formal tracks are green together on exact behavior SHA
-`f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`, and full local gates are green.
-Documentation-seal, feature, `main`, and final-delivery gates remain pending.
+are fixed. All three formal tracks were green together on exact behavior SHA
+`f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`. The first documentation seal's
+Linux feature CI then found three target-specific lint diagnostics while every
+native Linux/macOS test job and benchmark evidence remained green. The portable
+source normalization is present at `90d8f96`, and its full local macOS plus
+Linux cross-target lint gates are green. Because production source changed,
+all three tracks must rereview one new exact candidate before the replacement
+documentation seal, feature, `main`, and final-delivery gates.
 Milestone 03 remains `IN PROGRESS`.
 
 ## Candidate behavior
@@ -193,14 +210,26 @@ remains descriptor-bound and fail-closed. Documentation confirmed the contract,
 test counts, maintained summaries, evidence, deferred scope, links, and
 Rust-product/Zig-benchmark boundary.
 
-The later documentation-only seal and delivery records will update evidence and
+The first documentation seal at `03fa9ba` then exposed a Linux-only strict-
+Clippy portability gap: two `u32::from(st_mode)` conversions are nontrivial on
+macOS but useless on Linux, while the Linux no-op ACL validator unnecessarily
+wrapped `Ok(())`. Native x86_64/aarch64 Linux and macOS test jobs, dependency
+gates, and benchmark evidence were green on that seal. Fix `90d8f96` widens the
+portable mode comparison to `u64` and compiles descriptor ACL validation only
+on macOS; it changes no accepted path, mode, ACL, error, or public API behavior.
+The exact failing Linux cross-target Clippy command, strict all-target/all-
+feature local Clippy, all-feature workspace tests, and workspace documentation
+are green. The required three-track final rereview will inspect the same exact
+post-fix candidate SHA.
+
+The replacement documentation-only seal and delivery records will update evidence and
 status text only. Per the delivery workflow and the user's explicit instruction,
 those documentation-only commits are not adversarially reviewed after
 production behavior is already green.
 
 ## Candidate documentation checks
 
-The exact behavior candidate's local gates pass:
+The post-`90d8f96` candidate's local gates pass:
 
 - `cargo +1.94.1 fmt --all -- --check`;
 - exact Rust/Cargo 1.94.1 strict workspace all-target/all-feature Clippy;
@@ -211,12 +240,17 @@ The exact behavior candidate's local gates pass:
   release CLI smoke test; and
 - `git diff --check`.
 
-These local checks are not feature-workflow, benchmark, or `main` evidence.
+The Linux cross-target command that failed remotely also passes exactly:
+`cargo +1.94.1 clippy --locked -p machine-god-native --lib
+--no-default-features --target x86_64-unknown-linux-gnu -- -D warnings`.
+These local checks are not replacement feature-workflow, benchmark, or `main`
+evidence.
 
 ## Remaining scope
 
-Documentation-seal workflows, exact feature workflows, a fast-forward without
-force to `main`, exact `main` workflows, and final delivery evidence remain
-pending. Session lifecycle and reset/new-incarnation behavior, the remaining
+Final same-SHA adversarial rereview, replacement documentation-seal workflows,
+exact feature workflows, a fast-forward without force to `main`, exact `main`
+workflows, and final delivery evidence remain pending. Session lifecycle and
+reset/new-incarnation behavior, the remaining
 native tools, CLI expansion, release-binary end-to-end host evidence, and
 compatibility promotion remain open. No package or GitHub release is authorized.

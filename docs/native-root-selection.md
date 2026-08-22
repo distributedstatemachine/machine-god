@@ -1,7 +1,7 @@
 # Native root selection and preparation
 
-Status: adversarially green behavior contract for the fourteenth bounded
-Milestone 03 slice; documentation-seal and delivery gates pending.
+Status: final-rereview candidate contract for the fourteenth bounded Milestone
+03 slice; replacement documentation-seal and delivery gates pending.
 Thirteen slices are integrated through final delivery record
 `f840576af241c58d1e55399e66ba92f7770cd50c`; exact feature CI run
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
@@ -15,10 +15,16 @@ descriptor-bound ACL rejection and its independent regression are `8ae17db`
 and `041c83c`. First rereview found the protective macOS HOME deny-delete ACL
 compatibility issue and a Rustdoc mismatch; their finding-fix candidate includes
 the independent `bb2a856` regression and policy/Rustdoc fix `fa94d8a`. All
-three formal tracks are green together on exact behavior SHA
-`f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`; full local gates are green for
-that SHA. Documentation-seal workflows, exact feature delivery, fast-forward
-integration, exact `main` workflows, and the final record remain pending.
+three formal tracks were green together on exact behavior SHA
+`f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`. Documentation seal `03fa9ba`
+then produced green Linux/macOS native-test jobs and green benchmark run
+`32588948975`, but feature CI run `32588948956` failed on three Linux-only
+strict-Clippy diagnostics. Portable lint normalization is present at
+`90d8f96`; local macOS and Linux cross-target strict Clippy plus the full test
+and documentation gates are green. Because production source changed after
+`f1dc4751`, final same-SHA adversarial rereview, a replacement documentation
+seal, exact feature delivery, fast-forward integration, exact `main` workflows,
+and the final record remain pending.
 Milestone 03 remains `IN PROGRESS`.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
