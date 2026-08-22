@@ -166,7 +166,8 @@ provider, transport, and model projection drives composition. The candidate's
 production constructor receives a separate injected credential snapshot; no
 credential enters this configuration value or loader. Production implementation
 and focused independent tests are composed, and three fresh adversarial tracks
-are green on exact behavior SHA `5afda631`; remote delivery gates remain
+are green on exact behavior SHA `5afda631`. Exact feature gates are green on
+review record SHA `4a767255`; the documentation seal and `main` delivery remain
 pending.
 
 Configuration mutation, a migration or rewrite command, a terminal permission

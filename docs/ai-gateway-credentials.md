@@ -131,8 +131,9 @@ field or invoke this adapter. The separate twelfth
 [`native reference-host candidate`](native-reference-host.md) implements a
 production library constructor that consumes an explicitly injected snapshot
 and retains only the selected source metadata. Its focused composed tests and
-three fresh adversarial tracks are green on exact behavior SHA `5afda631`,
-while remote delivery gates remain pending. Its custom-
+three fresh adversarial tracks are green on exact behavior SHA `5afda631`.
+Exact feature gates are green on review record SHA `4a767255`; the documentation
+seal and `main` delivery remain pending. Its custom-
 transport authority override skips discovery
 and reports no native-discovery source. The broader M03 credential-and-
 configuration checklist item remains unchecked even after that candidate is

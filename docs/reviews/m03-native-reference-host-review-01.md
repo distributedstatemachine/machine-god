@@ -1,7 +1,8 @@
 # Milestone 03 native reference-host composition review 01
 
-Status: **ADVERSARIALLY GREEN — implementation, independent tests, and local
-gates green; exact remote feature gates and `main` delivery pending**
+Status: **FEATURE GREEN — implementation, independent tests, local gates,
+adversarial review, and exact feature workflows green; documentation seal and
+`main` delivery pending**
 
 ## Candidate lineage
 
@@ -23,9 +24,9 @@ gates green; exact remote feature gates and `main` delivery pending**
   `25089e9765b313b27742da3f4342b90647d0a1af`
 - Adversarially green behavior:
   `5afda631b83ee0ebd65ddc0e1d49079739b4914d`
-- Review record and exact feature-gate SHA: this branch commit; exact SHA
-  reported at handoff
-- Documentation seal: `PENDING`
+- Review record and exact feature-gate SHA:
+  `4a7672559b7f05f8e427d5b9db2b12984163253a`
+- Documentation seal: this branch commit; exact SHA reported at handoff
 - Exact `main` delivery SHA: `PENDING`
 - Integration branch: `agent/m03-native-reference-host`
 - Candidate-docs branch: `agent/m03-native-reference-host-docs`
@@ -34,8 +35,9 @@ gates green; exact remote feature gates and `main` delivery pending**
 The base contains eleven integrated bounded Milestone 03 slices. Production,
 independently owned tests, and candidate documentation for the twelfth bounded
 library slice are composed on this branch. All three fresh adversarial tracks
-are green on exact behavior SHA `5afda631`; no exact feature or `main` workflow
-has run. Milestone 03 remains `IN PROGRESS`.
+are green on exact behavior SHA `5afda631`. Exact feature CI and benchmark
+evidence are green on review record SHA `4a767255`; no documentation-seal or
+`main` workflow has run. Milestone 03 remains `IN PROGRESS`.
 
 ## Adversarially green behavior
 
@@ -140,11 +142,23 @@ code-identical documentation descendants with exact `rustc 1.94.1` and
 These checks and the three green review tracks are local exact-SHA evidence;
 they are not remote or `main` delivery evidence.
 
+## Exact feature-branch delivery gates
+
+The reviewed behavior and its review record are feature-green at
+`4a7672559b7f05f8e427d5b9db2b12984163253a`:
+
+- exact feature CI run
+  [`32578674609`](https://github.com/distributedstatemachine/machine-god/actions/runs/32578674609)
+  is green; and
+- exact feature benchmark-evidence run
+  [`32578674621`](https://github.com/distributedstatemachine/machine-god/actions/runs/32578674621)
+  is green.
+
 ## Remaining gates and scope
 
-Exact feature-branch CI and benchmark-evidence runs, the documentation seal,
-fast-forward integration, and exact `main` CI and benchmark-evidence runs remain
-pending.
+The documentation seal must pass both exact feature workflows before
+fast-forward integration. Exact `main` CI and benchmark-evidence runs must then
+pass on the same sealed SHA.
 
 Root selection and safe creation, a terminal prompter, session identifiers and
 lifecycle commands, the remaining native tools, CLI composition/execution, and

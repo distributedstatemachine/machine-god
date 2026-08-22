@@ -24,7 +24,8 @@ an async executor.
 Milestone 03 has eleven integrated bounded slices and a twelfth bounded
 candidate whose production implementation and independent black-box tests are
 composed on its feature branch, with three fresh adversarial tracks green on
-exact behavior SHA `5afda631`. Remote gates and delivery remain pending.
+exact behavior SHA `5afda631` and exact feature gates green on review record
+SHA `4a767255`. The documentation seal and `main` delivery remain pending.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -245,8 +246,8 @@ origin and observable version `1` while using its projected provider,
 transport, and model values. Its fixed debug form exposes no config structure
 or source. Every nested construction error is reduced to one fixed redacted
 stage in the non-exhaustive reference-host error taxonomy. These are composed
-candidate behaviors that are adversarially green and awaiting remote delivery
-gates.
+candidate behaviors that are adversarially and feature-branch green while the
+documentation seal and `main` delivery remain pending.
 
 The eighth slice is `machine-god-native::FileSessionStore`. On supported
 Linux and macOS Unix targets, its host supplies one existing absolute root. The

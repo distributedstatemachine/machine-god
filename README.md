@@ -59,8 +59,9 @@ creates no root, runtime, network request, prompt operation, session record, or
 background work. Production implementation and independent black-box tests are
 composed on this feature branch, their focused pinned-toolchain checks are
 green, and three fresh adversarial tracks are green on exact behavior SHA
-`5afda631`. Exact remote gates and `main` delivery remain pending. The CLI is
-byte-unchanged and remains thin. See
+`5afda631`. Exact feature-branch CI and benchmark evidence are green on review
+record SHA `4a767255`; the documentation seal and `main` delivery remain
+pending. The CLI is byte-unchanged and remains thin. See
 the [candidate contract](docs/native-reference-host.md) and
 [candidate review record](docs/reviews/m03-native-reference-host-review-01.md).
 

@@ -224,8 +224,9 @@ output are redacted. The CLI remains byte-unchanged and thin. Only the
 [`candidate review record`](reviews/m03-native-reference-host-review-01.md),
 production implementation, and independent black-box tests are composed on
 this branch. Focused pinned-toolchain checks and three fresh adversarial tracks
-are green on exact behavior SHA `5afda631`; exact remote feature gates and
-`main` delivery remain pending.
+are green on exact behavior SHA `5afda631`. Exact feature-branch CI and
+benchmark evidence are green on review record SHA `4a767255`; the documentation
+seal and `main` delivery remain pending.
 
 ### Milestone 03 completion boundary
 
