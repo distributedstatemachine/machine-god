@@ -471,6 +471,7 @@ fn prepare_suffix_directory(
                 PreparedNativeRootsErrorKind::UnsafeStateDirectory,
             ));
         }
+        validate_no_extended_acl(&descriptor)?;
     } else {
         validate_existing_directory(&descriptor, effective_uid, is_final)?;
     }
@@ -503,6 +504,25 @@ fn validate_existing_directory(
             PreparedNativeRootsErrorKind::UnsafeStateDirectory,
         ));
     }
+    validate_no_extended_acl(descriptor)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn validate_no_extended_acl(descriptor: &OwnedFd) -> Result<(), PreparedNativeRootsError> {
+    let acl = calcifer_macos_acl::read_acl(descriptor.as_fd()).map_err(|_| {
+        PreparedNativeRootsError::new(PreparedNativeRootsErrorKind::UnsafeStateDirectory)
+    })?;
+    if !acl.is_empty() {
+        return Err(PreparedNativeRootsError::new(
+            PreparedNativeRootsErrorKind::UnsafeStateDirectory,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+const fn validate_no_extended_acl(_descriptor: &OwnedFd) -> Result<(), PreparedNativeRootsError> {
     Ok(())
 }
 

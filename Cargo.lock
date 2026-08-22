@@ -65,6 +65,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "calcifer-macos-acl"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d623f1bbaccbe0d1c6a9e4d2366feef6e179ac4e235aa86342601caf29358df4"
+
+[[package]]
 name = "cc"
 version = "1.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -652,6 +658,7 @@ name = "machine-god-native"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "calcifer-macos-acl",
  "futures-core",
  "futures-executor",
  "futures-util",
