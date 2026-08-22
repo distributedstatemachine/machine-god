@@ -1,6 +1,6 @@
 # Milestone 03 native session-listing review 01
 
-Status: **REPLACEMENT REREVIEW GREEN — REMOTE GATES PENDING**
+Status: **REMOTE LINUX FINDING FIX CANDIDATE — REVIEW PENDING**
 
 All three first-round formal tracks reported confirmed findings on exact
 candidate `dec98e06e110be88317a2ba76c77e7ca872fed34`. Production and the
@@ -169,8 +169,23 @@ dependencies with no finding. Diff checks and the worktree are clean.
 
 ## Pending delivery evidence
 
-Exact feature-branch CI and benchmark-evidence workflows, fast-forward
-integration, and exact `main` workflows remain pending. Until those
+Feature branch head `a70a864673e4df6c7555c06008d43ad802285437` passed exact
+benchmark-evidence run `32599591928`, both native macOS jobs, and dependency
+policy/audit, but exact CI run `32599591900` failed the existing removed-root
+regression in its quality job and on both native Linux architectures. On Linux,
+opening fresh `.` from an already removed retained descriptor succeeded and
+listing returned an empty success. The prior macOS identity validation did not
+run on Linux.
+
+This remote-finding candidate validates the acquired descriptor on both
+platforms: Linux rejects a zero link count, while macOS retains its parent/name
+identity validation. The acquire-then-unlink unit regression now compiles and
+runs on both platforms. Local macOS focused tests, strict native Clippy, and an
+x86_64 Linux target check are green. This executable change still requires all
+three review tracks and replacement exact-SHA remote workflows.
+
+Exact replacement feature-branch CI and benchmark-evidence workflows, fast-
+forward integration, and exact `main` workflows remain pending. Until those
 gates pass, the combined root plus native create/list/resume/replay/reset M03
 checklist item remains unchecked even though its functional code scope exists.
 

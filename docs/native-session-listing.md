@@ -8,8 +8,10 @@ confirmed findings. Acquire-first production fix `4b8d8b0`, test hardening
 behavior candidate `3fa54635dab00ebba78b233c69fd39e04e9be57e`. Its 18 focused
 tests, full all-target/all-feature workspace suite, and all three replacement
 review tracks are green. Exact feature-SHA remote workflows and delivery
-evidence remain pending. The fifteen earlier slices remain integrated through
-`9ada4b5`.
+evidence remain pending. First remote CI run `32599591900` exposed a Linux-only
+removed-root liveness gap; this remote-finding candidate adds portable linked-
+descriptor validation and still requires review plus replacement remote gates.
+The fifteen earlier slices remain integrated through `9ada4b5`.
 
 The exact first-candidate lineage is: integrated base `9ada4b5`; isolated
 production `0accfbf`, composed as `1bffac9`; isolated documentation `63d589c`,
@@ -112,10 +114,10 @@ as a by-ID load:
 
 The replacement contract acquires the fresh `.` descriptor relative to the
 retained root first, then checks that exact acquired descriptor's linked
-identity before constructing its enumeration stream. Linux reports removal
-before fresh acquisition as `Unavailable`. On macOS, where an unlinked retained
-descriptor can still reopen `.`, the linked-identity check is applied to the
-freshly acquired descriptor rather than to the earlier retained descriptor.
+identity before constructing its enumeration stream. Linux rejects an acquired
+descriptor with zero links. On macOS, where an unlinked retained descriptor can
+still reopen `.`, the linked-identity check resolves the acquired descriptor's
+parent/name identity rather than checking the earlier retained descriptor.
 A stable completed rename preserves directory identity and remains valid.
 Removal before acquisition or before the identity check is `Unavailable`.
 Concurrent rename or removal may conservatively return `Unavailable` or may

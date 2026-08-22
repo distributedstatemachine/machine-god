@@ -139,7 +139,9 @@ first review tracks were not green. Isolated fix `4b8d8b0` and test hardening
 `446b495` are composed into exact behavior candidate `3fa5463` with the
 corrected documentation; its 18 focused tests, required local gates, and all
 three replacement review tracks are green. Exact remote delivery evidence
-remains pending. It adds no
+remains pending. First remote CI run `32599591900` exposed a Linux removed-root
+liveness gap; this remote-finding candidate applies the portable descriptor
+check and awaits review plus replacement remote gates. It adds no
 CLI behavior and makes no fx equivalence or performance claim. See the
 [native session-listing contract](docs/native-session-listing.md) and
 [review record](docs/reviews/m03-native-session-listing-review-01.md).

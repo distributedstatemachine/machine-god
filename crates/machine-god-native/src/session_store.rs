@@ -325,8 +325,7 @@ impl FileSessionStore {
         )
         .map_err(map_io_error)?;
         after_directory_open();
-        #[cfg(target_os = "macos")]
-        ensure_macos_root_is_linked(directory.as_fd())?;
+        ensure_listing_root_is_linked(directory.as_fd())?;
         let mut stream = Dir::new(directory).map_err(map_io_error)?;
         let mut candidates = Vec::new();
         let mut scanned_entries = 0_usize;
@@ -456,6 +455,21 @@ impl FileSessionStore {
         publish_record(self.root.as_fd(), &names, record)?;
         Ok(revision)
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn ensure_listing_root_is_linked(
+    root: rustix::fd::BorrowedFd<'_>,
+) -> Result<(), SessionStoreError> {
+    #[cfg(target_os = "linux")]
+    {
+        if rustix::fs::fstat(root).map_err(map_io_error)?.st_nlink == 0 {
+            return Err(unavailable(true));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    ensure_macos_root_is_linked(root)?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -1289,20 +1303,15 @@ fn save_ambiguous() -> SessionStoreError {
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
-    #[cfg(target_os = "macos")]
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    #[cfg(target_os = "macos")]
     use machine_god_core::SessionStoreErrorKind;
 
-    #[cfg(target_os = "macos")]
     use super::FileSessionStore;
     use super::retry_interrupted;
 
-    #[cfg(target_os = "macos")]
     static NEXT_LISTING_ROOT: AtomicU64 = AtomicU64::new(0);
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn freshly_acquired_listing_descriptor_is_revalidated_after_unlink() {
         let root = loop {

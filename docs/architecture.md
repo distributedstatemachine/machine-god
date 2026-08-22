@@ -25,7 +25,9 @@ Milestone 03 has fifteen delivered bounded slices. The first formal sixteenth
 candidate is composed through `dec98e0`, whose three review tracks were not
 green. Its source and test fixes are composed in exact behavior candidate
 `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
-green and remote evidence remains pending. The twelfth slice's
+green. First remote CI `32599591900` exposed the Linux removed-root gap; this
+portable remote-finding candidate awaits review and replacement remote gates.
+The twelfth slice's
 production implementation, independent black-box tests, three fresh adversarial
 tracks, and exact feature and `main` workflows are green. It is integrated on
 `main` through final delivery record
