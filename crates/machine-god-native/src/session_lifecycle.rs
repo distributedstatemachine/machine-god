@@ -280,7 +280,7 @@ impl NativeSessionLifecycle {
         incarnation_source: Arc<dyn SessionIncarnationSource>,
     ) -> Result<Self, NativeSessionLifecycleBuildError> {
         let supplied_store: &dyn SessionStore = session_store.as_ref();
-        if !std::ptr::eq(engine.session_store(), supplied_store) {
+        if !std::ptr::addr_eq(engine.session_store(), supplied_store) {
             return Err(NativeSessionLifecycleBuildError::new(
                 NativeSessionLifecycleBuildErrorKind::MismatchedSessionStore,
             ));

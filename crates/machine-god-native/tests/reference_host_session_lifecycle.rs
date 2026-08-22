@@ -103,7 +103,7 @@ fn reference_host_lifecycle_engine_and_public_store_share_one_exact_store() {
         host.session_store(),
         host.session_lifecycle().session_store()
     ));
-    assert!(std::ptr::eq(
+    assert!(std::ptr::addr_eq(
         host.engine().session_store(),
         host.session_store().as_ref() as &dyn SessionStore,
     ));

@@ -477,8 +477,10 @@ fn incarnation_source_failure_and_collision_preserve_the_prior_record() {
     let prior = fs::read(&path).unwrap();
 
     let failing = ScriptedIncarnationSource::failing();
-    let (lifecycle, _) = lifecycle(&store, Arc::clone(&failing), []);
-    let error = lifecycle_error(futures_executor::block_on(lifecycle.reset(old.id.clone())));
+    let (failing_lifecycle, _) = lifecycle(&store, Arc::clone(&failing), []);
+    let error = lifecycle_error(futures_executor::block_on(
+        failing_lifecycle.reset(old.id.clone()),
+    ));
     assert_eq!(
         error.kind(),
         NativeSessionLifecycleErrorKind::IncarnationSource
@@ -496,8 +498,10 @@ fn incarnation_source_failure_and_collision_preserve_the_prior_record() {
         "existing-incarnation",
         "existing-incarnation",
     ]);
-    let (lifecycle, _) = lifecycle(&store, Arc::clone(&collisions), []);
-    let error = lifecycle_error(futures_executor::block_on(lifecycle.reset(old.id)));
+    let (collision_lifecycle, _) = lifecycle(&store, Arc::clone(&collisions), []);
+    let error = lifecycle_error(futures_executor::block_on(
+        collision_lifecycle.reset(old.id),
+    ));
     assert_eq!(
         error.kind(),
         NativeSessionLifecycleErrorKind::IncarnationSource
@@ -662,7 +666,7 @@ fn lifecycle_retains_the_exact_store_shared_with_its_engine() {
     let (lifecycle, _) = lifecycle(&store, source, []);
 
     assert!(Arc::ptr_eq(lifecycle.session_store(), &store));
-    assert!(std::ptr::eq(
+    assert!(std::ptr::addr_eq(
         lifecycle.engine().session_store(),
         store.as_ref() as &dyn SessionStore,
     ));
