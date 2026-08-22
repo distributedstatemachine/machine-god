@@ -2,9 +2,10 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::future::Future;
 use std::io;
+use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -23,6 +24,7 @@ use machine_god_native::{
     NativeSessionLifecycleErrorKind, SessionIncarnationSource, SessionIncarnationSourceError,
 };
 use machine_god_testkit::{ModelProviderStep, ScriptedModelProvider, ScriptedPermissionHandler};
+use rustix::fs::{FlockOperation, flock};
 use serde_json::json;
 
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -315,6 +317,69 @@ fn create_is_durable_and_duplicate_create_preserves_the_original_record() {
         "an existing record must be rejected before allocating an incarnation"
     );
     assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn same_engine_concurrent_create_reservation_reports_live_session() {
+    let temporary = TemporaryDirectory::new("concurrent-create-reservation");
+    let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    let session_id = id("concurrent-create-reservation");
+    save_new(
+        &store,
+        session_id.clone(),
+        incarnation("removed-bootstrap-life"),
+    );
+    fs::remove_file(data_path(temporary.path())).unwrap();
+    let lock_path = fs::read_dir(temporary.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "lock")
+        })
+        .expect("the permanent session lock must remain after removing test data");
+    let external_lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    flock(external_lock.as_fd(), FlockOperation::LockExclusive).unwrap();
+
+    let source_barrier = Arc::new(Barrier::new(2));
+    let source = ScriptedIncarnationSource::with_hook(
+        ["concurrent-first-life", "concurrent-second-life"],
+        {
+            let source_barrier = Arc::clone(&source_barrier);
+            move || {
+                source_barrier.wait();
+            }
+        },
+    );
+    let (lifecycle, _) = lifecycle(&store, Arc::clone(&source), []);
+    let first_lifecycle = lifecycle.clone();
+    let first_id = session_id.clone();
+    let first =
+        std::thread::spawn(move || futures_executor::block_on(first_lifecycle.create(first_id)));
+
+    source_barrier.wait();
+    let reservation = lifecycle
+        .engine()
+        .create_session(session_id.clone(), incarnation("concurrent-first-life"))
+        .unwrap();
+    let loser = lifecycle_error(futures_executor::block_on(
+        lifecycle.create(session_id.clone()),
+    ));
+    assert_eq!(loser.kind(), NativeSessionLifecycleErrorKind::LiveSession);
+
+    flock(external_lock.as_fd(), FlockOperation::Unlock).unwrap();
+    let winner = first.join().unwrap().unwrap();
+    assert_eq!(
+        winner.incarnation_id(),
+        incarnation("concurrent-first-life")
+    );
+    assert_eq!(winner.record(), reservation.record());
+    assert_eq!(load(&store, session_id), Some(winner.record()));
+    assert_eq!(source.calls(), 2);
 }
 
 #[test]

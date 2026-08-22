@@ -23,13 +23,21 @@ constructing independent stores.
 
 ## Platform and authority boundary
 
-The candidate has the reference host's existing gate: optional
-`ai-gateway-http`, non-WebAssembly, and Linux or macOS. It operates only on the
-`FileSessionStore` already composed into that host. Prepared-root composition
-uses the selected `machine-god` state root itself; legacy path composition uses
-the explicitly supplied existing session root. Lifecycle operations receive no
-path, environment, configuration, network, terminal, process-execution,
-provider, permission, tool, event-sink, clock, or runtime authority.
+The standalone lifecycle API is exported on Linux and macOS independently of
+the optional `ai-gateway-http` feature. Its constructors accept any caller-built
+`Engine` and `Arc<FileSessionStore>` that satisfy the exact shared-allocation
+invariant below. Integration through `NativeReferenceHost` retains that host's
+stricter optional-HTTP, non-WebAssembly, Linux/macOS gate. Prepared-root host
+composition uses the selected `machine-god` state root itself; legacy host
+composition uses the explicitly supplied existing session root.
+
+The lifecycle implementation and its default OS-random source receive no path,
+environment, configuration, network, terminal, process-execution, provider,
+permission, tool, event-sink, clock, or runtime authority. A custom
+`SessionIncarnationSource` is explicitly trusted host code: its implementor is
+responsible for its own authority, effects, latency, allocation, internal work,
+and globally unique ID contract. It must not be model- or configuration-
+controlled merely because the lifecycle exposes an injection boundary.
 
 Store identity is an enforced invariant, not caller documentation. Every
 lifecycle constructor proves that the engine's configured session-store `Arc`
@@ -95,10 +103,12 @@ the new-record conflict specifically to `AlreadyExists`; it is never resumed,
 reset, merged, truncated, or replaced as a convenience.
 
 Concurrent creates for one absent ID use the same store lock and create CAS.
-At most one can create that durable lifetime from the absent state; every
-loser reports `AlreadyExists`. A local incompatible live session also prevents
-publication and reports `LiveSession` rather than forcing that handle to adopt
-another incarnation.
+At most one can create that durable lifetime from the absent state; a caller
+that reaches and loses the durable create CAS reports `AlreadyExists`. Within
+one engine, however, a competing create may first encounter the other create's
+incompatible local registry reservation and report `LiveSession` without
+reaching the store CAS. The implementation never forces that reservation or
+another incompatible live handle to adopt a different incarnation.
 
 As in the underlying store, failure before rename leaves no published record,
 although a permanent lock or safe temporary artifact may remain. A directory-
@@ -202,15 +212,18 @@ reset session a second time and is therefore explicitly unsafe.
 ## Live handles and concurrency
 
 The native lifecycle coordinates its operations with the engine's local
-session registry. Reset fails as `LiveSession` before record replacement
-whenever that host still has a live handle for the ID: a new reset incarnation
-would necessarily be incompatible. The preceding current-record load may create
+session registry. Reset fails as `LiveSession` before record replacement when
+that host retains an incompatible incarnation, an active turn, or divergent
+state for the proposed replacement. The preceding current-record load may create
 the store's permanent fixed lock sidecar, and the bounded incarnation source
 may already have been consulted; neither effect changes the durable record. The
 lifecycle does not cancel an active turn, revoke clones, mutate a live handle in
 place, or force it to adopt the new lifetime. The registry reservation also
 prevents a new local handle for the ID from being published across the reset
-check-and-commit window.
+check-and-commit window. A trusted custom source that deliberately returns the
+incarnation of an already registered inactive empty candidate may reuse that
+matching local state; such coordination is outside the default globally unique
+OS-random path and does not permit reuse of the currently durable incarnation.
 
 This is a process-local safety rule, not distributed revocation. Another
 process may retain the old incarnation while reset succeeds under the shared
@@ -229,10 +242,14 @@ enumeration or takes a lock spanning multiple IDs.
 
 ## Polling, cancellation, and resource bounds
 
-Constructing a lifecycle future performs no entropy read, store call, record or
-lock creation, engine registration, provider work, prompt, or background work.
-Dropping it before first poll is effect-free. Polling owns the complete
-operation and detaches no task, thread, timer, retry loop, or runtime work.
+Constructing a lifecycle future performs no source call, entropy read, store
+call, record or lock creation, engine registration, provider work, prompt, or
+background work. Dropping it before first poll is effect-free. The lifecycle
+implementation and default source detach no task, thread, timer, retry loop, or
+runtime work while polling. A trusted custom incarnation source is called
+synchronously, but the lifecycle cannot constrain work that its implementation
+performs or detaches internally; custom hosts must enforce the same bounded,
+non-detaching source contract when they require those properties.
 
 The shared `FileSessionStore` performs bounded synchronous I/O and advisory
 locking on the polling thread. Once one of those calls is executing, dropping
@@ -240,7 +257,7 @@ the outer future cannot preempt it or roll back a completed rename. The host
 does not add a Tokio runtime or move the work to a blocking pool. A caller that
 must preserve executor responsiveness must arrange a suitable polling context.
 
-Per call, retained application data is bounded by:
+With the default OS source, per-call retained application data is bounded by:
 
 - one validated `SessionId`, at most 128 bytes;
 - one bounded incarnation and one fixed-size random draw for create, or at most
@@ -255,9 +272,10 @@ Per call, retained application data is bounded by:
 Create and reset serialize only an empty record. Resume and replay do not read
 past the file-store cap. Each attempt touches only the fixed record, lock, and
 temporary names derived from one ID and performs no directory enumeration.
-Successful byte-transfer work is bounded; advisory-lock waits, filesystem
-latency, synchronization latency, and the store's `EINTR` retries have no
-wall-clock bound.
+Successful byte-transfer and default-source work are bounded; advisory-lock
+waits, filesystem latency, synchronization latency, and the store's `EINTR`
+retries have no wall-clock bound. A custom source owns any additional resource
+or wall-clock bounds required by its trusted host.
 
 ## Errors and redaction
 

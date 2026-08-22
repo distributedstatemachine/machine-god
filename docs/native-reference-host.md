@@ -94,6 +94,8 @@ NativeReferenceHost::into_engine(self) -> Engine
 NativeReferenceHost::loaded_config(&self) -> &LoadedNativeConfig
 NativeReferenceHost::credential_source(&self)
     -> Option<AiGatewayCredentialSource>
+NativeReferenceHost::session_store(&self) -> &Arc<FileSessionStore>
+NativeReferenceHost::session_lifecycle(&self) -> &NativeSessionLifecycle
 ```
 
 The integrated fourteenth slice adds these consuming constructors:
