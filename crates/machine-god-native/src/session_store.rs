@@ -43,7 +43,8 @@ pub const MAX_LIST_SESSION_DIRECTORY_ENTRIES: usize = 1_024;
 /// Maximum aggregate record bytes accepted and decoded by one native listing.
 ///
 /// Concurrent file growth may transfer one additional byte solely to prove
-/// overflow; that witness is neither retained nor decoded.
+/// overflow; that witness may be retained transiently, but is not accepted,
+/// decoded, or returned.
 pub const MAX_LIST_SESSION_TOTAL_RECORD_BYTES: usize = 64 * 1_024 * 1_024;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

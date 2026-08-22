@@ -3,7 +3,8 @@
 Status: integrated contract for the twelfth bounded Milestone 03 library slice.
 Fifteen slices are delivered. The first formal sixteenth candidate is composed
 through `dec98e0`, but all three review tracks are not green and its replacement
-is pending. This
+source and test fixes are composed in the replacement candidate. Formal
+rereview and remote evidence remain pending. This
 slice's production implementation, an
 independently owned seven-test black-box suite, three fresh adversarial tracks,
 and exact feature and `main` workflows are green. Its final delivery record is
@@ -369,7 +370,7 @@ workspace/latest/cursor semantics, pagination, global snapshot, session-ID
 generation, UI replay, or CLI command. Its behavior and limits are in
 [`native-session-listing.md`](native-session-listing.md); production/test
 composition is present through `dec98e0`, but all three first formal tracks are
-not green. Replacement composition, formal rereview, and exact delivery
+not green. The replacement is composed; formal rereview and exact delivery
 evidence are pending.
 
 Deterministic end-to-end evidence through a freshly built release binary,
@@ -388,7 +389,7 @@ final-record feature and `main` workflows are green at integrated SHA
 fifteenth supplies create/resume/replay/reset, and the sixteenth first candidate
 contains bounded IDs-only listing. The combined root-and-session-lifecycle item
 remains unchecked because all three first listing reviews are not green and
-replacement composition, formal rereview, and remote exact-SHA gates remain
-pending. Milestone 03 remains in progress because the remaining native tools,
+the composed replacement still needs formal rereview and remote exact-SHA
+gates. Milestone 03 remains in progress because the remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.

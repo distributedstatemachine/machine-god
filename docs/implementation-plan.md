@@ -45,7 +45,8 @@ Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with fifteen delivered bounded slices. The first formal sixteenth-slice
 candidate is composed through `dec98e0`, but all three review tracks are not
-green and its replacement is pending. The first
+green. Its source and test fixes are composed in the replacement candidate,
+which awaits formal rereview and remote evidence. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -442,8 +443,8 @@ gate:
   remaining bounded IDs-only native listing functional scope. Production and
   13 initial independent tests are composed through first formal candidate
   `dec98e0`, but all three first review tracks are not green. The replacement
-  source fix and 18-test hardened suite exist in isolation at `4b8d8b0` and
-  `446b495`, but their shared composition, formal rereview, and remote exact-SHA
+  source fix and 18-test hardened suite from `4b8d8b0` and `446b495` are
+  composed in the replacement candidate. Formal rereview and remote exact-SHA
   gates remain pending. The combined item therefore stays
   unchecked until those delivery gates are green.
 - [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
