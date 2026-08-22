@@ -28,8 +28,13 @@ green, with evidence retained in the
 It is integrated on `main` at
 `8f7b47db9580b14570bf9fb55763858f71a81271`; exact main CI run `32541315998`
 and benchmark run `32541315997` are green.
-Permission mode remains `ask`; CLI registration, prompting, and the fail-closed
-behavior of a production permission handler remain future work.
+A ninth bounded candidate defines the fail-closed native
+`AskPermissionHandler` over an explicitly injected `PermissionPrompter`. It
+does not contain a prompt UI or change CLI behavior, and it is not an integrated
+slice until implementation, tests, adversarial review, exact remote CI, and
+`main` integration evidence are available. Permission mode remains `ask`; CLI
+registration and a concrete prompt remain future work. The candidate's exact
+security boundary is in [`ask-permission.md`](ask-permission.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -70,10 +75,10 @@ configuration contents, or operating-system error text. Inaccessible paths and
 read errors are not converted into defaults.
 
 The existing status path remains metadata-only and its CLI output is
-byte-stable. Configuration mutation, prompting and modes beyond `ask`, concrete
-provider/CLI composition, credential discovery, CLI expansion, native tools
-other than the bounded library-level `read_file` and `list_files`, and
-compatibility or performance claims remain outside the implemented slices.
+byte-stable. Configuration mutation, a concrete prompt UI and modes beyond
+`ask`, concrete provider/CLI composition, credential discovery, CLI expansion,
+native tools other than the bounded library-level `read_file` and `list_files`,
+and compatibility or performance claims remain outside the implemented slices.
 
 The file-session slice does not consume those status-derived state paths.
 The host explicitly supplies one existing absolute root. On supported Linux and
@@ -144,6 +149,38 @@ IDs, hashes, roots, child paths,
 record bytes, parser diagnostics, OS text, or raw error numbers. The complete
 contract and fixed taxonomy are in
 [`session-store.md`](session-store.md).
+
+The ask-handler candidate adds no ambient authority to core or native. The host
+must inject either an owned `PermissionPrompter` or an explicitly shared
+`Arc<dyn PermissionPrompter>`. The adapter never reads terminal input, writes
+terminal output, inspects environment or configuration, accesses a file or
+process, contacts a network, selects an executor, or persists a grant. Such
+authority and its security controls belong behind the injected prompter.
+
+For the engine path, core bounds the prepared capability and arguments and
+constructs the complete auditable request before the adapter is called. The
+adapter forwards that owned request exactly once and does not clone, mutate,
+serialize, truncate, revalidate, or traverse it. This preserves the identity,
+session incarnation, turn, capability, critical-risk hint, and fixed reason
+that core already exposed through `PermissionRequested`; a presentation layer
+must not silently authorize a shortened or reconstructed request.
+
+Only structured allow-once, allow-turn, allow-session, and deny values cross
+back into the adapter. The first three map to the matching core scopes but are
+not cached by either the adapter or core. Deny maps to the fixed host-facing
+reason `permission denied`. Prompt infrastructure failure carries no source
+data in the zero-data `PermissionPromptError` and maps only to the fixed
+`permission_prompt_failed` / `permission prompt failed` core error. It cannot
+be treated as approval or ordinary denial.
+
+Authorization is inert until polled and the adapter detaches no work. Dropping
+an unpolled future never calls the prompter; dropping a pending future drops the
+underlying prompt future. There is no separate cancellation token or revocation
+message at this boundary. A prompter must therefore retain prompt work in its
+returned future or perform its own drop cleanup; detaching an approval request
+that can outlive that future violates the contract. Full polling, redaction,
+and deferred-scope requirements are in
+[`ask-permission.md`](ask-permission.md).
 
 Tool preflight closes the representation gap between a model's raw JSON call
 and the operation presented to permission policy. The source-compatible default

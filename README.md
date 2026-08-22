@@ -20,9 +20,13 @@ An eighth bounded slice implements a Unix file-backed session store under an
 explicit host-opened root. Its exact feature, documentation-seal, and `main`
 checks are green; it is integrated at
 `8f7b47db9580b14570bf9fb55763858f71a81271`. Credential discovery, provider/CLI
-wiring, permission prompting, broader session lifecycle features, the remaining
-native tools, and compatibility work remain planned; the project is not yet
-production-ready. See the exact [CLI contract](docs/cli.md),
+wiring, a concrete prompt UI, broader session lifecycle features, the remaining
+native tools, and compatibility work remain planned. A ninth bounded candidate
+defines an executor-neutral, fail-closed native `AskPermissionHandler` over an
+explicitly injected prompter. It has no CLI or terminal authority and is not an
+integrated-slice claim; see its [candidate contract](docs/ask-permission.md).
+The project is not yet production-ready. See the exact
+[CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus

@@ -86,6 +86,37 @@ serialization, clone, retained-value destruction, and downstream extension
 paths that follow iterative validation. Builder-owned Schemas are still drained
 iteratively if this configuration check fails.
 
+## Native ask handler candidate
+
+The ninth bounded Milestone 03 candidate implements the existing
+provider-neutral `PermissionHandler` boundary as
+`machine_god_native::AskPermissionHandler`. It does not change core's trait or
+give core terminal, UI, environment, filesystem, process, network, clock, or
+executor authority. A host explicitly injects a `PermissionPrompter`, either as
+an owned concrete value through `AskPermissionHandler::new` or as an
+`Arc<dyn PermissionPrompter>` through
+`AskPermissionHandler::shared_prompter`.
+
+On the engine path, core validates the prepared arguments and capability under
+the configured byte/depth/node limits, constructs the complete
+`PermissionRequest`, and emits `PermissionRequested` before calling the
+handler. The adapter forwards the owned request to the prompter exactly once
+without cloning, mutation, serialization, truncation, revalidation, or
+traversal. Structured allow-once, allow-turn, allow-session, and deny prompt
+results map to the corresponding existing `PermissionDecision`. The scopes are
+auditable decisions; neither core nor this adapter caches them for a later
+request.
+
+A denied prompt returns the fixed reason `permission denied`. A prompt failure
+cannot carry source diagnostics in its zero-data error and maps fail-closed to
+the core error `permission_prompt_failed` / `permission prompt failed`. The
+authorization future is inert until polled and creates no detached work.
+Dropping it before first poll does not call the prompter; dropping it while
+pending drops the underlying prompt future. Core cancellation relies on that
+drop behavior and supplies no permission-specific cancellation token. The
+complete candidate contract, host obligations, and integration gate are in
+[`ask-permission.md`](ask-permission.md). Existing CLI behavior is unchanged.
+
 ## Native file store
 
 The eighth bounded Milestone 03 slice implements this unchanged

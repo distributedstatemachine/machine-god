@@ -128,17 +128,85 @@ It is integrated on `main` at
 `8f7b47db9580b14570bf9fb55763858f71a81271`; exact main CI run `32541315998`
 and benchmark run `32541315997` are green.
 
-These slices do not complete Milestone 03. Permission prompting and modes
-beyond `ask`, credential discovery and broader configuration, durable native
-session migration, encryption, reset and listing, provider/CLI wiring,
-workspace discovery, recursive/glob/grep and
-mutation tools, non-Unix
-hardened workspace construction, the remaining executable native tools, and
-compatibility or performance claims remain planned. Existing CLI bytes,
-benchmark evidence, workflows, and Zig inputs are unchanged; the provider is
-explicitly scoped to a pinned wire shape and makes no current-protocol or full
-fx-equivalence claim. Help and status remain claim-ineligible and unmeasured in
-bootstrap evidence.
+The ninth bounded slice is a candidate, not an integrated slice. It defines a
+native, executor-neutral `AskPermissionHandler` over an explicitly injected
+`PermissionPrompter`. `AskPermissionHandler::new` accepts an owned concrete
+prompter and `AskPermissionHandler::shared_prompter` accepts an
+`Arc<dyn PermissionPrompter>`. The adapter forwards core's complete bounded
+`PermissionRequest` by value without cloning, mutation, serialization,
+truncation, revalidation, or traversal. Structured allow-once, allow-turn,
+allow-session, and deny results map exactly to the corresponding core decision;
+neither core nor the adapter caches a positive grant. Denial uses the fixed
+reason `permission denied`. The zero-data prompt error maps fail-closed to only
+`permission_prompt_failed` / `permission prompt failed`.
+
+Authorization is inert until polled, the prompt future remains owned by the
+adapter future, and drop supplies cancellation by dropping that prompt future.
+The adapter detaches no work and supplies no second cancellation token, so an
+injected prompter must not leave a detached approval operation behind. It owns
+no terminal, UI, environment, filesystem, process, network, configuration, or
+runtime authority. The exact candidate contract is in
+[`ask-permission.md`](ask-permission.md). This plan must continue to say
+"eight integrated slices and a ninth candidate" until the implementation,
+tests, three fresh adversarial reviews, required local checks, exact remote CI,
+and `main` integration are all evidenced. Only then may the milestone summary
+be updated to nine integrated slices.
+
+### Milestone 03 completion boundary
+
+The nine slices alone do not complete Milestone 03. The following checklist is
+the frozen M03 boundary; changing ownership requires an explicit plan change in
+a reviewed commit rather than silently deferring a gate:
+
+- [x] Integrate and retain evidence for slices one through eight.
+- [ ] Integrate the ninth ask-handler candidate under its exact contract and
+  retain feature, adversarial-review, exact-SHA CI, and `main` evidence.
+- [ ] Compose a useful native reference-host path through an explicitly selected
+  provider and transport, session store, permission handler and prompter, and
+  registered tools. The CLI stays a thin host and owns no product state.
+- [ ] Add bounded, redacted credential acquisition and the configuration fields
+  required by that composition. Source precedence, missing/invalid behavior,
+  size limits, and secret non-reflection must be normative and tested; core
+  receives no ambient credential or configuration authority.
+- [ ] Add explicit workspace/state-root selection and safe required-root
+  creation, plus native create, list, resume, replay, and reset session
+  lifecycle behavior for the current schema. A reset under a reused session ID
+  must allocate a new incarnation before reuse.
+- [ ] Complete the M03 native tool set: `list_files`, `glob_files`,
+  `grep_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
+  `rename_file`, `copy_file`, `create_folder`, `file_info`, `open_file`,
+  `web_fetch`, `web_search`, `terminal`, `ask_user_question`, `vision`, and
+  `read_tool_result`. Every authority-bearing tool requires normalized
+  preflight, exact policy/execution agreement, resource bounds, redacted
+  diagnostics, cancellation/drop tests, and platform scope stated before
+  integration.
+- [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
+  `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
+  `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
+  slash-command categories `general`, `session`, `model`, `security`, and
+  `workspace`. Observable compatibility is scenario-based; command names may
+  remain intentional differences when documented.
+- [ ] Retain deterministic end-to-end evidence for the composed host with fake
+  provider/prompt/network boundaries, exercise user-visible behavior through a
+  freshly built release binary, resolve three fresh adversarial reviews, pass
+  every required local and remote exact-SHA gate, and update the compatibility
+  inventory/status without making a performance claim.
+
+Ownership beyond that boundary is also fixed:
+
+| Owner | Explicitly assigned work |
+| --- | --- |
+| M04 | Permission modes and identity-safe grant policy beyond `ask`; session schema migration and explicit legacy import; encryption, record authentication, key management, and secure erasure; persistence/lifecycle concurrency hardening; hardened non-Unix workspace and store construction. |
+| M05 | Skills, MCP, ACP, and subagent infrastructure; top-level `acp`, `background`, and `teams`; extension/agent slash commands; built-in `memory`, `semantic_search`, `skill`, `install_skill`, `subagent`, `mcp_search_tools`, `mcp_select_tool`, and `mcp_features`. |
+| M06 | SDK surfaces and remaining advanced compatibility, including top-level `pr`, `issue`, `login`, `logout`, `setup`, `credits`, `usage`, and `upgrade`, plus pinned account, media, product, and appearance slash-command categories. |
+| M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
+
+Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
+by the ninth candidate; Zig remains only the pinned upstream benchmark build
+input, not a machine-god product language or runtime dependency. The provider
+is explicitly scoped to a pinned wire shape and makes no current-protocol or
+full fx-equivalence claim. Help and status remain claim-ineligible and
+unmeasured in bootstrap evidence.
 
 ## Release gates
 

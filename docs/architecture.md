@@ -21,8 +21,8 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has eight integrated bounded slices. The first two are native-host
-slices;
+Milestone 03 has eight integrated bounded slices and a ninth bounded candidate.
+The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
 provides a bounded Gateway codec over an injected host byte transport. The
@@ -34,6 +34,11 @@ documentation-seal, and `main` checks are green, with evidence retained in the
 it is integrated on `main` at
 `8f7b47db9580b14570bf9fb55763858f71a81271`. Exact main CI run `32541315998`
 and benchmark run `32541315997` are green.
+The ninth candidate supplies an executor-neutral, fail-closed native
+`AskPermissionHandler` over an explicitly injected `PermissionPrompter`. It is
+not yet an integrated-slice claim: implementation, tests, adversarial review,
+exact remote CI, and integration evidence remain required. Its fixed candidate
+contract is in [`ask-permission.md`](ask-permission.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -50,7 +55,9 @@ loader, and owns no product state. The exact surfaces are documented in
 [`list_files` contract](list-files.md) do not change either CLI surface. The
 separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
-[`native file session store`](session-store.md).
+[`native file session store`](session-store.md). The ask-handler candidate is
+also a library surface and does not change CLI bytes or supply a concrete
+terminal prompt.
 
 ```text
 process environment -> resolved native paths
@@ -70,6 +77,10 @@ host-injected bearer token -> optional bounded native HTTP transport
 
 host-selected existing absolute state root -> retained directory descriptor
  SessionId -> domain-separated SHA-256 v1 name -> bounded file SessionStore
+
+core-owned bounded PermissionRequest -> AskPermissionHandler
+                                     -> injected PermissionPrompter
+                                     -> structured allow/deny decision
 ```
 
 The config and state roots resolve independently. A nonempty XDG root wins and
@@ -106,7 +117,7 @@ most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 or operating-system error text. Configuration mutation, permission modes beyond
-`ask`, prompting, credential discovery and provider/CLI composition,
+`ask`, a concrete prompt UI, credential discovery and provider/CLI composition,
 executable native tools other than the bounded `read_file` and `list_files`
 library capabilities, session migration/encryption/reset/listing, and CLI
 expansion remain deferred.
@@ -164,6 +175,33 @@ The first poll performs bounded synchronous serialization, I/O, advisory-lock
 acquisition, and sync work inline and can block the executor thread. Full
 format, polling, error, trust, and deferred-scope details are in
 [`session-store.md`](session-store.md).
+
+The ninth candidate is `machine_god_native::AskPermissionHandler`. It adapts
+core's existing provider-neutral `PermissionHandler` to an explicitly injected,
+object-safe `PermissionPrompter`. `new` accepts an owned concrete prompter;
+`shared_prompter` accepts an `Arc<dyn PermissionPrompter>`. The native adapter
+selects no executor and owns no terminal, UI, environment, filesystem, process,
+network, configuration, or persistence authority.
+
+For an engine-driven authorization, core first constructs and bounds the full
+auditable `PermissionRequest` and emits `PermissionRequested`. The adapter then
+forwards its owned request by value without cloning, mutation, serialization,
+truncation, revalidation, or traversal. The injected prompter returns one of
+four structured outcomes: allow once, allow for the turn, allow for the
+session, or deny. The adapter maps those values to the corresponding core grant
+scope or the fixed reason `permission denied`. These grant scopes are reported
+decisions only; neither core nor the adapter caches them for later requests.
+
+Prompt failure is fail-closed. The zero-data `PermissionPromptError` cannot
+carry host diagnostics, and the adapter returns only
+`permission_prompt_failed` / `permission prompt failed`. Construction of the
+authorization future is inert. Its first poll invokes the injected prompter
+exactly once; dropping a pending authorization drops the prompt future. The
+adapter detaches nothing and has no separate cancellation signal, so a
+conforming prompter must keep its work owned by that future or clean it up on
+drop. A concrete prompt UI, CLI composition, grant persistence, and permission
+modes beyond `ask` remain outside this candidate. The complete candidate
+contract and integration gate are in [`ask-permission.md`](ask-permission.md).
 
 The first concrete provider remains on the native side of core's explicit
 boundary but owns no network effect. `AiGatewayProvider` encodes the supported
