@@ -50,13 +50,13 @@ descriptor into the store without reopening its path. That addition is
 integrated through final delivery record `d6b1b21` under exact green feature and
 `main` workflows.
 
-The isolated fifteenth
+The composed fifteenth
 [`native session-lifecycle candidate`](native-session-lifecycle.md) composes a
 `NativeSessionLifecycle` over the exact shared `FileSessionStore` already used
 by the engine. It does not change this constructor, retained-root identity,
 flat file layout, current schema, ordinary `SessionStore::load`/`save`
-behavior, or direct-caller contract. Production, independent tests, formal
-review, and delivery remain pending.
+behavior, or direct-caller contract. Production and fourteen independently
+owned focused tests are green; formal review and delivery remain pending.
 
 ## Stable v1 layout
 
@@ -275,7 +275,7 @@ This slice adds no CLI command or existing CLI-byte change, provider or
 transport wiring, credential discovery, permission prompt or new permission
 mode, session listing, deletion, reset, or automatic cleanup. Environment-based
 state-root selection and fixed-suffix creation are integrated through the
-separate fourteenth slice and do not alter this path constructor. The isolated
+separate fourteenth slice and do not alter this path constructor. The composed
 fifteenth candidate adds host-level by-ID create, resume, replay, and reset over
 the exact shared store, including a reset-specific atomic incarnation
 replacement; it does not change the ordinary store trait described by this

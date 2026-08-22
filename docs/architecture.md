@@ -107,13 +107,14 @@ candidate `72cf64f6`. Replacement seal `f08dbd9e` and feature record `6f66b6e5`
 are feature-green; the latter is integrated on `main` under exact CI
 `32590429626` and benchmark evidence `32590429592`. Its integrated contract is
 in [`native-root-selection.md`](native-root-selection.md).
-An isolated fifteenth candidate adds a Linux/macOS
+The composed fifteenth candidate adds a Linux/macOS
 `NativeSessionLifecycle` owned by `NativeReferenceHost`. The host, engine, and
 lifecycle share one `Arc<FileSessionStore>` and therefore one retained state
 root. Caller-supplied IDs drive durable create, resume, current-schema record
 replay, and atomic reset; production OS randomness supplies new incarnations.
-No session listing or CLI path is added. Production, independent tests, formal
-review, and exact delivery remain pending; the contract is in
+No session listing or CLI path is added. Production and fourteen independently
+owned focused tests are green; formal review and exact delivery remain pending;
+the contract is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
@@ -395,7 +396,7 @@ acquisition, and sync work inline and can block the executor thread. Full
 format, polling, error, trust, and deferred-scope details are in
 [`session-store.md`](session-store.md).
 
-The fifteenth candidate adds `NativeSessionLifecycle` above that exact store
+The composed fifteenth candidate adds `NativeSessionLifecycle` above that exact store
 without changing core's provider-neutral `SessionStore` trait. The engine,
 lifecycle, and `NativeReferenceHost::session_store()` observation share the
 same store allocation and retained directory descriptor. Lifecycle
@@ -429,7 +430,7 @@ between lifetimes. Cross-process old handles are not revoked, but the new
 incarnation fences their later saves. A post-rename directory-sync failure is
 ambiguous and requires resume/replay reconciliation rather than blind reset
 retry. Complete concurrency, entropy, resource, and redaction rules are in
-[`native-session-lifecycle.md`](native-session-lifecycle.md). Production and
+[`native-session-lifecycle.md`](native-session-lifecycle.md). Formal review and
 delivery evidence are pending.
 
 The ninth slice is `machine_god_native::AskPermissionHandler`. It adapts

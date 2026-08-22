@@ -39,12 +39,12 @@ adapter, and two confined read-only tools into one provider-neutral `Engine`.
 It is a library surface in `machine-god-native`. The `machine-god-cli` crate and
 every existing CLI output byte remain unchanged.
 
-An isolated fifteenth-slice candidate adds a `NativeSessionLifecycle` owned by
+The composed fifteenth-slice candidate adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
 the exact file-store instance shared with the engine; the caller still supplies
 the validated session ID and production native code supplies OS-random
-incarnations. Production, independent tests, formal review, and exact delivery
-remain pending. Its normative behavior is in
+incarnations. Production and fourteen independently owned focused tests are
+green; formal review and exact delivery remain pending. Its normative behavior is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
 ## Feature and platform boundary
@@ -218,7 +218,7 @@ Constructing `AskPermissionHandler` does not invoke the injected prompter.
 Constructing `FileSessionStore` retains only its root and does not touch a
 session record or lock sidecar.
 
-The fifteenth candidate's construction only shares the retained
+The composed fifteenth candidate's construction only shares the retained
 `FileSessionStore` with `NativeSessionLifecycle`; it performs no entropy read,
 session load, save, reset, engine registration, or lock-sidecar operation.
 Those effects are owned by a lifecycle future and remain inert until that
@@ -257,7 +257,7 @@ then no longer available through the wrapper. Host debugging is exactly
 `NativeReferenceHost { .. }`: it exposes no configuration structure, model,
 credential source, roots, component diagnostic, or transport detail.
 
-The fifteenth candidate adds host observations for the retained
+The composed fifteenth candidate adds host observations for the retained
 `FileSessionStore` and `NativeSessionLifecycle`. `session_store()` and
 `session_lifecycle()` expose components backed by the same shared store
 allocation that the engine received during construction. They do not reopen
@@ -322,13 +322,13 @@ session lifecycle commands. It does not add the remaining native tools, compose
 or run the CLI, or change any existing CLI byte. A reset under a reused session
 ID still requires a new host-generated incarnation before reuse.
 
-The isolated fifteenth candidate fills the library-level by-ID create, resume,
+The composed fifteenth candidate fills the library-level by-ID create, resume,
 durable-record replay, and reset sub-boundary. `NativeSessionLifecycle` uses the
 exact store shared with the engine, allocates new incarnations from production
 OS randomness, persists create before success, and resets by atomic
 current-record replacement with a checked advancing revision. It does not add
 session listing, session-ID generation, a UI/event replay, or any CLI command;
-production and delivery gates remain pending.
+formal review and delivery gates remain pending.
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining CLI ownership, compatibility promotion, and product-performance

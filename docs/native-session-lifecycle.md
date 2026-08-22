@@ -1,11 +1,11 @@
 # Native by-ID session lifecycle
 
-Status: isolated candidate contract for the fifteenth bounded Milestone 03
-slice. Production implementation, independently owned tests, three fresh
-adversarial tracks, exact feature workflows, fast-forward integration, exact
-`main` workflows, and the final delivery record are pending. Fourteen bounded
-slices are integrated through root-selection final record `d6b1b21`; Milestone
-03 remains `IN PROGRESS`.
+Status: composed formal-review candidate for the fifteenth bounded Milestone 03
+slice. Production and fourteen independently owned focused tests are green.
+Three fresh adversarial tracks, exact feature workflows, fast-forward
+integration, exact `main` workflows, and the final delivery record are pending.
+Fourteen bounded slices are integrated through root-selection final record
+`d6b1b21`; Milestone 03 remains `IN PROGRESS`.
 
 This slice gives the Linux/macOS native reference host a durable, by-ID library
 boundary for creating, resuming, replaying, and resetting sessions in the
@@ -13,9 +13,9 @@ current file-session schema. The caller supplies a validated core `SessionId`;
 the host does not invent, enumerate, parse, or discover session IDs. The host
 allocates the `SessionIncarnationId` for a new logical lifetime.
 
-The contract deliberately names behavior rather than freezing method
-signatures before production and independent tests are composed. The owning
-component is `NativeSessionLifecycle`. `NativeReferenceHost` retains it and
+The owning component is `NativeSessionLifecycle`. Its production API exposes
+typed construction and operation errors plus inert `create`, `resume`,
+`replay`, and `reset` futures. `NativeReferenceHost` retains it and
 exposes lifecycle and session-store observation over the same shared
 `FileSessionStore` instance. The engine, lifecycle component, and store
 therefore use one retained state-root identity rather than reopening a path or
@@ -275,9 +275,9 @@ are:
 | `Unavailable` | Store I/O, locking, rename, or synchronization failed, possibly after publication. |
 | `Engine` | Core validation/registration failed, or the store reported a non-I/O invariant such as revision exhaustion or serialization failure. |
 
-The exact public method signatures and display strings are finalized with the
-production implementation, not asserted by this isolated candidate. The
-mapping is normative: atomic create conflict becomes `AlreadyExists`; missing
+The production public method signatures and fixed display strings implement
+this contract. The mapping is normative: atomic create conflict becomes
+`AlreadyExists`; missing
 load becomes `NotFound`; store CAS mismatch remains `Conflict`; store corrupt
 remains `Corrupt`; store I/O and save-ambiguous remain `Unavailable`; store
 `Other` and core protocol/validation failures become `Engine`; engine
@@ -309,7 +309,7 @@ session-ID generation, CLI `session`/`sessions`/`resume`/`replay` commands, a UI
 replay, or CLI byte changes. The combined M03 root-and-lifecycle checklist item
 therefore remains unchecked even after create/resume/replay/reset delivery:
 native session listing is still open, and this candidate itself still requires
-production, independent tests, formal review, and exact delivery gates.
+formal review and exact delivery gates.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and changes no benchmark workload or workflow. Zig remains solely the

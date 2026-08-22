@@ -90,13 +90,14 @@ are feature-green; the latter is integrated on `main` under exact CI
 `32590429626` and benchmark evidence `32590429592`. Its integrated security
 boundary is in
 [`native-root-selection.md`](native-root-selection.md).
-An isolated fifteenth candidate adds a by-ID native session lifecycle above the
+The composed fifteenth candidate adds a by-ID native session lifecycle above the
 exact file store shared with the composed engine. The caller supplies the
 validated session ID; only production OS cryptographic randomness supplies new
 incarnations. Create persists before success, replay returns a durable bounded
 record rather than UI/events, and reset atomically changes incarnation without
-a deletion gap. Production, independent tests, three fresh adversarial tracks,
-and exact delivery remain pending. Its security boundary is in
+a deletion gap. Production and fourteen independently owned focused tests are
+green; three fresh adversarial tracks and exact delivery remain pending. Its
+security boundary is in
 [`native-session-lifecycle.md`](native-session-lifecycle.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -347,7 +348,7 @@ record bytes, parser diagnostics, OS text, or raw error numbers. The complete
 contract and fixed taxonomy are in
 [`session-store.md`](session-store.md).
 
-The fifteenth candidate gives `NativeReferenceHost` one
+The composed fifteenth candidate gives `NativeReferenceHost` one
 `NativeSessionLifecycle` backed by the exact `Arc<FileSessionStore>` already
 given to its engine. Lifecycle and session-store observations do not reopen a
 path or select another state root. Construction performs no entropy read or
