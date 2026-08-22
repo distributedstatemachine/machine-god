@@ -22,7 +22,7 @@ use serde_json::Value;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fd::{AsFd, OwnedFd};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags};
+use rustix::fs::{AtFlags, Dir, FileType, FlockOperation, Mode, OFlags};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use sha2::{Digest, Sha256};
 
@@ -32,6 +32,15 @@ pub const FILE_SESSION_SCHEMA_VERSION: u32 = 1;
 /// Maximum number of serialized bytes in one file session record.
 pub const MAX_FILE_SESSION_BYTES: usize = 8_651_165;
 
+/// Maximum number of session IDs returned by one native listing.
+pub const MAX_LIST_SESSIONS: usize = 100;
+
+/// Maximum number of non-dot directory entries inspected by one native listing.
+pub const MAX_LIST_SESSION_DIRECTORY_ENTRIES: usize = 1_024;
+
+/// Maximum aggregate record bytes read by one native listing.
+pub const MAX_LIST_SESSION_TOTAL_RECORD_BYTES: usize = 64 * 1_024 * 1_024;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_STORED_JSON_DEPTH: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -39,6 +48,12 @@ const MAX_STORED_JSON_NODES: usize = 65_536;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const FILE_NAME_DOMAIN: &[u8] = b"machine-god:file-session:v1:";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const SESSION_FILE_PREFIX: &[u8] = b"session-";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const SESSION_DATA_SUFFIX: &[u8] = b".json";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const SESSION_DIGEST_BYTES: usize = 64;
 
 /// Stable category for failure to acquire a session directory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,6 +129,22 @@ pub struct FileSessionStore {
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) struct FileSessionList {
+    pub(crate) session_ids: Vec<SessionId>,
+    pub(crate) truncated: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+enum StoredRecordRead {
+    Missing,
+    Record {
+        record: SessionRecord,
+        bytes_read: usize,
+    },
+    ByteLimit,
 }
 
 impl FileSessionStore {
@@ -268,6 +299,97 @@ impl FileSessionStore {
         Ok(replacement)
     }
 
+    pub(crate) fn list_session_ids(&self) -> Result<FileSessionList, SessionStoreError> {
+        let directory = rustix::fs::openat(
+            self.root.as_fd(),
+            ".",
+            OFlags::RDONLY
+                | OFlags::DIRECTORY
+                | OFlags::NOFOLLOW
+                | OFlags::CLOEXEC
+                | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(map_io_error)?;
+        let mut stream = Dir::new(directory).map_err(map_io_error)?;
+        let mut candidates = Vec::new();
+        let mut scanned_entries = 0_usize;
+        let mut truncated = false;
+
+        loop {
+            let Some(entry) = stream.next() else {
+                break;
+            };
+            let entry = entry.map_err(map_io_error)?;
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            if scanned_entries >= MAX_LIST_SESSION_DIRECTORY_ENTRIES {
+                truncated = true;
+                break;
+            }
+            scanned_entries += 1;
+            if is_session_data_name(name) {
+                let name = std::str::from_utf8(name)
+                    .expect("canonical session data names are ASCII")
+                    .to_owned();
+                candidates.push(name);
+            }
+        }
+
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        let mut session_ids = Vec::new();
+        let mut total_record_bytes = 0_usize;
+        for data_name in candidates {
+            if session_ids.len() >= MAX_LIST_SESSIONS {
+                truncated = true;
+                break;
+            }
+            let remaining_bytes = MAX_LIST_SESSION_TOTAL_RECORD_BYTES
+                .checked_sub(total_record_bytes)
+                .expect("listing byte accounting cannot exceed its limit");
+            if remaining_bytes == 0 {
+                truncated = true;
+                break;
+            }
+
+            if !probe_data(self.root.as_fd(), &data_name)? {
+                continue;
+            }
+            let lock_name = lock_name_for_data_name(&data_name);
+            let lock = open_lock(self.root.as_fd(), &lock_name)?;
+            lock_exclusive(&lock)?;
+            let (record, bytes_read) =
+                match read_stored_record(self.root.as_fd(), &data_name, remaining_bytes)? {
+                    StoredRecordRead::Missing => continue,
+                    StoredRecordRead::Record { record, bytes_read } => (record, bytes_read),
+                    StoredRecordRead::ByteLimit => {
+                        truncated = true;
+                        break;
+                    }
+                };
+            let record = RecordOwner::new(record);
+            if SessionNames::for_id(&record.get().id).data != data_name {
+                return Err(corrupt());
+            }
+            total_record_bytes = total_record_bytes
+                .checked_add(bytes_read)
+                .filter(|total| *total <= MAX_LIST_SESSION_TOTAL_RECORD_BYTES)
+                .expect("a successful bounded listing read fits the aggregate limit");
+            session_ids.push(record.get().id.clone());
+        }
+
+        session_ids.sort_unstable();
+        session_ids.dedup();
+        Ok(FileSessionList {
+            session_ids,
+            truncated,
+        })
+    }
+
     fn load_unix(&self, id: &SessionId) -> Result<Option<SessionRecord>, SessionStoreError> {
         let names = SessionNames::for_id(id);
         if !probe_data(self.root.as_fd(), &names.data)? {
@@ -371,6 +493,25 @@ impl SessionNames {
             temp: format!("{stem}.tmp"),
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn is_session_data_name(name: &[u8]) -> bool {
+    let expected_len = SESSION_FILE_PREFIX.len() + SESSION_DIGEST_BYTES + SESSION_DATA_SUFFIX.len();
+    name.len() == expected_len
+        && name.starts_with(SESSION_FILE_PREFIX)
+        && name.ends_with(SESSION_DATA_SUFFIX)
+        && name[SESSION_FILE_PREFIX.len()..SESSION_FILE_PREFIX.len() + SESSION_DIGEST_BYTES]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || matches!(*byte, b'a'..=b'f'))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn lock_name_for_data_name(data_name: &str) -> String {
+    let stem = data_name
+        .strip_suffix(".json")
+        .expect("canonical session data name has its fixed suffix");
+    format!("{stem}.lock")
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -482,6 +623,19 @@ fn read_record(
     name: &str,
     expected_id: &SessionId,
 ) -> Result<Option<SessionRecord>, SessionStoreError> {
+    match read_stored_record(root, name, MAX_FILE_SESSION_BYTES)? {
+        StoredRecordRead::Missing => Ok(None),
+        StoredRecordRead::Record { record, .. } if &record.id == expected_id => Ok(Some(record)),
+        StoredRecordRead::Record { .. } | StoredRecordRead::ByteLimit => Err(corrupt()),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_stored_record(
+    root: rustix::fd::BorrowedFd<'_>,
+    name: &str,
+    byte_limit: usize,
+) -> Result<StoredRecordRead, SessionStoreError> {
     let file = match rustix::fs::openat(
         root,
         name,
@@ -489,27 +643,34 @@ fn read_record(
         Mode::empty(),
     ) {
         Ok(file) => file,
-        Err(error) if error == rustix::io::Errno::NOENT => return Ok(None),
+        Err(error) if error == rustix::io::Errno::NOENT => {
+            return Ok(StoredRecordRead::Missing);
+        }
         Err(error) => return Err(map_existing_entry_open_error(root, name, error)),
     };
     let metadata = ensure_regular(&file)?;
-    if metadata.st_size < 0
-        || u64::try_from(metadata.st_size).unwrap_or(u64::MAX) > MAX_FILE_SESSION_BYTES as u64
-    {
+    if metadata.st_size < 0 {
         return Err(corrupt());
     }
-    let mut bytes = Vec::with_capacity(
-        usize::try_from(metadata.st_size)
-            .unwrap_or(MAX_FILE_SESSION_BYTES)
-            .min(MAX_FILE_SESSION_BYTES),
-    );
+    let metadata_bytes = usize::try_from(metadata.st_size).map_err(|_| corrupt())?;
+    if metadata_bytes > MAX_FILE_SESSION_BYTES {
+        return Err(corrupt());
+    }
+    if metadata_bytes > byte_limit {
+        return Ok(StoredRecordRead::ByteLimit);
+    }
+    let mut bytes = Vec::with_capacity(metadata_bytes);
     let mut chunk = [0_u8; 8192];
     loop {
-        let remaining = (MAX_FILE_SESSION_BYTES + 1).saturating_sub(bytes.len());
-        if remaining == 0 {
+        let file_remaining = (MAX_FILE_SESSION_BYTES + 1).saturating_sub(bytes.len());
+        if file_remaining == 0 {
             return Err(corrupt());
         }
-        let chunk_limit = remaining.min(chunk.len());
+        let budget_remaining = byte_limit.saturating_add(1).saturating_sub(bytes.len());
+        if budget_remaining == 0 {
+            return Ok(StoredRecordRead::ByteLimit);
+        }
+        let chunk_limit = file_remaining.min(budget_remaining).min(chunk.len());
         let read = retry_interrupted(|| rustix::io::read(&file, &mut chunk[..chunk_limit]))
             .map_err(map_io_error)?;
         if read == 0 {
@@ -519,20 +680,25 @@ fn read_record(
         if bytes.len() > MAX_FILE_SESSION_BYTES {
             return Err(corrupt());
         }
+        if bytes.len() > byte_limit {
+            return Ok(StoredRecordRead::ByteLimit);
+        }
     }
     let envelope: StoredEnvelope = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
     if envelope.schema_version != FILE_SESSION_SCHEMA_VERSION {
         return Err(corrupt());
     }
     let record = SessionRecord::from(envelope.record);
-    if &record.id != expected_id
-        || record.revision == SessionRevision(0)
+    if record.revision == SessionRevision(0)
         || record.next_turn_sequence == 0
         || validate_record_json(&record).is_err()
     {
         return Err(corrupt());
     }
-    Ok(Some(record))
+    Ok(StoredRecordRead::Record {
+        record,
+        bytes_read: bytes.len(),
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -908,6 +1074,11 @@ impl RecordOwner {
         Self {
             record: Some(record),
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn get(&self) -> &SessionRecord {
+        self.record.as_ref().expect("record owner is armed")
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

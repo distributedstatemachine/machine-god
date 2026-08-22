@@ -88,11 +88,13 @@ pub use root_selection::{
 pub use session_lifecycle::{
     MAX_SESSION_INCARNATION_ATTEMPTS, NativeSessionLifecycle, NativeSessionLifecycleBuildError,
     NativeSessionLifecycleBuildErrorKind, NativeSessionLifecycleError,
-    NativeSessionLifecycleErrorKind, SessionIncarnationSource, SessionIncarnationSourceError,
+    NativeSessionLifecycleErrorKind, NativeSessionList, SessionIncarnationSource,
+    SessionIncarnationSourceError,
 };
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
-    FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES,
+    FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES, MAX_LIST_SESSION_DIRECTORY_ENTRIES,
+    MAX_LIST_SESSION_TOTAL_RECORD_BYTES, MAX_LIST_SESSIONS,
 };
 
 /// Core API version intentionally supported by this native host.

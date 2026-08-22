@@ -227,6 +227,33 @@ impl fmt::Display for NativeSessionLifecycleError {
 
 impl Error for NativeSessionLifecycleError {}
 
+/// Bounded durable session-ID observation from one native store scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeSessionList {
+    session_ids: Vec<SessionId>,
+    truncated: bool,
+}
+
+impl NativeSessionList {
+    /// Returns the observed session IDs in ascending identifier order.
+    #[must_use]
+    pub fn session_ids(&self) -> &[SessionId] {
+        &self.session_ids
+    }
+
+    /// Consumes this result and returns its observed session IDs.
+    #[must_use]
+    pub fn into_session_ids(self) -> Vec<SessionId> {
+        self.session_ids
+    }
+
+    /// Reports whether a work or result bound prevented an exhaustive scan.
+    #[must_use]
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
 /// By-ID durable lifecycle over one engine and its exact concrete file store.
 ///
 /// Construction verifies that `engine` contains the exact supplied
@@ -334,6 +361,15 @@ impl NativeSessionLifecycle {
         Box::pin(async move { lifecycle.replay_polled(id).await })
     }
 
+    /// Returns a bounded, sorted observation of durable session IDs.
+    #[must_use]
+    pub fn list_sessions(
+        &self,
+    ) -> BoxFuture<'static, Result<NativeSessionList, NativeSessionLifecycleError>> {
+        let lifecycle = self.clone();
+        Box::pin(async move { lifecycle.list_sessions_polled() })
+    }
+
     /// Atomically replaces one durable session with a new empty incarnation.
     #[must_use]
     pub fn reset(
@@ -377,6 +413,17 @@ impl NativeSessionLifecycle {
     ) -> Result<SessionRecord, NativeSessionLifecycleError> {
         self.load_record(id).await?.ok_or_else(|| {
             NativeSessionLifecycleError::new(NativeSessionLifecycleErrorKind::NotFound)
+        })
+    }
+
+    fn list_sessions_polled(&self) -> Result<NativeSessionList, NativeSessionLifecycleError> {
+        let listing = self
+            .session_store
+            .list_session_ids()
+            .map_err(map_store_error)?;
+        Ok(NativeSessionList {
+            session_ids: listing.session_ids,
+            truncated: listing.truncated,
         })
     }
 
