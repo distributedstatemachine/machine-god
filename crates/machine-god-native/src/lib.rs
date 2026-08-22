@@ -13,6 +13,7 @@ mod ai_gateway_credential;
 mod ai_gateway_http;
 mod ask_permission;
 mod config;
+mod file_info;
 mod list_files;
 mod read_file;
 #[cfg(all(
@@ -62,6 +63,10 @@ pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
     NativeConfigError, NativeConfigErrorKind, NativeCredentialSourceKind, NativeProviderKind,
     NativeTransportKind, load_native_config, load_process_config,
+};
+pub use file_info::{
+    FILE_INFO_TOOL_NAME, FileInfoTool, FileInfoToolOpenError, FileInfoToolOpenErrorKind,
+    MAX_FILE_INFO_PATH_BYTES,
 };
 pub use list_files::{
     LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,

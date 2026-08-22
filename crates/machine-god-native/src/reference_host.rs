@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use machine_god_core::Engine;
 
-use crate::workspace::WorkspaceRoot;
+use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AskPermissionHandler, FileSessionStore,
@@ -20,7 +20,7 @@ use crate::{
 pub enum NativeReferenceHostBuildErrorKind {
     /// The loaded configuration selects a component this host cannot compose.
     UnsupportedSelection,
-    /// The workspace root could not be safely retained for both native tools.
+    /// The workspace root could not be safely retained for native tools.
     WorkspaceRoot,
     /// The existing session-store root could not be safely retained.
     SessionStore,
@@ -120,7 +120,7 @@ impl NativeReferenceHost {
         permission_prompter: Arc<dyn PermissionPrompter>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
-        let (list_files, read_file) = open_workspace_tools(workspace_root)?;
+        let workspace_tools = open_workspace_tools(workspace_root)?;
         let session_store = open_session_store(session_root)?;
 
         let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
@@ -135,8 +135,7 @@ impl NativeReferenceHost {
         Self::finish_composition(
             loaded_config,
             Arc::new(transport),
-            list_files,
-            read_file,
+            workspace_tools,
             session_store,
             permission_prompter,
             Some(credential_source),
@@ -162,7 +161,7 @@ impl NativeReferenceHost {
         permission_prompter: Arc<dyn PermissionPrompter>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
-        let (list_files, read_file, session_store) = consume_prepared_roots(prepared_roots)?;
+        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
 
         let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
@@ -176,8 +175,7 @@ impl NativeReferenceHost {
         Self::finish_composition(
             loaded_config,
             Arc::new(transport),
-            list_files,
-            read_file,
+            workspace_tools,
             session_store,
             permission_prompter,
             Some(credential_source),
@@ -204,14 +202,13 @@ impl NativeReferenceHost {
         permission_prompter: Arc<dyn PermissionPrompter>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
-        let (list_files, read_file) = open_workspace_tools(workspace_root)?;
+        let workspace_tools = open_workspace_tools(workspace_root)?;
         let session_store = open_session_store(session_root)?;
 
         Self::finish_composition(
             loaded_config,
             transport,
-            list_files,
-            read_file,
+            workspace_tools,
             session_store,
             permission_prompter,
             None,
@@ -236,13 +233,12 @@ impl NativeReferenceHost {
         permission_prompter: Arc<dyn PermissionPrompter>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
-        let (list_files, read_file, session_store) = consume_prepared_roots(prepared_roots)?;
+        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
 
         Self::finish_composition(
             loaded_config,
             transport,
-            list_files,
-            read_file,
+            workspace_tools,
             session_store,
             permission_prompter,
             None,
@@ -290,8 +286,7 @@ impl NativeReferenceHost {
     fn finish_composition(
         loaded_config: LoadedNativeConfig,
         transport: Arc<dyn AiGatewayTransport>,
-        list_files: crate::ListFilesTool,
-        read_file: crate::ReadFileTool,
+        workspace_tools: WorkspaceTools,
         session_store: FileSessionStore,
         permission_prompter: Arc<dyn PermissionPrompter>,
         credential_source: Option<AiGatewayCredentialSource>,
@@ -308,8 +303,9 @@ impl NativeReferenceHost {
             .provider(provider)
             .shared_session_store(engine_session_store)
             .permission_handler(permission_handler)
-            .tool(list_files)
-            .tool(read_file)
+            .tool(workspace_tools.list_files)
+            .tool(workspace_tools.read_file)
+            .tool(workspace_tools.file_info)
             .build()
             .map_err(|_| {
                 NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine)
@@ -355,7 +351,7 @@ fn validate_selections(
 
 fn open_workspace_tools(
     workspace_root: &Path,
-) -> Result<(crate::ListFilesTool, crate::ReadFileTool), NativeReferenceHostBuildError> {
+) -> Result<WorkspaceTools, NativeReferenceHostBuildError> {
     WorkspaceRoot::open(workspace_root)
         .and_then(WorkspaceRoot::into_tools)
         .map_err(|_| {
@@ -373,10 +369,7 @@ fn open_session_store(
 
 fn consume_prepared_roots(
     prepared_roots: PreparedNativeRoots,
-) -> Result<
-    (crate::ListFilesTool, crate::ReadFileTool, FileSessionStore),
-    NativeReferenceHostBuildError,
-> {
+) -> Result<(WorkspaceTools, FileSessionStore), NativeReferenceHostBuildError> {
     prepared_roots.into_parts().map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WorkspaceRoot)
     })

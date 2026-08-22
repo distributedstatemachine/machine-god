@@ -365,10 +365,9 @@ impl PreparedNativeRoots {
     #[cfg(feature = "ai-gateway-http")]
     pub(crate) fn into_parts(
         self,
-    ) -> Result<(crate::ListFilesTool, crate::ReadFileTool, FileSessionStore), WorkspaceRootError>
-    {
-        let (list_files, read_file) = self.workspace.into_tools()?;
-        Ok((list_files, read_file, self.session_store))
+    ) -> Result<(crate::workspace::WorkspaceTools, FileSessionStore), WorkspaceRootError> {
+        let tools = self.workspace.into_tools()?;
+        Ok((tools, self.session_store))
     }
 }
 

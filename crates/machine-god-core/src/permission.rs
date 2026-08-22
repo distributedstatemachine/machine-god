@@ -11,6 +11,7 @@ use serde_json::Value;
 #[non_exhaustive]
 pub enum FilesystemAccess {
     Read,
+    Metadata,
     Write,
     Create,
     Delete,
