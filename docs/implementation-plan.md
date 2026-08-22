@@ -277,17 +277,20 @@ Linux/macOS native root selection and safe preparation. A
 selected XDG state base or fallback `HOME` to exist, and can create only the
 fixed descriptor-relative `machine-god` or `.local/state/machine-god` suffix.
 New directories use private mode, existing directories are never repaired,
-and ownership, write, final privacy, no-follow, and root-disjointness checks
-fail closed. New consuming reference-host constructors preserve those retained
+and ownership, write, final privacy, no-follow, root-disjointness, and
+descriptor-bound macOS extended-ACL checks fail closed. New consuming
+reference-host constructors preserve those retained
 identities and discover production credentials only after root preparation.
 Schema v3, configuration bytes, status and every CLI byte remain unchanged;
 the old reference-host path constructors and `FileSessionStore::open` remain
 no-create. Production is present at `050d253`, with creation-normalization fix
 `7420a3a` and selected-base normalization fix `fa5119a`. Independent regression,
 core-contract, and prepared-host suites are present at `85c99a8`, `85c4193`,
-and `236e3d4`, covering 2, 9, and 3 focused tests respectively. Those focused
-gates are green. A preliminary audit is green but does not count as any of the
-required three fresh formal adversarial tracks. Formal review, full local gates,
+and `236e3d4`, covering 2, 9, and 3 focused tests respectively. The formal
+portability finding is fixed by explicit fixture modes at `f5dbbca`; the formal
+macOS ACL finding is fixed by descriptor-bound rejection at `8ae17db` with its
+independent regression at `041c83c`. The focused suites are green, including
+10 core tests under default and all features. Formal rereview, full local gates,
 exact feature workflows, fast-forward integration, exact `main` workflows, and
 the final delivery record remain pending. The candidate contract and review
 record are in

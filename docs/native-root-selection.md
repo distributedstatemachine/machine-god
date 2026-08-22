@@ -7,11 +7,13 @@ Thirteen slices are integrated through final delivery record
 `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 `32583871385`, and main benchmark-evidence run `32583871368` are green for that
 record. Production is present at `050d253`, with focused correctness fixes at
-`7420a3a` and `fa5119a`. Independent 2-test regression, 9-test core-contract,
-and 3-test prepared-host suites are present at `85c99a8`, `85c4193`, and
-`236e3d4`; their focused gates are green. A preliminary audit is green but is
-not one of the three required fresh formal adversarial tracks. Those tracks,
-full local gates, exact feature workflows, fast-forward integration, exact
+`7420a3a` and `fa5119a`. Independent 2-test regression, 10-test core-contract,
+and 3-test prepared-host suites are present; their focused gates are green.
+Formal review of exact candidate `d59c7a5` found ambient-umask-dependent valid
+fixtures and a macOS extended-ACL authority gap. The fixture fix is `f5dbbca`;
+descriptor-bound ACL rejection and its independent regression are `8ae17db`
+and `041c83c`. All three formal tracks must now rereview one exact behavior SHA.
+Full local gates, exact feature workflows, fast-forward integration, exact
 `main` workflows, and the final record remain pending. Milestone 03 remains
 `IN PROGRESS`.
 
@@ -112,7 +114,8 @@ supported Linux and macOS targets it performs these ordered operations:
    fixed suffix, opening every existing or newly created component relative to
    its parent without following symlinks;
 4. validate the ownership and permission rules for the selected state base and
-   every retained suffix component; and
+   every retained suffix component and, on macOS, reject any extended ACL or
+   descriptor-bound ACL read failure; and
 5. compare the retained workspace and final state-root identities and reject
    equality or either ancestor relationship.
 
@@ -133,7 +136,12 @@ owned by the process's effective user ID with no group-or-other write bit
 (`mode & 0o022 == 0`). The existing final `machine-god` directory must meet
 those rules and be private from group and other entirely
 (`mode & 0o077 == 0`). User permission bits are not repaired or otherwise
-normalized.
+normalized. On macOS, the retained descriptor for the base and every existing
+suffix component must also have an entirely empty extended ACL: any ACL-level
+flag, any entry (including deny or owner-oriented entries), malformed result,
+or operating-system read failure rejects the directory. This intentionally
+strict rule prevents an ACL from granting or inheriting authority that the
+POSIX mode bits do not show.
 
 Every directory created by preparation is requested with mode `0700`. Because
 the process umask may remove even owner access bits, the just-created fixed name
@@ -141,13 +149,25 @@ is first normalized descriptor-relatively to `0700` beneath the already
 effective-UID-owned, non-group/other-writable parent. It is then observed
 no-follow, reopened no-follow, checked so the path observation and opened
 descriptor have the same device/inode identity, and `fchmod`ed and verified at
-exact `0700`. The same-effective-UID account is the remaining trust boundary
-during that normalization; Linux cannot apply `AT_SYMLINK_NOFOLLOW` to this
-`fchmodat` operation. The resulting directory must be owned by the effective
-user ID and still have exact `0700`. Existing components are never chmodded,
-chowned, replaced, removed, or otherwise repaired. A failure after one or more
-successful creates may leave those safe fixed directories present; preparation
-supplies no rollback transaction or removal authority.
+exact `0700`. On macOS, the opened new directory must additionally have an
+empty extended ACL after that normalization, so an inherited ACL fails closed.
+The same-effective-UID account is the remaining trust boundary during that
+normalization; Linux cannot apply `AT_SYMLINK_NOFOLLOW` to this `fchmodat`
+operation. The resulting directory must be owned by the effective user ID and
+still have exact `0700`. Existing components are never chmodded, chowned,
+replaced, removed, stripped of ACLs, or otherwise repaired. A failure after one
+or more successful creates may leave those safe fixed directories present;
+preparation supplies no rollback transaction or removal authority.
+
+macOS ACL inspection is bound directly to each retained descriptor, not to its
+original path or a `/dev/fd` pathname. The product crate remains free of unsafe
+Rust and exact-pins `calcifer-macos-acl` 0.1.0 as a target-macOS-only narrow FFI
+boundary around the native descriptor API. Its crates.io checksum is retained
+in `Cargo.lock`; it has no normal dependencies. The dependency's complete
+published source was inspected for this slice, and dependency policy plus
+vulnerability gates apply normally. ACL validation is a point-in-time
+preparation check; the same user or a privileged process can still mutate an
+accepted directory later.
 
 Concurrent preparers never widen an existing directory or treat `EEXIST` as
 proof that they created it. A caller that loses the create race while the winner
@@ -197,8 +217,9 @@ Preparation has five fixed, redacted categories:
 `WorkspaceRoot` covers failure to open and retain the workspace. `StateBase`
 covers failure to open or inspect the required existing state base. `StateRoot`
 covers a fixed suffix open/create/identity operation. `UnsafeStateDirectory`
-covers an opened base or suffix directory that violates ownership or permission
-rules. `OverlappingRoots` covers descriptor-proven equality or ancestry.
+covers an opened base or suffix directory that violates ownership, permission,
+or macOS extended-ACL rules, including failure to read its descriptor-bound ACL.
+`OverlappingRoots` covers descriptor-proven equality or ancestry.
 
 Each error retains only its kind. `Debug` is exactly
 `PreparedNativeRootsError { kind: ... }`; `Display` is the corresponding table

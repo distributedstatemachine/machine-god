@@ -1,6 +1,6 @@
 # Milestone 03 native root-selection review 01
 
-Status: **COMPOSED CANDIDATE — formal adversarial and delivery gates pending**
+Status: **FINDING FIXES COMPOSED — exact-SHA formal rereview and delivery gates pending**
 
 ## Candidate lineage
 
@@ -30,10 +30,23 @@ Status: **COMPOSED CANDIDATE — formal adversarial and delivery gates pending**
   `85c4193cbf7efabb7916a2a75d3a9e0e3bae3440`
 - Independent three-test all-feature prepared-host suite:
   `236e3d45f71074d6f3fe2817958f8b89bf9a3ac9`
+- Initial exact formal-review candidate:
+  `d59c7a5b19def6bf4c65806efa3bf3986d77cb7d`
+- Formal portability finding fix for valid fixtures under restrictive ambient
+  umasks: `f5dbbca`
+- Formal security finding fix for descriptor-bound macOS extended ACL
+  rejection: `8ae17db`
+- Independent macOS ACL regression: `041c83c`
 - Preliminary read-only audit: **GREEN**; explicitly not one of the required
   three fresh formal adversarial tracks
-- Initial composed candidate: this documentation-reconciliation commit; exact
-  SHA reported at handoff
+- Initial formal documentation track on `d59c7a5`: **GREEN**
+- Initial formal API/tests/portability track on `d59c7a5`: **NOT GREEN**;
+  one medium fixture-mode finding, fixed at `f5dbbca`
+- Initial formal security/resources/authority track on `d59c7a5`: **NOT
+  GREEN**; one high macOS ACL finding, fixed at `8ae17db` and covered at
+  `041c83c`
+- Exact finding-fix behavior candidate: this documentation-reconciliation
+  commit; exact SHA reported at handoff
 - Adversarially green behavior: pending
 - Exact feature-gate SHA and workflows: pending
 - Documentation seal and workflows: pending
@@ -44,10 +57,11 @@ Status: **COMPOSED CANDIDATE — formal adversarial and delivery gates pending**
 - Toolchain gate: Rust and Cargo 1.94.1 exactly
 
 Thirteen bounded Milestone 03 slices are integrated. The fourteenth slice's
-production, two correctness fixes, and 14 independently owned focused tests are
-now composed, and focused root-selection and prepared-host gates are green. A
-preliminary read-only audit is green but is not formal review evidence. No
-required fresh adversarial track is yet green on this exact composed candidate,
+production, finding fixes, and 15 independently owned focused tests are now
+composed, and focused root-selection and prepared-host gates are green. The
+initial formal review was green for documentation and produced one confirmed
+portability finding plus one confirmed security finding; both are fixed. No
+required formal track is yet green on the same exact finding-fix behavior SHA,
 and feature, `main`, and final-delivery gates remain pending. Milestone 03
 remains `IN PROGRESS`.
 
@@ -71,6 +85,9 @@ The composed candidate implements:
   no-group/other-write validation for the selected base and existing
   intermediates; complete group/other privacy for the existing final root; and
   validation rather than chmod or repair for any existing directory;
+- descriptor-bound rejection on macOS of any extended ACL flag or entry, and
+  of any ACL read failure, for the selected base and every retained existing or
+  newly created suffix directory;
 - retained workspace and state-root descriptors and mandatory device/inode plus
   descriptor-parent-walk rejection when their opened identities are equal or
   one is an ancestor of the other;
@@ -107,20 +124,37 @@ This slice adds no compatibility, upstream-equivalence, or product-performance
 claim. Zig remains solely the pinned upstream benchmark build input;
 machine-god remains a Rust product.
 
-## Parallel delivery and pending formal review
+## Parallel delivery and formal finding resolution
 
 Production implementation, independent black-box tests, and candidate
 documentation were completed in isolated worktrees with non-overlapping
-ownership, then composed with both correctness fixes. The focused regression,
-core-contract, and prepared-host suites run 2, 9, and 3 tests respectively and
-are green. A preliminary read-only audit reported green, but it is explicitly
-not one of the required formal tracks.
+ownership, then composed with the correctness and formal finding fixes. The
+focused regression, core-contract, and prepared-host suites run 2, 10, and 3
+tests respectively and are green. The macOS ACL test was demonstrably red on
+the old production and green on the descriptor-bound fix. A preliminary
+read-only audit reported green, but it is explicitly not one of the required
+formal tracks.
 
-Three fresh read-only adversarial tracks must still inspect the exact composed
-candidate for correctness/API/tests/portability, security/resources/authority,
-and maintained documentation/evidence scope. Every confirmed finding must be
-fixed and all three tracks must report green together on the same exact
-behavior SHA before feature delivery.
+The three formal tracks inspected exact candidate `d59c7a5`. Documentation was
+green. API/tests/portability found that valid fixtures inherited ambient modes
+and could become group/other writable under `umask 000` or `002`; every valid
+fixture now receives explicit `0700`, with isolated `umask 000` validation.
+Security/resources/authority found that macOS mode `0700` does not exclude an
+extended ACL granting or inheriting non-owner authority. The fix exact-pins the
+target-macOS-only `calcifer-macos-acl` 0.1.0 descriptor API and rejects any ACL
+or ACL read failure on every retained state directory, including a new suffix
+after permission normalization. A real `everyone allow search` ACL regression
+keeps mode `0700`, was red before the fix, and is green after it.
+The exact-pinned crate has no normal dependencies, is locked to crates.io
+checksum `d623f1bbaccbe0d1c6a9e4d2366feef6e179ac4e235aa86342601caf29358df4`,
+and its published source at upstream commit `24a15cc4f7c46802d93d2f9cc93e45e1d5a5313e`
+was inspected in full. The product crate continues to forbid unsafe Rust; the
+dependency isolates its bounded native ACL parsing/FFI behind a safe
+`BorrowedFd` API. Dependency policy and vulnerability gates are green.
+
+All three tracks must now rereview this exact finding-fix candidate. Every
+additional confirmed finding must be fixed, and all three must report green
+together on the same exact behavior SHA before feature delivery.
 
 The later documentation-only seal and delivery records will update evidence and
 status text only. Per the delivery workflow and the user's explicit instruction,
@@ -141,8 +175,8 @@ review, feature-workflow, benchmark, or `main` evidence.
 
 ## Remaining scope
 
-Three fresh formal adversarial tracks, any resulting fixes and rereviews, full
-local gates, exact feature workflows, a fast-forward without force to `main`,
+Three exact-SHA formal rereviews, any resulting fixes and further rereviews,
+full local gates, exact feature workflows, a fast-forward without force to `main`,
 exact `main` workflows, and final delivery evidence remain pending. Session
 lifecycle and reset/new-incarnation behavior, the remaining native tools, CLI
 expansion, release-binary end-to-end host evidence, and compatibility promotion

@@ -76,12 +76,14 @@ A fourteenth composed candidate adds explicit Linux/macOS native root selection
 and narrowly bounded safe preparation. It opens and retains the
 workspace before state work, may create only a fixed descriptor-relative state
 suffix under an existing selected base, validates rather than repairs existing
-directories, rejects root equality or ancestry, and preserves credential
-discovery after retained-root preparation. Production and 14 independently
-owned focused tests are present, and focused gates are green. A preliminary
-audit is green but does not satisfy any of the required three fresh formal
-adversarial tracks. Those formal tracks, full gates, remote workflows, and
-`main` integration remain pending. Its candidate security boundary is in
+directories, rejects root equality or ancestry, rejects any macOS extended ACL
+through the retained descriptor, and preserves credential
+discovery after retained-root preparation. Production and 15 independently
+owned focused tests are present, and focused gates are green. Formal review of
+the initial exact candidate found and drove fixes for macOS extended ACLs and
+ambient-umask-dependent fixtures. All three formal tracks must rereview the same
+finding-fix SHA; full gates, remote workflows, and `main` integration remain
+pending. Its candidate security boundary is in
 [`native-root-selection.md`](native-root-selection.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -226,10 +228,18 @@ suffix symlink while it opens or creates only `machine-god` or
 directories are never chmodded, chowned, replaced, or removed. The selected
 base and existing intermediates must be owned by the effective UID with no
 group/other write; the existing final root permits no group/other permission.
+A macOS base or suffix must additionally have an empty extended ACL as read
+from its retained descriptor; any entry, ACL-level flag, malformed value, or
+read failure is unsafe. This closes the gap where a directory can remain mode
+`0700` while granting or inheriting authority for another principal.
 A just-created fixed name is normalized descriptor-relatively to `0700` before
 the permission-requiring reopen, then identity-checked, `fchmod`ed, and verified
-at exact `0700`; the same-effective-UID account is the remaining normalization
-trust boundary. Opened workspace and
+at exact `0700`; its macOS ACL is then required to be empty. Existing ACLs are
+never stripped or repaired. The same-effective-UID account is the remaining
+normalization trust boundary. The descriptor-bound check uses the exact-pinned,
+target-macOS-only `calcifer-macos-acl` 0.1.0 narrow safe API; its published
+source, checksum, no-normal-dependency graph, dependency policy, and
+vulnerability results are reviewed evidence for this slice. Opened workspace and
 final state identities must be disjoint in both directions under device/inode
 identity and descriptor-relative parent walking. Fixed errors and debug output
 reflect no path, environment, identity, ownership, mode, or OS diagnostic.

@@ -93,12 +93,14 @@ The fourteenth slice is a composed candidate for explicit Linux/macOS native
 root selection and safe preparation. It derives state location from an
 injected environment snapshot, retains an explicit existing workspace, may
 create only a fixed descriptor-relative state suffix under an existing selected
-base, and rejects equality or ancestry of the retained roots. New
+base, rejects any macOS extended ACL through the retained directory descriptor,
+and rejects equality or ancestry of the retained roots. New
 reference-host constructors consume those descriptors before production
-credential discovery. Production and 14 independently owned focused tests are
-present, and their focused gates are green. A preliminary audit is green but is
-not a formal adversarial track. Three fresh formal tracks, full gates, remote
-workflows, and `main` integration remain pending. Its candidate contract is
+credential discovery. Production and 15 independently owned focused tests are
+present, and their focused gates are green. Formal review findings for macOS
+extended ACLs and ambient-umask-dependent fixtures are fixed; all three formal
+tracks must rereview one exact finding-fix SHA. Full gates, remote workflows,
+and `main` integration remain pending. Its candidate contract is
 in [`native-root-selection.md`](native-root-selection.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
@@ -299,8 +301,10 @@ derives the fixed state path from injected values without I/O.
 `PreparedNativeRoots::prepare` opens the workspace first, requires the selected
 state base to exist, retains no-follow descriptors while walking or creating
 only the fixed suffix, validates existing state-directory ownership and modes
-without repair, and rejects retained-root equality or ancestry by device/inode
-identity and descriptor-relative parent walking. New
+without repair, rejects every macOS ACL entry/flag or descriptor ACL-read
+failure (including on a newly created suffix after normalization), and rejects
+retained-root equality or ancestry by device/inode identity and
+descriptor-relative parent walking. New
 `NativeReferenceHost` constructors consume that prepared value and transfer its
 workspace identity to both tools and its state-root identity to
 `FileSessionStore` without reopening either path. Config selection is validated
