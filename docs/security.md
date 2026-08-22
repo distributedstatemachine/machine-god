@@ -119,6 +119,15 @@ exact portable behavior candidate `17f1884`. Its correctness/API and security
 reviews are green; seal `d3312d7` resolves the documentation lineage finding
 and passed exact feature and `main` delivery gates. Its security contract is in
 [`native-session-listing.md`](native-session-listing.md).
+A seventeenth bounded candidate adds Linux/macOS `file_info` under a distinct
+`FilesystemAccess::Metadata` authorization kind. It shares one retained
+workspace identity with `list_files` and `read_file`, follows no selected
+symlink, and does not open the final component. Final symlinks therefore report
+themselves, while FIFO, socket, device, and other special objects can be
+classified without a blocking open. Production is present at isolated SHA
+`5c2d129` and production-only composed SHA `1d93a65`; independent tests, three
+fresh adversarial tracks, and exact feature and `main` delivery remain pending.
+Its security contract is in [`file-info.md`](file-info.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
@@ -188,10 +197,10 @@ acquisition kind may appear in config debug output; the model remains redacted.
 
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
-modes beyond `ask`, token fields in configuration, delivery of native session
-listing, CLI composition and expansion, native tools other than the bounded
-library-level `read_file` and `list_files`, composed release-binary end-to-end
-host evidence, and compatibility or performance claims remain open. The
+modes beyond `ask`, token fields in configuration, CLI composition and
+expansion, native tools beyond the bounded library-level `read_file` and
+`list_files` plus candidate `file_info`, composed release-binary end-to-end host
+evidence, and compatibility or performance claims remain open. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -200,8 +209,9 @@ or CLI authority.
 The integrated `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. The thirteenth
 slice also requires configured credential source `environment`. It then
-opens the existing absolute workspace once and clones that retained descriptor so
-exactly `list_files` and `read_file` share one opened directory identity. This
+opens the existing absolute workspace once and, in the seventeenth candidate,
+clones that retained descriptor so exactly `list_files`, `read_file`, and
+`file_info` share one opened directory identity. This
 prevents path replacement between separate tool-construction opens from giving
 the tools different roots. The same trusted-host ancestor and subordinate-mount
 limits as the individual tool contracts still apply. A separately supplied
@@ -238,6 +248,16 @@ retry, or other background work. `AskPermissionHandler` retains but does not
 invoke the injected prompter. Later production HTTP polling still requires a
 live host-owned Tokio runtime with I/O and time enabled and driven through
 teardown.
+
+The seventeenth candidate changes only the workspace-tool bundle. Path and
+prepared-root constructors distribute the original retained workspace
+descriptor plus two clones across three tools, all with the already validated
+identity. They supply exactly `file_info`, `list_files`,
+and `read_file`; core exposes the catalog alphabetically. If a required clone
+cannot be made, composition returns the
+existing fixed redacted `WorkspaceRoot` stage before engine construction. Tool
+construction performs no per-path metadata lookup; `file_info` work remains
+inert until its execution future is polled after exact policy approval.
 
 Reference-host failures retain only a non-exhaustive fixed stage kind:
 unsupported selection, workspace root, session store, credential, HTTP
@@ -603,13 +623,67 @@ enumeration, between entry reads, and after result validation and sorting. It
 cannot preempt one open or directory-read syscall already in flight and spawns
 no detached work.
 
+Candidate `file_info` uses the same explicit retained workspace boundary for a
+new, narrower `FilesystemAccess::Metadata` operation. That distinct enum value
+does not imply content `Read`, directory `Enumerate`, mutation, target-following,
+or external-path authority. Strict effect-free preflight accepts exactly a
+required sole string `path`, applies the same 4,096-byte lexical normalization
+and forbidden-character checks as `read_file`, and supplies the identical
+normalized string to policy and allowed execution. Invalid input reaches
+neither policy nor filesystem authority. Nonempty current-directory forms
+normalize to `.` so the retained root itself is an explicit operation.
+
+Allowed metadata execution acquires a fresh `.` descriptor from the retained
+root, then validates that exact acquired descriptor's linked identity. Linux
+rejects zero link count. macOS requires a descriptor-relative parent/name
+lookup to match its device, inode, and directory type. It then opens only
+ancestor directories descriptor-relatively with directory, no-follow, close-on-exec,
+and nonblocking requirements. It performs one final descriptor-relative
+no-follow metadata operation without opening the final component. An ancestor
+symlink or non-directory therefore fails closed. A final symlink reports link
+metadata, not target metadata; FIFO, socket, device, and other special objects
+report `other` without an open that could block, read, or trigger device
+behavior. The operation never reads content, enumerates children, follows a
+target, or mutates an object. An explicit `.` operation obtains its result with
+one `fstat` of the acquired root after linked-identity validation.
+
+Checked conversion rejects a negative metadata size, an invalid nanosecond
+value, or a value outside the public integer representation. Unix seconds are
+signed and pre-epoch timestamps remain valid. Extension is derived only from
+the already bounded normalized basename and only for regular files: leading-
+dot-only and trailing-dot names yield `null`, and only the nonempty suffix after
+the last non-leading dot is returned. No MIME sniffing or target/content lookup
+occurs. The returned path and extension remain below 17 KiB even under
+worst-case JSON escaping; core's configured lower result bound still applies.
+
+The retained descriptor continues to identify the originally opened workspace
+after its host path is renamed or replaced. A stable rename preserves the fresh
+descriptor's identity; removal before acquisition or linked-identity validation
+is unavailable. An already opened ancestor cannot be redirected by later path
+replacement. A component replaced before its lookup may be observed. All
+returned metadata fields come from one final no-follow `statat`, or one final
+`fstat` for `.`, but there is no preflight-time, content, symlink-target, or
+continued-existence snapshot. Removal after successful metadata acquisition
+does not make the captured result unsafe to return.
+
+The exact fixed errors in [`file-info.md`](file-info.md) retain no root,
+requested path, extension, metadata value, operating-system text, or raw error
+number. The future performs no work until first poll, checks cancellation before
+fresh-root acquisition, after acquisition, around each ancestor open, before
+and after final metadata, and immediately before return, and detaches nothing.
+It cannot preempt one open or metadata syscall
+already in flight. Dropping before poll is effect-free; dropping later closes
+per-call descriptors and discards any unreturned result.
+
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
 points visible beneath a retained directory are trusted inputs. Hardened
-non-Unix workspace construction and traversal remain deferred. The normative
-surfaces are [`read-file.md`](read-file.md) and
-[`list-files.md`](list-files.md).
+non-Linux/macOS workspace construction and traversal remain deferred for
+`list_files` and candidate `file_info`; `read_file` retains its separate
+supported-Unix boundary. The normative surfaces are
+[`read-file.md`](read-file.md), [`list-files.md`](list-files.md), and
+[`file-info.md`](file-info.md).
 
 The injected-transport AI Gateway provider preserves network authority at an
 explicit trusted-host boundary. `AiGatewayProvider` accepts only an owned body,

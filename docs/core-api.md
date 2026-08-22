@@ -395,8 +395,9 @@ JSON. In particular, native filesystem, process, and network tools must execute
 the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
-The first concrete consumers are the native
-[`read_file` tool](read-file.md) and [`list_files` tool](list-files.md).
+The concrete consumers are the native
+[`read_file` tool](read-file.md), [`list_files` tool](list-files.md), and the
+seventeenth-slice [`file_info` candidate](file-info.md).
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -422,6 +423,23 @@ envelope is at most 44,130 serialized bytes under the independent tool bounds,
 so it remains within the default 64 KiB result limit. A configured lower result
 limit still applies after execution. Core does not add recursion, ordering,
 snapshot, or filesystem semantics to this native result.
+
+The candidate adds `FilesystemAccess::Metadata` as a distinct serialized
+filesystem operation. It authorizes inspection of metadata for exactly one
+normalized path; it does not imply `Read`, `Enumerate`, mutation, symlink-target,
+or external-path authority. `file_info` effect-free preflight accepts only a
+required sole string `path` and produces both
+`Capability::Filesystem { access: Metadata, path }` and exact prepared
+`{"path":"<normalized>"}` execution arguments. Its Linux/macOS native
+implementation owns the retained workspace descriptor, 4,096-byte lexical path
+bound and explicit `.` root normalization, fresh acquired-root liveness
+validation, descriptor-relative no-follow ancestor traversal, final no-follow
+metadata lookup, checked fixed-width metadata conversion, lexical regular-file
+extension, redacted errors, and syscall-granularity cancellation limits. Its
+exact `{path, kind, size_bytes, modified: {unix_seconds, nanoseconds},
+extension}` content remains below 17 KiB at its independent worst case. Core
+does not infer any relationship among `Metadata`, `Read`, or `Enumerate`, and
+adds no filesystem or snapshot semantics to this result.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

@@ -25,4 +25,5 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 configured credential-source review](m03-configured-credential-source-review-01.md)
 - [Milestone 03 native root-selection composed candidate](m03-native-root-selection-review-01.md)
 - [Milestone 03 native session-lifecycle review](m03-native-session-lifecycle-review-01.md)
-- [Milestone 03 native session-listing review (replacement green; delivery pending)](m03-native-session-listing-review-01.md)
+- [Milestone 03 native session-listing delivery review](m03-native-session-listing-review-01.md)
+- [Milestone 03 native `file_info` candidate](m03-file-info-review-01.md)

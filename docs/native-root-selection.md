@@ -32,7 +32,11 @@ is green under exact feature CI run `32589778343` and benchmark-evidence run
 force to `main` and green there under exact CI `32590429626` and benchmark
 evidence `32590429592`. This documentation-only commit is the final record; its
 exact feature and `main` workflows are reported at handoff.
-Milestone 03 remains `IN PROGRESS` because session lifecycle is still open.
+Milestone 03 remains `IN PROGRESS`. Sixteen slices are delivered. Seventeenth-
+slice `file_info` production is present at isolated SHA `5c2d129` and
+production-only composed SHA `1d93a65`; independent tests, three fresh
+adversarial tracks, and exact remote delivery remain pending. The remaining
+native tools, CLI ownership, and composed end-to-end evidence also stay open.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
@@ -253,10 +257,13 @@ and macOS; other targets receive no public runtime API for this slice.
 The new
 `NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots` and
 `NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots`
-constructors consume one `PreparedNativeRoots`. They transfer its retained
-workspace identity to exactly `list_files` and `read_file` and its separately
-retained state-root identity to `FileSessionStore` without reopening either
-path. The selected `machine-god` state root itself is the store root; no extra
+constructors consume one `PreparedNativeRoots`. Under the seventeenth candidate,
+they transfer its original retained workspace descriptor plus two clones to
+exactly `list_files`, `read_file`, and `file_info`, and its separately retained
+state-root identity to `FileSessionStore`, without reopening either path. The
+exact tool membership is `file_info`, `list_files`, and `read_file`, which core
+exposes in deterministic alphabetical catalog order. The selected `machine-god`
+state root itself is the store root; no extra
 `sessions` suffix is inserted. The existing loaded configuration, permission
 prompter, production credential snapshot or trusted custom transport, default
 engine limits, and no-op event sink retain their existing meanings.
@@ -276,7 +283,7 @@ Root failure therefore does not discover or hand off a credential. The custom
 transport path still performs no native credential discovery or production HTTP
 construction.
 
-If transferring the prepared workspace descriptor into the two tools cannot
+If transferring the prepared workspace descriptor into the three tools cannot
 clone it, the existing reference-host `WorkspaceRoot` stage is returned. The
 session store has already accepted the retained state descriptor during
 preparation, so prepared-root composition does not reopen a session path.
@@ -305,12 +312,13 @@ and unchanged. No CLI command invokes root preparation.
 
 ## Deferred scope
 
-This root sub-boundary does not implement session create, list, resume, replay,
-or reset. It does not allocate a session ID or a new incarnation for reset,
+This root sub-boundary did not implement session create, list, resume, replay,
+or reset; the delivered fifteenth and sixteenth slices now supply that bounded
+library behavior. It does not allocate a session ID or a new incarnation for reset,
 change the session record schema, migrate or encrypt state, add a cleanup or
-repair command, supply a terminal prompter, add native tools, or expand CLI
-ownership. The combined root-and-session-lifecycle checklist item therefore
-remains unchecked after this slice's root sub-boundary is delivered.
+repair command, supply a terminal prompter, or expand CLI ownership. The
+seventeenth candidate consumes its retained workspace identity for `file_info`
+but adds no root-selection authority or behavior.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and does not change the pinned fx inventory, benchmark workloads,

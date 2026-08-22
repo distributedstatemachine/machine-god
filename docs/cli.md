@@ -17,14 +17,22 @@ surface. The separate fourteenth composed
 no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
-The delivered by-ID native lifecycle and first formal sixteenth
-[`native session-listing candidate`](native-session-listing.md) are also
+The delivered by-ID native lifecycle and delivered sixteenth
+[`native session-listing extension`](native-session-listing.md) are also
 library-only. They add no `session`, `sessions`, `resume`, `replay`, workspace,
 or slash command and change none of the accepted invocations, output bytes,
-diagnostics, or exit statuses below. In particular, the candidate's IDs-only
+diagnostics, or exit statuses below. In particular, the listing's IDs-only
 bounded result is not exposed as fx-compatible CLI output. That first formal
-candidate was not green; all three review tracks are green on its composed
-replacement. Pending remote delivery does not change this CLI contract.
+candidate was not green; all three review tracks and exact feature and `main`
+delivery workflows are green on its replacement lineage.
+
+The seventeenth [`file_info` candidate](file-info.md) is likewise library-only.
+It adds no `file_info`, workspace, or slash command and changes none of the
+accepted invocations, output bytes, diagnostics, or exit statuses below. Its
+production is present at isolated SHA `5c2d129` and production-only composed
+SHA `1d93a65`; independent tests, three fresh adversarial tracks, and exact
+remote delivery remain pending. Its metadata result is not exposed as CLI
+output.
 
 ## Accepted invocations
 
@@ -107,9 +115,9 @@ missing, inaccessible, or the wrong kind. The path is `null` only for
 `unavailable` or `invalid_environment`.
 
 Permission mode is always `ask` in this slice. It reports the native host's
-fixed safe default; no permission prompt or permission-gated native tool is
-implemented here. Status does not load a legacy v1 or v2 config or the current
-v3 config and therefore does not report its observable schema version,
+fixed safe default; this CLI path constructs no permission prompt or
+permission-gated native tool. Status does not load a legacy v1 or v2 config or
+the current v3 config and therefore does not report its observable schema version,
 provider, transport, model, or credential source.
 
 ## Config and state locations

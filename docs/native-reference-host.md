@@ -1,7 +1,11 @@
 # Native reference-host composition
 
-Status: integrated contract for the twelfth bounded Milestone 03 library slice.
-Sixteen slices are delivered. The first formal sixteenth candidate is composed
+Status: integrated contract for the twelfth bounded Milestone 03 library slice,
+with its workspace-tool composition extended by a seventeenth candidate.
+Sixteen slices are delivered. Seventeenth-slice production is present at
+isolated SHA `5c2d129` and production-only composed SHA `1d93a65`; independent
+tests, three fresh adversarial tracks, and exact remote delivery remain pending.
+The first formal sixteenth candidate is composed
 through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
 `3fa54635dab00ebba78b233c69fd39e04e9be57e`; all three replacement tracks are
@@ -45,9 +49,12 @@ lineage is recorded in the
 
 `NativeReferenceHost` composes the existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and two confined read-only tools into one provider-neutral `Engine`.
-It is a library surface in `machine-god-native`. The `machine-god-cli` crate and
-every existing CLI output byte remain unchanged.
+adapter, and—in the seventeenth candidate—three confined read-only tools into
+one provider-neutral `Engine`. Their exact membership is `file_info`,
+`list_files`, and `read_file`, and core exposes that catalog in deterministic
+alphabetical order. It is a library surface in
+`machine-god-native`. The `machine-god-cli` crate and every existing CLI output
+byte remain unchanged.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
@@ -71,6 +78,17 @@ tests and all three replacement review tracks green. Portable behavior
 `17f1884` and seal `d3312d7` passed exact feature and `main` delivery gates. Its
 normative behavior is in
 [`native-session-listing.md`](native-session-listing.md).
+
+The seventeenth candidate adds `file_info` beside integrated `list_files` and
+`read_file`. It prepares a distinct `FilesystemAccess::Metadata` capability and exact
+normalized path, walks ancestors descriptor-relatively without following
+symlinks, and inspects the final object with no-follow metadata without opening
+it. Its bounded structured result and fixed redacted behavior are normative in
+[`file-info.md`](file-info.md). It changes no constructor arguments, provider,
+transport, permission, session, runtime, credential, or CLI authority. The
+candidate's production is present at `5c2d129` / composed `1d93a65`;
+independent tests, three fresh adversarial tracks, and exact feature and `main`
+workflows remain pending.
 
 ## Feature and platform boundary
 
@@ -100,6 +118,11 @@ the HTTP feature, or a runtime.
 The delivered sixteenth slice's standalone `list_sessions` method uses that same
 Linux/macOS lifecycle gate without requiring `ai-gateway-http`. Listing through
 the composed wrapper inherits this page's stricter gate.
+
+The candidate standalone `FileInfoTool` is likewise supported on Linux and
+macOS without requiring `ai-gateway-http`; other targets receive its fixed
+unsupported-platform construction failure. Registration through
+`NativeReferenceHost` inherits the composition gate above.
 
 The public composition and observation surface is:
 
@@ -174,7 +197,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the two tools;
+   identity for the three tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -182,8 +205,9 @@ this order:
 6. construct `AiGatewayProvider` with the loaded configuration's projected
    model;
 7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly `list_files` and `read_file`, default
-   `EngineLimits`, and the default `NoopEventSink`.
+8. build `Engine` with exactly candidate `file_info`, `list_files`, and
+   `read_file`, default `EngineLimits`, and the default `NoopEventSink`; core's
+   catalog exposes those names in deterministic alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
 credential discovery and bearer-token handoff. A selection, workspace, or
@@ -194,13 +218,14 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and a descriptor clone of the same opened directory object feeds
-the other. The composed engine registers exactly the existing one-level
-`list_files` and bounded UTF-8 `read_file`; it discovers or registers no other
-tool. This shared retained identity prevents separate path opens from selecting
+with one tool and two descriptor clones of the same opened directory object
+feed the others. The candidate composed engine registers exactly the existing
+one-level `list_files`, bounded UTF-8 `read_file`, and no-follow metadata
+`file_info`; it discovers or registers no other tool. This shared retained
+identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
 tool construction steps. It does not make the workspace a sandbox against the
-host, change either tool's model-selected path rules, or freeze mounts beneath
+host, change any tool's model-selected path rules, or freeze mounts beneath
 the retained directory.
 
 The session root is supplied separately from the workspace. It must already
@@ -217,7 +242,7 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same two tools, and
+the same provider and permission adapter, registers the same three tools, and
 uses the same default engine limits and no-op sink. It deliberately performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
 
@@ -260,6 +285,13 @@ future is first polled.
 The delivered sixteenth slice does not add construction effects. Creating its listing
 future is also inert; only first poll can enumerate the retained root, validate
 canonical records, acquire their per-ID locks, or create private lock sidecars.
+
+The seventeenth candidate adds no construction effect beyond cloning and
+retaining the already opened workspace descriptor for the third tool.
+`file_info` preparation is effect-free, and creating its execution future is
+inert; only first poll can traverse ancestor descriptors or inspect final
+metadata. It creates no task, thread, file, directory, timer, or background
+work.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
@@ -360,8 +392,9 @@ record.
 Neither that root slice nor this integrated composition implements a concrete
 terminal `PermissionPrompter`, allocates a session ID or
 `SessionIncarnationId`, or adds create/list/resume/replay/reset session
-lifecycle CLI commands. It does not add the remaining native tools, compose or
-run the CLI, or change any existing CLI byte. A reset under a reused session ID
+lifecycle CLI commands. The seventeenth candidate adds only `file_info`; it does
+not add the other remaining native tools, compose or run the CLI, or change any
+existing CLI byte. A reset under a reused session ID
 still requires a new host-generated incarnation before reuse.
 
 The delivered fifteenth slice fills the library-level by-ID create, resume,
@@ -383,8 +416,10 @@ three replacement tracks are green. Portable behavior `17f1884` and seal
 `d3312d7` passed exact feature and `main` delivery gates.
 
 Deterministic end-to-end evidence through a freshly built release binary,
-remaining CLI ownership, compatibility promotion, and product-performance
-claims remain open. The slice does not alter the pinned fx inventory,
+remaining native-tool and CLI ownership, compatibility promotion, and
+product-performance claims remain open. Candidate `file_info` production,
+independent tests, adversarial review, and exact remote delivery also remain
+open. The slice does not alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
@@ -399,6 +434,6 @@ fifteenth supplies create/resume/replay/reset, and the delivered sixteenth
 slice supplies bounded IDs-only listing. The combined root-and-session-lifecycle
 item is complete: the replacement reviews and exact feature and `main` gates
 are green. Milestone 03 remains in
-progress because the remaining native tools,
+progress because `file_info` is not yet delivered and the other remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.
