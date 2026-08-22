@@ -9,7 +9,7 @@ CLI makes model requests today. Review details are in the
 The adapter discovers one Vercel AI Gateway bearer credential from an
 explicitly owned environment snapshot. It is separate from core, the CLI, and
 native configuration. Credentials are fields in neither the exact legacy v1
-schema nor the candidate current v2 schema. The only ambient lookup is the
+schema nor the integrated current v2 schema. The only ambient lookup is the
 explicitly named process-snapshot constructor or process convenience function.
 
 ## Feature and public boundary
@@ -124,17 +124,16 @@ origin, redirect, proxy, status, timeout, and cancellation policy.
 
 This integrated adapter does not store or rotate credentials, write environment
 variables, add a setup command, compose a provider into the CLI, select a model,
-or make a network request. The eleventh
-[`native configuration schema-v2 candidate`](configuration.md) adds only
+or make a network request. The eleventh integrated
+[`native configuration schema-v2 slice`](configuration.md) adds only
 declarative provider, transport, and model data; it does not add a credential
 field or invoke this adapter. The broader M03 credential-and-configuration
 checklist item remains unchecked because configuration still has no bounded
 credential-source field and no reference-host composition invokes this
-adapter. The schema-v2 candidate's adversarial and exact feature-branch gates
-are green, while its documentation seal and `main` delivery remain pending.
-Existing CLI bytes and benchmark workloads are unchanged. Zig remains only a
-build input for the pinned upstream benchmark; machine-god remains a Rust
-product.
+adapter. Its adversarial, feature-branch, documentation-seal, and `main` gates
+are green at the exact lineage recorded in its review. Existing CLI bytes and
+benchmark workloads are unchanged. Zig remains only a build input for the
+pinned upstream benchmark; machine-god remains a Rust product.
 
 ## Delivery evidence
 

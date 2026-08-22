@@ -34,18 +34,19 @@ is integrated on `main` at
 and benchmark run `32573320937` are green. It does not change configuration
 or CLI behavior; see its
 [contract](docs/ai-gateway-credentials.md).
-An eleventh bounded candidate advances the built-in native configuration and
-current file schema to strict v2 with fixed declarative AI Gateway provider,
-HTTP transport, and `zai/glm-5.2` model defaults. The exact strict two-field v1
-file remains read-compatible without rewrite or migration and remains
-observable as schema v1 after its in-memory projection. Credentials are in
-neither schema, and the new fields do not compose a provider, HTTP client,
+The eleventh integrated bounded slice advances the built-in native
+configuration and current file schema to strict v2 with fixed declarative AI
+Gateway provider, HTTP transport, and `zai/glm-5.2` model defaults. The exact
+strict two-field v1 file remains read-compatible without rewrite or migration
+and remains observable as schema v1 after its in-memory projection. Credentials
+are in neither schema, and the new fields do not compose a provider, HTTP client,
 runtime, token, network request, or CLI path. The feature implementation,
-black-box tests, candidate documentation, three adversarial tracks, and exact
-feature-branch gates are green. Documentation seal and `main` delivery remain
-pending. See the
+black-box tests, documentation, three adversarial tracks, and exact feature and
+`main` gates are green. It is integrated on `main` at
+`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`; exact main CI run `32576137963`
+and benchmark run `32576137955` are green. See the
 [native configuration contract](docs/configuration.md) and
-[candidate review record](docs/reviews/m03-native-host-config-review-01.md).
+[review record](docs/reviews/m03-native-host-config-review-01.md).
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),

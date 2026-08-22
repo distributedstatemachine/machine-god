@@ -1,17 +1,15 @@
 # Native configuration
 
-Status: feature-branch candidate contract for the eleventh bounded Milestone 03
-slice. Production implementation, black-box tests, and candidate documentation
-are composed on the feature branch. Three fresh adversarial tracks and exact
-feature-branch CI and benchmark-evidence gates are green. Documentation seal
-and delivery on `main` are pending. Milestone 03 remains `IN PROGRESS`. Exact
-candidate lineage is recorded in the
+Status: eleventh bounded Milestone 03 slice integrated on `main` at
+`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`. Exact main CI run `32576137963`
+and benchmark-evidence run `32576137955` are green. Milestone 03 remains
+`IN PROGRESS`. Exact lineage is recorded in the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 
 The native configuration loader is a bounded, synchronous, read-only
 `machine-god-native` authority. Core remains independent of the process
 environment and filesystem, and the CLI does not invoke the loader. This
-candidate advances the built-in and current file schema to v2 while retaining
+slice advances the built-in and current file schema to v2 while retaining
 strict read compatibility for the exact legacy v1 object.
 
 ## Location and defaults
@@ -152,9 +150,9 @@ Native status remains a separate metadata-only observation. It still uses
 final-path metadata to report config-file and state-directory states, does not
 read or parse `config.json`, and reports permission mode `ask`. Existing CLI
 help, version, status, error, and bare-invocation bytes remain unchanged; no CLI
-command loads configuration in this candidate.
+command loads configuration in this slice.
 
-Provider, transport, and model fields are declarative data only. This candidate
+Provider, transport, and model fields are declarative data only. This slice
 does not instantiate `AiGatewayProvider`, select or construct an HTTP client,
 create or drive a Tokio runtime, discover or attach a credential, open a
 network connection, or compose any component into core or the CLI.
@@ -163,5 +161,5 @@ Configuration mutation, a migration or rewrite command, permission prompting
 and modes beyond `ask`, provider/HTTP/runtime/token/CLI composition, required
 workspace and state-root lifecycle, the remaining native tools, CLI and
 session expansion, end-to-end host evidence, and compatibility or performance
-claims remain open. This candidate does not complete the combined
+claims remain open. This slice does not complete the combined
 credential-and-configuration checklist item or Milestone 03.

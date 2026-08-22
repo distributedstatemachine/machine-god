@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with ten integrated bounded slices and an eleventh bounded candidate. The first
+with eleven integrated bounded slices. The first
 provides read-only native config/state
 discovery, a fixed `ask` permission-mode report, and help/version/status CLI
 behavior. The second adds synchronous read-only native loading of an exact
@@ -178,7 +178,7 @@ SHA is integrated on `main`; exact main CI run `32573320962` and
 benchmark-evidence run `32573320937` are green. The review lineage is in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
-The eleventh bounded candidate advances the built-in native configuration and
+The eleventh bounded slice advances the built-in native configuration and
 current file schema to strict v2. Its exact five-field object has integer
 `schema_version: 2`, permission mode `ask`, provider `vercel_ai_gateway`,
 transport `ai_gateway_http`, and default model `zai/glm-5.2`. The exact strict
@@ -189,18 +189,19 @@ Models share the AI Gateway provider's 1–128-byte visible-ASCII validator;
 config owns and redacts its model in debug output. Provider, transport, and
 model selections are declarative only and do not compose the codec, optional
 HTTP transport, runtime, credential, network, core, or CLI. Status remains
-metadata-only and existing CLI bytes are unchanged. The exact candidate
+metadata-only and existing CLI bytes are unchanged. The exact
 contract and review lineage are in
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
-Production implementation, black-box tests, and candidate documentation are
-composed on the feature branch. Three fresh adversarial tracks and exact
-feature-branch CI and benchmark-evidence gates are green. Documentation seal
-and delivery on `main` remain pending.
+Production implementation, black-box tests, documentation, three fresh
+adversarial tracks, and exact feature and `main` gates are green. The slice is
+integrated on `main` at `503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`;
+exact main CI run `32576137963` and benchmark-evidence run `32576137955` are
+green.
 
 ### Milestone 03 completion boundary
 
-The ten integrated slices and eleventh candidate do not complete Milestone 03.
+The eleven integrated slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -211,9 +212,9 @@ gate:
 - [x] Integrate the tenth credential-discovery slice under its exact
   contract and retain feature, adversarial-review, exact-SHA CI, and `main`
   evidence.
-- [ ] Integrate the eleventh native host configuration schema-v2 slice under
+- [x] Integrate the eleventh native host configuration schema-v2 slice under
   its exact contract and retain feature, adversarial-review, exact-SHA CI, and
-  `main` evidence. Candidate documentation alone does not satisfy this item.
+  `main` evidence.
 - [ ] Compose a useful native reference-host path through an explicitly selected
   provider and transport, session store, permission handler and prompter, and
   registered tools. The CLI stays a thin host and owns no product state.
@@ -255,7 +256,7 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth slice and the eleventh candidate; Zig remains only the pinned
+by the tenth and eleventh slices; Zig remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
 no current-protocol or full fx-equivalence claim. Help and status remain

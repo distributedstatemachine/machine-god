@@ -18,7 +18,7 @@ requests, streams, and pooled connections and remain driven while they are
 active or being torn down. Construction performs no network effect and requires
 no runtime. Core, the codec, and custom injected transports remain
 executor-neutral and retain their existing authority and resource boundaries.
-The separate candidate [`native configuration schema v2`](configuration.md)
+The separate integrated [`native configuration schema v2`](configuration.md)
 declares the stable `ai_gateway_http` transport kind only; parsing that value
 does not construct this transport or its required runtime.
 

@@ -4,7 +4,7 @@ The `machine-god` binary is the thin native reference host for the embeddable
 engine. This page defines the exact Milestone 03 config/status slice. The
 commands inspect process environment and filesystem metadata only; they do not
 parse configuration, create directories, write files, or start the engine.
-The separate candidate [`native configuration schema v2`](configuration.md)
+The separate integrated [`native configuration schema v2`](configuration.md)
 does not change that boundary or any CLI byte documented below. Provider,
 transport, and model config fields remain invisible to this metadata-only
 surface.

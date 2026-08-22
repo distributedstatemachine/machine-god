@@ -21,8 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has ten integrated bounded slices and an eleventh bounded
-candidate.
+Milestone 03 has eleven integrated bounded slices.
 The first two are native-host slices;
 the third extends the authority-free core tool contract, the fourth and fifth
 use that contract for bounded executable native capabilities, and the sixth
@@ -52,13 +51,12 @@ integrated on `main` at
 `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
 and benchmark run `32573320937` are green. Its fixed contract and evidence are
 in [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
-The eleventh candidate advances native configuration to a strict current
+The eleventh slice advances native configuration to a strict current
 schema v2 while retaining strict v1 reads without file rewrite or migration.
-It is a declarative library surface only. Its production implementation,
-black-box tests, and candidate documentation are composed on the feature
-branch; three adversarial tracks and exact feature-branch gates are green.
-Documentation seal and delivery on `main` remain pending.
-Its contract and candidate lineage are in [`configuration.md`](configuration.md)
+It is a declarative library surface only, integrated on `main` at
+`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`. Exact main CI run `32576137963`
+and benchmark run `32576137955` are green. Its contract and delivery lineage
+are in [`configuration.md`](configuration.md)
 and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -130,7 +128,7 @@ argument errors remain byte-stable presentation behavior, not an engine-owned
 command model.
 
 The synchronous loader resolves only the config location. In the eleventh
-candidate, an unavailable location or missing file yields the explicit built-in
+slice, an unavailable location or missing file yields the explicit built-in
 schema-v2 object
 `{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2"}`.
 Invalid selected environment input and all other load failures fail closed. A

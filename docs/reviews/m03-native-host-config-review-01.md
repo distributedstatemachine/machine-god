@@ -1,7 +1,6 @@
 # Milestone 03 native host configuration schema-v2 review 01
 
-Status: **FEATURE BRANCH GREEN — documentation seal and `main` delivery
-pending**
+Status: **DELIVERY GREEN — integrated on `main`**
 
 ## Review lineage
 
@@ -27,17 +26,17 @@ pending**
   `53645ce89997be82a28d98ea0bdf4d74ea4f0c4d`
 - Review record and exact feature-gate SHA:
   `40adb062b32417463b8ba266e21ecd2b677082b4`
-- Documentation seal: `PENDING`
-- Exact `main` delivery SHA: `PENDING`
+- Documentation seal and integrated `main` behavior:
+  `503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`
+- Exact `main` delivery SHA:
+  `503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`
 - Integration branch: `agent/m03-native-host-config-v2`
 - Candidate-docs branch: `agent/m03-native-host-config-v2-docs`
 - Toolchain gate: Rust and Cargo 1.94.1 exactly; local results green
 
-This is the eleventh bounded Milestone 03 candidate. The first ten slices are
-integrated. This slice's production implementation, tests, and documentation
-are composed on its feature branch, three fresh adversarial tracks are green,
-and both exact feature-branch workflows are green. Documentation seal and
-`main` delivery remain pending. Milestone 03 remains `IN PROGRESS`.
+This is the eleventh integrated bounded Milestone 03 slice. Its production
+implementation, tests, documentation, three fresh adversarial tracks, and exact
+feature and `main` workflows are green. Milestone 03 remains `IN PROGRESS`.
 
 ## Reviewed behavior
 
@@ -159,23 +158,36 @@ The reviewed behavior and its review record are feature-green at
   [`32575563375`](https://github.com/distributedstatemachine/machine-god/actions/runs/32575563375)
   is green.
 
-The documentation seal must pass both exact feature workflows before it can be
-fast-forwarded without force to `main`; that exact `main` SHA must then pass
-both workflows. Seal and `main` results are pending at this record's current
-state.
+The documentation seal was required to pass both exact feature workflows before
+it could be fast-forwarded without force to `main`; that exact `main` SHA was
+then required to pass both workflows.
+
+The documentation seal at
+`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544` passed exact feature CI run
+[`32575866170`](https://github.com/distributedstatemachine/machine-god/actions/runs/32575866170)
+and benchmark-evidence run
+[`32575866197`](https://github.com/distributedstatemachine/machine-god/actions/runs/32575866197).
+
+## Exact `main` delivery gates
+
+The seal was fast-forwarded without force to `main` at
+`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`. Exact main CI run
+[`32576137963`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576137963)
+and benchmark-evidence run
+[`32576137955`](https://github.com/distributedstatemachine/machine-god/actions/runs/32576137955)
+are green for that exact SHA.
 
 ## Scope
 
-This candidate does not complete the combined credential-and-configuration
+This slice does not complete the combined credential-and-configuration
 checklist item because it adds no bounded credential-source field and no
-reference-host composition invokes credential discovery; final adversarial and
-delivery evidence also remains pending. It adds no
+reference-host composition invokes credential discovery. It adds no
 provider/HTTP/runtime/token/CLI composition, workspace or state-root creation,
 session lifecycle commands, remaining native tools, CLI expansion, deterministic
 end-to-end composed-host evidence, compatibility promotion, or package/release
 authorization. Those Milestone 03 items remain open.
 
-No performance result or full fx-equivalence claim is made. A later green
-benchmark-evidence workflow would validate only the retained evidence path for
-that exact SHA. Zig remains solely the pinned upstream benchmark build input;
-machine-god remains a Rust product.
+No performance result or full fx-equivalence claim is made. Green
+benchmark-evidence workflows validate only the retained evidence path for their
+exact SHAs. Zig remains solely the pinned upstream benchmark build input;
+machine-god remains a Rust product. No package or GitHub release is authorized.

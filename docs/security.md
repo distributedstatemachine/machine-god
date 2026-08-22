@@ -45,12 +45,11 @@ configuration, or the CLI. It is integrated on `main` at
 `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`; exact main CI run `32573320962`
 and benchmark run `32573320937` are green. Its exact boundary is in
 [`ai-gateway-credentials.md`](ai-gateway-credentials.md).
-An eleventh bounded candidate advances the built-in and current native config
-schema to strict v2 while keeping exact strict v1 files read-compatible without
-rewrite or migration. Its production implementation, black-box tests, and
-candidate documentation are composed on the feature branch. Three adversarial
-tracks and exact feature-branch gates are green. Documentation seal and
-delivery on `main` remain pending; see
+An eleventh integrated bounded slice advances the built-in and current native
+config schema to strict v2 while keeping exact strict v1 files read-compatible
+without rewrite or migration. It is integrated on `main` at
+`503d67e1fb43ea60a7818c6f4db2f6ecd04a8544`; exact main CI run `32576137963`
+and benchmark run `32576137955` are green. See
 [`configuration.md`](configuration.md) and the
 [`native host configuration review`](reviews/m03-native-host-config-review-01.md).
 
@@ -72,7 +71,7 @@ CLI arguments are rejected as invalid. Output errors use a fixed diagnostic
 rather than reflecting path or OS-error text.
 
 Configuration loading uses the same config-location selection. In the
-eleventh candidate, missing and unavailable locations yield the explicit strict
+eleventh slice, missing and unavailable locations yield the explicit strict
 schema-v2 built-in values: permission mode `ask`, provider
 `vercel_ai_gateway`, transport `ai_gateway_http`, and model `zai/glm-5.2`.
 The only legacy form is the exact two-field schema-v1 object; it maps in memory
