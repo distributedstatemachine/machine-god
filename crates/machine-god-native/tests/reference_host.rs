@@ -6,13 +6,14 @@
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, FileTimes};
 use std::io;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
@@ -22,9 +23,10 @@ use machine_god_core::{
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, AiGatewayByteStream, AiGatewayCredentialEnvironment,
     AiGatewayCredentialSource, AiGatewayTransport, AiGatewayTransportRequest, ConfigOrigin,
-    LIST_FILES_TOOL_NAME, LoadedNativeConfig, NativeEnvironment, NativeReferenceHost,
-    NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind, PermissionPromptDecision,
-    PermissionPromptError, PermissionPrompter, READ_FILE_TOOL_NAME, load_native_config,
+    FILE_INFO_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig, NativeEnvironment,
+    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+    PermissionPromptDecision, PermissionPromptError, PermissionPrompter, READ_FILE_TOOL_NAME,
+    load_native_config,
 };
 use serde_json::{Value, json};
 
@@ -196,6 +198,7 @@ fn tool_round_responses(final_text: &str) -> [Vec<u8>; 2] {
     let first = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"list-call\",\"toolName\":\"list_files\",\"input\":{\"path\":\"./nested//.\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"read-call\",\"toolName\":\"read_file\",\"input\":{\"path\":\"./nested//note.txt\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"info-call\",\"toolName\":\"file_info\",\"input\":{\"path\":\"./nested//note.txt\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -317,6 +320,69 @@ fn directory_is_empty(path: &Path) -> bool {
     fs::read_dir(path).unwrap().next().is_none()
 }
 
+fn assert_exact_native_tool_catalog(request: &Value) {
+    let tools = request["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 3);
+    assert_eq!(
+        tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            FILE_INFO_TOOL_NAME,
+            LIST_FILES_TOOL_NAME,
+            READ_FILE_TOOL_NAME
+        ]
+    );
+    assert!(tools.iter().all(|tool| tool["type"] == "function"));
+}
+
+fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
+    let permission_requests = prompter.requests();
+    assert_eq!(permission_requests.len(), 3);
+    assert_eq!(
+        permission_requests[0].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::Enumerate,
+            path: "nested".to_owned(),
+        }
+    );
+    assert_eq!(
+        permission_requests[1].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::Read,
+            path: "nested/note.txt".to_owned(),
+        }
+    );
+    assert_eq!(
+        permission_requests[2].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::Metadata,
+            path: "nested/note.txt".to_owned(),
+        }
+    );
+}
+
+fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: SessionId) {
+    let loaded_session = futures_executor::block_on(host.engine().load_session(session_id))
+        .unwrap()
+        .expect("the reference host persisted the completed session");
+    let record = loaded_session.record();
+    assert_eq!(record.messages.len(), 6);
+    assert_eq!(record.messages[0].role, Role::User);
+    assert_eq!(record.messages[1].role, Role::Assistant);
+    assert_eq!(record.messages[2].role, Role::Tool);
+    assert_eq!(record.messages[3].role, Role::Tool);
+    assert_eq!(record.messages[4].role, Role::Tool);
+    assert_eq!(record.messages[5].role, Role::Assistant);
+    assert_eq!(
+        record.messages[5].content,
+        [ContentBlock::Text {
+            text: "composition complete".to_owned()
+        }]
+    );
+}
+
 #[test]
 fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable_results() {
     let temporary = TemporaryDirectory::new("full-wiring");
@@ -324,6 +390,15 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
     let nested = workspace.join("nested");
     fs::create_dir(&nested).unwrap();
     fs::write(nested.join("note.txt"), "reference host contents\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(nested.join("note.txt"))
+        .unwrap()
+        .set_times(
+            FileTimes::new()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::new(1_700_000_789, 987_654_321)),
+        )
+        .unwrap();
     fs::write(nested.join("other.txt"), "other").unwrap();
     let model = "custom/reference-host-model-v2";
     let loaded = load_v2_config(temporary.path(), model);
@@ -348,36 +423,11 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
     assert_eq!(requests.len(), 2);
     assert_eq!(header(&requests[0], "ai-language-model-id"), model);
     let first = body(&requests[0]);
-    let tools = first["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 2);
-    assert_eq!(
-        tools
-            .iter()
-            .map(|tool| tool["name"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        [LIST_FILES_TOOL_NAME, READ_FILE_TOOL_NAME]
-    );
-    assert!(tools.iter().all(|tool| tool["type"] == "function"));
-
-    let permission_requests = prompter.requests();
-    assert_eq!(permission_requests.len(), 2);
-    assert_eq!(
-        permission_requests[0].capability,
-        Capability::Filesystem {
-            access: FilesystemAccess::Enumerate,
-            path: "nested".to_owned(),
-        }
-    );
-    assert_eq!(
-        permission_requests[1].capability,
-        Capability::Filesystem {
-            access: FilesystemAccess::Read,
-            path: "nested/note.txt".to_owned(),
-        }
-    );
+    assert_exact_native_tool_catalog(&first);
+    assert_exact_native_tool_permissions(&prompter);
 
     let second = body(&requests[1]);
-    assert_eq!(second["prompt"].as_array().unwrap().len(), 4);
+    assert_eq!(second["prompt"].as_array().unwrap().len(), 5);
     assert_eq!(second["prompt"][2]["content"][0]["toolCallId"], "list-call");
     assert_eq!(
         decoded_tool_output(&second, 2),
@@ -401,24 +451,26 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
             "is_error": false
         })
     );
+    assert_eq!(second["prompt"][4]["content"][0]["toolCallId"], "info-call");
+    assert_eq!(
+        decoded_tool_output(&second, 4),
+        json!({
+            "content": {
+                "path": "nested/note.txt",
+                "kind": "file",
+                "size_bytes": 24,
+                "modified": {
+                    "unix_seconds": 1_700_000_789_i64,
+                    "nanoseconds": 987_654_321_u32
+                },
+                "extension": "txt"
+            },
+            "is_error": false
+        })
+    );
 
     drop(events);
-    let loaded_session = futures_executor::block_on(host.engine().load_session(session_id))
-        .unwrap()
-        .expect("the reference host persisted the completed session");
-    let record = loaded_session.record();
-    assert_eq!(record.messages.len(), 5);
-    assert_eq!(record.messages[0].role, Role::User);
-    assert_eq!(record.messages[1].role, Role::Assistant);
-    assert_eq!(record.messages[2].role, Role::Tool);
-    assert_eq!(record.messages[3].role, Role::Tool);
-    assert_eq!(record.messages[4].role, Role::Assistant);
-    assert_eq!(
-        record.messages[4].content,
-        [ContentBlock::Text {
-            text: "composition complete".to_owned()
-        }]
-    );
+    assert_persisted_composed_turn(&host, session_id);
     assert!(!directory_is_empty(&sessions));
 }
 
@@ -675,7 +727,7 @@ fn injected_construction_is_inert_and_host_debug_redacts_owned_inputs() {
 }
 
 #[test]
-fn replacing_original_workspace_path_cannot_redirect_either_registered_tool() {
+fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     let temporary = TemporaryDirectory::new("retained-workspace");
     let (workspace, sessions) = roots(temporary.path());
     let nested = workspace.join("nested");
@@ -713,6 +765,7 @@ fn replacing_original_workspace_path_cannot_redirect_either_registered_tool() {
     let second = body(&requests[1]);
     let list_output = decoded_tool_output(&second, 2);
     let read_output = decoded_tool_output(&second, 3);
+    let info_output = decoded_tool_output(&second, 4);
     assert_eq!(
         list_output["content"]["entries"],
         json!([
@@ -723,6 +776,12 @@ fn replacing_original_workspace_path_cannot_redirect_either_registered_tool() {
     assert_eq!(
         read_output["content"]["content"],
         "RETAINED_FILE_CONTENT_SENTINEL"
+    );
+    assert_eq!(info_output["content"]["path"], "nested/note.txt");
+    assert_eq!(info_output["content"]["kind"], "file");
+    assert_eq!(
+        info_output["content"]["size_bytes"],
+        "RETAINED_FILE_CONTENT_SENTINEL".len()
     );
     let serialized = serde_json::to_string(&second).unwrap();
     assert!(!serialized.contains("REPLACEMENT_FILE_CONTENT_SENTINEL"));

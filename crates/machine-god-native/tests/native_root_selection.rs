@@ -25,6 +25,7 @@ use machine_god_native::{
     PermissionPromptDecision, PermissionPromptError, PermissionPrompter, PreparedNativeRoots,
     load_native_config,
 };
+use serde_json::Value;
 
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -202,6 +203,7 @@ fn collect_turn(host: &NativeReferenceHost) -> Vec<TurnEvent> {
 fn retained_root_responses() -> [Vec<u8>; 2] {
     let first = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"read-call\",\"toolName\":\"read_file\",\"input\":{\"path\":\"note.txt\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"info-call\",\"toolName\":\"file_info\",\"input\":{\"path\":\"note.txt\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -268,12 +270,23 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
             ..
         })
     ));
-    assert_eq!(prompter.count(), 1);
+    assert_eq!(prompter.count(), 2);
     let requests = transport.request_bodies();
     assert_eq!(requests.len(), 2);
     let second_request = String::from_utf8(requests[1].clone()).unwrap();
     assert!(second_request.contains("RETAINED_WORKSPACE_CONTENT_SENTINEL"));
     assert!(!second_request.contains("REPLACEMENT_WORKSPACE_CONTENT_SENTINEL"));
+    let second_request: Value = serde_json::from_slice(&requests[1]).unwrap();
+    let encoded_info = second_request["prompt"][3]["content"][0]["output"]["value"]
+        .as_str()
+        .expect("file_info output is encoded as text");
+    let info_output: Value = serde_json::from_str(encoded_info).unwrap();
+    assert_eq!(info_output["content"]["path"], "note.txt");
+    assert_eq!(info_output["content"]["kind"], "file");
+    assert_eq!(
+        info_output["content"]["size_bytes"],
+        "RETAINED_WORKSPACE_CONTENT_SENTINEL".len()
+    );
     assert!(!directory_is_empty(&retained_state));
     assert!(directory_is_empty(&state_root));
 }
