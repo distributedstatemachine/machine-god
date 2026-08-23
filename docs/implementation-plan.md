@@ -51,7 +51,8 @@ workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
 `c1268fdf463e11242b7b916add70675ae91ed115` to the final record; exact main CI
 `32651488265` passed all six jobs, and main benchmark workflow `32651488282`
 passed both jobs with two nonexpired exact-SHA artifacts. Native `delete_file`
-is the twenty-second bounded slice and is **IN PROGRESS**. Formal cycle 1 is
+is the twenty-second bounded slice and is **BEHAVIOR GREEN — DELIVERY
+PENDING**. Formal cycle 1 is
 **NOT GREEN** on exact candidate
 `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf`; remediation, replacement
 same-SHA adversarial review, and delivery remain pending. Exact remediation
@@ -73,7 +74,10 @@ local gate. Tree-identical cycle-4 candidate
 three tracks with the same single medium definitive-unlink-failure cancellation
 finding and no others. Exact remediation
 `4273de513007175be94829aef85aaaa0d09bc02c` passes the complete replacement
-local gate; another fresh same-SHA cycle remains pending. The remaining native
+local gate. Tree-identical cycle-5 candidate
+`8575354542803f5e8ba8faf311e7524ed87eacba` is green with zero findings in
+all three fresh tracks. Exact feature workflows, no-force fast-forward
+integration, and exact `main` workflows remain pending. The remaining native
 tools, CLI ownership, and Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
@@ -1218,8 +1222,15 @@ benchmarks; workspace, Python 130, compatibility, dependency, portability,
 and fresh release-smoke evidence pass. The 319,152-byte arm64 Mach-O CLI has
 SHA-256 `126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107`.
 Optional all-feature Linux cross remains blocked only by the host C sysroot in
-`aws-lc-sys`, before product Rust. Another fresh tree-identical review cycle is
-pending.
+`aws-lc-sys`, before product Rust. Formal cycle 5 reviewed exact candidate
+`8575354542803f5e8ba8faf311e7524ed87eacba`, tree
+`13f28f2a687960e17cd4061c849a0bae17604ae7`; correctness/API,
+filesystem/robustness, and performance/concurrency are all **GREEN** with zero
+findings. Clean detached worktrees and focused exact Rust 1.94.1 reruns covered
+29/30 private, 21 direct including hostile umask, five engine, seven host, one
+core, reference-host composition, and relevant FreeBSD/WASI gates. Crate
+content is identical to remediation `4273de5`. Exact feature and `main`
+delivery workflows remain pending.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1530,7 +1541,9 @@ gate:
   portability, documentation, diff/no-unsafe/no-Cargo/no-CLI, and fresh
   release-smoke evidence green. Its ten-case definitive-failure matrix proves
   post-syscall cancellation precedence while preserving the success/`EINTR`
-  commit boundary. Another fresh same-SHA review, feature delivery, and `main`
+  commit boundary. Tree-identical cycle-5 candidate `8575354`, tree `13f28f2`,
+  is green with zero findings in all three fresh correctness/API, filesystem/
+  robustness, and performance/concurrency tracks. Feature delivery and `main`
   delivery remain pending, so the combined native-tool checkbox stays
   unchecked and the delivered-slice count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

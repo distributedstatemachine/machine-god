@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — cycle 4 remediated; replacement review pending**
+Status: **BEHAVIOR GREEN — delivery pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -33,7 +33,10 @@ local gate. Tree-identical formal cycle-4 candidate
 `0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** with
 one overlapping medium finding. Exact remediation
 `4273de513007175be94829aef85aaaa0d09bc02c` passes the complete replacement
-local gate; another fresh same-SHA cycle remains pending.
+local gate. Tree-identical formal cycle-5 candidate
+`8575354542803f5e8ba8faf311e7524ed87eacba` is **GREEN** with zero findings
+in all three fresh tracks. Exact feature workflows, no-force fast-forward
+integration, and exact `main` workflows remain pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -462,9 +465,34 @@ cross-build remains blocked only by the host's missing Linux C sysroot in
 arm64 Mach-O release CLI has SHA-256
 `126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107`
 and passes bare, help, human-status, and JSON-status smoke paths with exact
-stdout and empty stderr. These results qualify only the replacement local
-gate; three fresh reviewers must still green-light one tree-identical behavior
-candidate before remote delivery.
+stdout and empty stderr. These results qualified only the replacement local
+gate and required three fresh reviewers to green-light one tree-identical
+behavior candidate before remote delivery.
+
+Formal cycle 5 reviewed exact tree-identical candidate
+`8575354542803f5e8ba8faf311e7524ed87eacba`, tree
+`13f28f2a687960e17cd4061c849a0bae17604ae7`. Correctness/API,
+filesystem/robustness, and performance/concurrency are all **GREEN** with zero
+findings. Every reviewer used a clean detached worktree, verified the exact
+candidate and tree, and confirmed that crate content is identical to exact
+remediation `4273de513007175be94829aef85aaaa0d09bc02c`.
+
+Correctness/API reran formatting, 29/30 private tests, 21 direct tests, five
+engine tests, one core contract test, and all-feature reference-host
+composition. Filesystem/robustness reran 29/30 private, 21 direct including the
+hostile-umask child, five engine, and seven host tests plus FreeBSD/WASI checks
+and the WASI unsupported-test build. Performance/concurrency reran 29/30
+private, 21 direct including the hostile-umask child, and five engine tests.
+All three independently confirmed the ten-case definitive-failure cancellation
+matrix, the success/`EINTR` commit boundary, and closure of every historical
+finding in their tracks.
+
+This establishes behavior-green review only. Delivery still requires the
+documentation seal's exact feature CI and benchmark workflows, a no-force
+fast-forward to `main`, and exact `main` CI and benchmark workflows. The
+documentation-only seal and later delivery record are exempt from another
+adversarial cycle under the user's instruction, but not from their applicable
+remote workflows.
 
 ## Parallel ownership and formal review
 

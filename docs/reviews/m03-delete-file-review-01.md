@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — cycle 4 remediated; replacement review pending**
+Status: **BEHAVIOR GREEN — delivery pending**
 
 ## Base and contract gate
 
@@ -377,9 +377,61 @@ C-sysroot failure in `aws-lc-sys` before product Rust. A fresh locked
 and passes bare/help/human-status/JSON-status smoke with exact stdout and empty
 stderr.
 
-Cycle 4 remains historically not green. This exact local gate does not
-establish behavior approval or delivery; a tree-identical marker must receive
+Cycle 4 remains historically not green. This exact local gate did not by itself
+establish behavior approval or delivery; its tree-identical marker required
 three fresh cycle-5 reviews before any behavior-green claim.
+
+## Formal adversarial cycle 5
+
+Exact candidate: `8575354542803f5e8ba8faf311e7524ed87eacba`.
+Exact tree: `13f28f2a687960e17cd4061c849a0bae17604ae7`.
+
+All three fresh tracks reviewed that exact candidate in clean detached
+worktrees and reported **GREEN** with zero findings:
+
+1. Correctness/API traced exports, schema, normalization, all bounds,
+   construction and tool errors, redaction, two-pass validation, one-call
+   deletion, macOS diagnosis, retryability, parent-sync ambiguity, host
+   composition, and every historical finding. Formatting, 29/30 private, 21
+   direct, five engine, one core contract, and all-feature reference-host
+   composition checks passed.
+2. Filesystem/robustness traced confinement, root/parent/target identity,
+   final-window races, all permission and read-only mappings, hostile umask,
+   exact flags/outcomes, cancellation, `EINTR`, bounded sync, retained-parent
+   movement, cleanup, and macOS diagnostic races. The 29/30 private, 21 direct,
+   five engine, seven host, FreeBSD/WASI, and WASI unsupported-test checks
+   passed.
+3. Performance/concurrency traced bounded input and traversal work, descriptor
+   lifetime, cancellation order, unpolled/drop behavior, the single non-
+   retried delete, 16-interruption sync bound, static evidence dispatch, fixed
+   host scaling, concurrent-use safety, race disclosures, and performance
+   nonclaims. The 29/30 private, 21 direct, and five engine checks passed.
+
+Every track independently confirmed that definitive non-`EINTR` failures give
+post-syscall cancellation precedence, the ten-case matrix preserves targets
+and sentinels with one exact-flag delete and zero syncs, and success/`EINTR`
+retain their commit/ambiguity semantics. Crate content is identical to exact
+remediation `4273de513007175be94829aef85aaaa0d09bc02c`; intervening commit
+`cef8827a97e1d54685cbae24861dc9057b153ea7` is documentation-only and the
+cycle-5 marker is empty.
+
+## Pending delivery lineage
+
+- Exact delivered base:
+  `719a9bded86fd7ce394d482798b9064c736f43ab`
+- Exact behavior-green candidate:
+  `8575354542803f5e8ba8faf311e7524ed87eacba`
+- Correctness/API: green, zero findings
+- Filesystem/robustness: green, zero findings
+- Performance/concurrency: green, zero findings
+- Documentation seal: pending
+- Exact feature CI and benchmark evidence: pending
+- No-force fast-forward `main`: pending
+- Exact `main` CI and benchmark evidence: pending
+
+The documentation-only seal and later delivery record are exempt from another
+adversarial cycle under the user's instruction. Their applicable exact remote
+workflows remain mandatory.
 
 ## Formal adversarial protocol
 
