@@ -1,10 +1,10 @@
 # Native `grep_files` tool
 
 Status: **IN PROGRESS — formal second replacement candidate
-`5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
-filesystem/robustness green with zero findings; performance/concurrency is not
-green, and remediation plus rereview and delivery remain pending** nineteenth
-bounded Milestone 03 candidate.
+`5aeddc1b4cb210b00cb967b938db8d5232062916` is historically not green; third
+remediation and exact local gates are green at precursor
+`a8f61794ee5e279558856220b5789526b908015a`, while exact replacement rereview
+and delivery remain pending** nineteenth bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
@@ -51,13 +51,22 @@ buffer; 10,000 empty files accumulated approximately 2,048,010,000 allocated
 bytes, with an observed 6.10-second diagnostic run that is not a contractual
 timing result. Its two low findings correct the Markdown inventory from 57 to
 58 files and reject the claim that deterministic evidence already exercises
-the recursive dynamic-programming branch. That evidence remediation requires
-injected-checker routing and a deterministic recursive regression; it does not
-exist yet. Production, independent-test, and documentation remediation, the
-exact replacement rereview candidate and all three rereviews, exact behavior
-SHA with all tracks green, documentation seal, feature workflows, integrated
-`main`, and exact `main` workflows remain **PENDING**. Compatibility, Python,
-clean locked release-build, and eight CLI smoke gates are green on exact b498.
+the recursive dynamic-programming branch. Third production remediation
+`8777825b1b8b8c97dd4eb4bb31c0d8dbed9a7741` composes at
+`ab1c13385a475ac34e8df2180e8c4cbb3b0ee3e9`; independent regression
+`dcf57ad35150b86c84a3f6c1127d9e379f3840fc` composes at
+`d7526d4dcd7f41be1b8d4c95d640da061088517c`; review-findings documentation
+`44afb232f2b8418c0b61eec7d1dab46bbe8e3667` composes at
+`f08c5f2e35befb5e533ef4bb80a4b342dc5ffa46`; lint follow-up
+`1f13f9ae04ee3307d13a363ed28b156d7ee2421f` produces exact fully composed
+local-gate precursor `a8f61794ee5e279558856220b5789526b908015a`.
+Exact Rust 1.94.1 formatting, warnings-denied workspace Clippy, 598 non-
+documentation tests plus two doctests, 25 private native tests, 40 direct
+`grep_files` tests, four engine tests, and diff checks are green. Exact a8f
+cross-target/dependency/link and compatibility/release validators are green.
+The exact replacement rereview candidate and all three rereviews,
+exact behavior SHA with all tracks green, documentation seal, feature workflows,
+integrated `main`, and exact `main` workflows remain **PENDING**.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal
@@ -224,10 +233,11 @@ not split, counted, or allocated again per entry. The aggregate include-work
 meter charges the complete once-per-call parse/compile work as well as every
 per-candidate basename or path match operation, including candidate splitting,
 dynamic-programming cells, and segment transitions. Slashful candidate
-splitting checks cancellation at least every 1,024 candidate bytes, and both
-recursive and non-recursive dynamic-programming branches retain cancellation
-checks. Checked overflow or the first unit beyond the include-work cap fails the
-complete call.
+splitting checks cancellation at least every 1,024 candidate bytes. Recursive
+and non-recursive dynamic-programming branches route their checks through the
+same scan-local cancellation interface, including deterministic injected-
+checker evidence for each branch. Checked overflow or the first unit beyond the
+include-work cap fails the complete call.
 
 Preflight is deterministic, synchronous, bounded, nonblocking, and effect-free.
 It performs only strict decoding, range validation, and lexical normalization.
@@ -358,8 +368,8 @@ search root. It filters files only and never prunes directory traversal. Its
 single compile plus every invocation charge the aggregate delivered glob-
 matcher work budget completely. Candidate path splitting checks cancellation
 at intervals of at most 1,024 candidate bytes, including inputs that ultimately
-fail to match, and both recursive and non-recursive dynamic-programming branches
-remain cancellation-checked.
+fail to match. Both recursive and non-recursive dynamic-programming branches
+route through the scan-local cancellation checker.
 
 Hidden files are included. No ignore file, Git repository state, subprocess,
 shell, external path, home expansion, or ambient environment participates.
@@ -386,6 +396,15 @@ path, depth, include-work, or content-work cap fails every mode without partial
 structured output. An output `truncated` flag never represents incomplete
 scanning.
 
+One content buffer belongs to one scan and is never shared between concurrent
+or reentrant scans. Each file begins with a logical length of zero, reads through
+an 8 KiB window, and reuses the same allocation at its prior high-water mark.
+Initialized storage length grows only as observed bytes require and never beyond
+204,801 bytes: the 204,800-byte eligible-file ceiling plus one overflow witness.
+Logical reset prevents stale bytes from entering a later file view. Actual bytes read,
+including the per-file overflow witness and the first aggregate-overflow
+witness, remain charged to the aggregate content counter exactly as before.
+
 The two list modes retain at most the requested `head_limit`, never more than
 100 mode records, after discarding the first `offset` logical results from the
 deterministic result stream. Across returned records, raw path bytes are at
@@ -401,8 +420,9 @@ matched substring; `excerpt_start_byte` identifies that window in source-line
 bytes and `line_truncated` is true. The equality between maximum pattern and
 line-result bytes makes the complete first match representable.
 
-Context is extracted from the same validated per-file buffer that produced the
-match. There is no second open or race-prone reread. A context line record is
+Context is extracted from the same validated per-file view of the scan-local
+reusable buffer that produced the match. There is no second open or race-prone
+reread. A context line record is
 the complete line when it fits, otherwise its longest UTF-8-safe prefix of at
 most 4,096 bytes with `line_truncated: true`.
 
@@ -556,8 +576,10 @@ File contents are not an atomic snapshot. Concurrent writes, growth, shrink,
 or replacement before open can affect observed bytes; the opened descriptor
 still cannot be redirected afterward. The size sentinel and aggregate read
 budget prevent growth from becoming an unbounded read. Context and matching
-derive from the same retained buffer, so they agree with each other even though
-that buffer is not a filesystem snapshot.
+derive from the same validated logical file view, so they agree with each other
+even though the scan-local allocation is reused afterward and is not a
+filesystem snapshot. Retained result strings own their bytes independently of
+that later reuse.
 
 A stable tree and stable file bytes produce deterministic traversal, totals,
 pagination, excerpts, and context. A concurrent scan is not a multi-file or
@@ -606,16 +628,17 @@ include/content matching, and line-index construction, before every serialized-
 size trimming reconstruction/serialization attempt, and immediately before
 return. Slashful selected-file rejection has its own charged cancellation check;
 slashful candidate splitting checks at intervals of at most 1,024 candidate
-bytes; and both recursive and non-recursive dynamic-programming branches check
-cancellation. The fixed byte-processing interval is at most 1,024 source or
-candidate bytes; directory-entry loops retain their per-entry checks, and every
+bytes; and both recursive and non-recursive dynamic-programming branches route
+through the scan-local cancellation checker. The fixed byte-processing interval
+is at most 1,024 source or candidate bytes; directory-entry loops retain their
+per-entry checks, and every
 output-trimming iteration begins with a check. Cancellation cannot preempt one
 syscall already in flight.
 
 No task, thread, process, timer, cache, indexer, or producer is detached.
 Dropping an unpolled future performs no filesystem work. Dropping after work
-has begun releases every owned per-call descriptor and buffer and publishes no
-partial result.
+has begun releases every owned per-call descriptor and the one scan-local
+content buffer and publishes no partial result.
 
 ## Pinned upstream input and deliberate differences
 

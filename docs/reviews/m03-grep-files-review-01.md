@@ -1,9 +1,10 @@
 # Milestone 03 native `grep_files` review 01
 
 Status: **IN PROGRESS — formal second replacement candidate
-`5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
-filesystem/robustness green with zero findings; performance/concurrency is not
-green, and remediation plus rereview and delivery remain pending**
+`5aeddc1b4cb210b00cb967b938db8d5232062916` is historically not green; third
+remediation and exact local gates are green at precursor
+`a8f61794ee5e279558856220b5789526b908015a`, while exact replacement rereview
+and delivery remain pending**
 
 ## Candidate lineage
 
@@ -77,9 +78,23 @@ green, and remediation plus rereview and delivery remain pending**
   findings** on exact `5aeddc1`
 - Second replacement performance/concurrency review: **NOT GREEN — one MEDIUM
   and two LOW findings** on exact `5aeddc1`
-- Third production remediation: **PENDING**
-- Independent-test remediation: **PENDING**
-- Documentation remediation composition: **PENDING**
+- Third production remediation:
+  `8777825b1b8b8c97dd4eb4bb31c0d8dbed9a7741`
+- Composed third production remediation head:
+  `ab1c13385a475ac34e8df2180e8c4cbb3b0ee3e9`
+- Independent-test remediation:
+  `dcf57ad35150b86c84a3f6c1127d9e379f3840fc`
+- Composed production-and-test remediation head:
+  `d7526d4dcd7f41be1b8d4c95d640da061088517c`
+- Review-findings documentation remediation:
+  `44afb232f2b8418c0b61eec7d1dab46bbe8e3667`
+- Composed production, test, and documentation remediation head:
+  `f08c5f2e35befb5e533ef4bb80a4b342dc5ffa46`
+- Exact-toolchain lint follow-up:
+  `1f13f9ae04ee3307d13a363ed28b156d7ee2421f`
+- Fully composed third-remediation local-gate precursor:
+  `a8f61794ee5e279558856220b5789526b908015a`
+- Third-remediation local gates: **GREEN** on exact `a8f6179`
 - Exact replacement rereview candidate SHA: **PENDING**
 - Replacement correctness/API rereview SHA: **PENDING**
 - Replacement security/filesystem-robustness rereview SHA: **PENDING**
@@ -106,6 +121,13 @@ documentation remediation `7ad0863` composes with it at fully composed exact
 local-gate precursor `b498ba0`. Formal second replacement candidate `5aeddc1`
 has correctness/API and filesystem/robustness green with zero findings, while
 performance/concurrency is not green with one medium and two low findings.
+Third production remediation `8777825` composes at `ab1c133`; independent
+regression `dcf57ad` composes at `d7526d4`; review-findings documentation
+`44afb23` composes at `f08c5f2`; and exact-toolchain lint follow-up `1f13f9a`
+produces fully composed local-gate precursor `a8f6179`. Its exact local,
+cross-target, dependency, link, compatibility, release, and CLI-smoke gates are
+green. The exact replacement rereview candidate and its three reviews remain
+pending.
 Every listed identifier was observed directly; no production/test/documentation
 remediation, replacement rereview, behavior-green, seal, or workflow identifier
 may be inferred from a branch tip, tree identity, or another component.
@@ -165,10 +187,16 @@ complete.
   more than 204,800 bytes, valid UTF-8, and NUL-free. Oversized and non-text
   files are skipped with disclosed aggregate statistics. Other candidate
   failures fail the whole call.
-- Context is taken from the same validated file buffer. Match excerpts are
-  UTF-8-safe, at most 4,096 bytes, and contain the complete first match. Context
-  records are complete bounded prefixes; `context_truncated` separates omitted
-  requested context from top-level page truncation.
+- One content buffer is local to one scan, reads through an 8 KiB window, grows
+  only as observed bytes require up to the 204,801-byte file-plus-witness cap,
+  and logically resets between files. Reentrant scans do not share it, reset
+  exposes no stale bytes, and actual per-file and aggregate overflow witnesses
+  remain charged.
+- Context is taken from the same validated logical file view of that reusable
+  buffer. Match excerpts are UTF-8-safe, at most 4,096 bytes, and contain the
+  complete first match. Retained output owns its bytes before buffer reuse.
+  Context records are complete bounded prefixes; `context_truncated` separates
+  omitted requested context from top-level page truncation.
 - `matches`, `files_with_matches`, and `count` return the exact structured
   shapes in the normative contract. Matching totals remain exact for eligible
   text after a complete bounded scan. Both list modes implement exact bounded
@@ -187,9 +215,9 @@ complete.
   cancellation around every authority-bearing operation, at fixed intervals
   through line indexing and matching, and before every serialization-trimming
   attempt. Slashful candidate splitting checks at most every 1,024 candidate
-  bytes, and both recursive and non-recursive dynamic-programming branches
-  retain cancellation checks. Execution owns all descriptors/buffers and
-  detaches nothing.
+  bytes, and both recursive and non-recursive dynamic-programming branches route
+  through the injectable scan-local cancellation checker. Execution owns all
+  descriptors and its one content buffer and detaches nothing.
 - Fixed constructor/tool errors retain and reflect no path, pattern, include,
   entry name, file bytes, match, metadata, OS diagnostic, or errno. Successful
   excerpts and paths are intentionally model-visible durable data.
@@ -235,9 +263,10 @@ record.
   evidence must additionally prove the charged, cancellation-checked slashful
   selected-file rejection plus at-most-1,024-byte cancellation intervals while
   splitting slashful candidates and through both dynamic-programming branches.
-  Recursive-branch proof requires injected-checker routing and a deterministic
-  recursive regression; exact candidate `5aeddc1` does not yet supply that
-  evidence. These deterministic seams replace flaky sleep-based race tests.
+  Exact candidate `5aeddc1` did not supply recursive-branch proof. Third
+  production remediation `8777825` routes the recursive branch through the
+  injected checker and supplies a deterministic recursive regression. These
+  deterministic seams replace flaky sleep-based race tests.
 - The dedicated `grep_files_unsupported` integration target compiles for
   `wasm32-wasip1` with its constructor test active rather than cfg-elided. It
   exercises the reachable public boundary: `GrepFilesTool::open` returns the
@@ -319,10 +348,43 @@ Fully composed second-fix local-gate precursor
   links with zero missing; second-fix diff checks pass with a clean exact-SHA
   worktree.
 
-These local results are second-fix precursor evidence, not remote-delivery
-evidence. First replacement candidate `ae87bf1` remains historically NOT GREEN.
-Formal second replacement candidate `5aeddc1` is not green because its
-performance/concurrency review confirmed one medium and two low findings.
+Fully composed third-remediation local-gate precursor
+`a8f61794ee5e279558856220b5789526b908015a` is green under Rust and Cargo
+1.94.1 exactly:
+
+- formatting and workspace/all-target/all-feature warnings-denied Clippy pass;
+- the combined workspace gate passes 598 non-documentation tests plus two
+  doctests, the private `grep_files` gate passes 25/25, the direct integration
+  gate passes 40/40, and four real-engine tests pass;
+- the repository Python gate discovers two files and runs 129 tests: 121 pass
+  and eight expected macOS skips, with zero failures or errors;
+- a fresh credential-stripped upstream fx checkout at
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` passes
+  `generate_compatibility.py --check`;
+- a clean locked release CLI build passes and produces an arm64 Mach-O binary
+  with SHA-256
+  `e4d4246b501c524121d1f4af270a662f11e96b33dd4cb8c8bc1be40142a5ebe0`; all
+  eight bare, help, version, status, and JSON-status forms exit zero with byte-
+  exact stdout, empty stderr, and no config or state creation;
+- cargo-deny 0.19.9 passes with only the accepted `syn` and `windows-sys`
+  duplicate warnings; cargo-audit 0.22.2 checks 1,225 cached advisories over 175
+  dependencies with zero findings under `--no-fetch`;
+- Linux and FreeBSD no-default native Clippy pass with warnings denied; WASI
+  no-default and all-feature checks pass with only the pre-existing
+  `read_file::check_cancellation` dead-code warning; the dedicated unsupported-
+  target test compiles to a 12,789,126-byte active WASI artifact containing its
+  exact test, closure, private sentinel, fixed diagnostics, and harness `main`;
+  and
+- 58 Markdown files contain 420 inline links, including 270 repository-relative
+  links with zero missing; all remediation and whole-lineage diff checks pass
+  in an exact detached clean worktree.
+
+These local results are third-remediation precursor evidence, not remote-
+delivery evidence. First replacement candidate `ae87bf1` remains historically
+NOT GREEN. Formal second replacement candidate `5aeddc1` remains historically
+not green because its performance/concurrency review confirmed one medium and
+two low findings. The remediation does not become review-green until all three
+replacement tracks approve one later exact behavior SHA.
 
 ## Explicit nonclaims
 
@@ -341,7 +403,7 @@ Every confirmed production fix and required regression/evidence item below is
 implemented in the recorded remediation lineage and locally green at exact
 `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. The track headings preserve the
 historical first-cycle verdicts; formal closure still requires all three
-second replacement reviewers to approve one exact behavior SHA.
+replacement reviewers to approve one exact behavior SHA.
 
 ### Correctness/API track — NOT GREEN
 
@@ -471,19 +533,29 @@ zero findings on the security/filesystem-robustness track.
   accumulated approximately 2,048,010,000 allocated bytes and observed 6.10
   seconds. The allocation total demonstrates amplification; the observed time
   is diagnostic only and is not a contractual timing or product-performance
-  result. Production remediation is **PENDING**.
+  result. Third production remediation `8777825` creates one scan-local buffer,
+  reads through an 8 KiB window, grows only as observed bytes require up to the
+  204,801-byte high-water cap, and logically resets it between files. It retains
+  exact file and aggregate overflow-witness accounting, isolates reentrant
+  scans, and composes at `ab1c133`. Private tests cover empty reuse, maximum-to-
+  empty/tiny stale-byte exclusion, interrupt/error/cancellation semantics, and
+  reentrant isolation; independent regression `dcf57ad`, composed at `d7526d4`,
+  covers one maximum file followed by many empty and tiny files.
 - **LOW — confirmed:** the second-fix local-gate record reported 57 Markdown
   files, but the measured inventory is 58. This record corrects the count;
-  documentation remediation composition is **PENDING**.
+  review-findings documentation `44afb23` composes at `f08c5f2`.
 - **LOW — confirmed:** the first replacement resolution claimed deterministic
   checker regressions for both dynamic-programming branches, but the recursive
-  branch does not route through the injected checker. Remediation requires
-  injected-checker routing and a deterministic recursive regression; the
-  production/test remediation is **PENDING**, and this record does not preclaim
-  that regression exists.
+  branch did not route through the injected checker. Third production
+  remediation `8777825` routes both branches through one injectable checker and
+  adds the deterministic recursive regression. Exact-toolchain lint follow-up
+  `1f13f9a` preserves that evidence under warnings-denied Clippy.
 
-Production, independent-test, and documentation remediation, the exact
-replacement rereview candidate and all three replacement rereviews,
+Production, independent-test, review-findings documentation, and lint
+remediation compose through `ab1c133`, `d7526d4`, `f08c5f2`, and exact fully
+composed local-gate precursor `a8f6179`. Its exact local, cross-target,
+dependency, link, compatibility, release, and CLI-smoke gates are green. The
+exact replacement rereview candidate and all three replacement rereviews,
 behavior-green SHA, documentation seal, and remote delivery evidence remain
 **PENDING**. Once one exact replacement behavior SHA is green across all three
 tracks, a later documentation-only seal or final delivery record needs no

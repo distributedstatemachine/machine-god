@@ -521,11 +521,13 @@ selected-file include filtering before content open, stable-special skipping and
 raced-special opened-type rejection, fixed literal pattern-table work before
 root resolution, once-per-call fully metered include compilation, regular-file
 eligibility, a worst-case-linear literal matcher with ASCII-only folding,
-same-buffer context, complete scan/work/output budgets,
+one scan-local content buffer using an 8 KiB read window and a logical-reset
+204,801-byte high-water ceiling, same-buffer context, complete scan/work/output budgets,
 reusable 64 MiB-bounded offsets, fixed redacted errors, and fixed cancellation
 checks through line indexing and serialization trimming. Slashful selected-file
 rejection is charged and cancellation-checked; slashful candidate splitting and
-both dynamic-programming branches retain fixed cancellation checks. Its
+both dynamic-programming branches route through injectable fixed cancellation
+checks. Its
 `matches`, `files_with_matches`, and `count` shapes echo the canonical request,
 return exact eligible-text totals plus candidate/search/skip statistics, and
 remain under an independent 48 KiB complete serialized `ToolOutput` cap. Core
@@ -548,10 +550,16 @@ through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
 `b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
 and filesystem/robustness **GREEN** with zero findings and
 performance/concurrency **NOT GREEN** with one medium allocation-amplification
-finding and two low documentation/evidence findings. Production,
-independent-test, and documentation remediation, exact replacement rereviews,
-behavior-green SHA, seal, and remote delivery evidence remain **PENDING**;
-compatibility and release smoke evidence are green on exact b498. Maintained behavior
+finding and two low documentation/evidence findings. Third production
+remediation `8777825` composes at `ab1c133`; independent regression `dcf57ad`
+composes at `d7526d4`; review-findings documentation `44afb23` composes at
+`f08c5f2`; lint follow-up `1f13f9a` produces exact fully composed local-gate
+precursor `a8f6179`. Exact Rust 1.94.1 formatting, warnings-denied workspace
+Clippy, 598 non-documentation tests plus two doctests, 25 private native tests,
+40 direct `grep_files` tests, four engine tests, and diff checks are green.
+Exact a8f cross-target/dependency/link and compatibility/release validators are
+green. Exact replacement rereviews, behavior-green SHA, seal, and remote
+delivery evidence remain **PENDING**. Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
 later documentation-only seal or delivery record is exempt from another
 adversarial cycle under the user's instruction but still requires exact feature

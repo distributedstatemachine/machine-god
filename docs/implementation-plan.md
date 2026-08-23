@@ -580,9 +580,13 @@ candidate is eligible text only when its complete observed content is at most
 204,800 bytes, valid UTF-8, and NUL-free. Oversized and non-text candidates are
 skipped with disclosed aggregate statistics; other candidate failures fail the
 complete call. Match excerpts are UTF-8-safe, at most 4,096 bytes, and contain
-the complete first matched substring. Requested before/after context comes
-from the same validated buffer, and per-record `context_truncated` distinguishes
-budgeted context omission from top-level page incompleteness.
+the complete first matched substring. One scan-local content buffer reads
+through an 8 KiB window, grows only to the 204,801-byte per-file high-water
+ceiling, and logically resets for reuse between files without exposing stale
+bytes. Actual aggregate and per-file overflow witnesses remain charged.
+Requested before/after context comes from the same validated logical file view,
+and per-record `context_truncated` distinguishes budgeted context omission from
+top-level page incompleteness.
 
 Each mode either completes the same bounded scan or fails without partial
 output under exact 4,096-byte input/path limits, head 100, offset 67,108,864,
@@ -597,7 +601,7 @@ text matching-line/file totals without pagination fields. Every emitted
 fixed intervals while indexing lines and at every serialized-output trimming
 iteration. Slashful candidate splitting checks at intervals of at most 1,024
 candidate bytes, and both recursive and non-recursive dynamic-programming
-branches retain cancellation checks.
+branches route through the scan-local injectable cancellation checker.
 
 The candidate extends reference-host composition to exactly five alphabetical
 workspace tools: `file_info`, `glob_files`, `grep_files`, `list_files`, and
@@ -635,13 +639,21 @@ candidate `5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
 filesystem/robustness **GREEN** with zero findings. Performance/concurrency is
 **NOT GREEN** with one medium repeated 204,801-byte buffer-allocation
 amplification finding and two low findings: the Markdown inventory is 58 rather
-than 57 files, and deterministic recursive-DP evidence was overclaimed.
-Recursive evidence remediation requires injected-checker routing and a
-deterministic recursive regression. Production, independent-test, and
-documentation remediation, the exact replacement rereview candidate and all
-three rereviews, behavior-green SHA, documentation seal, and feature/`main`
-delivery SHAs or runs remain **PENDING**. Compatibility and release smoke
-evidence are green on exact b498.
+than 57 files, and deterministic recursive-DP evidence was overclaimed. The
+third remediation supplies injected-checker routing and a deterministic
+recursive regression. Third production remediation
+`8777825b1b8b8c97dd4eb4bb31c0d8dbed9a7741` composes at `ab1c133`; independent
+regression `dcf57ad35150b86c84a3f6c1127d9e379f3840fc` composes at `d7526d4`;
+review-findings documentation `44afb232f2b8418c0b61eec7d1dab46bbe8e3667`
+composes at `f08c5f2`; lint follow-up `1f13f9ae04ee3307d13a363ed28b156d7ee2421f`
+produces exact fully composed local-gate precursor
+`a8f61794ee5e279558856220b5789526b908015a`. Exact Rust 1.94.1 formatting,
+warnings-denied workspace Clippy, 598 non-documentation tests plus two doctests,
+25 private native tests, 40 direct `grep_files` tests, four engine tests, and
+diff checks are green. Exact a8f cross-target/dependency/link and compatibility/
+release validators are green. The exact replacement rereview candidate and
+all three rereviews, behavior-green SHA, documentation seal, and feature/`main`
+delivery SHAs or runs remain **PENDING**.
 The maintained documentation must compose into the
 exact behavior SHA reviewed by all three adversarial tracks. A later
 documentation-only seal or delivery record is exempt from another adversarial
@@ -754,10 +766,15 @@ gate:
   replacement candidate `5aeddc1` has correctness/API and
   filesystem/robustness **GREEN** with zero findings and performance/concurrency
   **NOT GREEN** with one medium allocation-amplification finding and two low
-  documentation/evidence findings. Production, independent-test, and
-  documentation remediation, exact replacement rereviews, behavior-green SHA,
-  seal, feature, integration, and `main` evidence remain **PENDING**;
-  compatibility and release smoke evidence are green on exact b498. The
+  documentation/evidence findings. Third remediation composes through
+  `8777825`, `ab1c133`, `dcf57ad`, `d7526d4`, `44afb23`, `f08c5f2`, and
+  `1f13f9a` at exact fully composed local-gate precursor `a8f6179`. Exact Rust
+  1.94.1 formatting, warnings-denied workspace Clippy, 598 non-documentation
+  tests plus two doctests, 25 private native tests, 40 direct tests, four engine
+  tests, and diff checks are green. Exact a8f cross-target/dependency/link and
+  compatibility/release validators are green. Exact replacement rereviews,
+  behavior-green SHA, seal, feature, integration, and `main` evidence remain
+  **PENDING**. The
   remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

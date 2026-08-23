@@ -250,11 +250,16 @@ green precursor `b498ba0`. `ae87bf1` remains historically **NOT GREEN**.
 Formal second replacement candidate `5aeddc1` has correctness/API and
 filesystem/robustness **GREEN** with zero findings; performance/concurrency is
 **NOT GREEN** with one medium allocation-amplification finding and two low
-documentation/evidence findings. Production, independent-test, and
-documentation remediation, the exact replacement rereview candidate and all
-three rereviews, behavior-green SHA, seal, and remote delivery evidence remain
-**PENDING**. Exact b498 compatibility, Python, clean locked release-build, and
-eight CLI smoke gates are green.
+documentation/evidence findings. Third production remediation `8777825`
+composes at `ab1c133`; independent regression `dcf57ad` composes at `d7526d4`;
+review-findings documentation `44afb23` composes at `f08c5f2`; lint follow-up
+`1f13f9a` produces exact fully composed local-gate precursor `a8f6179`. Exact
+Rust 1.94.1 formatting, warnings-denied workspace Clippy, 598 non-documentation
+tests plus two doctests, 25 private native tests, 40 direct `grep_files` tests,
+four engine tests, and diff checks are green on that precursor. Exact a8f
+cross-target/dependency/link and compatibility/release validators are green.
+The exact replacement rereview candidate and all three rereviews,
+behavior-green SHA, seal, and remote delivery evidence remain **PENDING**.
 Strict effect-free preflight accepts exactly `pattern`, `path`, `include`,
 `case_insensitive`, `mode`, `head_limit`,
 `offset`, and `context_lines`, makes every default explicit, and prepares
@@ -267,9 +272,14 @@ selected-file rejection is charged and cancellation-checked; slashful candidate
 splitting and both dynamic-programming branches retain fixed cancellation
 checks. Allowed execution performs a bounded linear literal search with
 optional ASCII case folding over eligible UTF-8 no-follow regular files reached
-through the retained descriptor. It reports exact matching and eligible-text
-statistics in bounded `matches`, `files_with_matches`, or `count` results, with
-same-buffer context and fixed redacted errors. Candidate composition extends
+through the retained descriptor. One scan-local content buffer reads through an
+8 KiB window, grows only to a 204,801-byte high-water ceiling, and logically
+resets for reuse between files while preserving per-file and aggregate overflow
+witnesses. Recursive and non-recursive include matching use injectable
+cancellation checks with deterministic coverage. The tool reports exact
+matching and eligible-text statistics in bounded `matches`,
+`files_with_matches`, or `count` results, with same-buffer context and fixed
+redacted errors. Candidate composition extends
 the host to exactly five alphabetical tools—`file_info`, `glob_files`,
 `grep_files`, `list_files`, and `read_file`—using the original retained
 workspace descriptor plus four clones. It adds no CLI byte, benchmark workload,

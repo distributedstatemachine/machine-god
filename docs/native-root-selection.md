@@ -74,10 +74,16 @@ documentation compose through `ac5d772`, `d672210`, `7ad0863`, and exact local-
 gate-green precursor `b498ba0`. Formal second replacement candidate `5aeddc1`
 has correctness/API and filesystem/robustness **GREEN** with zero findings and
 performance/concurrency **NOT GREEN** with one medium allocation-amplification
-finding and two low documentation/evidence findings. Production,
-independent-test, and documentation remediation, exact replacement rereviews,
-behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
-and release smoke evidence are green on exact b498.
+finding and two low documentation/evidence findings. Third production
+remediation `8777825` composes at `ab1c133`; independent regression `dcf57ad`
+composes at `d7526d4`; review-findings documentation `44afb23` composes at
+`f08c5f2`; lint follow-up `1f13f9a` produces exact fully composed local-gate
+precursor `a8f6179`. Exact Rust 1.94.1 formatting, warnings-denied workspace
+Clippy, 598 non-documentation tests plus two doctests, 25 private native tests,
+40 direct `grep_files` tests, four engine tests, cross-target/dependency/link
+validation, and diff checks are green. Compatibility/release validation is
+green. Exact replacement rereviews, behavior-green SHA, seal, and remote
+delivery remain **PENDING**.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host

@@ -240,11 +240,22 @@ buffer, yielding approximately 2,048,010,000 cumulative allocated bytes for
 a contractual timing or product-performance result. Two low findings correct
 the Markdown inventory from 57 to 58 files and identify an overclaim that the
 recursive dynamic-programming branch already has deterministic evidence.
-Remediation requires injected-checker routing and a deterministic recursive
-regression; it is pending. Production, independent-test, and documentation
-remediation, exact replacement rereviews, behavior-green SHA, seal, and remote
-delivery remain **PENDING**; compatibility and release smoke evidence are green
-on exact b498. The corrected behavior contract requires cancellation-aware
+Third production remediation `8777825` composes at `ab1c133`; independent
+regression `dcf57ad` composes at `d7526d4`; review-findings documentation
+`44afb23` composes at `f08c5f2`; lint follow-up `1f13f9a` produces exact fully
+composed local-gate precursor `a8f6179`. One scan-local content buffer reads
+through an 8 KiB window, grows only as far as its 204,801-byte high-water cap,
+and logically resets for reuse between files. This removes per-file maximum-
+buffer allocation while preserving per-file and aggregate overflow witnesses;
+it is a bounded design fact, not a measured product-performance result. Both
+dynamic-programming branches now route through injectable cancellation checks,
+with deterministic recursive and non-recursive regressions. Exact Rust 1.94.1
+formatting, warnings-denied workspace Clippy, 598 non-documentation tests plus
+two doctests, 25 private native tests, 40 direct `grep_files` tests, four engine
+tests, cross-target/dependency/link validation, and diff checks are green.
+Compatibility/release validation is green. Exact replacement rereviews,
+behavior-green SHA, seal, and remote delivery remain **PENDING**. The corrected
+behavior contract requires cancellation-aware
 slashful candidate splitting at intervals of at most 1,024 bytes, checks in
 both dynamic-programming branches, and one charged cancellation-checked
 slashful selected-file rejection.

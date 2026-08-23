@@ -20,9 +20,15 @@ and exact local-gate-green precursor `b498ba0`. Formal second replacement
 candidate `5aeddc1` has correctness/API and filesystem/robustness **GREEN** with
 zero findings and performance/concurrency **NOT GREEN** with one medium
 allocation-amplification finding and two low documentation/evidence findings.
-Production, independent-test, and documentation remediation, exact replacement
-rereviews, behavior-green SHA, seal, and remote delivery remain **PENDING**;
-compatibility and release smoke evidence are green on exact b498.
+Third production remediation `8777825` composes at `ab1c133`; independent
+regression `dcf57ad` composes at `d7526d4`; review-findings documentation
+`44afb23` composes at `f08c5f2`; lint follow-up `1f13f9a` produces exact fully
+composed local-gate precursor `a8f6179`. Exact Rust 1.94.1 formatting,
+warnings-denied workspace Clippy, 598 non-documentation tests plus two doctests,
+25 private native tests, 40 direct `grep_files` tests, four engine tests, and
+diff checks are green. Exact a8f cross-target/dependency/link validation is
+green; compatibility/release validation is green. Exact replacement
+rereviews, behavior-green SHA, seal, and remote delivery remain **PENDING**.
 Eighteenth-slice
 production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
@@ -151,6 +157,8 @@ The nineteenth candidate adds `grep_files` beside those four delivered tools.
 It prepares the distinct `FilesystemAccess::SearchContent` capability at the
 normalized selected file or subtree, performs a complete bounded literal
 search through descriptor-relative no-follow regular-file-only traversal, and
+reuses one scan-local, 8 KiB-window content buffer whose logical file view resets
+between files and whose high-water storage cannot exceed 204,801 bytes. It
 returns exact eligible-text statistics with bounded structured match, file, or
 count results. Its frozen candidate contract is
 [`grep-files.md`](grep-files.md); its green local evidence and remaining formal-
@@ -544,10 +552,17 @@ across all three tracks. Second-fix production and documentation compose through
 `b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
 and filesystem/robustness **GREEN** with zero findings and
 performance/concurrency **NOT GREEN** with one medium allocation-amplification
-finding and two low documentation/evidence findings. Production,
-independent-test, and documentation remediation, exact replacement rereviews,
-behavior-green SHA, seal, and feature and `main` workflows remain **PENDING**;
-compatibility and release smoke evidence are green on exact b498.
+finding and two low documentation/evidence findings. Third remediation composes
+through `8777825`, `ab1c133`, `dcf57ad`, `d7526d4`, `44afb23`, `f08c5f2`, and
+`1f13f9a` at exact fully composed local-gate precursor `a8f6179`. Its scan-local
+content buffer reads through an 8 KiB window, grows only to a 204,801-byte high-
+water ceiling, and logically resets for reuse between files; both dynamic-
+programming branches route through injectable cancellation checks. Exact Rust
+1.94.1 formatting, warnings-denied workspace Clippy, 598 non-documentation tests
+plus two doctests, 25 private native tests, 40 direct tests, four engine tests,
+cross-target/dependency/link validation, and diff checks are green.
+Compatibility/release validation is green. Exact replacement rereviews,
+behavior-green SHA, seal, and feature and `main` workflows remain **PENDING**.
 The combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the

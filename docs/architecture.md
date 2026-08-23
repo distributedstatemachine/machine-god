@@ -213,16 +213,27 @@ historically **NOT GREEN**. Formal second replacement candidate `5aeddc1` has
 correctness/API and filesystem/robustness **GREEN** with zero findings;
 performance/concurrency is **NOT GREEN** with one medium repeated-buffer-
 allocation amplification finding and two low documentation/evidence findings.
-Production, independent-test, and documentation remediation, the exact
-replacement rereview candidate and all three rereviews, behavior-green SHA,
-seal, and remote delivery evidence remain **PENDING**. Exact b498 compatibility,
-Python, clean locked release-build, and eight CLI smoke gates are green.
+Third production remediation `8777825` composes at `ab1c133`; independent
+regression `dcf57ad` composes at `d7526d4`; review-findings documentation
+`44afb23` composes at `f08c5f2`; lint follow-up `1f13f9a` produces exact fully
+composed local-gate precursor `a8f6179`. Exact Rust 1.94.1 formatting,
+warnings-denied workspace Clippy, 598 non-documentation tests plus two doctests,
+25 private native tests, 40 direct `grep_files` tests, four engine tests, and
+diff checks are green. Exact a8f cross-target/dependency/link and compatibility/
+release validators are green. The exact replacement rereview candidate,
+all three rereviews, behavior-green SHA, seal, and remote delivery evidence
+remain **PENDING**.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
 follow traversal, searches only bounded eligible UTF-8 regular files with a
-linear literal matcher and ASCII-only folding, and returns one of three exact
-structured result modes with disclosed skip/scan totals. Same-buffer context,
+linear literal matcher and ASCII-only folding. One scan-local content buffer
+reads through an 8 KiB window, grows only to a 204,801-byte high-water ceiling,
+and logically resets between files without exposing stale bytes; per-file and
+aggregate overflow witnesses remain charged. Recursive and non-recursive
+include matching route through injectable cancellation checks. Execution
+returns one of three exact structured result modes with disclosed skip/scan
+totals. Same-buffer context,
 aggregate traversal/content/matcher/output budgets, fixed redacted errors, and
 cancellation/race semantics are normative in
 [`grep-files.md`](grep-files.md). The composed host candidate has exactly five
@@ -488,10 +499,14 @@ through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
 `b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
 and filesystem/robustness **GREEN** with zero findings and
 performance/concurrency **NOT GREEN** with one medium allocation-amplification
-finding and two low documentation/evidence findings. Production,
-independent-test, and documentation remediation, exact replacement rereviews,
-behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
-and release smoke evidence are green on exact b498.
+finding and two low documentation/evidence findings. Third remediation composes
+through `8777825`, `ab1c133`, `dcf57ad`, `d7526d4`, `44afb23`, `f08c5f2`, and
+`1f13f9a` at exact fully composed local-gate precursor `a8f6179`. Exact Rust
+1.94.1 formatting, warnings-denied workspace Clippy, 598 non-documentation tests
+plus two doctests, 25 private native tests, 40 direct tests, four engine tests,
+and diff checks are green. Exact a8f cross-target/dependency/link and
+compatibility/release validators are green. Exact replacement rereviews,
+behavior-green SHA, seal, and remote delivery remain **PENDING**.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

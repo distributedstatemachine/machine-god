@@ -176,10 +176,16 @@ through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
 `b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
 and filesystem/robustness **GREEN** with zero findings and
 performance/concurrency **NOT GREEN** with one medium allocation-amplification
-finding and two low documentation/evidence findings. Production,
-independent-test, and documentation remediation, exact replacement rereviews,
-behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
-and release smoke evidence are green on exact b498. Its strict preflight
+finding and two low documentation/evidence findings. Third production
+remediation `8777825` composes at `ab1c133`; independent regression `dcf57ad`
+composes at `d7526d4`; review-findings documentation `44afb23` composes at
+`f08c5f2`; lint follow-up `1f13f9a` produces exact fully composed local-gate
+precursor `a8f6179`. Exact Rust 1.94.1 formatting, warnings-denied workspace
+Clippy, 598 non-documentation tests plus two doctests, 25 private native tests,
+40 direct `grep_files` tests, four engine tests, cross-target/dependency/link
+validation, and diff checks are green. Compatibility/release validation is
+green. Exact replacement rereviews, behavior-green SHA, seal, and remote
+delivery remain **PENDING**. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
 relative no-follow regular-file-only traversal, bounded eligible UTF-8 content
@@ -833,8 +839,8 @@ checked include decision. An excluded selected file consumes that fixed literal
 and include work but no candidate, content-byte, or per-file matching work; an
 included file opens and is revalidated before those latter budgets. Slashful
 candidate splitting checks cancellation at least every 1,024 candidate bytes,
-and both recursive and non-recursive dynamic-programming branches retain
-cancellation checks.
+and both recursive and non-recursive dynamic-programming branches route through
+the scan-local injectable cancellation checker.
 
 Regular content is accepted only after the complete observed file is no more
 than 204,800 bytes, valid UTF-8, and NUL-free. Initial or sentinel-observed
@@ -846,8 +852,17 @@ compile/match work, and literal matcher work all have checked exact caps. The
 literal engine is worst-case linear and folds ASCII only when requested,
 preventing pattern-length multiplication from becoming unmetered work.
 
-Matching and requested context derive from one validated buffer. No path-based
-context reopen can redirect content or observe a second file identity. UTF-8-
+One content buffer is local to one scan. It reads through an 8 KiB window,
+grows only as observed bytes require up to the 204,801-byte file-plus-witness
+ceiling, and logically resets between files. Concurrent and reentrant scans do
+not share it. Reset prevents stale bytes from entering the next logical file;
+actual per-file and aggregate overflow witnesses remain retained in the checked
+content budget.
+
+Matching and requested context derive from one validated logical file view of
+that reusable buffer. No path-based context reopen can redirect content or
+observe a second file identity. Retained output strings own their bytes before
+the buffer is reset. UTF-8-
 safe bounded excerpts contain the complete first match, and bounded context
 records distinguish line clipping from omitted requested context. Aggregate
 path/text and complete serialized-output caps limit retained and escaped data.
@@ -869,8 +884,9 @@ The future is inert before first poll and detaches nothing. Cancellation is
 checked around root liveness, every directory/file authority operation and
 bounded read, at fixed intervals through include compilation, matching, and line
 indexing, before every serialization-trimming attempt, and immediately before
-return. It cannot preempt one syscall already in flight. Drop closes every owned
-descriptor and buffer.
+return. Recursive and non-recursive include matching use the same injectable
+checker. Cancellation cannot preempt one syscall already in flight. Drop closes
+every owned descriptor and the one scan-local content buffer.
 Fixed errors retain no path, pattern, include, entry name, file byte, match,
 metadata, OS diagnostic, or errno. Successful paths, excerpts, context, and
 counts are intentionally sensitive model-visible durable data rather than
