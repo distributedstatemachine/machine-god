@@ -409,7 +409,7 @@ fn execute_deletes_regular_files_and_empty_directories_with_exact_result() {
     fs::write(temporary.path().join("nested/λ file"), b"unread content").unwrap();
     fs::set_permissions(
         temporary.path().join("nested/λ file"),
-        fs::Permissions::from_mode(0),
+        fs::Permissions::from_mode(0o0),
     )
     .unwrap();
     fs::write(temporary.path().join(r"literal\name"), b"literal").unwrap();
