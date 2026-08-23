@@ -1,6 +1,6 @@
 # Milestone 03 native `edit_file` review 01
 
-Status: **IN PROGRESS — cycle 1 remediated locally; replacement review pending**
+Status: **IN PROGRESS — cycle 2 remediated locally; cycle-3 review pending**
 
 ## Base and contract gate
 
@@ -36,14 +36,16 @@ The contract freezes:
 - exact seven-tool alphabetical reference-host composition.
 
 The remediated publication protocol keeps the stage at `0600` through the long
-target rewalk and reread, performs complete mutation-sensitive staged-path and
-held-descriptor exact-content checks after both deterministic race hooks,
-applies final mode only near publication, syncs content and metadata, and
-repeats exact verification immediately before rename. After rename it ignores
-tool cancellation, stably rereads exact bytes through the retained descriptor,
-verifies the published path, and always attempts parent sync; any verification
-or sync failure is nonretryable commit ambiguity. This narrows but does not
-remove same-UID, root, final check-window, or post-verification writer races.
+target rewalk and reread, but no longer treats mode alone as sufficient on
+macOS. Immediately after exclusive creation it clears and verifies the held
+stage has no ACL flags or entries before any write. Complete mutation-sensitive
+staged-path, held-descriptor exact-content, and empty-ACL checks continue
+through both deterministic race hooks and after final mode/sync. After rename
+it ignores tool cancellation, stably rereads exact bytes through the retained
+descriptor, rechecks the empty ACL and published path, and always attempts
+parent sync; any verification or sync failure is nonretryable commit ambiguity.
+This narrows but does not remove same-UID, root, final check-window, or post-
+verification writer races.
 
 Preparation remains effect-free, so this slice deliberately defers pinned fx's
 preapproval preimage read and computed diff. It also defers external paths,
@@ -99,9 +101,22 @@ Cycle-1 remediation has the following exact lineage:
   integrated as exact composed precursor
   `482d33c0bc586ff594d5b0decc58de347cb9243e`.
 
-This documentation record follows that precursor. Because a commit cannot
-self-record its own identifier, its documentation-only component SHA is
-recorded after direct observation in the integration handoff.
+Cycle-1 remediation documentation
+`b02b4e9c1262042c7f0aa7fc5112520f8c406924` and review preparation
+`5a985798b679e6cfaeeca61af1ced8da42c02bc1` produced exact cycle-2
+candidate `f84bac87f472fc851eca670764657e5a31ce0256`.
+
+Cycle-2 remediation has the following exact lineage:
+
+- production component `22197389a521095132c02125726dbe67fbf06d1b`,
+  integrated as `7900d97269341a9b8a46bcdcdb987279bc168e4d`; and
+- independent-test component
+  `65d40d99f4e026834a05778029800fa703c9379e`, integrated as exact composed
+  behavior SHA `ab6841388838384e27e6299151d50bb83d2ec46e`.
+
+This documentation record follows exact behavior SHA `ab684138`. Because a
+commit cannot self-record its own identifier, its documentation-only component
+SHA is recorded after direct observation in the integration handoff.
 
 ## Cycle-1 review result and remediation
 
@@ -132,14 +147,85 @@ passes 30 private production-helper tests, 24 direct tests, five engine tests,
 and seven reference-host tests. Newly direct evidence also covers exact mode
 preservation under hostile umask, cancellation at final verification, and the
 disclosed publication into a retained parent moved outside its public path.
-The precursor is locally remediated, not an exact replacement candidate; all
-three fresh replacement tracks remain pending.
+That precursor closed the cycle-1 defect and became the basis of the cycle-2
+candidate recorded below.
+
+## Cycle-2 review result and remediation
+
+All three fresh tracks reviewed exact candidate
+`f84bac87f472fc851eca670764657e5a31ce0256`:
+
+- correctness/API: **GREEN**, zero findings;
+- performance/concurrency: **GREEN**, zero findings; and
+- filesystem/robustness: **NOT GREEN**, with one high and one low finding.
+
+The high finding was macOS-specific: a same-parent stage created with
+`open(O_EXCL, 0600)` could retain a file-inherited allow ACL, and the existing
+`fchmod` operations did not clear it. The unsafe ACL could therefore survive
+long staging and follow the inode through rename into publication. The low
+finding was evidence incompleteness across deterministic root/intermediate
+traversal, staged-creation error/cancellation, logical read phases, the final
+mode/sync boundary, immediately after the real rename, and cleanup mode/unlink
+dual failure. Cycle 2 explicitly confirmed that cycle 1's same-inode/same-size
+staged-content corruption defect was fixed; neither green track reported a new
+correctness, API, performance, bounded-work, cancellation, or concurrency
+finding.
+
+Production component `22197389a521095132c02125726dbe67fbf06d1b` closes the
+high finding with the existing exact `calcifer-macos-acl` dependency. Through
+the held staged descriptor it clears and verifies an empty ACL immediately
+after exclusive creation and before any content write. Every later staged
+content verification rechecks the ACL before and after its stable reread,
+including after final mode and sync; published verification does the same after
+rename. A clear/read/nonempty ACL failure is a retryable `edit_file_write_failed`
+before rename and nonretryable `edit_file_commit_ambiguous` after rename.
+Linux retains its supported behavior without compiling the macOS-only crate.
+
+The component also adds a generic, statically dispatched `EditFileEvidence`
+trait while preserving the existing execution wrapper. Its production no-op
+implementation routes phase-labelled root/intermediate, target, and stage
+opens; `pread`, `fstat`, and `statat`; checkpoints after RAII takes ownership of
+the stage, after final staged sync, and immediately after successful real rename
+and publication marking; plus an independently injectable cleanup mode/unlink
+helper. The real pipeline and test evidence therefore share one control flow
+without global state or a release behavioral fork.
+
+Independent component `65d40d99f4e026834a05778029800fa703c9379e` adds nine
+private helper tests, raising that suite from 30 to 39. The 24 direct, five
+engine, and seven reference-host tests remain green. A real macOS regression
+installs a file-inherited `everyone` allow ACL on the parent, proves an ordinary
+child inherits it, then proves both the private staged inode and published inode
+have empty ACLs while the parent retains its ACL and the original ordinary mode
+and edited bytes are correct.
+
+The phase matrix directly covers:
+
+- initial and revalidation root/intermediate open error and cancellation;
+- initial/revalidation target open and path-stat errors, plus read error,
+  cumulative 16-interruption exhaustion, early EOF, and cancellation;
+- stage-open error and error/cancellation immediately after staged RAII
+  ownership, with unchanged target and no residue;
+- staged/published descriptor-stat, path-stat, and read error, interruption
+  exhaustion, and early EOF with exact retryable precommit versus nonretryable
+  postcommit mapping and parent sync after publication;
+- same-size corruption after final mode/sync and before rename;
+- cancellation immediately after real rename, which is ignored while the
+  published reread and exactly one parent sync complete successfully; and
+- an independently failing cleanup mode reset followed by an attempted,
+  independently failing unlink, proving the disclosed final-mode owned residue
+  outcome without changing the original target.
+
+Exact composed behavior SHA `ab6841388838384e27e6299151d50bb83d2ec46e` is
+locally remediated, not cycle-3 reviewed or delivered. This documentation-only
+record receives no separate adversarial review under the user's explicit
+instruction.
 
 ## Required independent evidence
 
-The check marks below record only evidence directly exercised on the remediated
-precursor. Unchecked items identify work for formal review or a subsequent
-evidence commit; they do not imply a known product defect.
+The check marks below record only evidence directly exercised through exact
+cycle-2 remediation behavior `ab684138`. Unchecked items identify work for
+cycle-3 review or a subsequent evidence commit; they do not imply a known
+product defect.
 
 - [x] Exact public symbols, constants, schema/property descriptions,
   construction/tool errors, serialized forms, and redacted debug/display.
@@ -160,18 +246,18 @@ evidence commit; they do not imply a known product defect.
 - [x] Retained-root changes and deterministic target identity/mode/content,
   staged-name, and moved-parent races through the real production pipeline,
   including the disclosed retained-parent publication behavior.
-- [ ] Every read/match/construction/write/chmod/file-sync/rename/parent-sync
-  fault with unchanged-target precommit and nonretryable postcommit ambiguity.
-  Broad phase fault coverage is green, but the universal claim remains for
-  formal audit.
-- [ ] Cumulative interruption bounds, entropy partial progress and exhaustion,
+- [x] Phase-exact target/staged/published open, descriptor-stat, path-stat, and
+  read faults plus existing match, construction, write, chmod, file-sync,
+  rename, and parent-sync failure evidence, with unchanged-target precommit and
+  nonretryable postcommit ambiguity.
+- [x] Cumulative interruption bounds, entropy partial progress and exhaustion,
   eight collisions, collision preservation, cleanup swaps, held-descriptor mode
-  reset, and disclosed residue dual-failure behavior. All except the disclosed
-  dual-failure residue outcome are directly exercised.
-- [ ] Cancellation during both reads, matching, construction, traversal,
-  entropy/staging, final verification, immediately before rename, unpolled/
-  drop, and engine same-poll durable recovery. Final-verification cancellation
-  is now direct; the complete phase matrix remains for formal audit.
+  reset, and the directly exercised disclosed residue dual-failure behavior.
+- [x] Cancellation during both reads, matching, construction, initial and
+  revalidation root/intermediate traversal, entropy/staging, final
+  verification, immediately before and after real rename, unpolled/drop, and
+  engine same-poll durable recovery. Post-rename cancellation is ignored while
+  published verification and parent sync finish.
 - [x] Exact seven-tool alphabetical host catalog, original-plus-six-clone
   descriptor identity, complete `write_file` regression, native macOS behavior,
   Linux/FreeBSD/WASI compilation, and active unsupported behavior.
@@ -210,11 +296,10 @@ order and adds the thirtieth benchmark-harness test. The final harness is green
 at 130 tests: 122 pass and eight expected macOS skips. This is harness
 correctness evidence, not a product-performance result.
 
-## Replacement review and delivery gates
+## Cycle-3 review and delivery gates
 
-Cycle 1 is not green. After this documentation component composes, three fresh
-agents must independently inspect one subsequent exact replacement behavior SHA
-for:
+Cycle 2 is not green. After this documentation component composes, three fresh
+agents must independently inspect one subsequent exact cycle-3 behavior SHA for:
 
 1. correctness and public API;
 2. filesystem confinement, atomicity, durability, and robustness; and
@@ -252,18 +337,32 @@ remote workflows remain required.
   `482d33c0bc586ff594d5b0decc58de347cb9243e`
 - Cycle-1 remediation documentation component:
   `b02b4e9c1262042c7f0aa7fc5112520f8c406924`
-- Exact replacement behavior candidate: pending
-- Replacement correctness/API track: pending
-- Replacement filesystem/robustness track: pending
-- Replacement performance/concurrency track: pending
+- Cycle-2 review-preparation commit:
+  `5a985798b679e6cfaeeca61af1ced8da42c02bc1`
+- Failed cycle-2 candidate: `f84bac87f472fc851eca670764657e5a31ce0256`
+- Cycle-2 correctness/API track: green, zero findings
+- Cycle-2 filesystem/robustness track: not green, one high and one low finding
+- Cycle-2 performance/concurrency track: green, zero findings
+- Cycle-2 production remediation component:
+  `22197389a521095132c02125726dbe67fbf06d1b`
+- Integrated cycle-2 production remediation:
+  `7900d97269341a9b8a46bcdcdb987279bc168e4d`
+- Cycle-2 independent remediation-test component:
+  `65d40d99f4e026834a05778029800fa703c9379e`
+- Exact composed cycle-2 remediation behavior:
+  `ab6841388838384e27e6299151d50bb83d2ec46e`
+- Exact cycle-3 behavior candidate: pending
+- Cycle-3 correctness/API track: pending
+- Cycle-3 filesystem/robustness track: pending
+- Cycle-3 performance/concurrency track: pending
 - Behavior-green SHA: pending
 - Documentation seal: pending
 - Exact feature CI and benchmark evidence: pending
 - No-force fast-forward `main`: pending
 - Exact `main` CI and benchmark evidence: pending
 
-The remediation precursor establishes neither replacement-candidate nor
-replacement-review status, and no feature-delivery, `main`, compatibility-
-promotion, equivalence, or product-performance approval. Zig remains solely the
-pinned upstream fx benchmark build input; the machine-god product
-implementation is Rust.
+The cycle-2 remediation behavior establishes neither cycle-3-candidate nor
+cycle-3-review status, and no feature-delivery, `main`, compatibility-promotion,
+equivalence, or product-performance approval. Zig remains solely the pinned
+upstream fx benchmark build input; the machine-god product implementation is
+Rust.

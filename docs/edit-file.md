@@ -1,6 +1,6 @@
 # Native `edit_file` contract
 
-Status: **IN PROGRESS — cycle 1 remediated locally; replacement review pending**
+Status: **IN PROGRESS — cycle 2 remediated locally; cycle-3 review pending**
 
 This document freezes the twenty-first bounded Milestone 03 slice from exact
 delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
@@ -13,10 +13,15 @@ composed through exact local-gate precursor
 on exact candidate `8fdb67892f34a0fbfbb90a54e8eda982159813bf` was not green.
 The confirmed staged-content race is remediated with independent evidence on
 exact composed precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`.
-A replacement candidate and all three fresh review tracks, feature delivery,
-fast-forward integration, and exact `main` workflows remain pending. Under the
-user's explicit instruction, documentation-only records are exempt from their
-own adversarial cycle; they are included in the next behavior candidate review.
+Cycle-2 candidate `f84bac87f472fc851eca670764657e5a31ce0256` confirmed that
+fix, but was not green because a newly created macOS stage could retain an
+inherited allow ACL and deterministic phase evidence remained incomplete.
+Production and independent cycle-2 remediation are composed at exact behavior
+SHA `ab6841388838384e27e6299151d50bb83d2ec46e`. All three fresh cycle-3
+review tracks, feature delivery, fast-forward integration, and exact `main`
+workflows remain pending. Under the user's explicit instruction,
+documentation-only records are exempt from their own adversarial cycle; they
+are included in the next behavior candidate review.
 
 `edit_file` replaces exactly one occurrence of exact text in one existing
 workspace file. It does not grant file creation, a general read capability, or
@@ -224,12 +229,19 @@ On Linux and macOS, allowed execution performs this bounded sequence:
 6. In the same retained parent, try at most eight high-entropy exclusive
    temporary basenames that cannot equal the target basename. Each stage opens
    read/write, create, exclusive, no-follow, close-on-exec, and nonblocking at
-   `0600`. A collision is preserved and consumes one attempt.
+   `0600`. On macOS, immediately clear any file-inherited ACL through the held
+   staged descriptor and verify that both ACL flags and entries are empty
+   before any content write. Creation mode alone is not sufficient because an
+   inherited allow ACL can survive `open(O_EXCL, 0600)` and `fchmod`. Failure
+   to clear or verify is a precommit write failure and invokes bounded cleanup.
+   Linux performs the same protocol with an ACL no-op. A collision is preserved
+   and consumes one attempt.
 7. Write the postimage in at most 8 KiB chunks and keep the staged inode at
    `0600`. Require its pathname to name the held staged descriptor, and require
    exact postimage bytes plus a mutation-sensitive stable identity, type, size,
    mode, modification-time, and change-time view through a complete bounded
-   held-descriptor reread.
+   held-descriptor reread. On macOS, each complete staged verification also
+   requires an empty ACL before and after the reread.
 8. While the stage remains `0600`, reacquire and validate the root, rewalk the
    parent, require its recorded device and inode, and reopen the target no-
    follow. Require the original
@@ -240,17 +252,19 @@ On Linux and macOS, allowed execution performs this bounded sequence:
    descriptor validation while the stage is still `0600`.
 9. Only near publication, apply the original target's `st_mode & 0o777`, sync
    staged content and metadata, and repeat the complete exact path/held-
-   descriptor content and stable-metadata verification. Perform the final
-   precommit cancellation check, atomically rename over the existing target in
-   the same parent, and cross the irreversible boundary.
+   descriptor content, stable-metadata, and macOS empty-ACL verification.
+   Perform the final precommit cancellation check, atomically rename over the
+   existing target in the same parent, and cross the irreversible boundary.
 10. Ignore later tool-level cancellation. Require the published pathname to
     name the staged device/inode and perform a complete bounded stable reread
     through the retained staged descriptor. Require exact postimage bytes,
     regular type, size, ordinary mode, identity, and mutation-sensitive stable
-    metadata, with the published pathname still matching afterward. Always
-    attempt parent-directory sync even if this verification fails. Any post-
-    rename verification or parent-sync failure returns nonretryable commit
-    ambiguity because new bytes may already be live.
+    metadata, with the published pathname still matching afterward. On macOS,
+    require the retained published descriptor's ACL to remain empty before and
+    after the reread. Always attempt parent-directory sync even if this
+    verification fails. Any post-rename verification, ACL verification, or
+    parent-sync failure returns nonretryable commit ambiguity because new bytes
+    may already be live.
 
 Temporary-name entropy inherits the delivered bounded implementation: Linux
 uses direct `rustix` `getrandom` with `NONBLOCK`; macOS uses the pinned one-call
@@ -285,14 +299,17 @@ moved outside the configured workspace after validation can receive
 publication. The slice states these limits and does not claim adversarial
 concurrent-rename confinement.
 
-Private `0600` staging blocks group/other writers through the long target
-rewalk and reread, but it is not a lock. The same UID and root can still write
-the staged inode, and final-mode permissions may admit other writers near
-publication. Complete checks after both deterministic race hooks, after final
-mode and sync, and after rename detect observed same-inode/same-size corruption,
-but a writer can still act in a final check-to-rename window or after the post-
-rename verification. Success therefore reports the verified observation, not
-permanent content isolation; post-verification writers can change the live file.
+Private `0600` staging plus the verified empty macOS ACL blocks group/other
+writers through the long target rewalk and reread, but it is not a lock. Mode
+`0600` by itself is insufficient on macOS because a parent file-inherit entry
+can grant access outside those ordinary mode bits. The same UID and root can
+still write the staged inode, and final-mode permissions may admit other
+writers near publication. Complete content and ACL checks after the relevant
+race boundaries, after final mode and sync, and after rename detect observed
+same-inode/same-size corruption or an unsafe ACL, but a writer can still act in
+a final check-to-rename window or after the post-rename verification. Success
+therefore reports the verified observation, not permanent content isolation;
+post-verification writers can change the live file.
 
 Before rename, every failure leaves the target pathname unchanged. Cleanup is
 best-effort and identity-checked: one best-effort `fchmod(0600)` is attempted on
@@ -369,7 +386,7 @@ write_file
 The CLI remains byte-unchanged and thin. The new tool is library-only in this
 slice.
 
-## Local evidence and cycle-1 remediation
+## Local evidence and review remediation
 
 Exact precursor `31ec79e000589c4fb34599be4aad4f90ea33974f` is locally green under
 Rust and Cargo 1.94.1. Focused evidence passes 25 private production-helper
@@ -420,10 +437,58 @@ and seven reference-host tests. It also directly proves hostile-umask mode
 preservation and the disclosed behavior when a retained parent moves outside
 its public path.
 
-This precursor is locally remediated, not a replacement formal candidate. The
-next candidate must include this documentation and pass three fresh review
-tracks. No delivery, compatibility promotion, product-performance, or fx-
-equivalence claim follows from the remediation.
+Cycle-1 remediation documentation
+`b02b4e9c1262042c7f0aa7fc5112520f8c406924` and replacement-review
+preparation `5a985798b679e6cfaeeca61af1ced8da42c02bc1` produced exact
+cycle-2 candidate `f84bac87f472fc851eca670764657e5a31ce0256`. That candidate
+confirmed the cycle-1 same-inode/same-size corruption defect was fixed.
+Correctness/API and performance/concurrency were each **GREEN** with zero
+findings. Filesystem/robustness was **NOT GREEN** with:
+
+- one high finding that macOS `open(O_EXCL, 0600)` could inherit a parent allow
+  ACL which `fchmod` did not clear, allowing that ACL to follow the staged inode
+  into publication; and
+- one low finding that deterministic evidence did not yet directly cover every
+  requested traversal, staged-creation, logical-read, final-sync, actual-rename,
+  cancellation, and dual-cleanup-failure boundary.
+
+Production remediation component
+`22197389a521095132c02125726dbe67fbf06d1b` clears and verifies an empty
+macOS ACL on the held stage immediately after exclusive creation and before any
+write, then revalidates it through staged checks after final mode/sync and
+through published verification. Precommit ACL failures remain retryable write
+failures; post-rename ACL failures remain nonretryable commit ambiguity. The
+same component adds a generic, statically dispatched evidence trait for
+root/intermediate opens, stage and target opens, phase-labelled `pread`,
+`fstat`, and `statat`, post-stage, post-final-sync, and post-real-rename
+checkpoints, plus an independently injectable cleanup mode/unlink helper. It is
+integrated as `7900d97269341a9b8a46bcdcdb987279bc168e4d`.
+
+Independent evidence component
+`65d40d99f4e026834a05778029800fa703c9379e` composes the exact behavior SHA
+`ab6841388838384e27e6299151d50bb83d2ec46e`. It adds nine private helper
+tests, bringing that suite to 39, while the existing 24 direct, five engine,
+and seven reference-host tests remain green. The new evidence constructs a
+real macOS file-inherited allow ACL, proves the private stage and published
+inode have empty ACLs while the parent ACL remains, and exercises:
+
+- initial and revalidation root/intermediate traversal error and cancellation;
+- target open/path-stat faults plus initial/revalidation read error, cumulative
+  interruption exhaustion, early EOF, and cancellation;
+- staged open error and error/cancellation immediately after RAII ownership;
+- staged and published descriptor-stat, path-stat, read error, cumulative
+  interruption exhaustion, and early EOF with exact pre/postcommit mappings;
+- same-size corruption after final mode and sync, before rename;
+- cancellation immediately after the real rename, proving published reread and
+  parent sync still run and verified success is not replaced by cancellation;
+  and
+- cleanup mode-reset failure followed by an attempted, independently failing
+  unlink, with the disclosed owned-residue outcome preserved.
+
+This exact behavior SHA is locally remediated, not reviewed green or delivered.
+The next candidate must include this documentation and pass three fresh cycle-3
+review tracks. No delivery, compatibility promotion, product-performance, or
+fx-equivalence claim follows from the remediation.
 
 ## Required independent evidence
 
@@ -449,15 +514,17 @@ confirm that evidence covers:
   replacement, old-descriptor/new-path visibility, and hard-link behavior;
 - retained-root rename/replacement/removal and deterministic target identity,
   mode, size/content, staged-name, and parent race seams;
-- every read, match, construction, write, chmod, file-sync, rename, and parent-
-  sync fault, including unchanged-target precommit behavior and post-rename
-  ambiguity;
-- bounded interruptions, entropy partial progress/exhaustion, all eight
-  collisions, collision preservation, cleanup swaps, mode restoration, and its
-  disclosed dual-failure residue boundary;
+- phase-exact target/staged/published open, descriptor-stat, path-stat, and read
+  faults plus the existing match, construction, write, chmod, file-sync,
+  rename, and parent-sync failure evidence, including unchanged-target
+  precommit behavior and nonretryable post-rename ambiguity;
+- bounded interruptions in every read/sync phase, entropy partial progress and
+  exhaustion, all eight collisions, collision preservation, cleanup swaps,
+  mode restoration, and the directly exercised dual-failure residue boundary;
 - cancellation during both target reads, prefix-table work, matching, result
-  construction, traversal, entropy, staging, final verification, immediately
-  before rename, unpolled/drop behavior, and engine same-poll recovery;
+  construction, initial/revalidation root and intermediate traversal, entropy,
+  staging creation and writes, final verification, immediately before and after
+  the real rename, unpolled/drop behavior, and engine same-poll recovery;
 - exact seven-tool alphabetical host catalog, original-plus-six-clone retained
   identity, native Linux/macOS execution, FreeBSD/WASI compilation, and active
   unsupported-target behavior; and
@@ -471,14 +538,14 @@ Python and pinned-compatibility checks, dependency policy/audit, Linux/macOS
 native checks, FreeBSD/WASI gates, documentation links, no-unsafe/diff checks,
 and a freshly built locked release CLI smoke.
 
-After this documentation record composes, three fresh adversarial agents must
-review the same exact behavior SHA for correctness/API, filesystem/robustness,
-and performance/concurrency. Every confirmed finding is fixed and restarts all
-three fresh tracks on a new exact SHA until all are green. The green behavior
-must then receive exact feature-branch workflows, a no-force fast-forward to
-`main`, and exact `main` workflows. Documentation-only kickoff, seal, and final
-records remain exempt from another adversarial cycle under the user's explicit
-instruction.
+After this documentation record composes, three fresh cycle-3 adversarial
+agents must review the same subsequent exact behavior SHA for correctness/API,
+filesystem/robustness, and performance/concurrency. Every confirmed finding is
+fixed and restarts all three fresh tracks on a new exact SHA until all are
+green. The green behavior must then receive exact feature-branch workflows, a
+no-force fast-forward to `main`, and exact `main` workflows. This
+documentation-only remediation record does not receive a separate adversarial
+review under the user's explicit instruction.
 
 ## Pinned fx input and deliberate differences
 

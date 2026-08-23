@@ -862,9 +862,13 @@ evidence are now composed through exact local-gate precursor
 `3934d9d26ced78d5164e9ff2620c44ebb6480dd1` produced exact cycle-1 candidate
 `8fdb67892f34a0fbfbb90a54e8eda982159813bf`, which was not green. Production
 and independent remediation evidence are locally composed through exact
-precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`. This changes no delivered-
-slice count: replacement review, feature workflows, fast-forward integration,
-and exact `main` workflows remain pending.
+precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`. Remediation documentation and
+review preparation produced exact cycle-2 candidate
+`f84bac87f472fc851eca670764657e5a31ce0256`, which was also not green.
+Cycle-2 production and independent evidence are composed at exact behavior SHA
+`ab6841388838384e27e6299151d50bb83d2ec46e`. This changes no delivered-slice
+count: cycle-3 review, feature workflows, fast-forward integration, and exact
+`main` workflows remain pending.
 
 The frozen strict effect-free input is exactly required UTF-8 `path`,
 `old_string`, and `new_string`, with no unknown fields. Path normalization is
@@ -899,23 +903,28 @@ one private same-parent stage selected within eight entropy names, at most 16
 cumulative interrupted results per I/O/sync phase, and at most 16 interruptions
 and 31 native entropy calls per 16-byte name including partial progress. The
 stage stays `0600` throughout the long parent/target rewalk and complete target
-reread. Complete mutation-sensitive staged-path and held-descriptor postimage
-checks follow both deterministic staged-race hooks. Only near publication does
-the stage receive the original target's nine ordinary rwx bits; content and
-metadata are synced and completely reverified immediately before the final
+reread. On macOS, creation immediately clears and verifies the held stage has
+no inherited ACL flags or entries before any write; mode `0600` is not treated
+as sufficient by itself. Complete mutation-sensitive staged-path,
+held-descriptor postimage, and empty-ACL checks follow the deterministic race
+boundaries. Only near publication does the stage receive the original target's
+nine ordinary rwx bits; content and metadata are synced and completely
+reverified, including the empty macOS ACL, immediately before the final
 cancellation check and atomic rename. After rename, tool cancellation is
 ignored while the retained staged descriptor is stably reread for exact bytes,
-identity, type, size, mode, and metadata and the published path is rechecked.
-Parent sync is always attempted, even when verification fails; either failure
-is nonretryable commit ambiguity. Precommit cleanup makes the delivered best-
-effort held-descriptor `fchmod(0600)` and identity-checked unlink attempts with
-the same disclosed race and dual-failure residue caveat.
+identity, type, size, mode, metadata, and empty macOS ACL and the published path
+is rechecked. Parent sync is always attempted, even when verification fails;
+either failure is nonretryable commit ambiguity. Precommit cleanup makes the
+delivered best-effort held-descriptor `fchmod(0600)` and identity-checked unlink
+attempts with the same disclosed race and directly evidenced dual-failure
+residue caveat.
 
 This is not inode compare-and-swap isolation: a target or retained parent can
 change after the last validation, and a moved retained parent can receive
-publication. Private mode narrows staged access but cannot exclude the same UID
-or root. Final-mode and check-to-rename windows remain, and writers can mutate
-the file after post-rename verification. Replacing the inode preserves only
+publication. Private mode plus the empty macOS ACL narrows staged access but
+cannot exclude the same UID or root. Final-mode and check-to-rename windows
+remain, and writers can mutate the file after post-rename verification.
+Replacing the inode preserves only
 ordinary rwx bits and breaks the edited pathname away from other hard links;
 ownership, ACLs, xattrs, timestamps, and other metadata are not preserved. The
 slice adds no missing-file insertion, parent creation, external path, binary/alternate-encoding
@@ -964,14 +973,29 @@ private, 24 direct, five engine, and seven reference-host tests. They directly
 cover both precommit same-inode/same-size staged mutation windows,
 postpublication held-inode corruption with parent sync still attempted, hostile-
 umask mode preservation, final-verification cancellation, and moved retained-
-parent publication. Universal fault and cancellation matrices remain pending.
-This is local remediation evidence, not a replacement-candidate, delivery,
-performance, or equivalence claim.
+parent publication.
+
+Cycle-2 candidate `f84bac87f472fc851eca670764657e5a31ce0256` confirmed the
+cycle-1 corruption fix. Correctness/API and performance/concurrency were each
+**GREEN** with zero findings. Filesystem/robustness was **NOT GREEN** with a high
+macOS inherited-allow-ACL stage/publication defect and a low incomplete
+deterministic fault/cancellation evidence finding. Production component
+`22197389a521095132c02125726dbe67fbf06d1b` clears and verifies the empty ACL
+before write and revalidates it after final sync and publication; it composes as
+`7900d97269341a9b8a46bcdcdb987279bc168e4d`. Independent component
+`65d40d99f4e026834a05778029800fa703c9379e` uses the generic evidence seams to
+add a phase matrix for traversal, initial/revalidation/staged/published reads,
+staged creation, final-sync corruption, post-real-rename cancellation, and
+cleanup mode/unlink dual failure. Exact composed behavior
+`ab6841388838384e27e6299151d50bb83d2ec46e` passes 39 private, 24 direct, five
+engine, and seven reference-host focused tests. This is local cycle-2
+remediation evidence, not cycle-3 review, delivery, performance, or equivalence
+approval.
 
 After this documentation component composes, three fresh correctness/API,
 filesystem/robustness, and performance/concurrency agents must next review the
-same exact replacement behavior SHA. Every confirmed finding is
-fixed and restarts all three fresh tracks on a new SHA until all are green.
+same exact cycle-3 behavior SHA. Every confirmed finding is fixed and restarts
+all three fresh tracks on a new SHA until all are green.
 Exact feature workflows, a no-force fast-forward to `main`, and exact `main`
 workflows follow. Documentation-only records are exempt from another
 adversarial cycle under the user's instruction, but not from applicable remote
@@ -1190,10 +1214,22 @@ gate:
   `482d33c0bc586ff594d5b0decc58de347cb9243e`. Its three corruption regressions
   are red on the failed candidate and green on the fix; focused totals are 30
   private, 24 direct, five engine, and seven reference-host tests. Hostile-
-  umask and moved-retained-parent evidence are now direct. Universal fault and
-  cancellation matrices, replacement candidate preparation, all three fresh
-  replacement tracks, exact feature workflows, fast-forward integration, and
-  exact `main` workflows remain pending; `edit_file` is not delivered.
+  umask and moved-retained-parent evidence are now direct. Exact cycle-2
+  candidate `f84bac87f472fc851eca670764657e5a31ce0256` confirmed that
+  corruption fix; correctness/API and performance/concurrency were green with
+  zero findings, while filesystem/robustness was not green with a high macOS
+  inherited-ACL defect and low incomplete deterministic-evidence finding.
+  Production component `22197389a521095132c02125726dbe67fbf06d1b` clears and
+  verifies an empty macOS stage ACL before write and revalidates it after final
+  sync and publication. Independent component
+  `65d40d99f4e026834a05778029800fa703c9379e` exercises the generic evidence
+  seams across traversal, all four logical read phases, staging, final sync,
+  post-real-rename cancellation, and cleanup dual failure. Exact composed
+  remediation behavior `ab6841388838384e27e6299151d50bb83d2ec46e` passes 39
+  private, 24 direct, five engine, and seven reference-host focused tests. A
+  cycle-3 candidate, all three fresh cycle-3 tracks, exact feature workflows,
+  fast-forward integration, and exact `main` workflows remain pending;
+  `edit_file` is not delivered.
   Documentation-only commits are exempt from a separate adversarial cycle under
   the user's instruction and are included in the replacement candidate. The
   remaining native tools are
