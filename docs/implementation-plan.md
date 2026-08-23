@@ -51,9 +51,10 @@ workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
 `c1268fdf463e11242b7b916add70675ae91ed115` to the final record; exact main CI
 `32651488265` passed all six jobs, and main benchmark workflow `32651488282`
 passed both jobs with two nonexpired exact-SHA artifacts. Native `delete_file`
-is the twenty-second bounded slice and is **IN PROGRESS** under its frozen
-library-only contract. The remaining native tools, CLI ownership, and
-Milestone 03 completion boundary remain pending.
+is the twenty-second bounded slice and is **IN PROGRESS** on exact composed
+local-gate precursor `5e340155f9a38b81a2812942d6ad0a796164beb5`; formal
+same-SHA adversarial review and delivery remain pending. The remaining native
+tools, CLI ownership, and Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1126,6 +1127,25 @@ bounded sync, cancellation/drop/engine recovery, the exact eight-tool
 alphabetical host and one additional descriptor clone, Linux/macOS behavior,
 FreeBSD/WASI compilation, and active unsupported-target behavior.
 
+Exact clean precursor `5e340155f9a38b81a2812942d6ad0a796164beb5` passes the
+complete local gate under Rust and Cargo 1.94.1. Focused totals are 19 default-
+feature and 20 all-feature private tests, 19 direct tests, five engine tests,
+and seven reference-host tests. Formatting, workspace all-target/all-feature
+warnings-denied Clippy, workspace tests, and two doctests are green. Discovery
+inventories 728 default-feature tests, 778 all-feature tests, and zero
+benchmarks.
+
+The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility, cargo-deny 0.20.2,
+cargo-audit 0.22.2, Linux/FreeBSD/WASI gates, and Node's active unsupported test
+1/1 are green. Documentation integrity is 64/445/295/0. The base diff is clean,
+adds no unsafe Rust, and changes neither Cargo metadata nor CLI source. A fresh
+locked arm64 Mach-O release CLI has SHA-256
+`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
+and passes bare, help, and status smoke paths. These results are local precursor
+evidence only, not formal review, delivery, compatibility promotion,
+performance, or fx-equivalence approval.
+
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
 finding is fixed and restarts all three tracks until each reports **GREEN** with
@@ -1400,9 +1420,15 @@ gate:
   evidence matrix, and fresh same-SHA review protocol are frozen in
   [`delete-file.md`](delete-file.md) and
   [`m03-delete-file-review-01.md`](reviews/m03-delete-file-review-01.md).
-  Implementation, review, feature delivery, and `main` delivery remain pending,
-  so the combined native-tool checkbox stays unchecked and the delivered-slice
-  count remains twenty-one.
+  Contract commit `78ed6292386f86e5807bcf72591d6cb5d9f45c45` is green under
+  exact feature CI `32652361712` and benchmark workflow `32652361692` with two
+  exact-SHA artifacts. Implementation and independent evidence compose through
+  exact local-gate precursor `5e340155f9a38b81a2812942d6ad0a796164beb5`;
+  focused, workspace, Python, compatibility, dependency, portability,
+  documentation, no-unsafe/diff, and release-smoke gates are green. Formal
+  same-SHA review, feature delivery, and `main` delivery remain pending, so the
+  combined native-tool checkbox stays unchecked and the delivered-slice count
+  remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

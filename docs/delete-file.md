@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **CONTRACT FROZEN — implementation and formal review pending**
+Status: **IN PROGRESS — composed local gates green; formal review pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -10,6 +10,15 @@ workflow `32651168515` across both jobs with two nonexpired exact-SHA artifacts.
 `c1268fdf463e11242b7b916add70675ae91ed115` to that exact base and is green
 under exact CI `32651488265` across all six jobs and benchmark workflow
 `32651488282` across both jobs with two nonexpired exact-SHA artifacts.
+
+Documentation-only contract commit
+`78ed6292386f86e5807bcf72591d6cb5d9f45c45` is green under exact feature CI
+`32652361712` across all six jobs and benchmark workflow `32652361692` across
+both jobs with two nonexpired exact-SHA artifacts. Those workflows froze only
+the contract. Production and independently owned evidence are now composed
+through exact local-gate precursor
+`5e340155f9a38b81a2812942d6ad0a796164beb5`; formal same-SHA review and remote
+delivery remain pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -249,6 +258,36 @@ write_file
 The CLI remains byte-unchanged and thin. This slice adds no CLI command,
 invocation path, prompt, status field, or output byte.
 
+## Composed local evidence
+
+Exact precursor `5e340155f9a38b81a2812942d6ad0a796164beb5` is locally green
+under Rust and Cargo 1.94.1. Focused evidence passes 19 default-feature and 20
+all-feature private tests, 19 direct tests, five engine tests, and seven
+reference-host tests. Workspace formatting, all-target/all-feature warnings-
+denied Clippy, workspace tests, and two doctests pass. Discovery inventories
+728 default-feature tests, 778 all-feature tests, and zero benchmarks.
+
+The repository harness passes all 130 tests with eight expected macOS skips.
+Pinned-fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`
+compatibility, cargo-deny 0.20.2, and cargo-audit 0.22.2 over 1,225 advisories
+and 175 dependencies are green. Linux cross-Clippy, FreeBSD library check and
+Clippy plus unsupported-test type-check, and WASI library/test build gates pass;
+Node actively executes the WASI unsupported-target test 1/1. The optional
+all-feature Linux cross-build remains a host C-sysroot limitation in
+`aws-lc-sys`, before product Rust compilation, rather than a `delete_file`
+failure.
+
+Documentation integrity covers 64 Markdown files, 445 inline links, and 295
+repository-relative links with zero missing targets. The base diff is clean,
+adds zero unsafe Rust, changes no Cargo metadata or CLI source, and changes only
+Rust files under crates. A fresh locked arm64 Mach-O release CLI has SHA-256
+`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
+and passes bare, help, and status smoke paths.
+
+These are local precursor results only. They establish neither a formal
+behavior candidate nor adversarial, feature-delivery, `main`, compatibility,
+equivalence, or product-performance approval.
+
 ## Parallel ownership and formal review
 
 Implementation proceeds with three non-overlapping owners:
@@ -309,7 +348,8 @@ The composed candidate must prove:
   target behavior, no unsafe Rust, and complete regression of all seven
   delivered workspace tools.
 
-Focused suites run first, followed by Rust 1.94.1 formatting, workspace all-
+Focused suites have run first on the local precursor. The formal behavior
+candidate repeats Rust 1.94.1 formatting, workspace all-
 target/all-feature warnings-denied Clippy, workspace tests, workspace doctests,
 the repository Python and pinned-compatibility checks, dependency policy and
 audit, portability gates, documentation integrity, diff/no-unsafe checks, and

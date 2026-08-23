@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **CONTRACT FROZEN — implementation and formal review pending**
+Status: **IN PROGRESS — composed local gates green; formal review pending**
 
 ## Base and contract gate
 
@@ -8,9 +8,10 @@ Status: **CONTRACT FROZEN — implementation and formal review pending**
   `719a9bded86fd7ce394d482798b9064c736f43ab`.
 - Integration branch: `agent/m03-delete-file`.
 - Normative contract: [`delete-file.md`](../delete-file.md).
-- Contract commit: this documentation-only contract commit; exact SHA is
-  recorded by the coordinator after creation.
-- Contract CI and benchmark evidence: pending push of the exact contract SHA.
+- Contract commit: `78ed6292386f86e5807bcf72591d6cb5d9f45c45`.
+- Exact contract CI: workflow `32652361712`, green across all six jobs.
+- Exact contract benchmark evidence: workflow `32652361692`, green across both
+  jobs with two nonexpired exact-SHA artifacts.
 
 The exact base is green under feature CI `32651168514` across all six jobs and
 feature benchmark workflow `32651168515` across both jobs with two nonexpired
@@ -22,7 +23,9 @@ under main CI `32651488265` across all six jobs and main benchmark workflow
 This contract commit is documentation-only and is exempt from adversarial
 review under the user's explicit instruction. Its workflows establish only the
 frozen documentation boundary, not implementation, behavior, compatibility,
-performance, equivalence, or delivery.
+performance, equivalence, or delivery. Production and independent evidence are
+now composed through exact local-gate precursor
+`5e340155f9a38b81a2812942d6ad0a796164beb5`.
 
 ## Frozen boundary
 
@@ -81,33 +84,64 @@ test-only alternate executor is accepted.
 
 ## Required independent evidence
 
-- [ ] Exact public API, constants, schema, descriptions, result, construction
+- [x] Exact public API, constants, schema, descriptions, result, construction
   taxonomy, fixed tool errors, retryability, `Display`, and redaction.
-- [ ] Exact/one-over requested and canonical path bytes, 256 components,
+- [x] Exact/one-over requested and canonical path bytes, 256 components,
   65,536-byte serialized arguments, and 16,384-byte serialized result.
-- [ ] Effect-free strict preparation, denied execution before lookup, exact
+- [x] Effect-free strict preparation, denied execution before lookup, exact
   `Delete` capability, and canonical policy/direct-execution agreement.
-- [ ] Native regular-file and empty-directory deletion without content reads or
+- [x] Native regular-file and empty-directory deletion without content reads or
   enumeration; nonempty directory and root removal rejection.
-- [ ] Missing ancestors/targets, all symlink positions, FIFO/socket/device/
+- [x] Missing ancestors/targets, all symlink positions, FIFO/socket/device/
   other special objects, and outside sentinels fail closed without blocking.
-- [ ] Retained-root changes, complete parent/target rewalk and revalidation,
+- [x] Retained-root changes, complete parent/target rewalk and revalidation,
   moved retained parent, final different-entry race, hard links/open
   descriptors, and post-success pathname recreation.
-- [ ] Root/intermediate-open and ordinal `fstat`/`statat` faults, exact type
+- [x] Root/intermediate-open and ordinal `fstat`/`statat` faults, exact type
   flags, one actual `unlinkat`, post-delete checkpoint, and parent-sync faults
   all route through the real production path.
-- [ ] `unlinkat` success, definitive failures, and `EINTR` have exact mappings;
+- [x] `unlinkat` success, definitive failures, and `EINTR` have exact mappings;
   interruption makes no second delete call; parent sync has one cumulative
   16-interruption ceiling and postcommit failures are nonretryable ambiguity.
-- [ ] Cancellation is covered through both traversal/validation passes, at the
+- [x] Cancellation is covered through both traversal/validation passes, at the
   exact final pre-delete boundary, and after a real delete, plus inert-until-
   poll, drop, and core same-poll unknown-result recovery.
-- [ ] The exact eight-tool alphabetical catalog and original-plus-seven-clone
+- [x] The exact eight-tool alphabetical catalog and original-plus-seven-clone
   retained identity are green without changing CLI bytes.
-- [ ] Native Linux/macOS, FreeBSD/WASI compilation, active unsupported-target,
+- [x] Native Linux/macOS, FreeBSD/WASI compilation, active unsupported-target,
   seven-tool regression, no-unsafe, docs, dependency, compatibility, and fresh
   release-smoke gates are green.
+
+## Composed lineage and local gate
+
+Production component `d31d0656528988f57caaecbacf15453f129ab27e`, independent
+black-box component `2d2d8502a7b12ac6d9baeb983b06e604b58b2cde`, private
+precommit component `e36cbd780d47fc847121ac3da75ec8a4649cd11e`, and private
+commit-race components `f9464d736940b87a1e38948244d871d4497892eb`,
+`829fff21c447dd7333b8042431932589e51f0801`, and
+`af3d0ba7cd8ada7aa9b80794e786782dc5ba33df` compose through exact clean
+precursor `5e340155f9a38b81a2812942d6ad0a796164beb5`. Deterministic evidence exposed
+and closed the `ELOOP` and macOS `EPERM` type-race mappings before formal
+review.
+
+Under Rust and Cargo 1.94.1, formatting, workspace all-target/all-feature
+warnings-denied Clippy, workspace tests, and two doctests are green. Focused
+totals are 19 default-feature and 20 all-feature private tests, 19 direct, five
+engine, and seven reference-host tests. Discovery reports 728 default-feature
+tests, 778 all-feature tests, and zero benchmarks.
+
+All 130 Python tests pass with eight expected macOS skips. Pinned-fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility, cargo-deny 0.20.2,
+cargo-audit 0.22.2, Linux/FreeBSD/WASI gates, and Node's active unsupported test
+1/1 are green. Documentation integrity is 64 Markdown files, 445 inline links,
+295 repository-relative links, and zero missing targets. Diff/no-unsafe/Cargo/
+CLI checks are clean. A fresh locked arm64 Mach-O release CLI has SHA-256
+`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
+and passes bare, help, and status smoke paths.
+
+This local precursor is not yet a reviewed behavior candidate. Three fresh
+tracks must inspect the same next exact SHA before any behavior-green or
+delivery claim.
 
 ## Formal adversarial protocol
 

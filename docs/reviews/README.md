@@ -31,4 +31,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native `grep_files` candidate review](m03-grep-files-review-01.md)
 - [Milestone 03 native `write_file` candidate review](m03-write-file-review-01.md)
 - [Milestone 03 native `edit_file` delivery review](m03-edit-file-review-01.md)
-- [Milestone 03 native `delete_file` contract review](m03-delete-file-review-01.md)
+- [Milestone 03 native `delete_file` candidate review](m03-delete-file-review-01.md)
