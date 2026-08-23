@@ -1,7 +1,6 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FORMAL CYCLE-3 REVIEW GREEN — documentation-only seal; exact feature
-workflows and delivery are pending**
+Status: **DELIVERED — exact feature and `main` workflows are green**
 
 ## Base and prior delivery
 
@@ -37,8 +36,8 @@ tree-identical exact cycle-2 candidate
 `708f2d08d72d610ca387a62a4cec1f656c188a7d`. Cycle 2 is also **NOT GREEN**.
 Production remediation is composed at
 `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`; exact local gates are green at
-`8432c0c6b5d5955b78a882b651a5bfec76af8814`, while another fresh same-SHA cycle
-remains pending.
+`8432c0c6b5d5955b78a882b651a5bfec76af8814`. Cycle 3 is green at exact
+candidate `db78c640`, and exact seal `bdd27ec` is delivered on `main`.
 
 ## Frozen boundary
 
@@ -102,12 +101,12 @@ following evidence through cycle-2 production remediation:
   evidence. Linux uses direct nonblocking `rustix` entropy with at most 16
   cumulative interruptions and 31 calls per name; the one-call macOS path is
   routed through the same checks.
-- [ ] Exact six-tool alphabetical host catalog, original-plus-five-clone
+- [x] Exact six-tool alphabetical host catalog, original-plus-five-clone
   workspace identity, and the complete platform matrix are green. The catalog
   and workspace identity pass locally; native behavior is locally exercised on
   macOS, Linux and FreeBSD are cross-compiled, and the WASI unsupported-target
-  test is actively executed. Exact feature CI still must exercise supported
-  native Linux and macOS behavior.
+  test is actively executed. Exact seal feature CI exercises supported native
+  Linux and macOS behavior green.
 
 ## Formal gates
 
@@ -196,10 +195,16 @@ still required.
 - Formal adversarial cycle 3: correctness/API **GREEN** zero findings;
   filesystem/robustness **GREEN** zero findings; performance/concurrency
   **GREEN** zero findings
-- Documentation seal: this documentation-only commit; exempt from further
-  adversarial review under the user's instruction
-- Feature CI and benchmark evidence: **PENDING**
-- Fast-forward `main` and exact workflows: **PENDING**
+- Documentation seal: `bdd27ec969769d94c78efdab8e07cbd6b600ca3f`;
+  exempt from further adversarial review under the user's instruction
+- Seal feature CI `32633372927`: **GREEN**, all six jobs
+- Seal feature benchmark evidence `32633372982`: **GREEN**, both jobs and two
+  nonexpired exact-SHA artifacts
+- Fast-forward `main`: without force from
+  `bc042536eb3a40d75ccf4d1fe52032b31defac04` to exact `bdd27ec`
+- Exact main CI `32633639774`: **GREEN**, all six jobs
+- Exact main benchmark evidence `32633639763`: **GREEN**, both jobs and two
+  nonexpired exact-SHA artifacts
 
 Every placeholder must be replaced only with directly observed evidence. A
 branch tip, tree identity, another component's checks, or an earlier review
@@ -461,9 +466,23 @@ precursor gate at `8432c0c` and exact gate record `9a09172` remain retained,
 including the initial LTO-overlapped Python timeout and the isolated plus full
 sequential green reruns that establish validation-method contention rather than
 a product failure. The behavior-green SHA is exactly `db78c640`. Feature CI,
-benchmark evidence, fast-forward `main`, and exact `main` workflows remain
-pending. This seal changes documentation only and is exempt from further
-adversarial review under the user's instruction.
+benchmark evidence, fast-forward `main`, and exact `main` workflows subsequently
+completed green on exact seal `bdd27ec` as recorded below. This seal changes
+documentation only and is exempt from further adversarial review.
+
+## Exact delivery
+
+Seal `bdd27ec969769d94c78efdab8e07cbd6b600ca3f` passed feature CI
+`32633372927` across all six jobs and feature benchmark run `32633372982` across
+both jobs with two nonexpired exact-SHA artifacts. `main` was fast-forwarded
+without force from exact base `bc042536eb3a40d75ccf4d1fe52032b31defac04` to
+the seal. Exact main CI `32633639774` passed all six jobs; main benchmark run
+`32633639763` passed both jobs with two nonexpired exact-SHA artifacts.
+
+The native `write_file` slice is delivered. This final delivery record is
+documentation-only and exempt from adversarial review under the user's explicit
+instruction. Its own exact feature and `main` workflows remain required after
+push and cannot be self-recorded in this commit.
 
 ## Explicit nonclaims
 

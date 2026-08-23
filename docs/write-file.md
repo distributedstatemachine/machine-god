@@ -1,7 +1,6 @@
 # Native `write_file` contract
 
-Status: **FORMAL CYCLE-3 REVIEW GREEN — documentation-only seal; exact feature
-workflows and delivery are pending**
+Status: **DELIVERED — exact feature and `main` workflows are green**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -9,7 +8,16 @@ The contract commit is
 validate only the contract kickoff; they are not implementation, behavior-
 review, or final delivery evidence.
 
-`write_file` is the twentieth Milestone 03 slice. It adds one bounded,
+Behavior-green candidate `db78c6407c4f603f18e2839a8a291f2de33e579c`
+is sealed and integrated at `bdd27ec969769d94c78efdab8e07cbd6b600ca3f`.
+Exact seal feature CI `32633372927` is green across all six jobs; feature
+benchmark run `32633372982` is green across both jobs with two nonexpired exact-
+SHA artifacts. `main` was fast-forwarded without force from
+`bc042536eb3a40d75ccf4d1fe52032b31defac04` to that seal. Exact main CI
+`32633639774` is green across all six jobs, and main benchmark run `32633639763`
+is green across both jobs with two nonexpired exact-SHA artifacts.
+
+`write_file` is the delivered twentieth Milestone 03 slice. It adds one bounded,
 permission-gated workspace mutation without granting parent creation,
 external-path access, target-content reads, or general filesystem authority.
 The product remains Rust. Zig remains only a pinned upstream benchmark build
@@ -311,10 +319,10 @@ identity-preserving clones and registers exactly six tools alphabetically:
 
 Production, independent tests, and the maintained documentation are composed on
 the feature branch. The first exact candidate failed all three formal tracks.
-Cycle-1 code and evidence remediation is composed through `3010e6d`. This six-
-tool catalog remains candidate behavior until a replacement exact composed SHA
-passes local gates, three fresh same-SHA adversarial tracks, exact
-feature workflows, and fast-forward `main` delivery.
+Cycle-1 code and evidence remediation is composed through `3010e6d`. The six-
+tool catalog is delivered at exact seal `bdd27ec` after local gates, three fresh
+same-SHA adversarial tracks, exact feature workflows, and fast-forward `main`
+delivery all completed green.
 
 ## Formal review status
 
@@ -347,10 +355,9 @@ effort `0600` cleanup reset with the failure caveat above. Focused checks are
 green at that exact remediation SHA: 28 private `write_file` tests, 109 native
 library tests, 25 direct integration tests, formatting, workspace/all-target/
 all-feature warnings-denied Clippy, and the Linux cross-check. Exact remediation
-precursor `8432c0c6b5d5955b78a882b651a5bfec76af8814` now passes the complete
-local gate recorded below. Cycle 3 remains pending. No green behavior SHA or
-replacement claim is made. All three fresh tracks must review the same new
-exact behavior candidate. A later
+precursor `8432c0c6b5d5955b78a882b651a5bfec76af8814` passes the complete local
+gate recorded below. Cycle 2 itself remains historically not green; cycle 3 and
+delivery are green as recorded below. A later
 documentation-only seal or delivery record remains
 exempt from another adversarial cycle under the user's instruction, while exact
 feature and `main` workflows remain required.
@@ -404,7 +411,7 @@ items are still candidate evidence until the formal exact-SHA gates complete:
   through the same checks.
 - [x] Engine deny/allow events and durable results, exact six-tool alphabetical
   catalog, and original-plus-five-clones workspace identity all pass.
-- [ ] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
+- [x] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
   an active unsupported-target test reaches the fixed public construction
   failure without fabricating an unsafe instance.
 
@@ -413,10 +420,10 @@ Exact local-gate-green behavior precursor
 Linux and FreeBSD cross-compilation checks, WASI compilation and active
 unsupported-target execution, and the repository-wide checks recorded in the
 [`write_file` review](reviews/m03-write-file-review-01.md). The combined
-platform item remains unchecked until exact feature CI executes the supported
-native behavior on the repository's Linux and macOS runner matrix. Those local
-results belong to the precursor, whose documentation tree differs from formal
-candidate `119938240807f8279f83e2ace65a69706e8fcfed`.
+platform item was completed by exact seal feature CI across the repository's
+Linux and macOS runner matrix. Those local results belong to the precursor,
+whose documentation tree differs from formal candidate
+`119938240807f8279f83e2ace65a69706e8fcfed`.
 
 Exact remediated local-gate precursor
 `581fe6aa9a4190ba8cc303371e02af5aba68a5a1` passes 655 workspace tests,
@@ -424,8 +431,8 @@ two doctests, all focused suites, warnings-denied workspace Clippy, repository
 Python and pinned-compatibility checks, dependency policy/audit, Linux and
 FreeBSD cross-target checks, WASI compilation with active unsupported-target
 execution, documentation links, diff/no-unsafe checks, and a fresh release CLI
-smoke. The platform item remains unchecked only until exact feature CI executes
-the supported native behavior on both Linux and macOS.
+smoke. Exact seal feature CI later completes the supported native Linux/macOS
+platform evidence.
 
 Passing only a subset of this list does not establish delivery. A remediated
 exact composed behavior SHA must pass repository gates and three fresh
@@ -469,9 +476,11 @@ denied Clippy, workspace tests, two doctests, and diff/clean checks are green.
 The behavior-green SHA is exactly `db78c6407c4f603f18e2839a8a291f2de33e579c`.
 The earlier full gate record at `8432c0c`/`9a09172` remains applicable evidence,
 including the transparently recorded contended Python timeout and isolated plus
-full sequential green reruns. Exact feature CI, benchmark evidence, fast-forward
-`main`, and exact `main` workflows remain pending. This seal is documentation-
-only and is exempt from further adversarial review under the user's instruction.
+full sequential green reruns. Exact seal feature CI `32633372927`, feature
+benchmark `32633372982`, main CI `32633639774`, and main benchmark `32633639763`
+are green; both benchmark runs retain two nonexpired exact-SHA artifacts. `main`
+was fast-forwarded without force from `bc042536` to exact seal `bdd27ec`. This
+seal is documentation-only and exempt from further adversarial review.
 
 ## Pinned fx input and deliberate differences
 
@@ -489,6 +498,9 @@ differences should be normalized away merely to resemble upstream behavior.
 This slice adds no CLI or slash command, parent creation, external path,
 symlink-target write, metadata-only edit, append mode, patch mode, ownership/
 ACL/xattr preservation, non-Linux/macOS hardened execution, benchmark workload,
-compatibility-status change, or product-performance claim. The component and
-delivery lineage remains pending in the
-[`write_file` review](reviews/m03-write-file-review-01.md).
+compatibility-status change, or product-performance claim. Complete delivery
+lineage is retained in the
+[`write_file` review](reviews/m03-write-file-review-01.md). This final record is
+documentation-only and exempt from adversarial review under the user's
+instruction. Its own exact feature and `main` workflows remain required after
+push and cannot be self-recorded here.

@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with nineteen delivered bounded slices.
+with twenty delivered bounded slices.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -691,7 +691,7 @@ workload, compatibility-status change, product-performance claim, or fx-
 equivalence claim. Zig remains only the pinned upstream benchmark build input;
 the product remains Rust.
 
-The twentieth bounded Milestone 03 slice is native `write_file`, frozen in
+The delivered twentieth bounded Milestone 03 slice is native `write_file`, frozen in
 exact contract commit `3ee52fd8393bfb86f11048eaa6c624bd18a78798` from exact
 delivered base `bc042536eb3a40d75ccf4d1fe52032b31defac04`.
 Exact contract-only feature CI `32626410935` and benchmark-evidence run
@@ -816,8 +816,16 @@ concurrency tracks are **GREEN** with zero findings on that same SHA.
 Filesystem/robustness reran 30 private, 25 direct, and five engine tests under
 Rust 1.94.1 exactly. Exact-candidate formatting, workspace warnings-denied
 Clippy, workspace tests, two doctests, and diff/clean checks are green. Behavior-
-green SHA is `db78c640`; feature workflows and delivery remain pending. This
-documentation-only seal is exempt from further adversarial review.
+green SHA is `db78c640`. Documentation seal
+`bdd27ec969769d94c78efdab8e07cbd6b600ca3f` passed exact feature CI
+`32633372927` across all six jobs and feature benchmark run `32633372982` across
+both jobs with two nonexpired exact-SHA artifacts. `main` was fast-forwarded
+without force from `bc042536eb3a40d75ccf4d1fe52032b31defac04` to the seal;
+exact main CI `32633639774` passed all six jobs and main benchmark run
+`32633639763` passed both jobs with two nonexpired exact-SHA artifacts. The
+native `write_file` slice is delivered. This documentation-only seal is exempt
+from further adversarial review. The remaining M03 native tools, CLI ownership,
+and composed end-to-end boundary remain pending.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -829,9 +837,9 @@ the exact six-tool alphabetical reference host, Linux/macOS execution,
 FreeBSD/WASI compilation, and active unsupported behavior. Three fresh
 correctness/API, filesystem/robustness, and performance/concurrency agents must
 all report green on the same replacement behavior SHA; every finding restarts
-all three tracks. Exact feature CI must still execute supported native Linux and
-macOS behavior. Documentation-only seal and delivery commits are exempt from a
-new adversarial cycle under the user's instruction. The complete normative
+all three tracks. Exact seal feature CI executes supported native Linux and
+macOS behavior green. Documentation-only seal and delivery commits are exempt
+from a new adversarial cycle under the user's instruction. The complete normative
 contract and kickoff lineage are in [`write-file.md`](write-file.md) and the
 [`write_file` review](reviews/m03-write-file-review-01.md). The slice adds no
 parent creation, external-path access, target-content read, CLI behavior,
@@ -840,7 +848,7 @@ product remains Rust; Zig remains only the pinned upstream fx benchmark input.
 
 ### Milestone 03 completion boundary
 
-The nineteen delivered slices do not complete Milestone 03.
+The twenty delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -1010,16 +1018,21 @@ gate:
   following formal-preparation and tree-identical exact candidate
   `db78c6407c4f603f18e2839a8a291f2de33e579c` are now **GREEN** with zero
   findings in all three fresh tracks. Candidate fmt, workspace Clippy/tests, two
-  doctests, and diff/clean checks are green. Behavior-green SHA is `db78c640`;
-  feature CI/benchmark evidence and `main` delivery remain pending. This docs-
-  only seal is exempt from further adversarial review. Local
+  doctests, and diff/clean checks are green. Behavior-green SHA is `db78c640`.
+  Documentation seal `bdd27ec969769d94c78efdab8e07cbd6b600ca3f` is green
+  under feature CI `32633372927` and benchmark evidence `32633372982`, was fast-
+  forwarded without force from `bc042536` to `main`, and is green there under
+  CI `32633639774` and benchmark evidence `32633639763`; each benchmark run has
+  two nonexpired exact-SHA artifacts. Native `write_file` is delivered. This
+  docs-only seal is exempt from further adversarial review. Local
   evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
-  exact feature CI native Linux/macOS remains pending. A later documentation-
-  only seal or delivery record remains exempt from adversarial review under the
-  user's instruction. The
+  exact feature CI native Linux/macOS is green on the seal. This final delivery
+  record is documentation-only and exempt from adversarial review under the
+  user's instruction; its own exact feature and `main` workflows are required
+  after push and cannot be self-recorded. The
   remaining native tools are
-  incomplete, so this pending slice does not change the combined checkbox.
+  incomplete, so delivery of this slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
@@ -1042,8 +1055,8 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fifteenth slices, the delivered sixteenth through
-eighteenth slices, and the nineteenth candidate; Zig remains only the pinned
+by the tenth through fifteenth slices and the delivered sixteenth through
+twentieth slices; Zig remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
 no current-protocol or full fx-equivalence claim. Help and status remain
