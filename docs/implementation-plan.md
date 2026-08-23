@@ -44,7 +44,9 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with twenty delivered bounded slices. The next bounded `edit_file` slice is
-**IN PROGRESS** at its contract-only kickoff and is not delivered.
+**IN PROGRESS** on exact composed local-gate precursor
+`31ec79e000589c4fb34599be4aad4f90ea33974f`; formal adversarial review and
+delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -849,11 +851,13 @@ product remains Rust; Zig remains only the pinned upstream fx benchmark input.
 
 The twenty-first bounded Milestone 03 slice, native `edit_file`, is **IN
 PROGRESS** from exact delivered base
-`242adfed4be717baf7cd07275aae40ec8a3637f6`. Its contract-only kickoff is
-documentation and is exempt from adversarial review under the user's explicit
-instruction. It does not establish production behavior or change the count of
-twenty delivered slices. Its exact feature workflows remain required after
-push and cannot be recorded by the commit that triggers them.
+`242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
+`bb0c381f8b044f7849bef80cc482034e1dd57ecf` is green under exact CI
+`32634883133` and benchmark workflow `32634883139`. Production and independent
+evidence are now composed through exact local-gate precursor
+`31ec79e000589c4fb34599be4aad4f90ea33974f`. This changes no delivered-slice
+count: formal adversarial review, feature workflows, fast-forward integration,
+and exact `main` workflows remain pending.
 
 The frozen strict effect-free input is exactly required UTF-8 `path`,
 `old_string`, and `new_string`, with no unknown fields. Path normalization is
@@ -866,7 +870,7 @@ empty replacement is valid, I/O and construction chunks are at most 8,192
 bytes, and success is exactly normalized path plus resulting
 `bytes_written`.
 
-Core gains distinct `FilesystemAccess::Edit`, serialized `edit`, because one
+Core has distinct `FilesystemAccess::Edit`, serialized `edit`, because one
 allowed edit must read the complete existing preimage before deriving and
 atomically replacing it. Reusing `Write` would contradict `write_file`'s
 explicit no-target-read authority. Preparation remains effect-free, so it
@@ -905,25 +909,41 @@ editing, regex, patch/range/multi-edit, append, symlink-target access, CLI
 behavior, non-Linux/macOS hardening, benchmark change, performance claim, or fx
 equivalence.
 
-Production, independent tests, and maintained documentation have separate,
-non-overlapping owners. Production owns core `Edit` authority, native behavior,
+Production, independent tests, and maintained documentation had separate,
+non-overlapping owners. Production owned core `Edit` authority, native behavior,
 exports, prepared-root/reference-host wiring, and any narrow package-private
 staging extraction while preserving every delivered `write_file` behavior.
-Independent tests own public direct, engine, host, portability, fault, race,
+Independent tests owned public direct, engine, host, portability, fault, race,
 bound, cancellation, and unsupported-target evidence. Documentation owns the
-normative contract, plan/index status, and lineage record. Composition will
-register exactly seven alphabetical workspace tools: `edit_file`, `file_info`,
+normative contract, plan/index status, and lineage record. Composition registers
+exactly seven alphabetical workspace tools: `edit_file`, `file_info`,
 `glob_files`, `grep_files`, `list_files`, `read_file`, and `write_file`, backed
 by one retained workspace descriptor plus six identity-preserving clones.
 
-After production, tests, and docs compose and the exact Rust 1.94.1 local gate
-is green, three fresh correctness/API, filesystem/robustness, and performance/
-concurrency agents must review the same exact behavior SHA. Every confirmed
-finding is fixed and restarts all three fresh tracks on a new SHA until all are
-green. Exact feature workflows, a no-force fast-forward to `main`, and exact
-`main` workflows follow. Documentation-only kickoff, seal, and delivery
-records are exempt from another adversarial cycle, but not from their own exact
-remote workflows. The normative boundary and pending lineage are in
+The composed precursor passes 25 private production-helper, 23 direct, five
+engine, and seven reference-host focused tests. Formatting, workspace all-
+target/all-feature warnings-denied Clippy, workspace tests, and two doctests are
+green; discovery inventories 665 default-feature tests, 714 all-feature tests,
+and zero benchmarks. The repository harness first failed honestly at 129 tests
+because its benchmark compatibility helper sorted paths while Git supplies
+source order. Correction component
+`e4eec3cac30ec923c19fa53a81e5b6ba9b81cfae`, integrated as `31ec79e`, preserves
+Git order; the final harness is green at 130 tests, comprising 122 passes and
+eight expected macOS skips. Pinned-fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility, cargo-deny 0.20.2,
+cargo-audit 0.22.2, Linux/FreeBSD/WASI gates, Node's active WASI unsupported
+test 1/1, locked arm64 Mach-O release smoke, documentation links, no-unsafe,
+whole-feature diff, and clean-worktree checks are green. These are local
+precursor results, not compatibility promotion, performance, equivalence,
+formal candidate, review, or delivery approval.
+
+Three fresh correctness/API, filesystem/robustness, and performance/concurrency
+agents must next review the same exact behavior SHA. Every confirmed finding is
+fixed and restarts all three fresh tracks on a new SHA until all are green.
+Exact feature workflows, a no-force fast-forward to `main`, and exact `main`
+workflows follow. Documentation-only records are exempt from another
+adversarial cycle under the user's instruction, but not from applicable remote
+workflows. The normative boundary and pending lineage are in
 [`edit-file.md`](edit-file.md) and the
 [`edit_file` review](reviews/m03-edit-file-review-01.md). Zig remains solely the
 pinned upstream benchmark build input; the product implementation remains Rust.
@@ -1119,11 +1139,18 @@ gate:
   393,216-step public work cap, bounded existing-file atomic-replacement
   protocol, parallel ownership, and fresh same-SHA review requirements are
   frozen in [`edit-file.md`](edit-file.md) and
-  [`m03-edit-file-review-01.md`](reviews/m03-edit-file-review-01.md). This
-  documentation-only kickoff is exempt from adversarial review. Production,
-  independent evidence, composed local gates, all three formal tracks, exact
-  feature workflows, fast-forward integration, and exact `main` workflows are
-  pending; `edit_file` is not delivered. The
+  [`m03-edit-file-review-01.md`](reviews/m03-edit-file-review-01.md). Contract
+  `bb0c381f8b044f7849bef80cc482034e1dd57ecf` is green under exact CI
+  `32634883133` and benchmark workflow `32634883139`. Production and independent
+  evidence are composed through exact local-gate precursor
+  `31ec79e000589c4fb34599be4aad4f90ea33974f`; focused suites, the Rust 1.94.1
+  workspace gate, 130-test repository harness, pinned-fx compatibility,
+  dependency, portability, documentation, release-smoke, no-unsafe, diff, and
+  clean-worktree checks are green. Formal candidate preparation, all three
+  adversarial tracks, exact feature workflows, fast-forward integration, and
+  exact `main` workflows remain pending; `edit_file` is not delivered.
+  Documentation-only commits are exempt from a separate adversarial cycle under
+  the user's instruction. The
   remaining native tools are
   incomplete, so delivery of this slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

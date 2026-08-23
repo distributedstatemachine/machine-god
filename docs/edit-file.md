@@ -1,22 +1,28 @@
 # Native `edit_file` contract
 
-Status: **IN PROGRESS — contract-only kickoff; no production behavior exists**
+Status: **IN PROGRESS — composed local gates green; formal review pending**
 
 This document freezes the twenty-first bounded Milestone 03 slice from exact
-delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. The kickoff changes
-documentation only. Under the user's explicit instruction, documentation-only
-kickoff, seal, and delivery commits are exempt from adversarial review. Their
-exact feature and `main` workflows remain required, but cannot be self-recorded
-before they run.
+delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
+`bb0c381f8b044f7849bef80cc482034e1dd57ecf` is green under exact feature CI
+`32634883133` and benchmark-evidence run `32634883139`; those contract-only
+workflows are not implementation or delivery evidence. Production,
+independently owned tests, and the benchmark harness ordering correction are
+composed through exact local-gate precursor
+`31ec79e000589c4fb34599be4aad4f90ea33974f`. Formal same-SHA adversarial review,
+feature delivery, fast-forward integration, and exact `main` workflows remain
+pending. Under the user's explicit instruction, documentation-only kickoff,
+seal, and delivery commits are exempt from adversarial review; their own exact
+remote workflows remain required.
 
-`edit_file` will replace exactly one occurrence of exact text in one existing
+`edit_file` replaces exactly one occurrence of exact text in one existing
 workspace file. It does not grant file creation, a general read capability, or
 unbounded filesystem mutation. The product remains Rust. Zig remains only the
 pinned upstream fx benchmark build input.
 
 ## Public API, schema, and limits
 
-`machine-god-native` will export `EDIT_FILE_TOOL_NAME`, `EditFileTool`,
+`machine-god-native` exports `EDIT_FILE_TOOL_NAME`, `EditFileTool`,
 `EditFileToolOpenError`, `EditFileToolOpenErrorKind`, and these public limits:
 
 | Public constant | Exact value |
@@ -115,7 +121,7 @@ Capability::Filesystem {
 }
 ```
 
-Core will add `FilesystemAccess::Edit`, serialized exactly as `edit`. This
+Core adds `FilesystemAccess::Edit`, serialized exactly as `edit`. This
 authority permits one bounded existing-file preimage read, exact-one-match
 derivation, and atomic pathname replacement under this contract. It is distinct
 from `Read`, `Write`, `Create`, `Delete`, `Metadata`, `Enumerate`,
@@ -324,8 +330,8 @@ system text. `Display` is exactly `<code>: <message>`.
 
 ## Reference-host composition
 
-The composed reference host will distribute one retained workspace descriptor
-plus six identity-preserving clones and register exactly seven tools in
+The composed reference host distributes one retained workspace descriptor
+plus six identity-preserving clones and registers exactly seven tools in
 alphabetical order:
 
 ```text
@@ -341,10 +347,40 @@ write_file
 The CLI remains byte-unchanged and thin. The new tool is library-only in this
 slice.
 
+## Composed local evidence
+
+Exact precursor `31ec79e000589c4fb34599be4aad4f90ea33974f` is locally green under
+Rust and Cargo 1.94.1. Focused evidence passes 25 private production-helper
+tests, 23 direct tests, five engine tests, and seven reference-host tests.
+Workspace formatting, all-target/all-feature warnings-denied Clippy, workspace
+tests, and two doctests pass. Discovery inventories 665 default-feature tests,
+714 all-feature tests, and zero benchmarks.
+
+The repository harness ultimately passes 130 tests: 122 pass and eight expected
+macOS skips. Its first 129-test run failed honestly because the benchmark
+compatibility helper sorted paths that Git supplies in source order. Component
+fix `e4eec3cac30ec923c19fa53a81e5b6ba9b81cfae`, integrated as `31ec79e`,
+preserves Git order and adds the thirtieth benchmark-harness test. The clean
+pinned-fx `b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility check then
+passes. This remediation is harness correctness, not product-performance
+evidence.
+
+Cargo-deny 0.20.2 and cargo-audit 0.22.2 are green. Linux, FreeBSD, and WASI
+gates pass; Node actively executes the WASI `edit_file` unsupported-target test
+1/1. A fresh locked release smoke produces an arm64 Mach-O CLI with SHA-256
+`87f452...`; its bare invocation, help, and status paths are green. The pre-doc
+tree contains 62 Markdown files, 437 inline links, 287 repository-relative
+links, and zero missing targets. No unsafe Rust was added, the whole-feature
+diff check passes, and the precursor worktree is clean.
+
+These are local precursor results only. They establish neither a formal
+behavior candidate nor adversarial, feature-delivery, `main`, compatibility,
+equivalence, or product-performance approval.
+
 ## Required independent evidence
 
-Production and independently owned tests must compose before review. Evidence
-must cover:
+Production and independently owned tests are composed. Formal review must
+confirm that evidence covers:
 
 - exact exports, constants, schema and descriptions, error kinds/codes/
   messages/retryability, serialized forms, and debug/display redaction;
@@ -380,16 +416,16 @@ must cover:
 - complete regression of the delivered `write_file` contract if shared private
   staging/publication mechanics are extracted.
 
-Focused suites run first. The composed behavior candidate must then pass Rust
-1.94.1 formatting, workspace all-target/all-feature warnings-denied Clippy,
-workspace and documentation tests, repository Python and pinned-compatibility
-checks, dependency policy/audit, Linux/macOS native checks, FreeBSD/WASI gates,
-documentation links, no-unsafe/diff checks, and a freshly built locked release
-CLI smoke.
+Focused suites have run first on the local precursor. A subsequent formal
+behavior candidate must repeat Rust 1.94.1 formatting, workspace all-target/all-
+feature warnings-denied Clippy, workspace and documentation tests, repository
+Python and pinned-compatibility checks, dependency policy/audit, Linux/macOS
+native checks, FreeBSD/WASI gates, documentation links, no-unsafe/diff checks,
+and a freshly built locked release CLI smoke.
 
-After production composition, three fresh adversarial agents must review the
-same exact behavior SHA for correctness/API, filesystem/robustness, and
-performance/concurrency. Every confirmed finding is fixed and restarts all
+After this documentation record composes, three fresh adversarial agents must
+review the same exact behavior SHA for correctness/API, filesystem/robustness,
+and performance/concurrency. Every confirmed finding is fixed and restarts all
 three fresh tracks on a new exact SHA until all are green. The green behavior
 must then receive exact feature-branch workflows, a no-force fast-forward to
 `main`, and exact `main` workflows. Documentation-only kickoff, seal, and final
