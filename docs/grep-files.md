@@ -1,12 +1,10 @@
 # Native `grep_files` tool
 
-Status: **IN PROGRESS — formal third-cycle candidate
-`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness green
-with zero findings; correctness/API and performance/concurrency are not green
-only for the same low documentation mismatch, with zero production defects;
-wording remediation `993b618` composes at exact documentation-gate-green
-`f87f6be`, while the formal fourth-cycle review SHA, all three tracks, and
-delivery remain pending**
+Status: **IN PROGRESS — formal fourth-cycle exact behavior SHA
+`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is green with zero findings
+across correctness/API, filesystem/robustness, and performance/concurrency;
+this documentation-only seal needs no further adversarial review, while remote
+workflow IDs and final delivery remain pending**
 nineteenth bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
@@ -83,10 +81,18 @@ exact `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`. Exact f87 documentation
 gates are green: formatting and two doctests pass; 58 Markdown files contain
 420 inline links, including 270 repository-relative links with zero missing;
 and diff, added-line-length, exact 11-file ownership, and clean-worktree checks
-pass. Its behavior tree remains `a8f6179` except for documentation. The formal
-fourth-cycle review SHA and all three tracks, exact behavior SHA with all tracks
-green, documentation seal, feature workflows, integrated `main`, and exact
-`main` workflows remain **PENDING**.
+pass. Its behavior tree remains `a8f6179` except for documentation. Formal
+fourth-cycle exact behavior SHA
+`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is **GREEN** with zero findings
+on each fresh correctness/API, filesystem/robustness, and performance/
+concurrency track. Exact reviewers verified formatting, warnings-denied
+workspace Clippy/tests, Linux/FreeBSD cross-target and WASI gates, two doctests,
+25 private tests, 40 direct `grep_files` tests, four engine tests, and the
+58/420/270/0 documentation inventory. All historical findings are closed,
+including the attempted-read-window storage wording, so behavior is green.
+This commit is a documentation-only seal and is exempt from another adversarial
+review under the user's explicit instruction. Feature and `main` remote
+workflow IDs, integrated `main`, and the final delivery SHA remain **PENDING**.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal

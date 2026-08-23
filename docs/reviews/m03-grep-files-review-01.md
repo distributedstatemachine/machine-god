@@ -1,12 +1,10 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — formal third-cycle candidate
-`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness green
-with zero findings; correctness/API and performance/concurrency are not green
-only for the same low documentation mismatch, with zero production defects;
-wording remediation `993b618` composes at exact documentation-gate-green
-`f87f6be`, while the formal fourth-cycle review SHA, all three tracks, and
-delivery remain pending**
+Status: **IN PROGRESS — formal fourth-cycle exact behavior SHA
+`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is green with zero findings
+across correctness/API, filesystem/robustness, and performance/concurrency;
+this documentation-only seal needs no further adversarial review, while remote
+workflow IDs and final delivery remain pending**
 
 ## Candidate lineage
 
@@ -112,15 +110,22 @@ delivery remain pending**
   `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`
 - Exact f87 documentation gates: **GREEN**
 - Behavior tree: **unchanged from `a8f6179` except for documentation**
-- Formal fourth-cycle review SHA: **PENDING**
-- Fourth-cycle correctness/API rereview SHA: **PENDING**
-- Fourth-cycle security/filesystem-robustness rereview SHA: **PENDING**
-- Fourth-cycle performance/concurrency rereview SHA: **PENDING**
-- Exact behavior SHA with all three review tracks green: **PENDING**
-- Documentation seal: **PENDING**
-- Feature CI and benchmark-evidence runs: **PENDING**
+- Formal fourth-cycle exact behavior-review SHA:
+  `8e5fccea1b12483d2de2448e7a4ece0dc840ba39`
+- Fourth-cycle correctness/API review: **GREEN — zero findings** on exact
+  `8e5fcce`
+- Fourth-cycle security/filesystem-robustness review: **GREEN — zero findings**
+  on exact `8e5fcce`
+- Fourth-cycle performance/concurrency review: **GREEN — zero findings** on
+  exact `8e5fcce`
+- Exact behavior SHA with all three review tracks green:
+  `8e5fccea1b12483d2de2448e7a4ece0dc840ba39`
+- Documentation-only seal: **THIS COMMIT — explicitly exempt from another
+  adversarial review; self-SHA cannot be embedded**
+- Feature CI and benchmark-evidence workflow IDs: **PENDING**
 - Integrated `main` SHA: **PENDING**
-- Exact `main` CI and benchmark-evidence runs: **PENDING**
+- Exact `main` CI and benchmark-evidence workflow IDs: **PENDING**
+- Final delivery SHA: **PENDING**
 - Required toolchain: Rust and Cargo 1.94.1 exactly
 
 The three isolated component SHAs and all integration heads above were observed
@@ -148,8 +153,11 @@ with zero findings. Correctness/API and performance/concurrency are not green
 only for the same low documentation contract mismatch; reviewers confirmed
 zero production defects. Isolated wording remediation `993b618` composes at
 exact `f87f6be`; its documentation gates are green, and its behavior tree
-remains `a8f6179` except for documentation. The formal fourth-cycle review SHA
-and all three tracks, behavior-green SHA, seal, and workflows remain pending.
+remains `a8f6179` except for documentation. Formal fourth-cycle exact behavior
+SHA `8e5fcce` is green with zero findings across all three fresh tracks. All
+historical findings are closed, including the attempted-read-window storage
+wording. This documentation-only seal is exempt from further adversarial review;
+feature and `main` workflow IDs and the final delivery SHA remain pending.
 Every listed identifier was observed directly; no production/test/documentation
 remediation, replacement rereview, behavior-green, seal, or workflow identifier
 may be inferred from a branch tip, tree identity, or another component.
@@ -614,11 +622,40 @@ Isolated documentation wording remediation
 doctests pass; 58 Markdown files contain 420 inline links, including 270
 repository-relative links with zero missing; and diff, added-line-length, exact
 11-file ownership, and clean-worktree checks pass. Its behavior tree remains
-`a8f6179` except for documentation. The formal fourth-cycle review SHA and all
-three tracks, behavior-green SHA, documentation seal, and remote delivery
-evidence remain **PENDING**. This documentation child will be the formal fourth-
-cycle candidate, but cannot name its own review SHA and therefore does not
-preclaim any fourth-cycle verdict. Once one exact replacement behavior SHA is
-green across all three tracks, a later documentation-only seal or final delivery
-record needs no additional adversarial review under the user's explicit
-instruction, but exact feature and `main` workflow evidence is still required.
+`a8f6179` except for documentation.
+
+### Fourth-cycle correctness/API track — GREEN
+
+Exact behavior candidate `8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is
+**GREEN** with zero findings. The corrected contract states that initialized
+storage is acquired or grown before reads in attempted windows of at most 8 KiB
+while logical length, visible bytes, and charged content bytes advance only by
+bytes actually read.
+
+### Fourth-cycle security/filesystem-robustness track — GREEN
+
+Exact behavior candidate `8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is
+**GREEN** with zero findings. Descriptor confinement, type validation, race and
+cancellation semantics, fixed redaction, and evidence wording have no open
+finding.
+
+### Fourth-cycle performance/concurrency track — GREEN
+
+Exact behavior candidate `8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is
+**GREEN** with zero findings. Scan-local buffer reuse, bounded attempted-read
+windows, actual-read accounting, linear matcher work, cancellation intervals,
+and output bounds have no open finding. Allocation and timing instrumentation
+remains diagnostic only.
+
+Exact 8e5 validation is green: formatting; warnings-denied workspace Clippy and
+workspace tests; Linux/FreeBSD cross-target and WASI gates; two doctests; 25
+private native tests; 40 direct `grep_files` tests; four engine tests; and 58
+Markdown files with 420 inline links, including 270 repository-relative links
+and zero missing. All historical correctness, filesystem, performance,
+cancellation, evidence, inventory, and attempted-window wording findings are
+closed. Exact behavior SHA `8e5fcce` is green across all three fresh tracks.
+
+This commit is a documentation-only review seal. The user's explicit
+instruction exempts it from another adversarial review after behavior is green.
+Feature and `main` CI and benchmark-evidence workflow IDs, integrated `main`,
+and the final delivery SHA remain **PENDING**.

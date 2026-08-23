@@ -658,9 +658,18 @@ release validators are green. Formal third-cycle candidate
 confirmed zero production defects. Isolated wording remediation
 `993b618bf78d30f6a68f3b248b572e33e4de1126` composes at exact
 `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`; its documentation gates are
-green, and its behavior tree remains `a8f6179` except for documentation. The
-formal fourth-cycle review SHA and all three tracks, behavior-green SHA,
-documentation seal, and feature/`main` delivery SHAs or runs remain **PENDING**.
+green, and its behavior tree remains `a8f6179` except for documentation. Formal
+fourth-cycle exact behavior SHA
+`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is **GREEN** with zero findings
+in all three fresh tracks: correctness/API, filesystem/robustness, and
+performance/concurrency. Exact-SHA formatting, warnings-denied workspace
+Clippy/tests, Linux/FreeBSD cross-target and WASI gates, two doctests, 25 private
+tests, 40 direct `grep_files` tests, four engine tests, and the 58/420/270/0
+documentation inventory are green. All historical findings are closed,
+including the attempted-read-window storage wording. This documentation-only
+seal is exempt from another adversarial review under the user's explicit
+instruction. Feature and `main` remote workflow IDs and the final delivery SHA
+remain **PENDING**.
 The maintained documentation must compose into the
 exact behavior SHA reviewed by all three adversarial tracks. A later
 documentation-only seal or delivery record is exempt from another adversarial
@@ -786,9 +795,18 @@ gate:
   reviewers confirmed zero production defects. Isolated wording remediation
   `993b618bf78d30f6a68f3b248b572e33e4de1126` composes at exact
   `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`; its documentation gates are
-  green, and its behavior tree remains `a8f6179` except for documentation. The
-  formal fourth-cycle review SHA and all three tracks, behavior-green SHA,
-  seal, feature, integration, and `main` evidence remain **PENDING**. The
+  green, and its behavior tree remains `a8f6179` except for documentation.
+  Formal fourth-cycle exact behavior SHA
+  `8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is **GREEN** with zero
+  findings in all three fresh tracks: correctness/API, filesystem/robustness,
+  and performance/concurrency. Exact-SHA formatting, warnings-denied workspace
+  Clippy/tests, Linux/FreeBSD cross-target and WASI gates, two doctests, 25
+  private tests, 40 direct tests, four engine tests, and the 58/420/270/0
+  documentation inventory are green. All historical findings are closed,
+  including the attempted-read-window storage wording. This documentation-only
+  seal is exempt from another adversarial review under the user's explicit
+  instruction. Feature and `main` remote workflow IDs and the final delivery
+  SHA remain **PENDING**. The
   remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
