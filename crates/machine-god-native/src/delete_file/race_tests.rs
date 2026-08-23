@@ -75,6 +75,11 @@ impl FinalAction {
                 target,
                 displaced,
                 replacement,
+            }
+            | Self::ReplaceDirectoryWithFile {
+                target,
+                displaced,
+                replacement,
             } => {
                 fs::rename(target, &displaced).unwrap();
                 fs::write(displaced.parent().unwrap().join(basename), replacement).unwrap();
@@ -91,14 +96,6 @@ impl FinalAction {
             } => {
                 fs::rename(target, &displaced).unwrap();
                 symlink(referent, displaced.parent().unwrap().join(basename)).unwrap();
-            }
-            Self::ReplaceDirectoryWithFile {
-                target,
-                displaced,
-                replacement,
-            } => {
-                fs::rename(target, &displaced).unwrap();
-                fs::write(displaced.parent().unwrap().join(basename), replacement).unwrap();
             }
             Self::MoveParent {
                 original_parent,
@@ -220,18 +217,65 @@ impl DeleteFileEvidence for ScriptedEvidence {
         assert_eq!(attempt, self.sync_attempts.len());
         self.sync_attempts.push(attempt);
         match self.sync_script {
-            SyncScript::Native => rustix::fs::fsync(parent),
             SyncScript::Error(error) => Err(error),
             SyncScript::InterruptionsThenNative(interruptions) if attempt < interruptions => {
                 Err(rustix::io::Errno::INTR)
             }
-            SyncScript::InterruptionsThenNative(_) => rustix::fs::fsync(parent),
+            SyncScript::Native | SyncScript::InterruptionsThenNative(_) => {
+                rustix::fs::fsync(parent)
+            }
             SyncScript::AlwaysInterrupted => Err(rustix::io::Errno::INTR),
         }
     }
 }
 
-fn assert_success(output: ToolOutput, path: &str) {
+#[derive(Clone, Copy)]
+enum ExpectedUnlinkError {
+    PermissionDenied,
+    TargetChanged,
+    DeleteFailed,
+    DirectoryNotEmpty,
+}
+
+impl ExpectedUnlinkError {
+    const fn details(self) -> (ToolErrorKind, &'static str, &'static str, bool) {
+        match self {
+            Self::PermissionDenied => (
+                ToolErrorKind::PermissionDenied,
+                "delete_file_permission_denied",
+                "requested path cannot be deleted",
+                false,
+            ),
+            Self::TargetChanged => (
+                ToolErrorKind::Execution,
+                "delete_file_target_changed",
+                "requested path changed before deletion",
+                true,
+            ),
+            Self::DeleteFailed => (
+                ToolErrorKind::Execution,
+                "delete_file_delete_failed",
+                "requested path could not be deleted",
+                true,
+            ),
+            Self::DirectoryNotEmpty => (
+                ToolErrorKind::Execution,
+                "delete_file_directory_not_empty",
+                "requested directory is not empty",
+                false,
+            ),
+        }
+    }
+}
+
+struct UnlinkErrorCase {
+    label: &'static str,
+    errno: rustix::io::Errno,
+    directory: bool,
+    expected: ExpectedUnlinkError,
+}
+
+fn assert_success(output: &ToolOutput, path: &str) {
     assert!(!output.is_error);
     assert_eq!(output.content, json!({ "path": path }));
 }
@@ -275,7 +319,7 @@ fn final_window_same_type_replacement_is_the_entry_deleted_for_files_and_directo
         .unwrap()
         .execute_supported_with_evidence("file", &CancellationToken::new(), &mut file_evidence)
         .unwrap();
-    assert_success(output, "file");
+    assert_success(&output, "file");
     assert!(!file_target.exists());
     assert_eq!(fs::read(displaced_file).unwrap(), b"original file");
     assert_eq!(file_evidence.final_pre_unlink_calls, 1);
@@ -298,7 +342,7 @@ fn final_window_same_type_replacement_is_the_entry_deleted_for_files_and_directo
             &mut directory_evidence,
         )
         .unwrap();
-    assert_success(output, "directory");
+    assert_success(&output, "directory");
     assert!(!directory_target.exists());
     assert!(displaced_directory.is_dir());
     assert_eq!(directory_evidence.final_pre_unlink_calls, 1);
@@ -328,7 +372,7 @@ fn final_window_file_to_symlink_removes_only_the_link_and_preserves_its_referent
         .execute_supported_with_evidence("target", &CancellationToken::new(), &mut evidence)
         .unwrap();
 
-    assert_success(output, "target");
+    assert_success(&output, "target");
     assert!(fs::symlink_metadata(&target).is_err());
     assert_eq!(fs::read(displaced).unwrap(), b"original");
     assert_eq!(fs::read(sentinel).unwrap(), b"external sentinel");
@@ -414,7 +458,7 @@ fn retained_parent_moved_outside_public_path_receives_only_the_intended_delete()
         .execute_supported_with_evidence("nested/target", &CancellationToken::new(), &mut evidence)
         .unwrap();
 
-    assert_success(output, "nested/target");
+    assert_success(&output, "nested/target");
     assert!(!moved_parent.join("target").exists());
     assert_eq!(
         fs::read(moved_parent.join("sentinel")).unwrap(),
@@ -447,7 +491,7 @@ fn unlink_receives_exact_file_and_directory_flags() {
             .unwrap()
             .execute_supported_with_evidence(name, &CancellationToken::new(), &mut evidence)
             .unwrap();
-        assert_success(output, name);
+        assert_success(&output, name);
         assert_eq!(evidence.unlink_calls, 1);
         assert_eq!(evidence.unlink_flags, [expected_flags]);
         assert_eq!(evidence.sync_attempts, [0]);
@@ -456,106 +500,66 @@ fn unlink_receives_exact_file_and_directory_flags() {
 
 #[test]
 fn definitive_unlink_errors_have_exact_mapping_one_call_and_no_sync() {
-    struct Case {
-        label: &'static str,
-        errno: rustix::io::Errno,
-        directory: bool,
-        kind: ToolErrorKind,
-        code: &'static str,
-        message: &'static str,
-        retryable: bool,
-    }
-
     let cases = [
-        Case {
+        UnlinkErrorCase {
             label: "eacces",
             errno: rustix::io::Errno::ACCESS,
             directory: false,
-            kind: ToolErrorKind::PermissionDenied,
-            code: "delete_file_permission_denied",
-            message: "requested path cannot be deleted",
-            retryable: false,
+            expected: ExpectedUnlinkError::PermissionDenied,
         },
-        Case {
+        UnlinkErrorCase {
             label: "eperm",
             errno: rustix::io::Errno::PERM,
             directory: false,
-            kind: ToolErrorKind::PermissionDenied,
-            code: "delete_file_permission_denied",
-            message: "requested path cannot be deleted",
-            retryable: false,
+            expected: ExpectedUnlinkError::PermissionDenied,
         },
-        Case {
+        UnlinkErrorCase {
             label: "erofs",
             errno: rustix::io::Errno::ROFS,
             directory: false,
-            kind: ToolErrorKind::PermissionDenied,
-            code: "delete_file_permission_denied",
-            message: "requested path cannot be deleted",
-            retryable: false,
+            expected: ExpectedUnlinkError::PermissionDenied,
         },
-        Case {
+        UnlinkErrorCase {
             label: "enoent",
             errno: rustix::io::Errno::NOENT,
             directory: false,
-            kind: ToolErrorKind::Execution,
-            code: "delete_file_target_changed",
-            message: "requested path changed before deletion",
-            retryable: true,
+            expected: ExpectedUnlinkError::TargetChanged,
         },
-        Case {
+        UnlinkErrorCase {
             label: "enotdir",
             errno: rustix::io::Errno::NOTDIR,
             directory: false,
-            kind: ToolErrorKind::Execution,
-            code: "delete_file_target_changed",
-            message: "requested path changed before deletion",
-            retryable: true,
+            expected: ExpectedUnlinkError::TargetChanged,
         },
-        Case {
+        UnlinkErrorCase {
             label: "eisdir",
             errno: rustix::io::Errno::ISDIR,
             directory: false,
-            kind: ToolErrorKind::Execution,
-            code: "delete_file_target_changed",
-            message: "requested path changed before deletion",
-            retryable: true,
+            expected: ExpectedUnlinkError::TargetChanged,
         },
-        Case {
+        UnlinkErrorCase {
             label: "eloop",
             errno: rustix::io::Errno::LOOP,
             directory: false,
-            kind: ToolErrorKind::Execution,
-            code: "delete_file_target_changed",
-            message: "requested path changed before deletion",
-            retryable: true,
+            expected: ExpectedUnlinkError::TargetChanged,
         },
-        Case {
+        UnlinkErrorCase {
             label: "eio",
             errno: rustix::io::Errno::IO,
             directory: false,
-            kind: ToolErrorKind::Execution,
-            code: "delete_file_delete_failed",
-            message: "requested path could not be deleted",
-            retryable: true,
+            expected: ExpectedUnlinkError::DeleteFailed,
         },
-        Case {
+        UnlinkErrorCase {
             label: "enotempty",
             errno: rustix::io::Errno::NOTEMPTY,
             directory: true,
-            kind: ToolErrorKind::Execution,
-            code: "delete_file_directory_not_empty",
-            message: "requested directory is not empty",
-            retryable: false,
+            expected: ExpectedUnlinkError::DirectoryNotEmpty,
         },
-        Case {
+        UnlinkErrorCase {
             label: "eexist",
             errno: rustix::io::Errno::EXIST,
             directory: true,
-            kind: ToolErrorKind::Execution,
-            code: "delete_file_directory_not_empty",
-            message: "requested directory is not empty",
-            retryable: false,
+            expected: ExpectedUnlinkError::DirectoryNotEmpty,
         },
     ];
 
@@ -573,7 +577,8 @@ fn definitive_unlink_errors_have_exact_mapping_one_call_and_no_sync() {
             .unwrap()
             .execute_supported_with_evidence("target", &CancellationToken::new(), &mut evidence)
             .unwrap_err();
-        assert_error(&error, case.kind, case.code, case.message, case.retryable);
+        let (kind, code, message, retryable) = case.expected.details();
+        assert_error(&error, kind, code, message, retryable);
         assert_eq!(evidence.unlink_calls, 1);
         assert_eq!(
             evidence.unlink_flags,
@@ -657,7 +662,7 @@ fn parent_sync_allows_fifteen_interruptions_and_bounds_the_sixteenth() {
         .unwrap()
         .execute_supported_with_evidence("target", &CancellationToken::new(), &mut succeeds)
         .unwrap();
-    assert_success(output, "target");
+    assert_success(&output, "target");
     assert_eq!(succeeds.unlink_calls, 1);
     assert_eq!(succeeds.sync_attempts, (0..16).collect::<Vec<_>>());
     assert!(!target.exists());
@@ -704,7 +709,7 @@ fn post_unlink_cancellation_is_ignored_for_success_and_interruption_ambiguity() 
         .unwrap()
         .execute_supported_with_evidence("target", &cancellation, &mut success)
         .unwrap();
-    assert_success(output, "target");
+    assert_success(&output, "target");
     assert!(cancellation.is_cancelled());
     assert_eq!(success.unlink_calls, 1);
     assert_eq!(success.sync_attempts, [0]);
@@ -743,7 +748,7 @@ fn immediate_recreation_can_leave_the_path_present_after_reported_success() {
         .execute_supported_with_evidence("target", &CancellationToken::new(), &mut evidence)
         .unwrap();
 
-    assert_success(output, "target");
+    assert_success(&output, "target");
     assert_eq!(fs::read(target).unwrap(), b"recreated");
     assert_eq!(evidence.unlink_calls, 1);
     assert_eq!(evidence.sync_attempts, [0]);
