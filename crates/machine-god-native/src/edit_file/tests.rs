@@ -431,6 +431,57 @@ mod supported {
     }
 
     #[test]
+    fn stable_size_rejects_early_eof_for_initial_staged_and_revalidation_reads() {
+        let temporary = TempFile::new(b"stable");
+        let file = rustix::fs::open(
+            &temporary.path,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .unwrap();
+        for (phase, expected_code) in [
+            (ReadPhase::Initial, "edit_file_unavailable"),
+            (ReadPhase::Staged, "edit_file_write_failed"),
+            (ReadPhase::Revalidate, "edit_file_target_changed"),
+        ] {
+            let zero_calls = Cell::new(0_usize);
+            let error = read_bounded_stable_for_phase_with(
+                &CancellationToken::new(),
+                MAX_EDIT_FILE_EXISTING_BYTES,
+                phase,
+                |_, _| {
+                    zero_calls.set(zero_calls.get() + 1);
+                    Ok(0)
+                },
+                || rustix::fs::fstat(&file),
+            )
+            .unwrap_err();
+            assert_eq!(zero_calls.get(), 1);
+            assert_eq!(error.code, expected_code);
+
+            let short_calls = Cell::new(0_usize);
+            let error = read_bounded_stable_for_phase_with(
+                &CancellationToken::new(),
+                MAX_EDIT_FILE_EXISTING_BYTES,
+                phase,
+                |buffer, offset| {
+                    short_calls.set(short_calls.get() + 1);
+                    if offset == 0 {
+                        buffer[..2].copy_from_slice(b"st");
+                        Ok(2)
+                    } else {
+                        Ok(0)
+                    }
+                },
+                || rustix::fs::fstat(&file),
+            )
+            .unwrap_err();
+            assert_eq!(short_calls.get(), 2);
+            assert_eq!(error.code, expected_code);
+        }
+    }
+
+    #[test]
     fn entropy_partial_progress_interrupts_and_total_call_bound_are_exact() {
         let calls = Cell::new(0_usize);
         let name = random_temp_name_with(&CancellationToken::new(), |remaining| {
@@ -877,6 +928,42 @@ mod supported {
                 || {
                     cancellation_before_rename.cancel();
                 },
+                |parent, staged_name, basename| {
+                    publish_calls.set(publish_calls.get() + 1);
+                    native_publish_staged(parent, staged_name, basename)
+                },
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "edit_file_cancelled");
+        assert_eq!(publish_calls.get(), 0);
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
+    fn pipeline_cancellation_from_staged_hook_wins_before_metadata_or_publication() {
+        let temporary = TempDirectory::new("staged-hook-cancel");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let cancellation = CancellationToken::new();
+        let cancellation_from_hook = cancellation.clone();
+        let publish_calls = Cell::new(0_usize);
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &cancellation,
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {
+                    cancellation_from_hook.cancel();
+                },
+                || {},
+                || {},
                 |parent, staged_name, basename| {
                     publish_calls.set(publish_calls.get() + 1);
                     native_publish_staged(parent, staged_name, basename)
