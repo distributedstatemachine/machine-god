@@ -104,8 +104,11 @@ impl Error for DeleteFileToolOpenError {}
 /// Supported Linux and macOS implementations retain the opened root descriptor
 /// and never reopen its injected pathname. Each call validates one regular file
 /// or directory twice before issuing exactly one `unlinkat`. This is not a
-/// pathname compare-and-swap: another actor can install a different same-type
-/// entry after final validation and before deletion.
+/// pathname compare-and-swap: after final validation, a file-class delete can
+/// remove any replacement non-directory entry accepted by empty `unlinkat`
+/// flags, including a regular file, symlink, FIFO, socket, or special entry,
+/// without following a symlink referent. A directory-class delete can remove a
+/// different empty directory. File/directory flag mismatches fail.
 pub struct DeleteFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
@@ -695,7 +698,7 @@ impl DeleteFileTool {
             }
             Err(error) => Err(map_unlink_error_with_evidence(
                 error,
-                final_target.kind,
+                final_target,
                 revalidated.parent.as_fd(),
                 revalidated.basename,
                 cancellation,
@@ -713,26 +716,16 @@ impl DeleteFileTool {
         evidence: &mut Evidence,
         ordinals: &mut OperationOrdinals,
     ) -> Result<ParentWalk<'path>, ToolError> {
-        let root_ordinal = ordinals.next_open();
-        precommit_checkpoint(
-            evidence,
-            DeleteCheckpoint::BeforeOpen(phase, OpenSite::Root, root_ordinal),
+        let mut parent = evidence_open_walk(
+            self.root.as_fd(),
+            OsStr::new("."),
+            phase,
+            OpenSite::Root,
             cancellation,
-        )?;
-        let mut parent = evidence
-            .open_walk(
-                phase,
-                OpenSite::Root,
-                root_ordinal,
-                self.root.as_fd(),
-                OsStr::new("."),
-            )
-            .map_err(|error| map_walk_error(error, phase))?;
-        precommit_checkpoint(
             evidence,
-            DeleteCheckpoint::AfterOpen(phase, OpenSite::Root, root_ordinal),
-            cancellation,
-        )?;
+            ordinals,
+        )
+        .map_err(|error| map_evidence_walk_error(error, phase))?;
         validate_linked_root(parent.as_fd(), phase, cancellation, evidence, ordinals)?;
         precommit_checkpoint(
             evidence,
@@ -765,20 +758,16 @@ impl DeleteFileTool {
             }
 
             let site = OpenSite::Intermediate(depth);
-            let ordinal = ordinals.next_open();
-            precommit_checkpoint(
-                evidence,
-                DeleteCheckpoint::BeforeOpen(phase, site, ordinal),
+            parent = evidence_open_walk(
+                parent.as_fd(),
+                OsStr::new(component),
+                phase,
+                site,
                 cancellation,
-            )?;
-            parent = evidence
-                .open_walk(phase, site, ordinal, parent.as_fd(), OsStr::new(component))
-                .map_err(|error| map_parent_open_error(error, phase))?;
-            precommit_checkpoint(
                 evidence,
-                DeleteCheckpoint::AfterOpen(phase, site, ordinal),
-                cancellation,
-            )?;
+                ordinals,
+            )
+            .map_err(|error| map_evidence_parent_open_error(error, phase))?;
             let metadata = evidence_fstat(
                 parent.as_fd(),
                 phase,
@@ -868,7 +857,10 @@ fn validate_linked_macos_root<Evidence: DeleteFileEvidence>(
     evidence: &mut Evidence,
     ordinals: &mut OperationOrdinals,
 ) -> Result<(), ToolError> {
-    let root_path = rustix::fs::getpath(root).map_err(|error| map_walk_error(error, phase))?;
+    check_cancellation(cancellation)?;
+    let root_path = rustix::fs::getpath(root);
+    check_cancellation(cancellation)?;
+    let root_path = root_path.map_err(|error| map_walk_error(error, phase))?;
     let root_path = root_path.as_bytes();
     if root_path == b"/" {
         return Ok(());
@@ -879,20 +871,16 @@ fn validate_linked_macos_root<Evidence: DeleteFileEvidence>(
         .filter(|name| !name.is_empty())
         .ok_or_else(|| map_operational_phase(phase))?;
     let site = OpenSite::RootParent;
-    let open_ordinal = ordinals.next_open();
-    precommit_checkpoint(
-        evidence,
-        DeleteCheckpoint::BeforeOpen(phase, site, open_ordinal),
+    let root_parent = evidence_open_walk(
+        root,
+        OsStr::new(".."),
+        phase,
+        site,
         cancellation,
-    )?;
-    let root_parent = evidence
-        .open_walk(phase, site, open_ordinal, root, OsStr::new(".."))
-        .map_err(|error| map_walk_error(error, phase))?;
-    precommit_checkpoint(
         evidence,
-        DeleteCheckpoint::AfterOpen(phase, site, open_ordinal),
-        cancellation,
-    )?;
+        ordinals,
+    )
+    .map_err(|error| map_evidence_walk_error(error, phase))?;
     let linked = evidence_statat(
         root_parent.as_fd(),
         OsStr::from_bytes(name),
@@ -929,9 +917,7 @@ fn evidence_fstat<Evidence: DeleteFileEvidence>(
     if cancellation.is_cancelled() {
         return Err(EvidenceOperationError::Cancelled);
     }
-    let metadata = evidence
-        .fstat(phase, site, ordinal, descriptor)
-        .map_err(EvidenceOperationError::Os)?;
+    let metadata = evidence.fstat(phase, site, ordinal, descriptor);
     evidence.checkpoint(
         DeleteCheckpoint::AfterFstat(phase, site, ordinal),
         cancellation,
@@ -939,7 +925,7 @@ fn evidence_fstat<Evidence: DeleteFileEvidence>(
     if cancellation.is_cancelled() {
         return Err(EvidenceOperationError::Cancelled);
     }
-    Ok(metadata)
+    metadata.map_err(EvidenceOperationError::Os)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -961,9 +947,7 @@ fn evidence_statat<Evidence: DeleteFileEvidence>(
     if cancellation.is_cancelled() {
         return Err(EvidenceOperationError::Cancelled);
     }
-    let metadata = evidence
-        .statat(phase, site, ordinal, parent, name)
-        .map_err(EvidenceOperationError::Os)?;
+    let metadata = evidence.statat(phase, site, ordinal, parent, name);
     evidence.checkpoint(
         DeleteCheckpoint::AfterStatat(phase, site, ordinal),
         cancellation,
@@ -971,7 +955,37 @@ fn evidence_statat<Evidence: DeleteFileEvidence>(
     if cancellation.is_cancelled() {
         return Err(EvidenceOperationError::Cancelled);
     }
-    Ok(metadata)
+    metadata.map_err(EvidenceOperationError::Os)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(clippy::too_many_arguments)]
+fn evidence_open_walk<Evidence: DeleteFileEvidence>(
+    parent: BorrowedFd<'_>,
+    component: &OsStr,
+    phase: DeletePhase,
+    site: OpenSite,
+    cancellation: &CancellationToken,
+    evidence: &mut Evidence,
+    ordinals: &mut OperationOrdinals,
+) -> Result<OwnedFd, EvidenceOperationError> {
+    let ordinal = ordinals.next_open();
+    evidence.checkpoint(
+        DeleteCheckpoint::BeforeOpen(phase, site, ordinal),
+        cancellation,
+    );
+    if cancellation.is_cancelled() {
+        return Err(EvidenceOperationError::Cancelled);
+    }
+    let descriptor = evidence.open_walk(phase, site, ordinal, parent, component);
+    evidence.checkpoint(
+        DeleteCheckpoint::AfterOpen(phase, site, ordinal),
+        cancellation,
+    );
+    if cancellation.is_cancelled() {
+        return Err(EvidenceOperationError::Cancelled);
+    }
+    descriptor.map_err(EvidenceOperationError::Os)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1039,11 +1053,27 @@ fn map_walk_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_parent_open_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
     match phase {
+        _ if is_permission_error(error) => permission_denied(),
         DeletePhase::Revalidate => target_changed(),
         DeletePhase::Initial if error == rustix::io::Errno::NOENT => not_found(),
-        DeletePhase::Initial if is_permission_error(error) => permission_denied(),
         DeletePhase::Initial if is_rejected_type_error(error) => path_rejected(),
         DeletePhase::Initial => unavailable(),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_evidence_walk_error(error: EvidenceOperationError, phase: DeletePhase) -> ToolError {
+    match error {
+        EvidenceOperationError::Cancelled => cancelled(),
+        EvidenceOperationError::Os(error) => map_walk_error(error, phase),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_evidence_parent_open_error(error: EvidenceOperationError, phase: DeletePhase) -> ToolError {
+    match error {
+        EvidenceOperationError::Cancelled => cancelled(),
+        EvidenceOperationError::Os(error) => map_parent_open_error(error, phase),
     }
 }
 
@@ -1051,6 +1081,7 @@ fn map_parent_open_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolEr
 fn map_evidence_metadata_error(error: EvidenceOperationError, phase: DeletePhase) -> ToolError {
     match error {
         EvidenceOperationError::Cancelled => cancelled(),
+        EvidenceOperationError::Os(error) if is_permission_error(error) => permission_denied(),
         EvidenceOperationError::Os(_) => map_operational_phase(phase),
     }
 }
@@ -1075,9 +1106,9 @@ fn map_evidence_target_error(error: EvidenceOperationError, phase: DeletePhase) 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_target_metadata_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
     match phase {
+        _ if is_permission_error(error) => permission_denied(),
         DeletePhase::Revalidate => target_changed(),
         DeletePhase::Initial if error == rustix::io::Errno::NOENT => not_found(),
-        DeletePhase::Initial if is_permission_error(error) => permission_denied(),
         DeletePhase::Initial if is_rejected_type_error(error) => path_rejected(),
         DeletePhase::Initial => unavailable(),
     }
@@ -1121,7 +1152,7 @@ fn map_unlink_error(error: rustix::io::Errno, kind: TargetKind) -> ToolError {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_unlink_error_with_evidence<Evidence: DeleteFileEvidence>(
     error: rustix::io::Errno,
-    kind: TargetKind,
+    target: TargetIdentity,
     parent: BorrowedFd<'_>,
     basename: &str,
     cancellation: &CancellationToken,
@@ -1129,7 +1160,7 @@ fn map_unlink_error_with_evidence<Evidence: DeleteFileEvidence>(
     ordinals: &mut OperationOrdinals,
 ) -> ToolError {
     #[cfg(target_os = "macos")]
-    if error == rustix::io::Errno::PERM && kind == TargetKind::RegularFile {
+    if error == rustix::io::Errno::PERM && target.kind == TargetKind::RegularFile {
         match evidence_statat(
             parent,
             OsStr::new(basename),
@@ -1139,18 +1170,24 @@ fn map_unlink_error_with_evidence<Evidence: DeleteFileEvidence>(
             evidence,
             ordinals,
         ) {
-            Ok(metadata) if FileType::from_raw_mode(metadata.st_mode).is_dir() => {
-                return target_changed();
+            Ok(metadata) => {
+                return match TargetIdentity::from_stat(&metadata) {
+                    Ok(observed) if observed == target => permission_denied(),
+                    Ok(_) | Err(()) => target_changed(),
+                };
             }
             Err(EvidenceOperationError::Cancelled) => return cancelled(),
-            Ok(_) | Err(EvidenceOperationError::Os(_)) => {}
+            Err(EvidenceOperationError::Os(error)) if is_target_change_error(error) => {
+                return target_changed();
+            }
+            Err(EvidenceOperationError::Os(_)) => return permission_denied(),
         }
     }
 
     #[cfg(target_os = "linux")]
     let _ = (parent, basename, cancellation, evidence, ordinals);
 
-    map_unlink_error(error, kind)
+    map_unlink_error(error, target.kind)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1163,6 +1200,11 @@ fn is_rejected_type_error(error: rustix::io::Errno) -> bool {
     error == rustix::io::Errno::LOOP
         || error == rustix::io::Errno::NOTDIR
         || error == rustix::io::Errno::ISDIR
+}
+
+#[cfg(target_os = "macos")]
+fn is_target_change_error(error: rustix::io::Errno) -> bool {
+    error == rustix::io::Errno::NOENT || is_rejected_type_error(error)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

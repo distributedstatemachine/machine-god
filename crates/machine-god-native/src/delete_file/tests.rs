@@ -3,6 +3,7 @@
 use super::*;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -44,6 +45,26 @@ impl Drop for TemporaryDirectory {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => panic!("failed to remove private delete fixture: {error}"),
         }
+    }
+}
+
+struct ModeRestoreGuard {
+    path: PathBuf,
+    mode: u32,
+}
+
+impl ModeRestoreGuard {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            mode: fs::metadata(path).unwrap().permissions().mode(),
+        }
+    }
+}
+
+impl Drop for ModeRestoreGuard {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode));
     }
 }
 
@@ -476,6 +497,103 @@ struct FaultEvidence {
     sync_calls: usize,
 }
 
+struct CancelAndFaultEvidence {
+    point: FaultPoint,
+    cancellation: CancellationToken,
+    checkpoints: Vec<DeleteCheckpoint>,
+    hits: usize,
+    unlink_calls: usize,
+    sync_calls: usize,
+}
+
+impl CancelAndFaultEvidence {
+    fn new(point: FaultPoint, cancellation: CancellationToken) -> Self {
+        Self {
+            point,
+            cancellation,
+            checkpoints: Vec::new(),
+            hits: 0,
+            unlink_calls: 0,
+            sync_calls: 0,
+        }
+    }
+}
+
+impl DeleteFileEvidence for CancelAndFaultEvidence {
+    fn checkpoint(&mut self, checkpoint: DeleteCheckpoint, _cancellation: &CancellationToken) {
+        self.checkpoints.push(checkpoint);
+    }
+
+    fn open_walk(
+        &mut self,
+        phase: DeletePhase,
+        site: OpenSite,
+        ordinal: usize,
+        parent: BorrowedFd<'_>,
+        component: &OsStr,
+    ) -> Result<OwnedFd, rustix::io::Errno> {
+        if self.point == FaultPoint::Open(phase, site, ordinal) {
+            self.hits += 1;
+            let _ = self.cancellation.cancel();
+            Err(rustix::io::Errno::IO)
+        } else {
+            rustix::fs::openat(parent, component, directory_open_flags(), Mode::empty())
+        }
+    }
+
+    fn fstat(
+        &mut self,
+        phase: DeletePhase,
+        site: FstatSite,
+        ordinal: usize,
+        descriptor: BorrowedFd<'_>,
+    ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        if self.point == FaultPoint::Fstat(phase, site, ordinal) {
+            self.hits += 1;
+            let _ = self.cancellation.cancel();
+            Err(rustix::io::Errno::IO)
+        } else {
+            rustix::fs::fstat(descriptor)
+        }
+    }
+
+    fn statat(
+        &mut self,
+        phase: DeletePhase,
+        site: StatatSite,
+        ordinal: usize,
+        parent: BorrowedFd<'_>,
+        name: &OsStr,
+    ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        if self.point == FaultPoint::Statat(phase, site, ordinal) {
+            self.hits += 1;
+            let _ = self.cancellation.cancel();
+            Err(rustix::io::Errno::IO)
+        } else {
+            rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+        }
+    }
+
+    fn unlink(
+        &mut self,
+        parent: BorrowedFd<'_>,
+        basename: &str,
+        flags: AtFlags,
+    ) -> Result<(), rustix::io::Errno> {
+        self.unlink_calls += 1;
+        rustix::fs::unlinkat(parent, basename, flags)
+    }
+
+    fn sync_parent(
+        &mut self,
+        _attempt: usize,
+        parent: BorrowedFd<'_>,
+    ) -> Result<(), rustix::io::Errno> {
+        self.sync_calls += 1;
+        rustix::fs::fsync(parent)
+    }
+}
+
 impl FaultEvidence {
     const fn new(point: FaultPoint, error: rustix::io::Errno) -> Self {
         Self {
@@ -607,6 +725,7 @@ enum RevalidationAction {
     RemoveTarget(PathBuf),
     ReplaceFileWithDirectory(PathBuf),
     ReplaceDirectoryWithFile(PathBuf),
+    RemoveIntermediatePermissions(PathBuf),
     ReplaceParent {
         parent: PathBuf,
         moved: PathBuf,
@@ -616,6 +735,8 @@ enum RevalidationAction {
 
 struct RevalidationEvidence {
     action: Option<RevalidationAction>,
+    mode_restore: Option<ModeRestoreGuard>,
+    mode_was_enforced: bool,
     unlink_calls: usize,
     sync_calls: usize,
 }
@@ -624,6 +745,8 @@ impl RevalidationEvidence {
     const fn new(action: RevalidationAction) -> Self {
         Self {
             action: Some(action),
+            mode_restore: None,
+            mode_was_enforced: false,
             unlink_calls: 0,
             sync_calls: 0,
         }
@@ -659,6 +782,12 @@ impl DeleteFileEvidence for RevalidationEvidence {
             RevalidationAction::ReplaceDirectoryWithFile(target) => {
                 fs::remove_dir(&target).unwrap();
                 fs::write(target, b"replacement file").unwrap();
+            }
+            RevalidationAction::RemoveIntermediatePermissions(intermediate) => {
+                self.mode_restore = Some(ModeRestoreGuard::new(&intermediate));
+                fs::set_permissions(&intermediate, fs::Permissions::from_mode(0o000)).unwrap();
+                self.mode_was_enforced =
+                    rustix::fs::open(&intermediate, directory_open_flags(), Mode::empty()).is_err();
             }
             RevalidationAction::ReplaceParent {
                 parent,
@@ -711,6 +840,18 @@ fn fault_points_from_trace() -> Vec<FaultPoint> {
             | Operation::Sync(_) => None,
         })
         .collect()
+}
+
+fn after_checkpoint_for_fault(point: FaultPoint) -> DeleteCheckpoint {
+    match point {
+        FaultPoint::Open(phase, site, ordinal) => DeleteCheckpoint::AfterOpen(phase, site, ordinal),
+        FaultPoint::Fstat(phase, site, ordinal) => {
+            DeleteCheckpoint::AfterFstat(phase, site, ordinal)
+        }
+        FaultPoint::Statat(phase, site, ordinal) => {
+            DeleteCheckpoint::AfterStatat(phase, site, ordinal)
+        }
+    }
 }
 
 fn is_operational_fault_point(point: FaultPoint) -> bool {
@@ -862,6 +1003,58 @@ fn every_phase_site_and_ordinal_open_fstat_and_statat_fault_maps_precommit_exact
 }
 
 #[test]
+fn cancellation_wins_a_same_call_error_at_every_open_fstat_and_statat_site() {
+    for (index, point) in fault_points_from_trace().into_iter().enumerate() {
+        let temporary = TemporaryDirectory::new(&format!("cancel-error-{index}"));
+        let target = create_nested_target(temporary.path(), TargetKind::RegularFile);
+        let tool = DeleteFileTool::open(temporary.path()).unwrap();
+        let cancellation = CancellationToken::new();
+        let mut evidence = CancelAndFaultEvidence::new(point, cancellation.clone());
+
+        let error = tool
+            .execute_supported_with_evidence("a/b/target", &cancellation, &mut evidence)
+            .unwrap_err();
+
+        assert_cancelled(&error);
+        assert!(cancellation.is_cancelled());
+        assert_eq!(evidence.hits, 1, "fault point was not reached: {point:?}");
+        assert!(
+            evidence
+                .checkpoints
+                .contains(&after_checkpoint_for_fault(point)),
+            "after checkpoint was not recorded: {point:?}"
+        );
+        assert_eq!(evidence.unlink_calls, 0, "fault reached unlink: {point:?}");
+        assert_eq!(evidence.sync_calls, 0, "fault reached sync: {point:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"original bytes");
+    }
+}
+
+#[test]
+fn access_and_permission_errors_are_fixed_at_every_precommit_metadata_site() {
+    for (point_index, point) in fault_points_from_trace().into_iter().enumerate() {
+        for (errno_index, errno) in [rustix::io::Errno::ACCESS, rustix::io::Errno::PERM]
+            .into_iter()
+            .enumerate()
+        {
+            let temporary =
+                TemporaryDirectory::new(&format!("permission-matrix-{point_index}-{errno_index}"));
+            let target = create_nested_target(temporary.path(), TargetKind::RegularFile);
+            let tool = DeleteFileTool::open(temporary.path()).unwrap();
+            let mut evidence = FaultEvidence::new(point, errno);
+
+            let error = execute_with(&tool, "a/b/target", &mut evidence).unwrap_err();
+
+            assert_permission_denied(&error);
+            assert_eq!(evidence.hits, 1, "fault point was not reached: {point:?}");
+            assert_eq!(evidence.unlink_calls, 0, "fault reached unlink: {point:?}");
+            assert_eq!(evidence.sync_calls, 0, "fault reached sync: {point:?}");
+            assert_eq!(fs::read(&target).unwrap(), b"original bytes");
+        }
+    }
+}
+
+#[test]
 fn root_link_and_descriptor_faults_keep_phase_mapping_for_all_errno_classes() {
     let points = fault_points_from_trace()
         .into_iter()
@@ -995,6 +1188,45 @@ fn every_real_precommit_checkpoint_honors_cancellation_without_unlink_or_sync() 
             "cancel reached sync: {checkpoint:?}"
         );
         assert_eq!(fs::read(&target).unwrap(), b"original bytes");
+    }
+}
+
+#[test]
+fn real_intermediate_mode_loss_after_initial_validation_is_permission_denied() {
+    let temporary = TemporaryDirectory::new("intermediate-mode-loss");
+    let target = create_nested_target(temporary.path(), TargetKind::RegularFile);
+    let intermediate = temporary.path().join("a");
+    let original_mode = fs::metadata(&intermediate).unwrap().permissions().mode();
+    let tool = DeleteFileTool::open(temporary.path()).unwrap();
+    let mut evidence = RevalidationEvidence::new(
+        RevalidationAction::RemoveIntermediatePermissions(intermediate.clone()),
+    );
+
+    let result = execute_with(&tool, "a/b/target", &mut evidence);
+    let mode_was_enforced = evidence.mode_was_enforced;
+
+    if mode_was_enforced {
+        assert_permission_denied(&result.unwrap_err());
+        assert_eq!(evidence.unlink_calls, 0);
+        assert_eq!(evidence.sync_calls, 0);
+    } else {
+        assert_eq!(
+            result.unwrap(),
+            ToolOutput::success(json!({"path": "a/b/target"}))
+        );
+        assert_eq!(evidence.unlink_calls, 1);
+        assert_eq!(evidence.sync_calls, 1);
+    }
+
+    drop(evidence);
+    assert_eq!(
+        fs::metadata(&intermediate).unwrap().permissions().mode() & 0o7777,
+        original_mode & 0o7777
+    );
+    if mode_was_enforced {
+        assert_eq!(fs::read(target).unwrap(), b"original bytes");
+    } else {
+        assert!(!target.exists());
     }
 }
 

@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::fs::symlink;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
@@ -138,6 +140,41 @@ impl FinalAction {
     }
 }
 
+#[cfg(target_os = "macos")]
+enum MacosAfterUnlinkAction {
+    RemoveDirectory(PathBuf),
+    ReplaceDirectoryWithSymlink { target: PathBuf, referent: PathBuf },
+    ReplaceDirectoryWithFifo(PathBuf),
+    ReplaceDirectoryWithSocket(PathBuf),
+    ReplaceDirectoryWithFile(PathBuf),
+}
+
+#[cfg(target_os = "macos")]
+impl MacosAfterUnlinkAction {
+    fn run(self) {
+        match self {
+            Self::RemoveDirectory(target) => fs::remove_dir(target).unwrap(),
+            Self::ReplaceDirectoryWithSymlink { target, referent } => {
+                fs::remove_dir(&target).unwrap();
+                symlink(referent, target).unwrap();
+            }
+            Self::ReplaceDirectoryWithFifo(target) => {
+                fs::remove_dir(&target).unwrap();
+                create_fifo(&target);
+            }
+            Self::ReplaceDirectoryWithSocket(target) => {
+                fs::remove_dir(&target).unwrap();
+                let listener = UnixListener::bind(target).unwrap();
+                drop(listener);
+            }
+            Self::ReplaceDirectoryWithFile(target) => {
+                fs::remove_dir(&target).unwrap();
+                fs::write(target, b"different regular file").unwrap();
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum UnlinkScript {
     Native,
@@ -155,6 +192,8 @@ enum SyncScript {
 
 struct ScriptedEvidence {
     final_action: Option<FinalAction>,
+    #[cfg(target_os = "macos")]
+    after_unlink_action: Option<MacosAfterUnlinkAction>,
     unlink_script: UnlinkScript,
     sync_script: SyncScript,
     recreate_after_unlink: Option<(PathBuf, Vec<u8>)>,
@@ -169,6 +208,8 @@ impl ScriptedEvidence {
     fn new(unlink_script: UnlinkScript, sync_script: SyncScript) -> Self {
         Self {
             final_action: None,
+            #[cfg(target_os = "macos")]
+            after_unlink_action: None,
             unlink_script,
             sync_script,
             recreate_after_unlink: None,
@@ -182,6 +223,12 @@ impl ScriptedEvidence {
 
     fn with_final_action(mut self, action: FinalAction) -> Self {
         self.final_action = Some(action);
+        self
+    }
+
+    #[cfg(target_os = "macos")]
+    fn with_after_unlink_action(mut self, action: MacosAfterUnlinkAction) -> Self {
+        self.after_unlink_action = Some(action);
         self
     }
 }
@@ -228,6 +275,10 @@ impl DeleteFileEvidence for ScriptedEvidence {
         _outcome: Result<(), rustix::io::Errno>,
         cancellation: &CancellationToken,
     ) -> Result<(), rustix::io::Errno> {
+        #[cfg(target_os = "macos")]
+        if let Some(action) = self.after_unlink_action.take() {
+            action.run();
+        }
         if let Some((path, bytes)) = self.recreate_after_unlink.take() {
             fs::write(path, bytes).map_err(|_| rustix::io::Errno::IO)?;
         }
@@ -306,14 +357,74 @@ impl DeleteFileEvidence for CancelMacosDiagnosticEvidence {
         parent: BorrowedFd<'_>,
         name: &OsStr,
     ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
-        let result = rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW);
         if phase == DeletePhase::Revalidate && site == StatatSite::Target {
             self.revalidation_target_statat_calls += 1;
             if self.revalidation_target_statat_calls == 2 {
                 let _ = self.cancellation.cancel();
+                return Err(rustix::io::Errno::IO);
             }
         }
-        result
+        rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+    }
+
+    fn unlink(
+        &mut self,
+        _parent: BorrowedFd<'_>,
+        _basename: &str,
+        flags: AtFlags,
+    ) -> Result<(), rustix::io::Errno> {
+        self.unlink_calls += 1;
+        assert_eq!(flags, AtFlags::empty());
+        Err(rustix::io::Errno::PERM)
+    }
+
+    fn sync_parent(
+        &mut self,
+        _attempt: usize,
+        _parent: BorrowedFd<'_>,
+    ) -> Result<(), rustix::io::Errno> {
+        self.sync_calls += 1;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct MacosDiagnosticErrorEvidence {
+    error: rustix::io::Errno,
+    revalidation_target_statat_calls: usize,
+    unlink_calls: usize,
+    sync_calls: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl MacosDiagnosticErrorEvidence {
+    const fn new(error: rustix::io::Errno) -> Self {
+        Self {
+            error,
+            revalidation_target_statat_calls: 0,
+            unlink_calls: 0,
+            sync_calls: 0,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl DeleteFileEvidence for MacosDiagnosticErrorEvidence {
+    fn statat(
+        &mut self,
+        phase: DeletePhase,
+        site: StatatSite,
+        _ordinal: usize,
+        parent: BorrowedFd<'_>,
+        name: &OsStr,
+    ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        if phase == DeletePhase::Revalidate && site == StatatSite::Target {
+            self.revalidation_target_statat_calls += 1;
+            if self.revalidation_target_statat_calls == 2 {
+                return Err(self.error);
+            }
+        }
+        rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
     }
 
     fn unlink(
@@ -752,7 +863,144 @@ fn definitive_unlink_errors_have_exact_mapping_one_call_and_no_sync() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn macos_file_eperm_diagnostic_honors_cancellation_from_a_token_clone() {
+fn macos_eperm_diagnostic_rejects_every_post_unlink_identity_change() {
+    for replacement_kind in 0_u8..5 {
+        let temporary = TempDirectory::new(&format!("mi{replacement_kind}"));
+        let target = temporary.path().join("t");
+        let displaced = temporary.path().join("o");
+        let referent = temporary.path().join("r");
+        let unrelated = temporary.path().join("u");
+        fs::write(&target, b"validated original").unwrap();
+        fs::write(&referent, b"referent sentinel").unwrap();
+        fs::write(&unrelated, b"unrelated sentinel").unwrap();
+
+        let after_unlink_action = match replacement_kind {
+            0 => MacosAfterUnlinkAction::RemoveDirectory(target.clone()),
+            1 => MacosAfterUnlinkAction::ReplaceDirectoryWithSymlink {
+                target: target.clone(),
+                referent: referent.clone(),
+            },
+            2 => MacosAfterUnlinkAction::ReplaceDirectoryWithFifo(target.clone()),
+            3 => MacosAfterUnlinkAction::ReplaceDirectoryWithSocket(target.clone()),
+            4 => MacosAfterUnlinkAction::ReplaceDirectoryWithFile(target.clone()),
+            _ => unreachable!(),
+        };
+        let mut evidence = ScriptedEvidence::new(UnlinkScript::Native, SyncScript::Native)
+            .with_final_action(FinalAction::ReplaceFileWithDirectory {
+                target: target.clone(),
+                displaced: displaced.clone(),
+            })
+            .with_after_unlink_action(after_unlink_action);
+
+        let error = DeleteFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with_evidence("t", &CancellationToken::new(), &mut evidence)
+            .unwrap_err();
+
+        assert_error(
+            &error,
+            ToolErrorKind::Execution,
+            "delete_file_target_changed",
+            "requested path changed before deletion",
+            true,
+        );
+        assert_eq!(evidence.unlink_calls, 1);
+        assert_eq!(evidence.unlink_flags, [AtFlags::empty()]);
+        assert!(evidence.sync_attempts.is_empty());
+        assert_eq!(fs::read(&displaced).unwrap(), b"validated original");
+        assert_eq!(fs::read(&referent).unwrap(), b"referent sentinel");
+        assert_eq!(fs::read(&unrelated).unwrap(), b"unrelated sentinel");
+        match replacement_kind {
+            0 => assert!(fs::symlink_metadata(&target).is_err()),
+            1 => assert!(
+                fs::symlink_metadata(&target)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            ),
+            2 => assert!(fs::symlink_metadata(&target).unwrap().file_type().is_fifo()),
+            3 => assert!(
+                fs::symlink_metadata(&target)
+                    .unwrap()
+                    .file_type()
+                    .is_socket()
+            ),
+            4 => assert_eq!(fs::read(&target).unwrap(), b"different regular file"),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_eperm_diagnostic_errno_precedence_is_exact() {
+    for (index, (diagnostic_error, expected)) in [
+        (rustix::io::Errno::NOENT, ExpectedUnlinkError::TargetChanged),
+        (
+            rustix::io::Errno::NOTDIR,
+            ExpectedUnlinkError::TargetChanged,
+        ),
+        (rustix::io::Errno::ISDIR, ExpectedUnlinkError::TargetChanged),
+        (rustix::io::Errno::LOOP, ExpectedUnlinkError::TargetChanged),
+        (
+            rustix::io::Errno::ACCESS,
+            ExpectedUnlinkError::PermissionDenied,
+        ),
+        (
+            rustix::io::Errno::PERM,
+            ExpectedUnlinkError::PermissionDenied,
+        ),
+        (rustix::io::Errno::IO, ExpectedUnlinkError::PermissionDenied),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let temporary = TempDirectory::new(&format!("me{index}"));
+        let target = temporary.path().join("t");
+        fs::write(&target, b"unchanged regular file").unwrap();
+        let mut evidence = MacosDiagnosticErrorEvidence::new(diagnostic_error);
+
+        let error = DeleteFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with_evidence("t", &CancellationToken::new(), &mut evidence)
+            .unwrap_err();
+
+        let (kind, code, message, retryable) = expected.details();
+        assert_error(&error, kind, code, message, retryable);
+        assert_eq!(evidence.revalidation_target_statat_calls, 2);
+        assert_eq!(evidence.unlink_calls, 1);
+        assert_eq!(evidence.sync_calls, 0);
+        assert_eq!(fs::read(&target).unwrap(), b"unchanged regular file");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_eperm_diagnostic_preserves_permission_for_an_unchanged_regular_file() {
+    let temporary = TempDirectory::new("unchanged");
+    let target = temporary.path().join("t");
+    fs::write(&target, b"unchanged regular file").unwrap();
+    let mut evidence = ScriptedEvidence::new(
+        UnlinkScript::Error(rustix::io::Errno::PERM),
+        SyncScript::Native,
+    );
+
+    let error = DeleteFileTool::open(temporary.path())
+        .unwrap()
+        .execute_supported_with_evidence("t", &CancellationToken::new(), &mut evidence)
+        .unwrap_err();
+
+    let (kind, code, message, retryable) = ExpectedUnlinkError::PermissionDenied.details();
+    assert_error(&error, kind, code, message, retryable);
+    assert_eq!(evidence.unlink_calls, 1);
+    assert_eq!(evidence.unlink_flags, [AtFlags::empty()]);
+    assert!(evidence.sync_attempts.is_empty());
+    assert_eq!(fs::read(&target).unwrap(), b"unchanged regular file");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_file_eperm_diagnostic_error_honors_cancellation_from_a_token_clone() {
     let temporary = TempDirectory::new("macos-eperm-diagnostic-cancel");
     let target = temporary.path().join("target");
     fs::write(&target, b"original bytes").unwrap();

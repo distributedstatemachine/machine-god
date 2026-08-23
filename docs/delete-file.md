@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — cycle 1 remediated; replacement review pending**
+Status: **IN PROGRESS — formal cycle 2 not green; remediation in progress**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -22,7 +22,9 @@ behavior candidate `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf` and all three
 tracks reported **NOT GREEN**. Remediation, replacement same-SHA review, and
 remote delivery remain pending. Exact remediation
 `60e81a633557bc90aca01e3579782340c7c154c9` passes the complete replacement
-local gate; its tree has not yet received formal cycle-2 review.
+local gate. Tree-identical formal cycle-2 candidate
+`88026f10ed8c194c7160a754f226241c276579fc` is **NOT GREEN**;
+remediation and another fresh same-SHA cycle remain pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -184,7 +186,9 @@ The execution future is inert until polled, performs bounded synchronous work
 on its polling thread, and starts no detached task, thread, subprocess, timer,
 or runtime. Cancellation is checked before and after root acquisition, around
 each parent open and metadata operation, after initial and final validation,
-and at the exact final pre-`unlinkat` boundary. It cannot preempt a syscall
+and at the exact final pre-`unlinkat` boundary. Every precommit operation's
+after-check runs even when that operation returns an error; cancellation then
+takes precedence over the saved noncommit error. It cannot preempt a syscall
 already in flight. Once the delete call has succeeded or returned `EINTR`,
 later tool cancellation is ignored while the bounded parent durability attempt
 completes. Dropping an unpolled future is effect-free; dropping at a documented
@@ -239,12 +243,20 @@ An initially absent target or ancestor is `delete_file_not_found`. Absence or a
 type mismatch during final revalidation or the delete call is
 `delete_file_target_changed`. A nonempty directory is
 `delete_file_directory_not_empty`. Permission and read-only-filesystem failures
-are `delete_file_permission_denied`, including retained-root acquisition and
-linked-root metadata in either validation phase. `unlinkat` interruption and
-any failure after successful deletion are `delete_file_commit_ambiguous`;
-`unlinkat` is never retried. Other bounded operational failures map to the
-fixed unavailable, target-changed, or delete-failed category according to the
-documented phase.
+are `delete_file_permission_denied` at every root, parent, and target operation
+in either validation phase. `unlinkat` interruption and any failure after
+successful deletion are `delete_file_commit_ambiguous`; `unlinkat` is never
+retried. Other bounded operational failures map to the fixed unavailable,
+target-changed, or delete-failed category according to the documented phase.
+
+On macOS, empty-flag `unlinkat` reports `EPERM` for both a genuine permission
+failure and a final-window file-to-directory replacement. The bounded
+diagnostic no-follow metadata operation compares the complete observed target
+identity and type with the validated regular-file identity. Cancellation wins;
+absence, a type-change errno, or any observed identity/type mismatch is
+`delete_file_target_changed`; an exact unchanged identity, diagnostic
+`EACCES`/`EPERM`, or another diagnostic OS error preserves the original
+`delete_file_permission_denied`. The diagnostic never retries deletion.
 
 No public error or tool `Debug` form reflects the requested/canonical path,
 workspace root, device or inode, file type, raw errno, operating-system text,
@@ -329,6 +341,15 @@ fresh locked arm64 Mach-O release CLI is 319,152 bytes with SHA-256
 and passes bare, help, and unavailable-environment status smoke paths with empty
 stderr. These results qualify only the replacement local gate, not formal
 review or delivery.
+
+Formal cycle 2 reviewed exact tree-identical candidate
+`88026f10ed8c194c7160a754f226241c276579fc`. Performance/concurrency is
+**GREEN** with zero findings. Correctness/API and filesystem/robustness are
+**NOT GREEN** with three overlapping medium findings: failed operations skipped
+their after-cancellation checks, macOS `EPERM` diagnosis did not compare full
+identity, and non-root revalidation permission errors lost the fixed taxonomy.
+Correctness/API also found one low public-Rustdoc race-boundary mismatch.
+Remediation and another complete local and fresh three-track cycle are pending.
 
 ## Parallel ownership and formal review
 

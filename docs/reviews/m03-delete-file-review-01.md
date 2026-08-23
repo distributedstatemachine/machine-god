@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — cycle 1 remediated; replacement review pending**
+Status: **IN PROGRESS — formal cycle 2 not green; remediation in progress**
 
 ## Base and contract gate
 
@@ -204,6 +204,35 @@ empty stderr.
 
 This exact local gate does not make cycle 1 green. A tree-identical marker must
 receive three fresh formal cycle-2 reviews before any behavior-green claim.
+
+## Formal adversarial cycle 2
+
+Exact candidate: `88026f10ed8c194c7160a754f226241c276579fc`, tree-identical
+to the recorded cycle-1 remediation local gate.
+
+1. Correctness/API: **NOT GREEN**, with three medium findings and one low
+   finding. It found that failed open/metadata calls bypassed their
+   after-operation cancellation check, the macOS `EPERM` diagnosis compared
+   only directory type rather than complete validated identity, and non-root
+   revalidation `EACCES`/`EPERM` lost the fixed permission taxonomy. Public
+   Rustdoc also retained the obsolete same-type-only final-window disclosure.
+2. Filesystem/robustness: **NOT GREEN**, with the same three medium findings.
+   Its deterministic scenarios include cancellation plus a failed evidence
+   operation, a file-to-directory `EPERM` followed by diagnostic-window removal
+   or another replacement, and revalidation mode loss at non-root sites.
+3. Performance/concurrency: **GREEN** with zero findings. It confirmed the
+   requested path's constant-time byte-limit rejection precedes serialized JSON
+   traversal and found no remaining bounded-work, cancellation-frequency,
+   resource-lifetime, or concurrency defect.
+
+The four unique remediations require every precommit operation to save its
+result, always run the after-check, and give cancellation precedence; complete
+identity-aware macOS diagnosis with explicitly frozen diagnostic errno
+precedence; permission-errno precedence at every root, parent, and target site
+in both phases; full combined error/cancellation, permission, and diagnostic
+race matrices; and corrected public Rustdoc. Cycle 2 remains historically
+**NOT GREEN**. A new exact candidate receives the complete local gate and three
+entirely fresh reviewers.
 
 ## Formal adversarial protocol
 
