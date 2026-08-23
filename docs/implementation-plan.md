@@ -94,8 +94,8 @@ zero findings in all three fresh tracks. Replacement seal `fe56f4c` completed
 the exact feature and `main` delivery gates recorded above. The remaining
 native tools, CLI ownership, and Milestone 03 completion boundary remain
 pending.
-The twenty-third bounded slice, native `rename_file`, is **CYCLE 2 GREEN;
-FEATURE DELIVERY PENDING** from exact delivered base
+The twenty-third bounded slice, native `rename_file`, is **REMOTE TEST
+REMEDIATED; CYCLE 3 REVIEW PENDING** from exact delivered base
 `3d76f2e844312e7f3e809524cb72c1a7957975ff`. Its two-endpoint typed
 authority, regular-file-only absent-destination semantics, one no-replace
 rename boundary, bounded two-parent durability, explicit race limitations,
@@ -124,7 +124,13 @@ Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
 tests for that matrix, clarifies the directory race, and passes the complete
 replacement local gate recorded in the review. A tree-identical cycle-2
 candidate `4f224a5447a61a76a3cdea5ced035c164240c02c`, tree `cb75dca`, is green
-with zero findings in all three fresh tracks. Feature and main delivery remain
+with zero findings in all three fresh tracks. First seal `a03a57b` passed exact
+feature benchmark `32671805335` with both jobs and two exact-SHA artifacts;
+feature CI `32671805412` was cancelled after reproducing an unrelated
+pre-existing Linux session-lifecycle fixture deadlock. Exact test-only
+remediation `2c771ed`, tree `5de94a6`, passes the complete replacement local
+gate without changing production or rename behavior. A tree-identical cycle-3
+candidate, three fresh reviews, and replacement feature/main delivery remain
 pending.
 The first
 formal sixteenth-slice
@@ -1636,7 +1642,7 @@ gate:
   exact-SHA artifacts. Native `delete_file` is delivered as slice twenty-two.
   The combined native-tool checkbox stays unchecked because the remaining
   native tools and M03 ownership are incomplete. The twenty-third
-  `rename_file` slice is **CYCLE 2 GREEN; FEATURE DELIVERY PENDING** from exact base
+  `rename_file` slice is **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING** from exact base
   `3d76f2e`.
   It is frozen as one existing confined regular file moved to an absent
   destination through exact two-endpoint `FilesystemRename` policy input,
@@ -1655,7 +1661,12 @@ gate:
   `0b195bd`, expands the private suite to 15 tests for the requested matrix,
   clarifies that race, and passes the complete replacement local gate. Tree-
   identical cycle-2 candidate `4f224a5`, tree `cb75dca`, is green with zero
-  findings in all three fresh tracks. Exact feature/main delivery gates remain
+  findings in all three fresh tracks. First seal `a03a57b` passed exact feature
+  benchmark `32671805335`; feature CI `32671805412` reproduced an unrelated
+  pre-existing Linux session-lifecycle fixture deadlock. Exact test-only
+  remediation `2c771ed`, tree `5de94a6`, passes the complete replacement local
+  gate without changing production. A tree-identical cycle-3 candidate, three
+  fresh reviews, and exact replacement feature/main delivery gates remain
   pending under
   [`rename-file.md`](rename-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

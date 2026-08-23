@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **CYCLE 2 GREEN; FEATURE DELIVERY PENDING**
+Status: **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -27,7 +27,15 @@ local gate. Tree-identical cycle-2 candidate
 `4f224a5447a61a76a3cdea5ced035c164240c02c`, tree
 `cb75dca76eeec80dc526946c9d39d6e3da882c68`, is green with zero findings in
 all three fresh tracks. Feature delivery, fast-forward main integration, and
-exact main workflows remain pending.
+exact main workflows remain pending. First documentation seal `a03a57b` passed
+feature benchmark `32671805335` with both jobs and two exact-SHA artifacts;
+feature CI `32671805412` was cancelled after its quality job reproduced a
+pre-existing Linux deadlock in an unrelated session-lifecycle test fixture.
+Exact test-only remediation `2c771edf3d4385c0c94f2cbbee93427ea9e8b13a`, tree
+`5de94a6f90d5316ab84b7f9451e51b7cc25fd6a2`, changes no production or rename
+behavior and passes the complete replacement local gate. A tree-identical
+cycle-3 candidate and three fresh reviews remain pending before replacement
+feature delivery.
 
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
@@ -251,5 +259,10 @@ Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
 tests, clarifies the directory race, and passes the complete replacement local
 gate recorded in the review. Tree-identical cycle-2 candidate `4f224a5`, tree
 `cb75dca`, is green with zero findings in all three fresh same-SHA tracks.
-Exact feature workflows, fast-forward integration, and exact main workflows
-are still required before delivery.
+First seal `a03a57b` passed the exact feature benchmark workflow, while exact
+feature CI reproduced an unrelated Linux session-lifecycle fixture deadlock.
+Test-only remediation `2c771ed`, tree `5de94a6`, deterministically removes the
+fixture cycle and passes the complete replacement local gate without changing
+production. A tree-identical cycle-3 candidate, three fresh same-SHA reviews,
+exact replacement feature workflows, fast-forward integration, and exact main
+workflows are still required before delivery.

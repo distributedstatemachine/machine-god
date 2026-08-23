@@ -5,8 +5,11 @@ workspace tools. Twenty-two bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
-tree `cb75dca`, is green with zero findings in all three fresh tracks. Feature
-and main delivery remain pending.
+tree `cb75dca`, is green with zero findings in all three fresh tracks. First
+seal `a03a57b` passed exact feature benchmark evidence; feature CI reproduced
+an unrelated Linux session-lifecycle test deadlock. Test-only remediation
+`2c771ed`, tree `5de94a6`, passes the complete replacement local gate without
+changing production. Cycle-3 review and replacement delivery remain pending.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,

@@ -25,8 +25,11 @@ Milestone 03 has twenty-two delivered bounded slices. The twenty-third,
 library-only native `rename_file`, has composed production and independent
 evidence; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
-tree `cb75dca`, is green with zero findings in all three fresh tracks. Feature
-and main delivery remain pending.
+tree `cb75dca`, is green with zero findings in all three fresh tracks. First
+seal `a03a57b` passed exact feature benchmark evidence; feature CI reproduced
+an unrelated Linux session-lifecycle test deadlock. Test-only remediation
+`2c771ed`, tree `5de94a6`, passes the complete replacement local gate without
+changing production. Cycle-3 review and replacement delivery remain pending.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate

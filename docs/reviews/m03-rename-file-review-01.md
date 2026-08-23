@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **CYCLE 2 GREEN; FEATURE DELIVERY PENDING**
+Status: **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -32,10 +32,17 @@ Status: **CYCLE 2 GREEN; FEATURE DELIVERY PENDING**
 - Exact tree-identical cycle-2 candidate:
   `4f224a5447a61a76a3cdea5ced035c164240c02c` (tree
   `cb75dca76eeec80dc526946c9d39d6e3da882c68`).
+- First cycle-2 documentation seal:
+  `a03a57be82eca63a2cc471c308924608c1de6f8b`.
+- Exact remote-test remediation:
+  `2c771edf3d4385c0c94f2cbbee93427ea9e8b13a` (tree
+  `5de94a6f90d5316ab84b7f9451e51b7cc25fd6a2`).
 - All three cycle-1 tracks remain historically **NOT GREEN**. The remediation
   and its complete replacement local gate are green. All three fresh cycle-2
-  tracks are **GREEN** with zero findings; feature and main delivery have not
-  completed.
+  tracks are **GREEN** with zero findings. The first feature workflow attempt
+  exposed an unrelated pre-existing Linux test-fixture deadlock; its test-only
+  remediation and complete replacement local gate are green. Cycle-3 review
+  and replacement feature/main delivery have not completed.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are
@@ -196,6 +203,49 @@ only review seal is exempt from another adversarial cycle under the user's
 explicit instruction. Exact feature CI and benchmark workflows, both exact-SHA
 benchmark artifacts, fast-forward main integration, and exact main workflows
 remain required.
+
+## First feature workflow attempt and test-only remediation
+
+Documentation seal `a03a57be82eca63a2cc471c308924608c1de6f8b` passed exact
+feature benchmark workflow `32671805335`: both jobs are green and exactly two
+nonexpired artifacts name and bind that SHA. Exact feature CI `32671805412`
+passed formatting, Clippy, all four native Linux/macOS matrices, and dependency
+policy/audit. Its quality job then remained blocked in the pre-existing
+`same_engine_concurrent_create_reservation_reports_live_session` test and was
+explicitly cancelled after the exact hang was proven from both that run and
+the older contract run.
+
+The fixture acquired an external session lock before the spawned create's
+initial load and ran its first-call hook before reserving the scripted ID.
+Linux could therefore block the initial load or let the second call consume
+the first ID and wait on the lock that the test released only after that call
+returned. macOS scheduling and lock semantics had masked the cycle. Exact
+test-only remediation `2c771edf3d4385c0c94f2cbbee93427ea9e8b13a`, tree
+`5de94a6f90d5316ab84b7f9451e51b7cc25fd6a2`, reserves the scripted step and
+extracts the hook before signaling, then uses reached/release barriers instead
+of filesystem-lock timing. It changes no production source or `rename_file`
+behavior.
+
+That exact remediation passes the complete replacement local gate under Rust
+and Cargo 1.94.1. The formerly hanging test passes 100 consecutive focused
+runs, its complete 14-test lifecycle suite, and strict focused Clippy. Full
+formatting, workspace all-target/all-feature warnings-denied Clippy, workspace
+tests, all-feature tests, and both doctests are green. The `rename_file`
+focused totals remain 15 private, 16 direct, five engine, seven all-feature
+reference-host, and one core-contract test; discovery remains 777/827 with
+zero benchmarks.
+
+All 130 Python tests pass with eight expected macOS skips. Pinned-fx
+compatibility, cargo-deny 0.19.9, cargo-audit 0.22.2 over 1,225 advisories and
+175 dependencies, Linux/FreeBSD/WASI gates, and active Node 1/1 are green.
+Documentation integrity remains 66 Markdown files, 462 inline links, 312
+repository-relative links, and zero missing targets. The base diff is now 23
+files with no unsafe Rust, Cargo/dependency, or CLI change. A fresh locked
+319,152-byte arm64 Mach-O release CLI has SHA-256
+`126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107` and
+passes bare, help, human-status, and JSON-status smoke paths. A tree-identical
+cycle-3 candidate and three fresh same-SHA reviews remain required before the
+replacement feature push.
 
 ## Formal review protocol
 
