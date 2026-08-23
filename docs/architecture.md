@@ -209,10 +209,14 @@ local gates are green at final code/test precursor `275d263`. First replacement
 candidate `ae87bf1` is **NOT GREEN** across all three tracks; production and
 documentation corrections compose through `ac5d772`, `d672210`, `7ad0863`, and
 fully composed local-gate-green precursor `b498ba0`. `ae87bf1` remains
-historically **NOT GREEN**. Only the second replacement exact review SHA, all
-three reviews, behavior-green SHA, seal, and remote delivery evidence remain
-**PENDING**. Exact b498 compatibility, Python, clean locked release-build, and
-eight CLI smoke gates are green.
+historically **NOT GREEN**. Formal second replacement candidate `5aeddc1` has
+correctness/API and filesystem/robustness **GREEN** with zero findings;
+performance/concurrency is **NOT GREEN** with one medium repeated-buffer-
+allocation amplification finding and two low documentation/evidence findings.
+Production, independent-test, and documentation remediation, the exact
+replacement rereview candidate and all three rereviews, behavior-green SHA,
+seal, and remote delivery evidence remain **PENDING**. Exact b498 compatibility,
+Python, clean locked release-build, and eight CLI smoke gates are green.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -481,7 +485,11 @@ at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
 GREEN** across all three tracks. Second-fix production and documentation compose
 through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
-`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+`b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
+and filesystem/robustness **GREEN** with zero findings and
+performance/concurrency **NOT GREEN** with one medium allocation-amplification
+finding and two low documentation/evidence findings. Production,
+independent-test, and documentation remediation, exact replacement rereviews,
 behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
 and release smoke evidence are green on exact b498.
 

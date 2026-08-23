@@ -630,10 +630,18 @@ medium-plus-low performance/cancellation findings. Second production remediation
 `ac5d7726411744e4f85344edf966d26a3cdb0a26` composes at `d672210`; second
 documentation remediation `7ad0863885d28b7b7a1d6f89d35f525cdd2dd3fa`
 produces fully composed exact local-gate-green precursor
-`b498ba06fa808dc9453a7644727cf8166b6f8e87`. Only the second replacement exact
-review SHA, all three reviews, behavior-green SHA, documentation seal, and
-feature/`main` delivery SHAs or runs remain **PENDING**. Compatibility and
-release smoke evidence are green on exact b498.
+`b498ba06fa808dc9453a7644727cf8166b6f8e87`. Formal second replacement
+candidate `5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
+filesystem/robustness **GREEN** with zero findings. Performance/concurrency is
+**NOT GREEN** with one medium repeated 204,801-byte buffer-allocation
+amplification finding and two low findings: the Markdown inventory is 58 rather
+than 57 files, and deterministic recursive-DP evidence was overclaimed.
+Recursive evidence remediation requires injected-checker routing and a
+deterministic recursive regression. Production, independent-test, and
+documentation remediation, the exact replacement rereview candidate and all
+three rereviews, behavior-green SHA, documentation seal, and feature/`main`
+delivery SHAs or runs remain **PENDING**. Compatibility and release smoke
+evidence are green on exact b498.
 The maintained documentation must compose into the
 exact behavior SHA reviewed by all three adversarial tracks. A later
 documentation-only seal or delivery record is exempt from another adversarial
@@ -742,10 +750,14 @@ gate:
   gates are green at final code/test precursor `275d263`. First replacement
   candidate `ae87bf1` remains historically **NOT GREEN** across all three tracks.
   Second-fix production and documentation compose through `ac5d772`, `d672210`,
-  `7ad0863`, and exact local-gate-green precursor `b498ba0`. Only the second
-  replacement exact review SHA, all three reviews, behavior-green SHA, seal,
-  feature, integration, and `main` evidence remain **PENDING**; compatibility
-  and release smoke evidence are green on exact b498. The
+  `7ad0863`, and exact local-gate-green precursor `b498ba0`. Formal second
+  replacement candidate `5aeddc1` has correctness/API and
+  filesystem/robustness **GREEN** with zero findings and performance/concurrency
+  **NOT GREEN** with one medium allocation-amplification finding and two low
+  documentation/evidence findings. Production, independent-test, and
+  documentation remediation, exact replacement rereviews, behavior-green SHA,
+  seal, feature, integration, and `main` evidence remain **PENDING**;
+  compatibility and release smoke evidence are green on exact b498. The
   remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

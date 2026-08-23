@@ -231,13 +231,23 @@ GREEN**: performance review found a medium slashful candidate/false-DP
 cancellation gap and a low unmetered slashful selected-file decision, while the
 other tracks each found one low issue. Second-fix production and documentation
 compose through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green
-precursor `b498ba0`; `ae87bf1` remains historically **NOT GREEN**. Only the
-second replacement exact review SHA, all three reviews, behavior-green SHA,
-seal, and remote delivery remain **PENDING**; compatibility and release smoke
-evidence are green on exact b498. The corrected contract requires
-cancellation-aware slashful candidate splitting at intervals of at most 1,024
-bytes, checks in both dynamic-programming branches, and one charged
-cancellation-checked slashful selected-file rejection.
+precursor `b498ba0`; `ae87bf1` remains historically **NOT GREEN**. The
+formal second replacement candidate `5aeddc1` has correctness/API and
+filesystem/robustness **GREEN** with zero findings. Performance/concurrency is
+**NOT GREEN**: repeated eligible files can each allocate a 204,801-byte content
+buffer, yielding approximately 2,048,010,000 cumulative allocated bytes for
+10,000 empty files. The observed 6.10-second review run is diagnostic only, not
+a contractual timing or product-performance result. Two low findings correct
+the Markdown inventory from 57 to 58 files and identify an overclaim that the
+recursive dynamic-programming branch already has deterministic evidence.
+Remediation requires injected-checker routing and a deterministic recursive
+regression; it is pending. Production, independent-test, and documentation
+remediation, exact replacement rereviews, behavior-green SHA, seal, and remote
+delivery remain **PENDING**; compatibility and release smoke evidence are green
+on exact b498. The corrected behavior contract requires cancellation-aware
+slashful candidate splitting at intervals of at most 1,024 bytes, checks in
+both dynamic-programming branches, and one charged cancellation-checked
+slashful selected-file rejection.
 Existing bootstrap
 classifications, eligibility, thresholds, workflows, and pinned upstream Zig
 input remain unchanged; machine-god remains a Rust product.

@@ -79,10 +79,14 @@ remediation and exact replacement local gates are green at final code/test
 precursor `275d263`. First replacement candidate `ae87bf1` is **NOT GREEN**
 across all three tracks. Second-fix production and documentation compose through
 `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
-`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+`b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
+and filesystem/robustness **GREEN** with zero findings and
+performance/concurrency **NOT GREEN** with one medium allocation-amplification
+finding and two low documentation/evidence findings. Production,
+independent-test, and documentation remediation, exact replacement rereviews,
 behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
-and release smoke evidence are green on exact b498. It makes no
-compatibility or performance claim.
+and release smoke evidence are green on exact b498. It makes no compatibility
+or performance claim.
 
 ## Accepted invocations
 

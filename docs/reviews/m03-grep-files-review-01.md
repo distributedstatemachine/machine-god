@@ -1,9 +1,9 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — second-fix corrections and exact local gates are green
-at `b498ba06fa808dc9453a7644727cf8166b6f8e87`; the second replacement exact
-review SHA, three reviews, behavior-green SHA, seal, and remote delivery remain
-pending**
+Status: **IN PROGRESS — formal second replacement candidate
+`5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
+filesystem/robustness green with zero findings; performance/concurrency is not
+green, and remediation plus rereview and delivery remain pending**
 
 ## Candidate lineage
 
@@ -69,10 +69,21 @@ pending**
 - Fully composed second-fix local-gate precursor:
   `b498ba06fa808dc9453a7644727cf8166b6f8e87`
 - Second-fix local gates: **GREEN** on exact `b498ba0`
-- Second replacement formal behavior-review candidate SHA: **PENDING**
-- Second replacement correctness/API review SHA: **PENDING**
-- Second replacement security/filesystem-robustness review SHA: **PENDING**
-- Second replacement performance/concurrency review SHA: **PENDING**
+- Second replacement formal behavior-review candidate:
+  `5aeddc1b4cb210b00cb967b938db8d5232062916`
+- Second replacement correctness/API review: **GREEN — zero findings** on exact
+  `5aeddc1`
+- Second replacement security/filesystem-robustness review: **GREEN — zero
+  findings** on exact `5aeddc1`
+- Second replacement performance/concurrency review: **NOT GREEN — one MEDIUM
+  and two LOW findings** on exact `5aeddc1`
+- Third production remediation: **PENDING**
+- Independent-test remediation: **PENDING**
+- Documentation remediation composition: **PENDING**
+- Exact replacement rereview candidate SHA: **PENDING**
+- Replacement correctness/API rereview SHA: **PENDING**
+- Replacement security/filesystem-robustness rereview SHA: **PENDING**
+- Replacement performance/concurrency rereview SHA: **PENDING**
 - Exact behavior SHA with all three review tracks green: **PENDING**
 - Documentation seal: **PENDING**
 - Feature CI and benchmark-evidence runs: **PENDING**
@@ -92,11 +103,14 @@ components above compose in order through `35defb5`, `5855073`, `3cd282f`,
 candidate `ae87bf1` records those gates and is NOT GREEN under all three fresh
 tracks. Second production remediation `ac5d772` composes at `d672210`; second
 documentation remediation `7ad0863` composes with it at fully composed exact
-local-gate precursor `b498ba0`. Every listed identifier was observed directly;
-no second-replacement review, behavior-green, seal, or workflow identifier may
-be inferred from a branch tip, tree identity, or another component. Production,
-independent tests, and maintained docs remain non-overlapping ownership slices
-and must compose without overwriting one another.
+local-gate precursor `b498ba0`. Formal second replacement candidate `5aeddc1`
+has correctness/API and filesystem/robustness green with zero findings, while
+performance/concurrency is not green with one medium and two low findings.
+Every listed identifier was observed directly; no production/test/documentation
+remediation, replacement rereview, behavior-green, seal, or workflow identifier
+may be inferred from a branch tip, tree identity, or another component.
+Production, independent tests, and maintained docs remain non-overlapping
+ownership slices and must compose without overwriting one another.
 
 The exact base is the final `glob_files` documentation record. It passed feature
 CI `32611623653` and feature benchmark evidence `32611623655`. GitHub did not
@@ -217,11 +231,13 @@ record.
   post-observation `NOENT` omission and non-`NOENT` error mapping, growth and
   aggregate-content overflow with oversized accounting, raced nonregular-open
   rejection, line-index cancellation intervals, and a check before every
-  serialization-trimming iteration. Second-replacement evidence must
-  additionally prove the charged, cancellation-checked slashful selected-file
-  rejection plus at-most-1,024-byte cancellation intervals while splitting
-  slashful candidates and through both dynamic-programming branches. These
-  deterministic seams replace flaky sleep-based race tests.
+  serialization-trimming iteration. Replacement remediation and rereview
+  evidence must additionally prove the charged, cancellation-checked slashful
+  selected-file rejection plus at-most-1,024-byte cancellation intervals while
+  splitting slashful candidates and through both dynamic-programming branches.
+  Recursive-branch proof requires injected-checker routing and a deterministic
+  recursive regression; exact candidate `5aeddc1` does not yet supply that
+  evidence. These deterministic seams replace flaky sleep-based race tests.
 - The dedicated `grep_files_unsupported` integration target compiles for
   `wasm32-wasip1` with its constructor test active rather than cfg-elided. It
   exercises the reachable public boundary: `GrepFilesTool::open` returns the
@@ -299,14 +315,14 @@ Fully composed second-fix local-gate precursor
   `read_file::check_cancellation` dead-code warning; the dedicated unsupported-
   target test compiles to an active WASI artifact containing its exact test,
   closure, private sentinel, fixed diagnostics, and harness `main`; and
-- 57 Markdown files contain 420 inline links, including 270 repository-relative
+- 58 Markdown files contain 420 inline links, including 270 repository-relative
   links with zero missing; second-fix diff checks pass with a clean exact-SHA
   worktree.
 
-These local results are not second-replacement or remote-delivery evidence.
-First replacement candidate `ae87bf1` remains historically NOT GREEN. No
-replacement cycle is green until all three reviewers report on the same exact
-behavior SHA.
+These local results are second-fix precursor evidence, not remote-delivery
+evidence. First replacement candidate `ae87bf1` remains historically NOT GREEN.
+Formal second replacement candidate `5aeddc1` is not green because its
+performance/concurrency review confirmed one medium and two low findings.
 
 ## Explicit nonclaims
 
@@ -426,18 +442,50 @@ candidate `ae87bf1` nevertheless remains NOT GREEN under the findings below.
   dynamic-programming cells could traverse bounded work without the documented
   at-most-1,024-byte cancellation interval. Composed production at `d672210`
   makes splitting cancellation-aware at that interval and checks both recursive
-  and non-recursive dynamic-programming branches, with deterministic checker
-  regressions.
+  and non-recursive dynamic-programming branches. The existing deterministic
+  checker regression exercises the non-recursive false-cell path; it does not
+  route the recursive branch through the injected checker, as the later second
+  replacement review found.
 - **LOW — confirmed:** slashful include rejection for a selected file returned
   without a charged or local cancellation-checked include decision. Composed
   production charges exactly one decision unit and checks cancellation, with
   deterministic exact-work evidence.
 
 Production and documentation corrections, independent regressions, and exact
-local gates are composed and green at `b498ba0`. Only the second replacement
-exact review SHA, all three second replacement reviews, behavior-green SHA,
-documentation seal, and remote delivery evidence remain **PENDING**. Once one
-exact replacement behavior SHA is green across all three tracks, a later
-documentation-only seal or final delivery record needs no additional
-adversarial review under the user's explicit instruction, but exact feature and
-`main` workflow evidence is still required.
+local gates are composed and green at `b498ba0`.
+
+### Second replacement correctness/API track — GREEN
+
+Exact candidate `5aeddc1b4cb210b00cb967b938db8d5232062916` is **GREEN** with
+zero findings on the correctness/API track.
+
+### Second replacement security/filesystem-robustness track — GREEN
+
+Exact candidate `5aeddc1b4cb210b00cb967b938db8d5232062916` is **GREEN** with
+zero findings on the security/filesystem-robustness track.
+
+### Second replacement performance/concurrency track — NOT GREEN
+
+- **MEDIUM — confirmed:** each eligible file can allocate a fresh 204,801-byte
+  content buffer even when the file is empty. A 10,000-empty-file diagnostic
+  accumulated approximately 2,048,010,000 allocated bytes and observed 6.10
+  seconds. The allocation total demonstrates amplification; the observed time
+  is diagnostic only and is not a contractual timing or product-performance
+  result. Production remediation is **PENDING**.
+- **LOW — confirmed:** the second-fix local-gate record reported 57 Markdown
+  files, but the measured inventory is 58. This record corrects the count;
+  documentation remediation composition is **PENDING**.
+- **LOW — confirmed:** the first replacement resolution claimed deterministic
+  checker regressions for both dynamic-programming branches, but the recursive
+  branch does not route through the injected checker. Remediation requires
+  injected-checker routing and a deterministic recursive regression; the
+  production/test remediation is **PENDING**, and this record does not preclaim
+  that regression exists.
+
+Production, independent-test, and documentation remediation, the exact
+replacement rereview candidate and all three replacement rereviews,
+behavior-green SHA, documentation seal, and remote delivery evidence remain
+**PENDING**. Once one exact replacement behavior SHA is green across all three
+tracks, a later documentation-only seal or final delivery record needs no
+additional adversarial review under the user's explicit instruction, but exact
+feature and `main` workflow evidence is still required.

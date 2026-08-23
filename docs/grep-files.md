@@ -1,9 +1,10 @@
 # Native `grep_files` tool
 
-Status: **IN PROGRESS — second-fix corrections and exact local gates are green
-at `b498ba06fa808dc9453a7644727cf8166b6f8e87`; the second replacement exact
-review SHA, three reviews, behavior-green SHA, seal, and remote delivery remain
-pending** nineteenth bounded Milestone 03 candidate.
+Status: **IN PROGRESS — formal second replacement candidate
+`5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
+filesystem/robustness green with zero findings; performance/concurrency is not
+green, and remediation plus rereview and delivery remain pending** nineteenth
+bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
@@ -42,11 +43,21 @@ file decision. Second production remediation
 `d67221021aa173299f8f2e99d2574a15870cd5c8`; second documentation remediation
 `7ad0863885d28b7b7a1d6f89d35f525cdd2dd3fa` produces fully composed exact
 local-gate precursor `b498ba06fa808dc9453a7644727cf8166b6f8e87`.
-`ae87bf1` remains historically **NOT GREEN**. Only the second replacement exact
-review SHA, all three reviews, exact behavior SHA with all tracks green,
-documentation seal, feature workflows, integrated `main`, and exact `main`
-workflows remain **PENDING**. Compatibility, Python, clean locked release-build,
-and eight CLI smoke gates are green on exact b498.
+`ae87bf1` remains historically **NOT GREEN**. Formal second replacement
+candidate `5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
+filesystem/robustness **GREEN** with zero findings. Performance/concurrency is
+**NOT GREEN**: repeated eligible files can each allocate a 204,801-byte content
+buffer; 10,000 empty files accumulated approximately 2,048,010,000 allocated
+bytes, with an observed 6.10-second diagnostic run that is not a contractual
+timing result. Its two low findings correct the Markdown inventory from 57 to
+58 files and reject the claim that deterministic evidence already exercises
+the recursive dynamic-programming branch. That evidence remediation requires
+injected-checker routing and a deterministic recursive regression; it does not
+exist yet. Production, independent-test, and documentation remediation, the
+exact replacement rereview candidate and all three rereviews, exact behavior
+SHA with all tracks green, documentation seal, feature workflows, integrated
+`main`, and exact `main` workflows remain **PENDING**. Compatibility, Python,
+clean locked release-build, and eight CLI smoke gates are green on exact b498.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal

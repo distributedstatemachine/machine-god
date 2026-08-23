@@ -545,10 +545,13 @@ green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
 GREEN** across all three tracks. Second-fix production and documentation compose
 through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
-`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+`b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
+and filesystem/robustness **GREEN** with zero findings and
+performance/concurrency **NOT GREEN** with one medium allocation-amplification
+finding and two low documentation/evidence findings. Production,
+independent-test, and documentation remediation, exact replacement rereviews,
 behavior-green SHA, seal, and remote delivery evidence remain **PENDING**;
-compatibility and release smoke evidence are green on exact b498. Maintained
-behavior
+compatibility and release smoke evidence are green on exact b498. Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
 later documentation-only seal or delivery record is exempt from another
 adversarial cycle under the user's instruction but still requires exact feature

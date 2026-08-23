@@ -246,10 +246,15 @@ GREEN** with one low correctness ordering finding, one low filesystem evidence-
 wording finding, and medium-plus-low performance/cancellation findings.
 Second production remediation `ac5d772` composes at `d672210`; second
 documentation remediation `7ad0863` produces fully composed, exact local-gate-
-green precursor `b498ba0`. `ae87bf1` remains historically **NOT GREEN**. Only
-the second replacement exact review SHA, all three reviews, behavior-green SHA,
-seal, and remote delivery evidence remain **PENDING**. Exact b498 compatibility,
-Python, clean locked release-build, and eight CLI smoke gates are green.
+green precursor `b498ba0`. `ae87bf1` remains historically **NOT GREEN**.
+Formal second replacement candidate `5aeddc1` has correctness/API and
+filesystem/robustness **GREEN** with zero findings; performance/concurrency is
+**NOT GREEN** with one medium allocation-amplification finding and two low
+documentation/evidence findings. Production, independent-test, and
+documentation remediation, the exact replacement rereview candidate and all
+three rereviews, behavior-green SHA, seal, and remote delivery evidence remain
+**PENDING**. Exact b498 compatibility, Python, clean locked release-build, and
+eight CLI smoke gates are green.
 Strict effect-free preflight accepts exactly `pattern`, `path`, `include`,
 `case_insensitive`, `mode`, `head_limit`,
 `offset`, and `context_lines`, makes every default explicit, and prepares
