@@ -343,6 +343,7 @@ pub(super) enum DeletePhase {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OpenSite {
     Root,
+    #[cfg(target_os = "macos")]
     RootParent,
     Intermediate(usize),
 }
@@ -358,6 +359,7 @@ pub(super) enum FstatSite {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StatatSite {
+    #[cfg(target_os = "macos")]
     LinkedRoot,
     Target,
 }
