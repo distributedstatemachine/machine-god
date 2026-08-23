@@ -11,10 +11,13 @@ component `6eaee93398de8fbf6e87e77cf4d3e7de56e2a8cb` exist. They compose initial
 through `9057feb24fd3f24657148ca8e78198b88c9dbab4` and
 `44e33d7e24c6650a1e375cd095eb9efae31f4e78`, respectively. Reference-host
 fixture fix `bdbb677161322e249aea95a12bfb1b2169ff5b48` makes focused production-
-and-test composition green. The documentation component,
-first fully composed behavior SHA, local-gate SHA, formal-review SHA,
-documentation seal, feature workflow runs, integrated `main` SHA, and `main`
-workflow runs remain **PENDING** until those artifacts actually exist.
+and-test composition green. Documentation component
+`b04151a7d958875118eebddd67526d74e2ea9526` produces first fully composed
+behavior candidate `42e4793b27902da7390dc54ef6bedb169da7e1bc`. Lint fix and
+exact local gates are green at `45ad91fa2689250c47c79d2105f5e3c261cea638`.
+Formal-review SHA, documentation seal, feature workflow runs, integrated `main`
+SHA, and `main` workflow runs remain **PENDING** until those artifacts actually
+exist.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal

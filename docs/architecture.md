@@ -201,9 +201,10 @@ kickoff `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` precede parallel production,
 independent-test, and documentation ownership. Exact production `27eec2f` and
 initial independent-test `6eaee93` components exist and initially compose
 through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
-focused production/test composition green. The documentation component, first
-fully composed behavior,
-local-gate, formal-review, seal, and delivery evidence are **PENDING**.
+focused production/test composition green. Documentation component `b04151a`
+produces first fully composed behavior candidate `42e4793`; lint fix and exact
+local gates are green at `45ad91f`. Formal-review, seal, and delivery evidence
+are **PENDING**.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -465,8 +466,9 @@ not substitute for subtree content-search authority. No provider, permission-
 handler, session-store, credential, transport, runtime, constructor argument,
 root-selection, or CLI authority changes. Exact base and kickoff are
 `f6aa458` and tree-identical `f6ab594`. Exact isolated components and focused
-production/test composition are named above; the documentation component, fully
-composed behavior, review, seal, and delivery evidence remain **PENDING**.
+production/test composition are named above; documentation component `b04151a`
+produces fully composed behavior `42e4793`, with lint fix and local gates green
+at `45ad91f`. Review, seal, and delivery evidence remain **PENDING**.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

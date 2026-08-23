@@ -64,9 +64,10 @@ kickoff is `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent
 tests, and documentation are parallel, non-overlapping components. Exact
 production `27eec2f` and initial test `6eaee93` components exist and initially
 compose through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677`
-makes focused production/test composition green. The documentation component,
-fully composed behavior, review, seal, delivery,
-and exact-workflow evidence remain **PENDING**.
+makes focused production/test composition green. Documentation component
+`b04151a` produces fully composed behavior `42e4793`; lint fix and exact local
+gates are green at `45ad91f`. Review, seal, delivery, and exact-workflow
+evidence remain **PENDING**.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host

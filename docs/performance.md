@@ -222,9 +222,10 @@ tree-identical integration kickoff is
 and documentation are parallel, non-overlapping components. Exact production
 `27eec2f` and initial test `6eaee93` components exist and initially compose
 through `9057feb` and `44e33d7`; fixture fix `bdbb677` makes focused
-production/test composition green. Documentation, first fully composed
-behavior, adversarial reviews, seal, delivery, and exact-workflow evidence
-remain **PENDING**. Existing bootstrap
+production/test composition green. Documentation component `b04151a` produces
+first fully composed behavior `42e4793`; lint fix and exact local gates are
+green at `45ad91f`. Adversarial reviews, seal, delivery, and exact-workflow
+evidence remain **PENDING**. Existing bootstrap
 classifications, eligibility, thresholds, workflows, and pinned upstream Zig
 input remain unchanged; machine-god remains a Rust product.
 

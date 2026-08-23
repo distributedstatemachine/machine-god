@@ -603,8 +603,11 @@ heads are `9057feb24fd3f24657148ca8e78198b88c9dbab4` after production and
 `44e33d7e24c6650a1e375cd095eb9efae31f4e78` after the tests. Reference-host
 fixture fix and focused production/test head
 `bdbb677161322e249aea95a12bfb1b2169ff5b48` is green. The documentation
-component, fully composed behavior, local-gate, formal review, documentation
-seal, and feature/`main` delivery SHAs or runs remain **PENDING**. The maintained
+component is `b04151a7d958875118eebddd67526d74e2ea9526`, producing first fully
+composed behavior candidate `42e4793b27902da7390dc54ef6bedb169da7e1bc`.
+Lint fix and exact local gates are green at
+`45ad91fa2689250c47c79d2105f5e3c261cea638`. Formal review, documentation seal,
+and feature/`main` delivery SHAs or runs remain **PENDING**. The maintained
 documentation must compose into the exact behavior SHA reviewed by all three
 adversarial tracks. A later documentation-only seal or delivery record is
 exempt from another adversarial cycle under the user's instruction but still
@@ -705,9 +708,10 @@ gate:
   one exact behavior candidate with all three formal review tracks green.
   Exact production `27eec2f` and initial independent-test `6eaee93` components
   exist and initially compose through `9057feb` and `44e33d7`; fixture fix
-  `bdbb677` makes focused production/test composition green. Documentation,
-  fully composed behavior, review, seal, feature, integration, and `main`
-  evidence remain **PENDING**. The remaining native tools are incomplete, so
+  `bdbb677` makes focused production/test composition green. Documentation
+  component `b04151a` produces first fully composed behavior `42e4793`; lint
+  fix and exact local gates are green at `45ad91f`. Review, seal, feature,
+  integration, and `main` evidence remain **PENDING**. The remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

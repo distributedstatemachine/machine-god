@@ -532,9 +532,9 @@ This candidate starts from exact base
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Exact production `27eec2f` and
 initial independent-test `6eaee93` components exist and initially compose
 through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
-focused production/test composition green. The documentation component, fully
-composed behavior, local-gate,
-formal review, seal, and delivery evidence are **PENDING**. Maintained behavior
+focused production/test composition green. Documentation component `b04151a`
+produces fully composed behavior `42e4793`; lint fix and exact local gates are
+green at `45ad91f`. Formal review, seal, and delivery evidence are **PENDING**. Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
 later documentation-only seal or
 delivery record is exempt from another adversarial cycle under the user's

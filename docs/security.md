@@ -166,9 +166,9 @@ The nineteenth bounded candidate adds Linux/macOS `grep_files` under distinct
 independent-test, and documentation ownership. Exact production `27eec2f` and
 initial independent-test `6eaee93` components exist and initially compose
 through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
-focused production/test composition green. Documentation, fully composed
-behavior, review, seal, and delivery
-evidence remain **PENDING**. Its strict preflight
+focused production/test composition green. Documentation component `b04151a`
+produces fully composed behavior `42e4793`; lint fix and exact local gates are
+green at `45ad91f`. Review, seal, and delivery evidence remain **PENDING**. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
 relative no-follow regular-file-only traversal, bounded eligible UTF-8 content

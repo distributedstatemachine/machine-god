@@ -9,9 +9,10 @@ kickoff is `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Its production, independe
 tests, and maintained documentation are parallel, non-overlapping components;
 exact production `27eec2f` and initial test `6eaee93` components exist and
 initially compose through `9057feb` and `44e33d7`. Reference-host fixture fix
-`bdbb677` makes focused production/test composition green. The documentation
-component, fully composed behavior, review, seal,
-delivery, and exact-workflow evidence remain **PENDING**. Eighteenth-slice
+`bdbb677` makes focused production/test composition green. Documentation
+component `b04151a` produces fully composed behavior `42e4793`; lint fix and
+exact local gates are green at `45ad91f`. Review, seal, delivery, and exact-
+workflow evidence remain **PENDING**. Eighteenth-slice
 production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
 first formal review at `1f5de6a` found a high matcher-work bound defect. Its fix,
@@ -521,9 +522,9 @@ stays open because the other listed tools remain incomplete.
 The nineteenth `grep_files` candidate likewise adds no benchmark workload or
 workflow change and makes no compatibility or product-performance claim. Its
 isolated production and initial independent-test components exist. The fixture
-fix is green at `bdbb677`; the documentation component, first fully composed
-behavior SHA, local gates,
-adversarial reviews, seal, and feature and `main` workflows remain **PENDING**.
+fix is green at `bdbb677`; documentation component `b04151a` produces first
+fully composed behavior `42e4793`, and lint fix plus exact local gates are green
+at `45ad91f`. Adversarial reviews, seal, and feature and `main` workflows remain **PENDING**.
 The combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the

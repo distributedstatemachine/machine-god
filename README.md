@@ -237,8 +237,9 @@ independent tests, and maintained documentation are parallel, non-overlapping
 components. Exact production `27eec2f` and initial independent-test `6eaee93`
 components exist and initially compose through `9057feb` and `44e33d7`;
 reference-host fixture fix `bdbb677` makes focused production/test composition
-green. The documentation component, first fully composed behavior, review,
-seal, delivery, and exact-workflow evidence remain **PENDING**. Strict effect-
+green. Documentation component `b04151a` produces first fully composed behavior
+candidate `42e4793`; lint fix and exact local gates are green at `45ad91f`.
+Formal review, seal, delivery, and exact-workflow evidence remain **PENDING**. Strict effect-
 free preflight accepts exactly `pattern`, `path`, `include`,
 `case_insensitive`, `mode`, `head_limit`,
 `offset`, and `context_lines`, makes every default explicit, and prepares

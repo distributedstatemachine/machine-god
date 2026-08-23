@@ -1,8 +1,7 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — contract and focused production/test composition
-present; documentation composition and all behavior-review, seal, and delivery
-evidence pending**
+Status: **IN PROGRESS — fully composed behavior and exact local gates are green;
+formal behavior reviews, seal, and delivery evidence are pending**
 
 ## Candidate lineage
 
@@ -15,14 +14,15 @@ evidence pending**
 - Integration owner: `agent/m03-grep-files`
 - Production component: `27eec2f3c25ffecd1ba8ff3c0a4fe0129dbeeac3`
 - Initial independent-test component: `6eaee93398de8fbf6e87e77cf4d3e7de56e2a8cb`
-- Documentation component: **PENDING**
+- Documentation component: `b04151a7d958875118eebddd67526d74e2ea9526`
 - First composed production head: `9057feb24fd3f24657148ca8e78198b88c9dbab4`
 - Initial composed production-and-test head:
   `44e33d7e24c6650a1e375cd095eb9efae31f4e78`
 - Reference-host fixture fix and focused production/test head:
   `bdbb677161322e249aea95a12bfb1b2169ff5b48`
-- First fully composed behavior candidate: **PENDING**
-- Local-gate precursor: **PENDING**
+- First fully composed behavior candidate:
+  `42e4793b27902da7390dc54ef6bedb169da7e1bc`
+- Local-gate precursor: `45ad91fa2689250c47c79d2105f5e3c261cea638`
 - Formal correctness/API review SHA: **PENDING**
 - Formal security/abuse review SHA: **PENDING**
 - Formal performance/concurrency review SHA: **PENDING**
@@ -34,11 +34,12 @@ evidence pending**
 - Exact `main` CI and benchmark-evidence runs: **PENDING**
 - Required toolchain: Rust and Cargo 1.94.1 exactly
 
-The two isolated component SHAs and all three integration heads above were
-observed directly. Initial production-and-test head `44e33d7` required its
-reference-host fixture fix; focused production-and-test composition is green
-through `bdbb677`. That head is not the fully composed behavior candidate
-because this maintained documentation is not yet composed. No pending SHA or workflow identifier may be inferred
+The three isolated component SHAs and all integration heads above were observed
+directly. Initial production-and-test head `44e33d7` required its reference-host
+fixture fix; focused production-and-test composition is green through
+`bdbb677`. Maintained documentation first composes at `42e4793`; the bounded
+lint and cross-target correction composes at local-gate precursor `45ad91f`.
+No pending SHA or workflow identifier may be inferred
 from a branch tip, tree identity, or another component. Record it only after the
 named artifact exists and was observed. Production, independent tests, and
 maintained docs are parallel, non-overlapping ownership slices and must compose
@@ -155,6 +156,33 @@ record.
 - The pushed feature branch passes exact-SHA CI and benchmark-evidence workflows.
 - `main` is fast-forwarded without force and passes exact-SHA CI and benchmark-
   evidence workflows.
+
+## Local gate results
+
+Exact local-gate precursor `45ad91fa2689250c47c79d2105f5e3c261cea638`
+is green under Rust and Cargo 1.94.1 exactly:
+
+- formatting, workspace/all-target/all-feature warnings-denied Clippy, 571
+  workspace unit/integration tests plus two doctests, explicit 2/2 workspace
+  doctests, and 63/63 native private library tests pass;
+- the focused behavior represented in the workspace suite includes 30 direct
+  `grep_files`, four real-engine, seven reference-host, three prepared-root,
+  and 58 core contract tests;
+- the repository Python gate runs 129 tests: 121 pass and eight expected macOS
+  skips, with no failure or error;
+- a fresh exact upstream fx checkout at
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` passes compatibility-inventory
+  generation check; a clean locked release build and all eight accepted CLI
+  bare/version/help/status forms pass exact-output, empty-stderr, and no-create
+  checks;
+- cargo-deny 0.20.2 passes with only the accepted `syn` and `windows-sys`
+  duplicate warnings; cargo-audit 0.22.2 checks 1,225 cached advisories over 175
+  dependencies with zero findings;
+- Linux and FreeBSD no-default native Clippy pass with warnings denied; WASI
+  no-default and all-feature checks pass with only the pre-existing
+  `read_file::check_cancellation` dead-code warning; and
+- 58 Markdown files contain 420 valid relative links with zero missing, while
+  both base-to-candidate and kickoff-to-candidate diff checks pass.
 
 ## Explicit nonclaims
 
