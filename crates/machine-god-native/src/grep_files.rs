@@ -24,7 +24,11 @@ pub const MAX_GREP_FILES_RESULT_PATH_BYTES: usize = 4 * 1024;
 /// Maximum requested result count for paginated modes.
 pub const MAX_GREP_FILES_HEAD_LIMIT: usize = 100;
 /// Maximum accepted zero-based result offset.
-pub const MAX_GREP_FILES_OFFSET: usize = 100_000;
+///
+/// A nonempty literal match requires at least one observed content byte, so a
+/// successful scan cannot produce more matching lines than the aggregate
+/// content-byte limit.
+pub const MAX_GREP_FILES_OFFSET: usize = MAX_GREP_FILES_TOTAL_CONTENT_BYTES;
 /// Maximum requested context lines before and after one match.
 pub const MAX_GREP_FILES_CONTEXT_LINES: usize = 5;
 /// Maximum eligible file size in bytes.
@@ -519,6 +523,7 @@ fn validate_canonical_arguments(arguments: &ExecutionArguments) -> Result<(), To
 enum SearchRoot {
     Directory(OwnedFd),
     File(OwnedFd),
+    ExcludedFile,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -527,6 +532,11 @@ enum EntryKind {
     Directory,
     RegularFile,
     Other,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn search_root_type_is_stable(initial: EntryKind, opened: EntryKind) -> bool {
+    initial == opened && matches!(opened, EntryKind::Directory | EntryKind::RegularFile)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -544,7 +554,7 @@ struct DirectoryFrame {
     entries: std::vec::IntoIter<DirectoryEntry>,
 }
 
-#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Default)]
 struct ScanBudget {
     visited_entries: usize,
@@ -555,7 +565,7 @@ struct ScanBudget {
     content_match_steps: usize,
 }
 
-#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl ScanBudget {
     fn observe_entry(&mut self, name_bytes: usize) -> Result<(), ToolError> {
         self.visited_entries = self.visited_entries.checked_add(1).ok_or_else(scan_limit)?;
@@ -661,7 +671,7 @@ struct ScanOutcome {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct LineRange {
     start: usize,
     end: usize,
@@ -672,6 +682,110 @@ struct LiteralMatcher {
     needle: Vec<u8>,
     prefix: Vec<usize>,
     case_insensitive: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+enum IncludeMatcher<'a> {
+    All,
+    Basename(&'a [u8]),
+    Path {
+        segments: Vec<&'a str>,
+        non_recursive_segments: usize,
+    },
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'a> IncludeMatcher<'a> {
+    fn compile(
+        include: Option<&'a str>,
+        budget: &mut ScanBudget,
+        cancellation: &CancellationToken,
+    ) -> Result<Self, ToolError> {
+        let Some(pattern) = include else {
+            return Ok(Self::All);
+        };
+        check_cancellation(cancellation)?;
+        let mut segments = Vec::new();
+        let mut segment_start = 0_usize;
+        let mut segment_all_stars = true;
+        let mut non_recursive_segments = 0_usize;
+        for (index, byte) in pattern.as_bytes().iter().copied().enumerate() {
+            if index.is_multiple_of(1024) {
+                check_cancellation(cancellation)?;
+            }
+            budget.observe_include_steps(1)?;
+            if byte == b'/' {
+                let segment = &pattern[segment_start..index];
+                budget.observe_include_steps(1)?;
+                non_recursive_segments = non_recursive_segments
+                    .checked_add(usize::from(
+                        index - segment_start != 2 || !segment_all_stars,
+                    ))
+                    .ok_or_else(scan_limit)?;
+                segments.push(segment);
+                segment_start = index.checked_add(1).ok_or_else(scan_limit)?;
+                segment_all_stars = true;
+            } else {
+                segment_all_stars &= byte == b'*';
+            }
+        }
+        check_cancellation(cancellation)?;
+        if segments.is_empty() {
+            return Ok(Self::Basename(pattern.as_bytes()));
+        }
+        let segment = &pattern[segment_start..];
+        budget.observe_include_steps(1)?;
+        non_recursive_segments = non_recursive_segments
+            .checked_add(usize::from(
+                pattern.len() - segment_start != 2 || !segment_all_stars,
+            ))
+            .ok_or_else(scan_limit)?;
+        segments.push(segment);
+        Ok(Self::Path {
+            segments,
+            non_recursive_segments,
+        })
+    }
+
+    fn matches(
+        &self,
+        relative_path: &str,
+        basename: &str,
+        budget: &mut ScanBudget,
+        cancellation: &CancellationToken,
+    ) -> Result<bool, ToolError> {
+        match self {
+            Self::All => Ok(true),
+            Self::Basename(pattern) => {
+                segment_matches(pattern, basename.as_bytes(), budget, cancellation)
+            }
+            Self::Path {
+                segments,
+                non_recursive_segments,
+            } => path_matches(
+                segments,
+                *non_recursive_segments,
+                relative_path,
+                budget,
+                cancellation,
+            ),
+        }
+    }
+
+    fn matches_selected_file(
+        &self,
+        basename: &str,
+        budget: &mut ScanBudget,
+        cancellation: &CancellationToken,
+    ) -> Result<bool, ToolError> {
+        match self {
+            Self::All => Ok(true),
+            Self::Basename(pattern) => {
+                segment_matches(pattern, basename.as_bytes(), budget, cancellation)
+            }
+            Self::Path { .. } => Ok(false),
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -753,14 +867,43 @@ impl GrepFilesTool {
         cancellation: &CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(cancellation)?;
-        let root = self.open_search_root(&arguments.path, cancellation)?;
-        let outcome = scan_root(root, arguments, cancellation)?;
+        let mut outcome = ScanOutcome {
+            budget: ScanBudget::default(),
+            stats: ScanStats::default(),
+            retained: RetainedResults::default(),
+        };
+        let matcher = LiteralMatcher::compile(
+            &arguments.pattern,
+            arguments.case_insensitive,
+            &mut outcome.budget,
+        )?;
+        let include_matcher = IncludeMatcher::compile(
+            arguments.include.as_deref(),
+            &mut outcome.budget,
+            cancellation,
+        )?;
+        let root = self.open_search_root(
+            &arguments.path,
+            &include_matcher,
+            &mut outcome.budget,
+            cancellation,
+        )?;
+        scan_root(
+            root,
+            arguments,
+            &matcher,
+            &include_matcher,
+            &mut outcome,
+            cancellation,
+        )?;
         render_output(arguments, outcome, cancellation)
     }
 
     fn open_search_root(
         &self,
         search_path: &str,
+        include_matcher: &IncludeMatcher<'_>,
+        budget: &mut ScanBudget,
         cancellation: &CancellationToken,
     ) -> Result<SearchRoot, ToolError> {
         check_cancellation(cancellation)?;
@@ -797,25 +940,39 @@ impl GrepFilesTool {
                     .map_err(map_search_root_open_error)?;
             check_cancellation(cancellation)?;
             let initial_type = FileType::from_raw_mode(metadata.st_mode);
-            let flags = if initial_type.is_dir() {
-                directory_open_flags()
+            if initial_type.is_file()
+                && !include_matcher.matches_selected_file(component, budget, cancellation)?
+            {
+                return Ok(SearchRoot::ExcludedFile);
+            }
+            let (flags, expected_type) = if initial_type.is_dir() {
+                (directory_open_flags(), EntryKind::Directory)
             } else if initial_type.is_file() {
-                content_open_flags()
+                (content_open_flags(), EntryKind::RegularFile)
             } else {
                 return Err(rejected_path());
             };
+            check_cancellation(cancellation)?;
             let selected = rustix::fs::openat(current.as_fd(), component, flags, Mode::empty())
                 .map_err(map_search_root_open_error)?;
             check_cancellation(cancellation)?;
             let selected_metadata = rustix::fs::fstat(&selected).map_err(|_| unavailable())?;
             check_cancellation(cancellation)?;
             let file_type = FileType::from_raw_mode(selected_metadata.st_mode);
-            return if file_type.is_dir() {
-                Ok(SearchRoot::Directory(selected))
+            let opened_type = if file_type.is_dir() {
+                EntryKind::Directory
             } else if file_type.is_file() {
-                Ok(SearchRoot::File(selected))
+                EntryKind::RegularFile
             } else {
-                Err(rejected_path())
+                EntryKind::Other
+            };
+            if !search_root_type_is_stable(expected_type, opened_type) {
+                return Err(rejected_path());
+            }
+            return match expected_type {
+                EntryKind::Directory => Ok(SearchRoot::Directory(selected)),
+                EntryKind::RegularFile => Ok(SearchRoot::File(selected)),
+                EntryKind::Other => Err(rejected_path()),
             };
         }
     }
@@ -825,48 +982,36 @@ impl GrepFilesTool {
 fn scan_root(
     root: SearchRoot,
     arguments: &ExecutionArguments,
+    matcher: &LiteralMatcher,
+    include_matcher: &IncludeMatcher<'_>,
+    outcome: &mut ScanOutcome,
     cancellation: &CancellationToken,
-) -> Result<ScanOutcome, ToolError> {
-    let mut outcome = ScanOutcome {
-        budget: ScanBudget::default(),
-        stats: ScanStats::default(),
-        retained: RetainedResults::default(),
-    };
-    let matcher = LiteralMatcher::compile(
-        &arguments.pattern,
-        arguments.case_insensitive,
-        &mut outcome.budget,
-    )?;
+) -> Result<(), ToolError> {
     match root {
         SearchRoot::File(file) => {
-            let include_selected = match &arguments.include {
-                Some(include) if include.contains('/') => false,
-                Some(include) => segment_matches(
-                    include.as_bytes(),
-                    basename(&arguments.path).as_bytes(),
-                    &mut outcome.budget,
-                    cancellation,
-                )?,
-                None => true,
-            };
-            if include_selected {
-                outcome.budget.observe_candidate()?;
-                scan_open_file(
-                    &file,
-                    &arguments.path,
-                    arguments,
-                    &matcher,
-                    &mut outcome,
-                    cancellation,
-                )?;
-            }
+            outcome.budget.observe_candidate()?;
+            scan_open_file(
+                &file,
+                &arguments.path,
+                arguments,
+                matcher,
+                outcome,
+                cancellation,
+            )?;
         }
+        SearchRoot::ExcludedFile => {}
         SearchRoot::Directory(directory) => {
-            scan_directory_tree(directory, arguments, &matcher, &mut outcome, cancellation)?;
+            scan_directory_tree(
+                directory,
+                arguments,
+                matcher,
+                include_matcher,
+                outcome,
+                cancellation,
+            )?;
         }
     }
-    check_cancellation(cancellation)?;
-    Ok(outcome)
+    check_cancellation(cancellation)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -874,6 +1019,7 @@ fn scan_directory_tree(
     directory: OwnedFd,
     arguments: &ExecutionArguments,
     matcher: &LiteralMatcher,
+    include_matcher: &IncludeMatcher<'_>,
     outcome: &mut ScanOutcome,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
@@ -896,9 +1042,12 @@ fn scan_directory_tree(
             continue;
         };
         let frame = stack.last().expect("nonempty grep traversal stack");
-        let relative_path = join_relative(&frame.relative_path, &entry.name);
+        let relative_length =
+            checked_descendant_path_length(&arguments.path, &frame.relative_path, &entry.name)?;
         match entry.kind {
             EntryKind::Directory => {
+                let relative_path =
+                    join_relative(&frame.relative_path, &entry.name, relative_length);
                 let depth = frame.depth.checked_add(1).ok_or_else(scan_limit)?;
                 if depth > MAX_GREP_FILES_DEPTH {
                     return Err(scan_limit());
@@ -924,8 +1073,9 @@ fn scan_directory_tree(
                 )?);
             }
             EntryKind::RegularFile => {
-                if !include_matches(
-                    arguments.include.as_deref(),
+                let relative_path =
+                    join_relative(&frame.relative_path, &entry.name, relative_length);
+                if !include_matcher.matches(
                     &relative_path,
                     &entry.name,
                     &mut outcome.budget,
@@ -1035,37 +1185,6 @@ fn read_directory_entries(
     entries.sort_unstable_by(|left, right| left.sort_key.cmp(&right.sort_key));
     check_cancellation(cancellation)?;
     Ok(entries)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn include_matches(
-    include: Option<&str>,
-    relative_path: &str,
-    basename: &str,
-    budget: &mut ScanBudget,
-    cancellation: &CancellationToken,
-) -> Result<bool, ToolError> {
-    let Some(include) = include else {
-        return Ok(true);
-    };
-    if include.contains('/') {
-        let segments = include.split('/').collect::<Vec<_>>();
-        let non_recursive = segments.iter().filter(|segment| **segment != "**").count();
-        path_matches(
-            &segments,
-            non_recursive,
-            relative_path,
-            budget,
-            cancellation,
-        )
-    } else {
-        segment_matches(
-            include.as_bytes(),
-            basename.as_bytes(),
-            budget,
-            cancellation,
-        )
-    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1182,7 +1301,7 @@ fn search_content(
     retained: &mut RetainedResults,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
-    let lines = line_ranges(content);
+    let lines = line_ranges(content, cancellation)?;
     let mut file_matched = false;
     for (line_index, range) in lines.iter().copied().enumerate() {
         check_cancellation(cancellation)?;
@@ -1215,21 +1334,37 @@ fn search_content(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn line_ranges(content: &str) -> Vec<LineRange> {
+fn line_ranges(
+    content: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<LineRange>, ToolError> {
+    line_ranges_with_check(content, || check_cancellation(cancellation))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn line_ranges_with_check(
+    content: &str,
+    mut check: impl FnMut() -> Result<(), ToolError>,
+) -> Result<Vec<LineRange>, ToolError> {
     let mut ranges = Vec::new();
     let mut start = 0_usize;
-    while start < content.len() {
-        let end = content.as_bytes()[start..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or(content.len(), |offset| start + offset);
-        ranges.push(LineRange { start, end });
-        if end == content.len() {
-            break;
+    for (index, byte) in content.as_bytes().iter().copied().enumerate() {
+        if index.is_multiple_of(1024) {
+            check()?;
         }
-        start = end + 1;
+        if byte == b'\n' {
+            ranges.push(LineRange { start, end: index });
+            start = index.checked_add(1).ok_or_else(scan_limit)?;
+        }
     }
-    ranges
+    if start < content.len() {
+        ranges.push(LineRange {
+            start,
+            end: content.len(),
+        });
+    }
+    check()?;
+    Ok(ranges)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1438,12 +1573,22 @@ fn utf8_prefix(text: &str, maximum_bytes: usize) -> &str {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn render_output(
     arguments: &ExecutionArguments,
-    mut outcome: ScanOutcome,
+    outcome: ScanOutcome,
     cancellation: &CancellationToken,
 ) -> Result<ToolOutput, ToolError> {
-    check_cancellation(cancellation)?;
+    render_output_with_check(arguments, outcome, || check_cancellation(cancellation))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn render_output_with_check(
+    arguments: &ExecutionArguments,
+    mut outcome: ScanOutcome,
+    mut check: impl FnMut() -> Result<(), ToolError>,
+) -> Result<ToolOutput, ToolError> {
+    check()?;
     let content = match arguments.mode {
         GrepMode::Matches => loop {
+            check()?;
             let value = matches_output_value(arguments, &outcome);
             if serialized_tool_output_size(&value)? <= MAX_GREP_FILES_SERIALIZED_RESULT_BYTES {
                 break value;
@@ -1457,6 +1602,7 @@ fn render_output(
             outcome.retained.stopped = true;
         },
         GrepMode::FilesWithMatches => loop {
+            check()?;
             let value = files_output_value(arguments, &outcome);
             if serialized_tool_output_size(&value)? <= MAX_GREP_FILES_SERIALIZED_RESULT_BYTES {
                 break value;
@@ -1474,7 +1620,7 @@ fn render_output(
             value
         }
     };
-    check_cancellation(cancellation)?;
+    check()?;
     Ok(ToolOutput::success(content))
 }
 
@@ -1689,7 +1835,7 @@ fn is_forbidden_character(character: char) -> bool {
         )
 }
 
-#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn segment_matches(
     pattern: &[u8],
     candidate: &[u8],
@@ -1730,7 +1876,7 @@ fn segment_matches(
     Ok(pattern_index == pattern.len())
 }
 
-#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn path_matches(
     pattern_segments: &[&str],
     non_recursive_pattern_segments: usize,
@@ -1789,38 +1935,71 @@ fn path_matches(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn join_relative(parent: &str, name: &str) -> String {
+fn join_relative(parent: &str, name: &str, capacity: usize) -> String {
     if parent.is_empty() {
         name.to_owned()
     } else {
-        format!("{parent}/{name}")
+        let mut path = String::with_capacity(capacity);
+        path.push_str(parent);
+        path.push('/');
+        path.push_str(name);
+        path
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn checked_descendant_path_length(
+    search_path: &str,
+    relative_parent: &str,
+    name: &str,
+) -> Result<usize, ToolError> {
+    let relative_length = if relative_parent.is_empty() {
+        name.len()
+    } else {
+        relative_parent
+            .len()
+            .checked_add(1)
+            .and_then(|length| length.checked_add(name.len()))
+            .ok_or_else(scan_limit)?
+    };
+    let workspace_length = checked_workspace_path_length(search_path, relative_length)?;
+    if workspace_length > MAX_GREP_FILES_RESULT_PATH_BYTES {
+        return Err(scan_limit());
+    }
+    Ok(relative_length)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn checked_workspace_path_length(
+    search_path: &str,
+    relative_length: usize,
+) -> Result<usize, ToolError> {
+    if search_path == "." {
+        Ok(relative_length)
+    } else {
+        search_path
+            .len()
+            .checked_add(1)
+            .and_then(|length| length.checked_add(relative_length))
+            .ok_or_else(scan_limit)
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn join_workspace_path(search_path: &str, relative_path: &str) -> Result<String, ToolError> {
+    let capacity = checked_workspace_path_length(search_path, relative_path.len())?;
+    if capacity > MAX_GREP_FILES_RESULT_PATH_BYTES {
+        return Err(scan_limit());
+    }
     let path = if search_path == "." {
         relative_path.to_owned()
     } else {
-        let capacity = search_path
-            .len()
-            .checked_add(1)
-            .and_then(|length| length.checked_add(relative_path.len()))
-            .ok_or_else(scan_limit)?;
         let mut path = String::with_capacity(capacity);
         path.push_str(search_path);
         path.push('/');
         path.push_str(relative_path);
         path
     };
-    if path.len() > MAX_GREP_FILES_RESULT_PATH_BYTES {
-        return Err(scan_limit());
-    }
     Ok(path)
 }
 
@@ -2083,7 +2262,7 @@ fn invalid_entry_name() -> ToolError {
     )
 }
 
-#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn scan_limit() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -2093,13 +2272,17 @@ fn scan_limit() -> ToolError {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::{
-        CancellationToken, GrepMode, LiteralMatcher, MAX_GREP_FILES_CONTENT_MATCH_STEPS,
-        MAX_GREP_FILES_INCLUDE_MATCH_STEPS, ScanBudget, excerpt_containing_match,
-        grep_files_input_schema, normalize_include_pattern, normalize_literal_pattern,
-        normalize_relative_path, path_matches, segment_matches,
+        CancellationToken, ContextRecord, EntryKind, ExecutionArguments, GrepMode, IncludeMatcher,
+        LiteralMatcher, MAX_GREP_FILES_CONTENT_MATCH_STEPS, MAX_GREP_FILES_INCLUDE_MATCH_STEPS,
+        MAX_GREP_FILES_OFFSET, MAX_GREP_FILES_SERIALIZED_RESULT_BYTES,
+        MAX_GREP_FILES_TOTAL_CONTENT_BYTES, MatchRecord, RetainedResults, ScanBudget, ScanOutcome,
+        ScanStats, checked_descendant_path_length, excerpt_containing_match,
+        grep_files_input_schema, line_ranges_with_check, normalize_include_pattern,
+        normalize_literal_pattern, normalize_relative_path, pagination_fields, path_matches,
+        render_output_with_check, search_root_type_is_stable, segment_matches,
     };
     use serde_json::json;
 
@@ -2109,6 +2292,10 @@ mod tests {
         assert_eq!(schema["required"], json!(["pattern"]));
         assert_eq!(schema["additionalProperties"], json!(false));
         assert_eq!(schema["properties"].as_object().unwrap().len(), 8);
+        assert_eq!(
+            schema["properties"]["offset"]["maximum"],
+            json!(MAX_GREP_FILES_OFFSET)
+        );
         assert_eq!(
             schema["properties"]["mode"]["enum"],
             json!(["matches", "files_with_matches", "count"])
@@ -2139,6 +2326,90 @@ mod tests {
     }
 
     #[test]
+    fn include_matcher_compiles_once_and_reuses_its_metered_segments() {
+        let pattern = "src/**/*.rs";
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget::default();
+        let matcher = IncludeMatcher::compile(Some(pattern), &mut budget, &cancellation).unwrap();
+        assert_eq!(budget.include_match_steps, pattern.len() + 3);
+
+        let compiled_steps = budget.include_match_steps;
+        assert!(
+            matcher
+                .matches("src/nested/lib.rs", "lib.rs", &mut budget, &cancellation)
+                .unwrap()
+        );
+        let first_match_steps = budget.include_match_steps - compiled_steps;
+        assert!(
+            matcher
+                .matches("src/nested/lib.rs", "lib.rs", &mut budget, &cancellation)
+                .unwrap()
+        );
+        assert_eq!(
+            budget.include_match_steps - compiled_steps - first_match_steps,
+            first_match_steps
+        );
+        let before_selected_file = budget.include_match_steps;
+        assert!(
+            !matcher
+                .matches_selected_file("lib.rs", &mut budget, &cancellation)
+                .unwrap()
+        );
+        assert_eq!(budget.include_match_steps, before_selected_file);
+
+        let mut basename_budget = ScanBudget::default();
+        let basename =
+            IncludeMatcher::compile(Some("*.rs"), &mut basename_budget, &cancellation).unwrap();
+        assert_eq!(basename_budget.include_match_steps, "*.rs".len());
+        assert!(
+            basename
+                .matches_selected_file("lib.rs", &mut basename_budget, &cancellation)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn descendant_path_limit_precedes_entry_kind_handling() {
+        let exact_parent = "a".repeat(super::MAX_GREP_FILES_RESULT_PATH_BYTES - 6);
+        assert_eq!(
+            checked_descendant_path_length(".", &exact_parent, "bbbbb").unwrap(),
+            super::MAX_GREP_FILES_RESULT_PATH_BYTES
+        );
+        assert!(checked_descendant_path_length(".", &exact_parent, "bbbbbb").is_err());
+
+        let prefixed_parent = "a".repeat(super::MAX_GREP_FILES_RESULT_PATH_BYTES - 10);
+        assert_eq!(
+            checked_descendant_path_length("src", &prefixed_parent, "bbbbb").unwrap(),
+            super::MAX_GREP_FILES_RESULT_PATH_BYTES - 4
+        );
+        assert!(checked_descendant_path_length("src", &prefixed_parent, "bbbbbb").is_err());
+    }
+
+    #[test]
+    fn selected_root_type_changes_are_rejected() {
+        assert!(search_root_type_is_stable(
+            EntryKind::Directory,
+            EntryKind::Directory
+        ));
+        assert!(search_root_type_is_stable(
+            EntryKind::RegularFile,
+            EntryKind::RegularFile
+        ));
+        assert!(!search_root_type_is_stable(
+            EntryKind::Directory,
+            EntryKind::RegularFile
+        ));
+        assert!(!search_root_type_is_stable(
+            EntryKind::RegularFile,
+            EntryKind::Directory
+        ));
+        assert!(!search_root_type_is_stable(
+            EntryKind::RegularFile,
+            EntryKind::Other
+        ));
+    }
+
+    #[test]
     fn literal_matcher_is_linear_and_ascii_case_optional() {
         let mut budget = ScanBudget::default();
         let cancellation = CancellationToken::new();
@@ -2166,6 +2437,80 @@ mod tests {
         assert!(line.is_char_boundary(start));
         assert!(excerpt.contains("needle"));
         assert!(excerpt.len() <= super::MAX_GREP_FILES_RESULT_LINE_BYTES);
+    }
+
+    #[test]
+    fn line_range_builder_checks_cancellation_at_fixed_byte_intervals() {
+        let content = "x".repeat(2048);
+        let cancellation = CancellationToken::new();
+        let mut checks = 0_usize;
+        let error = line_ranges_with_check(&content, || {
+            checks += 1;
+            if checks == 2 {
+                let _ = cancellation.cancel();
+            }
+            super::check_cancellation(&cancellation)
+        })
+        .unwrap_err();
+        assert_eq!(checks, 2);
+        assert_eq!(error.code, "grep_files_cancelled");
+    }
+
+    #[test]
+    fn render_trimming_checks_cancellation_on_each_iteration() {
+        let arguments = ExecutionArguments {
+            pattern: "x".to_owned(),
+            path: ".".to_owned(),
+            include: None,
+            case_insensitive: false,
+            mode: GrepMode::Matches,
+            head_limit: 1,
+            offset: 0,
+            context_lines: 0,
+        };
+        let outcome = ScanOutcome {
+            budget: ScanBudget::default(),
+            stats: ScanStats {
+                matching_lines: 1,
+                matching_files: 1,
+                ..ScanStats::default()
+            },
+            retained: RetainedResults {
+                matches: vec![MatchRecord {
+                    path: "file".to_owned(),
+                    line_number: 1,
+                    match_start_byte: 0,
+                    excerpt_start_byte: 0,
+                    line: "x".repeat(MAX_GREP_FILES_SERIALIZED_RESULT_BYTES),
+                    line_truncated: false,
+                    context_before: Vec::<ContextRecord>::new(),
+                    context_after: Vec::<ContextRecord>::new(),
+                    context_truncated: false,
+                }],
+                ..RetainedResults::default()
+            },
+        };
+        let cancellation = CancellationToken::new();
+        let mut checks = 0_usize;
+        let error = render_output_with_check(&arguments, outcome, || {
+            checks += 1;
+            if checks == 3 {
+                let _ = cancellation.cancel();
+            }
+            super::check_cancellation(&cancellation)
+        })
+        .unwrap_err();
+        assert_eq!(checks, 3);
+        assert_eq!(error.code, "grep_files_cancelled");
+    }
+
+    #[test]
+    fn pagination_offsets_cover_every_possible_matching_line() {
+        assert_eq!(MAX_GREP_FILES_OFFSET, MAX_GREP_FILES_TOTAL_CONTENT_BYTES);
+        let (next_offset, truncated) = pagination_fields(100_000, 100, 100_102);
+        assert_eq!(next_offset, Some(100_100));
+        assert!(next_offset.unwrap() <= MAX_GREP_FILES_OFFSET);
+        assert!(truncated);
     }
 
     #[test]
