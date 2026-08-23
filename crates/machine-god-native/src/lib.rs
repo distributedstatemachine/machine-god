@@ -13,6 +13,7 @@ mod ai_gateway_credential;
 mod ai_gateway_http;
 mod ask_permission;
 mod config;
+mod edit_file;
 mod file_info;
 mod glob_files;
 mod grep_files;
@@ -66,6 +67,14 @@ pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
     NativeConfigError, NativeConfigErrorKind, NativeCredentialSourceKind, NativeProviderKind,
     NativeTransportKind, load_native_config, load_process_config,
+};
+pub use edit_file::{
+    EDIT_FILE_TOOL_NAME, EditFileTool, EditFileToolOpenError, EditFileToolOpenErrorKind,
+    MAX_EDIT_FILE_CHUNK_BYTES, MAX_EDIT_FILE_EXISTING_BYTES, MAX_EDIT_FILE_MATCH_WORK_STEPS,
+    MAX_EDIT_FILE_NEW_STRING_BYTES, MAX_EDIT_FILE_OLD_STRING_BYTES, MAX_EDIT_FILE_PATH_BYTES,
+    MAX_EDIT_FILE_PATH_COMPONENTS, MAX_EDIT_FILE_RESULTING_BYTES,
+    MAX_EDIT_FILE_SERIALIZED_ARGUMENT_BYTES, MAX_EDIT_FILE_SERIALIZED_RESULT_BYTES,
+    MAX_EDIT_FILE_TEMP_ATTEMPTS,
 };
 pub use file_info::{
     FILE_INFO_TOOL_NAME, FileInfoTool, FileInfoToolOpenError, FileInfoToolOpenErrorKind,

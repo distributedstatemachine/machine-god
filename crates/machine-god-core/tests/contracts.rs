@@ -46,6 +46,30 @@ fn search_content_filesystem_access_has_exact_stable_json_contract() {
     );
 }
 
+#[test]
+fn edit_filesystem_access_has_exact_stable_json_contract() {
+    assert_eq!(
+        serde_json::to_value(FilesystemAccess::Edit).unwrap(),
+        json!("edit")
+    );
+    assert_eq!(
+        serde_json::from_value::<FilesystemAccess>(json!("edit")).unwrap(),
+        FilesystemAccess::Edit
+    );
+    assert_eq!(
+        serde_json::to_value(Capability::Filesystem {
+            access: FilesystemAccess::Edit,
+            path: "scope/nested".to_owned(),
+        })
+        .unwrap(),
+        json!({
+            "type": "filesystem",
+            "access": "edit",
+            "path": "scope/nested"
+        })
+    );
+}
+
 impl EngineTestSessions for Engine {
     fn create_test_session(&self, id: SessionId) -> Session {
         let incarnation = test_incarnation(&id);

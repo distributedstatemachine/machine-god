@@ -13,6 +13,7 @@ pub enum FilesystemAccess {
     Read,
     Metadata,
     Write,
+    Edit,
     Create,
     Delete,
     Enumerate,
