@@ -691,8 +691,11 @@ workload, compatibility-status change, product-performance claim, or fx-
 equivalence claim. Zig remains only the pinned upstream benchmark build input;
 the product remains Rust.
 
-The twentieth bounded Milestone 03 slice is native `write_file`, frozen from
-exact delivered base `bc042536eb3a40d75ccf4d1fe52032b31defac04`.
+The twentieth bounded Milestone 03 slice is native `write_file`, frozen in
+exact contract commit `3ee52fd8393bfb86f11048eaa6c624bd18a78798` from exact
+delivered base `bc042536eb3a40d75ccf4d1fe52032b31defac04`.
+Exact contract-only feature CI `32626410935` and benchmark-evidence run
+`32626410931` are green; they are not implementation or final-feature evidence.
 Effect-free preparation accepts exactly required UTF-8 `path` and `content`
 strings, rejects unknown fields, independently caps the normalized path at
 4,096 bytes and 256 components, raw content at 49,152 bytes, and serialized
@@ -878,11 +881,11 @@ gate:
   tools remain pending. This final delivery
   record is documentation-only and exempt from adversarial review; its own exact
   remote workflows are required after push and cannot be self-recorded. The
-  twentieth `write_file` contract is frozen from exact base `bc042536`; its
-  separate production, independent-test, and maintained-documentation
-  components remain pending composition, exact local gates, and three fresh
-  same-SHA adversarial tracks. The remaining native tools are incomplete, so
-  this delivered slice does not change the combined checkbox.
+  twentieth `write_file` contract is frozen at exact `3ee52fd` from exact base
+  `bc042536`; its separate production, independent-test, and maintained-
+  documentation components remain pending composition, exact local gates, and
+  three fresh same-SHA adversarial tracks. The remaining native tools are
+  incomplete, so this pending slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
