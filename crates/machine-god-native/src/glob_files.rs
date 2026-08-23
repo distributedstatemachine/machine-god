@@ -36,6 +36,9 @@ pub const MAX_GLOB_FILES_VISITED_ENTRIES: usize = 100_000;
 /// Maximum aggregate number of raw non-dot entry-name bytes visited by one search.
 pub const MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES: usize = 16 * 1024 * 1024;
 
+/// Maximum aggregate number of matcher-work steps performed by one search.
+pub const MAX_GLOB_FILES_MATCH_STEPS: usize = 8 * 1024 * 1024;
+
 /// Maximum recursive directory traversal depth below the selected search root.
 pub const MAX_GLOB_FILES_DEPTH: usize = 256;
 
@@ -363,14 +366,15 @@ struct DirectoryFrame {
     entries: std::vec::IntoIter<String>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 #[derive(Default)]
 struct ScanBudget {
     visited_entries: usize,
     total_entry_name_bytes: usize,
+    matcher_steps: usize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 impl ScanBudget {
     fn observe_entry(&mut self, name_bytes: usize) -> Result<(), ToolError> {
         self.visited_entries = self.visited_entries.checked_add(1).ok_or_else(scan_limit)?;
@@ -383,6 +387,18 @@ impl ScanBudget {
         {
             return Err(scan_limit());
         }
+        Ok(())
+    }
+
+    fn observe_match_steps(&mut self, steps: usize) -> Result<(), ToolError> {
+        let matcher_steps = self
+            .matcher_steps
+            .checked_add(steps)
+            .ok_or_else(scan_limit)?;
+        if matcher_steps > MAX_GLOB_FILES_MATCH_STEPS {
+            return Err(scan_limit());
+        }
+        self.matcher_steps = matcher_steps;
         Ok(())
     }
 }
@@ -449,6 +465,10 @@ fn scan_tree(
 ) -> Result<ScanResults, ToolError> {
     let slashful_pattern = pattern.contains('/');
     let pattern_segments = pattern.split('/').collect::<Vec<_>>();
+    let non_recursive_pattern_segments = pattern_segments
+        .iter()
+        .filter(|segment| **segment != "**")
+        .count();
     let mut budget = ScanBudget::default();
     let mut stack = vec![make_directory_frame(
         search_root,
@@ -530,10 +550,12 @@ fn scan_tree(
             observe_candidate(
                 pattern,
                 &pattern_segments,
+                non_recursive_pattern_segments,
                 slashful_pattern,
                 search_path,
                 &relative_path,
                 &name,
+                &mut budget,
                 &mut results,
                 cancellation,
             )?;
@@ -548,10 +570,12 @@ fn scan_tree(
 fn observe_candidate(
     pattern: &str,
     pattern_segments: &[&str],
+    non_recursive_pattern_segments: usize,
     slashful_pattern: bool,
     search_path: &str,
     relative_path: &str,
     name: &str,
+    budget: &mut ScanBudget,
     results: &mut ScanResults,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
@@ -563,9 +587,14 @@ fn observe_candidate(
     };
     check_cancellation(cancellation)?;
     let matched = if slashful_pattern {
-        path_matches(pattern_segments, candidate)
+        path_matches(
+            pattern_segments,
+            non_recursive_pattern_segments,
+            candidate,
+            budget,
+        )?
     } else {
-        segment_matches(pattern.as_bytes(), candidate.as_bytes())
+        segment_matches(pattern.as_bytes(), candidate.as_bytes(), budget)?
     };
     check_cancellation(cancellation)?;
     if matched {
@@ -798,13 +827,18 @@ fn is_forbidden_path_character(character: char) -> bool {
 }
 
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
-fn segment_matches(pattern: &[u8], candidate: &[u8]) -> bool {
+fn segment_matches(
+    pattern: &[u8],
+    candidate: &[u8],
+    budget: &mut ScanBudget,
+) -> Result<bool, ToolError> {
     let mut pattern_index = 0_usize;
     let mut candidate_index = 0_usize;
     let mut latest_star = None;
     let mut star_candidate_index = 0_usize;
 
     while candidate_index < candidate.len() {
+        budget.observe_match_steps(1)?;
         if pattern_index < pattern.len()
             && (pattern[pattern_index] == b'?'
                 || pattern[pattern_index] == candidate[candidate_index])
@@ -820,36 +854,43 @@ fn segment_matches(pattern: &[u8], candidate: &[u8]) -> bool {
             candidate_index = star_candidate_index;
             pattern_index = star_index + 1;
         } else {
-            return false;
+            return Ok(false);
         }
     }
     while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        budget.observe_match_steps(1)?;
         pattern_index += 1;
     }
-    pattern_index == pattern.len()
+    Ok(pattern_index == pattern.len())
 }
 
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
-fn path_matches(pattern_segments: &[&str], candidate: &str) -> bool {
+fn path_matches(
+    pattern_segments: &[&str],
+    non_recursive_pattern_segments: usize,
+    candidate: &str,
+    budget: &mut ScanBudget,
+) -> Result<bool, ToolError> {
+    budget.observe_match_steps(candidate.len())?;
     let candidate_segments = candidate.split('/').collect::<Vec<_>>();
-    if pattern_segments
-        .iter()
-        .filter(|segment| **segment != "**")
-        .count()
-        > candidate_segments.len()
-    {
-        return false;
+    if non_recursive_pattern_segments > candidate_segments.len() {
+        return Ok(false);
     }
-    let mut previous = vec![false; candidate_segments.len() + 1];
-    let mut current = vec![false; candidate_segments.len() + 1];
+    let dp_columns = candidate_segments
+        .len()
+        .checked_add(1)
+        .ok_or_else(scan_limit)?;
+    let mut previous = vec![false; dp_columns];
+    let mut current = vec![false; dp_columns];
     previous[0] = true;
     let mut previous_was_recursive = false;
 
     for pattern_segment in pattern_segments {
+        budget.observe_match_steps(1)?;
         if *pattern_segment == "**" && previous_was_recursive {
             continue;
         }
-        current.fill(false);
+        budget.observe_match_steps(dp_columns)?;
         if *pattern_segment == "**" {
             current[0] = previous[0];
             for candidate_index in 1..=candidate_segments.len() {
@@ -857,18 +898,23 @@ fn path_matches(pattern_segments: &[&str], candidate: &str) -> bool {
                     previous[candidate_index] || current[candidate_index - 1];
             }
         } else {
+            current[0] = false;
             for candidate_index in 1..=candidate_segments.len() {
-                current[candidate_index] = previous[candidate_index - 1]
-                    && segment_matches(
+                current[candidate_index] = if previous[candidate_index - 1] {
+                    segment_matches(
                         pattern_segment.as_bytes(),
                         candidate_segments[candidate_index - 1].as_bytes(),
-                    );
+                        budget,
+                    )?
+                } else {
+                    false
+                };
             }
         }
         std::mem::swap(&mut previous, &mut current);
         previous_was_recursive = *pattern_segment == "**";
     }
-    previous[candidate_segments.len()]
+    Ok(previous[candidate_segments.len()])
 }
 
 fn glob_files_name() -> ToolName {
@@ -1102,7 +1148,7 @@ fn invalid_entry_name() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
 fn scan_limit() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -1114,13 +1160,31 @@ fn scan_limit() -> ToolError {
 
 #[cfg(test)]
 mod tests {
-    use super::{GLOB_FILES_DESCRIPTION, glob_files_input_schema};
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
-        MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES, MAX_GLOB_FILES_VISITED_ENTRIES, ScanBudget,
+        GLOB_FILES_DESCRIPTION, MAX_GLOB_FILES_MATCH_STEPS, ScanBudget, glob_files_input_schema,
     };
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use super::{MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES, MAX_GLOB_FILES_VISITED_ENTRIES};
     use super::{normalize_pattern, normalize_relative_path, path_matches, segment_matches};
     use serde_json::json;
+
+    fn segment_matches_without_prior_work(pattern: &[u8], candidate: &[u8]) -> bool {
+        segment_matches(pattern, candidate, &mut ScanBudget::default()).unwrap()
+    }
+
+    fn path_matches_without_prior_work(pattern_segments: &[&str], candidate: &str) -> bool {
+        let non_recursive_pattern_segments = pattern_segments
+            .iter()
+            .filter(|segment| **segment != "**")
+            .count();
+        path_matches(
+            pattern_segments,
+            non_recursive_pattern_segments,
+            candidate,
+            &mut ScanBudget::default(),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn model_visible_description_and_schema_text_are_exact() {
@@ -1175,22 +1239,97 @@ mod tests {
 
     #[test]
     fn segment_matcher_is_byte_oriented_and_treats_syntax_literally() {
-        assert!(segment_matches(b"a*t", b"alphabet"));
-        assert!(segment_matches(b"??", "é".as_bytes()));
-        assert!(!segment_matches(b"?", "é".as_bytes()));
-        assert!(segment_matches(br"[x]{y}\z", br"[x]{y}\z"));
-        assert!(segment_matches(b"a**b", b"axxxb"));
-        assert!(segment_matches(b"***", b"anything"));
+        assert!(segment_matches_without_prior_work(b"a*t", b"alphabet"));
+        assert!(segment_matches_without_prior_work(b"??", "é".as_bytes()));
+        assert!(!segment_matches_without_prior_work(b"?", "é".as_bytes()));
+        assert!(segment_matches_without_prior_work(
+            br"[x]{y}\z",
+            br"[x]{y}\z"
+        ));
+        assert!(segment_matches_without_prior_work(b"a**b", b"axxxb"));
+        assert!(segment_matches_without_prior_work(b"***", b"anything"));
     }
 
     #[test]
     fn path_matcher_supports_only_exact_recursive_double_star_segments() {
-        assert!(path_matches(&["**", "*.rs"], "lib.rs"));
-        assert!(path_matches(&["**", "*.rs"], "src/nested/lib.rs"));
-        assert!(path_matches(&["src", "**", "lib.rs"], "src/lib.rs"));
-        assert!(path_matches(&["src", "**", "lib.rs"], "src/nested/lib.rs"));
-        assert!(!path_matches(&["***", "lib.rs"], "src/nested/lib.rs"));
-        assert!(path_matches(&["a**b", "file"], "axxb/file"));
+        assert!(path_matches_without_prior_work(&["**", "*.rs"], "lib.rs"));
+        assert!(path_matches_without_prior_work(
+            &["**", "*.rs"],
+            "src/nested/lib.rs"
+        ));
+        assert!(path_matches_without_prior_work(
+            &["src", "**", "lib.rs"],
+            "src/lib.rs"
+        ));
+        assert!(path_matches_without_prior_work(
+            &["src", "**", "lib.rs"],
+            "src/nested/lib.rs"
+        ));
+        assert!(!path_matches_without_prior_work(
+            &["***", "lib.rs"],
+            "src/nested/lib.rs"
+        ));
+        assert!(path_matches_without_prior_work(
+            &["a**b", "file"],
+            "axxb/file"
+        ));
+    }
+
+    #[test]
+    fn matcher_work_accounting_covers_splitting_visits_cells_and_segment_transitions() {
+        let mut budget = ScanBudget::default();
+        assert!(path_matches(&["**", "*.rs"], 1, "src/lib.rs", &mut budget).unwrap());
+        assert_eq!(budget.matcher_steps, 29);
+
+        let mut skipped_recursive_budget = ScanBudget::default();
+        assert!(path_matches(&["**", "**", "x"], 1, "x", &mut skipped_recursive_budget).unwrap());
+        assert_eq!(skipped_recursive_budget.matcher_steps, 9);
+
+        let mut transition_budget = ScanBudget::default();
+        assert!(segment_matches(b"a*b", b"axxb", &mut transition_budget).unwrap());
+        assert_eq!(transition_budget.matcher_steps, 5);
+
+        let mut trailing_star_budget = ScanBudget::default();
+        assert!(segment_matches(b"a**", b"a", &mut trailing_star_budget).unwrap());
+        assert_eq!(trailing_star_budget.matcher_steps, 3);
+    }
+
+    #[test]
+    fn matcher_work_budget_accepts_the_exact_bound_and_rejects_excess_and_overflow() {
+        assert_eq!(MAX_GLOB_FILES_MATCH_STEPS, 8 * 1024 * 1024);
+        let mut exact = ScanBudget {
+            matcher_steps: MAX_GLOB_FILES_MATCH_STEPS - 9,
+            ..ScanBudget::default()
+        };
+        assert!(path_matches(&["**", "**", "x"], 1, "x", &mut exact).unwrap());
+        assert_eq!(exact.matcher_steps, MAX_GLOB_FILES_MATCH_STEPS);
+
+        let excess = exact.observe_match_steps(1).unwrap_err();
+        assert_eq!(excess.code, "glob_files_scan_limit");
+        assert_eq!(exact.matcher_steps, MAX_GLOB_FILES_MATCH_STEPS);
+
+        let mut overflow = ScanBudget {
+            matcher_steps: usize::MAX,
+            ..ScanBudget::default()
+        };
+        let overflow = overflow.observe_match_steps(1).unwrap_err();
+        assert_eq!(overflow.code, "glob_files_scan_limit");
+    }
+
+    #[test]
+    fn matcher_budget_preserves_one_hundred_thousand_simple_candidates() {
+        let mut budget = ScanBudget::default();
+        for _ in 0..100_000 {
+            assert!(segment_matches(b"*.rs", b"main.rs", &mut budget).unwrap());
+        }
+        assert_eq!(budget.matcher_steps, 800_000);
+    }
+
+    #[test]
+    fn precomputed_non_recursive_count_can_reject_after_only_candidate_splitting() {
+        let mut budget = ScanBudget::default();
+        assert!(!path_matches(&["a", "b"], 2, "x", &mut budget).unwrap());
+        assert_eq!(budget.matcher_steps, 1);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1198,14 +1337,14 @@ mod tests {
     fn scan_budget_accepts_exact_boundaries_and_rejects_the_next_observation() {
         let mut entry_limit = ScanBudget {
             visited_entries: MAX_GLOB_FILES_VISITED_ENTRIES - 1,
-            total_entry_name_bytes: 0,
+            ..ScanBudget::default()
         };
         entry_limit.observe_entry(0).unwrap();
         assert!(entry_limit.observe_entry(0).is_err());
 
         let mut byte_limit = ScanBudget {
-            visited_entries: 0,
             total_entry_name_bytes: MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES - 1,
+            ..ScanBudget::default()
         };
         byte_limit.observe_entry(1).unwrap();
         assert!(byte_limit.observe_entry(1).is_err());
