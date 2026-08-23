@@ -192,12 +192,128 @@ fn native_sync_parent(parent: BorrowedFd<'_>) -> Result<(), rustix::io::Errno> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn open_target(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum WalkStep {
+    Root,
+    Intermediate(usize),
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) trait EditFileEvidence {
+    fn open_walk(
+        &mut self,
+        _phase: WalkPhase,
+        _step: WalkStep,
+        parent: BorrowedFd<'_>,
+        component: &str,
+    ) -> Result<OwnedFd, rustix::io::Errno> {
+        rustix::fs::openat(parent, component, directory_open_flags(), Mode::empty())
+    }
+
+    fn open_target(
+        &mut self,
+        _phase: ReadPhase,
+        parent: BorrowedFd<'_>,
+        basename: &str,
+    ) -> Result<OwnedFd, rustix::io::Errno> {
+        rustix::fs::openat(
+            parent,
+            basename,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+    }
+
+    fn open_stage(
+        &mut self,
+        parent: BorrowedFd<'_>,
+        name: &str,
+    ) -> Result<OwnedFd, rustix::io::Errno> {
+        rustix::fs::openat(
+            parent,
+            name,
+            OFlags::RDWR
+                | OFlags::CREATE
+                | OFlags::EXCL
+                | OFlags::NOFOLLOW
+                | OFlags::CLOEXEC
+                | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o600),
+        )
+    }
+
+    fn pread(
+        &mut self,
+        _phase: ReadPhase,
+        file: BorrowedFd<'_>,
+        buffer: &mut [u8],
+        offset: u64,
+    ) -> Result<usize, rustix::io::Errno> {
+        rustix::io::pread(file, buffer, offset)
+    }
+
+    fn fstat(
+        &mut self,
+        _phase: ReadPhase,
+        file: BorrowedFd<'_>,
+    ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        rustix::fs::fstat(file)
+    }
+
+    fn statat(
+        &mut self,
+        _phase: ReadPhase,
+        parent: BorrowedFd<'_>,
+        name: &str,
+    ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+    }
+
+    fn after_stage_created(
+        &mut self,
+        _parent: BorrowedFd<'_>,
+        _file: BorrowedFd<'_>,
+        _name: &str,
+        _cancellation: &CancellationToken,
+    ) -> Result<(), ToolError> {
+        Ok(())
+    }
+
+    fn after_final_stage_sync(
+        &mut self,
+        _parent: BorrowedFd<'_>,
+        _file: BorrowedFd<'_>,
+        _name: &str,
+        _cancellation: &CancellationToken,
+    ) -> Result<(), ToolError> {
+        Ok(())
+    }
+
+    fn after_rename(
+        &mut self,
+        _parent: BorrowedFd<'_>,
+        _file: BorrowedFd<'_>,
+        _basename: &str,
+        _cancellation: &CancellationToken,
+    ) -> Result<(), ToolError> {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct NativeEditFileEvidence;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl EditFileEvidence for NativeEditFileEvidence {}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn open_target_with_evidence<Evidence: EditFileEvidence>(
     parent: BorrowedFd<'_>,
     basename: &str,
     phase: ReadPhase,
+    evidence: &mut Evidence,
 ) -> Result<OwnedFd, ToolError> {
-    match rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW) {
+    match evidence.statat(phase, parent, basename) {
         Ok(metadata) if FileType::from_raw_mode(metadata.st_mode).is_file() => {}
         Ok(_) => {
             return Err(match phase {
@@ -209,23 +325,20 @@ fn open_target(
         }
         Err(error) => return Err(map_target_open_error(error, phase)),
     }
-    rustix::fs::openat(
-        parent,
-        basename,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
-    .map_err(|error| map_target_open_error(error, phase))
+    evidence
+        .open_target(phase, parent, basename)
+        .map_err(|error| map_target_open_error(error, phase))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn fingerprint_and_validate_path(
+fn fingerprint_and_validate_path_with_evidence<Evidence: EditFileEvidence>(
     parent: BorrowedFd<'_>,
     basename: &str,
     file: BorrowedFd<'_>,
     phase: ReadPhase,
+    evidence: &mut Evidence,
 ) -> Result<FileFingerprint, ToolError> {
-    let descriptor_metadata = rustix::fs::fstat(file).map_err(|_| match phase {
+    let descriptor_metadata = evidence.fstat(phase, file).map_err(|_| match phase {
         ReadPhase::Initial => unavailable(true),
         ReadPhase::Staged => write_failed(),
         ReadPhase::Revalidate => target_changed(),
@@ -239,13 +352,13 @@ fn fingerprint_and_validate_path(
             ReadPhase::Published => commit_ambiguous(),
         });
     }
-    let path_metadata = rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW).map_err(
-        |_| match phase {
+    let path_metadata = evidence
+        .statat(phase, parent, basename)
+        .map_err(|_| match phase {
             ReadPhase::Staged => write_failed(),
             ReadPhase::Initial | ReadPhase::Revalidate => target_changed(),
             ReadPhase::Published => commit_ambiguous(),
-        },
-    )?;
+        })?;
     if !FileType::from_raw_mode(path_metadata.st_mode).is_file()
         || FileFingerprint::from_stat(&path_metadata)
             != FileFingerprint::from_stat(&descriptor_metadata)
@@ -260,22 +373,30 @@ fn fingerprint_and_validate_path(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn create_staged_file(
-    parent: BorrowedFd<'_>,
-    basename: &str,
-    cancellation: &CancellationToken,
-) -> Result<(String, OwnedFd), ToolError> {
-    create_staged_file_with(parent, basename, cancellation, |_| {
-        random_temp_name(cancellation)
-    })
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn create_staged_file_with(
     parent: BorrowedFd<'_>,
     basename: &str,
     cancellation: &CancellationToken,
     mut next_name: impl FnMut(usize) -> Result<String, ToolError>,
+) -> Result<(String, OwnedFd), ToolError> {
+    let mut evidence = NativeEditFileEvidence;
+    create_staged_file_with_evidence(
+        parent,
+        basename,
+        cancellation,
+        &mut next_name,
+        &mut evidence,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn create_staged_file_with_evidence<Evidence: EditFileEvidence>(
+    parent: BorrowedFd<'_>,
+    basename: &str,
+    cancellation: &CancellationToken,
+    mut next_name: impl FnMut(usize) -> Result<String, ToolError>,
+    evidence: &mut Evidence,
 ) -> Result<(String, OwnedFd), ToolError> {
     for attempt in 0..MAX_EDIT_FILE_TEMP_ATTEMPTS {
         check_cancellation(cancellation)?;
@@ -284,22 +405,17 @@ pub(super) fn create_staged_file_with(
         if name == basename {
             continue;
         }
-        let result = rustix::fs::openat(
-            parent,
-            &name,
-            OFlags::RDWR
-                | OFlags::CREATE
-                | OFlags::EXCL
-                | OFlags::NOFOLLOW
-                | OFlags::CLOEXEC
-                | OFlags::NONBLOCK,
-            Mode::from_raw_mode(0o600),
-        );
+        let result = evidence.open_stage(parent, &name);
         match result {
             Ok(file) => {
+                let acl_result = clear_and_verify_staged_acl(file.as_fd());
                 if cancellation.is_cancelled() {
                     cleanup_unpublished_file(parent, file.as_fd(), &name);
                     return Err(cancelled());
+                }
+                if let Err(error) = acl_result {
+                    cleanup_unpublished_file(parent, file.as_fd(), &name);
+                    return Err(error);
                 }
                 return Ok((name, file));
             }
@@ -320,7 +436,20 @@ pub(super) fn create_staged_file_with(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn cleanup_unpublished_file(parent: BorrowedFd<'_>, file: BorrowedFd<'_>, name: &str) {
-    let _ = rustix::fs::fchmod(file, Mode::from_raw_mode(0o600));
+    cleanup_unpublished_file_with(parent, file, name, rustix::fs::fchmod, |parent, name| {
+        rustix::fs::unlinkat(parent, name, AtFlags::empty())
+    });
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) fn cleanup_unpublished_file_with<'fd>(
+    parent: BorrowedFd<'fd>,
+    file: BorrowedFd<'fd>,
+    name: &str,
+    mut set_mode: impl FnMut(BorrowedFd<'fd>, Mode) -> Result<(), rustix::io::Errno>,
+    mut unlink: impl FnMut(BorrowedFd<'fd>, &str) -> Result<(), rustix::io::Errno>,
+) {
+    let _ = set_mode(file, Mode::from_raw_mode(0o600));
     let Ok(descriptor_metadata) = rustix::fs::fstat(file) else {
         return;
     };
@@ -330,8 +459,39 @@ fn cleanup_unpublished_file(parent: BorrowedFd<'_>, file: BorrowedFd<'_>, name: 
     if same_identity(&descriptor_metadata, &path_metadata)
         && FileType::from_raw_mode(path_metadata.st_mode).is_file()
     {
-        let _ = rustix::fs::unlinkat(parent, name, AtFlags::empty());
+        let _ = unlink(parent, name);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn clear_and_verify_staged_acl(file: BorrowedFd<'_>) -> Result<(), ToolError> {
+    calcifer_macos_acl::clear_acl(file).map_err(|_| write_failed())?;
+    let acl = calcifer_macos_acl::read_acl(file).map_err(|_| write_failed())?;
+    if acl.is_empty() {
+        Ok(())
+    } else {
+        Err(write_failed())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn clear_and_verify_staged_acl(_file: BorrowedFd<'_>) -> Result<(), ToolError> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn verify_staged_acl(file: BorrowedFd<'_>, phase: ReadPhase) -> Result<(), ToolError> {
+    let acl = calcifer_macos_acl::read_acl(file).map_err(|_| map_read_phase_failure(phase))?;
+    if acl.is_empty() {
+        Ok(())
+    } else {
+        Err(map_read_phase_failure(phase))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn verify_staged_acl(_file: BorrowedFd<'_>, _phase: ReadPhase) -> Result<(), ToolError> {
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -504,12 +664,15 @@ fn sync_after_commit_with(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn verify_staged_descriptor(
+fn verify_staged_descriptor<Evidence: EditFileEvidence>(
     staged: &StagedFile<'_>,
     content_length: usize,
     expected_mode: Option<Mode>,
+    evidence: &mut Evidence,
 ) -> Result<(), ToolError> {
-    let metadata = rustix::fs::fstat(&staged.file).map_err(|_| write_failed())?;
+    let metadata = evidence
+        .fstat(ReadPhase::Staged, staged.file.as_fd())
+        .map_err(|_| write_failed())?;
     if !same_identity(&metadata, &staged.identity)
         || !FileType::from_raw_mode(metadata.st_mode).is_file()
         || usize::try_from(metadata.st_size).ok() != Some(content_length)
@@ -521,7 +684,8 @@ fn verify_staged_descriptor(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn verify_staged_content_at_path(
+#[allow(clippy::too_many_arguments)]
+fn verify_staged_content_at_path<Evidence: EditFileEvidence>(
     parent: BorrowedFd<'_>,
     name: &str,
     staged: &StagedFile<'_>,
@@ -529,16 +693,22 @@ fn verify_staged_content_at_path(
     expected_mode: Mode,
     cancellation: &CancellationToken,
     phase: ReadPhase,
+    evidence: &mut Evidence,
 ) -> Result<FileFingerprint, ToolError> {
-    let before = fingerprint_and_validate_path(parent, name, staged.file.as_fd(), phase)?;
-    let read_file = staged.file.as_fd();
-    let stat_file = staged.file.as_fd();
-    let (actual, fingerprint) = read_bounded_stable_for_phase_with(
+    verify_staged_acl(staged.file.as_fd(), phase)?;
+    let before = fingerprint_and_validate_path_with_evidence(
+        parent,
+        name,
+        staged.file.as_fd(),
+        phase,
+        evidence,
+    )?;
+    let (actual, fingerprint) = read_bounded_stable_for_phase_with_evidence(
+        staged.file.as_fd(),
         cancellation,
         MAX_EDIT_FILE_RESULTING_BYTES,
         phase,
-        |buffer, offset| rustix::io::pread(read_file, buffer, offset),
-        || rustix::fs::fstat(stat_file),
+        evidence,
     )?;
     if actual != expected
         || fingerprint != before
@@ -549,10 +719,17 @@ fn verify_staged_content_at_path(
     {
         return Err(map_read_phase_failure(phase));
     }
-    let after = fingerprint_and_validate_path(parent, name, staged.file.as_fd(), phase)?;
+    let after = fingerprint_and_validate_path_with_evidence(
+        parent,
+        name,
+        staged.file.as_fd(),
+        phase,
+        evidence,
+    )?;
     if after != fingerprint {
         return Err(map_read_phase_failure(phase));
     }
+    verify_staged_acl(staged.file.as_fd(), phase)?;
     Ok(fingerprint)
 }
 
@@ -1334,8 +1511,8 @@ impl FileFingerprint {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Clone, Copy)]
-enum ReadPhase {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ReadPhase {
     Initial,
     Staged,
     Revalidate,
@@ -1376,6 +1553,7 @@ fn check_read_phase_cancellation(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn read_bounded_stable_with(
     _file: BorrowedFd<'_>,
     cancellation: &CancellationToken,
@@ -1392,15 +1570,90 @@ pub(super) fn read_bounded_stable_with(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(not(test), allow(dead_code))]
 fn read_bounded_stable_for_phase_with(
     cancellation: &CancellationToken,
     max_bytes: usize,
     phase: ReadPhase,
-    mut read: impl FnMut(&mut [u8], u64) -> Result<usize, rustix::io::Errno>,
-    mut stat: impl FnMut() -> Result<rustix::fs::Stat, rustix::io::Errno>,
+    read: impl FnMut(&mut [u8], u64) -> Result<usize, rustix::io::Errno>,
+    stat: impl FnMut() -> Result<rustix::fs::Stat, rustix::io::Errno>,
+) -> Result<(Vec<u8>, FileFingerprint), ToolError> {
+    let mut source = ClosureStableReadSource { read, stat };
+    read_bounded_stable_for_phase_from(cancellation, max_bytes, phase, &mut source)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+trait StableReadSource {
+    fn pread(&mut self, buffer: &mut [u8], offset: u64) -> Result<usize, rustix::io::Errno>;
+
+    fn fstat(&mut self) -> Result<rustix::fs::Stat, rustix::io::Errno>;
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(not(test), allow(dead_code))]
+struct ClosureStableReadSource<Read, Stat> {
+    read: Read,
+    stat: Stat,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<Read, Stat> StableReadSource for ClosureStableReadSource<Read, Stat>
+where
+    Read: FnMut(&mut [u8], u64) -> Result<usize, rustix::io::Errno>,
+    Stat: FnMut() -> Result<rustix::fs::Stat, rustix::io::Errno>,
+{
+    fn pread(&mut self, buffer: &mut [u8], offset: u64) -> Result<usize, rustix::io::Errno> {
+        (self.read)(buffer, offset)
+    }
+
+    fn fstat(&mut self) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        (self.stat)()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct EvidenceStableReadSource<'evidence, 'fd, Evidence> {
+    evidence: &'evidence mut Evidence,
+    file: BorrowedFd<'fd>,
+    phase: ReadPhase,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<Evidence: EditFileEvidence> StableReadSource for EvidenceStableReadSource<'_, '_, Evidence> {
+    fn pread(&mut self, buffer: &mut [u8], offset: u64) -> Result<usize, rustix::io::Errno> {
+        self.evidence.pread(self.phase, self.file, buffer, offset)
+    }
+
+    fn fstat(&mut self) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        self.evidence.fstat(self.phase, self.file)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_bounded_stable_for_phase_with_evidence<Evidence: EditFileEvidence>(
+    file: BorrowedFd<'_>,
+    cancellation: &CancellationToken,
+    max_bytes: usize,
+    phase: ReadPhase,
+    evidence: &mut Evidence,
+) -> Result<(Vec<u8>, FileFingerprint), ToolError> {
+    let mut source = EvidenceStableReadSource {
+        evidence,
+        file,
+        phase,
+    };
+    read_bounded_stable_for_phase_from(cancellation, max_bytes, phase, &mut source)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_bounded_stable_for_phase_from(
+    cancellation: &CancellationToken,
+    max_bytes: usize,
+    phase: ReadPhase,
+    source: &mut impl StableReadSource,
 ) -> Result<(Vec<u8>, FileFingerprint), ToolError> {
     check_read_phase_cancellation(phase, cancellation)?;
-    let initial = stat().map_err(|_| map_read_phase_failure(phase))?;
+    let initial = source.fstat().map_err(|_| map_read_phase_failure(phase))?;
     check_read_phase_cancellation(phase, cancellation)?;
     if !FileType::from_raw_mode(initial.st_mode).is_file() {
         return Err(match phase {
@@ -1423,7 +1676,7 @@ fn read_bounded_stable_for_phase_with(
             .saturating_add(MAX_EDIT_FILE_CHUNK_BYTES)
             .min(capacity);
         let offset = u64::try_from(length).map_err(|_| map_read_phase_failure(phase))?;
-        let result = read(&mut bytes[length..end], offset);
+        let result = source.pread(&mut bytes[length..end], offset);
         check_read_phase_cancellation(phase, cancellation)?;
         match result {
             Ok(0) => break,
@@ -1445,7 +1698,7 @@ fn read_bounded_stable_for_phase_with(
     }
 
     check_read_phase_cancellation(phase, cancellation)?;
-    let final_metadata = stat().map_err(|_| map_read_phase_failure(phase))?;
+    let final_metadata = source.fstat().map_err(|_| map_read_phase_failure(phase))?;
     check_read_phase_cancellation(phase, cancellation)?;
     if !FileType::from_raw_mode(final_metadata.st_mode).is_file() {
         return Err(map_read_phase_failure(phase));
@@ -1472,8 +1725,8 @@ fn read_bounded_stable_for_phase_with(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Clone, Copy)]
-enum WalkPhase {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum WalkPhase {
     Initial,
     Revalidate,
 }
@@ -1495,8 +1748,13 @@ struct StagedFile<'a> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl<'a> StagedFile<'a> {
-    fn new(cleanup_parent: BorrowedFd<'a>, file: OwnedFd, name: String) -> Result<Self, ToolError> {
-        let Ok(identity) = rustix::fs::fstat(&file) else {
+    fn new_with_evidence<Evidence: EditFileEvidence>(
+        cleanup_parent: BorrowedFd<'a>,
+        file: OwnedFd,
+        name: String,
+        evidence: &mut Evidence,
+    ) -> Result<Self, ToolError> {
+        let Ok(identity) = evidence.fstat(ReadPhase::Staged, file.as_fd()) else {
             cleanup_unpublished_file(cleanup_parent, file.as_fd(), &name);
             return Err(write_failed());
         };
@@ -1603,33 +1861,93 @@ impl EditFileTool {
         Publish: for<'fd> FnMut(BorrowedFd<'fd>, &str, &str) -> Result<(), rustix::io::Errno>,
         SyncParent: for<'fd> FnMut(BorrowedFd<'fd>) -> Result<(), rustix::io::Errno>,
     {
+        let mut evidence = NativeEditFileEvidence;
+        self.execute_supported_with_evidence(
+            normalized,
+            old_string,
+            new_string,
+            cancellation,
+            &mut evidence,
+            &mut set_mode,
+            &mut write,
+            &mut sync_staged,
+            &mut before_staged_revalidation,
+            &mut before_final_verification,
+            &mut before_rename,
+            &mut publish,
+            &mut sync_parent,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub(super) fn execute_supported_with_evidence<
+        Evidence,
+        SetMode,
+        WriteContent,
+        SyncStaged,
+        BeforeStagedRevalidation,
+        BeforeFinalVerification,
+        BeforeRename,
+        Publish,
+        SyncParent,
+    >(
+        &self,
+        normalized: &str,
+        old_string: &[u8],
+        new_string: &[u8],
+        cancellation: &CancellationToken,
+        evidence: &mut Evidence,
+        mut set_mode: SetMode,
+        mut write: WriteContent,
+        mut sync_staged: SyncStaged,
+        mut before_staged_revalidation: BeforeStagedRevalidation,
+        mut before_final_verification: BeforeFinalVerification,
+        mut before_rename: BeforeRename,
+        mut publish: Publish,
+        mut sync_parent: SyncParent,
+    ) -> Result<ToolOutput, ToolError>
+    where
+        Evidence: EditFileEvidence,
+        SetMode: for<'fd> FnMut(BorrowedFd<'fd>, Mode) -> Result<(), rustix::io::Errno>,
+        WriteContent:
+            for<'fd> FnMut(BorrowedFd<'fd>, &[u8], &CancellationToken) -> Result<(), ToolError>,
+        SyncStaged: for<'fd> FnMut(BorrowedFd<'fd>, &CancellationToken) -> Result<(), ToolError>,
+        BeforeStagedRevalidation: for<'fd> FnMut(BorrowedFd<'fd>, &str),
+        BeforeFinalVerification: FnMut(),
+        BeforeRename: FnMut(),
+        Publish: for<'fd> FnMut(BorrowedFd<'fd>, &str, &str) -> Result<(), rustix::io::Errno>,
+        SyncParent: for<'fd> FnMut(BorrowedFd<'fd>) -> Result<(), rustix::io::Errno>,
+    {
         check_cancellation(cancellation)?;
-        let initial_walk = self.walk_parent(normalized, cancellation, WalkPhase::Initial)?;
-        let initial_parent_metadata =
-            rustix::fs::fstat(&initial_walk.parent).map_err(|_| unavailable(true))?;
+        let initial_walk =
+            self.walk_parent_with_evidence(normalized, cancellation, WalkPhase::Initial, evidence)?;
+        let initial_parent_metadata = evidence
+            .fstat(ReadPhase::Initial, initial_walk.parent.as_fd())
+            .map_err(|_| unavailable(true))?;
         check_cancellation(cancellation)?;
         if !FileType::from_raw_mode(initial_parent_metadata.st_mode).is_dir() {
             return Err(rejected_path());
         }
 
-        let initial_target = open_target(
+        let initial_target = open_target_with_evidence(
             initial_walk.parent.as_fd(),
             initial_walk.basename,
             ReadPhase::Initial,
+            evidence,
         )?;
-        let initial_open_fingerprint = fingerprint_and_validate_path(
+        let initial_open_fingerprint = fingerprint_and_validate_path_with_evidence(
             initial_walk.parent.as_fd(),
             initial_walk.basename,
             initial_target.as_fd(),
             ReadPhase::Initial,
+            evidence,
         )?;
-        let initial_read_file = initial_target.as_fd();
-        let initial_stat_file = initial_target.as_fd();
-        let (preimage, initial_fingerprint) = read_bounded_stable_with(
+        let (preimage, initial_fingerprint) = read_bounded_stable_for_phase_with_evidence(
             initial_target.as_fd(),
             cancellation,
-            |buffer, offset| rustix::io::pread(initial_read_file, buffer, offset),
-            || rustix::fs::fstat(initial_stat_file),
+            MAX_EDIT_FILE_EXISTING_BYTES,
+            ReadPhase::Initial,
+            evidence,
         )?;
         if initial_fingerprint != initial_open_fingerprint {
             return Err(target_changed());
@@ -1651,20 +1969,33 @@ impl EditFileTool {
             MAX_EDIT_FILE_SERIALIZED_RESULT_BYTES,
         )?;
 
-        let (temp_name, temp_file) = create_staged_file(
+        let (temp_name, temp_file) = create_staged_file_with_evidence(
             initial_walk.parent.as_fd(),
             initial_walk.basename,
             cancellation,
+            |_| random_temp_name(cancellation),
+            evidence,
         )?;
-        let mut staged = StagedFile::new(initial_walk.parent.as_fd(), temp_file, temp_name)?;
+        let mut staged = StagedFile::new_with_evidence(
+            initial_walk.parent.as_fd(),
+            temp_file,
+            temp_name,
+            evidence,
+        )?;
+        evidence.after_stage_created(
+            initial_walk.parent.as_fd(),
+            staged.file.as_fd(),
+            &staged.name,
+            cancellation,
+        )?;
         check_cancellation(cancellation)?;
 
         let private_mode = Mode::from_raw_mode(0o600);
         set_mode(staged.file.as_fd(), private_mode).map_err(|_| write_failed())?;
         check_cancellation(cancellation)?;
-        verify_staged_descriptor(&staged, 0, Some(private_mode))?;
+        verify_staged_descriptor(&staged, 0, Some(private_mode), evidence)?;
         write(staged.file.as_fd(), &postimage, cancellation)?;
-        verify_staged_descriptor(&staged, postimage.len(), Some(private_mode))?;
+        verify_staged_descriptor(&staged, postimage.len(), Some(private_mode), evidence)?;
         verify_staged_content_at_path(
             initial_walk.parent.as_fd(),
             &staged.name,
@@ -1673,36 +2004,44 @@ impl EditFileTool {
             private_mode,
             cancellation,
             ReadPhase::Staged,
+            evidence,
         )?;
 
-        let final_walk = self.walk_parent(normalized, cancellation, WalkPhase::Revalidate)?;
-        let final_parent_metadata =
-            rustix::fs::fstat(&final_walk.parent).map_err(|_| target_changed())?;
+        let final_walk = self.walk_parent_with_evidence(
+            normalized,
+            cancellation,
+            WalkPhase::Revalidate,
+            evidence,
+        )?;
+        let final_parent_metadata = evidence
+            .fstat(ReadPhase::Revalidate, final_walk.parent.as_fd())
+            .map_err(|_| target_changed())?;
         check_cancellation(cancellation)?;
         revalidate_parent_identity(&initial_parent_metadata, &final_parent_metadata)?;
         before_final_verification();
         check_cancellation(cancellation)?;
 
-        let verification_target = open_target(
+        let verification_target = open_target_with_evidence(
             final_walk.parent.as_fd(),
             final_walk.basename,
             ReadPhase::Revalidate,
+            evidence,
         )?;
-        let verification_open_fingerprint = fingerprint_and_validate_path(
+        let verification_open_fingerprint = fingerprint_and_validate_path_with_evidence(
             final_walk.parent.as_fd(),
             final_walk.basename,
             verification_target.as_fd(),
             ReadPhase::Revalidate,
+            evidence,
         )?;
-        let verification_read_file = verification_target.as_fd();
-        let verification_stat_file = verification_target.as_fd();
-        let (verification_bytes, verification_fingerprint) = read_bounded_stable_for_phase_with(
-            cancellation,
-            MAX_EDIT_FILE_EXISTING_BYTES,
-            ReadPhase::Revalidate,
-            |buffer, offset| rustix::io::pread(verification_read_file, buffer, offset),
-            || rustix::fs::fstat(verification_stat_file),
-        )?;
+        let (verification_bytes, verification_fingerprint) =
+            read_bounded_stable_for_phase_with_evidence(
+                verification_target.as_fd(),
+                cancellation,
+                MAX_EDIT_FILE_EXISTING_BYTES,
+                ReadPhase::Revalidate,
+                evidence,
+            )?;
         if verification_open_fingerprint != initial_fingerprint
             || verification_fingerprint != initial_fingerprint
             || verification_bytes != preimage
@@ -1724,6 +2063,7 @@ impl EditFileTool {
             private_mode,
             cancellation,
             ReadPhase::Staged,
+            evidence,
         )?;
 
         before_rename();
@@ -1736,6 +2076,7 @@ impl EditFileTool {
             private_mode,
             cancellation,
             ReadPhase::Staged,
+            evidence,
         )?;
 
         let final_mode = initial_fingerprint.ordinary_mode();
@@ -1743,6 +2084,12 @@ impl EditFileTool {
         set_mode(staged.file.as_fd(), final_mode).map_err(|_| write_failed())?;
         check_cancellation(cancellation)?;
         sync_staged(staged.file.as_fd(), cancellation)?;
+        evidence.after_final_stage_sync(
+            final_walk.parent.as_fd(),
+            staged.file.as_fd(),
+            &staged.name,
+            cancellation,
+        )?;
         verify_staged_content_at_path(
             final_walk.parent.as_fd(),
             &staged.name,
@@ -1751,12 +2098,19 @@ impl EditFileTool {
             final_mode,
             cancellation,
             ReadPhase::Staged,
+            evidence,
         )?;
         check_cancellation(cancellation)?;
         publish(final_walk.parent.as_fd(), &staged.name, final_walk.basename)
             .map_err(map_publish_error)?;
         staged.mark_published();
 
+        let after_rename = evidence.after_rename(
+            final_walk.parent.as_fd(),
+            staged.file.as_fd(),
+            final_walk.basename,
+            cancellation,
+        );
         let published_verification = verify_staged_content_at_path(
             final_walk.parent.as_fd(),
             final_walk.basename,
@@ -1765,9 +2119,10 @@ impl EditFileTool {
             final_mode,
             cancellation,
             ReadPhase::Published,
+            evidence,
         );
         let directory_sync = sync_after_commit_with(|| sync_parent(final_walk.parent.as_fd()));
-        if published_verification.is_err() || directory_sync.is_err() {
+        if after_rename.is_err() || published_verification.is_err() || directory_sync.is_err() {
             return Err(commit_ambiguous());
         }
 
@@ -1778,24 +2133,22 @@ impl EditFileTool {
         Ok(success_output)
     }
 
-    fn walk_parent<'a>(
+    fn walk_parent_with_evidence<'a, Evidence: EditFileEvidence>(
         &self,
         normalized: &'a str,
         cancellation: &CancellationToken,
         phase: WalkPhase,
+        evidence: &mut Evidence,
     ) -> Result<ParentWalk<'a>, ToolError> {
         check_cancellation(cancellation)?;
-        let mut parent = rustix::fs::openat(
-            self.root.as_fd(),
-            ".",
-            directory_open_flags(),
-            Mode::empty(),
-        )
-        .map_err(|_| map_walk_failure(phase))?;
+        let mut parent = evidence
+            .open_walk(phase, WalkStep::Root, self.root.as_fd(), ".")
+            .map_err(|_| map_walk_failure(phase))?;
         check_cancellation(cancellation)?;
         ensure_root_is_linked(parent.as_fd(), phase)?;
 
         let mut components = normalized.split('/').peekable();
+        let mut depth = 0_usize;
         loop {
             check_cancellation(cancellation)?;
             let component = components.next().ok_or_else(invalid_arguments)?;
@@ -1805,18 +2158,28 @@ impl EditFileTool {
                     basename: component,
                 });
             }
-            parent = rustix::fs::openat(
-                parent.as_fd(),
-                component,
-                directory_open_flags(),
-                Mode::empty(),
-            )
-            .map_err(|error| map_parent_open_error(error, phase))?;
+            parent = evidence
+                .open_walk(
+                    phase,
+                    WalkStep::Intermediate(depth),
+                    parent.as_fd(),
+                    component,
+                )
+                .map_err(|error| map_parent_open_error(error, phase))?;
             check_cancellation(cancellation)?;
-            let metadata = rustix::fs::fstat(&parent).map_err(|_| map_walk_failure(phase))?;
+            let read_phase = match phase {
+                WalkPhase::Initial => ReadPhase::Initial,
+                WalkPhase::Revalidate => ReadPhase::Revalidate,
+            };
+            let metadata = evidence
+                .fstat(read_phase, parent.as_fd())
+                .map_err(|_| map_walk_failure(phase))?;
             if !FileType::from_raw_mode(metadata.st_mode).is_dir() {
                 return Err(map_walk_rejected(phase));
             }
+            depth = depth
+                .checked_add(1)
+                .ok_or_else(|| map_walk_failure(phase))?;
         }
     }
 }
