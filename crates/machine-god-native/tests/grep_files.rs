@@ -377,7 +377,7 @@ fn exported_contract_limits_and_spec_are_exact() {
                 "offset": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 100000,
+                    "maximum": 100_000,
                     "description": "Zero-based result offset for matches or files_with_matches; defaults to 0"
                 },
                 "context_lines": {
@@ -747,7 +747,7 @@ fn files_with_matches_and_count_have_exact_distinct_shapes_and_complete_totals()
             "case_insensitive": false,
             "mode": "count",
             "head_limit": 1,
-            "offset": 100000,
+            "offset": 100_000,
             "context_lines": 5,
             "candidate_files": 3,
             "searched_files": 3,

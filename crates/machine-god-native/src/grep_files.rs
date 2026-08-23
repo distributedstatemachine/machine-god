@@ -1788,6 +1788,7 @@ fn path_matches(
     Ok(previous[candidate_segments.len()])
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }

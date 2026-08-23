@@ -410,6 +410,7 @@ fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: Sessio
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable_results() {
     let temporary = TemporaryDirectory::new("full-wiring");
     let (workspace, sessions) = roots(temporary.path());

@@ -220,6 +220,7 @@ fn retained_root_responses() -> [Vec<u8>; 2] {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
     let temporary = TemporaryDirectory::new("retained-identities");
     let (prepared, workspace, state_root) = prepared_roots(temporary.path());
