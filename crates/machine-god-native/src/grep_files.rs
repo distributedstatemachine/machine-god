@@ -56,6 +56,9 @@ pub const MAX_GREP_FILES_TOTAL_RESULT_TEXT_BYTES: usize = 8 * 1024;
 /// Maximum serialized [`ToolOutput`] bytes produced by this tool.
 pub const MAX_GREP_FILES_SERIALIZED_RESULT_BYTES: usize = 48 * 1024;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const CONTENT_READ_CHUNK_BYTES: usize = 8 * 1024;
+
 /// Registered name of [`GrepFilesTool`].
 pub const GREP_FILES_TOOL_NAME: &str = "grep_files";
 
@@ -703,6 +706,47 @@ struct ScanOutcome {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Default)]
+struct ContentBuffer {
+    storage: Vec<u8>,
+    length: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ContentBuffer {
+    fn reset(&mut self) {
+        self.length = 0;
+    }
+
+    fn read_window(&mut self, requested: usize) -> Result<&mut [u8], ToolError> {
+        let end = self.length.checked_add(requested).ok_or_else(scan_limit)?;
+        if requested == 0 || end > MAX_GREP_FILES_FILE_BYTES + 1 {
+            return Err(scan_limit());
+        }
+        if self.storage.len() < end {
+            let additional = end - self.storage.len();
+            self.storage
+                .try_reserve_exact(additional)
+                .map_err(|_| read_failed())?;
+            self.storage.resize(end, 0);
+        }
+        Ok(&mut self.storage[self.length..end])
+    }
+
+    fn commit_read(&mut self, bytes: usize) -> Result<(), ToolError> {
+        self.length = self.length.checked_add(bytes).ok_or_else(scan_limit)?;
+        if self.length > MAX_GREP_FILES_FILE_BYTES + 1 {
+            return Err(scan_limit());
+        }
+        Ok(())
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.storage[..self.length]
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug)]
 struct LineRange {
     start: usize,
@@ -908,6 +952,7 @@ impl GrepFilesTool {
             stats: ScanStats::default(),
             retained: RetainedResults::default(),
         };
+        let mut content_buffer = ContentBuffer::default();
         let matcher = LiteralMatcher::compile(
             &arguments.pattern,
             arguments.case_insensitive,
@@ -930,6 +975,7 @@ impl GrepFilesTool {
             &matcher,
             &include_matcher,
             &mut outcome,
+            &mut content_buffer,
             cancellation,
         )?;
         render_output(arguments, outcome, cancellation)
@@ -1015,6 +1061,7 @@ fn scan_root(
     matcher: &LiteralMatcher,
     include_matcher: &IncludeMatcher<'_>,
     outcome: &mut ScanOutcome,
+    content_buffer: &mut ContentBuffer,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
     match root {
@@ -1026,6 +1073,7 @@ fn scan_root(
                 arguments,
                 matcher,
                 outcome,
+                content_buffer,
                 cancellation,
             )?;
         }
@@ -1037,6 +1085,7 @@ fn scan_root(
                 matcher,
                 include_matcher,
                 outcome,
+                content_buffer,
                 cancellation,
             )?;
         }
@@ -1051,6 +1100,7 @@ fn scan_directory_tree(
     matcher: &LiteralMatcher,
     include_matcher: &IncludeMatcher<'_>,
     outcome: &mut ScanOutcome,
+    content_buffer: &mut ContentBuffer,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
     let mut stack = vec![make_directory_frame(
@@ -1137,6 +1187,7 @@ fn scan_directory_tree(
                     arguments,
                     matcher,
                     outcome,
+                    content_buffer,
                     cancellation,
                 )?;
             }
@@ -1223,6 +1274,7 @@ fn scan_open_file(
     arguments: &ExecutionArguments,
     matcher: &LiteralMatcher,
     outcome: &mut ScanOutcome,
+    content_buffer: &mut ContentBuffer,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
     check_cancellation(cancellation)?;
@@ -1242,7 +1294,7 @@ fn scan_open_file(
         return Ok(());
     }
 
-    let bytes = read_bounded_content(file, &mut outcome.budget, cancellation)?;
+    let bytes = read_bounded_content(file, content_buffer, &mut outcome.budget, cancellation)?;
     let Some(bytes) = classify_observed_content_size(bytes, &mut outcome.stats)? else {
         return Ok(());
     };
@@ -1254,7 +1306,7 @@ fn scan_open_file(
             .ok_or_else(scan_limit)?;
         return Ok(());
     }
-    let Ok(content) = std::str::from_utf8(&bytes) else {
+    let Ok(content) = std::str::from_utf8(bytes) else {
         outcome.stats.skipped_non_text_files = outcome
             .stats
             .skipped_non_text_files
@@ -1280,10 +1332,10 @@ fn scan_open_file(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn classify_observed_content_size(
-    bytes: Vec<u8>,
+fn classify_observed_content_size<'a>(
+    bytes: &'a [u8],
     stats: &mut ScanStats,
-) -> Result<Option<Vec<u8>>, ToolError> {
+) -> Result<Option<&'a [u8]>, ToolError> {
     if bytes.len() <= MAX_GREP_FILES_FILE_BYTES {
         return Ok(Some(bytes));
     }
@@ -1295,12 +1347,14 @@ fn classify_observed_content_size(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn read_bounded_content(
+fn read_bounded_content<'a>(
     file: &OwnedFd,
+    content_buffer: &'a mut ContentBuffer,
     budget: &mut ScanBudget,
     cancellation: &CancellationToken,
-) -> Result<Vec<u8>, ToolError> {
+) -> Result<&'a [u8], ToolError> {
     read_bounded_content_with(
+        content_buffer,
         budget,
         |buffer| rustix::io::read(file, buffer),
         || check_cancellation(cancellation),
@@ -1308,41 +1362,42 @@ fn read_bounded_content(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn read_bounded_content_with(
+fn read_bounded_content_with<'a>(
+    content_buffer: &'a mut ContentBuffer,
     budget: &mut ScanBudget,
     mut read: impl FnMut(&mut [u8]) -> Result<usize, rustix::io::Errno>,
     mut check: impl FnMut() -> Result<(), ToolError>,
-) -> Result<Vec<u8>, ToolError> {
-    let mut bytes = vec![0_u8; MAX_GREP_FILES_FILE_BYTES + 1];
-    let mut length = 0_usize;
+) -> Result<&'a [u8], ToolError> {
+    content_buffer.reset();
     loop {
         check()?;
-        if length == bytes.len() {
+        if content_buffer.length == MAX_GREP_FILES_FILE_BYTES + 1 {
             break;
         }
         let aggregate_remaining = MAX_GREP_FILES_TOTAL_CONTENT_BYTES
             .checked_sub(budget.total_content_bytes)
             .ok_or_else(scan_limit)?;
-        let requested = (bytes.len() - length).min(aggregate_remaining.saturating_add(1));
+        let requested = (MAX_GREP_FILES_FILE_BYTES + 1 - content_buffer.length)
+            .min(aggregate_remaining.saturating_add(1))
+            .min(CONTENT_READ_CHUNK_BYTES);
         if requested == 0 {
             return Err(scan_limit());
         }
-        match read(&mut bytes[length..length + requested]) {
+        match read(content_buffer.read_window(requested)?) {
             Ok(0) => break,
             Ok(read) => {
                 if read > requested {
                     return Err(read_failed());
                 }
                 budget.observe_content_bytes(read)?;
-                length = length.checked_add(read).ok_or_else(scan_limit)?;
+                content_buffer.commit_read(read)?;
                 check()?;
             }
             Err(error) if error == rustix::io::Errno::INTR => {}
             Err(_) => return Err(read_failed()),
         }
     }
-    bytes.truncate(length);
-    Ok(bytes)
+    Ok(content_buffer.as_slice())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1983,7 +2038,7 @@ fn path_matches_with_check(
             current[0] = previous[0];
             for candidate_index in 1..=candidate_segments.len() {
                 if candidate_index.is_multiple_of(1024) {
-                    check_cancellation(cancellation)?;
+                    check()?;
                 }
                 current[candidate_index] =
                     previous[candidate_index] || current[candidate_index - 1];
@@ -2374,8 +2429,9 @@ fn scan_limit() -> ToolError {
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::{
-        CancellationToken, ContextRecord, EntryKind, ExecutionArguments, GrepMode, IncludeMatcher,
-        LiteralMatcher, MAX_GREP_FILES_CONTENT_MATCH_STEPS, MAX_GREP_FILES_FILE_BYTES,
+        CONTENT_READ_CHUNK_BYTES, CancellationToken, ContentBuffer, ContextRecord, EntryKind,
+        ExecutionArguments, GrepMode, IncludeMatcher, LiteralMatcher,
+        MAX_GREP_FILES_CONTENT_MATCH_STEPS, MAX_GREP_FILES_FILE_BYTES,
         MAX_GREP_FILES_INCLUDE_MATCH_STEPS, MAX_GREP_FILES_OFFSET,
         MAX_GREP_FILES_SERIALIZED_RESULT_BYTES, MAX_GREP_FILES_TOTAL_CONTENT_BYTES, MatchRecord,
         RetainedResults, ScanBudget, ScanOutcome, ScanStats, checked_descendant_path_length,
@@ -2555,6 +2611,31 @@ mod tests {
     }
 
     #[test]
+    fn recursive_path_dp_checks_injected_cancellation_through_expensive_cells() {
+        let candidate = std::iter::repeat_n("a", 2048).collect::<Vec<_>>().join("/");
+        let cancellation = CancellationToken::new();
+        let injected = CancellationToken::new();
+        let mut checks = 0_usize;
+        let error = path_matches_with_check(
+            &["**", "not-a"],
+            1,
+            &candidate,
+            &mut ScanBudget::default(),
+            &cancellation,
+            &mut || {
+                checks += 1;
+                if checks == 6 {
+                    assert!(injected.cancel());
+                }
+                super::check_cancellation(&injected)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(checks, 6);
+        assert_eq!(error.code, "grep_files_cancelled");
+    }
+
+    #[test]
     fn descendant_path_limit_precedes_entry_kind_handling() {
         let exact_parent = "a".repeat(super::MAX_GREP_FILES_RESULT_PATH_BYTES - 6);
         assert_eq!(
@@ -2630,11 +2711,15 @@ mod tests {
     #[test]
     fn bounded_reader_observes_growth_witness_and_aggregate_overflow() {
         let mut delivered = 0_usize;
+        let mut read_calls = 0_usize;
         let mut checks = 0_usize;
+        let mut content_buffer = ContentBuffer::default();
         let mut budget = ScanBudget::default();
         let bytes = read_bounded_content_with(
+            &mut content_buffer,
             &mut budget,
             |buffer| {
+                read_calls += 1;
                 let remaining = (MAX_GREP_FILES_FILE_BYTES + 1) - delivered;
                 let read = buffer.len().min(remaining);
                 buffer[..read].fill(b'x');
@@ -2650,7 +2735,7 @@ mod tests {
         assert_eq!(delivered, MAX_GREP_FILES_FILE_BYTES + 1);
         assert_eq!(bytes.len(), MAX_GREP_FILES_FILE_BYTES + 1);
         assert_eq!(budget.total_content_bytes, MAX_GREP_FILES_FILE_BYTES + 1);
-        assert_eq!(checks, 3);
+        assert_eq!(checks, read_calls * 2 + 1);
 
         let mut stats = ScanStats::default();
         assert!(
@@ -2664,8 +2749,10 @@ mod tests {
             total_content_bytes: MAX_GREP_FILES_TOTAL_CONTENT_BYTES,
             ..ScanBudget::default()
         };
+        let mut aggregate_buffer = ContentBuffer::default();
         let mut aggregate_witnesses = 0_usize;
         let error = read_bounded_content_with(
+            &mut aggregate_buffer,
             &mut aggregate_budget,
             |buffer| {
                 assert_eq!(buffer.len(), 1);
@@ -2682,6 +2769,178 @@ mod tests {
             MAX_GREP_FILES_TOTAL_CONTENT_BYTES + 1
         );
         assert_eq!(error.code, "grep_files_scan_limit");
+    }
+
+    #[test]
+    fn empty_reads_reuse_one_small_initialized_window() {
+        let mut content_buffer = ContentBuffer::default();
+        let mut budget = ScanBudget::default();
+        for _ in 0..32 {
+            let bytes =
+                read_bounded_content_with(&mut content_buffer, &mut budget, |_| Ok(0), || Ok(()))
+                    .unwrap();
+            assert!(bytes.is_empty());
+        }
+
+        assert_eq!(content_buffer.storage.len(), CONTENT_READ_CHUNK_BYTES);
+        assert!(content_buffer.storage.len() < MAX_GREP_FILES_FILE_BYTES + 1);
+        assert_eq!(budget.total_content_bytes, 0);
+        let pointer = content_buffer.storage.as_ptr();
+        let capacity = content_buffer.storage.capacity();
+
+        let bytes =
+            read_bounded_content_with(&mut content_buffer, &mut budget, |_| Ok(0), || Ok(()))
+                .unwrap();
+        assert!(bytes.is_empty());
+        assert_eq!(content_buffer.storage.as_ptr(), pointer);
+        assert_eq!(content_buffer.storage.capacity(), capacity);
+    }
+
+    #[test]
+    fn maximum_then_empty_and_tiny_reads_do_not_expose_stale_content() {
+        let mut content_buffer = ContentBuffer::default();
+        let mut budget = ScanBudget::default();
+        let mut delivered = 0_usize;
+        let bytes = read_bounded_content_with(
+            &mut content_buffer,
+            &mut budget,
+            |buffer| {
+                let remaining = MAX_GREP_FILES_FILE_BYTES - delivered;
+                let read = buffer.len().min(remaining);
+                buffer[..read].fill(b'x');
+                delivered += read;
+                Ok(read)
+            },
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(bytes.len(), MAX_GREP_FILES_FILE_BYTES);
+        assert!(bytes.iter().all(|byte| *byte == b'x'));
+        assert_eq!(content_buffer.storage.len(), MAX_GREP_FILES_FILE_BYTES + 1);
+        let pointer = content_buffer.storage.as_ptr();
+        let capacity = content_buffer.storage.capacity();
+
+        let empty =
+            read_bounded_content_with(&mut content_buffer, &mut budget, |_| Ok(0), || Ok(()))
+                .unwrap();
+        assert!(empty.is_empty());
+
+        let mut tiny_offset = 0_usize;
+        let tiny = read_bounded_content_with(
+            &mut content_buffer,
+            &mut budget,
+            |buffer| {
+                let source = b"ok";
+                let read = buffer.len().min(source.len() - tiny_offset);
+                buffer[..read].copy_from_slice(&source[tiny_offset..tiny_offset + read]);
+                tiny_offset += read;
+                Ok(read)
+            },
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(tiny, b"ok");
+        assert_eq!(content_buffer.storage.as_ptr(), pointer);
+        assert_eq!(content_buffer.storage.capacity(), capacity);
+        assert_eq!(content_buffer.storage.len(), MAX_GREP_FILES_FILE_BYTES + 1);
+    }
+
+    #[test]
+    fn bounded_reader_retains_interrupt_cancellation_and_error_semantics() {
+        let mut content_buffer = ContentBuffer::default();
+        let mut budget = ScanBudget::default();
+        let mut read_calls = 0_usize;
+        let bytes = read_bounded_content_with(
+            &mut content_buffer,
+            &mut budget,
+            |buffer| {
+                read_calls += 1;
+                match read_calls {
+                    1 => Err(rustix::io::Errno::INTR),
+                    2 => {
+                        buffer[0] = b'x';
+                        Ok(1)
+                    }
+                    _ => Ok(0),
+                }
+            },
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(bytes, b"x");
+        assert_eq!(read_calls, 3);
+        assert_eq!(budget.total_content_bytes, 1);
+
+        let error = read_bounded_content_with(
+            &mut content_buffer,
+            &mut budget,
+            |_| Err(rustix::io::Errno::IO),
+            || Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "grep_files_read_failed");
+        assert!(content_buffer.as_slice().is_empty());
+
+        let cancellation = CancellationToken::new();
+        assert!(cancellation.cancel());
+        let mut reads_after_cancellation = 0_usize;
+        let error = read_bounded_content_with(
+            &mut content_buffer,
+            &mut budget,
+            |_| {
+                reads_after_cancellation += 1;
+                Ok(0)
+            },
+            || super::check_cancellation(&cancellation),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "grep_files_cancelled");
+        assert_eq!(reads_after_cancellation, 0);
+        assert!(content_buffer.as_slice().is_empty());
+    }
+
+    #[test]
+    fn content_buffers_are_isolated_between_reentrant_scans() {
+        let mut first = ContentBuffer::default();
+        let mut second = ContentBuffer::default();
+        let mut first_budget = ScanBudget::default();
+        let mut second_budget = ScanBudget::default();
+
+        let mut first_offset = 0_usize;
+        let first_bytes = read_bounded_content_with(
+            &mut first,
+            &mut first_budget,
+            |buffer| {
+                let source = b"first";
+                let read = buffer.len().min(source.len() - first_offset);
+                buffer[..read].copy_from_slice(&source[first_offset..first_offset + read]);
+                first_offset += read;
+                Ok(read)
+            },
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(first_bytes, b"first");
+
+        let mut second_offset = 0_usize;
+        let second_bytes = read_bounded_content_with(
+            &mut second,
+            &mut second_budget,
+            |buffer| {
+                let source = b"second";
+                let read = buffer.len().min(source.len() - second_offset);
+                buffer[..read].copy_from_slice(&source[second_offset..second_offset + read]);
+                second_offset += read;
+                Ok(read)
+            },
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(second_bytes, b"second");
+        assert_eq!(first.as_slice(), b"first");
+        assert_ne!(first.storage.as_ptr(), second.storage.as_ptr());
+        assert_eq!(first_budget.total_content_bytes, 5);
+        assert_eq!(second_budget.total_content_bytes, 6);
     }
 
     #[test]
