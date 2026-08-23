@@ -305,6 +305,7 @@ impl NativeReferenceHost {
             .permission_handler(permission_handler)
             .tool(workspace_tools.file_info)
             .tool(workspace_tools.glob_files)
+            .tool(workspace_tools.grep_files)
             .tool(workspace_tools.list_files)
             .tool(workspace_tools.read_file)
             .build()
