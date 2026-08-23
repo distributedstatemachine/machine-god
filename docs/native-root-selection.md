@@ -50,9 +50,10 @@ reports its own exact workflows at handoff.
 The remaining
 native tools, CLI ownership, and composed end-to-end evidence also stay open.
 The eighteenth candidate starts from exact base
-`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; its production, independent
-tests, composition, local gates, formal reviews, and remote exact-SHA delivery
-are pending.
+`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production, independent tests,
+documentation, composition, and local gates are green at exact precursor
+`60070d899b7ac298960f6d01826d3876cf8b5835`. Formal reviews and remote exact-SHA
+delivery remain pending.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host

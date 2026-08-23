@@ -1,19 +1,19 @@
 # Milestone 03 native `glob_files` review 01
 
-Status: **CANDIDATE — composition, local gates, three formal reviews, and
-remote exact-SHA delivery pending**
+Status: **CANDIDATE — composition and local gates green; three formal reviews
+and remote exact-SHA delivery pending**
 
 ## Candidate
 
 - Exact base: `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`
-- Production component: **PENDING — isolated production SHA will be recorded
-  only after composition**
-- Independent-test component: **PENDING — isolated test SHA will be recorded
-  only after composition**
-- Documentation component: **PENDING — isolated documentation SHA will be
-  recorded only after composition**
-- First fully composed behavior candidate: **PENDING**
-- Local-gate precursor: **PENDING**
+- Production component: `a5d1399a5d05fcf056e8c1951fef92211824df25`
+- Production schema-text correction: `f1584f5047a729c3a5647d2b9b59704b1f565e1b`
+- Independent-test component: `948994d5cfee6693579f114a6f7a2ce50fd91258`
+- Documentation component: `f2f0fc13a98922cc0aa9dc8643ef4620bce78eb9`
+- Composed production head: `df3017cdae2508d4c82f85e4f1480760dc351906`
+- Composed production-and-test head: `c9eccb7f09b67ddf4b7e9123519abcc013ca5532`
+- First fully composed behavior candidate: `60070d899b7ac298960f6d01826d3876cf8b5835`
+- Local-gate precursor: `60070d899b7ac298960f6d01826d3876cf8b5835`
 - Formal review head shared by all three tracks: **PENDING**
 - Finding-fix and rereview heads: **PENDING if required**
 - Documentation seal: **PENDING**
@@ -22,8 +22,8 @@ remote exact-SHA delivery pending**
 - Required toolchain: Rust and Cargo 1.94.1 exactly
 
 No pending SHA above is inferred, abbreviated, or invented. The coordinator
-will replace a placeholder only after the named component or composed state
-exists. This eighteenth bounded Milestone 03 candidate adds a read-only
+will replace each remaining placeholder only after the named state exists.
+This eighteenth bounded Milestone 03 candidate adds a read-only
 Linux/macOS `glob_files` library tool, the distinct
 `FilesystemAccess::EnumerateRecursive` permission kind, direct and real-engine
 independent tests, reference-host/root-bundle composition as a fourth workspace
@@ -111,11 +111,10 @@ Three isolated worktrees own non-overlapping surfaces from exact base
   indexes and guides, implementation-plan/status updates, and this review
   record.
 
-The coordinator will compose the isolated commits onto
-`agent/m03-glob-files` without reverting unrelated work. Production behavior,
-independent evidence, and documentation must be present together before formal
-review begins. Isolated component SHAs remain explicitly pending until that
-composition exists.
+The coordinator composed the isolated commits onto `agent/m03-glob-files`
+without reverting unrelated work. Production behavior, independent evidence,
+and documentation are present together at `60070d8`; formal review begins only
+from its local-evidence child after the gates below are recorded.
 
 ## Required local gates
 
@@ -131,11 +130,22 @@ cargo +1.94.1 test --doc --workspace
 ```
 
 Repository Python, dependency-policy, vulnerability, compatibility-inventory,
-and release-binary smoke gates also remain required by the delivery workflow.
+and release-binary smoke gates are also required by the delivery workflow.
 The current `machine-god` CLI bytes must be exercised through the freshly built
 `target/release/machine-god` binary even though this candidate adds no CLI
-behavior. No local result is claimed until it is recorded against an exact
-composed SHA.
+behavior.
+
+The 39 focused direct/engine/root/host integration tests and five private
+matcher/schema unit tests are green at exact composed SHA `60070d8`. Formatting,
+workspace/all-target/all-feature warnings-denied Clippy, workspace tests,
+documentation tests, dependency policy, the 1,225-advisory vulnerability check
+over 175 dependencies, the fresh pinned-fx compatibility-inventory check, and
+release-binary bare/help/status smoke are also green under Rust and Cargo
+1.94.1 exactly. The 129-test repository Python gate is green with eight
+expected macOS skips. Linux, FreeBSD, and WASI no-default-feature native
+library checks pass; WASI retains the existing non-fatal `read_file`
+`check_cancellation` dead-code warning. This slice changes no benchmark
+behavior.
 
 ## Required adversarial tracks
 

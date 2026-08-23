@@ -185,10 +185,12 @@ bytewise sorts each directory, and returns either the globally smallest bounded
 sorted match prefix or an exact count after a complete bounded scan. The
 candidate extends the host catalog to `file_info`, `glob_files`, `list_files`,
 and `read_file`, distributing the original retained descriptor plus three
-clones of one workspace identity. All component and delivery SHAs remain
-pending from exact base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; no
-review or delivery gate is claimed green. Its contract and pending review
-record are [`glob-files.md`](glob-files.md) and
+clones of one workspace identity. Production, independent-test, documentation,
+composed-behavior, and local-gate lineage is green through exact precursor
+`60070d899b7ac298960f6d01826d3876cf8b5835` from base
+`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; review and delivery gates remain
+pending. Its contract and pending review record are
+[`glob-files.md`](glob-files.md) and
 [`m03-glob-files-review-01.md`](reviews/m03-glob-files-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
@@ -413,8 +415,9 @@ recursive-enumeration policy and execution receive the same normalized selected
 subtree, while exact prepared pattern/path/mode arguments attenuate only the
 output. No provider, permission handler, session-store, credential, transport,
 runtime, constructor argument, root-selection, or CLI authority changes.
-Production, independent tests, composition, local gates, three formal tracks,
-and exact remote delivery remain pending.
+Production, independent tests, documentation, composition, and local gates are
+green at exact precursor `60070d8`; three formal tracks and exact remote
+delivery remain pending.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

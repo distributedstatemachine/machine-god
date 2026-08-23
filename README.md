@@ -200,8 +200,10 @@ byte caps; count mode completes the same bounded scan and is exact. The
 candidate extends the composed host catalog to `file_info`, `glob_files`,
 `list_files`, and `read_file`, with one retained workspace identity distributed
 as the original descriptor plus three clones. Production, independent tests,
-composition, local gates, three same-SHA adversarial tracks, and remote exact-
-SHA delivery remain pending; no SHA is invented in the
+and documentation are composed and all required local gates are green at exact
+candidate `60070d899b7ac298960f6d01826d3876cf8b5835`. Three same-SHA adversarial
+tracks and remote exact-SHA delivery remain pending; no later SHA is invented
+in the
 [`glob_files` contract](docs/glob-files.md) or
 [review record](docs/reviews/m03-glob-files-review-01.md). The candidate changes
 no CLI byte, benchmark workload, compatibility status, or performance claim,

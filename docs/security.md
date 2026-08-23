@@ -147,10 +147,11 @@ workspace identity, traverses iteratively with descriptor-relative no-follow
 operations, follows no symlink, reads no content, includes hidden entries, and
 fails without partial output if any fixed scan cap fires. The same complete
 bounded traversal produces either a globally bytewise-smallest sorted match
-prefix or an exact count. Its production, independent tests, composition,
-local gates, three same-SHA adversarial tracks, and remote delivery remain
-pending from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Its security
-contract is in [`glob-files.md`](glob-files.md).
+prefix or an exact count. Production, independent tests, documentation,
+composition, and local gates are green at exact precursor
+`60070d899b7ac298960f6d01826d3876cf8b5835`; three same-SHA adversarial tracks
+and remote delivery remain pending. Its security contract is in
+[`glob-files.md`](glob-files.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is

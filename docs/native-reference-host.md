@@ -3,9 +3,10 @@
 Status: integrated contract for the twelfth bounded Milestone 03 library slice,
 with its workspace-tool composition extended by the delivered seventeenth
 slice and the eighteenth `glob_files` candidate. Seventeen slices are
-delivered; eighteenth-slice production, independent tests, composition, local
-gates, three same-SHA formal reviews, and exact remote delivery remain pending
-from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
+delivered; eighteenth-slice production, independent tests, documentation,
+composition, and local gates are green at exact precursor `60070d8`, while
+three same-SHA formal reviews and exact remote delivery remain pending from
+base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
 production `5c2d129` and independent tests `ca0091c` compose at `f228c06`,
 where all 34 focused tests are green. Review hardening composes at `b69ec4b`,
 bringing the focused total to 36 plus five private unit tests. The first formal
@@ -116,8 +117,9 @@ Allowed execution performs a complete bounded descriptor-relative no-follow
 scan and returns either the globally bytewise-smallest sorted match prefix or an
 exact count. Its normative contract is [`glob-files.md`](glob-files.md). It
 changes no constructor arguments, provider, transport, permission handler,
-session, runtime, credential, root-selection, or CLI authority. Candidate and
-delivery SHAs are explicitly pending in the
+session, runtime, credential, root-selection, or CLI authority. Exact composed
+and local-gate lineage is recorded, while review and delivery SHAs remain
+explicitly pending in the
 [`review record`](reviews/m03-glob-files-review-01.md).
 
 ## Feature and platform boundary
@@ -470,9 +472,10 @@ benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
 The `glob_files` candidate adds no benchmark workload or workflow change and
-makes no compatibility or product-performance claim. Its production,
-independent tests, composition, local gates, formal reviews, and remote exact-
-SHA delivery remain pending, so the combined native-tool checklist stays open.
+makes no compatibility or product-performance claim. Production, independent
+tests, documentation, composition, and local gates are green at exact precursor
+`60070d8`; formal reviews and remote exact-SHA delivery remain pending, so the
+combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature

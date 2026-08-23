@@ -46,10 +46,10 @@ at handoff. Its metadata result is not exposed as CLI output.
 The eighteenth [`glob_files` candidate](glob-files.md) is also library-only.
 It adds no `glob_files`, workspace, or slash command and changes none of the
 accepted invocations, output bytes, diagnostics, or exit statuses below. Its
-bounded path/count result is not exposed as CLI output. Production,
-independent tests, composition, three formal review tracks, and exact remote
-delivery remain pending; the candidate makes no compatibility or performance
-claim.
+bounded path/count result is not exposed as CLI output. Production, independent
+tests, documentation, composition, and local gates are green at exact precursor
+`60070d8`; three formal review tracks and exact remote delivery remain pending.
+The candidate makes no compatibility or performance claim.
 
 ## Accepted invocations
 

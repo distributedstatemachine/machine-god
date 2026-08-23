@@ -510,11 +510,15 @@ identity. Its public constants, constructor errors, result shapes, cancellation
 boundaries, compatibility inputs and deliberate differences, and deferred scope
 are normative in [`glob-files.md`](glob-files.md). Parallel production,
 independent-test, and documentation ownership is recorded in the
-[`glob_files` review](reviews/m03-glob-files-review-01.md). Isolated component,
-composed-behavior, review, seal, and delivery SHAs are explicitly pending and
-must not be invented. Three fresh adversarial tracks must review one exact
-composed behavior SHA after local gates, with fixes and same-SHA rereview until
-green. Per the user's instruction, a later documentation-only seal is exempt
+[`glob_files` review](reviews/m03-glob-files-review-01.md). Isolated components,
+composed behavior, and local-gate lineage are recorded there: production
+`a5d1399`, schema correction `f1584f5`, independent tests `948994d`, and
+documentation `f2f0fc1` compose through exact local-gate precursor
+`60070d899b7ac298960f6d01826d3876cf8b5835`. Review, seal, and delivery SHAs
+remain explicitly pending and must not be invented. Three fresh adversarial
+tracks must review one exact composed behavior SHA after local gates, with fixes
+and same-SHA rereview until green. Per the user's instruction, a later
+documentation-only seal is exempt
 from another adversarial cycle after behavior is green. The candidate adds no
 CLI behavior, external-path access, ignore or Git/subprocess behavior, content
 read, mutation, dependency, benchmark workload, product-performance claim, or
@@ -588,9 +592,12 @@ gate:
   `32606050294`; all four report that exact seal SHA. The other listed native
   tools remain incomplete, so this combined item stays unchecked. The
   eighteenth `glob_files` candidate has a frozen contract from base
-  `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`, but production, independent
-  tests, composition, local gates, three same-SHA adversarial tracks, and exact
-  remote delivery remain pending. It therefore does not change this checkbox.
+  `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production, 39 focused
+  integration tests, five private unit tests, documentation, composition, and
+  all required local gates are green at exact precursor
+  `60070d899b7ac298960f6d01826d3876cf8b5835`. Three same-SHA adversarial tracks
+  and exact remote delivery remain pending. It therefore does not change this
+  checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

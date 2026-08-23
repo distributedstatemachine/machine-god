@@ -1,10 +1,11 @@
 # Native `glob_files` tool
 
-Status: candidate contract for the eighteenth bounded Milestone 03 slice.
-The exact base is `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Production,
-independent-test, documentation, composed-behavior, review, and delivery SHAs
-are pending composition and are not claimed by this page. Milestone 03 remains
-`IN PROGRESS`, and its combined native-tool checklist remains unchecked.
+Status: composed candidate for the eighteenth bounded Milestone 03 slice.
+The exact base is `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production,
+independent tests, and documentation are composed and local gates are green at
+`60070d899b7ac298960f6d01826d3876cf8b5835`. Formal review, seal, and delivery
+remain pending. Milestone 03 remains `IN PROGRESS`, and its combined native-tool
+checklist remains unchecked.
 
 `glob_files` is a Linux/macOS library capability in `machine-god-native`. The
 current CLI does not construct an engine, register or invoke this tool, prompt
@@ -373,6 +374,6 @@ watcher, new dependency, benchmark workload, product-performance claim, or fx-
 equivalence claim. It does not implement any other remaining native tool and
 does not complete the M03 combined tool boundary.
 
-The exact ownership, pending composition lineage, required three-track review,
-and delivery gates are recorded in the
+The exact ownership and composed lineage, required three-track review, and
+delivery gates are recorded in the
 [`glob_files` review record](reviews/m03-glob-files-review-01.md).
