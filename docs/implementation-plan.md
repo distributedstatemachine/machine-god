@@ -68,8 +68,12 @@ local gate. Tree-identical cycle-3 candidate
 low findings: validation-site `EROFS` taxonomy and missing retained hostile-
 umask evidence. Exact remediation
 `77884a9fceed6268cbdbec1310de3f94a9c5a230` passes the complete replacement
-local gate; another fresh same-SHA cycle remains pending. The remaining native
-tools, CLI ownership, and Milestone 03 completion boundary remain pending.
+local gate. Tree-identical cycle-4 candidate
+`0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** across all
+three tracks with the same single medium definitive-unlink-failure cancellation
+finding and no others. Remediation and another fresh same-SHA cycle remain
+pending. The remaining native tools, CLI ownership, and Milestone 03 completion
+boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1198,6 +1202,11 @@ isolated child-process evidence remediations compose in exact
 gate: focused 28/29 private, 21 direct, five engine, seven host, one core;
 discovery 739/789 with zero benchmarks; workspace, Python, compatibility,
 dependency, portability, docs, diff, and fresh release-smoke gates green.
+Tree-identical cycle-4 candidate
+`0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** in all
+three tracks for the same single medium finding: definitive non-`EINTR` unlink
+failures skipped post-syscall cancellation precedence. Remediation and another
+complete local/fresh-review cycle are in progress.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1499,9 +1508,12 @@ gate:
   Exact remediation `77884a9` passes complete local gates with 28/29 private,
   21 direct, five engine, seven host, one core, 739/789 discovery, workspace,
   Python, compatibility, dependency, portability, documentation, diff, and
-  release-smoke evidence green. Another fresh same-SHA review, feature
-  delivery, and `main` delivery remain pending, so the combined native-tool
-  checkbox stays unchecked and the delivered-slice count remains twenty-one.
+  release-smoke evidence green. Tree-identical cycle-4 candidate `0b732d2` is
+  not green across all three tracks for the same single medium definitive-
+  unlink-failure cancellation finding. Remediation, another fresh same-SHA
+  review, feature delivery, and `main` delivery remain pending, so the combined
+  native-tool checkbox stays unchecked and the delivered-slice count remains
+  twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

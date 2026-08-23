@@ -861,6 +861,69 @@ fn definitive_unlink_errors_have_exact_mapping_one_call_and_no_sync() {
     }
 }
 
+#[test]
+fn post_unlink_cancellation_wins_every_definitive_error_without_syncing() {
+    let cases = [
+        ("cancel-eio", rustix::io::Errno::IO, false),
+        ("cancel-eacces", rustix::io::Errno::ACCESS, false),
+        ("cancel-eperm", rustix::io::Errno::PERM, false),
+        ("cancel-erofs", rustix::io::Errno::ROFS, false),
+        ("cancel-enoent", rustix::io::Errno::NOENT, false),
+        ("cancel-enotdir", rustix::io::Errno::NOTDIR, false),
+        ("cancel-eisdir", rustix::io::Errno::ISDIR, false),
+        ("cancel-eloop", rustix::io::Errno::LOOP, false),
+        ("cancel-enotempty", rustix::io::Errno::NOTEMPTY, true),
+        ("cancel-eexist", rustix::io::Errno::EXIST, true),
+    ];
+
+    for (label, errno, directory) in cases {
+        let temporary = TempDirectory::new(label);
+        let target = temporary.path().join("target");
+        if directory {
+            fs::create_dir(&target).unwrap();
+            fs::write(target.join("sentinel"), b"retained directory contents").unwrap();
+        } else {
+            fs::write(&target, b"retained file contents").unwrap();
+        }
+        let cancellation = CancellationToken::new();
+        let mut evidence = ScriptedEvidence::new(UnlinkScript::Error(errno), SyncScript::Native);
+        evidence.cancel_after_unlink = true;
+
+        let error = DeleteFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with_evidence("target", &cancellation, &mut evidence)
+            .unwrap_err();
+
+        assert_error(
+            &error,
+            ToolErrorKind::Cancelled,
+            "delete_file_cancelled",
+            "delete_file execution was cancelled",
+            false,
+        );
+        assert!(cancellation.is_cancelled());
+        assert_eq!(evidence.unlink_calls, 1);
+        assert_eq!(
+            evidence.unlink_flags,
+            [if directory {
+                AtFlags::REMOVEDIR
+            } else {
+                AtFlags::empty()
+            }],
+        );
+        assert!(evidence.sync_attempts.is_empty());
+        if directory {
+            assert!(target.is_dir());
+            assert_eq!(
+                fs::read(target.join("sentinel")).unwrap(),
+                b"retained directory contents"
+            );
+        } else {
+            assert_eq!(fs::read(target).unwrap(), b"retained file contents");
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_eperm_diagnostic_rejects_every_post_unlink_identity_change() {

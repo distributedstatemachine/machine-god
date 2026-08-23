@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — cycle 3 remediated; replacement review pending**
+Status: **IN PROGRESS — formal cycle 4 not green; remediation in progress**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -29,7 +29,10 @@ complete replacement local gate. Tree-identical formal cycle-3 candidate
 `24f851d2d3db21735124729bb1b0a14adf7ae864` is **NOT GREEN** with
 two low findings. Exact remediation
 `77884a9fceed6268cbdbec1310de3f94a9c5a230` passes the complete replacement
-local gate; another fresh same-SHA cycle remains pending.
+local gate. Tree-identical formal cycle-4 candidate
+`0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** with
+one overlapping medium finding; remediation and another fresh cycle remain
+pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -199,6 +202,12 @@ returned `EINTR`, later tool cancellation is ignored while the bounded parent
 durability attempt completes. Dropping an unpolled future is effect-free;
 dropping at a documented precommit boundary closes owned descriptors without
 deleting anything.
+
+When `unlinkat` returns a definitive non-`EINTR` failure, the target was not
+committed by that outcome. Cancellation is therefore checked immediately after
+the syscall/evidence hook and before errno or macOS diagnostic mapping; observed
+cancellation wins as `delete_file_cancelled`. The failed call is not retried or
+synced. Only success and `EINTR` cross the cancellation-ignore boundary.
 
 This protocol is not pathname compare-and-swap. A same-directory actor can
 replace the target after final no-follow validation and before `unlinkat`.
@@ -411,6 +420,15 @@ CLI has SHA-256
 and passes bare, help, human-status, and JSON-status smoke paths with empty
 stderr. These results qualify the replacement local gate only, not formal
 review or delivery.
+
+Formal cycle 4 reviewed exact tree-identical candidate
+`0b732d2746d5c821a5294901f8b4cc641bc98530`. Correctness/API,
+filesystem/robustness, and performance/concurrency all reported **NOT GREEN**
+with the same single medium finding and no others: definitive non-`EINTR`
+`unlinkat` errors mapped directly without observing cancellation raised during
+the syscall. Source and representative file/directory errno-matrix evidence are
+being remediated; another complete local gate and three fresh reviewers remain
+mandatory.
 
 ## Parallel ownership and formal review
 

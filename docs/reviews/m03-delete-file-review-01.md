@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — cycle 3 remediated; replacement review pending**
+Status: **IN PROGRESS — formal cycle 4 not green; remediation in progress**
 
 ## Base and contract gate
 
@@ -324,6 +324,28 @@ and passes bare/help/human-status/JSON-status smoke with empty stderr.
 
 Cycle 3 remains historically not green. A tree-identical marker must receive
 three fresh cycle-4 reviews before any behavior-green claim.
+
+## Formal adversarial cycle 4
+
+Exact candidate: `0b732d2746d5c821a5294901f8b4cc641bc98530`, tree-identical
+to the recorded cycle-3 remediation local gate.
+
+All three tracks reported **NOT GREEN** with the same single medium finding and
+no others. A definitive non-`EINTR` `unlinkat` failure flowed directly to errno
+or macOS diagnostic mapping without checking cancellation raised during that
+syscall. This made direct-tool cancellation precedence depend on platform and
+errno even though only success and `EINTR` are postcommit/ambiguous outcomes
+that ignore later cancellation.
+
+Remediation checks cancellation after the syscall/evidence hook and before all
+definitive failure mappings, with no retry or sync. Independent production-seam
+evidence covers representative file `EIO`, permission `EACCES`/`EPERM`/`EROFS`,
+target-change `ENOENT`/type mismatch, and directory `ENOTEMPTY`/`EEXIST`
+outcomes; every cancelled case retains the target and sentinels, makes exactly
+one delete call with exact flags, and performs zero syncs. Existing success and
+`EINTR` tests continue to prove cancellation is ignored after the commit/
+ambiguity boundary. Cycle 4 remains historically **NOT GREEN**; a new exact
+candidate receives complete gates and three fresh reviewers.
 
 ## Formal adversarial protocol
 

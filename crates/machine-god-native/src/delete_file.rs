@@ -696,15 +696,18 @@ impl DeleteFileTool {
                 let _ = sync_parent_bounded(revalidated.parent.as_fd(), evidence);
                 Err(commit_ambiguous())
             }
-            Err(error) => Err(map_unlink_error_with_evidence(
-                error,
-                final_target,
-                revalidated.parent.as_fd(),
-                revalidated.basename,
-                cancellation,
-                evidence,
-                &mut ordinals,
-            )),
+            Err(error) => {
+                check_cancellation(cancellation)?;
+                Err(map_unlink_error_with_evidence(
+                    error,
+                    final_target,
+                    revalidated.parent.as_fd(),
+                    revalidated.basename,
+                    cancellation,
+                    evidence,
+                    &mut ordinals,
+                ))
+            }
         }
     }
 
