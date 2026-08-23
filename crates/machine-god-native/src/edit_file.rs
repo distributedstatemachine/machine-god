@@ -1451,6 +1451,9 @@ fn read_bounded_stable_for_phase_with(
     check_cancellation(cancellation)?;
     let final_metadata = stat().map_err(|_| map_read_phase_failure(phase))?;
     check_cancellation(cancellation)?;
+    if !FileType::from_raw_mode(final_metadata.st_mode).is_file() {
+        return Err(map_read_phase_failure(phase));
+    }
     let initial_fingerprint = FileFingerprint::from_stat(&initial);
     let final_fingerprint = FileFingerprint::from_stat(&final_metadata);
     if !initial_fingerprint.stable_for_phase(final_fingerprint, phase) {
@@ -1714,6 +1717,7 @@ impl EditFileTool {
 
         check_cancellation(cancellation)?;
         before_staged_revalidation(final_walk.parent.as_fd(), &staged.name);
+        check_cancellation(cancellation)?;
         revalidate_staged_path(
             final_walk.parent.as_fd(),
             &staged,
