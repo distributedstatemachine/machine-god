@@ -776,15 +776,18 @@ entropy acquisition can retry partial reads or interruptions without a finite
 work/cancellation bound. Performance/concurrency is **NOT GREEN** with the same
 medium entropy finding. No behavior-green SHA is claimed.
 
-The next remediation remains pending. It is intended to give production-used
-entropy acquisition one cumulative partial-progress/interruption bound with
-cancellation at retry and exhaustion boundaries, and to reset a retained held
-staged descriptor to `0600` before the existing identity-checked best-effort
-unlink. Mode restoration itself remains best-effort: if it fails and unlink
-also leaves the entry, residue can retain final mode bits. These descriptions
-are pending design requirements, not completed behavior. After production
-remediation and exact local gates compose into a new behavior candidate, all
-three fresh tracks must review that same SHA again.
+The next remediation remains pending. Linux entropy acquisition is intended to
+use direct `rustix` `getrandom` with `NONBLOCK`, one cumulative partial-
+progress/interruption bound, and cancellation at retry and exhaustion
+boundaries. `ENOSYS`, `EPERM`, and `EAGAIN` will fail closed as retryable
+`write_file_unavailable` rather than invoke a fallback or block. The pinned
+macOS `getrandom` 0.4.3 path uses one `getentropy` call for the 16-byte request.
+Cleanup is intended to make one best-effort `fchmod(0600)` call on the retained
+held staged descriptor before the existing identity-checked best-effort unlink.
+If mode restoration and unlink both fail, residue can retain final mode bits.
+These descriptions are pending design requirements, not completed behavior.
+After production remediation and exact local gates compose into a new behavior
+candidate, all three fresh tracks must review that same SHA again.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic

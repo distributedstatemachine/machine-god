@@ -185,7 +185,12 @@ On Linux and macOS, execution performs this bounded sequence:
    `0600`. A collision is never deleted and consumes one attempt. Formal cycle
    2 found that candidate `708f2d0` does not yet bound Linux entropy-source
    retries; a production-used cumulative partial-read/interruption bound with
-   cancellation checks remains pending.
+   cancellation checks remains pending. The intended Linux path is direct
+   `rustix` `getrandom` with `NONBLOCK`, failing closed as retryable
+   `write_file_unavailable` on `ENOSYS`, `EPERM`, or `EAGAIN` rather than using
+   a fallback or blocking. The intended macOS path retains pinned `getrandom`
+   0.4.3, whose 16-byte request uses one `getentropy` call. Neither path is a
+   completed claim until its production change and evidence are composed.
 5. Write in chunks of at most 8 KiB with cancellation and exact-byte checks.
    Verify the staged descriptor identity and byte count. Apply final ordinary
    rwx bits with `fchmod`, then `fsync` the staged file.
@@ -244,12 +249,12 @@ preexisting collision. Portable metadata-check-to-unlink still has a final
 race. Formal cycle 2 found that the exact candidate can leave its owned staged
 inode carrying the already-applied final mode when cleanup cannot unlink it, so
 such residue is not yet guaranteed private. Pending remediation will first make
-a best-effort reset of the held staged descriptor to `0600`, then retain the
-same identity-checked best-effort unlink. If that mode reset itself fails and
-the entry also remains, the residue can still retain final mode bits; perfect
-mode restoration and identity-safe unlink are not promised. This remediation
-is not complete until its production change and evidence are composed into a
-new exact candidate.
+one best-effort `fchmod(0600)` call on the held staged descriptor, then retain
+the same identity-checked best-effort unlink. If that mode reset itself fails
+and the entry also remains, the residue can still retain final mode bits;
+perfect mode restoration and identity-safe unlink are not promised. This
+remediation is not complete until its production change and evidence are
+composed into a new exact candidate.
 
 The required execution future is inert until polled, performs bounded
 synchronous work on the polling thread, and spawns no task, thread, subprocess,

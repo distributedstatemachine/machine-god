@@ -276,14 +276,17 @@ All three fresh tracks inspected exact candidate
   effect remain missing.
 
 No green or replacement claim follows from cycle 2. Intended production
-remediation is still pending: entropy acquisition will use a production-used
-cumulative partial-progress/interruption bound with cancellation checks, and
-cleanup will first attempt to restore the held staged descriptor to `0600`
-before the existing identity-checked best-effort unlink. The latter remains
-best-effort: if mode restoration itself fails and unlink does not remove the
-entry, residue can retain its final mode. These are planned corrections, not
-completed behavior. Once production fixes and exact local gates compose into a
-new candidate, three fresh agents must repeat all tracks on that same SHA.
+remediation is still pending. Linux entropy acquisition will use direct
+`rustix` `getrandom` with `NONBLOCK`, a cumulative partial-progress/interruption
+bound, and cancellation checks; `ENOSYS`, `EPERM`, and `EAGAIN` will fail closed
+as retryable `write_file_unavailable` rather than invoke a fallback or block.
+The pinned macOS `getrandom` 0.4.3 path uses one `getentropy` call for the
+16-byte request. Cleanup will make one best-effort `fchmod(0600)` call on the
+held staged descriptor before the existing identity-checked best-effort unlink.
+If that mode restoration and unlink both fail, residue can retain its final
+mode. These are planned corrections, not completed behavior. Once production
+fixes and exact local gates compose into a new candidate, three fresh agents
+must repeat all tracks on that same SHA.
 
 ## Local gate results
 
