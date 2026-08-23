@@ -475,6 +475,10 @@ fn clear_and_verify_staged_acl(file: BorrowedFd<'_>) -> Result<(), ToolError> {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "keep one fallible ACL adapter contract at cfg-free staging call sites"
+)]
 fn clear_and_verify_staged_acl(_file: BorrowedFd<'_>) -> Result<(), ToolError> {
     Ok(())
 }
@@ -490,6 +494,10 @@ fn verify_staged_acl(file: BorrowedFd<'_>, phase: ReadPhase) -> Result<(), ToolE
 }
 
 #[cfg(target_os = "linux")]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "keep one fallible ACL adapter contract at cfg-free verification call sites"
+)]
 fn verify_staged_acl(_file: BorrowedFd<'_>, _phase: ReadPhase) -> Result<(), ToolError> {
     Ok(())
 }
