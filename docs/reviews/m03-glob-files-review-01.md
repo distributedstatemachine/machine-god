@@ -1,8 +1,8 @@
 # Milestone 03 native `glob_files` review 01
 
-Status: **REVIEWED — first review found a high matcher-work bound defect; fix,
-replacement local gates, and three same-SHA rereviews are green; remote exact-
-SHA delivery pending**
+Status: **DELIVERED — first review found a high matcher-work bound defect; fix,
+replacement local gates, three same-SHA rereviews, and exact feature and `main`
+delivery gates are green**
 
 ## Candidate
 
@@ -23,14 +23,16 @@ SHA delivery pending**
 - Replacement local-gate precursor: `4171a4a8811a98888b7e4e161281a1216564746f`
 - Replacement formal rereview head shared by all three tracks:
   `523df85822a27102d7e7100e274e3bad7b25494f`
-- Documentation seal: **PENDING**
-- Feature and `main` delivery evidence: **PENDING**
+- Documentation seal: `35c853605077f2ac700f4be1dd79eabd2ace4dd4`
+- Feature CI: `32610950593` — success on the exact documentation seal
+- Feature benchmark evidence: `32610950594` — success on the exact seal
+- `main` CI: `32611208411` — success on the exact integrated seal
+- `main` benchmark evidence: `32611208415` — success on the exact integrated seal
 - Delivery branch: `agent/m03-glob-files`
 - Required toolchain: Rust and Cargo 1.94.1 exactly
 
-No pending SHA above is inferred, abbreviated, or invented. The coordinator
-will replace each remaining placeholder only after the named state exists.
-This eighteenth bounded Milestone 03 candidate adds a read-only
+Every delivery SHA and run above was observed at the named state; none is
+inferred or invented. This delivered eighteenth bounded Milestone 03 slice adds a read-only
 Linux/macOS `glob_files` library tool, the distinct
 `FilesystemAccess::EnumerateRecursive` permission kind, direct and real-engine
 independent tests, reference-host/root-bundle composition as a fourth workspace
@@ -243,10 +245,16 @@ adversarial cycle. Exact feature and `main` gates remain mandatory.
 
 ## Remote delivery gates
 
-**PENDING.** The composed branch must be pushed without force, wait for feature
-CI and benchmark-evidence workflows that report the exact pushed SHA, and be
-fast-forwarded to `main` only after all local and adversarial gates are green.
-Exact `main` CI and benchmark-evidence workflows must then report that same
-integrated SHA. Benchmark workflow success is delivery evidence only and does
-not create a product-performance claim. No package publication or GitHub
-release is authorized.
+**GREEN.** Documentation seal `35c853605077f2ac700f4be1dd79eabd2ace4dd4`
+was pushed without force to `agent/m03-glob-files`. Feature CI run
+`32610950593` and feature benchmark-evidence run `32610950594` succeeded on
+that exact SHA. The branch was then fast-forwarded without force to `main`;
+exact main CI run `32611208411` and main benchmark-evidence run `32611208415`
+succeeded on the same integrated SHA. Benchmark workflow success is delivery
+evidence only and does not create a product-performance claim. No package was
+published and no GitHub release was created.
+
+This documentation-only final delivery record is exempt from another
+adversarial cycle because exact production behavior was already green under all
+three replacement tracks. Its own exact feature and `main` workflows are
+reported at handoff.

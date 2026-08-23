@@ -7,7 +7,7 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-seventeen delivered bounded slices plus an eighteenth bounded candidate. The
+eighteen delivered bounded slices. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -187,7 +187,7 @@ behavior was already green, and reports its own exact workflows at handoff. See
 the [`file_info` contract](docs/file-info.md) and
 [review record](docs/reviews/m03-file-info-review-01.md).
 
-The eighteenth bounded candidate adds Linux/macOS library-only `glob_files`.
+The eighteenth delivered bounded slice adds Linux/macOS library-only `glob_files`.
 Strict effect-free preflight accepts a required glob pattern plus optional
 search root and `matches`/`count` mode, prepares the distinct
 `FilesystemAccess::EnumerateRecursive` capability at that normalized subtree,
@@ -198,15 +198,23 @@ name-byte, depth, candidate-path, or 8,388,608-step aggregate matcher-work cap
 fires. Match output is the globally
 bytewise-smallest sorted prefix under exact 100-path and 16 KiB aggregate path-
 byte caps; count mode completes the same bounded scan and is exact. The
-candidate extends the composed host catalog to `file_info`, `glob_files`,
+slice extends the composed host catalog to `file_info`, `glob_files`,
 `list_files`, and `read_file`, with one retained workspace identity distributed
 as the original descriptor plus three clones. Production, independent tests,
 and documentation are composed. The first formal review at `1f5de6a` found a
 high unmetered matcher-work defect; the checked 8,388,608-step fix, independent
 both-mode regression, and all replacement local gates are green at exact
 code-and-test head `4171a4a8811a98888b7e4e161281a1216564746f`. All three
-replacement adversarial tracks are green on exact behavior SHA `523df858`;
-documentation seal and remote exact-SHA delivery remain pending in the
+replacement adversarial tracks are green on exact behavior SHA `523df858`.
+Documentation seal and integrated `main` SHA
+`35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI run
+`32610950593`, feature benchmark-evidence run `32610950594`, main CI run
+`32611208411`, and main benchmark-evidence run `32611208415`; all four report
+that exact seal SHA. Benchmark success is delivery evidence only and makes no
+product-performance claim. This documentation-only commit is the final
+`glob_files` delivery record, is explicitly exempt from another adversarial
+review after behavior was green, and reports its own exact workflows at
+handoff. See the
 [`glob_files` contract](docs/glob-files.md) or
 [review record](docs/reviews/m03-glob-files-review-01.md). The reviewed behavior changes
 no CLI byte, benchmark workload, compatibility status, or performance claim,
@@ -217,7 +225,7 @@ The project is not yet production-ready. See the exact
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md),
 [`file_info` contract](docs/file-info.md),
-[`glob_files` candidate contract](docs/glob-files.md), and
+[`glob_files` contract](docs/glob-files.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the

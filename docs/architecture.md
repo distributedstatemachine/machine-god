@@ -21,8 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has seventeen delivered bounded slices and an eighteenth bounded
-candidate.
+Milestone 03 has eighteen delivered bounded slices.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -174,7 +173,7 @@ from another adversarial review after the behavior was already green, and
 reports its own exact workflows at handoff. The contract and review record are in
 [`file-info.md`](file-info.md) and
 [`m03-file-info-review-01.md`](reviews/m03-file-info-review-01.md).
-The eighteenth candidate adds bounded Linux/macOS recursive `glob_files`
+The delivered eighteenth slice adds bounded Linux/macOS recursive `glob_files`
 enumeration under the distinct `FilesystemAccess::EnumerateRecursive` kind.
 Its strict effect-free preflight normalizes one required glob pattern, an
 optional selected search root, and an optional exact result mode, then supplies
@@ -183,15 +182,15 @@ Execution reacquires the retained workspace under the `file_info` liveness
 rule, traverses descriptor-relatively and no-follow, fully validates and
 bytewise sorts each directory, and returns either the globally smallest bounded
 sorted match prefix or an exact count after a complete bounded scan. The
-candidate extends the host catalog to `file_info`, `glob_files`, `list_files`,
+slice extends the host catalog to `file_info`, `glob_files`, `list_files`,
 and `read_file`, distributing the original retained descriptor plus three
 clones of one workspace identity. Production, independent-test, documentation,
 composed-behavior, and initial local-gate lineage is green through `60070d8`
 from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first review at
 `1f5de6a` found a high matcher-work bound defect; its fix, regression, public-
 bound assertion, and replacement local gates are green at exact `4171a4a`. All
-three replacement tracks are green on exact behavior SHA `523df858`; seal and
-delivery gates remain pending. Its contract and review record are
+three replacement tracks are green on exact behavior SHA `523df858`; exact
+seal and delivery gates are green at `35c8536`. Its contract and review record are
 [`glob-files.md`](glob-files.md) and
 [`m03-glob-files-review-01.md`](reviews/m03-glob-files-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -208,8 +207,8 @@ loader, and owns no product state. The exact surfaces are documented in
 [`cli.md`](cli.md) and [`configuration.md`](configuration.md). The separate
 [`read_file` contract](read-file.md),
 [`list_files` contract](list-files.md), delivered
-[`file_info` contract](file-info.md), and eighteenth
-[`glob_files` candidate](glob-files.md) do not change either CLI surface. The
+[`file_info` contract](file-info.md), and delivered eighteenth
+[`glob_files` slice](glob-files.md) do not change either CLI surface. The
 separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
 [`native file session store`](session-store.md). The ask-handler slice is
@@ -295,7 +294,7 @@ uses `symlink_metadata` on the final path, reports
 missing/inaccessible/wrong-kind states, and treats a final symlink as
 wrong-kind. It does not open, read, or parse the config file. Permission mode is
 fixed to `ask`; the CLI does not construct an engine, register `read_file`,
-`list_files`, delivered `file_info`, or candidate `glob_files`, or prompt for
+`list_files`, delivered `file_info`, or delivered `glob_files`, or prompt for
 permission. The CLI
 serializes paths as JSON strings
 even in human status so path contents do not become terminal controls. Bare
@@ -353,7 +352,7 @@ concrete selected OIDC-token or API-key source; the custom-transport override
 skips discovery and reports `None`. Configuration mutation or migration,
 permission modes beyond `ask`, a concrete prompt UI, runtime ownership, token
 fields in config, CLI composition, the native tools beyond bounded `read_file`,
-`list_files`, delivered `file_info`, and candidate `glob_files` library
+`list_files`, delivered `file_info`, and delivered `glob_files` library
 capabilities, session
 migration/encryption, CLI expansion, and composed release-binary end-to-end
 evidence remain open. The by-ID lifecycle, session-listing extension, and
@@ -409,7 +408,7 @@ is green under exact feature CI `32605071080` on successful retry attempt 2,
 feature benchmark evidence `32605071063`, main CI `32606050292`, and main
 benchmark evidence `32606050294`; all four report the exact seal SHA.
 
-The eighteenth candidate extends the same workspace bundle from three to four
+The delivered eighteenth slice extends the same workspace bundle from three to four
 descriptors of one retained identity: the original and three clones. Both path
 and prepared-root constructors supply exactly `file_info`, `glob_files`,
 `list_files`, and `read_file`; core exposes that catalog alphabetically. Its
@@ -420,8 +419,11 @@ runtime, constructor argument, root-selection, or CLI authority changes.
 Production, independent tests, documentation, and composition are present. The
 first review at `1f5de6a` found a matcher-work bound defect; its fix, regression,
 and replacement local gates are green at `4171a4a`. All three same-SHA
-replacement formal tracks are green at `523df858`; documentation seal and exact
-remote delivery remain pending.
+replacement formal tracks are green at `523df858`. Documentation seal and
+integrated `main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed
+exact feature CI `32610950593`, feature benchmark evidence `32610950594`, main
+CI `32611208411`, and main benchmark evidence `32611208415`; all four report
+that exact seal SHA.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
@@ -442,7 +444,7 @@ descriptor-relative parent walking. New
 `NativeReferenceHost` constructors consume that prepared value and transfer its
 workspace identity to the registered workspace tools and its state-root identity
 to `FileSessionStore` without reopening either path. The delivered seventeenth
-slice extends that transfer to three tools; the eighteenth candidate extends it
+slice extends that transfer to three tools; the delivered eighteenth slice extends it
 to all four. Config selection is validated
 by the composing constructor, and production credential discovery remains after
 the already prepared retained roots are accepted. Production and focused tests
@@ -861,7 +863,7 @@ below 17 KiB after worst-case JSON escaping. Fixed redacted errors, root rename/
 semantics, cancellation boundaries, and deferred scope are normative in
 [`file-info.md`](file-info.md).
 
-The eighteenth native `glob_files` candidate uses strict effect-free
+The delivered eighteenth native `glob_files` slice uses strict effect-free
 `{pattern:string,path?:string,mode?:"matches"|"count"}` preflight. Requested
 and normalized path and pattern forms are each bounded to 4,096 UTF-8 bytes.
 Path confinement matches `file_info`; pattern normalization uses `/`, removes
@@ -904,7 +906,7 @@ The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's
 ancestors and mount points beneath a retained root belong to that trusted host
 boundary. Hardened construction and traversal beyond Linux and macOS remain
-deferred for `list_files`, delivered `file_info`, and candidate `glob_files`;
+deferred for `list_files`, delivered `file_info`, and delivered `glob_files`;
 `read_file` retains its separately documented supported-Unix boundary.
 
 A preparation error consults no permission handler and starts no tool. It

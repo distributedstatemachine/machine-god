@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with seventeen delivered bounded slices and an eighteenth bounded candidate.
+with eighteen delivered bounded slices.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -463,7 +463,7 @@ extra timestamps, compatibility/equivalence claim, benchmark, or performance
 claim. Its base and parallel ownership are recorded in the
 [`file_info` review](reviews/m03-file-info-review-01.md).
 
-The eighteenth bounded candidate adds Linux/macOS library-only `glob_files`
+The delivered eighteenth bounded slice adds Linux/macOS library-only `glob_files`
 from exact base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Strict effect-free
 preflight accepts exactly
 `{pattern:string,path?:string,mode?:"matches"|"count"}`, defaults path to `.`
@@ -508,7 +508,7 @@ count. A stable tree is deterministic, while concurrent scans are not
 snapshots; a `NOENT` race may omit an entry and other failures fail closed under
 fixed redacted errors.
 
-The candidate extends the reference host to exactly four alphabetical workspace
+The slice extends the reference host to exactly four alphabetical workspace
 tools: `file_info`, `glob_files`, `list_files`, and `read_file`. Prepared roots
 distribute the original retained descriptor plus three clones of the same
 identity. Its public constants, constructor errors, result shapes, cancellation
@@ -524,17 +524,20 @@ Production fix `f3fd13b` and independent regression `825bbd3` compose through
 `aba2821`; the public-cap assertion and replacement local gates are green at
 exact code-and-test head `4171a4a8811a98888b7e4e161281a1216564746f`.
 All three replacement adversarial tracks are green on exact behavior SHA
-`523df85822a27102d7e7100e274e3bad7b25494f`. Seal and delivery SHAs remain
-explicitly pending and must not be invented. Per the user's instruction, a later
-documentation-only seal is exempt
-from another adversarial cycle after behavior is green. The candidate adds no
+`523df85822a27102d7e7100e274e3bad7b25494f`. Documentation seal and integrated
+`main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
+`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
+and main benchmark evidence `32611208415`; all four report that exact seal SHA.
+Benchmark success is delivery evidence only, not a product-performance claim.
+Per the user's instruction, this documentation-only final delivery record is
+exempt from another adversarial cycle after behavior is green. The slice adds no
 CLI behavior, external-path access, ignore or Git/subprocess behavior, content
 read, mutation, dependency, benchmark workload, product-performance claim, or
 fx-equivalence claim.
 
 ### Milestone 03 completion boundary
 
-The seventeen delivered slices and eighteenth candidate do not complete
+The eighteen delivered slices do not complete
 Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
@@ -599,7 +602,7 @@ gate:
   `32605071063`, main CI `32606050292`, and main benchmark evidence
   `32606050294`; all four report that exact seal SHA. The other listed native
   tools remain incomplete, so this combined item stays unchecked. The
-  eighteenth `glob_files` candidate has a frozen contract from base
+  delivered eighteenth `glob_files` slice has a frozen contract from base
   `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production, 39 focused
   integration tests, five private unit tests, documentation, composition, and
   initial local gates were green at `60070d8`, but the first formal review at
@@ -607,9 +610,12 @@ gate:
   budget fix, independent both-mode regression, 40 focused integration tests,
   nine private tests, and replacement local gates are green at exact code-and-
   test head `4171a4a8811a98888b7e4e161281a1216564746f`. All three same-SHA replacement
-  adversarial tracks are green on exact behavior SHA `523df858`; documentation
-  seal and exact remote delivery remain pending. It therefore does not change
-  this checkbox.
+  adversarial tracks are green on exact behavior SHA `523df858`. Documentation
+  seal and integrated `main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4`
+  passed exact feature CI `32610950593`, feature benchmark evidence
+  `32610950594`, main CI `32611208411`, and main benchmark evidence
+  `32611208415`. The remaining native tools are incomplete, so this delivery
+  does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
@@ -632,8 +638,8 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fifteenth slices, the delivered sixteenth and seventeenth
-slices, and the eighteenth `glob_files` candidate; Zig remains only the pinned
+by the tenth through fifteenth slices and the delivered sixteenth through
+eighteenth slices; Zig remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
 no current-protocol or full fx-equivalence claim. Help and status remain

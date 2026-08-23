@@ -43,16 +43,18 @@ commit is the final delivery record, is explicitly exempt from another
 adversarial review after behavior was green, and reports its own exact workflows
 at handoff. Its metadata result is not exposed as CLI output.
 
-The eighteenth [`glob_files` candidate](glob-files.md) is also library-only.
+The delivered eighteenth [`glob_files` slice](glob-files.md) is also library-only.
 It adds no `glob_files`, workspace, or slash command and changes none of the
 accepted invocations, output bytes, diagnostics, or exit statuses below. Its
 bounded path/count result is not exposed as CLI output. Production, independent
 tests, documentation, and composition are present. The first review at
 `1f5de6a` found a matcher-work bound defect; its fix, regression, and replacement
 local gates are green at `4171a4a`. All three replacement review tracks are
-green on exact behavior SHA `523df858`; documentation seal and exact remote
-delivery remain pending. The candidate makes no compatibility or performance
-claim.
+green on exact behavior SHA `523df858`. Documentation seal and integrated
+`main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
+`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
+and main benchmark evidence `32611208415`. The slice makes no compatibility or
+performance claim; benchmark success is delivery evidence only.
 
 ## Accepted invocations
 

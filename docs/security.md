@@ -139,7 +139,7 @@ from another adversarial review after behavior was green, and reports its own
 exact workflows at handoff.
 Its security contract is in [`file-info.md`](file-info.md).
 
-An eighteenth bounded candidate adds Linux/macOS `glob_files` under the
+The delivered eighteenth bounded slice adds Linux/macOS `glob_files` under the
 distinct `FilesystemAccess::EnumerateRecursive` authorization kind. Strict
 effect-free preflight normalizes the selected subtree and an exact bytewise glob
 pattern before policy. Execution reacquires and validates the retained
@@ -152,8 +152,11 @@ composition, and initial local gates were green at `60070d8`; the first formal
 review at `1f5de6a` found a high unmetered matcher-work defect. Its checked work-
 budget fix, both-mode regression, and replacement local gates are green at
 `4171a4a8811a98888b7e4e161281a1216564746f`; all three replacement tracks are
-green on exact behavior SHA `523df858`. Documentation seal and remote delivery
-remain pending. Its security contract is in
+green on exact behavior SHA `523df858`. Documentation seal and integrated
+`main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
+`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
+and main benchmark evidence `32611208415`; benchmark success is delivery
+evidence only and makes no product-performance claim. Its security contract is in
 [`glob-files.md`](glob-files.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -226,7 +229,7 @@ The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, native tools beyond the bounded library-level `read_file`,
-`list_files`, delivered `file_info`, and candidate `glob_files`, composed
+`list_files`, delivered `file_info`, and delivered `glob_files`, composed
 release-binary end-to-end host evidence, and compatibility or performance
 claims remain open. The
 twelfth slice composes the existing library components only after an already
@@ -287,7 +290,7 @@ existing fixed redacted `WorkspaceRoot` stage before engine construction. Tool
 construction performs no per-path metadata lookup; `file_info` work remains
 inert until its execution future is polled after exact policy approval.
 
-The eighteenth candidate changes only that workspace-tool bundle again. Path
+The delivered eighteenth slice changes only that workspace-tool bundle again. Path
 and prepared-root constructors distribute the original retained descriptor plus
 three clones across exactly `file_info`, `glob_files`, `list_files`, and
 `read_file`, all under the same already validated identity; core exposes the
@@ -767,7 +770,7 @@ components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
 points visible beneath a retained directory are trusted inputs. Hardened
 non-Linux/macOS workspace construction and traversal remain deferred for
-`list_files`, delivered `file_info`, and candidate `glob_files`; `read_file`
+`list_files`, delivered `file_info`, and delivered `glob_files`; `read_file`
 retains its separate
 supported-Unix boundary. The normative surfaces are
 [`read-file.md`](read-file.md), [`list-files.md`](list-files.md),

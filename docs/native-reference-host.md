@@ -1,15 +1,17 @@
 # Native reference-host composition
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice,
-with its workspace-tool composition extended by the delivered seventeenth
-slice and the eighteenth `glob_files` candidate. Seventeen slices are
-delivered; eighteenth-slice production, independent tests, documentation, and
+with its workspace-tool composition extended by the delivered seventeenth and
+eighteenth `glob_files` slices. Eighteen slices are delivered; eighteenth-slice
+production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
 first formal review at `1f5de6a` found a high matcher-work bound defect. Its fix,
 regression, and replacement local gates are green at `4171a4a`; all three same-
-SHA replacement reviews are green at `523df858`. Documentation seal and exact
-remote delivery remain pending from base
-`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
+SHA replacement reviews are green at `523df858`. Documentation seal and
+integrated `main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed
+exact feature CI `32610950593`, feature benchmark evidence `32610950594`, main
+CI `32611208411`, and main benchmark evidence `32611208415`. The slice started
+from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
 production `5c2d129` and independent tests `ca0091c` compose at `f228c06`,
 where all 34 focused tests are green. Review hardening composes at `b69ec4b`,
 bringing the focused total to 36 plus five private unit tests. The first formal
@@ -67,7 +69,7 @@ lineage is recorded in the
 
 `NativeReferenceHost` composes the existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and—through the eighteenth candidate—four confined read-only tools into
+adapter, and—through the delivered eighteenth slice—four confined read-only tools into
 one provider-neutral `Engine`. Their exact membership is `file_info`,
 `glob_files`, `list_files`, and `read_file`, and core exposes that catalog in
 deterministic alphabetical order. It is a library surface in
@@ -113,16 +115,15 @@ are green on exact candidate `4193ecc`; seal and integrated SHA
 `32605071063`, main CI `32606050292`, and main benchmark evidence `32606050294`.
 All four report the exact seal SHA.
 
-The eighteenth candidate adds `glob_files` beside those three delivered tools.
+The delivered eighteenth slice adds `glob_files` beside those three delivered tools.
 It prepares the distinct `FilesystemAccess::EnumerateRecursive` capability at
 the normalized selected subtree and exact explicit pattern/path/mode arguments.
 Allowed execution performs a complete bounded descriptor-relative no-follow
 scan and returns either the globally bytewise-smallest sorted match prefix or an
 exact count. Its normative contract is [`glob-files.md`](glob-files.md). It
 changes no constructor arguments, provider, transport, permission handler,
-session, runtime, credential, root-selection, or CLI authority. Exact composed
-and local-gate lineage is recorded, while review and delivery SHAs remain
-explicitly pending in the
+session, runtime, credential, root-selection, or CLI authority. Exact composed,
+review, and delivery lineage is recorded in the
 [`review record`](reviews/m03-glob-files-review-01.md).
 
 ## Feature and platform boundary
@@ -261,7 +262,7 @@ no-follow and authoritative directory checks. One retained descriptor remains
 with one tool and three descriptor clones of the same opened directory object
 feed the others. The composed engine registers exactly the existing one-level
 `list_files`, bounded UTF-8 `read_file`, no-follow metadata `file_info`, and
-candidate bounded recursive `glob_files`; it discovers or registers no other
+delivered bounded recursive `glob_files`; it discovers or registers no other
 tool. This shared retained
 identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
@@ -334,7 +335,7 @@ inert; only first poll can traverse ancestor descriptors or inspect final
 metadata. It creates no task, thread, file, directory, timer, or background
 work.
 
-The eighteenth candidate adds no construction effect beyond the third
+The delivered eighteenth slice adds no construction effect beyond the third
 descriptor clone and retention for the fourth tool. `glob_files` preparation is
 effect-free, and creating its execution future is inert. Its first poll performs
 the complete bounded synchronous scan after approval; it creates no task,
@@ -440,7 +441,7 @@ Neither that root slice nor this integrated composition implements a concrete
 terminal `PermissionPrompter`, allocates a session ID or
 `SessionIncarnationId`, or adds create/list/resume/replay/reset session
 lifecycle CLI commands. The delivered seventeenth slice adds only `file_info`,
-and the eighteenth candidate adds only `glob_files`; neither adds the other
+and the delivered eighteenth slice adds only `glob_files`; neither adds the other
 remaining native tools, composes or runs the CLI, or changes any existing CLI
 byte. A reset under a reused session ID
 still requires a new host-generated incarnation before reuse.
@@ -474,13 +475,16 @@ alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
 
-The `glob_files` candidate adds no benchmark workload or workflow change and
+The `glob_files` slice adds no benchmark workload or workflow change and
 makes no compatibility or product-performance claim. Production, independent
 tests, documentation, and composition are present. Its first review at
 `1f5de6a` found a matcher-work bound defect; the fix, regression, and replacement
 local gates are green at `4171a4a`. All three same-SHA replacement reviews are
-green at `523df858`; documentation seal and remote exact-SHA delivery remain
-pending, so the combined native-tool checklist stays open.
+green at `523df858`. Documentation seal and integrated `main` SHA
+`35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
+`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
+and main benchmark evidence `32611208415`; the combined native-tool checklist
+stays open because the other listed tools remain incomplete.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature

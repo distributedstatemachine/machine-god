@@ -1,13 +1,20 @@
 # Native `glob_files` tool
 
-Status: composed candidate for the eighteenth bounded Milestone 03 slice.
+Status: delivered eighteenth bounded Milestone 03 slice.
 The exact base is `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first formal
 review at `1f5de6a` found a high unmetered matcher-work defect. The checked
 matcher budget, independent both-mode regression, and all replacement local
 gates are green at exact code-and-test head
 `4171a4a8811a98888b7e4e161281a1216564746f`; all three replacement tracks are
 green on exact behavior SHA `523df85822a27102d7e7100e274e3bad7b25494f`.
-Documentation seal and delivery remain pending. Milestone 03 remains
+Documentation seal and integrated `main` SHA
+`35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI run
+`32610950593`, feature benchmark-evidence run `32610950594`, main CI run
+`32611208411`, and main benchmark-evidence run `32611208415`; all four report
+that exact seal SHA. Benchmark success is delivery evidence only and makes no
+product-performance claim. This documentation-only commit is the final delivery
+record and is explicitly exempt from another adversarial review after behavior
+was green. Milestone 03 remains
 `IN PROGRESS`, and its combined native-tool checklist remains unchecked.
 
 `glob_files` is a Linux/macOS library capability in `machine-god-native`. The
@@ -362,7 +369,7 @@ thread, channel, subprocess, timer, or detached work.
 
 ## Reference-host composition
 
-The candidate extends both existing-path and prepared-root
+The delivered slice extends both existing-path and prepared-root
 `NativeReferenceHost` constructors from three to exactly four workspace tools.
 The catalog order is deterministically alphabetical:
 
@@ -383,7 +390,7 @@ change.
 
 ## Deferred scope
 
-This candidate adds no CLI or slash command, external-path access, workspace
+This slice adds no CLI or slash command, external-path access, workspace
 discovery, non-Linux/macOS hardening, ignore-file or Git behavior, Git or shell
 subprocess, content or symlink-target read, mutation, pagination, snapshot,
 watcher, new dependency, benchmark workload, product-performance claim, or fx-

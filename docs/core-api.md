@@ -397,8 +397,8 @@ must not reinterpret their prepared arguments into broader authority.
 
 The concrete consumers are the native
 [`read_file` tool](read-file.md), [`list_files` tool](list-files.md), the
-delivered seventeenth-slice [`file_info` tool](file-info.md), and the eighteenth
-[`glob_files` candidate](glob-files.md).
+delivered seventeenth-slice [`file_info` tool](file-info.md), and the delivered
+eighteenth [`glob_files` tool](glob-files.md).
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -442,7 +442,7 @@ extension}` content remains below 17 KiB at its independent worst case. Core
 does not infer any relationship among `Metadata`, `Read`, or `Enumerate`, and
 adds no filesystem or snapshot semantics to this result.
 
-The eighteenth candidate adds
+The delivered eighteenth slice adds
 `FilesystemAccess::EnumerateRecursive` as another distinct serialized
 filesystem operation. It authorizes recursive enumeration beneath exactly one
 normalized selected subtree. It neither implies nor is implied by one-level
@@ -456,7 +456,7 @@ mode. Pattern and mode attenuate the output of the complete recursive scan; the
 capability continues to name the entire selected subtree whose entries may be
 observed.
 
-The Linux/macOS candidate implementation owns the retained workspace
+The Linux/macOS implementation owns the retained workspace
 descriptor, independent 4,096-byte requested and normalized path/pattern
 bounds, strict bytewise matcher, fresh acquired-root liveness validation,
 iterative descriptor-relative no-follow traversal, safe entry-name validation,
@@ -487,7 +487,11 @@ behavior, and initial local-gate lineage is green through `60070d8` from base
 independent regression, public-bound assertion, and replacement local gates are
 green through exact `4171a4a8811a98888b7e4e161281a1216564746f`. All three
 replacement adversarial tracks are green on exact behavior SHA `523df858`;
-seal and delivery SHAs remain explicitly pending. This candidate does not alter
+documentation seal and integrated `main` SHA
+`35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
+`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
+and main benchmark evidence `32611208415`; all four report that exact seal SHA.
+This delivered slice does not alter
 core result limits, generic durable error mapping, CLI behavior, benchmark
 evidence, or compatibility/performance status.
 

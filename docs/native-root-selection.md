@@ -32,8 +32,7 @@ is green under exact feature CI run `32589778343` and benchmark-evidence run
 force to `main` and green there under exact CI `32590429626` and benchmark
 evidence `32590429592`. This documentation-only commit is the final record; its
 exact feature and `main` workflows are reported at handoff.
-Milestone 03 remains `IN PROGRESS`. Seventeen slices are delivered and an
-eighteenth `glob_files` candidate is in progress. Seventeenth-
+Milestone 03 remains `IN PROGRESS`. Eighteen slices are delivered. Seventeenth-
 slice `file_info` production `5c2d129` and independent tests `ca0091c` compose
 at `f228c06`, where the initial 34 focused tests are green. Review hardening
 brings the focused total to 36 plus five private unit tests at `b69ec4b`. The
@@ -49,14 +48,16 @@ explicitly exempt from another adversarial review after behavior was green, and
 reports its own exact workflows at handoff.
 The remaining
 native tools, CLI ownership, and composed end-to-end evidence also stay open.
-The eighteenth candidate starts from exact base
+The delivered eighteenth slice starts from exact base
 `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production, independent tests,
 documentation, composition, and initial local gates were green at `60070d8`.
 The first formal review at `1f5de6a` found a high matcher-work bound defect; its
 fix, independent regression, and replacement local gates are green at exact
 `4171a4a8811a98888b7e4e161281a1216564746f`. All three replacement reviews are
-green on exact behavior SHA `523df858`; documentation seal and remote exact-SHA
-delivery remain pending.
+green on exact behavior SHA `523df858`. Documentation seal and integrated
+`main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
+`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
+and main benchmark evidence `32611208415`; all four report that exact seal SHA.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
@@ -277,7 +278,7 @@ and macOS; other targets receive no public runtime API for this slice.
 The new
 `NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots` and
 `NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots`
-constructors consume one `PreparedNativeRoots`. Under the eighteenth candidate,
+constructors consume one `PreparedNativeRoots`. Under the delivered eighteenth slice,
 they transfer its original retained workspace descriptor plus three clones to
 exactly `file_info`, `glob_files`, `list_files`, and `read_file`, and its
 separately retained state-root identity to `FileSessionStore`, without reopening
@@ -339,7 +340,7 @@ library behavior. It does not allocate a session ID or a new incarnation for res
 change the session record schema, migrate or encrypt state, add a cleanup or
 repair command, supply a terminal prompter, or expand CLI ownership. The
 delivered seventeenth slice consumes its retained workspace identity for
-`file_info`; the eighteenth candidate additionally consumes a clone of that
+`file_info`; the delivered eighteenth slice additionally consumes a clone of that
 same identity for `glob_files`. Neither adds root-selection authority or
 behavior.
 
