@@ -1,8 +1,8 @@
 # Milestone 03 native `glob_files` review 01
 
-Status: **REPLACEMENT CANDIDATE — first review found a high matcher-work bound
-defect; fix and replacement local gates are green; three same-SHA rereviews and
-remote exact-SHA delivery pending**
+Status: **REVIEWED — first review found a high matcher-work bound defect; fix,
+replacement local gates, and three same-SHA rereviews are green; remote exact-
+SHA delivery pending**
 
 ## Candidate
 
@@ -21,7 +21,8 @@ remote exact-SHA delivery pending**
 - Composed matcher-work fix: `fe33ba944ebdcfada36d6299d451dbb2818a341e`
 - Composed finding regression: `aba282128b1ae8ab586a925e96a25bc27c1db020`
 - Replacement local-gate precursor: `4171a4a8811a98888b7e4e161281a1216564746f`
-- Replacement formal rereview head shared by all three tracks: **PENDING**
+- Replacement formal rereview head shared by all three tracks:
+  `523df85822a27102d7e7100e274e3bad7b25494f`
 - Documentation seal: **PENDING**
 - Feature and `main` delivery evidence: **PENDING**
 - Delivery branch: `agent/m03-glob-files`
@@ -213,9 +214,32 @@ and 100,000 simple candidates. Independent commit `825bbd3` adds one depth-256,
 scan succeeded. The fix and regression compose through `aba2821`; `4171a4a`
 also binds the exported public cap in the integration contract test.
 
-**PENDING replacement review.** All three first-cycle outcomes are invalidated
-by the behavior fix. Three fresh tracks must report green on the same exact
-replacement formal-review SHA before delivery.
+All three fresh replacement tracks are green on exact SHA
+`523df85822a27102d7e7100e274e3bad7b25494f`:
+
+- **Correctness, API, matcher semantics, and portability — GREEN.** The track
+  reproduced all 40 focused integration and nine private tests, passed 344,043
+  component and 198,560 slashful differential cases, verified exact inclusive
+  metering and overflow behavior, and passed Linux, FreeBSD, WASI, and macOS
+  checks. Matcher semantics are unchanged and the both-mode regression fails
+  closed without partial output.
+- **Filesystem and resource robustness — GREEN.** The prior high finding is
+  closed: one shared checked meter covers slashful splitting, every pattern/
+  DP-state visit, every component transition, and slash-free matching. The
+  practical depth-256 regression completed in 0.67 seconds including fixture
+  setup, two successful simple scans, and both bounded failures. Fresh-root,
+  no-follow traversal, races, invalid names, redaction, descriptor cleanup,
+  cancellation/drop behavior, and portable stubs have no finding. Count mode's
+  unnecessary bounded 100-path heap is recorded as an optimization opportunity,
+  not a blocker.
+- **Composition, documentation, and evidence — GREEN.** The new public cap,
+  exact accounting contract, permission separation, prepared agreement,
+  catalog/root identity, initial/fix/test/composed lineage, 40-plus-nine
+  evidence, first-cycle rejection, non-claims, and maintained status all agree.
+
+Per the user's instruction, documentation-only review seals and delivery-
+evidence records after this exact behavior became green do not receive another
+adversarial cycle. Exact feature and `main` gates remain mandatory.
 
 ## Remote delivery gates
 

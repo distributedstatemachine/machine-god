@@ -54,8 +54,9 @@ The eighteenth candidate starts from exact base
 documentation, composition, and initial local gates were green at `60070d8`.
 The first formal review at `1f5de6a` found a high matcher-work bound defect; its
 fix, independent regression, and replacement local gates are green at exact
-`4171a4a8811a98888b7e4e161281a1216564746f`. Three replacement reviews and
-remote exact-SHA delivery remain pending.
+`4171a4a8811a98888b7e4e161281a1216564746f`. All three replacement reviews are
+green on exact behavior SHA `523df858`; documentation seal and remote exact-SHA
+delivery remain pending.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host

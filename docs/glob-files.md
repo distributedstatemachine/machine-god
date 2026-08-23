@@ -5,9 +5,10 @@ The exact base is `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first formal
 review at `1f5de6a` found a high unmetered matcher-work defect. The checked
 matcher budget, independent both-mode regression, and all replacement local
 gates are green at exact code-and-test head
-`4171a4a8811a98888b7e4e161281a1216564746f`; replacement review, seal, and
-delivery remain pending. Milestone 03 remains `IN PROGRESS`, and its combined
-native-tool checklist remains unchecked.
+`4171a4a8811a98888b7e4e161281a1216564746f`; all three replacement tracks are
+green on exact behavior SHA `523df85822a27102d7e7100e274e3bad7b25494f`.
+Documentation seal and delivery remain pending. Milestone 03 remains
+`IN PROGRESS`, and its combined native-tool checklist remains unchecked.
 
 `glob_files` is a Linux/macOS library capability in `machine-god-native`. The
 current CLI does not construct an engine, register or invoke this tool, prompt

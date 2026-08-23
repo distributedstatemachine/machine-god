@@ -523,10 +523,9 @@ The first formal review at `1f5de6a` found a high unmetered matcher-work defect.
 Production fix `f3fd13b` and independent regression `825bbd3` compose through
 `aba2821`; the public-cap assertion and replacement local gates are green at
 exact code-and-test head `4171a4a8811a98888b7e4e161281a1216564746f`.
-Replacement review, seal, and delivery SHAs remain explicitly pending and must
-not be invented. Three fresh adversarial tracks must review one exact composed
-behavior SHA after local gates, with fixes and same-SHA rereview until green.
-Per the user's instruction, a later
+All three replacement adversarial tracks are green on exact behavior SHA
+`523df85822a27102d7e7100e274e3bad7b25494f`. Seal and delivery SHAs remain
+explicitly pending and must not be invented. Per the user's instruction, a later
 documentation-only seal is exempt
 from another adversarial cycle after behavior is green. The candidate adds no
 CLI behavior, external-path access, ignore or Git/subprocess behavior, content
@@ -607,9 +606,10 @@ gate:
   `1f5de6a` found a high unmetered matcher-work defect. The checked matcher-
   budget fix, independent both-mode regression, 40 focused integration tests,
   nine private tests, and replacement local gates are green at exact code-and-
-  test head `4171a4a8811a98888b7e4e161281a1216564746f`. Three same-SHA replacement
-  adversarial tracks and exact remote delivery remain pending. It therefore
-  does not change this checkbox.
+  test head `4171a4a8811a98888b7e4e161281a1216564746f`. All three same-SHA replacement
+  adversarial tracks are green on exact behavior SHA `523df858`; documentation
+  seal and exact remote delivery remain pending. It therefore does not change
+  this checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

@@ -204,11 +204,11 @@ as the original descriptor plus three clones. Production, independent tests,
 and documentation are composed. The first formal review at `1f5de6a` found a
 high unmetered matcher-work defect; the checked 8,388,608-step fix, independent
 both-mode regression, and all replacement local gates are green at exact
-code-and-test head `4171a4a8811a98888b7e4e161281a1216564746f`. Three same-
-SHA replacement adversarial tracks and remote exact-SHA delivery remain
-pending; no later SHA is invented in the
+code-and-test head `4171a4a8811a98888b7e4e161281a1216564746f`. All three
+replacement adversarial tracks are green on exact behavior SHA `523df858`;
+documentation seal and remote exact-SHA delivery remain pending in the
 [`glob_files` contract](docs/glob-files.md) or
-[review record](docs/reviews/m03-glob-files-review-01.md). The candidate changes
+[review record](docs/reviews/m03-glob-files-review-01.md). The reviewed behavior changes
 no CLI byte, benchmark workload, compatibility status, or performance claim,
 and the combined native-tool checklist remains open.
 

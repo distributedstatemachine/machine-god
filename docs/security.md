@@ -151,8 +151,9 @@ prefix or an exact count. Production, independent tests, documentation,
 composition, and initial local gates were green at `60070d8`; the first formal
 review at `1f5de6a` found a high unmetered matcher-work defect. Its checked work-
 budget fix, both-mode regression, and replacement local gates are green at
-`4171a4a8811a98888b7e4e161281a1216564746f`; three same-SHA replacement tracks
-and remote delivery remain pending. Its security contract is in
+`4171a4a8811a98888b7e4e161281a1216564746f`; all three replacement tracks are
+green on exact behavior SHA `523df858`. Documentation seal and remote delivery
+remain pending. Its security contract is in
 [`glob-files.md`](glob-files.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG

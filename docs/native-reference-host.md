@@ -6,8 +6,9 @@ slice and the eighteenth `glob_files` candidate. Seventeen slices are
 delivered; eighteenth-slice production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
 first formal review at `1f5de6a` found a high matcher-work bound defect. Its fix,
-regression, and replacement local gates are green at `4171a4a`; three same-SHA
-replacement reviews and exact remote delivery remain pending from base
+regression, and replacement local gates are green at `4171a4a`; all three same-
+SHA replacement reviews are green at `523df858`. Documentation seal and exact
+remote delivery remain pending from base
 `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
 production `5c2d129` and independent tests `ca0091c` compose at `f228c06`,
 where all 34 focused tests are green. Review hardening composes at `b69ec4b`,
@@ -477,9 +478,9 @@ The `glob_files` candidate adds no benchmark workload or workflow change and
 makes no compatibility or product-performance claim. Production, independent
 tests, documentation, and composition are present. Its first review at
 `1f5de6a` found a matcher-work bound defect; the fix, regression, and replacement
-local gates are green at `4171a4a`. Three same-SHA replacement reviews and
-remote exact-SHA delivery remain pending, so the combined native-tool checklist
-stays open.
+local gates are green at `4171a4a`. All three same-SHA replacement reviews are
+green at `523df858`; documentation seal and remote exact-SHA delivery remain
+pending, so the combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature

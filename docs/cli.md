@@ -49,9 +49,10 @@ accepted invocations, output bytes, diagnostics, or exit statuses below. Its
 bounded path/count result is not exposed as CLI output. Production, independent
 tests, documentation, and composition are present. The first review at
 `1f5de6a` found a matcher-work bound defect; its fix, regression, and replacement
-local gates are green at `4171a4a`. Three same-SHA replacement review tracks and
-exact remote delivery remain pending. The candidate makes no compatibility or
-performance claim.
+local gates are green at `4171a4a`. All three replacement review tracks are
+green on exact behavior SHA `523df858`; documentation seal and exact remote
+delivery remain pending. The candidate makes no compatibility or performance
+claim.
 
 ## Accepted invocations
 

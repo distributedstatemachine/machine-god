@@ -189,9 +189,9 @@ clones of one workspace identity. Production, independent-test, documentation,
 composed-behavior, and initial local-gate lineage is green through `60070d8`
 from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first review at
 `1f5de6a` found a high matcher-work bound defect; its fix, regression, public-
-bound assertion, and replacement local gates are green at exact `4171a4a`.
-Replacement review and delivery gates remain pending. Its contract and review
-record are
+bound assertion, and replacement local gates are green at exact `4171a4a`. All
+three replacement tracks are green on exact behavior SHA `523df858`; seal and
+delivery gates remain pending. Its contract and review record are
 [`glob-files.md`](glob-files.md) and
 [`m03-glob-files-review-01.md`](reviews/m03-glob-files-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -419,8 +419,9 @@ output. No provider, permission handler, session-store, credential, transport,
 runtime, constructor argument, root-selection, or CLI authority changes.
 Production, independent tests, documentation, and composition are present. The
 first review at `1f5de6a` found a matcher-work bound defect; its fix, regression,
-and replacement local gates are green at `4171a4a`. Three same-SHA replacement
-formal tracks and exact remote delivery remain pending.
+and replacement local gates are green at `4171a4a`. All three same-SHA
+replacement formal tracks are green at `523df858`; documentation seal and exact
+remote delivery remain pending.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

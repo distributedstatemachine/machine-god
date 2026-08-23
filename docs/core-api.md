@@ -485,10 +485,9 @@ behavior, and initial local-gate lineage is green through `60070d8` from base
 `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first formal review at
 `1f5de6a` found a high matcher-work bound defect; its checked-budget fix,
 independent regression, public-bound assertion, and replacement local gates are
-green through exact `4171a4a8811a98888b7e4e161281a1216564746f`. Replacement
-review, seal, and delivery SHAs remain explicitly pending. Its three fresh
-adversarial tracks must review one exact composed behavior SHA after local
-gates. This candidate does not alter
+green through exact `4171a4a8811a98888b7e4e161281a1216564746f`. All three
+replacement adversarial tracks are green on exact behavior SHA `523df858`;
+seal and delivery SHAs remain explicitly pending. This candidate does not alter
 core result limits, generic durable error mapping, CLI behavior, benchmark
 evidence, or compatibility/performance status.
 
