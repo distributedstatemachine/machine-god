@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **BEHAVIOR GREEN — delivery pending**
+Status: **BEHAVIOR GREEN — replacement evidence review pending**
 
 ## Base and contract gate
 
@@ -424,7 +424,15 @@ cycle-5 marker is empty.
 - Correctness/API: green, zero findings
 - Filesystem/robustness: green, zero findings
 - Performance/concurrency: green, zero findings
-- Documentation seal: pending
+- First documentation seal:
+  `9e2a2764420519a94e11986a758592b442faa65d`
+- First exact feature CI: `32663557182`, not green only on aarch64 Linux test
+  evidence; the other five jobs passed
+- First exact feature benchmark evidence: `32663557187`, both jobs green with
+  two nonexpired exact-SHA artifacts
+- Test-only portable evidence remediation:
+  `c6744ab5416fc4bde330d09f59dd507bd9991d72`
+- Replacement exact-candidate review: pending
 - Exact feature CI and benchmark evidence: pending
 - No-force fast-forward `main`: pending
 - Exact `main` CI and benchmark evidence: pending
@@ -432,6 +440,43 @@ cycle-5 marker is empty.
 The documentation-only seal and later delivery record are exempt from another
 adversarial cycle under the user's instruction. Their applicable exact remote
 workflows remain mandatory.
+
+## First remote seal and portable evidence remediation
+
+The first documentation seal
+`9e2a2764420519a94e11986a758592b442faa65d` passed exact benchmark workflow
+`32663557187` across both jobs with two nonexpired exact-SHA artifacts. Exact CI
+`32663557182` passed quality, dependency, x86_64 Linux, x86_64 macOS, and
+aarch64 macOS, but its aarch64 Linux job failed one private test after the
+runner immediately reused an unlinked test-fixture inode. The remaining 177
+private tests in that job passed.
+
+The same-type replacement fixture had unlinked and immediately recreated a
+regular file. Reuse made the replacement equal under the protocol's portable
+device/inode/type identity and allowed the intended target to be deleted. This
+was nondeterministic evidence, not a protocol violation. Test-only remediation
+`c6744ab5416fc4bde330d09f59dd507bd9991d72` retains an open handle to the
+original file across unlink/recreate, preventing inode reuse until final
+revalidation. It changes three test lines and no production, public API, Cargo,
+CLI, or contract behavior.
+
+Exact tree `2ac83ee846e1b74b5e103f8fabcb14d828024c89` passes complete
+replacement gates. Rust/Cargo 1.94.1 formatting, warnings-denied workspace
+Clippy, workspace tests, two doctests, focused 29/30 private, 21 direct, five
+engine, seven host, one core, 740/790 discovery, and zero benchmarks are green.
+Python 130 with eight expected skips, pinned-fx, cargo-deny 0.20.2, cargo-audit
+0.22.2 with 1,225 advisories/175 dependencies and zero findings,
+Linux/FreeBSD/WASI plus active Node 1/1, and docs 64/445/295/0 pass. The clean
+16-file base diff is +6,766/-62 with no unsafe, Cargo, or CLI additions.
+Optional all-feature Linux cross stops only at the host C sysroot in
+`aws-lc-sys` before product Rust. A fresh locked 319,152-byte arm64 Mach-O CLI
+has SHA-256
+`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
+and passes exact bare/help/human-status/JSON-status smoke with empty stderr.
+
+Because the remediation changes executable test evidence rather than only
+documentation, its tree-identical marker receives three fresh cycle-6 reviews.
+This documentation record itself remains exempt under the user's instruction.
 
 ## Formal adversarial protocol
 

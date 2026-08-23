@@ -51,8 +51,8 @@ workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
 `c1268fdf463e11242b7b916add70675ae91ed115` to the final record; exact main CI
 `32651488265` passed all six jobs, and main benchmark workflow `32651488282`
 passed both jobs with two nonexpired exact-SHA artifacts. Native `delete_file`
-is the twenty-second bounded slice and is **BEHAVIOR GREEN — DELIVERY
-PENDING**. Formal cycle 1 is
+is the twenty-second bounded slice and is **BEHAVIOR GREEN — REPLACEMENT
+EVIDENCE REVIEW PENDING**. Formal cycle 1 is
 **NOT GREEN** on exact candidate
 `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf`; remediation, replacement
 same-SHA adversarial review, and delivery remain pending. Exact remediation
@@ -76,9 +76,16 @@ finding and no others. Exact remediation
 `4273de513007175be94829aef85aaaa0d09bc02c` passes the complete replacement
 local gate. Tree-identical cycle-5 candidate
 `8575354542803f5e8ba8faf311e7524ed87eacba` is green with zero findings in
-all three fresh tracks. Exact feature workflows, no-force fast-forward
-integration, and exact `main` workflows remain pending. The remaining native
-tools, CLI ownership, and Milestone 03 completion boundary remain pending.
+all three fresh tracks. First documentation seal `9e2a2764420519a94e11986a758592b442faa65d`
+passed exact feature benchmark `32663557187` with both jobs and two exact-SHA
+artifacts, but CI `32663557182` failed only its aarch64 Linux job when the
+filesystem reused an unlinked same-type test-fixture inode; the other five jobs
+passed. Exact test-only remediation
+`c6744ab5416fc4bde330d09f59dd507bd9991d72` passes the complete replacement
+gate without changing production behavior. Fresh exact-candidate review,
+feature workflows, no-force fast-forward integration, and exact `main`
+workflows remain pending. The remaining native tools, CLI ownership, and
+Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1230,7 +1237,22 @@ findings. Clean detached worktrees and focused exact Rust 1.94.1 reruns covered
 29/30 private, 21 direct including hostile umask, five engine, seven host, one
 core, reference-host composition, and relevant FreeBSD/WASI gates. Crate
 content is identical to remediation `4273de5`. Exact feature and `main`
-delivery workflows remain pending.
+delivery workflows remain pending. First documentation seal `9e2a276` passed
+exact benchmark workflow `32663557187` with both jobs and two exact-SHA
+artifacts. Exact CI `32663557182` passed five jobs but failed aarch64 Linux when
+its same-type replacement fixture allowed immediate inode reuse. Test-only
+remediation `c6744ab5416fc4bde330d09f59dd507bd9991d72` retains an open handle
+to the original unlinked file until revalidation, changes no production
+behavior, and passes the complete replacement gate on exact tree `2ac83ee`:
+workspace and two doctests, 29/30 private, 21 direct, five engine, seven host,
+one core, 740/790 discovery with zero benchmarks, Python 130, compatibility,
+dependency, portability, docs 64/445/295/0, clean 16-file +6,766/-62 diff with
+no unsafe/Cargo/CLI changes, and fresh release-smoke evidence are green. A fresh
+319,152-byte arm64 Mach-O CLI has SHA-256
+`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`.
+Optional Linux all-feature cross remains a host C-sysroot limitation before
+product Rust. Three fresh exact-candidate reviewers remain pending because the
+change is executable test evidence rather than documentation-only.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1544,8 +1566,15 @@ gate:
   commit boundary. Tree-identical cycle-5 candidate `8575354`, tree `13f28f2`,
   is green with zero findings in all three fresh correctness/API, filesystem/
   robustness, and performance/concurrency tracks. Feature delivery and `main`
-  delivery remain pending, so the combined native-tool checkbox stays
-  unchecked and the delivered-slice count remains twenty-one.
+  delivery remain pending. First seal `9e2a276` passed benchmark workflow
+  `32663557187` with two artifacts but CI `32663557182` failed only aarch64
+  Linux after same-type test-fixture inode reuse. Test-only remediation
+  `c6744ab`, tree `2ac83ee`, retains the original unlinked handle through
+  revalidation and passes complete Rust, policy, portability, docs, diff, and
+  release-smoke gates without changing production behavior. Fresh exact-
+  candidate review and replacement remote delivery remain pending, so the
+  combined native-tool checkbox stays unchecked and the delivered-slice count
+  remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

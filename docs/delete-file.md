@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **BEHAVIOR GREEN — delivery pending**
+Status: **BEHAVIOR GREEN — replacement evidence review pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -35,8 +35,14 @@ one overlapping medium finding. Exact remediation
 `4273de513007175be94829aef85aaaa0d09bc02c` passes the complete replacement
 local gate. Tree-identical formal cycle-5 candidate
 `8575354542803f5e8ba8faf311e7524ed87eacba` is **GREEN** with zero findings
-in all three fresh tracks. Exact feature workflows, no-force fast-forward
-integration, and exact `main` workflows remain pending.
+in all three fresh tracks. Documentation seal
+`9e2a2764420519a94e11986a758592b442faa65d` passed exact feature benchmark
+workflow `32663557187` across both jobs with two nonexpired exact-SHA artifacts,
+but exact feature CI `32663557182` failed one of six jobs because its aarch64
+Linux filesystem immediately reused a test fixture's unlinked inode. Exact
+test-only remediation `c6744ab5416fc4bde330d09f59dd507bd9991d72`
+passes the complete replacement local gate; fresh exact-candidate review and
+remote delivery remain pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -493,6 +499,39 @@ fast-forward to `main`, and exact `main` CI and benchmark workflows. The
 documentation-only seal and later delivery record are exempt from another
 adversarial cycle under the user's instruction, but not from their applicable
 remote workflows.
+
+The first documentation seal's exact feature CI `32663557182` passed quality,
+dependency, x86_64 Linux, x86_64 macOS, and aarch64 macOS, but failed aarch64
+Linux in the same-type revalidation evidence. That fixture unlinked and
+immediately recreated a regular file; the runner legitimately reused the same
+inode, making the replacement equal under the protocol's portable
+`(device, inode, exact type)` identity. This was an evidence nondeterminism, not
+a production failure: the other 177 private tests in that job passed, every
+other CI job passed, and exact benchmark workflow `32663557187` passed both
+jobs with two nonexpired artifacts bound to the seal SHA.
+
+Test-only remediation `c6744ab5416fc4bde330d09f59dd507bd9991d72`
+retains an open handle to the original regular file while unlinking and
+recreating the same-type replacement. The original inode therefore cannot be
+recycled before final revalidation. No production, public API, Cargo, CLI, or
+contract behavior changed from the cycle-5-reviewed candidate.
+
+Exact remediation tree `2ac83ee846e1b74b5e103f8fabcb14d828024c89`
+passes the complete replacement gate. Rust/Cargo 1.94.1 formatting, workspace
+warnings-denied Clippy, workspace tests, two doctests, 29/30 private, 21 direct
+including hostile umask, five engine, seven host, one core, and 740/790
+discovery with zero benchmarks are green. Python 130 with eight expected skips,
+pinned-fx compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 1,225
+advisories and 175 dependencies, Linux/FreeBSD/WASI and active Node 1/1, and
+documentation 64/445/295/0 pass. The clean delivered-base diff covers 16 files
+with 6,766 insertions and 62 deletions, adds zero unsafe Rust, and changes no
+Cargo or CLI path. Optional all-feature Linux cross remains blocked only by the
+host C sysroot in `aws-lc-sys`, before product Rust. A fresh locked 319,152-byte
+arm64 Mach-O release CLI has SHA-256
+`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
+and passes exact bare/help/human-status/JSON-status smoke with empty stderr.
+This test-evidence change receives three fresh exact-candidate reviewers before
+a replacement seal is pushed; this documentation-only record does not.
 
 ## Parallel ownership and formal review
 
