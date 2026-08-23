@@ -626,9 +626,14 @@ local gates are green at final code/test precursor
 `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. First replacement candidate
 `ae87bf1454b1527b2e55ed5e517c21fd7410c980` is **NOT GREEN** with one low
 correctness ordering finding, one low filesystem evidence-wording finding, and
-medium-plus-low performance/cancellation findings. Production and documentation
-fixes, all three second replacement reviews, the behavior-green SHA,
-documentation seal, and feature/`main` delivery SHAs or runs remain **PENDING**.
+medium-plus-low performance/cancellation findings. Second production remediation
+`ac5d7726411744e4f85344edf966d26a3cdb0a26` composes at `d672210`; second
+documentation remediation `7ad0863885d28b7b7a1d6f89d35f525cdd2dd3fa`
+produces fully composed exact local-gate-green precursor
+`b498ba06fa808dc9453a7644727cf8166b6f8e87`. Only the second replacement exact
+review SHA, all three reviews, behavior-green SHA, documentation seal, and
+feature/`main` delivery SHAs or runs remain **PENDING**. Compatibility and
+release smoke evidence are green on exact b498.
 The maintained documentation must compose into the
 exact behavior SHA reviewed by all three adversarial tracks. A later
 documentation-only seal or delivery record is exempt from another adversarial
@@ -735,9 +740,12 @@ gate:
   fix and exact local gates are green at `45ad91f`. All three first-cycle tracks
   are **NOT GREEN** on exact `355a11a`. Remediation and exact replacement local
   gates are green at final code/test precursor `275d263`. First replacement
-  candidate `ae87bf1` is **NOT GREEN** across all three tracks; production and
-  documentation fixes, all three second replacement reviews, the behavior-green
-  SHA, seal, feature, integration, and `main` evidence remain **PENDING**. The
+  candidate `ae87bf1` remains historically **NOT GREEN** across all three tracks.
+  Second-fix production and documentation compose through `ac5d772`, `d672210`,
+  `7ad0863`, and exact local-gate-green precursor `b498ba0`. Only the second
+  replacement exact review SHA, all three reviews, behavior-green SHA, seal,
+  feature, integration, and `main` evidence remain **PENDING**; compatibility
+  and release smoke evidence are green on exact b498. The
   remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

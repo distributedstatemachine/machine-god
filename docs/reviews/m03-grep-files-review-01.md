@@ -1,9 +1,9 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — first replacement candidate
-`ae87bf1454b1527b2e55ed5e517c21fd7410c980` is NOT GREEN; production and
-documentation fixes, second replacement reviews, the behavior-green SHA, seal,
-and delivery remain pending**
+Status: **IN PROGRESS — second-fix corrections and exact local gates are green
+at `b498ba06fa808dc9453a7644727cf8166b6f8e87`; the second replacement exact
+review SHA, three reviews, behavior-green SHA, seal, and remote delivery remain
+pending**
 
 ## Candidate lineage
 
@@ -60,6 +60,16 @@ and delivery remain pending**
   on exact `ae87bf1`
 - First replacement performance/concurrency review: **NOT GREEN — MEDIUM and
   LOW** on exact `ae87bf1`
+- Second production remediation:
+  `ac5d7726411744e4f85344edf966d26a3cdb0a26`
+- Composed second production remediation head:
+  `d67221021aa173299f8f2e99d2574a15870cd5c8`
+- Second documentation remediation:
+  `7ad0863885d28b7b7a1d6f89d35f525cdd2dd3fa`
+- Fully composed second-fix local-gate precursor:
+  `b498ba06fa808dc9453a7644727cf8166b6f8e87`
+- Second-fix local gates: **GREEN** on exact `b498ba0`
+- Second replacement formal behavior-review candidate SHA: **PENDING**
 - Second replacement correctness/API review SHA: **PENDING**
 - Second replacement security/filesystem-robustness review SHA: **PENDING**
 - Second replacement performance/concurrency review SHA: **PENDING**
@@ -80,9 +90,11 @@ candidate `355a11a` are NOT GREEN. The five isolated remediation/evidence
 components above compose in order through `35defb5`, `5855073`, `3cd282f`,
 `630acbb`, and final local-gate precursor `275d263`. First replacement formal
 candidate `ae87bf1` records those gates and is NOT GREEN under all three fresh
-tracks. Every listed identifier was observed directly; no second-replacement,
-seal, or workflow identifier may be inferred from a branch tip, tree identity,
-or another component. Production,
+tracks. Second production remediation `ac5d772` composes at `d672210`; second
+documentation remediation `7ad0863` composes with it at fully composed exact
+local-gate precursor `b498ba0`. Every listed identifier was observed directly;
+no second-replacement review, behavior-green, seal, or workflow identifier may
+be inferred from a branch tip, tree identity, or another component. Production,
 independent tests, and maintained docs remain non-overlapping ownership slices
 and must compose without overwriting one another.
 
@@ -261,9 +273,40 @@ Exact final code/test local-gate precursor
   links with zero missing; first-review-to-precursor, post-documentation, and
   final-test diff checks pass with a clean exact-SHA worktree.
 
-These are local exact-SHA results, not second-replacement or remote-delivery
-evidence. First replacement candidate `ae87bf1` is NOT GREEN. No replacement
-cycle is green until all three reviewers report on the same exact behavior SHA.
+Fully composed second-fix local-gate precursor
+`b498ba06fa808dc9453a7644727cf8166b6f8e87` is green under Rust and Cargo
+1.94.1 exactly:
+
+- formatting and workspace/all-target/all-feature warnings-denied Clippy pass;
+- the workspace gate passes 592 non-documentation tests plus two doctests, and
+  the native private-library gate passes 75/75;
+- focused coverage remains 39 direct `grep_files` integration tests and four
+  real-engine tests;
+- the repository Python gate runs 129 tests: 121 pass and eight expected macOS
+  skips, with zero failures or errors;
+- a fresh credential-stripped upstream fx checkout at
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` passes
+  `generate_compatibility.py --check`;
+- `cargo clean` removes 12,335 files / 1.5 GiB before a locked release CLI build
+  passes in 48.85 seconds; all eight bare, help, version, status, and JSON-status
+  assertions exit zero with byte-exact stdout, empty stderr, and no config or
+  state creation;
+- cargo-deny 0.19.9 passes with only the accepted `syn` and `windows-sys`
+  duplicate warnings; cargo-audit 0.22.2 checks 1,225 cached advisories over 175
+  dependencies with zero findings under `--no-fetch`;
+- Linux and FreeBSD no-default native Clippy pass with warnings denied; WASI
+  no-default and all-feature checks pass with only the pre-existing
+  `read_file::check_cancellation` dead-code warning; the dedicated unsupported-
+  target test compiles to an active WASI artifact containing its exact test,
+  closure, private sentinel, fixed diagnostics, and harness `main`; and
+- 57 Markdown files contain 420 inline links, including 270 repository-relative
+  links with zero missing; second-fix diff checks pass with a clean exact-SHA
+  worktree.
+
+These local results are not second-replacement or remote-delivery evidence.
+First replacement candidate `ae87bf1` remains historically NOT GREEN. No
+replacement cycle is green until all three reviewers report on the same exact
+behavior SHA.
 
 ## Explicit nonclaims
 
@@ -365,7 +408,8 @@ candidate `ae87bf1` nevertheless remains NOT GREEN under the findings below.
   included file opened and revalidated before every literal-matcher charge, but
   production constructs the fixed pattern table before resolving the selected
   root. The normative correction distinguishes fixed once-per-call pattern-table
-  work from later candidate, content-byte, and per-file matching budgets.
+  work from later candidate, content-byte, and per-file matching budgets and is
+  composed at `b498ba0`.
 
 ### First replacement security/filesystem-robustness track — NOT GREEN
 
@@ -373,24 +417,27 @@ candidate `ae87bf1` nevertheless remains NOT GREEN under the findings below.
   regression, while the deep special-kind fixture constructs symlinks. The
   corrected evidence statement names the deep symlink/special-kind branch and
   retains the separate stable shallow FIFO and pre-poll substitution coverage.
-  No production filesystem defect was found in this track.
+  The correction is composed at `b498ba0`; no production filesystem defect was
+  found in this track.
 
 ### First replacement performance/concurrency track — NOT GREEN
 
 - **MEDIUM — confirmed:** slashful candidate splitting and false
   dynamic-programming cells could traverse bounded work without the documented
-  at-most-1,024-byte cancellation interval. The second replacement must make
-  splitting cancellation-aware at that interval and check both recursive and
-  non-recursive dynamic-programming branches, with deterministic checker
+  at-most-1,024-byte cancellation interval. Composed production at `d672210`
+  makes splitting cancellation-aware at that interval and checks both recursive
+  and non-recursive dynamic-programming branches, with deterministic checker
   regressions.
 - **LOW — confirmed:** slashful include rejection for a selected file returned
-  without a charged or local cancellation-checked include decision. The second
-  replacement must charge exactly one decision unit and check cancellation,
-  with deterministic exact-work evidence.
+  without a charged or local cancellation-checked include decision. Composed
+  production charges exactly one decision unit and checks cancellation, with
+  deterministic exact-work evidence.
 
-Production and documentation fixes, their independent regressions, local gates,
-and all three second replacement reviews remain **PENDING**. Once one exact
-replacement behavior SHA is green across all three tracks, a later
+Production and documentation corrections, independent regressions, and exact
+local gates are composed and green at `b498ba0`. Only the second replacement
+exact review SHA, all three second replacement reviews, behavior-green SHA,
+documentation seal, and remote delivery evidence remain **PENDING**. Once one
+exact replacement behavior SHA is green across all three tracks, a later
 documentation-only seal or final delivery record needs no additional
 adversarial review under the user's explicit instruction, but exact feature and
 `main` workflow evidence is still required.

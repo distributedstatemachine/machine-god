@@ -69,9 +69,11 @@ makes focused production/test composition green. Documentation component
 gates are green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on
 exact `355a11a`. Remediation and exact replacement local gates are green at
 final code/test precursor `275d263`. First replacement candidate `ae87bf1` is
-**NOT GREEN** across all three tracks; production and documentation fixes, all
-three second replacement reviews, the behavior-green SHA, seal, delivery, and
-exact-workflow evidence remain **PENDING**.
+historically **NOT GREEN** across all three tracks. Second-fix production and
+documentation compose through `ac5d772`, `d672210`, `7ad0863`, and exact local-
+gate-green precursor `b498ba0`. Only the second replacement exact review SHA,
+all three reviews, behavior-green SHA, seal, and remote delivery remain
+**PENDING**; compatibility and release smoke evidence are green on exact b498.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host

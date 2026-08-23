@@ -14,9 +14,13 @@ component `b04151a` produces fully composed behavior `42e4793`; lint fix and
 exact local gates are green at `45ad91f`. All three first-cycle tracks are
 **NOT GREEN** on exact `355a11a`. Remediation and exact replacement local gates
 are green at final code/test precursor `275d263`. First replacement candidate
-`ae87bf1` is **NOT GREEN** across all three tracks; production and documentation
-fixes, all three second replacement reviews, the behavior-green SHA, seal,
-delivery, and exact-workflow evidence remain **PENDING**. Eighteenth-slice
+`ae87bf1` remains historically **NOT GREEN** across all three tracks. Second-fix
+production and documentation compose through `ac5d772`, `d672210`, `7ad0863`,
+and exact local-gate-green precursor `b498ba0`. Only the second replacement exact
+review SHA, all three reviews, behavior-green SHA, seal, and remote delivery
+remain **PENDING**; compatibility and release smoke evidence are green on exact
+b498.
+Eighteenth-slice
 production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
 first formal review at `1f5de6a` found a high matcher-work bound defect. Its fix,
@@ -532,9 +536,11 @@ fully composed behavior `42e4793`, and lint fix plus exact local gates are green
 at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact `355a11a`.
 Remediation and exact replacement local gates are green at final code/test
 precursor `275d263`. First replacement candidate `ae87bf1` is **NOT GREEN**
-across all three tracks; production and documentation fixes, all three second
-replacement reviews, the behavior-green SHA, seal, and feature and `main`
-workflows remain **PENDING**.
+across all three tracks. Second-fix production and documentation compose through
+`ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
+`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+behavior-green SHA, seal, and feature and `main` workflows remain **PENDING**;
+compatibility and release smoke evidence are green on exact b498.
 The combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the

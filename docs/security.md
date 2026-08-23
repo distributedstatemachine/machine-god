@@ -171,9 +171,11 @@ produces fully composed behavior `42e4793`; lint fix and exact local gates are
 green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 `355a11a`. Remediation and exact replacement local gates are green at final
 code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
-GREEN** across all three tracks; production and documentation fixes, all three
-second replacement reviews, the behavior-green SHA, seal, and delivery remain
-**PENDING**. Its strict preflight
+GREEN** across all three tracks. Second-fix production and documentation compose
+through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
+`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
+and release smoke evidence are green on exact b498. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
 relative no-follow regular-file-only traversal, bounded eligible UTF-8 content

@@ -77,9 +77,11 @@ fully composed behavior `42e4793`; lint fix and exact local gates are green at
 `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact `355a11a`;
 remediation and exact replacement local gates are green at final code/test
 precursor `275d263`. First replacement candidate `ae87bf1` is **NOT GREEN**
-across all three tracks; production and documentation fixes, all three second
-replacement reviews, the behavior-green SHA, seal, delivery, and exact-workflow
-evidence remain **PENDING**. It makes no
+across all three tracks. Second-fix production and documentation compose through
+`ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
+`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
+and release smoke evidence are green on exact b498. It makes no
 compatibility or performance claim.
 
 ## Accepted invocations

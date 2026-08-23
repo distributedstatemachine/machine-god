@@ -207,8 +207,12 @@ local gates are green at `45ad91f`. All three first-cycle formal tracks are
 **NOT GREEN** on exact candidate `355a11a`. Remediation and exact replacement
 local gates are green at final code/test precursor `275d263`. First replacement
 candidate `ae87bf1` is **NOT GREEN** across all three tracks; production and
-documentation fixes, all three second replacement reviews, the behavior-green
-SHA, seal, and delivery evidence remain **PENDING**.
+documentation corrections compose through `ac5d772`, `d672210`, `7ad0863`, and
+fully composed local-gate-green precursor `b498ba0`. `ae87bf1` remains
+historically **NOT GREEN**. Only the second replacement exact review SHA, all
+three reviews, behavior-green SHA, seal, and remote delivery evidence remain
+**PENDING**. Exact b498 compatibility, Python, clean locked release-build, and
+eight CLI smoke gates are green.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -475,9 +479,11 @@ produces fully composed behavior `42e4793`, with lint fix and local gates green
 at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 `355a11a`. Remediation and exact replacement local gates are green at final
 code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
-GREEN** across all three tracks; production and documentation fixes, all three
-second replacement reviews, the behavior-green SHA, seal, and delivery remain
-**PENDING**.
+GREEN** across all three tracks. Second-fix production and documentation compose
+through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
+`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+behavior-green SHA, seal, and remote delivery remain **PENDING**; compatibility
+and release smoke evidence are green on exact b498.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

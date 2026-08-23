@@ -543,9 +543,12 @@ produces fully composed behavior `42e4793`; lint fix and exact local gates are
 green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 `355a11a`. Remediation and exact replacement local gates are green at final
 code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
-GREEN** across all three tracks; production and documentation fixes, all three
-second replacement reviews, the behavior-green SHA, seal, and delivery evidence
-remain **PENDING**. Maintained behavior
+GREEN** across all three tracks. Second-fix production and documentation compose
+through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
+`b498ba0`. Only the second replacement exact review SHA, all three reviews,
+behavior-green SHA, seal, and remote delivery evidence remain **PENDING**;
+compatibility and release smoke evidence are green on exact b498. Maintained
+behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
 later documentation-only seal or delivery record is exempt from another
 adversarial cycle under the user's instruction but still requires exact feature
