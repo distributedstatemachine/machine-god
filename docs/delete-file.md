@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — formal cycle 3 not green; remediation in progress**
+Status: **IN PROGRESS — cycle 3 remediated; replacement review pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -27,7 +27,9 @@ local gate. Tree-identical formal cycle-2 candidate
 exact remediation `225e9617a8a8f469d663693b61cc4f9b97af8094` passes the
 complete replacement local gate. Tree-identical formal cycle-3 candidate
 `24f851d2d3db21735124729bb1b0a14adf7ae864` is **NOT GREEN** with
-two low findings; remediation and another fresh same-SHA cycle remain pending.
+two low findings. Exact remediation
+`77884a9fceed6268cbdbec1310de3f94a9c5a230` passes the complete replacement
+local gate; another fresh same-SHA cycle remains pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -387,6 +389,28 @@ retained in a deterministic regression. It found no production protocol defect,
 and a manual restrictive-umask execution passed. Exact mapping/matrix and
 isolated child-process evidence remediations are in progress; another complete
 local gate and three fresh reviewers remain mandatory.
+
+Exact cycle-3 remediation `77884a9fceed6268cbdbec1310de3f94a9c5a230`
+passes the complete replacement local gate on Rust/Cargo 1.94.1. Focused totals
+are 28 default-feature and 29 all-feature private tests, 21 direct tests, five
+engine tests, seven reference-host tests, and one core `Delete` contract test.
+Workspace formatting, all-target/all-feature warnings-denied Clippy, tests, and
+two doctests pass; discovery inventories 739 default-feature tests, 789 all-
+feature tests, and zero benchmarks.
+
+The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
+compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 1,225 advisories and
+175 dependencies, Linux/FreeBSD/WASI gates, and Node's active unsupported test
+1/1 are green. Documentation integrity remains 64/445/295/0. The delivered-
+base diff covers 16 files with 6,404 insertions and 63 deletions, adds zero
+unsafe Rust, and changes no Cargo metadata or CLI source. The optional all-
+feature Linux cross-build remains blocked in `aws-lc-sys` by the host's missing
+Linux C sysroot before product Rust. A fresh locked 319,152-byte arm64 Mach-O
+CLI has SHA-256
+`951ff7ce945a6fa446dfd87a7d54a6dd962776a8a021d4af6e68d6bd18e963e8`
+and passes bare, help, human-status, and JSON-status smoke paths with empty
+stderr. These results qualify the replacement local gate only, not formal
+review or delivery.
 
 ## Parallel ownership and formal review
 

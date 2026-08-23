@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — formal cycle 3 not green; remediation in progress**
+Status: **IN PROGRESS — cycle 3 remediated; replacement review pending**
 
 ## Base and contract gate
 
@@ -296,6 +296,34 @@ fixture workspace mode, creates mode-zero file and empty-directory targets,
 and proves exact deletion while unrelated sentinels remain unchanged. Cycle 3
 remains historically **NOT GREEN**; a new exact candidate receives complete
 local gates and three fresh reviewers.
+
+## Cycle 3 remediation local gate
+
+Exact remediation: `77884a9fceed6268cbdbec1310de3f94a9c5a230`.
+
+The execution-time permission helper now includes `EROFS` with `EACCES` and
+`EPERM` at every root, parent, target, and unlink mapping without changing
+construction taxonomy. The complete phase/site/ordinal matrix exercises all
+three errnos. An isolated public child-process regression sets `umask 0777`,
+repairs only its workspace directory to mode `0700`, creates mode-zero regular
+file and empty-directory targets, proves exact deletion results, and preserves
+file and directory sentinels outside the workspace.
+
+Rust/Cargo 1.94.1 formatting, workspace all-target/all-feature warnings-denied
+Clippy, workspace tests, and two doctests are green. Focused totals are 28/29
+private, 21 direct, five engine, seven host, and one core contract; discovery
+is 739/789 with zero benchmarks. Python 130, pinned-fx compatibility, cargo-
+deny 0.20.2, cargo-audit 0.22.2 over 1,225 advisories and 175 dependencies,
+Linux/FreeBSD/WASI plus active Node 1/1, and docs 64/445/295/0 pass. The 16-file
+delivered-base diff is +6,404/-63 with zero added unsafe Rust and no Cargo or
+CLI changes. Optional all-feature Linux cross remains a host C-sysroot failure
+in `aws-lc-sys` before product Rust. A fresh locked 319,152-byte arm64 Mach-O
+CLI has SHA-256
+`951ff7ce945a6fa446dfd87a7d54a6dd962776a8a021d4af6e68d6bd18e963e8`
+and passes bare/help/human-status/JSON-status smoke with empty stderr.
+
+Cycle 3 remains historically not green. A tree-identical marker must receive
+three fresh cycle-4 reviews before any behavior-green claim.
 
 ## Formal adversarial protocol
 

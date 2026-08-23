@@ -66,9 +66,10 @@ remain pending. Exact cycle-2 remediation
 local gate. Tree-identical cycle-3 candidate
 `24f851d2d3db21735124729bb1b0a14adf7ae864` is **NOT GREEN** with two
 low findings: validation-site `EROFS` taxonomy and missing retained hostile-
-umask evidence. Remediation and another fresh same-SHA cycle remain pending.
-The remaining native tools, CLI ownership, and Milestone 03 completion boundary
-remain pending.
+umask evidence. Exact remediation
+`77884a9fceed6268cbdbec1310de3f94a9c5a230` passes the complete replacement
+local gate; another fresh same-SHA cycle remains pending. The remaining native
+tools, CLI ownership, and Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1192,7 +1193,11 @@ review cycle produced exact candidate
 green with zero findings; correctness/API is not green only for low validation-
 site `EROFS` taxonomy; filesystem/robustness is not green only for low missing
 hostile-umask evidence and found no production defect. Mapping/matrix and
-isolated child-process evidence remediations are in progress.
+isolated child-process evidence remediations compose in exact
+`77884a9fceed6268cbdbec1310de3f94a9c5a230`, which passes the complete local
+gate: focused 28/29 private, 21 direct, five engine, seven host, one core;
+discovery 739/789 with zero benchmarks; workspace, Python, compatibility,
+dependency, portability, docs, diff, and fresh release-smoke gates green.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1491,9 +1496,12 @@ gate:
   exact cycle-3 candidate `24f851d` is performance/concurrency green but
   correctness/API and filesystem/robustness not green with one low finding
   each: validation-site `EROFS` taxonomy and missing hostile-umask regression.
-  Remediation, another fresh same-SHA review, feature delivery, and `main`
-  delivery remain pending, so the combined native-tool checkbox stays
-  unchecked and the delivered-slice count remains twenty-one.
+  Exact remediation `77884a9` passes complete local gates with 28/29 private,
+  21 direct, five engine, seven host, one core, 739/789 discovery, workspace,
+  Python, compatibility, dependency, portability, documentation, diff, and
+  release-smoke evidence green. Another fresh same-SHA review, feature
+  delivery, and `main` delivery remain pending, so the combined native-tool
+  checkbox stays unchecked and the delivered-slice count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
