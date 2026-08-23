@@ -1,6 +1,6 @@
 # Milestone 03 native `edit_file` review 01
 
-Status: **BEHAVIOR GREEN — delivery pending**
+Status: **DELIVERED — final documentation record workflows pending**
 
 ## Base and contract gate
 
@@ -360,8 +360,8 @@ remote delivery work and do not imply a known product defect.
 - [x] Exact seven-tool alphabetical host catalog, original-plus-six-clone
   descriptor identity, complete `write_file` regression, native macOS behavior,
   Linux/FreeBSD/WASI compilation, and active unsupported behavior.
-- [ ] Exact native Linux execution remains part of the formal and remote gate;
-  the local Linux result is compilation evidence only.
+- [x] Exact native Linux and macOS execution is green under the documentation
+  seal's exact feature CI; the local Linux result is compilation evidence only.
 - [x] Private production-helper evidence proves the exact 16,384-byte
   serialized-result guard because every public success payload is smaller.
 
@@ -399,17 +399,29 @@ order and adds the thirtieth benchmark-harness test. The 130-test result and
 pinned compatibility result are harness-correctness evidence, not a product-
 performance result or compatibility-status promotion.
 
-## Cycle-4 delivery gates
+## Cycle-4 delivery result
 
 Cycle-4 behavior review is green on exact SHA
-`78d6fd7e0c42ec97f4f176e8378ab774c25893ca`. Delivery remains pending until
-the documentation seal receives exact feature-branch CI and benchmark
-workflows, `main` is fast-forwarded without force, and that exact `main` SHA
-receives green CI and benchmark workflows. Documentation-only records are
-exempt from a separate adversarial cycle under the user's instruction, but
-their applicable remote workflows remain required.
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca`. Documentation seal
+`c1268fdf463e11242b7b916add70675ae91ed115` passed exact feature CI
+`32650254095` across all six jobs. Exact feature benchmark workflow
+`32650254086` passed both jobs and retains two nonexpired artifacts bound to
+that exact SHA.
 
-## Pending lineage
+`main` was fast-forwarded without force from exact prior main
+`242adfed4be717baf7cd07275aae40ec8a3637f6` to the documentation seal. Exact
+main CI `32650593685` passed all six jobs. Exact main benchmark workflow
+`32650593703` passed both jobs and retains two nonexpired exact-SHA artifacts.
+Native `edit_file` is therefore delivered as the twenty-first bounded
+Milestone 03 slice.
+
+The remaining Milestone 03 native tools, top-level CLI ownership, and composed
+end-to-end boundary remain pending. This final delivery record is documentation-
+only and is exempt from adversarial review under the user's instruction. Its
+own exact feature CI and benchmark workflows and exact `main` CI and benchmark
+workflows remain required after push and cannot be self-recorded.
+
+## Delivery lineage
 
 - Exact base: `242adfed4be717baf7cd07275aae40ec8a3637f6`
 - Contract: `bb0c381f8b044f7849bef80cc482034e1dd57ecf`
@@ -472,12 +484,22 @@ their applicable remote workflows remain required.
 - Cycle-4 filesystem/robustness track: green, zero findings
 - Cycle-4 performance/concurrency track: green, zero findings
 - Behavior-green SHA: `78d6fd7e0c42ec97f4f176e8378ab774c25893ca`
-- Documentation seal: pending
-- Exact feature CI and benchmark evidence: pending
-- No-force fast-forward `main`: pending
-- Exact `main` CI and benchmark evidence: pending
+- Documentation seal:
+  `c1268fdf463e11242b7b916add70675ae91ed115`
+- Exact feature CI: `32650254095`, all six jobs green
+- Exact feature benchmark evidence: `32650254086`, both jobs green with two
+  nonexpired exact-SHA artifacts
+- No-force fast-forward `main`:
+  `242adfed4be717baf7cd07275aae40ec8a3637f6` to
+  `c1268fdf463e11242b7b916add70675ae91ed115`
+- Exact main CI: `32650593685`, all six jobs green
+- Exact main benchmark evidence: `32650593703`, both jobs green with two
+  nonexpired exact-SHA artifacts
+- Native `edit_file`: delivered as bounded Milestone 03 slice twenty-one
+- Final documentation record feature CI/benchmark and main CI/benchmark
+  workflows: pending after push; they cannot be self-recorded
 
-The cycle-4 candidate is behavior-green but establishes no feature-delivery,
-`main`, compatibility-status promotion, equivalence, or product-performance
-approval. Zig remains solely the pinned upstream fx benchmark build input; the
-machine-god product implementation is Rust.
+This delivery record establishes no full Milestone 03 completion,
+compatibility-status promotion, equivalence, or product-performance approval.
+Zig remains solely the pinned upstream fx benchmark build input; the machine-
+god product implementation is Rust.

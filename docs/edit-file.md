@@ -1,6 +1,6 @@
 # Native `edit_file` contract
 
-Status: **BEHAVIOR GREEN — delivery pending**
+Status: **DELIVERED — final documentation record workflows pending**
 
 This document freezes the twenty-first bounded Milestone 03 slice from exact
 delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
@@ -29,10 +29,16 @@ production atomicity defect. Cycle-4 source component
 `78d6fd7e0c42ec97f4f176e8378ab774c25893ca`, whose immediate parent is
 `12470d9e6c4c9301a0eeaef34e01a1ab31c84d07`, received three fresh cycle-4
 **GREEN**, zero-finding reviews for correctness/API, filesystem/robustness, and
-performance/concurrency. Exact feature delivery, no-force fast-forward
-integration, and exact `main` workflows remain pending. Documentation-only
-records are exempt from their own adversarial cycle under the user's explicit
-instruction.
+performance/concurrency. Documentation seal
+`c1268fdf463e11242b7b916add70675ae91ed115` is green under exact feature CI
+`32650254095` across all six jobs and feature benchmark workflow `32650254086`
+across both jobs with two nonexpired exact-SHA artifacts. `main` was fast-
+forwarded without force from `242adfed4be717baf7cd07275aae40ec8a3637f6` to
+that seal and is green under exact CI `32650593685` across all six jobs and
+benchmark workflow `32650593703` across both jobs with two nonexpired exact-SHA
+artifacts. Native `edit_file` is delivered as the twenty-first bounded
+Milestone 03 slice. Documentation-only records are exempt from their own
+adversarial cycle under the user's explicit instruction.
 
 `edit_file` replaces exactly one occurrence of exact text in one existing
 workspace file. It does not grant file creation, a general read capability, or
@@ -563,8 +569,9 @@ unsafe Rust. A freshly built locked arm64 Mach-O release CLI has SHA-256
 `66d1db86666764b68f79bcb5eb01a6413aab9f27d795a81b27152aa0c24add9d` and
 passes bare, help, and status smoke paths.
 
-This is behavior-green evidence only. It establishes no delivery,
-compatibility-status promotion, product-performance, or fx-equivalence claim.
+This exact-candidate evidence established behavior-green review, not by itself
+delivery, compatibility-status promotion, product-performance, or fx
+equivalence. Delivery evidence is recorded below.
 
 ## Required independent evidence
 
@@ -609,14 +616,28 @@ review tracks confirmed that evidence covers:
 
 Focused suites ran first, followed by the complete exact-candidate Rust 1.94.1,
 repository, dependency, portability, documentation, diff, release-smoke, and
-clean-worktree gates recorded above. Exact native Linux execution remains part
-of remote delivery rather than a local cross-compilation claim.
+clean-worktree gates recorded above. Exact native Linux and macOS execution are
+green under the seal's exact feature CI; the local Linux result remains only
+compilation evidence.
 
-Behavior review is complete. Delivery still requires exact feature-branch CI
-and benchmark workflows, a no-force fast-forward to `main`, and exact `main` CI
-and benchmark workflows. This documentation-only behavior seal does not
-receive a separate adversarial review under the user's explicit instruction,
-but its applicable remote workflows remain required.
+## Delivery evidence
+
+Documentation seal `c1268fdf463e11242b7b916add70675ae91ed115` passed exact
+feature CI `32650254095` across all six jobs. Exact feature benchmark workflow
+`32650254086` passed both jobs and retains two nonexpired artifacts bound to
+that exact SHA. `main` was fast-forwarded without force from exact prior main
+`242adfed4be717baf7cd07275aae40ec8a3637f6` to the seal. Exact main CI
+`32650593685` passed all six jobs; exact main benchmark workflow `32650593703`
+passed both jobs and retains two nonexpired exact-SHA artifacts. This completes
+delivery of native `edit_file` as the twenty-first bounded Milestone 03 slice.
+
+The remaining Milestone 03 native tools, top-level CLI ownership, and composed
+end-to-end boundary remain pending, so Milestone 03 is not complete. This final
+delivery record is documentation-only and is exempt from adversarial review
+under the user's instruction. Its own exact feature CI and benchmark workflows
+and exact `main` CI and benchmark workflows remain required after push and
+cannot be self-recorded. This record makes no product-performance claim, fx-
+equivalence claim, or compatibility-status promotion.
 
 ## Pinned fx input and deliberate differences
 

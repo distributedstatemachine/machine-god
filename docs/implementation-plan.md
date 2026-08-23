@@ -43,18 +43,15 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty delivered bounded slices. The next bounded `edit_file` slice is
-**BEHAVIOR GREEN — DELIVERY PENDING**. Exact cycle-3 candidate
-`da1537b229393007101264cd7bc8fd12ee393a3d` was correctness/API and
-performance/concurrency green with zero findings. Filesystem/robustness was not
-green only for four low deterministic-evidence gaps and reported no production
-atomicity defect. Source and independent-test remediation components
-`985b232731883f7a5c18f8f7cbba56dbedfc7c6e` and
-`3cbb8956477af30cf5f8d63f118e597793267efc` compose through exact integrated
-SHA `d0d188b39290a50f7f10d7e4665cf694abdfc460`. Exact tree-identical candidate
-`78d6fd7e0c42ec97f4f176e8378ab774c25893ca` is green with zero findings in all
-three fresh cycle-4 tracks. Exact feature workflows, no-force fast-forward
-integration, and exact `main` workflows remain pending.
+with twenty-one delivered bounded slices. Native `edit_file` is delivered on
+documentation seal `c1268fdf463e11242b7b916add70675ae91ed115`. Exact feature
+CI `32650254095` passed all six jobs, and feature benchmark workflow
+`32650254086` passed both jobs with two nonexpired exact-SHA artifacts. `main`
+was fast-forwarded without force from
+`242adfed4be717baf7cd07275aae40ec8a3637f6` to the seal; exact main CI
+`32650593685` passed all six jobs, and main benchmark workflow `32650593703`
+passed both jobs with two nonexpired exact-SHA artifacts. The remaining native
+tools, CLI ownership, and Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -857,8 +854,8 @@ parent creation, external-path access, target-content read, CLI behavior,
 benchmark workload, product-performance claim, or fx-equivalence claim. The
 product remains Rust; Zig remains only the pinned upstream fx benchmark input.
 
-The twenty-first bounded Milestone 03 slice, native `edit_file`, is **BEHAVIOR
-GREEN — DELIVERY PENDING** from exact delivered base
+The twenty-first bounded Milestone 03 slice, native `edit_file`, is
+**DELIVERED** from exact delivered base
 `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
 `bb0c381f8b044f7849bef80cc482034e1dd57ecf` is green under exact CI
 `32634883133` and benchmark workflow `32634883139`. Production and independent
@@ -876,8 +873,8 @@ Cycle-2 production and independent evidence are composed at exact behavior SHA
 `d0d188b39290a50f7f10d7e4665cf694abdfc460`; documentation-only parent
 `12470d9e6c4c9301a0eeaef34e01a1ab31c84d07` and tree-identical freeze marker
 `78d6fd7e0c42ec97f4f176e8378ab774c25893ca` produce the exact reviewed
-candidate. This changes no delivered-slice count: feature workflows, no-force
-fast-forward integration, and exact `main` workflows remain pending.
+candidate. Documentation seal `c1268fdf463e11242b7b916add70675ae91ed115`
+completed exact feature and `main` delivery gates recorded below.
 
 The frozen strict effect-free input is exactly required UTF-8 `path`,
 `old_string`, and `new_string`, with no unknown fields. Path normalization is
@@ -1045,19 +1042,29 @@ Mach-O release CLI has SHA-256
 `66d1db86666764b68f79bcb5eb01a6413aab9f27d795a81b27152aa0c24add9d` and
 passes bare, help, and status smoke paths.
 
-Exact feature workflows, a no-force fast-forward to `main`, and exact `main`
-workflows remain pending. Documentation-only records are exempt from another
-adversarial cycle under the user's instruction, but not from applicable remote
-workflows. This records no delivery, compatibility-status promotion, product-
-performance, or fx-equivalence claim. The normative boundary and pending
-lineage are in
+Documentation seal `c1268fdf463e11242b7b916add70675ae91ed115` passed exact
+feature CI `32650254095` across all six jobs and feature benchmark workflow
+`32650254086` across both jobs with two nonexpired exact-SHA artifacts. `main`
+was fast-forwarded without force from
+`242adfed4be717baf7cd07275aae40ec8a3637f6` to the seal. Exact main CI
+`32650593685` passed all six jobs; main benchmark workflow `32650593703` passed
+both jobs and retains two nonexpired exact-SHA artifacts. Native `edit_file` is
+delivered as bounded Milestone 03 slice twenty-one.
+
+The remaining native tools, CLI ownership, and composed end-to-end boundary
+remain pending, so Milestone 03 is not complete. This final delivery record is
+documentation-only and exempt from adversarial review under the user's
+instruction. Its own exact feature CI and benchmark workflows and exact `main`
+CI and benchmark workflows remain required after push and cannot be self-
+recorded. This records no compatibility-status promotion, product-performance,
+or fx-equivalence claim. The normative boundary and delivery lineage are in
 [`edit-file.md`](edit-file.md) and the
 [`edit_file` review](reviews/m03-edit-file-review-01.md). Zig remains solely the
 pinned upstream benchmark build input; the product implementation remains Rust.
 
 ### Milestone 03 completion boundary
 
-The twenty delivered slices do not complete Milestone 03.
+The twenty-one delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -1240,7 +1247,7 @@ gate:
   record is documentation-only and exempt from adversarial review under the
   user's instruction; its own exact feature and `main` workflows are required
   after push and cannot be self-recorded. The
-  twenty-first `edit_file` slice is **IN PROGRESS** from exact delivered base
+  twenty-first `edit_file` slice is **DELIVERED** from exact delivered base
   `242adfed4be717baf7cd07275aae40ec8a3637f6`. Its strict effect-free contract,
   distinct `FilesystemAccess::Edit` authority, exact-one overlapping matcher,
   393,216-step public work cap, bounded existing-file atomic-replacement
@@ -1290,13 +1297,17 @@ gate:
   with zero findings in all three fresh cycle-4 tracks. The exact Rust 1.94.1,
   684/733-test discovery, 130-test Python, pinned-fx, dependency,
   Linux/FreeBSD/WASI and active Node, documentation, no-unsafe/diff, and fresh
-  release-smoke gates are green. Exact feature workflows, no-force fast-forward
-  integration, and exact `main` workflows remain pending; `edit_file` is not
+  release-smoke gates are green. Documentation seal `c1268fd` passed feature CI
+  `32650254095` and benchmark workflow `32650254086` with two exact-SHA
+  artifacts, then was fast-forwarded without force from `242adfe` to `c1268fd`
+  on `main`. It is green there under CI `32650593685` and benchmark workflow
+  `32650593703` with two nonexpired exact-SHA artifacts. Native `edit_file` is
   delivered.
   Documentation-only commits are exempt from a separate adversarial cycle under
-  the user's instruction and are included in the replacement candidate. The
-  remaining native tools are
-  incomplete, so delivery of this slice does not change the combined checkbox.
+  the user's instruction. This final record's own exact feature CI/benchmark
+  and `main` CI/benchmark workflows are required after push and cannot be self-
+  recorded. The remaining native tools are incomplete, so delivery of this
+  slice does not change the combined checkbox or complete Milestone 03.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
