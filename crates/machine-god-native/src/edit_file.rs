@@ -1462,8 +1462,8 @@ fn read_bounded_stable_for_phase_with(
             ReadPhase::Staged => write_failed(),
         });
     }
-    let stable_size = usize::try_from(final_fingerprint.size)
-        .map_err(|_| map_read_phase_failure(phase))?;
+    let stable_size =
+        usize::try_from(final_fingerprint.size).map_err(|_| map_read_phase_failure(phase))?;
     if length > max_bytes || stable_size > max_bytes {
         return Err(map_read_phase_too_large(phase));
     }
