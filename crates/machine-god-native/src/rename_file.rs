@@ -105,8 +105,9 @@ impl Error for RenameFileToolOpenError {}
 /// Linux and macOS execution accepts only an existing regular-file source and
 /// an absent destination whose parents already exist. It uses one no-replace
 /// rename syscall. Portable rename has no source-inode compare-and-swap, so a
-/// final-window replacement can be moved; postcommit identity verification
-/// prevents that outcome from being reported as success.
+/// final-window regular, directory, symlink, or special-file replacement can
+/// be moved; postcommit identity verification prevents that outcome from being
+/// reported as success.
 pub struct RenameFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,

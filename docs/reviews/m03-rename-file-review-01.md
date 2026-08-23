@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **LOCAL GATE GREEN — FORMAL REVIEW PENDING**
+Status: **CYCLE 1 REMEDIATION IN PROGRESS**
 
 ## Base and boundary
 
@@ -23,7 +23,11 @@ Status: **LOCAL GATE GREEN — FORMAL REVIEW PENDING**
 - Exact composed local-gate precursor:
   `43847fe5fd405e8b1d28808f0495dac859ebab15` (tree
   `80cb9a17d9bb2c1151bc43b72faebcb305dd78c2`).
-- Formal review and delivery have not yet completed.
+- Exact failed cycle-1 candidate:
+  `2bc4f9a8ad809cd38a6b7b36488b27bf9bd531f6` (tree
+  `44558a0e88019ad9063234642c08097b4123c5f2`).
+- All three cycle-1 tracks are **NOT GREEN**. Remediation is in progress;
+  replacement review and delivery have not completed.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are
@@ -112,6 +116,27 @@ A fresh locked 319,152-byte arm64 Mach-O release CLI has SHA-256
 passes exact bare, help, human-status, and JSON-status smoke paths. These
 results establish local readiness only, not review, delivery, compatibility
 promotion, fx equivalence, or product performance.
+
+## Formal review cycle 1
+
+Exact candidate `2bc4f9a8ad809cd38a6b7b36488b27bf9bd531f6`, tree
+`44558a0e88019ad9063234642c08097b4123c5f2`, is **NOT GREEN** in all three
+fresh tracks. The consolidated evidence findings require retained tests for
+the terminal source-replacement race across regular-file, symlink, FIFO, and
+directory replacements; `EINTR` ambiguity without retry; injected errno
+classification; postcommit destination-identity failure; same- and distinct-
+parent sync behavior and the 16-call bound; ignored late cancellation; and
+retained parents moved before the rename boundary. A separate low
+documentation finding identified that the contract described only symlink and
+special-file final replacements even though a directory entry can also be
+moved in that window.
+
+No replacement behavior SHA exists yet. The uncommitted remediation in
+progress expands the private module suite from five to 15 tests to cover the
+requested terminal-race, syscall, postcommit, durability, cancellation, and
+moved-parent matrix. The contract now clarifies the final directory-
+replacement race. These working-tree changes have not passed a complete
+replacement local gate and are not review or delivery evidence.
 
 ## Formal review protocol
 

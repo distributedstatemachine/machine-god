@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **LOCAL GATE GREEN — FORMAL REVIEW PENDING**
+Status: **CYCLE 1 REMEDIATION IN PROGRESS**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -18,14 +18,20 @@ Production composes on the feature branch at
 composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. Exact composed
 local-gate precursor `43847fe5fd405e8b1d28808f0495dac859ebab15`, tree
 `80cb9a17d9bb2c1151bc43b72faebcb305dd78c2`, is green. Fresh same-SHA review
-cycles, feature delivery, fast-forward main integration, and exact main
-workflows remain pending.
+cycle 1 is **NOT GREEN** in all three tracks on exact candidate
+`2bc4f9a8ad809cd38a6b7b36488b27bf9bd531f6`, tree
+`44558a0e88019ad9063234642c08097b4123c5f2`. Remediation is in progress;
+replacement review, feature delivery, fast-forward main integration, and exact
+main workflows remain pending.
 
-`rename_file` moves one existing regular file between two confined names while
-preserving the file object. It does not read content, overwrite a destination,
-create a parent, move a directory, follow a symlink, access an external path,
-or fall back to copy-and-delete. It is library-only in this slice. The product
-remains Rust; Zig remains solely a pinned upstream benchmark build input.
+`rename_file` validates and authorizes one existing regular file between two
+confined names, and reports success only when that same file object is observed
+at the destination. It does not accept a directory, symlink, or special-file
+source, read content, overwrite a destination, create a parent, access an
+external path, or fall back to copy-and-delete. The unavoidable final source-
+replacement race is qualified below. It is library-only in this slice. The
+product remains Rust; Zig remains solely a pinned upstream benchmark build
+input.
 
 ## Public API and schema
 
@@ -164,10 +170,12 @@ parents receive the same bounded best-effort sync.
 rename has no inode compare-and-swap for the source. A different entry installed
 after final validation can be the entry moved. The postcommit identity check
 prevents false success but cannot roll back that move; it returns ambiguity.
-Symlink or special-file replacements are moved as directory entries without
-following referents. The tool does not promise the old name remains absent or
-the new name remains unchanged after return because another actor can recreate,
-remove, or replace pathnames.
+Regular-file, symlink, FIFO or other special-file, and directory replacements
+can therefore be moved as directory entries in this final window without
+following referents. None can produce success unless its identity is the
+original validated regular file. The tool does not promise the old name remains
+absent or the new name remains unchanged after return because another actor can
+recreate, remove, or replace pathnames.
 
 Retained descriptors prevent pathname replacement from redirecting traversal.
 A retained source or destination parent moved elsewhere before the syscall can
@@ -228,7 +236,13 @@ fx-equivalence or product-performance claim.
 Destination overwrite, parent creation, directory trees, symlink moves,
 external paths, cross-filesystem copy/delete, non-Linux/macOS hardening, CLI
 ownership, richer permission modes, benchmark workloads, and performance claims
-remain outside this slice. Production, independent evidence, and the exact
-composed local gate are green. Three fresh same-SHA adversarial reviews, exact
-feature workflows, fast-forward integration, and exact main workflows are still
+remain outside this slice. Production, independent evidence, and the recorded
+precursor local gate were green before formal cycle 1. That exact candidate is
+not green: retained evidence was missing for the terminal replacement-race,
+`EINTR`/errno, postcommit, sync-bound, late-cancellation, and moved-parent
+matrix, and the final directory-replacement wording required clarification.
+The working-tree remediation expands the private suite to 15 tests and
+clarifies the directory race, but no replacement SHA or complete replacement
+local gate is claimed. Three fresh same-SHA adversarial reviews, exact feature
+workflows, fast-forward integration, and exact main workflows are still
 required before delivery.

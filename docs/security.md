@@ -934,8 +934,10 @@ absent destination through both validation passes.
 
 The irreversible boundary is exactly one no-replace `renameat_with` call after
 the final cancellation check. It is never retried, including after `EINTR`;
-there is no overwrite, parent creation, directory or symlink move, external
-path, content read, staging, or copy/delete fallback. After success, later
+there is no overwrite, parent creation, external path, content read, staging,
+or copy/delete fallback, and a directory, symlink, or special source is never
+accepted by validation. The documented final source-replacement race can still
+move any replacement entry before returning ambiguity. After success, later
 cancellation is ignored while the destination's device/inode/type is compared
 with the validated source and each unique parent is synchronized under a
 16-call cumulative `fsync` cap. Distinct source and destination parents are
