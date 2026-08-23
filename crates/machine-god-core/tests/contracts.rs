@@ -94,6 +94,31 @@ fn delete_filesystem_access_has_exact_stable_json_contract() {
     );
 }
 
+#[test]
+fn filesystem_rename_capability_has_exact_stable_json_contract() {
+    let capability = Capability::FilesystemRename {
+        old_path: "scope/old.txt".to_owned(),
+        new_path: "scope/new.txt".to_owned(),
+    };
+    assert_eq!(
+        serde_json::to_value(&capability).unwrap(),
+        json!({
+            "type": "filesystem_rename",
+            "old_path": "scope/old.txt",
+            "new_path": "scope/new.txt"
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<Capability>(json!({
+            "type": "filesystem_rename",
+            "old_path": "scope/old.txt",
+            "new_path": "scope/new.txt"
+        }))
+        .unwrap(),
+        capability
+    );
+}
+
 impl EngineTestSessions for Engine {
     fn create_test_session(&self, id: SessionId) -> Session {
         let incarnation = test_incarnation(&id);
