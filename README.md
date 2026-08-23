@@ -6,17 +6,17 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Milestones 01 and 02 are complete, and Milestone 03 is in progress with sixteen
-delivered bounded slices plus a seventeenth candidate. The
+Milestones 01 and 02 are complete, and Milestone 03 is in progress with
+seventeen delivered bounded slices. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
 policy. It also includes bounded Unix-only `read_file` and one-level
 `list_files` library capabilities rooted in host-injected workspaces. The
-seventeenth candidate adds bounded no-follow `file_info` metadata inspection
-under a distinct exact authorization kind. Its local gates are green; it
-is green under all three replacement adversarial tracks and remains under
-remote review, so it is not delivered. The
+seventeenth delivered slice adds bounded no-follow `file_info` metadata
+inspection under a distinct exact authorization kind. Its local gates, all
+three replacement adversarial tracks, and exact feature and `main` delivery
+workflows are green. The
 repository also includes a bounded AI Gateway codec over an injected host
 transport. An optional,
 native-only HTTPS transport for that codec is the seventh integrated bounded
@@ -58,9 +58,9 @@ A twelfth bounded library slice implements `NativeReferenceHost` for Linux
 and macOS behind the optional `ai-gateway-http` and non-WebAssembly gate. It
 composes an already validated native configuration with the AI Gateway
 provider, either production HTTP from an injected credential snapshot or a
-trusted injected custom transport, one shared retained workspace feeding
-the delivered `list_files` and `read_file` tools, with candidate `file_info`
-joining that same retained identity, the existing file session store, and the
+trusted injected custom transport, one shared retained workspace feeding the
+delivered `file_info`, `list_files`, and `read_file` tools under that same
+retained identity, the existing file session store, and the
 ask handler over an injected prompter. Construction remains synchronous and
 creates no root, runtime, network request, prompt operation, session record, or
 background work. Its final delivery record is integrated on `main` at
@@ -157,7 +157,8 @@ CLI behavior and makes no fx equivalence or performance claim. See the
 [native session-listing contract](docs/native-session-listing.md) and
 [review record](docs/reviews/m03-native-session-listing-review-01.md).
 
-The seventeenth bounded candidate adds Linux/macOS library-only `file_info`.
+The delivered seventeenth bounded slice adds Linux/macOS library-only
+`file_info`.
 Strict effect-free preflight accepts only a required 4,096-byte-bounded
 workspace-relative path, prepares `FilesystemAccess::Metadata`, and gives
 policy and execution the exact same normalized path. Allowed execution walks
@@ -174,16 +175,23 @@ and compose with production at `f228c06`, where the initial 34 focused tests are
 green. Review hardening composes at `b69ec4b`, bringing the independently owned
 focused suite to 36 green tests plus five private unit tests. Required local
 gates and all three replacement adversarial tracks are green on exact candidate
-`4193ecc`. Exact feature and `main` workflows remain pending, so the overall
-native-tool checklist stays open. See the
-[`file_info` candidate contract](docs/file-info.md) and
+`4193ecc`. Documentation seal and integrated `main` SHA
+`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` is green under exact feature CI
+run `32605071080` (successful retry attempt 2), feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four report that exact seal SHA. The benchmark successes are
+delivery evidence only and make no product-performance claim. The overall
+native-tool checklist stays open. This documentation-only commit is the final
+delivery record, is explicitly exempt from another adversarial review after the
+behavior was already green, and reports its own exact workflows at handoff. See
+the [`file_info` contract](docs/file-info.md) and
 [review record](docs/reviews/m03-file-info-review-01.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md),
-[`file_info` candidate contract](docs/file-info.md), and
+[`file_info` contract](docs/file-info.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the

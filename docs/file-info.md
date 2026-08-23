@@ -1,6 +1,7 @@
 # Native `file_info` tool
 
-Status: candidate contract for the seventeenth bounded Milestone 03 slice.
+Status: integrated contract for the delivered seventeenth bounded Milestone 03
+slice.
 Production is present at isolated SHA
 `5c2d129a3755dca0c8f7913b27614b70352fe2a4`; independent tests are present at
 isolated SHA `ca0091c181d8ffbecda008ee0f981516dc5cff7b` and compose with
@@ -9,11 +10,19 @@ initial focused tests are green. Finding-test hardening composes at `b69ec4b`,
 bringing the focused total to 36 plus five private unit tests. The first formal
 candidate is `8399ec7`; its three tracks were not all green. Required local
 gates are green on the replacement through `d445eb3`. Three replacement
-adversarial review tracks are green on exact candidate `4193ecc`; exact feature
-and `main` delivery workflows remain pending. `file_info` is a library
-capability in `machine-god-native`; the current CLI does not construct an engine,
-register this tool, prompt for permission, or change any invocation or output
-byte.
+adversarial review tracks are green on exact candidate `4193ecc`.
+Documentation seal and integrated `main` SHA
+`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
+`32605071080` on successful retry attempt 2, feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four workflows report that exact seal SHA. Benchmark success
+is delivery evidence only and makes no product-performance claim. This
+documentation-only commit is the final delivery record, is explicitly exempt
+from another adversarial review because behavior is already green, and reports
+its own exact feature and `main` workflows at handoff. `file_info` is a library
+capability in `machine-god-native`; the current CLI does not construct an
+engine, register this tool, prompt for permission, or change any invocation or
+output byte.
 
 ## Workspace authority and platform scope
 

@@ -26,15 +26,22 @@ bounded result is not exposed as fx-compatible CLI output. That first formal
 candidate was not green; all three review tracks and exact feature and `main`
 delivery workflows are green on its replacement lineage.
 
-The seventeenth [`file_info` candidate](file-info.md) is likewise library-only.
+The delivered seventeenth [`file_info` slice](file-info.md) is likewise
+library-only.
 It adds no `file_info`, workspace, or slash command and changes none of the
 accepted invocations, output bytes, diagnostics, or exit statuses below. Its
 production and independent tests compose at `f228c06`, where all 34 focused
 initial tests are green. Review hardening brings the focused total to 36 plus
 five private unit tests at `b69ec4b`. All three replacement adversarial tracks
-are green on exact candidate `4193ecc`; exact remote delivery remains pending.
-Its metadata result is not exposed as
-CLI output.
+are green on exact candidate `4193ecc`. Documentation seal and integrated
+`main` SHA `60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI
+run `32605071080` on successful retry attempt 2, feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four report that exact seal SHA. The benchmark successes are
+delivery evidence only, not a product-performance claim. This documentation-only
+commit is the final delivery record, is explicitly exempt from another
+adversarial review after behavior was green, and reports its own exact workflows
+at handoff. Its metadata result is not exposed as CLI output.
 
 ## Accepted invocations
 

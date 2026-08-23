@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has sixteen delivered bounded slices plus a seventeenth candidate.
+Milestone 03 has seventeen delivered bounded slices.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -80,8 +80,8 @@ The twelfth slice implements a Linux/macOS-only `NativeReferenceHost` behind
 the existing `ai-gateway-http` and non-WebAssembly gate. It composes an
 already validated config selection with the provider, either production HTTP
 from an injected credential snapshot or a trusted custom transport, one shared
-retained workspace feeding delivered `list_files` and `read_file`, with
-candidate `file_info` joining that same identity, the existing file store under
+retained workspace feeding delivered `file_info`, `list_files`, and `read_file`
+under that same identity, the existing file store under
 a separate session root, and the ask adapter over an injected prompter. It uses
 default engine limits and the no-op event sink. The CLI
 remains byte-unchanged and thin. The contract and lineage are
@@ -148,7 +148,7 @@ Portable behavior `17f1884` and seal `d3312d7` passed exact feature and `main`
 delivery gates.
 The contract is in
 [`native-session-listing.md`](native-session-listing.md).
-The seventeenth candidate adds bounded Linux/macOS `file_info` metadata
+The delivered seventeenth slice adds bounded Linux/macOS `file_info` metadata
 inspection under a distinct `FilesystemAccess::Metadata` kind. It uses the
 same retained workspace authority and lexical path confinement as `read_file`,
 walks ancestors descriptor-relatively and no-follow, and inspects the final
@@ -156,14 +156,21 @@ component with one no-follow metadata operation without opening it. The exact
 bounded result reports normalized path, fixed kind, checked size, signed Unix
 modified time, and a nullable lexical regular-file extension. It therefore
 reports final symlinks rather than their targets and classifies special files
-without opening them. The composed host candidate supplies exactly
+without opening them. The composed host supplies exactly
 `file_info`, `list_files`, and `read_file`; core exposes the catalog in
 deterministic alphabetical order. Production `5c2d129` and independent tests
 `ca0091c` compose at `f228c06`, where all 34 initial focused tests are green.
 Review hardening brings the focused total to 36 plus five private unit tests at
-`b69ec4b`. Three replacement tracks are green on exact candidate `4193ecc`;
-exact feature and `main` delivery remain pending.
-The contract and review plan are in
+`b69ec4b`. Three replacement tracks are green on exact candidate `4193ecc`.
+Documentation seal and integrated `main` SHA
+`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
+`32605071080` on successful retry attempt 2, feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four workflows report that exact seal SHA. Benchmark success
+is evidence only and supports no product-performance claim. This
+documentation-only commit is the final delivery record, is explicitly exempt
+from another adversarial review after the behavior was already green, and
+reports its own exact workflows at handoff. The contract and review record are in
 [`file-info.md`](file-info.md) and
 [`m03-file-info-review-01.md`](reviews/m03-file-info-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -179,7 +186,7 @@ synchronous native authority can load the resolved config file read-only.
 loader, and owns no product state. The exact surfaces are documented in
 [`cli.md`](cli.md) and [`configuration.md`](configuration.md). The separate
 [`read_file` contract](read-file.md) and
-[`list_files` contract](list-files.md), and the candidate
+[`list_files` contract](list-files.md), and the delivered
 [`file_info` contract](file-info.md), do not change either CLI surface. The
 separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
@@ -263,7 +270,7 @@ uses `symlink_metadata` on the final path, reports
 missing/inaccessible/wrong-kind states, and treats a final symlink as
 wrong-kind. It does not open, read, or parse the config file. Permission mode is
 fixed to `ask`; the CLI does not construct an engine, register `read_file`,
-`list_files`, or candidate `file_info`, or prompt for permission. The CLI
+`list_files`, or delivered `file_info`, or prompt for permission. The CLI
 serializes paths as JSON strings
 even in human status so path contents do not become terminal controls. Bare
 invocation keeps the bootstrap identity contract. Help, version, status, and
@@ -319,11 +326,11 @@ injected credential snapshot. Its runtime `credential_source()` remains the
 concrete selected OIDC-token or API-key source; the custom-transport override
 skips discovery and reports `None`. Configuration mutation or migration,
 permission modes beyond `ask`, a concrete prompt UI, runtime ownership, token
-fields in config, CLI composition, the native tools beyond bounded `read_file`
-and `list_files` and the candidate `file_info` library capability, session
+fields in config, CLI composition, the native tools beyond bounded `read_file`,
+`list_files`, and the delivered `file_info` library capability, session
 migration/encryption, CLI expansion, and composed release-binary end-to-end
-evidence remain open. The by-ID lifecycle and session-listing extension are
-delivered; `file_info` delivery remains pending.
+evidence remain open. The by-ID lifecycle, session-listing extension, and
+`file_info` are delivered; the broader native-tool inventory remains open.
 
 ```text
                         machine-god-core
@@ -360,17 +367,20 @@ The thirteenth slice extends that first validation stage to require
 arguments: the production path still consumes the host-injected snapshot, and
 the custom transport remains an explicit trusted authority override.
 
-The seventeenth candidate extends the composed workspace bundle from two to
+The delivered seventeenth slice extends the composed workspace bundle from two to
 exactly three descriptors of one retained directory identity: the original and
 two clones. Both path and prepared-root constructors supply exactly `file_info`,
 `list_files`, and `read_file`; core exposes that catalog alphabetically. Its metadata policy and
-execution receive the same normalized path. This candidate does not change
+execution receive the same normalized path. This slice does not change
 provider, permission, session-store, credential, transport, runtime, or CLI
 authority. Production is present at `5c2d129` / composed `1d93a65`;
 independent tests compose at `f228c06`, where all 34 initial focused tests are
 green. Review hardening brings the focused total to 36 plus five private unit
 tests at `b69ec4b`. All three replacement tracks are green on exact candidate
-`4193ecc`; exact remote delivery remains pending.
+`4193ecc`. Seal and integrated SHA `60dd54f273afc7e62fb4b3cc1fb1a347d739998b`
+is green under exact feature CI `32605071080` on successful retry attempt 2,
+feature benchmark evidence `32605071063`, main CI `32606050292`, and main
+benchmark evidence `32606050294`; all four report the exact seal SHA.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
@@ -390,7 +400,7 @@ retained-root equality or ancestry by device/inode identity and
 descriptor-relative parent walking. New
 `NativeReferenceHost` constructors consume that prepared value and transfer its
 workspace identity to the registered workspace tools and its state-root identity
-to `FileSessionStore` without reopening either path. The seventeenth candidate
+to `FileSessionStore` without reopening either path. The delivered seventeenth slice
 extends that transfer to all three tools. Config selection is validated
 by the composing constructor, and production credential discovery remains after
 the already prepared retained roots are accepted. Production and focused tests
@@ -785,7 +795,7 @@ bytes for the structured content and 44,130 bytes including core's fixed
 behavior, fixed redacted errors, and cancellation boundaries are in
 [`list-files.md`](list-files.md).
 
-The candidate native `file_info` tool uses one required path and the same
+The delivered native `file_info` tool uses one required path and the same
 effect-free 4,096-byte lexical confinement as `read_file`. Successful preflight
 produces `Capability::Filesystem(Metadata)` and prepared execution arguments
 containing exactly the same normalized path; nonempty current-directory forms
@@ -813,7 +823,7 @@ The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's
 ancestors and mount points beneath a retained root belong to that trusted host
 boundary. Hardened construction and traversal beyond Linux and macOS remain
-deferred for `list_files` and candidate `file_info`; `read_file` retains its
+deferred for `list_files` and delivered `file_info`; `read_file` retains its
 separately documented supported-Unix boundary.
 
 A preparation error consults no permission handler and starts no tool. It

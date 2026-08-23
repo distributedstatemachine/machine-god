@@ -1,13 +1,20 @@
 # Native reference-host composition
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice,
-with its workspace-tool composition extended by a seventeenth candidate.
-Sixteen slices are delivered. Seventeenth-slice production `5c2d129` and
+with its workspace-tool composition extended by the delivered seventeenth
+slice. Seventeen slices are delivered. Seventeenth-slice production `5c2d129` and
 independent tests `ca0091c` compose at `f228c06`, where all 34 focused tests are
 green. Review hardening composes at `b69ec4b`, bringing the focused total to 36
 plus five private unit tests. The first formal candidate was not green; three
-replacement tracks are green on exact candidate `4193ecc`, and exact remote
-delivery remains pending.
+replacement tracks are green on exact candidate `4193ecc`. Documentation seal
+and integrated `main` SHA `60dd54f273afc7e62fb4b3cc1fb1a347d739998b`
+passed exact feature CI run `32605071080` on successful retry attempt 2, feature
+benchmark-evidence run `32605071063`, main CI run `32606050292`, and main
+benchmark-evidence run `32606050294`; all four workflows report that exact seal
+SHA. Benchmark success is delivery evidence only and makes no
+product-performance claim. This documentation-only commit is the final delivery
+record, is explicitly exempt from another adversarial review after behavior was
+already green, and reports its own exact workflows at handoff.
 The first formal sixteenth candidate is composed
 through `dec98e0`, whose three review tracks were not green. Its replacement
 source and test fixes are composed in exact behavior candidate
@@ -52,7 +59,7 @@ lineage is recorded in the
 
 `NativeReferenceHost` composes the existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and—in the seventeenth candidate—three confined read-only tools into
+adapter, and—through the delivered seventeenth slice—three confined read-only tools into
 one provider-neutral `Engine`. Their exact membership is `file_info`,
 `list_files`, and `read_file`, and core exposes that catalog in deterministic
 alphabetical order. It is a library surface in
@@ -82,18 +89,21 @@ tests and all three replacement review tracks green. Portable behavior
 normative behavior is in
 [`native-session-listing.md`](native-session-listing.md).
 
-The seventeenth candidate adds `file_info` beside integrated `list_files` and
+The delivered seventeenth slice adds `file_info` beside integrated `list_files` and
 `read_file`. It prepares a distinct `FilesystemAccess::Metadata` capability and exact
 normalized path, walks ancestors descriptor-relatively without following
 symlinks, and inspects the final object with no-follow metadata without opening
 it. Its bounded structured result and fixed redacted behavior are normative in
 [`file-info.md`](file-info.md). It changes no constructor arguments, provider,
 transport, permission, session, runtime, credential, or CLI authority. The
-candidate's production and independent tests compose at `f228c06`, where all 34
+slice's production and independent tests compose at `f228c06`, where all 34
 initial focused tests are green. Review hardening composes at `b69ec4b`, bringing
 the focused total to 36 plus five private unit tests. Three replacement tracks
-are green on exact candidate `4193ecc`; exact feature and `main` workflows
-remain pending.
+are green on exact candidate `4193ecc`; seal and integrated SHA
+`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` is green under feature CI
+`32605071080` on successful retry attempt 2, feature benchmark evidence
+`32605071063`, main CI `32606050292`, and main benchmark evidence `32606050294`.
+All four report the exact seal SHA.
 
 ## Feature and platform boundary
 
@@ -124,7 +134,7 @@ The delivered sixteenth slice's standalone `list_sessions` method uses that same
 Linux/macOS lifecycle gate without requiring `ai-gateway-http`. Listing through
 the composed wrapper inherits this page's stricter gate.
 
-The candidate standalone `FileInfoTool` is likewise supported on Linux and
+The delivered standalone `FileInfoTool` is likewise supported on Linux and
 macOS without requiring `ai-gateway-http`; other targets receive its fixed
 unsupported-platform construction failure. Registration through
 `NativeReferenceHost` inherits the composition gate above.
@@ -210,7 +220,7 @@ this order:
 6. construct `AiGatewayProvider` with the loaded configuration's projected
    model;
 7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly candidate `file_info`, `list_files`, and
+8. build `Engine` with exactly `file_info`, `list_files`, and
    `read_file`, default `EngineLimits`, and the default `NoopEventSink`; core's
    catalog exposes those names in deterministic alphabetical order.
 
@@ -224,7 +234,7 @@ endpoint and HTTP/TLS/status/cancellation policy.
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
 with one tool and two descriptor clones of the same opened directory object
-feed the others. The candidate composed engine registers exactly the existing
+feed the others. The composed engine registers exactly the existing
 one-level `list_files`, bounded UTF-8 `read_file`, and no-follow metadata
 `file_info`; it discovers or registers no other tool. This shared retained
 identity prevents separate path opens from selecting
@@ -291,7 +301,7 @@ The delivered sixteenth slice does not add construction effects. Creating its li
 future is also inert; only first poll can enumerate the retained root, validate
 canonical records, acquire their per-ID locks, or create private lock sidecars.
 
-The seventeenth candidate adds no construction effect beyond cloning and
+The delivered seventeenth slice adds no construction effect beyond cloning and
 retaining the already opened workspace descriptor for the third tool.
 `file_info` preparation is effect-free, and creating its execution future is
 inert; only first poll can traverse ancestor descriptors or inspect final
@@ -397,7 +407,7 @@ record.
 Neither that root slice nor this integrated composition implements a concrete
 terminal `PermissionPrompter`, allocates a session ID or
 `SessionIncarnationId`, or adds create/list/resume/replay/reset session
-lifecycle CLI commands. The seventeenth candidate adds only `file_info`; it does
+lifecycle CLI commands. The delivered seventeenth slice adds only `file_info`; it does
 not add the other remaining native tools, compose or run the CLI, or change any
 existing CLI byte. A reset under a reused session ID
 still requires a new host-generated incarnation before reuse.
@@ -422,8 +432,9 @@ three replacement tracks are green. Portable behavior `17f1884` and seal
 
 Deterministic end-to-end evidence through a freshly built release binary,
 remaining native-tool and CLI ownership, compatibility promotion, and
-product-performance claims remain open. Candidate `file_info` replacement
-reviews are green on exact `4193ecc`; exact remote delivery remains open. Its
+product-performance claims remain open. Delivered `file_info` replacement
+reviews are green on exact `4193ecc`; exact feature and `main` delivery is green
+at `60dd54f273afc7e62fb4b3cc1fb1a347d739998b`. Its
 initial 34 focused tests are present at `f228c06`, and finding hardening brings
 the total to 36 plus five private unit tests at `b69ec4b`. The slice does not
 alter the pinned fx inventory,
@@ -441,6 +452,5 @@ fifteenth supplies create/resume/replay/reset, and the delivered sixteenth
 slice supplies bounded IDs-only listing. The combined root-and-session-lifecycle
 item is complete: the replacement reviews and exact feature and `main` gates
 are green. Milestone 03 remains in
-progress because `file_info` is not yet delivered and the other remaining native tools,
-top-level CLI/slash-command ownership, and composed release-binary end-to-end
-evidence remain open.
+progress because the other remaining native tools, top-level CLI/slash-command
+ownership, and composed release-binary end-to-end evidence remain open.

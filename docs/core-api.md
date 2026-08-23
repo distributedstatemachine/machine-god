@@ -397,7 +397,7 @@ must not reinterpret their prepared arguments into broader authority.
 
 The concrete consumers are the native
 [`read_file` tool](read-file.md), [`list_files` tool](list-files.md), and the
-seventeenth-slice [`file_info` candidate](file-info.md).
+delivered seventeenth-slice [`file_info` tool](file-info.md).
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -424,7 +424,7 @@ so it remains within the default 64 KiB result limit. A configured lower result
 limit still applies after execution. Core does not add recursion, ordering,
 snapshot, or filesystem semantics to this native result.
 
-The candidate adds `FilesystemAccess::Metadata` as a distinct serialized
+The delivered slice adds `FilesystemAccess::Metadata` as a distinct serialized
 filesystem operation. It authorizes inspection of metadata for exactly one
 normalized path; it does not imply `Read`, `Enumerate`, mutation, symlink-target,
 or external-path authority. `file_info` effect-free preflight accepts only a
@@ -440,6 +440,17 @@ exact `{path, kind, size_bytes, modified: {unix_seconds, nanoseconds},
 extension}` content remains below 17 KiB at its independent worst case. Core
 does not infer any relationship among `Metadata`, `Read`, or `Enumerate`, and
 adds no filesystem or snapshot semantics to this result.
+
+Production and independent-test lineage is green through replacement behavior
+candidate `4193ecc`. Documentation seal and integrated `main` SHA
+`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
+`32605071080` on successful retry attempt 2, feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four workflows report that exact seal SHA. Benchmark success
+is evidence only, not a product-performance claim. This documentation-only
+commit is the final delivery record, is explicitly exempt from another
+adversarial review after behavior was green, and reports its own exact workflows
+at handoff.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

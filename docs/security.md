@@ -119,7 +119,7 @@ exact portable behavior candidate `17f1884`. Its correctness/API and security
 reviews are green; seal `d3312d7` resolves the documentation lineage finding
 and passed exact feature and `main` delivery gates. Its security contract is in
 [`native-session-listing.md`](native-session-listing.md).
-A seventeenth bounded candidate adds Linux/macOS `file_info` under a distinct
+A delivered seventeenth bounded slice adds Linux/macOS `file_info` under a distinct
 `FilesystemAccess::Metadata` authorization kind. It shares one retained
 workspace identity with `list_files` and `read_file`, follows no selected
 symlink, and does not open the final component. Final symlinks therefore report
@@ -127,8 +127,16 @@ themselves, while FIFO, socket, device, and other special objects can be
 classified without a blocking open. Production `5c2d129` and independent tests
 `ca0091c` compose at `f228c06`, where all 34 initial focused tests are green.
 Review hardening brings the focused total to 36 plus five private unit tests at
-`b69ec4b`. Three replacement tracks are green on exact candidate `4193ecc`;
-exact feature and `main` delivery remain pending.
+`b69ec4b`. Three replacement tracks are green on exact candidate `4193ecc`.
+Documentation seal and integrated `main` SHA
+`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
+`32605071080` on successful retry attempt 2, feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four workflows report that exact seal SHA. Benchmark success
+is delivery evidence only and makes no product-performance claim. This
+documentation-only commit is the final delivery record, is explicitly exempt
+from another adversarial review after behavior was green, and reports its own
+exact workflows at handoff.
 Its security contract is in [`file-info.md`](file-info.md).
 
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
@@ -200,8 +208,8 @@ acquisition kind may appear in config debug output; the model remains redacted.
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
-expansion, native tools beyond the bounded library-level `read_file` and
-`list_files` plus candidate `file_info`, composed release-binary end-to-end host
+expansion, native tools beyond the bounded library-level `read_file`,
+`list_files`, and delivered `file_info`, composed release-binary end-to-end host
 evidence, and compatibility or performance claims remain open. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
@@ -211,7 +219,7 @@ or CLI authority.
 The integrated `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. The thirteenth
 slice also requires configured credential source `environment`. It then
-opens the existing absolute workspace once and, in the seventeenth candidate,
+opens the existing absolute workspace once and, in the delivered seventeenth slice,
 clones that retained descriptor so exactly `list_files`, `read_file`, and
 `file_info` share one opened directory identity. This
 prevents path replacement between separate tool-construction opens from giving
@@ -251,7 +259,7 @@ invoke the injected prompter. Later production HTTP polling still requires a
 live host-owned Tokio runtime with I/O and time enabled and driven through
 teardown.
 
-The seventeenth candidate changes only the workspace-tool bundle. Path and
+The delivered seventeenth slice changes only the workspace-tool bundle. Path and
 prepared-root constructors distribute the original retained workspace
 descriptor plus two clones across three tools, all with the already validated
 identity. They supply exactly `file_info`, `list_files`,
@@ -625,7 +633,7 @@ enumeration, between entry reads, and after result validation and sorting. It
 cannot preempt one open or directory-read syscall already in flight and spawns
 no detached work.
 
-Candidate `file_info` uses the same explicit retained workspace boundary for a
+Delivered `file_info` uses the same explicit retained workspace boundary for a
 new, narrower `FilesystemAccess::Metadata` operation. That distinct enum value
 does not imply content `Read`, directory `Enumerate`, mutation, target-following,
 or external-path authority. Strict effect-free preflight accepts exactly a
@@ -682,7 +690,7 @@ components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
 points visible beneath a retained directory are trusted inputs. Hardened
 non-Linux/macOS workspace construction and traversal remain deferred for
-`list_files` and candidate `file_info`; `read_file` retains its separate
+`list_files` and delivered `file_info`; `read_file` retains its separate
 supported-Unix boundary. The normative surfaces are
 [`read-file.md`](read-file.md), [`list-files.md`](list-files.md), and
 [`file-info.md`](file-info.md).

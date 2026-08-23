@@ -32,12 +32,20 @@ is green under exact feature CI run `32589778343` and benchmark-evidence run
 force to `main` and green there under exact CI `32590429626` and benchmark
 evidence `32590429592`. This documentation-only commit is the final record; its
 exact feature and `main` workflows are reported at handoff.
-Milestone 03 remains `IN PROGRESS`. Sixteen slices are delivered. Seventeenth-
+Milestone 03 remains `IN PROGRESS`. Seventeen slices are delivered. Seventeenth-
 slice `file_info` production `5c2d129` and independent tests `ca0091c` compose
 at `f228c06`, where the initial 34 focused tests are green. Review hardening
 brings the focused total to 36 plus five private unit tests at `b69ec4b`. The
 first formal candidate was not green; all three replacement review tracks are
-green on exact candidate `4193ecc`, while exact remote delivery remains pending.
+green on exact candidate `4193ecc`. Documentation seal and integrated `main`
+SHA `60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
+`32605071080` on successful retry attempt 2, feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four workflows report that exact seal SHA. Benchmark success
+is delivery evidence only and makes no product-performance claim. This
+documentation-only commit is the final `file_info` delivery record, is
+explicitly exempt from another adversarial review after behavior was green, and
+reports its own exact workflows at handoff.
 The remaining
 native tools, CLI ownership, and composed end-to-end evidence also stay open.
 
@@ -260,7 +268,7 @@ and macOS; other targets receive no public runtime API for this slice.
 The new
 `NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots` and
 `NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots`
-constructors consume one `PreparedNativeRoots`. Under the seventeenth candidate,
+constructors consume one `PreparedNativeRoots`. Under the delivered seventeenth slice,
 they transfer its original retained workspace descriptor plus two clones to
 exactly `list_files`, `read_file`, and `file_info`, and its separately retained
 state-root identity to `FileSessionStore`, without reopening either path. The
@@ -320,7 +328,7 @@ or reset; the delivered fifteenth and sixteenth slices now supply that bounded
 library behavior. It does not allocate a session ID or a new incarnation for reset,
 change the session record schema, migrate or encrypt state, add a cleanup or
 repair command, supply a terminal prompter, or expand CLI ownership. The
-seventeenth candidate consumes its retained workspace identity for `file_info`
+delivered seventeenth slice consumes its retained workspace identity for `file_info`
 but adds no root-selection authority or behavior.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance

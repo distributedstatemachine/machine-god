@@ -1,7 +1,7 @@
 # Milestone 03 native `file_info` review 01
 
-Status: **REPLACEMENT REVIEWS GREEN — exact feature and `main` delivery
-pending**
+Status: **DELIVERED — replacement reviews and exact feature and `main`
+workflows green**
 
 ## Candidate
 
@@ -23,10 +23,12 @@ pending**
 - Replacement local-gate precursor:
   `d445eb384ceafad1f107e78d456c93aecc0bc5a2`
 - Replacement review head: `4193eccea7d46929a4f2e789f20f508200a346a0`
+- Documentation seal and integrated `main` head:
+  `60dd54f273afc7e62fb4b3cc1fb1a347d739998b`
 - Delivery branch: `agent/m03-file-info`
 - Toolchain: Rust and Cargo 1.94.1 exactly
 
-This candidate is the seventeenth bounded Milestone 03 slice. It adds the
+This delivered seventeenth bounded Milestone 03 slice adds the
 read-only Linux/macOS `file_info` library tool, a distinct
 `FilesystemAccess::Metadata` authorization kind, independent direct and engine
 tests, reference-host registration beside `list_files` and `read_file`, and the
@@ -168,11 +170,12 @@ All three fresh replacement tracks are green on exact candidate `4193ecc`:
   lineage resolve, CLI/benchmark/workflow surfaces remain unchanged, and the
   Rust-product/Zig-upstream-only boundary is intact.
 
-Per the user's instruction, the documentation-only review seal that records
-these results does not receive another adversarial cycle. Exact feature and
-`main` delivery gates remain mandatory.
+Per the user's instruction, documentation-only seals and delivery-evidence
+records that follow the already-green behavior do not receive another
+adversarial cycle. Exact feature and `main` delivery gates remained mandatory
+and are green below.
 
-## Local and pending remote gates
+## Local and remote delivery gates
 
 The replacement's 36 focused integration tests and five private unit tests,
 formatting, workspace/all-target/all-feature
@@ -184,13 +187,20 @@ Python gate is green with eight expected macOS skips. The first candidate's
 Python gate initially had one
 load-induced two-second timeout while a release build ran in parallel; that
 same regression reran green in isolation before the complete suite was rerun
-serially. This candidate changes no benchmark behavior.
+serially. This slice changes no benchmark behavior.
 
-After all three adversarial tracks are green, the coordinator must push the
-feature branch without force and wait for exact feature-SHA CI and benchmark-
-evidence workflows. Only then may the feature be fast-forwarded without force
-to `main`, whose exact workflows must also be green. No package or GitHub
-release is authorized.
+Documentation seal `60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact
+feature CI run `32605071080` on successful retry attempt 2 and exact feature
+benchmark-evidence run `32605071063`. It was fast-forwarded without force to
+`main` at that same exact SHA and passed exact main CI run `32606050292` and
+exact main benchmark-evidence run `32606050294`. All four workflows report exact
+seal SHA `60dd54f273afc7e62fb4b3cc1fb1a347d739998b`. Benchmark success is
+delivery evidence only and makes no product-performance claim.
+
+This documentation-only commit is the final delivery record. It is explicitly
+exempt from another adversarial review because exact production behavior was
+already green on all three replacement tracks; its own exact feature and `main`
+workflows are reported at handoff. No package or GitHub release is authorized.
 
 The benchmark workflow may continue obtaining Zig only to build the pinned
 upstream fx reference. `file_info` adds no benchmark workload or performance

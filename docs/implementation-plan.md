@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with sixteen delivered bounded slices plus a seventeenth candidate. The first
+with seventeen delivered bounded slices. The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
 green. Its source and test fixes are composed in exact behavior candidate
@@ -410,7 +410,8 @@ therefore adds no rich summaries, workspace/latest filter, cursor, pagination,
 CLI or slash command, and makes no fx-equivalence claim. The `sessions-json`
 benchmark remains unimplemented and claim-ineligible.
 
-The seventeenth bounded candidate adds Linux/macOS library-only `file_info`.
+The delivered seventeenth bounded slice adds Linux/macOS library-only
+`file_info`.
 Its strict effect-free preflight accepts only a required string `path`, bounds
 the requested and normalized forms to 4,096 UTF-8 bytes, applies the same
 lexical confinement as `read_file`, and prepares both
@@ -433,7 +434,7 @@ trailing-dot, multi-dot, retained-root rename/removal, concurrent replacement,
 single-stat snapshot, redaction, cancellation, and inert-future semantics are
 normative in [`file-info.md`](file-info.md).
 
-The candidate reference host registers exactly three workspace tools:
+The delivered reference-host extension registers exactly three workspace tools:
 `file_info`, `list_files`, and `read_file`; core exposes that catalog in
 deterministic alphabetical order. Prepared roots transfer descriptor clones of
 the same retained workspace identity so the three tools receive three
@@ -446,8 +447,15 @@ gates are green through composed precursor `0973acf`. First formal candidate
 `b69ec4b`, bringing the focused total to 36 plus five private unit tests; the
 two documentation findings are corrected at `9dbd188`. Replacement local gates
 are green through `d445eb3`, and all three replacement tracks are green on exact
-candidate `4193ecc`. Exact feature and `main` workflows and final delivery
-evidence remain pending.
+candidate `4193ecc`. Documentation seal and integrated `main` SHA
+`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
+`32605071080` on successful retry attempt 2, feature benchmark-evidence run
+`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
+`32606050294`; all four workflows report that exact seal SHA. Benchmark success
+is delivery evidence only, not a product-performance claim. This
+documentation-only commit is the final delivery record, is explicitly exempt
+from another adversarial review after behavior was already green, and reports
+its own exact workflows at handoff.
 The slice adds no CLI behavior, non-Linux/macOS hardening, content or target
 reading, mutation, recursion, MIME/hash/ownership/mode/ACL/xattr reporting,
 extra timestamps, compatibility/equivalence claim, benchmark, or performance
@@ -456,8 +464,7 @@ claim. Its base and parallel ownership are recorded in the
 
 ### Milestone 03 completion boundary
 
-The sixteen delivered slices plus the seventeenth candidate do not complete
-Milestone 03.
+The seventeen delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -510,13 +517,17 @@ gate:
   `read_tool_result`. Every authority-bearing tool requires normalized
   preflight, exact policy/execution agreement, resource bounds, redacted
   diagnostics, cancellation/drop tests, and platform scope stated before
-  integration. The seventeenth candidate supplies only `file_info`; production
+  integration. The delivered seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit
   tests at `b69ec4b`. The first formal candidate was not green; replacement
   local gates are green through `d445eb3`, and all three replacement tracks are
-  green on exact candidate `4193ecc`. Exact remote delivery remains pending, so
-  this combined item stays unchecked.
+  green on exact candidate `4193ecc`. Seal and integrated SHA
+  `60dd54f273afc7e62fb4b3cc1fb1a347d739998b` is green under exact feature CI
+  `32605071080` on successful retry attempt 2, feature benchmark evidence
+  `32605071063`, main CI `32606050292`, and main benchmark evidence
+  `32606050294`; all four report that exact seal SHA. The other listed native
+  tools remain incomplete, so this combined item stays unchecked.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
@@ -539,8 +550,8 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fifteenth slices, the delivered sixteenth slice, and the
-seventeenth candidate; Zig remains only the pinned
+by the tenth through fifteenth slices and the delivered sixteenth and
+seventeenth slices; Zig remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
 no current-protocol or full fx-equivalence claim. Help and status remain
