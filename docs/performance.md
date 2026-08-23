@@ -203,6 +203,14 @@ therefore remains unimplemented and claim-ineligible, with no samples or
 threshold claim. No benchmark definition, evidence schema, inventory, workflow,
 or pinned Zig input changes in this slice.
 
+The eighteenth [`glob_files` candidate](glob-files.md) likewise adds no
+benchmark workload or result data. Its strict fields, enum values, and bytewise
+matcher are compatibility inputs, not proof that a machine-god scenario is
+equivalent to fx. Both exact modes complete the bounded traversal by contract,
+but no latency, throughput, allocation, or comparative-performance result has
+been measured or claimed. Existing bootstrap classifications, eligibility,
+thresholds, workflows, and the pinned upstream Zig input remain unchanged.
+
 ## Milestone 02 orchestration note
 
 The durable tool loop checks the complete transcript before each provider

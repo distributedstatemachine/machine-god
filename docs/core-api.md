@@ -396,8 +396,9 @@ the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
 The concrete consumers are the native
-[`read_file` tool](read-file.md), [`list_files` tool](list-files.md), and the
-delivered seventeenth-slice [`file_info` tool](file-info.md).
+[`read_file` tool](read-file.md), [`list_files` tool](list-files.md), the
+delivered seventeenth-slice [`file_info` tool](file-info.md), and the eighteenth
+[`glob_files` candidate](glob-files.md).
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -441,6 +442,33 @@ extension}` content remains below 17 KiB at its independent worst case. Core
 does not infer any relationship among `Metadata`, `Read`, or `Enumerate`, and
 adds no filesystem or snapshot semantics to this result.
 
+The eighteenth candidate adds
+`FilesystemAccess::EnumerateRecursive` as another distinct serialized
+filesystem operation. It authorizes recursive enumeration beneath exactly one
+normalized selected subtree. It neither implies nor is implied by one-level
+`Enumerate`, and it does not imply `Read`, `Metadata`, mutation, symlink-target,
+or external-path authority. `glob_files` effect-free preflight accepts exactly
+`{pattern:string,path?:string,mode?:"matches"|"count"}`, defaults `path` to `.`
+and `mode` to `matches`, and produces both
+`Capability::Filesystem { access: EnumerateRecursive, path }` and exact
+prepared arguments containing normalized `pattern` and `path` plus the explicit
+mode. Pattern and mode attenuate the output of the complete recursive scan; the
+capability continues to name the entire selected subtree whose entries may be
+observed.
+
+The Linux/macOS candidate implementation owns the retained workspace
+descriptor, independent 4,096-byte requested and normalized path/pattern
+bounds, strict bytewise matcher, fresh acquired-root liveness validation,
+iterative descriptor-relative no-follow traversal, safe entry-name validation,
+fixed scan budgets, globally sorted bounded match-prefix selection, exact count
+mode, fixed redacted errors, synchronous first-poll execution, and syscall-
+granularity cancellation limits. Both modes complete the bounded scan or fail
+without partial output. Its exact matches content is `{path, pattern, mode:
+"matches", matches, truncated}`; count content is `{path, pattern, mode:
+"count", count}`. Core adds no glob grammar, traversal, ordering, truncation,
+snapshot, or filesystem semantics to these results. The complete contract is
+in [`glob-files.md`](glob-files.md).
+
 Production and independent-test lineage is green through replacement behavior
 candidate `4193ecc`. Documentation seal and integrated `main` SHA
 `60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
@@ -451,6 +479,13 @@ is evidence only, not a product-performance claim. This documentation-only
 commit is the final delivery record, is explicitly exempt from another
 adversarial review after behavior was green, and reports its own exact workflows
 at handoff.
+
+The `glob_files` production, independent-test, documentation, composed-
+behavior, review, seal, and delivery SHAs remain explicitly pending from base
+`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Its three fresh adversarial tracks
+must review one exact composed behavior SHA after local gates. This candidate
+does not alter core result limits, generic durable error mapping, CLI behavior,
+benchmark evidence, or compatibility/performance status.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

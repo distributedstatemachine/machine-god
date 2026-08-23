@@ -7,7 +7,7 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-seventeen delivered bounded slices. The
+seventeen delivered bounded slices plus an eighteenth bounded candidate. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -187,11 +187,32 @@ behavior was already green, and reports its own exact workflows at handoff. See
 the [`file_info` contract](docs/file-info.md) and
 [review record](docs/reviews/m03-file-info-review-01.md).
 
+The eighteenth bounded candidate adds Linux/macOS library-only `glob_files`.
+Strict effect-free preflight accepts a required glob pattern plus optional
+search root and `matches`/`count` mode, prepares the distinct
+`FilesystemAccess::EnumerateRecursive` capability at that normalized subtree,
+and makes defaults explicit to allowed execution. Descriptor-relative,
+no-follow iterative traversal includes hidden entries, never descends through
+symlinks, reads no content, and fails without partial output if its entry,
+name-byte, depth, or candidate-path scan cap fires. Match output is the globally
+bytewise-smallest sorted prefix under exact 100-path and 16 KiB aggregate path-
+byte caps; count mode completes the same bounded scan and is exact. The
+candidate extends the composed host catalog to `file_info`, `glob_files`,
+`list_files`, and `read_file`, with one retained workspace identity distributed
+as the original descriptor plus three clones. Production, independent tests,
+composition, local gates, three same-SHA adversarial tracks, and remote exact-
+SHA delivery remain pending; no SHA is invented in the
+[`glob_files` contract](docs/glob-files.md) or
+[review record](docs/reviews/m03-glob-files-review-01.md). The candidate changes
+no CLI byte, benchmark workload, compatibility status, or performance claim,
+and the combined native-tool checklist remains open.
+
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md),
-[`file_info` contract](docs/file-info.md), and
+[`file_info` contract](docs/file-info.md),
+[`glob_files` candidate contract](docs/glob-files.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the

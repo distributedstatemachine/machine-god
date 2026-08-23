@@ -43,7 +43,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with seventeen delivered bounded slices. The first
+with seventeen delivered bounded slices and an eighteenth bounded candidate.
+The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
 green. Its source and test fixes are composed in exact behavior candidate
@@ -462,9 +463,67 @@ extra timestamps, compatibility/equivalence claim, benchmark, or performance
 claim. Its base and parallel ownership are recorded in the
 [`file_info` review](reviews/m03-file-info-review-01.md).
 
+The eighteenth bounded candidate adds Linux/macOS library-only `glob_files`
+from exact base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Strict effect-free
+preflight accepts exactly
+`{pattern:string,path?:string,mode?:"matches"|"count"}`, defaults path to `.`
+and mode to `matches`, rejects unknown fields, and independently bounds each
+requested and normalized path and pattern at 4,096 UTF-8 bytes. Path
+normalization is the `file_info` rule. Pattern normalization uses `/`, collapses
+repeated separators and exact `.` segments, and rejects an empty normalized,
+absolute, parent-traversing, or forbidden pattern. Backslash, square brackets,
+and braces are literal. The bytewise matcher gives `?` one byte, `*` zero or
+more within a component, and only an exact `**` segment zero or more complete
+components. Slash-free patterns match candidate basenames recursively;
+slashful patterns match paths relative to the selected search root.
+
+Successful preflight produces exact prepared arguments with both defaults
+explicit and `FilesystemAccess::EnumerateRecursive` at the normalized selected
+subtree. This permission kind is distinct from one-level `Enumerate`; pattern
+and mode attenuate output but do not broaden or replace the recursive scan
+authority. Allowed execution reacquires and validates the retained workspace
+through the same fresh-`.` liveness rule as `file_info`, then performs iterative
+descriptor-relative no-follow traversal. Each directory is fully read,
+validated, and sorted bytewise before processing. Hidden entries are included;
+regular files and final symlinks are candidates; directories are traversal-
+only; specials are ignored; and symlinks are never descended through or read.
+Returned candidates use full workspace-relative paths.
+
+Both modes complete a bounded traversal of no more than 100,000 non-dot
+entries, 16 MiB of aggregate raw entry-name bytes, and directory traversal depth
+256. The selected root is depth 0; a depth-256 directory is scanned and its
+regular/symlink children remain eligible, while attempting to open a child
+directory at depth 257 is a scan-limit error. Any candidate full workspace path
+over 4,096 bytes is also a scan-limit error. A fired scan cap fails either mode
+without partial output. Match mode returns the longest globally bytewise-sorted
+prefix under 100 paths and 16 KiB of aggregate raw path bytes and sets
+`truncated` exactly when an observed match is omitted; it never skips an
+omitted long path to admit a later short path. Count mode returns the exact
+count. A stable tree is deterministic, while concurrent scans are not
+snapshots; a `NOENT` race may omit an entry and other failures fail closed under
+fixed redacted errors.
+
+The candidate extends the reference host to exactly four alphabetical workspace
+tools: `file_info`, `glob_files`, `list_files`, and `read_file`. Prepared roots
+distribute the original retained descriptor plus three clones of the same
+identity. Its public constants, constructor errors, result shapes, cancellation
+boundaries, compatibility inputs and deliberate differences, and deferred scope
+are normative in [`glob-files.md`](glob-files.md). Parallel production,
+independent-test, and documentation ownership is recorded in the
+[`glob_files` review](reviews/m03-glob-files-review-01.md). Isolated component,
+composed-behavior, review, seal, and delivery SHAs are explicitly pending and
+must not be invented. Three fresh adversarial tracks must review one exact
+composed behavior SHA after local gates, with fixes and same-SHA rereview until
+green. Per the user's instruction, a later documentation-only seal is exempt
+from another adversarial cycle after behavior is green. The candidate adds no
+CLI behavior, external-path access, ignore or Git/subprocess behavior, content
+read, mutation, dependency, benchmark workload, product-performance claim, or
+fx-equivalence claim.
+
 ### Milestone 03 completion boundary
 
-The seventeen delivered slices do not complete Milestone 03.
+The seventeen delivered slices and eighteenth candidate do not complete
+Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -527,7 +586,11 @@ gate:
   `32605071080` on successful retry attempt 2, feature benchmark evidence
   `32605071063`, main CI `32606050292`, and main benchmark evidence
   `32606050294`; all four report that exact seal SHA. The other listed native
-  tools remain incomplete, so this combined item stays unchecked.
+  tools remain incomplete, so this combined item stays unchecked. The
+  eighteenth `glob_files` candidate has a frozen contract from base
+  `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`, but production, independent
+  tests, composition, local gates, three same-SHA adversarial tracks, and exact
+  remote delivery remain pending. It therefore does not change this checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
@@ -550,8 +613,8 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fifteenth slices and the delivered sixteenth and
-seventeenth slices; Zig remains only the pinned
+by the tenth through fifteenth slices, the delivered sixteenth and seventeenth
+slices, and the eighteenth `glob_files` candidate; Zig remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
 no current-protocol or full fx-equivalence claim. Help and status remain

@@ -2,10 +2,14 @@
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice,
 with its workspace-tool composition extended by the delivered seventeenth
-slice. Seventeen slices are delivered. Seventeenth-slice production `5c2d129` and
-independent tests `ca0091c` compose at `f228c06`, where all 34 focused tests are
-green. Review hardening composes at `b69ec4b`, bringing the focused total to 36
-plus five private unit tests. The first formal candidate was not green; three
+slice and the eighteenth `glob_files` candidate. Seventeen slices are
+delivered; eighteenth-slice production, independent tests, composition, local
+gates, three same-SHA formal reviews, and exact remote delivery remain pending
+from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
+production `5c2d129` and independent tests `ca0091c` compose at `f228c06`,
+where all 34 focused tests are green. Review hardening composes at `b69ec4b`,
+bringing the focused total to 36 plus five private unit tests. The first formal
+candidate was not green; three
 replacement tracks are green on exact candidate `4193ecc`. Documentation seal
 and integrated `main` SHA `60dd54f273afc7e62fb4b3cc1fb1a347d739998b`
 passed exact feature CI run `32605071080` on successful retry attempt 2, feature
@@ -59,10 +63,10 @@ lineage is recorded in the
 
 `NativeReferenceHost` composes the existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and—through the delivered seventeenth slice—three confined read-only tools into
+adapter, and—through the eighteenth candidate—four confined read-only tools into
 one provider-neutral `Engine`. Their exact membership is `file_info`,
-`list_files`, and `read_file`, and core exposes that catalog in deterministic
-alphabetical order. It is a library surface in
+`glob_files`, `list_files`, and `read_file`, and core exposes that catalog in
+deterministic alphabetical order. It is a library surface in
 `machine-god-native`. The `machine-god-cli` crate and every existing CLI output
 byte remain unchanged.
 
@@ -105,6 +109,17 @@ are green on exact candidate `4193ecc`; seal and integrated SHA
 `32605071063`, main CI `32606050292`, and main benchmark evidence `32606050294`.
 All four report the exact seal SHA.
 
+The eighteenth candidate adds `glob_files` beside those three delivered tools.
+It prepares the distinct `FilesystemAccess::EnumerateRecursive` capability at
+the normalized selected subtree and exact explicit pattern/path/mode arguments.
+Allowed execution performs a complete bounded descriptor-relative no-follow
+scan and returns either the globally bytewise-smallest sorted match prefix or an
+exact count. Its normative contract is [`glob-files.md`](glob-files.md). It
+changes no constructor arguments, provider, transport, permission handler,
+session, runtime, credential, root-selection, or CLI authority. Candidate and
+delivery SHAs are explicitly pending in the
+[`review record`](reviews/m03-glob-files-review-01.md).
+
 ## Feature and platform boundary
 
 The integrated composition API is exported only under this gate:
@@ -136,6 +151,11 @@ the composed wrapper inherits this page's stricter gate.
 
 The delivered standalone `FileInfoTool` is likewise supported on Linux and
 macOS without requiring `ai-gateway-http`; other targets receive its fixed
+unsupported-platform construction failure. Registration through
+`NativeReferenceHost` inherits the composition gate above.
+
+Candidate standalone `GlobFilesTool` has the same Linux/macOS platform boundary
+without requiring `ai-gateway-http`; other targets receive its fixed
 unsupported-platform construction failure. Registration through
 `NativeReferenceHost` inherits the composition gate above.
 
@@ -212,7 +232,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the three tools;
+   identity for the four tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -220,7 +240,7 @@ this order:
 6. construct `AiGatewayProvider` with the loaded configuration's projected
    model;
 7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly `file_info`, `list_files`, and
+8. build `Engine` with exactly `file_info`, `glob_files`, `list_files`, and
    `read_file`, default `EngineLimits`, and the default `NoopEventSink`; core's
    catalog exposes those names in deterministic alphabetical order.
 
@@ -233,10 +253,11 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and two descriptor clones of the same opened directory object
-feed the others. The composed engine registers exactly the existing
-one-level `list_files`, bounded UTF-8 `read_file`, and no-follow metadata
-`file_info`; it discovers or registers no other tool. This shared retained
+with one tool and three descriptor clones of the same opened directory object
+feed the others. The composed engine registers exactly the existing one-level
+`list_files`, bounded UTF-8 `read_file`, no-follow metadata `file_info`, and
+candidate bounded recursive `glob_files`; it discovers or registers no other
+tool. This shared retained
 identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
 tool construction steps. It does not make the workspace a sandbox against the
@@ -257,7 +278,7 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same three tools, and
+the same provider and permission adapter, registers the same four tools, and
 uses the same default engine limits and no-op sink. It deliberately performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
 
@@ -307,6 +328,12 @@ retaining the already opened workspace descriptor for the third tool.
 inert; only first poll can traverse ancestor descriptors or inspect final
 metadata. It creates no task, thread, file, directory, timer, or background
 work.
+
+The eighteenth candidate adds no construction effect beyond the third
+descriptor clone and retention for the fourth tool. `glob_files` preparation is
+effect-free, and creating its execution future is inert. Its first poll performs
+the complete bounded synchronous scan after approval; it creates no task,
+thread, file, directory, subprocess, timer, or background work.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
@@ -407,9 +434,10 @@ record.
 Neither that root slice nor this integrated composition implements a concrete
 terminal `PermissionPrompter`, allocates a session ID or
 `SessionIncarnationId`, or adds create/list/resume/replay/reset session
-lifecycle CLI commands. The delivered seventeenth slice adds only `file_info`; it does
-not add the other remaining native tools, compose or run the CLI, or change any
-existing CLI byte. A reset under a reused session ID
+lifecycle CLI commands. The delivered seventeenth slice adds only `file_info`,
+and the eighteenth candidate adds only `glob_files`; neither adds the other
+remaining native tools, composes or runs the CLI, or changes any existing CLI
+byte. A reset under a reused session ID
 still requires a new host-generated incarnation before reuse.
 
 The delivered fifteenth slice fills the library-level by-ID create, resume,
@@ -440,6 +468,11 @@ the total to 36 plus five private unit tests at `b69ec4b`. The slice does not
 alter the pinned fx inventory,
 benchmark workloads, or workflows. Zig remains only the pinned upstream
 benchmark build input; machine-god remains a Rust product.
+
+The `glob_files` candidate adds no benchmark workload or workflow change and
+makes no compatibility or product-performance claim. Its production,
+independent tests, composition, local gates, formal reviews, and remote exact-
+SHA delivery remain pending, so the combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature

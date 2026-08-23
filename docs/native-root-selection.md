@@ -32,7 +32,8 @@ is green under exact feature CI run `32589778343` and benchmark-evidence run
 force to `main` and green there under exact CI `32590429626` and benchmark
 evidence `32590429592`. This documentation-only commit is the final record; its
 exact feature and `main` workflows are reported at handoff.
-Milestone 03 remains `IN PROGRESS`. Seventeen slices are delivered. Seventeenth-
+Milestone 03 remains `IN PROGRESS`. Seventeen slices are delivered and an
+eighteenth `glob_files` candidate is in progress. Seventeenth-
 slice `file_info` production `5c2d129` and independent tests `ca0091c` compose
 at `f228c06`, where the initial 34 focused tests are green. Review hardening
 brings the focused total to 36 plus five private unit tests at `b69ec4b`. The
@@ -48,6 +49,10 @@ explicitly exempt from another adversarial review after behavior was green, and
 reports its own exact workflows at handoff.
 The remaining
 native tools, CLI ownership, and composed end-to-end evidence also stay open.
+The eighteenth candidate starts from exact base
+`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; its production, independent
+tests, composition, local gates, formal reviews, and remote exact-SHA delivery
+are pending.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
@@ -268,11 +273,12 @@ and macOS; other targets receive no public runtime API for this slice.
 The new
 `NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots` and
 `NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots`
-constructors consume one `PreparedNativeRoots`. Under the delivered seventeenth slice,
-they transfer its original retained workspace descriptor plus two clones to
-exactly `list_files`, `read_file`, and `file_info`, and its separately retained
-state-root identity to `FileSessionStore`, without reopening either path. The
-exact tool membership is `file_info`, `list_files`, and `read_file`, which core
+constructors consume one `PreparedNativeRoots`. Under the eighteenth candidate,
+they transfer its original retained workspace descriptor plus three clones to
+exactly `file_info`, `glob_files`, `list_files`, and `read_file`, and its
+separately retained state-root identity to `FileSessionStore`, without reopening
+either path. The exact tool membership is `file_info`, `glob_files`,
+`list_files`, and `read_file`, which core
 exposes in deterministic alphabetical catalog order. The selected `machine-god`
 state root itself is the store root; no extra
 `sessions` suffix is inserted. The existing loaded configuration, permission
@@ -294,7 +300,7 @@ Root failure therefore does not discover or hand off a credential. The custom
 transport path still performs no native credential discovery or production HTTP
 construction.
 
-If transferring the prepared workspace descriptor into the three tools cannot
+If transferring the prepared workspace descriptor into the four tools cannot
 clone it, the existing reference-host `WorkspaceRoot` stage is returned. The
 session store has already accepted the retained state descriptor during
 preparation, so prepared-root composition does not reopen a session path.
@@ -328,8 +334,10 @@ or reset; the delivered fifteenth and sixteenth slices now supply that bounded
 library behavior. It does not allocate a session ID or a new incarnation for reset,
 change the session record schema, migrate or encrypt state, add a cleanup or
 repair command, supply a terminal prompter, or expand CLI ownership. The
-delivered seventeenth slice consumes its retained workspace identity for `file_info`
-but adds no root-selection authority or behavior.
+delivered seventeenth slice consumes its retained workspace identity for
+`file_info`; the eighteenth candidate additionally consumes a clone of that
+same identity for `glob_files`. Neither adds root-selection authority or
+behavior.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and does not change the pinned fx inventory, benchmark workloads,

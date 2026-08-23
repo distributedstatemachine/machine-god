@@ -139,6 +139,19 @@ from another adversarial review after behavior was green, and reports its own
 exact workflows at handoff.
 Its security contract is in [`file-info.md`](file-info.md).
 
+An eighteenth bounded candidate adds Linux/macOS `glob_files` under the
+distinct `FilesystemAccess::EnumerateRecursive` authorization kind. Strict
+effect-free preflight normalizes the selected subtree and an exact bytewise glob
+pattern before policy. Execution reacquires and validates the retained
+workspace identity, traverses iteratively with descriptor-relative no-follow
+operations, follows no symlink, reads no content, includes hidden entries, and
+fails without partial output if any fixed scan cap fires. The same complete
+bounded traversal produces either a globally bytewise-smallest sorted match
+prefix or an exact count. Its production, independent tests, composition,
+local gates, three same-SHA adversarial tracks, and remote delivery remain
+pending from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Its security
+contract is in [`glob-files.md`](glob-files.md).
+
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
 invalid and cannot be bypassed through a `HOME` fallback. Missing or empty
@@ -209,8 +222,9 @@ The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, native tools beyond the bounded library-level `read_file`,
-`list_files`, and delivered `file_info`, composed release-binary end-to-end host
-evidence, and compatibility or performance claims remain open. The
+`list_files`, delivered `file_info`, and candidate `glob_files`, composed
+release-binary end-to-end host evidence, and compatibility or performance
+claims remain open. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -268,6 +282,15 @@ cannot be made, composition returns the
 existing fixed redacted `WorkspaceRoot` stage before engine construction. Tool
 construction performs no per-path metadata lookup; `file_info` work remains
 inert until its execution future is polled after exact policy approval.
+
+The eighteenth candidate changes only that workspace-tool bundle again. Path
+and prepared-root constructors distribute the original retained descriptor plus
+three clones across exactly `file_info`, `glob_files`, `list_files`, and
+`read_file`, all under the same already validated identity; core exposes the
+catalog alphabetically. A required clone failure remains the same fixed
+redacted `WorkspaceRoot` stage before engine construction. `glob_files`
+preflight remains effect-free, and creating its execution future remains inert
+until the first poll after exact recursive-enumeration approval.
 
 Reference-host failures retain only a non-exhaustive fixed stage kind:
 unsupported selection, workspace root, session store, credential, HTTP
@@ -685,15 +708,64 @@ It cannot preempt one open or metadata syscall
 already in flight. Dropping before poll is effect-free; dropping later closes
 per-call descriptors and discards any unreturned result.
 
+Candidate `glob_files` uses the same retained workspace boundary for the new
+`FilesystemAccess::EnumerateRecursive` operation. This is separate from one-
+level `Enumerate` and does not imply content `Read`, `Metadata`, mutation,
+symlink-target, or external-path authority. Strict effect-free preflight accepts
+only `{pattern:string,path?:string,mode?:"matches"|"count"}`, independently
+bounds requested and normalized path/pattern forms to 4,096 UTF-8 bytes, and
+prepares the exact normalized subtree plus explicit pattern/path/mode
+arguments. Pattern and mode attenuate results; policy still authorizes recursive
+observation throughout the selected subtree.
+
+The pattern grammar is deliberately small and bytewise. Only `/` separates
+components; repeated separators and exact `.` segments normalize away, while
+absolute, parent, empty-normalized, control, line/paragraph-separator, and
+bidirectional-formatting input rejects before policy. Backslash, brackets, and
+braces are literal. `?` consumes one UTF-8 byte, `*` consumes zero or more bytes
+without crossing `/`, and only an exact `**` segment consumes zero or more
+components. Slash-free patterns match basenames recursively; slashful patterns
+match candidate paths relative to the selected search root.
+
+Allowed execution first performs the same fresh-`.` linked-root validation as
+`file_info`, then opens the selected root and child directories descriptor-
+relatively with directory, no-follow, close-on-exec, and nonblocking
+requirements. Iterative traversal fully reads, validates, and bytewise sorts
+each directory before processing. Hidden entries are included. Only regular
+files and final symlinks are match candidates; directories are traversal-only;
+specials are ignored; and no link is descended through or target/content read.
+Already opened ancestors cannot be redirected. A replacement before an entry's
+own lookup may be observed, and a `NOENT` race after enumeration may omit it;
+other traversal failures fail the complete call. There is no multi-entry
+snapshot.
+
+Both modes complete or fail without partial output under 100,000 visited non-
+dot entries, 16 MiB aggregate raw entry-name bytes, directory traversal depth
+256, and 4,096-byte full workspace-relative candidate paths. A directory at
+depth 256 is scanned and its candidate children are eligible; a child-directory
+open at depth 257 is `scan_limit`. Matches mode emits the longest globally
+bytewise-sorted prefix under 100 paths and 16 KiB aggregate raw path bytes,
+without backfilling after the first byte-cap omission, and sets `truncated`
+exactly when a match is omitted. Count mode returns the exact count. Invalid
+entry names, scan caps, I/O, and cancellation use the fixed redacted taxonomy in
+[`glob-files.md`](glob-files.md).
+
+The execution future is inert before first poll and performs bounded
+synchronous work on that poll. It checks cancellation around root liveness,
+selected component opens, each directory read, entry classification and child-
+directory opens, match accounting, and return. It cannot preempt one syscall
+already in flight and starts no detached work.
+
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
 points visible beneath a retained directory are trusted inputs. Hardened
 non-Linux/macOS workspace construction and traversal remain deferred for
-`list_files` and delivered `file_info`; `read_file` retains its separate
+`list_files`, delivered `file_info`, and candidate `glob_files`; `read_file`
+retains its separate
 supported-Unix boundary. The normative surfaces are
-[`read-file.md`](read-file.md), [`list-files.md`](list-files.md), and
-[`file-info.md`](file-info.md).
+[`read-file.md`](read-file.md), [`list-files.md`](list-files.md),
+[`file-info.md`](file-info.md), and [`glob-files.md`](glob-files.md).
 
 The injected-transport AI Gateway provider preserves network authority at an
 explicit trusted-host boundary. `AiGatewayProvider` accepts only an owned body,
