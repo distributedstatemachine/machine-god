@@ -691,6 +691,60 @@ workload, compatibility-status change, product-performance claim, or fx-
 equivalence claim. Zig remains only the pinned upstream benchmark build input;
 the product remains Rust.
 
+The twentieth bounded Milestone 03 slice is native `write_file`, frozen from
+exact delivered base `bc042536eb3a40d75ccf4d1fe52032b31defac04`.
+Effect-free preparation accepts exactly required UTF-8 `path` and `content`
+strings, rejects unknown fields, independently caps the normalized path at
+4,096 bytes and 256 components, raw content at 49,152 bytes, and serialized
+arguments at 65,536 bytes, and prepares exactly
+`FilesystemAccess::Write` for the canonical workspace-relative path. Empty and
+NUL-containing content are valid. Direct execution revalidates the same strict
+canonical shape, so neither provider nor direct use can widen approved
+authority.
+
+Allowed Linux/macOS execution operates only beneath the retained workspace
+descriptor and requires every parent to exist. It no-follow walks parents,
+records parent and target identity, rejects symlink and special targets, and
+never opens or reads existing target content. It stages into one exclusive,
+private `0600`, same-parent regular file chosen within eight high-entropy name
+attempts; writes and cancellation checks use at most 8 KiB chunks. The staged
+file receives exact `0644` ordinary rwx bits for creation or the initially
+observed replacement target's `st_mode & 0o777`, then is file-synced,
+identity-revalidated, and published atomically at the pathname. Missing-target
+creation must use `renameat_with(..., RenameFlags::NOREPLACE)` and fail closed
+when unavailable; replacement uses ordinary same-parent rename. A final parent
+sync completes durability. Success is exactly normalized `path` plus
+`bytes_written`.
+
+The irreversible boundary is rename. Precommit failures leave the target name
+unchanged and use best-effort identity-checked temporary cleanup, with the
+portable metadata-check-to-unlink race and possible private residue explicitly
+disclosed. After rename, the tool completes parent sync and returns success or
+nonretryable commit ambiguity rather than its own cancellation error. Creation
+cannot clobber a raced target, but replacement is not inode compare-and-swap:
+the final validation-to-rename race and a final-parent move outside the
+workspace remain documented limitations. The slice claims neither perfect
+identity-safe cleanup nor adversarial concurrent-rename confinement.
+
+Production, independent tests, and maintained documentation have separate
+owners and must compose before review. Evidence must cover exact schema and
+limits, normalization and policy agreement, create/replace and atomic
+visibility, exact modes under hostile umask, missing parents, symlink and
+special rejection, retained-root changes, all eight temporary collisions,
+cleanup and target/parent race seams, every precommit fault, post-rename sync
+ambiguity, cancellation through the final precommit check, engine recovery,
+the exact six-tool alphabetical reference host, Linux/macOS execution,
+FreeBSD/WASI compilation, and active unsupported behavior. Three fresh
+correctness/API, filesystem/robustness, and performance/concurrency agents must
+all report green on the same composed behavior SHA; every finding restarts all
+three tracks. Documentation-only seal and delivery commits are exempt from a
+new adversarial cycle under the user's instruction. The complete normative
+contract and kickoff lineage are in [`write-file.md`](write-file.md) and the
+[`write_file` review](reviews/m03-write-file-review-01.md). The slice adds no
+parent creation, external-path access, target-content read, CLI behavior,
+benchmark workload, product-performance claim, or fx-equivalence claim. The
+product remains Rust; Zig remains only the pinned upstream fx benchmark input.
+
 ### Milestone 03 completion boundary
 
 The nineteen delivered slices do not complete Milestone 03.
@@ -824,7 +878,10 @@ gate:
   tools remain pending. This final delivery
   record is documentation-only and exempt from adversarial review; its own exact
   remote workflows are required after push and cannot be self-recorded. The
-  remaining native tools are incomplete, so
+  twentieth `write_file` contract is frozen from exact base `bc042536`; its
+  separate production, independent-test, and maintained-documentation
+  components remain pending composition, exact local gates, and three fresh
+  same-SHA adversarial tracks. The remaining native tools are incomplete, so
   this delivered slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
