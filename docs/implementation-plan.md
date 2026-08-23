@@ -44,11 +44,15 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with twenty delivered bounded slices. The next bounded `edit_file` slice is
-**IN PROGRESS**. Exact cycle-1 candidate
-`8fdb67892f34a0fbfbb90a54e8eda982159813bf` was not green; its confirmed high
-staged-content race is locally remediated through exact composed precursor
-`482d33c0bc586ff594d5b0decc58de347cb9243e`. Replacement review and delivery
-remain pending.
+**IN PROGRESS**. Exact cycle-3 candidate
+`da1537b229393007101264cd7bc8fd12ee393a3d` was correctness/API and
+performance/concurrency green with zero findings. Filesystem/robustness was not
+green only for four low deterministic-evidence gaps and reported no production
+atomicity defect. Source and independent-test remediation components
+`985b232731883f7a5c18f8f7cbba56dbedfc7c6e` and
+`3cbb8956477af30cf5f8d63f118e597793267efc` compose through exact integrated
+SHA `d0d188b39290a50f7f10d7e4665cf694abdfc460`. Three fresh cycle-4 reviews and
+delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -992,9 +996,30 @@ engine, and seven reference-host focused tests. This is local cycle-2
 remediation evidence, not cycle-3 review, delivery, performance, or equivalence
 approval.
 
+Exact cycle-3 candidate `da1537b229393007101264cd7bc8fd12ee393a3d` has
+correctness/API and performance/concurrency **GREEN** with zero findings.
+Filesystem/robustness is **NOT GREEN** only for four low evidence gaps: the
+actual RAII `Drop` dual-failure path, the true final-verification-to-rename
+cancellation boundary, ACL clear/read/nonempty phase mapping, and call-ordinal
+descriptor `fstat` selection. It reported no production atomicity defect.
+
+Production component `985b232731883f7a5c18f8f7cbba56dbedfc7c6e` and
+independent-test component `3cbb8956477af30cf5f8d63f118e597793267efc`
+compose through `1b9ffca9031c61625420279569670c1c80d2d750` and exact
+integrated remediation `d0d188b39290a50f7f10d7e4665cf694abdfc460`.
+Production routes the actual generic staged-file `Drop` through statically
+dispatched cleanup evidence, adds the checkpoint immediately after final staged
+verification, and exposes ACL clear/read-empty defaults while retaining native
+operations and separate `fstat` calls. Independent evidence adds ordinal-aware
+fault ranges and four regressions for late descriptor faults, ACL outcomes, the
+true final cancellation boundary, and actual RAII dual-failure cleanup. Exact
+focused totals are 43 private, 24 direct, five engine, and seven reference-host
+`edit_file` tests; `write_file` remains green at 30 private, 25 direct, and five
+engine tests.
+
 After this documentation component composes, three fresh correctness/API,
 filesystem/robustness, and performance/concurrency agents must next review the
-same exact cycle-3 behavior SHA. Every confirmed finding is fixed and restarts
+same exact cycle-4 behavior SHA. Every confirmed finding is fixed and restarts
 all three fresh tracks on a new SHA until all are green.
 Exact feature workflows, a no-force fast-forward to `main`, and exact `main`
 workflows follow. Documentation-only records are exempt from another
@@ -1226,10 +1251,18 @@ gate:
   seams across traversal, all four logical read phases, staging, final sync,
   post-real-rename cancellation, and cleanup dual failure. Exact composed
   remediation behavior `ab6841388838384e27e6299151d50bb83d2ec46e` passes 39
-  private, 24 direct, five engine, and seven reference-host focused tests. A
-  cycle-3 candidate, all three fresh cycle-3 tracks, exact feature workflows,
-  fast-forward integration, and exact `main` workflows remain pending;
-  `edit_file` is not delivered.
+  private, 24 direct, five engine, and seven reference-host focused tests.
+  Exact cycle-3 candidate `da1537b229393007101264cd7bc8fd12ee393a3d` is
+  correctness/API and performance/concurrency green with zero findings;
+  filesystem/robustness is not green only for four low evidence gaps and
+  reports no production atomicity defect. Source `985b232` and tests `3cbb895`
+  compose through `1b9ffca` and exact integrated remediation `d0d188b`, with
+  actual generic RAII cleanup evidence, the after-final-verification checkpoint,
+  ACL evidence methods, ordinal-aware fault ranges, and four regressions.
+  Focused `edit_file` totals are 43/24/5/7; delivered `write_file` regressions
+  remain green at 30/25/5. All three fresh cycle-4 tracks, exact feature
+  workflows, fast-forward integration, and exact `main` workflows remain
+  pending; `edit_file` is not delivered.
   Documentation-only commits are exempt from a separate adversarial cycle under
   the user's instruction and are included in the replacement candidate. The
   remaining native tools are

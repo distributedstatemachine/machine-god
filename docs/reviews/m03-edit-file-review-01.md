@@ -1,6 +1,6 @@
 # Milestone 03 native `edit_file` review 01
 
-Status: **IN PROGRESS — cycle 2 remediated locally; cycle-3 review pending**
+Status: **IN PROGRESS — cycle-3 evidence findings remediated; cycle-4 review pending**
 
 ## Base and contract gate
 
@@ -114,9 +114,22 @@ Cycle-2 remediation has the following exact lineage:
   `65d40d99f4e026834a05778029800fa703c9379e`, integrated as exact composed
   behavior SHA `ab6841388838384e27e6299151d50bb83d2ec46e`.
 
-This documentation record follows exact behavior SHA `ab684138`. Because a
-commit cannot self-record its own identifier, its documentation-only component
-SHA is recorded after direct observation in the integration handoff.
+Cycle-2 remediation documentation `1171daa` and formal preparation
+`1c4be4b` produced the cycle-3 review candidate. Portable Linux ACL-adapter
+lint correction `9ee7f3f` was refrozen as exact cycle-3 candidate
+`da1537b229393007101264cd7bc8fd12ee393a3d`.
+
+Cycle-4 remediation has the following exact lineage:
+
+- production component `985b232731883f7a5c18f8f7cbba56dbedfc7c6e`,
+  integrated as `1b9ffca9031c61625420279569670c1c80d2d750`; and
+- independent-test component
+  `3cbb8956477af30cf5f8d63f118e597793267efc`, integrated as exact composed
+  remediation SHA `d0d188b39290a50f7f10d7e4665cf694abdfc460`.
+
+This documentation record follows exact integrated remediation SHA `d0d188b`.
+Because a commit cannot self-record its own identifier, its documentation-only
+component SHA is recorded after direct observation in the integration handoff.
 
 ## Cycle-1 review result and remediation
 
@@ -215,16 +228,77 @@ The phase matrix directly covers:
   independently failing unlink, proving the disclosed final-mode owned residue
   outcome without changing the original target.
 
-Exact composed behavior SHA `ab6841388838384e27e6299151d50bb83d2ec46e` is
-locally remediated, not cycle-3 reviewed or delivered. This documentation-only
-record receives no separate adversarial review under the user's explicit
-instruction.
+## Cycle-3 review result
+
+All three fresh tracks reviewed exact candidate
+`da1537b229393007101264cd7bc8fd12ee393a3d`:
+
+- correctness/API: **GREEN**, zero findings;
+- performance/concurrency: **GREEN**, zero findings; and
+- filesystem/robustness: **NOT GREEN**, with four low deterministic-evidence
+  findings and no production atomicity defect.
+
+The four low gaps were precise. The dual-failure cleanup regression injected a
+helper rather than the actual RAII `StagedFile::drop` operations. The named
+final-verification cancellation hook ran before the last complete staged
+verification, not at the true verification-to-rename boundary. ACL evidence
+did not independently inject clear failure, read failure, and unsafe nonempty
+outcomes across creation, final staged verification, and publication. Finally,
+phase-only fault selection could not choose later descriptor `fstat` calls by
+call ordinal. Neither green track reported a correctness, API, performance,
+bounded-work, cancellation, or concurrency finding.
+
+## Cycle-4 remediation
+
+Production component `985b232731883f7a5c18f8f7cbba56dbedfc7c6e` makes the
+actual RAII guard generic over a statically dispatched
+`EditFileCleanupEvidence`. Its `Drop` routes mode reset, descriptor `fstat`,
+no-follow pathname `statat`, and unlink through the injected evidence while
+retaining identity and regular-type checks. A failed mode reset does not skip
+the unlink attempt, and cleanup cannot replace the primary pipeline error. The
+production wrapper uses the native descriptor operations without global or
+dynamic release state.
+
+The same component adds `after_final_stage_verification` immediately after the
+last staged content/ACL verification and before the final cancellation check
+and rename. `clear_staged_acl` and phase-labelled `staged_acl_is_empty`
+evidence defaults preserve the exact macOS descriptor ACL operations and the
+Linux adapters while exposing creation, late-precommit, and published outcomes
+to deterministic tests. Existing phase-labelled `fstat` calls remain separate
+and observable.
+
+Independent component `3cbb8956477af30cf5f8d63f118e597793267efc` adds
+ordinal-aware fault ranges and per-phase/operation call counts, plus four
+regressions:
+
+- `pipeline_descriptor_and_late_fstat_faults_target_exact_ordinals` targets
+  initial ordinal 2, revalidation ordinal 2, staged ordinals 18 and 19, and
+  published ordinals 3 and 4 with exact pre/postcommit mappings;
+- `pipeline_acl_clear_read_and_unsafe_outcomes_map_at_exact_ordinals` covers
+  clear failure, creation read failure/nonempty, final staged ordinal-9 read
+  failure/nonempty, and published ordinal-2 read failure/nonempty;
+- `pipeline_cancellation_after_final_verification_precedes_rename_and_cleans_stage`
+  proves cancellation at the actual boundary leaves the target unchanged,
+  cleans the stage, and never publishes; and
+- `pipeline_drop_attempts_dual_failure_cleanup_after_final_verification`
+  drives the actual RAII `Drop`, proves mode reset failure is followed by
+  descriptor/path identity observations and an unlink attempt, preserves the
+  primary precommit error, and directly observes the disclosed residue.
+
+Exact integrated remediation SHA
+`d0d188b39290a50f7f10d7e4665cf694abdfc460` passes 43 private `edit_file`
+tests, 24 direct tests, five engine tests, and seven reference-host tests. The
+delivered `write_file` regressions remain green at 30 private, 25 direct, and
+five engine tests. These are remediation and focused regression results, not a
+cycle-4 review, behavior-green, delivery, performance, or equivalence claim.
+This documentation-only record receives no separate adversarial review under
+the user's explicit instruction.
 
 ## Required independent evidence
 
 The check marks below record only evidence directly exercised through exact
-cycle-2 remediation behavior `ab684138`. Unchecked items identify work for
-cycle-3 review or a subsequent evidence commit; they do not imply a known
+integrated cycle-4 remediation `d0d188b`. Unchecked items identify work for the
+fresh cycle-4 review or a subsequent evidence commit; they do not imply a known
 product defect.
 
 - [x] Exact public symbols, constants, schema/property descriptions,
@@ -296,10 +370,10 @@ order and adds the thirtieth benchmark-harness test. The final harness is green
 at 130 tests: 122 pass and eight expected macOS skips. This is harness
 correctness evidence, not a product-performance result.
 
-## Cycle-3 review and delivery gates
+## Cycle-4 review and delivery gates
 
-Cycle 2 is not green. After this documentation component composes, three fresh
-agents must independently inspect one subsequent exact cycle-3 behavior SHA for:
+Cycle 3 is not green. After this documentation component composes, three fresh
+agents must independently inspect one subsequent exact cycle-4 behavior SHA for:
 
 1. correctness and public API;
 2. filesystem confinement, atomicity, durability, and robustness; and
@@ -351,18 +425,31 @@ remote workflows remain required.
   `65d40d99f4e026834a05778029800fa703c9379e`
 - Exact composed cycle-2 remediation behavior:
   `ab6841388838384e27e6299151d50bb83d2ec46e`
-- Exact cycle-3 behavior candidate: pending
-- Cycle-3 correctness/API track: pending
-- Cycle-3 filesystem/robustness track: pending
-- Cycle-3 performance/concurrency track: pending
+- Exact cycle-3 behavior candidate:
+  `da1537b229393007101264cd7bc8fd12ee393a3d`
+- Cycle-3 correctness/API track: green, zero findings
+- Cycle-3 filesystem/robustness track: not green, four low evidence findings;
+  no production atomicity defect
+- Cycle-3 performance/concurrency track: green, zero findings
+- Cycle-4 production remediation component:
+  `985b232731883f7a5c18f8f7cbba56dbedfc7c6e`
+- Integrated cycle-4 production remediation:
+  `1b9ffca9031c61625420279569670c1c80d2d750`
+- Cycle-4 independent remediation-test component:
+  `3cbb8956477af30cf5f8d63f118e597793267efc`
+- Exact integrated cycle-4 remediation:
+  `d0d188b39290a50f7f10d7e4665cf694abdfc460`
+- Cycle-4 correctness/API track: pending
+- Cycle-4 filesystem/robustness track: pending
+- Cycle-4 performance/concurrency track: pending
 - Behavior-green SHA: pending
 - Documentation seal: pending
 - Exact feature CI and benchmark evidence: pending
 - No-force fast-forward `main`: pending
 - Exact `main` CI and benchmark evidence: pending
 
-The cycle-2 remediation behavior establishes neither cycle-3-candidate nor
-cycle-3-review status, and no feature-delivery, `main`, compatibility-promotion,
+The cycle-4 remediation establishes neither cycle-4-candidate nor cycle-4-
+review status, and no feature-delivery, `main`, compatibility-promotion,
 equivalence, or product-performance approval. Zig remains solely the pinned
 upstream fx benchmark build input; the machine-god product implementation is
 Rust.

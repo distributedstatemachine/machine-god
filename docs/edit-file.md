@@ -1,6 +1,6 @@
 # Native `edit_file` contract
 
-Status: **IN PROGRESS — cycle 2 remediated locally; cycle-3 review pending**
+Status: **IN PROGRESS — cycle-3 evidence findings remediated; cycle-4 review pending**
 
 This document freezes the twenty-first bounded Milestone 03 slice from exact
 delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
@@ -16,12 +16,19 @@ exact composed precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`.
 Cycle-2 candidate `f84bac87f472fc851eca670764657e5a31ce0256` confirmed that
 fix, but was not green because a newly created macOS stage could retain an
 inherited allow ACL and deterministic phase evidence remained incomplete.
-Production and independent cycle-2 remediation are composed at exact behavior
-SHA `ab6841388838384e27e6299151d50bb83d2ec46e`. All three fresh cycle-3
-review tracks, feature delivery, fast-forward integration, and exact `main`
-workflows remain pending. Under the user's explicit instruction,
-documentation-only records are exempt from their own adversarial cycle; they
-are included in the next behavior candidate review.
+Production and independent cycle-2 remediation compose through
+`ab6841388838384e27e6299151d50bb83d2ec46e`. Exact cycle-3 candidate
+`da1537b229393007101264cd7bc8fd12ee393a3d` was correctness/API and
+performance/concurrency green with zero findings. Filesystem/robustness was
+not green only for four low deterministic-evidence gaps; it reported no
+production atomicity defect. Cycle-4 source component
+`985b232731883f7a5c18f8f7cbba56dbedfc7c6e` and independent-test component
+`3cbb8956477af30cf5f8d63f118e597793267efc` compose through integrated SHAs
+`1b9ffca9031c61625420279569670c1c80d2d750` and
+`d0d188b39290a50f7f10d7e4665cf694abdfc460`. All three fresh cycle-4 review
+tracks, feature delivery, fast-forward integration, and exact `main` workflows
+remain pending. Documentation-only records are exempt from their own
+adversarial cycle under the user's explicit instruction.
 
 `edit_file` replaces exactly one occurrence of exact text in one existing
 workspace file. It does not grant file creation, a general read capability, or
@@ -485,15 +492,51 @@ inode have empty ACLs while the parent ACL remains, and exercises:
 - cleanup mode-reset failure followed by an attempted, independently failing
   unlink, with the disclosed owned-residue outcome preserved.
 
-This exact behavior SHA is locally remediated, not reviewed green or delivered.
-The next candidate must include this documentation and pass three fresh cycle-3
-review tracks. No delivery, compatibility promotion, product-performance, or
-fx-equivalence claim follows from the remediation.
+Exact cycle-3 candidate `da1537b229393007101264cd7bc8fd12ee393a3d`
+received **GREEN**, zero-finding correctness/API and performance/concurrency
+reviews. Filesystem/robustness was **NOT GREEN** with four low evidence gaps:
+
+- the dual-failure cleanup proof injected only a helper, not the actual RAII
+  `StagedFile::drop` operations;
+- the cancellation hook called "final" ran before the last complete staged
+  verification rather than at the true verification-to-rename boundary;
+- ACL evidence did not independently inject clear failure, read failure, and
+  unsafe nonempty outcomes at creation, final staged verification, and
+  publication; and
+- phase-only fault selection could not target later descriptor `fstat` calls
+  by call ordinal.
+
+The filesystem review explicitly reported no production atomicity defect.
+Cycle-4 source component `985b232731883f7a5c18f8f7cbba56dbedfc7c6e`
+adds statically dispatched `EditFileCleanupEvidence` to the actual generic
+RAII guard, a checkpoint immediately after final staged verification, ACL
+clear/read evidence defaults that preserve the exact native macOS descriptor
+operations, and a deeper private executor that accepts cleanup evidence. The
+guard continues from a failed mode reset through descriptor/path identity and
+type checks to an unlink attempt, and cleanup cannot replace the primary
+pipeline error.
+
+Independent component `3cbb8956477af30cf5f8d63f118e597793267efc`
+adds ordinal-aware operation ranges and call counts plus four regressions:
+
+- `pipeline_descriptor_and_late_fstat_faults_target_exact_ordinals`;
+- `pipeline_acl_clear_read_and_unsafe_outcomes_map_at_exact_ordinals`;
+- `pipeline_cancellation_after_final_verification_precedes_rename_and_cleans_stage`;
+  and
+- `pipeline_drop_attempts_dual_failure_cleanup_after_final_verification`.
+
+The components are integrated at `1b9ffca9031c61625420279569670c1c80d2d750`
+and `d0d188b39290a50f7f10d7e4665cf694abdfc460`. Focused suites are green at
+43 private `edit_file` tests, 24 direct tests, five engine tests, and seven
+reference-host tests; the delivered `write_file` regression suites remain
+green at 30 private, 25 direct, and five engine tests. These results close the
+four evidence gaps for cycle-4 review preparation. They establish no delivery,
+compatibility promotion, product-performance, or fx-equivalence claim.
 
 ## Required independent evidence
 
-Production and independently owned tests are composed. Formal review must
-confirm that evidence covers:
+Production and independently owned tests are composed. Fresh cycle-4 review
+must confirm that evidence covers:
 
 - exact exports, constants, schema and descriptions, error kinds/codes/
   messages/retryability, serialized forms, and debug/display redaction;
@@ -538,7 +581,7 @@ Python and pinned-compatibility checks, dependency policy/audit, Linux/macOS
 native checks, FreeBSD/WASI gates, documentation links, no-unsafe/diff checks,
 and a freshly built locked release CLI smoke.
 
-After this documentation record composes, three fresh cycle-3 adversarial
+After this documentation record composes, three fresh cycle-4 adversarial
 agents must review the same subsequent exact behavior SHA for correctness/API,
 filesystem/robustness, and performance/concurrency. Every confirmed finding is
 fixed and restarts all three fresh tracks on a new exact SHA until all are
