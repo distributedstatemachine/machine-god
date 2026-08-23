@@ -303,9 +303,10 @@ impl NativeReferenceHost {
             .provider(provider)
             .shared_session_store(engine_session_store)
             .permission_handler(permission_handler)
+            .tool(workspace_tools.file_info)
+            .tool(workspace_tools.glob_files)
             .tool(workspace_tools.list_files)
             .tool(workspace_tools.read_file)
-            .tool(workspace_tools.file_info)
             .build()
             .map_err(|_| {
                 NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine)

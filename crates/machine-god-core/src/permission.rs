@@ -16,6 +16,7 @@ pub enum FilesystemAccess {
     Create,
     Delete,
     Enumerate,
+    EnumerateRecursive,
 }
 
 /// Normalized network destination supplied by a native host.

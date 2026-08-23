@@ -14,6 +14,7 @@ mod ai_gateway_http;
 mod ask_permission;
 mod config;
 mod file_info;
+mod glob_files;
 mod list_files;
 mod read_file;
 #[cfg(all(
@@ -67,6 +68,13 @@ pub use config::{
 pub use file_info::{
     FILE_INFO_TOOL_NAME, FileInfoTool, FileInfoToolOpenError, FileInfoToolOpenErrorKind,
     MAX_FILE_INFO_PATH_BYTES,
+};
+pub use glob_files::{
+    GLOB_FILES_TOOL_NAME, GlobFilesTool, GlobFilesToolOpenError, GlobFilesToolOpenErrorKind,
+    MAX_GLOB_FILES_DEPTH, MAX_GLOB_FILES_MATCHES, MAX_GLOB_FILES_PATH_BYTES,
+    MAX_GLOB_FILES_PATTERN_BYTES, MAX_GLOB_FILES_RESULT_PATH_BYTES,
+    MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES, MAX_GLOB_FILES_TOTAL_MATCH_PATH_BYTES,
+    MAX_GLOB_FILES_VISITED_ENTRIES,
 };
 pub use list_files::{
     LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,

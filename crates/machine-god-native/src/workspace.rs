@@ -4,13 +4,14 @@ use rustix::fd::OwnedFd;
 use rustix::fs::{FileType, Mode, OFlags};
 
 #[cfg(feature = "ai-gateway-http")]
-use crate::{FileInfoTool, ListFilesTool, ReadFileTool};
+use crate::{FileInfoTool, GlobFilesTool, ListFilesTool, ReadFileTool};
 
 #[cfg(feature = "ai-gateway-http")]
 pub(crate) struct WorkspaceTools {
     pub(crate) list_files: ListFilesTool,
     pub(crate) read_file: ReadFileTool,
     pub(crate) file_info: FileInfoTool,
+    pub(crate) glob_files: GlobFilesTool,
 }
 
 pub(crate) struct WorkspaceRoot {
@@ -55,10 +56,15 @@ impl WorkspaceRoot {
             .descriptor
             .try_clone()
             .map_err(|_| WorkspaceRootError)?;
+        let file_info_root = self
+            .descriptor
+            .try_clone()
+            .map_err(|_| WorkspaceRootError)?;
         Ok(WorkspaceTools {
             list_files: ListFilesTool::from_root_descriptor(list_files_root),
             read_file: ReadFileTool::from_root_descriptor(read_file_root),
-            file_info: FileInfoTool::from_root_descriptor(self.descriptor),
+            file_info: FileInfoTool::from_root_descriptor(file_info_root),
+            glob_files: GlobFilesTool::from_root_descriptor(self.descriptor),
         })
     }
 
