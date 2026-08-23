@@ -1,6 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FORMAL REVIEW CYCLE 1 NOT GREEN — remediation is pending**
+Status: **FORMAL REVIEW CYCLE 1 REMEDIATED — replacement local gates and
+reviews are pending**
 
 ## Base and prior delivery
 
@@ -29,7 +30,8 @@ non-overlapping files. Their commits are not behavior candidates in isolation.
 The integration branch has composed all three without overwriting one another.
 Exact candidate `119938240807f8279f83e2ace65a69706e8fcfed` completed the first
 formal review cycle, and all three tracks reported **NOT GREEN**. Code and
-evidence remediation must be composed before a replacement candidate is named.
+evidence remediation is composed through `3010e6d`; replacement exact local
+gates must pass before a replacement candidate is named.
 
 ## Frozen boundary
 
@@ -54,7 +56,7 @@ equivalence.
 ## Required independent evidence
 
 Production and test owners remained separate. The composed branch supplies the
-following evidence, but cycle 1 found the explicitly unchecked gaps:
+following evidence after cycle-1 remediation:
 
 - [x] Exact public symbols, constants, tool/schema descriptions, strict
   arguments, result shape, open errors, tool errors, and redacted debug/display.
@@ -68,19 +70,21 @@ following evidence, but cycle 1 found the explicitly unchecked gaps:
   special-bit stripping.
 - [x] Missing parents, every symlink position, final special objects, retained-
   root replacement/removal, and unchanged outside sentinels.
-- [ ] Deterministic target appearance, existing-target replacement, and final-
+- [x] Deterministic target appearance, existing-target replacement, and final-
   parent postvalidation races are proven through the real production pipeline.
-  Helper/seam coverage exists, but cycle 1 correctly rejected it as insufficient
-  evidence for these three real-pipeline transitions. Staged-name replacement,
-  eight collisions, collision preservation, cleanup swap protection, and
-  residue handling are covered.
+  Native publication proves raced-create preservation, ordinary-rename raced
+  replacement, and retained-parent publication after a move outside the root.
+  Staged-name replacement, eight collisions, collision preservation, cleanup
+  swap protection, and residue handling are also covered.
 - [x] Injected write/chmod/file-sync/rename/directory-sync failures establish
   unchanged-target precommit behavior and post-rename commit ambiguity.
-- [ ] Cancellation is proven through the real production pipeline during the
-  verification phase. Traversal, final-prepublish, inert-until-poll/drop, engine
-  same-poll post-effect recovery, and absence of detached work are covered.
-- [ ] Every interrupt retry path has a finite work bound. Cycle 1 found
-  unbounded `EINTR` retry loops in write and sync helpers.
+- [x] Cancellation is proven through the real production pipeline during and
+  after the verification phase. Traversal, final-prepublish, inert-until-poll/
+  drop, engine same-poll post-effect recovery, and absence of detached work are
+  covered.
+- [x] Every interrupt path has an exact 16-interruption phase bound. Cumulative
+  interleaved write interruptions, both precommit sync and cancellation
+  outcomes, and real-rename postcommit ambiguity are covered.
 - [ ] Exact six-tool alphabetical host catalog, original-plus-five-clone
   workspace identity, and the complete platform matrix are green. The catalog
   and workspace identity pass locally; native behavior is locally exercised on
@@ -134,6 +138,10 @@ still required.
   tree and is not an exact-tree substitute for the formal candidate.
 - Formal adversarial cycle 1: correctness/API **NOT GREEN**;
   filesystem/robustness **NOT GREEN**; performance/concurrency **NOT GREEN**
+- Cycle-1 findings documentation:
+  `016f8dff13dffbacce3010342ee5b62f0af23b82`
+- Cycle-1 code and evidence remediation:
+  `3010e6d883b5f894083c6925b2b4412b8102b750`
 - Behavior-green SHA: **PENDING**
 - Remediation and replacement candidate: **PENDING**
 - Documentation seal: **PENDING**
@@ -201,8 +209,20 @@ confirmed findings are:
   active WASI execution, and the still-pending exact feature-CI Linux/macOS
   native matrix.
 
-No replacement candidate or green behavior SHA is claimed. After remediation
-and exact local gates, all three fresh tracks must rerun on the same new exact
+Documentation correction `016f8df` and code/evidence remediation `3010e6d`
+close every confirmed cycle-1 finding. The write path has one cumulative
+16-interruption budget despite partial progress; precommit file sync and
+postcommit parent sync each have their own 16-interruption budget. Precommit
+exhaustion preserves the target and cleans the stage, cancellation on the final
+interruption wins, and postcommit exhaustion after a real rename is
+nonretryable ambiguity with the new bytes live.
+
+Native-publish pipeline tests now prove raced-create preservation, ordinary-
+rename replacement of a postvalidation racer, publication into a retained
+parent moved outside the configured workspace, and cancellation after staged
+and target verification with zero publish calls plus exact-name cleanup. No
+replacement candidate or green behavior SHA is claimed yet. After replacement
+exact local gates, all three fresh tracks must rerun on the same new exact
 candidate.
 
 ## Local gate results

@@ -755,9 +755,12 @@ unbounded `EINTR` retries in write and sync helpers; medium missing
 deterministic real-pipeline proofs for target appearance, existing-target
 replacement, and final-parent postvalidation races; medium missing real-
 pipeline verification-phase cancellation evidence; and low stale platform,
-local-gate, and lineage claims in maintained documentation. Code and evidence
-remediation, exact replacement local gates, and three fresh same-SHA review
-tracks are pending. No replacement candidate or behavior-green SHA is claimed.
+local-gate, and lineage claims in maintained documentation. Documentation
+correction `016f8df` and code/evidence remediation `3010e6d` close those
+findings with an exact cumulative 16-interruption phase bound, native
+postvalidation race tests, and post-verification cancellation/cleanup evidence.
+Exact replacement local gates and three fresh same-SHA review tracks are
+pending. No replacement candidate or behavior-green SHA is claimed.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -920,9 +923,11 @@ gate:
   precursor `072bd69`. Formal-review preparation is `a7841c1`; exact first
   candidate `119938240807f8279f83e2ace65a69706e8fcfed` is tree-identical only to
   that immediate parent, while `072bd69` has a different documentation tree.
-  All three first-cycle tracks are **NOT GREEN**: remediation is pending for
-  unbounded `EINTR` retries, missing real-pipeline target/parent race evidence,
-  and missing real-pipeline verification-phase cancellation evidence. No
+  All three first-cycle tracks are **NOT GREEN**. Documentation correction
+  `016f8df` and code/evidence remediation `3010e6d` close the unbounded `EINTR`,
+  real-pipeline target/parent race, and verification-phase cancellation
+  findings. Replacement exact local gates and all three fresh review tracks
+  remain pending. No
   replacement candidate is claimed. Local evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-

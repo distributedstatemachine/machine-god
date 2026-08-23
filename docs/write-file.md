@@ -1,6 +1,7 @@
 # Native `write_file` contract
 
-Status: **FORMAL REVIEW CYCLE 1 NOT GREEN — remediation is pending**
+Status: **FORMAL REVIEW CYCLE 1 REMEDIATED — replacement local gates and
+reviews are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -247,11 +248,14 @@ timer, or other detached work. Cancellation is checked during root/parent
 traversal, every temporary attempt, every write chunk, staged and target
 verification, and immediately before rename. It cannot preempt an individual
 open, metadata, write, chmod, rename, unlink, or sync syscall already in flight.
-Formal cycle 1 found that candidate
-`119938240807f8279f83e2ace65a69706e8fcfed` does not yet satisfy the bounded-
-work requirement because write and sync helpers can retry `EINTR` without a
-finite bound. That behavior is a candidate defect, not a relaxation of this
-contract.
+
+Each content-write phase, staged-file sync phase, and post-rename parent-sync
+phase accepts at most 16 interrupted syscall results. The write-phase total
+does not reset after partial progress. On the sixteenth interruption,
+precommit cancellation is checked first and wins when observed; otherwise
+write or staged-sync exhaustion returns retryable `write_file_write_failed`.
+Parent-sync exhaustion occurs after publication, ignores later tool
+cancellation, and returns nonretryable `write_file_commit_ambiguous`.
 
 Rename is the irreversible boundary. Once it succeeds, the tool ignores its own
 later cancellation observation, completes parent sync, and returns success or
@@ -295,8 +299,9 @@ identity-preserving clones and registers exactly six tools alphabetically:
 
 Production, independent tests, and the maintained documentation are composed on
 the feature branch. The first exact candidate failed all three formal tracks.
-This six-tool catalog remains candidate behavior until a remediated exact
-composed SHA passes local gates, three fresh same-SHA adversarial tracks, exact
+Cycle-1 code and evidence remediation is composed through `3010e6d`. This six-
+tool catalog remains candidate behavior until a replacement exact composed SHA
+passes local gates, three fresh same-SHA adversarial tracks, exact
 feature workflows, and fast-forward `main` delivery.
 
 ## Formal review status
@@ -312,11 +317,13 @@ the maintained documents.
 The candidate is tree-identical only to its immediate parent
 `a7841c19b4b34cecf40e55d7cd001fd1547133c1`. Local-gate precursor
 `072bd69eb6f73944d1db00363da0f965f09dda9f` has a different documentation tree
-and is retained only as precursor evidence. No replacement candidate or green
-behavior SHA is claimed. After code and evidence remediation, all three tracks
-must rerun fresh on the same replacement SHA. A later documentation-only seal
-or delivery record remains exempt from another adversarial cycle under the
-user's instruction, while exact feature and `main` workflows remain required.
+and is retained only as precursor evidence. Documentation correction
+`016f8df` and code/evidence remediation `3010e6d` close the confirmed cycle-1
+findings. No replacement candidate or green behavior SHA is claimed yet. After
+replacement exact local gates, all three tracks must rerun fresh on the same
+replacement SHA. A later documentation-only seal or delivery record remains
+exempt from another adversarial cycle under the user's instruction, while exact
+feature and `main` workflows remain required.
 
 ## Independent evidence checklist
 
@@ -340,21 +347,23 @@ items are still candidate evidence until the formal exact-SHA gates complete:
 - [x] Parents are never created; ancestor/final symlinks and directory, FIFO,
   socket, device, and other special targets fail closed and outside sentinels
   remain unchanged.
-- [ ] Target appearance, existing-target replacement, and final-parent
+- [x] Target appearance, existing-target replacement, and final-parent
   postvalidation races are exercised deterministically through the real
-  production pipeline. Retained-root and helper/seam evidence exists, but the
-  three named pipeline proofs remain pending after cycle 1.
+  production pipeline, including native publication into a retained parent
+  moved outside the configured workspace.
 - [x] Eight temporary-name collisions exhaust exactly; foreign collisions are
   preserved; staged-name replacement and cleanup-name swaps never intentionally
   remove a mismatched sentinel; possible residue is accounted for.
 - [x] Injected write, chmod, staged-file sync, rename, and parent-directory sync
   failures prove precommit unchanged-target behavior and post-rename commit
   ambiguity.
-- [ ] Cancellation is exercised through the real production pipeline during
-  verification. Traversal, temporary-attempt, write, final-precommit,
+- [x] Cancellation is exercised through the real production pipeline during
+  and after verification. Traversal, temporary-attempt, write, final-precommit,
   unpolled/drop, and core same-poll durable unknown-result evidence exists.
-- [ ] Write and sync interruption handling has a finite retry/work bound; cycle
-  1 found unbounded `EINTR` retries.
+- [x] Write and sync interruption handling has a 16-interruption phase bound;
+  cumulative interleaved write interruptions do not reset on partial progress,
+  precommit cancellation wins on the final allowed interruption, and
+  postcommit exhaustion is ambiguous.
 - [x] Engine deny/allow events and durable results, exact six-tool alphabetical
   catalog, and original-plus-five-clones workspace identity all pass.
 - [ ] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
