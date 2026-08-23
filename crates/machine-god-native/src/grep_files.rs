@@ -815,7 +815,11 @@ impl<'a> IncludeMatcher<'a> {
             Self::Basename(pattern) => {
                 segment_matches(pattern, basename.as_bytes(), budget, cancellation)
             }
-            Self::Path { .. } => Ok(false),
+            Self::Path { .. } => {
+                check_cancellation(cancellation)?;
+                budget.observe_include_steps(1)?;
+                Ok(false)
+            }
         }
     }
 }
@@ -1936,8 +1940,27 @@ fn path_matches(
     budget: &mut ScanBudget,
     cancellation: &CancellationToken,
 ) -> Result<bool, ToolError> {
+    path_matches_with_check(
+        pattern_segments,
+        non_recursive_pattern_segments,
+        candidate,
+        budget,
+        cancellation,
+        &mut || check_cancellation(cancellation),
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn path_matches_with_check(
+    pattern_segments: &[&str],
+    non_recursive_pattern_segments: usize,
+    candidate: &str,
+    budget: &mut ScanBudget,
+    cancellation: &CancellationToken,
+    check: &mut impl FnMut() -> Result<(), ToolError>,
+) -> Result<bool, ToolError> {
     budget.observe_include_steps(candidate.len())?;
-    let candidate_segments = candidate.split('/').collect::<Vec<_>>();
+    let candidate_segments = candidate_segments_with_check(candidate, check)?;
     if non_recursive_pattern_segments > candidate_segments.len() {
         return Ok(false);
     }
@@ -1968,6 +1991,9 @@ fn path_matches(
         } else {
             current[0] = false;
             for candidate_index in 1..=candidate_segments.len() {
+                if candidate_index.is_multiple_of(1024) {
+                    check()?;
+                }
                 current[candidate_index] = if previous[candidate_index - 1] {
                     segment_matches(
                         pattern_segment.as_bytes(),
@@ -1984,6 +2010,27 @@ fn path_matches(
         previous_was_recursive = *pattern_segment == "**";
     }
     Ok(previous[candidate_segments.len()])
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn candidate_segments_with_check<'a>(
+    candidate: &'a str,
+    check: &mut impl FnMut() -> Result<(), ToolError>,
+) -> Result<Vec<&'a str>, ToolError> {
+    let mut segments = Vec::new();
+    let mut segment_start = 0_usize;
+    for (index, byte) in candidate.as_bytes().iter().copied().enumerate() {
+        if index.is_multiple_of(1024) {
+            check()?;
+        }
+        if byte == b'/' {
+            segments.push(&candidate[segment_start..index]);
+            segment_start = index.checked_add(1).ok_or_else(scan_limit)?;
+        }
+    }
+    check()?;
+    segments.push(&candidate[segment_start..]);
+    Ok(segments)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2336,8 +2383,9 @@ mod tests {
         classify_post_observation_result, excerpt_containing_match, grep_files_input_schema,
         line_ranges_with_check, map_content_open_error, map_descendant_open_error,
         map_scan_metadata_error, normalize_include_pattern, normalize_literal_pattern,
-        normalize_relative_path, pagination_fields, path_matches, read_bounded_content_with,
-        render_output_with_check, search_root_type_is_stable, segment_matches,
+        normalize_relative_path, pagination_fields, path_matches, path_matches_with_check,
+        read_bounded_content_with, render_output_with_check, search_root_type_is_stable,
+        segment_matches,
     };
     use serde_json::json;
 
@@ -2410,7 +2458,16 @@ mod tests {
                 .matches_selected_file("lib.rs", &mut budget, &cancellation)
                 .unwrap()
         );
-        assert_eq!(budget.include_match_steps, before_selected_file);
+        assert_eq!(budget.include_match_steps, before_selected_file + 1);
+
+        let cancelled = CancellationToken::new();
+        assert!(cancelled.cancel());
+        let before_cancelled_file = budget.include_match_steps;
+        let error = matcher
+            .matches_selected_file("lib.rs", &mut budget, &cancelled)
+            .unwrap_err();
+        assert_eq!(error.code, "grep_files_cancelled");
+        assert_eq!(budget.include_match_steps, before_cancelled_file);
 
         let mut basename_budget = ScanBudget::default();
         let basename =
@@ -2421,6 +2478,80 @@ mod tests {
                 .matches_selected_file("lib.rs", &mut basename_budget, &cancellation)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn slashful_candidate_split_checks_cancellation_at_fixed_byte_intervals() {
+        let candidate = format!("{}x", "a/".repeat(1024));
+        let cancellation = CancellationToken::new();
+        let injected = CancellationToken::new();
+        let mut checks = 0_usize;
+        let error = path_matches_with_check(
+            &["**", "x"],
+            1,
+            &candidate,
+            &mut ScanBudget::default(),
+            &cancellation,
+            &mut || {
+                checks += 1;
+                if checks == 2 {
+                    assert!(injected.cancel());
+                }
+                super::check_cancellation(&injected)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(checks, 2);
+        assert_eq!(error.code, "grep_files_cancelled");
+    }
+
+    #[test]
+    fn slashful_candidate_early_rejection_checks_after_segment_scan() {
+        let cancellation = CancellationToken::new();
+        let injected = CancellationToken::new();
+        let mut checks = 0_usize;
+        let error = path_matches_with_check(
+            &["a", "b"],
+            2,
+            "a",
+            &mut ScanBudget::default(),
+            &cancellation,
+            &mut || {
+                checks += 1;
+                if checks == 2 {
+                    assert!(injected.cancel());
+                }
+                super::check_cancellation(&injected)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(checks, 2);
+        assert_eq!(error.code, "grep_files_cancelled");
+    }
+
+    #[test]
+    fn nonrecursive_path_dp_checks_cancellation_through_false_cells() {
+        let candidate = std::iter::repeat_n("a", 2048).collect::<Vec<_>>().join("/");
+        let cancellation = CancellationToken::new();
+        let injected = CancellationToken::new();
+        let mut checks = 0_usize;
+        let error = path_matches_with_check(
+            &["not-a"],
+            1,
+            &candidate,
+            &mut ScanBudget::default(),
+            &cancellation,
+            &mut || {
+                checks += 1;
+                if checks == 7 {
+                    assert!(injected.cancel());
+                }
+                super::check_cancellation(&injected)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(checks, 7);
+        assert_eq!(error.code, "grep_files_cancelled");
     }
 
     #[test]
