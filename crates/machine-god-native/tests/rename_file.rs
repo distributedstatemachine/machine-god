@@ -377,7 +377,10 @@ fn execute_renames_same_and_distinct_parent_regular_files_without_reading_conten
     fs::write(temporary.path().join("same-old"), b"same parent").unwrap();
     let cross_source = temporary.path().join("source-parent/old");
     fs::write(&cross_source, b"private unread bytes").unwrap();
+    #[cfg(target_os = "linux")]
     fs::set_permissions(&cross_source, fs::Permissions::from_mode(0o000)).unwrap();
+    #[cfg(target_os = "macos")]
+    fs::set_permissions(&cross_source, fs::Permissions::from_mode(0o400)).unwrap();
     let tool = tool(temporary.path());
 
     assert_eq!(
@@ -398,9 +401,35 @@ fn execute_renames_same_and_distinct_parent_regular_files_without_reading_conten
     );
     assert!(!cross_source.exists());
     let destination = temporary.path().join("destination-parent/new");
-    assert_eq!(fs::metadata(&destination).unwrap().mode() & 0o777, 0);
+    #[cfg(target_os = "linux")]
+    assert_eq!(fs::metadata(&destination).unwrap().mode() & 0o777, 0o000);
+    #[cfg(target_os = "macos")]
+    assert_eq!(fs::metadata(&destination).unwrap().mode() & 0o777, 0o400);
     fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(fs::read(destination).unwrap(), b"private unread bytes");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn unreadable_source_is_preserved_when_descriptor_retention_is_denied() {
+    let temporary = TemporaryDirectory::new();
+    let source = temporary.path().join("source");
+    fs::write(&source, b"private unread bytes").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let error = rename(&tool(temporary.path()), "source", "destination").unwrap_err();
+
+    assert_tool_error(
+        error,
+        ToolErrorKind::PermissionDenied,
+        "rename_file_permission_denied",
+        "requested rename is not permitted",
+        false,
+    );
+    assert!(source.exists());
+    assert!(!temporary.path().join("destination").exists());
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(fs::read(source).unwrap(), b"private unread bytes");
 }
 
 #[test]

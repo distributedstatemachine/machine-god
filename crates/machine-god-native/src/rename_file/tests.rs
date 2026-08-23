@@ -109,7 +109,7 @@ impl RenameFileEvidence for TraceEvidence {
         component: &OsStr,
     ) -> Result<OwnedFd, rustix::io::Errno> {
         self.record(Operation::Open(phase, site, ordinal))?;
-        rustix::fs::openat(parent, component, directory_open_flags(), Mode::empty())
+        rustix::fs::openat(parent, component, open_flags(site), Mode::empty())
     }
 
     fn fstat(
@@ -523,6 +523,7 @@ impl RenameFileEvidence for TerminalEvidence {
 
     fn after_rename(
         &mut self,
+        _retained_source: BorrowedFd<'_>,
         _source_parent: BorrowedFd<'_>,
         _source_name: &str,
         _destination_parent: BorrowedFd<'_>,
@@ -890,6 +891,7 @@ fn each_parent_sync_accepts_fifteen_interruptions_and_bounds_the_sixteenth() {
 
 enum FinalWindowRace {
     ReplaceSource(&'static str),
+    UnlinkSourceThenReplace,
     CreateDestination,
 }
 
@@ -897,6 +899,7 @@ struct FinalWindowEvidence {
     race: FinalWindowRace,
     rename_calls: usize,
     sync_calls: Vec<(RenameSyncSide, usize)>,
+    retained_source_was_unlinked: bool,
 }
 
 impl RenameFileEvidence for FinalWindowEvidence {
@@ -915,6 +918,18 @@ impl RenameFileEvidence for FinalWindowEvidence {
                 rustix::fs::renameat(source_parent, replacement, source_parent, source_name)
                     .unwrap();
             }
+            FinalWindowRace::UnlinkSourceThenReplace => {
+                rustix::fs::renameat(source_parent, source_name, source_parent, "displaced")
+                    .unwrap();
+                rustix::fs::unlinkat(source_parent, "displaced", AtFlags::empty()).unwrap();
+                rustix::fs::renameat(
+                    source_parent,
+                    "replacement-file",
+                    source_parent,
+                    source_name,
+                )
+                .unwrap();
+            }
             FinalWindowRace::CreateDestination => {
                 rustix::fs::renameat(
                     destination_parent,
@@ -924,6 +939,24 @@ impl RenameFileEvidence for FinalWindowEvidence {
                 )
                 .unwrap();
             }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn after_rename(
+        &mut self,
+        retained_source: BorrowedFd<'_>,
+        _source_parent: BorrowedFd<'_>,
+        _source_name: &str,
+        _destination_parent: BorrowedFd<'_>,
+        _destination_name: &str,
+        _outcome: Result<(), rustix::io::Errno>,
+        _cancellation: &CancellationToken,
+    ) -> Result<(), rustix::io::Errno> {
+        if matches!(self.race, FinalWindowRace::UnlinkSourceThenReplace) {
+            let metadata = rustix::fs::fstat(retained_source)?;
+            self.retained_source_was_unlinked = metadata.st_nlink == 0;
         }
         Ok(())
     }
@@ -984,6 +1017,7 @@ fn assert_final_source_replacement(replacement: &'static str) {
         race: FinalWindowRace::ReplaceSource(replacement),
         rename_calls: 0,
         sync_calls: Vec::new(),
+        retained_source_was_unlinked: false,
     };
     let error = tool
         .execute_supported_with_evidence(
@@ -1033,6 +1067,39 @@ fn assert_final_source_replacement(replacement: &'static str) {
 }
 
 #[test]
+fn retained_source_descriptor_prevents_inode_reuse_false_success() {
+    let (temporary, tool) = nested_fixture("retained-source");
+    fs::write(
+        temporary.path().join("old-parent/replacement-file"),
+        b"replacement",
+    )
+    .unwrap();
+    let mut evidence = FinalWindowEvidence {
+        race: FinalWindowRace::UnlinkSourceThenReplace,
+        rename_calls: 0,
+        sync_calls: Vec::new(),
+        retained_source_was_unlinked: false,
+    };
+
+    let error = tool
+        .execute_supported_with_evidence(
+            "old-parent/source",
+            "new-parent/destination",
+            &CancellationToken::new(),
+            &mut evidence,
+        )
+        .unwrap_err();
+
+    assert_commit_ambiguous(&error);
+    assert_eq!(evidence.rename_calls, 1);
+    assert!(evidence.retained_source_was_unlinked);
+    assert_eq!(
+        fs::read(temporary.path().join("new-parent/destination")).unwrap(),
+        b"replacement"
+    );
+}
+
+#[test]
 fn final_window_destination_is_preserved_and_source_replacements_are_disclosed() {
     let (temporary, tool) = nested_fixture("destination-final-race");
     fs::write(temporary.path().join("new-parent/intruder"), b"intruder").unwrap();
@@ -1040,6 +1107,7 @@ fn final_window_destination_is_preserved_and_source_replacements_are_disclosed()
         race: FinalWindowRace::CreateDestination,
         rename_calls: 0,
         sync_calls: Vec::new(),
+        retained_source_was_unlinked: false,
     };
     let error = tool
         .execute_supported_with_evidence(

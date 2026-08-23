@@ -104,10 +104,11 @@ impl Error for RenameFileToolOpenError {}
 ///
 /// Linux and macOS execution accepts only an existing regular-file source and
 /// an absent destination whose parents already exist. It uses one no-replace
-/// rename syscall. Portable rename has no source-inode compare-and-swap, so a
-/// final-window regular, directory, symlink, or special-file replacement can
-/// be moved; postcommit identity verification prevents that outcome from being
-/// reported as success.
+/// rename syscall. A non-reading source descriptor pins the validated inode
+/// through postcommit identity verification. Portable rename has no source-
+/// inode compare-and-swap, so a final-window regular, directory, symlink, or
+/// special-file replacement can be moved; postcommit identity verification
+/// prevents that outcome from being reported as success.
 pub struct RenameFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
@@ -373,6 +374,7 @@ pub(super) enum RenameOpenSite {
     #[cfg(target_os = "macos")]
     RootParent(RenameEndpoint),
     Intermediate(RenameEndpoint, usize),
+    Source,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -381,6 +383,7 @@ pub(super) enum RenameFstatSite {
     Root(RenameEndpoint),
     Intermediate(RenameEndpoint, usize),
     FinalParent(RenameEndpoint),
+    Source,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -422,12 +425,12 @@ pub(super) trait RenameFileEvidence {
     fn open_walk(
         &mut self,
         _phase: RenamePhase,
-        _site: RenameOpenSite,
+        site: RenameOpenSite,
         _ordinal: usize,
         parent: BorrowedFd<'_>,
         component: &OsStr,
     ) -> Result<OwnedFd, rustix::io::Errno> {
-        rustix::fs::openat(parent, component, directory_open_flags(), Mode::empty())
+        rustix::fs::openat(parent, component, open_flags(site), Mode::empty())
     }
 
     fn fstat(
@@ -495,6 +498,7 @@ pub(super) trait RenameFileEvidence {
     #[allow(clippy::too_many_arguments)]
     fn after_rename(
         &mut self,
+        _retained_source: BorrowedFd<'_>,
         _source_parent: BorrowedFd<'_>,
         _source_name: &str,
         _destination_parent: BorrowedFd<'_>,
@@ -585,6 +589,12 @@ struct SourceIdentity {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct RetainedSource {
+    descriptor: OwnedFd,
+    identity: SourceIdentity,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl SourceIdentity {
     fn from_stat(metadata: &rustix::fs::Stat) -> Result<Self, ()> {
         if !FileType::from_raw_mode(metadata.st_mode).is_file() {
@@ -635,7 +645,7 @@ impl RenameFileTool {
             evidence,
             &mut ordinals,
         )?;
-        let initial_source_identity = inspect_source(
+        let retained_source = retain_source(
             initial_source.parent.as_fd(),
             initial_source.basename,
             RenamePhase::Initial,
@@ -692,7 +702,7 @@ impl RenameFileTool {
             evidence,
             &mut ordinals,
         )?;
-        if final_source_identity != initial_source_identity {
+        if final_source_identity != retained_source.identity {
             return Err(target_changed());
         }
         let final_destination = self.walk_parent(
@@ -744,6 +754,7 @@ impl RenameFileTool {
             final_destination.basename,
         );
         let after_rename = evidence.after_rename(
+            retained_source.descriptor.as_fd(),
             final_source.parent.as_fd(),
             final_source.basename,
             final_destination.parent.as_fd(),
@@ -777,7 +788,7 @@ impl RenameFileTool {
                     )
                 };
                 if after_rename.is_err()
-                    || published != Ok(initial_source_identity)
+                    || published != Ok(retained_source.identity)
                     || source_sync.is_err()
                     || destination_sync.is_err()
                 {
@@ -914,6 +925,58 @@ fn inspect_source<Evidence: RenameFileEvidence>(
     )
     .map_err(|error| map_source_evidence_error(error, phase))?;
     SourceIdentity::from_stat(&metadata).map_err(|()| map_rejected_phase(phase))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn retain_source<Evidence: RenameFileEvidence>(
+    parent: BorrowedFd<'_>,
+    name: &str,
+    phase: RenamePhase,
+    cancellation: &CancellationToken,
+    evidence: &mut Evidence,
+    ordinals: &mut OperationOrdinals,
+) -> Result<RetainedSource, ToolError> {
+    let descriptor = match evidence_open_walk(
+        parent,
+        OsStr::new(name),
+        phase,
+        RenameOpenSite::Source,
+        cancellation,
+        evidence,
+        ordinals,
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(open_error) => {
+            let metadata = evidence_statat(
+                parent,
+                OsStr::new(name),
+                phase,
+                RenameStatatSite::Source,
+                cancellation,
+                evidence,
+                ordinals,
+            )
+            .map_err(|error| map_source_evidence_error(error, phase))?;
+            if SourceIdentity::from_stat(&metadata).is_err() {
+                return Err(map_rejected_phase(phase));
+            }
+            return Err(map_source_evidence_error(open_error, phase));
+        }
+    };
+    let metadata = evidence_fstat(
+        descriptor.as_fd(),
+        phase,
+        RenameFstatSite::Source,
+        cancellation,
+        evidence,
+        ordinals,
+    )
+    .map_err(|error| map_source_evidence_error(error, phase))?;
+    let identity = SourceIdentity::from_stat(&metadata).map_err(|()| map_rejected_phase(phase))?;
+    Ok(RetainedSource {
+        descriptor,
+        identity,
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1195,6 +1258,26 @@ fn build_success_output(old_path: &str, new_path: &str) -> Result<ToolOutput, To
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn directory_open_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn open_flags(site: RenameOpenSite) -> OFlags {
+    if site == RenameOpenSite::Source {
+        source_open_flags()
+    } else {
+        directory_open_flags()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn source_open_flags() -> OFlags {
+    OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC
+}
+
+#[cfg(target_os = "macos")]
+fn source_open_flags() -> OFlags {
+    let event_only = u32::try_from(libc::O_EVTONLY).expect("O_EVTONLY fits in u32");
+    OFlags::from_bits_retain(event_only) | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
