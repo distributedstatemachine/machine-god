@@ -565,10 +565,14 @@ allocation, entry-kind handling, or include matching. Stable special objects
 are skipped; a raced nonblocking special open is rejected before read, and no
 symlink is followed. Optional include filtering is compiled once per call,
 uses the delivered bytewise glob grammar, charges complete parse and match
-work, and does not prune directory traversal. Selected-file filtering occurs
-after no-follow stat classification and before content open. No ignore, Git,
-subprocess, external-
-path, or ambient discovery behavior is added.
+work, and does not prune directory traversal. Fixed literal pattern-table work
+is charged before selected-root resolution. Selected-file filtering occurs
+after no-follow stat classification and before content open. A slashful
+selected-file rejection consumes one charged cancellation-checked include
+decision. An excluded selected file consumes fixed pattern-table and include
+work but no candidate, content-byte, or per-file matching work; an included file
+opens and is revalidated before those latter budgets. No ignore, Git,
+subprocess, external-path, or ambient discovery behavior is added.
 
 Content matching is literal and worst-case linear, with exact byte comparison
 or ASCII-only case folding and one result per matching LF-delimited line. A
@@ -591,7 +595,9 @@ return deterministic bounded pages with exact totals, scan statistics,
 text matching-line/file totals without pagination fields. Every emitted
 `next_offset` is reusable under the accepted bound. Cancellation is checked at
 fixed intervals while indexing lines and at every serialized-output trimming
-iteration.
+iteration. Slashful candidate splitting checks at intervals of at most 1,024
+candidate bytes, and both recursive and non-recursive dynamic-programming
+branches retain cancellation checks.
 
 The candidate extends reference-host composition to exactly five alphabetical
 workspace tools: `file_info`, `glob_files`, `grep_files`, `list_files`, and
@@ -617,9 +623,13 @@ Lint fix and exact local gates are green at
 tracks are **NOT GREEN** on exact candidate
 `355a11a6055b0053dff80e71011d7633e8a6ce97`. Remediation and exact replacement
 local gates are green at final code/test precursor
-`275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. All three replacement reviews,
-the behavior-green SHA, documentation seal, and feature/`main` delivery SHAs or
-runs remain **PENDING**. The maintained documentation must compose into the
+`275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. First replacement candidate
+`ae87bf1454b1527b2e55ed5e517c21fd7410c980` is **NOT GREEN** with one low
+correctness ordering finding, one low filesystem evidence-wording finding, and
+medium-plus-low performance/cancellation findings. Production and documentation
+fixes, all three second replacement reviews, the behavior-green SHA,
+documentation seal, and feature/`main` delivery SHAs or runs remain **PENDING**.
+The maintained documentation must compose into the
 exact behavior SHA reviewed by all three adversarial tracks. A later
 documentation-only seal or delivery record is exempt from another adversarial
 cycle under the user's instruction but still requires exact feature and `main`
@@ -724,9 +734,11 @@ gate:
   component `b04151a` produces first fully composed behavior `42e4793`; lint
   fix and exact local gates are green at `45ad91f`. All three first-cycle tracks
   are **NOT GREEN** on exact `355a11a`. Remediation and exact replacement local
-  gates are green at final code/test precursor `275d263`; all three replacement
-  reviews, the behavior-green SHA, seal, feature, integration, and `main`
-  evidence remain **PENDING**. The remaining native tools are incomplete, so
+  gates are green at final code/test precursor `275d263`. First replacement
+  candidate `ae87bf1` is **NOT GREEN** across all three tracks; production and
+  documentation fixes, all three second replacement reviews, the behavior-green
+  SHA, seal, feature, integration, and `main` evidence remain **PENDING**. The
+  remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

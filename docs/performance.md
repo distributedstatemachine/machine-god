@@ -226,8 +226,15 @@ production/test composition green. Documentation component `b04151a` produces
 first fully composed behavior `42e4793`; lint fix and exact local gates are
 green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 `355a11a`. Remediation and exact replacement local gates are green at final
-code/test precursor `275d263`; all three replacement reviews, the behavior-
-green SHA, seal, delivery, and exact-workflow evidence remain **PENDING**.
+code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
+GREEN**: performance review found a medium slashful candidate/false-DP
+cancellation gap and a low unmetered slashful selected-file decision, while the
+other tracks each found one low issue. Production and documentation fixes, all
+three second replacement reviews, the behavior-green SHA, seal, delivery, and
+exact-workflow evidence remain **PENDING**. The corrected contract requires
+cancellation-aware slashful candidate splitting at intervals of at most 1,024
+bytes, checks in both dynamic-programming branches, and one charged
+cancellation-checked slashful selected-file rejection.
 Existing bootstrap
 classifications, eligibility, thresholds, workflows, and pinned upstream Zig
 input remain unchanged; machine-god remains a Rust product.

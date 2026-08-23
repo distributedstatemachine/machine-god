@@ -241,17 +241,23 @@ green. Documentation component `b04151a` produces first fully composed behavior
 candidate `42e4793`; lint fix and exact local gates are green at `45ad91f`.
 All three first-cycle formal tracks are **NOT GREEN** on exact candidate
 `355a11a`. Remediation and exact replacement local gates are green at final
-code/test precursor `275d263`; all three replacement reviews, the behavior-
-green SHA, seal, delivery, and exact-workflow evidence remain **PENDING**.
+code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
+GREEN** with one low correctness ordering finding, one low filesystem evidence-
+wording finding, and medium-plus-low performance/cancellation findings.
+Production and documentation fixes, all three second replacement reviews, the
+behavior-green SHA, seal, delivery, and exact-workflow evidence remain
+**PENDING**.
 Strict effect-free preflight accepts exactly `pattern`, `path`, `include`,
 `case_insensitive`, `mode`, `head_limit`,
 `offset`, and `context_lines`, makes every default explicit, and prepares
 `FilesystemAccess::SearchContent` at the normalized selected file or subtree.
-The remediation contract requires one fully metered include compilation per
-call, full descendant-path validation before allocation or filtering, reusable
-64 MiB-bounded continuation offsets, selected-file filtering before content
-open, and fixed cancellation checks through line indexing and serialization
-trimming. Allowed execution performs a bounded linear literal search with
+The remediation contract requires fixed literal pattern-table work before root
+resolution, one fully metered include compilation per call, full descendant-
+path validation before allocation or filtering, reusable 64 MiB-bounded
+continuation offsets, and selected-file filtering before content open. Slashful
+selected-file rejection is charged and cancellation-checked; slashful candidate
+splitting and both dynamic-programming branches retain fixed cancellation
+checks. Allowed execution performs a bounded linear literal search with
 optional ASCII case folding over eligible UTF-8 no-follow regular files reached
 through the retained descriptor. It reports exact matching and eligible-text
 statistics in bounded `matches`, `files_with_matches`, or `count` results, with

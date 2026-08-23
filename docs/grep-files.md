@@ -1,9 +1,9 @@
 # Native `grep_files` tool
 
-Status: **IN PROGRESS — remediation and exact replacement local gates are
-green at `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`; all three replacement
-reviews, the behavior-green SHA, seal, and delivery remain pending** nineteenth
-bounded Milestone 03 candidate.
+Status: **IN PROGRESS — first replacement candidate
+`ae87bf1454b1527b2e55ed5e517c21fd7410c980` is NOT GREEN; production and
+documentation fixes, second replacement reviews, the behavior-green SHA, seal,
+and delivery remain pending** nineteenth bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
@@ -32,9 +32,15 @@ remediation commits `012f14d273b15085713fba9092e93486d4e6f0e4`,
 `3cd282fafb26bb069ac73407fde0fd30c7d1ff82`,
 `630acbb384f2e1b79b6916a10baaac26acafbf41`, and final code/test local-gate
 precursor `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. Its replacement local
-gates are green. All three replacement reviews, the exact behavior SHA with
-all tracks green, documentation seal, feature workflows, integrated `main`,
-and exact `main` workflows remain **PENDING** until those artifacts exist.
+gates are green. First replacement formal candidate
+`ae87bf1454b1527b2e55ed5e517c21fd7410c980` is **NOT GREEN**: correctness found
+one low literal-compilation ordering mismatch; filesystem review found one low
+deep-FIFO evidence overclaim; and performance review found one medium slashful
+candidate/false-DP cancellation gap plus one low unmetered slashful selected-
+file decision. Production and documentation fixes, all three second replacement
+reviews, the exact behavior SHA with all tracks green, documentation seal,
+feature workflows, integrated `main`, and exact `main` workflows remain
+**PENDING** until those artifacts exist.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal
@@ -193,14 +199,18 @@ line/paragraph-separator, and bidirectional-formatting forms reject. Backslash,
 brackets, and braces are literal. `?`, `*`, and an exact `**` segment retain
 their bytewise delivered meanings.
 
-Execution compiles the optional normalized include exactly once per call before
-candidate filtering. Slashful patterns retain their parsed segments and
-non-recursive-segment count for reuse; they are not split, counted, or allocated
-again per entry. The aggregate include-work meter charges the complete
-once-per-call parse/compile work as well as every per-candidate basename or path
-match operation, including candidate splitting, dynamic-programming cells, and
-segment transitions. Checked overflow or the first unit beyond the include-work
-cap fails the complete call.
+Execution constructs the fixed literal pattern table and charges that literal
+work before selected-root resolution. It then compiles the optional normalized
+include exactly once per call before candidate filtering. Slashful patterns
+retain their parsed segments and non-recursive-segment count for reuse; they are
+not split, counted, or allocated again per entry. The aggregate include-work
+meter charges the complete once-per-call parse/compile work as well as every
+per-candidate basename or path match operation, including candidate splitting,
+dynamic-programming cells, and segment transitions. Slashful candidate
+splitting checks cancellation at least every 1,024 candidate bytes, and both
+recursive and non-recursive dynamic-programming branches retain cancellation
+checks. Checked overflow or the first unit beyond the include-work cap fails the
+complete call.
 
 Preflight is deterministic, synchronous, bounded, nonblocking, and effect-free.
 It performs only strict decoding, range validation, and lexical normalization.
@@ -237,10 +247,10 @@ on a line supplies its byte offset.
 
 The matcher must be worst-case linear in bounded pattern and content bytes,
 using KMP or an equivalently auditable failure-function algorithm. Content work
-charges pattern-table construction, each candidate-byte comparison, and each
-failure transition across the whole call. Checked overflow exhausts the work
-budget. This deliberately does not reproduce an unmetered naive sliding-window
-search.
+charges pattern-table construction before selected-root resolution, then each
+per-file candidate-byte comparison and failure transition across the whole
+call. Checked overflow exhausts the work budget. This deliberately does not
+reproduce an unmetered naive sliding-window search.
 
 Logical lines are split on LF. LF is not part of the line, while a preceding CR
 remains content. A final LF creates no synthetic trailing line; real empty lines
@@ -284,12 +294,14 @@ followed or read.
 
 For a selected regular file, an absent `include` selects it and a slash-free
 `include` applies to its basename. A slashful include has no path beneath a
-single-file search root to match and therefore excludes that file. An excluded
-selected file consumes include work but is not content-opened and does not
-consume candidate or content work. An included selected file is opened and
-authoritatively revalidated as regular before it consumes candidate, content,
-and literal-matcher budgets. Its returned path is the full normalized
-workspace-relative selected path.
+single-file search root to match and therefore excludes that file through one
+charged, cancellation-checked include decision. Every selected-file call has
+already consumed the fixed literal pattern-table construction and include
+compile/decision work. An excluded selected file is not content-opened and
+consumes no candidate, content-byte, or per-file literal-matching work. An
+included selected file is opened and authoritatively revalidated as regular
+before it consumes those latter budgets. Its returned path is the full
+normalized workspace-relative selected path.
 
 For a selected directory, traversal is iterative and descriptor-relative. The
 selected directory is depth zero. Each directory is fully read; only `.` and
@@ -327,7 +339,10 @@ candidate before content open. A slash-free include matches the basename
 recursively. A slashful include matches the path relative to the selected
 search root. It filters files only and never prunes directory traversal. Its
 single compile plus every invocation charge the aggregate delivered glob-
-matcher work budget completely.
+matcher work budget completely. Candidate path splitting checks cancellation
+at intervals of at most 1,024 candidate bytes, including inputs that ultimately
+fail to match, and both recursive and non-recursive dynamic-programming branches
+remain cancellation-checked.
 
 Hidden files are included. No ignore file, Git repository state, subprocess,
 shell, external path, home expansion, or ambient environment participates.
@@ -572,10 +587,13 @@ directory read, classification, file open and metadata operation, before and
 after bounded content reads, at fixed intervals through include compilation,
 include/content matching, and line-index construction, before every serialized-
 size trimming reconstruction/serialization attempt, and immediately before
-return. The fixed byte-processing interval is at most 1,024 source or candidate
-bytes; directory-entry loops retain their per-entry checks, and every output-
-trimming iteration begins with a check. Cancellation cannot preempt one syscall
-already in flight.
+return. Slashful selected-file rejection has its own charged cancellation check;
+slashful candidate splitting checks at intervals of at most 1,024 candidate
+bytes; and both recursive and non-recursive dynamic-programming branches check
+cancellation. The fixed byte-processing interval is at most 1,024 source or
+candidate bytes; directory-entry loops retain their per-entry checks, and every
+output-trimming iteration begins with a check. Cancellation cannot preempt one
+syscall already in flight.
 
 No task, thread, process, timer, cache, indexer, or producer is detached.
 Dropping an unpolled future performs no filesystem work. Dropping after work

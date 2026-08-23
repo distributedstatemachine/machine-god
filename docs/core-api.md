@@ -518,11 +518,14 @@ The Linux/macOS native implementation, not core, owns retained workspace
 identity and liveness, selected-file/directory classification, iterative
 descriptor-relative no-follow sorted traversal, pre-allocation full-path bounds,
 selected-file include filtering before content open, stable-special skipping and
-raced-special opened-type rejection, once-per-call fully metered include
-compilation, regular-file eligibility, a worst-case-linear literal matcher with
-ASCII-only folding, same-buffer context, complete scan/work/output budgets,
+raced-special opened-type rejection, fixed literal pattern-table work before
+root resolution, once-per-call fully metered include compilation, regular-file
+eligibility, a worst-case-linear literal matcher with ASCII-only folding,
+same-buffer context, complete scan/work/output budgets,
 reusable 64 MiB-bounded offsets, fixed redacted errors, and fixed cancellation
-checks through line indexing and serialization trimming. Its
+checks through line indexing and serialization trimming. Slashful selected-file
+rejection is charged and cancellation-checked; slashful candidate splitting and
+both dynamic-programming branches retain fixed cancellation checks. Its
 `matches`, `files_with_matches`, and `count` shapes echo the canonical request,
 return exact eligible-text totals plus candidate/search/skip statistics, and
 remain under an independent 48 KiB complete serialized `ToolOutput` cap. Core
@@ -539,8 +542,10 @@ focused production/test composition green. Documentation component `b04151a`
 produces fully composed behavior `42e4793`; lint fix and exact local gates are
 green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 `355a11a`. Remediation and exact replacement local gates are green at final
-code/test precursor `275d263`; all three replacement reviews, the behavior-
-green SHA, seal, and delivery evidence remain **PENDING**. Maintained behavior
+code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
+GREEN** across all three tracks; production and documentation fixes, all three
+second replacement reviews, the behavior-green SHA, seal, and delivery evidence
+remain **PENDING**. Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
 later documentation-only seal or delivery record is exempt from another
 adversarial cycle under the user's instruction but still requires exact feature

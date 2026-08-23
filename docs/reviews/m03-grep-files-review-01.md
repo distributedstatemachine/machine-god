@@ -1,8 +1,9 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — remediation and exact replacement local gates are
-green at `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`; all three replacement
-reviews, the behavior-green SHA, seal, and delivery remain pending**
+Status: **IN PROGRESS — first replacement candidate
+`ae87bf1454b1527b2e55ed5e517c21fd7410c980` is NOT GREEN; production and
+documentation fixes, second replacement reviews, the behavior-green SHA, seal,
+and delivery remain pending**
 
 ## Candidate lineage
 
@@ -51,9 +52,17 @@ reviews, the behavior-green SHA, seal, and delivery remain pending**
 - Final code/test local-gate precursor:
   `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`
 - Replacement local gates: **GREEN** on exact `275d263`
-- Replacement correctness/API review SHA: **PENDING**
-- Replacement security/filesystem-robustness review SHA: **PENDING**
-- Replacement performance/concurrency review SHA: **PENDING**
+- First replacement formal behavior-review candidate:
+  `ae87bf1454b1527b2e55ed5e517c21fd7410c980`
+- First replacement correctness/API review: **NOT GREEN — LOW** on exact
+  `ae87bf1`
+- First replacement security/filesystem-robustness review: **NOT GREEN — LOW**
+  on exact `ae87bf1`
+- First replacement performance/concurrency review: **NOT GREEN — MEDIUM and
+  LOW** on exact `ae87bf1`
+- Second replacement correctness/API review SHA: **PENDING**
+- Second replacement security/filesystem-robustness review SHA: **PENDING**
+- Second replacement performance/concurrency review SHA: **PENDING**
 - Exact behavior SHA with all three review tracks green: **PENDING**
 - Documentation seal: **PENDING**
 - Feature CI and benchmark-evidence runs: **PENDING**
@@ -69,9 +78,11 @@ lint and cross-target correction composes at local-gate precursor `45ad91f`.
 Maintained documentation records that all three first-cycle reviews of exact
 candidate `355a11a` are NOT GREEN. The five isolated remediation/evidence
 components above compose in order through `35defb5`, `5855073`, `3cd282f`,
-`630acbb`, and final local-gate precursor `275d263`. Every listed identifier was
-observed directly; no replacement-review, seal, or workflow identifier may be
-inferred from a branch tip, tree identity, or another component. Production,
+`630acbb`, and final local-gate precursor `275d263`. First replacement formal
+candidate `ae87bf1` records those gates and is NOT GREEN under all three fresh
+tracks. Every listed identifier was observed directly; no second-replacement,
+seal, or workflow identifier may be inferred from a branch tip, tree identity,
+or another component. Production,
 independent tests, and maintained docs remain non-overlapping ownership slices
 and must compose without overwriting one another.
 
@@ -116,9 +127,14 @@ complete.
   glob grammar, and charges complete parse plus match work before content open.
   It filters regular candidates but does not prune traversal. Selected-file
   filtering occurs after no-follow stat classification and before content open.
-- Content matching is literal and worst-case linear. Case-insensitive mode folds
-  ASCII only. One result represents each matching LF-delimited line and records
-  the first matching byte offset.
+  A slashful selected-file rejection consumes one charged cancellation-checked
+  include unit. An excluded selected file consumes fixed pattern-table and
+  include work but no candidate, content-byte, or per-file matching work. An
+  included selected file opens and is revalidated before those latter budgets.
+- Content matching is literal and worst-case linear. Pattern-table construction
+  consumes fixed literal work before selected-root resolution. Case-insensitive
+  mode folds ASCII only. One result represents each matching LF-delimited line
+  and records the first matching byte offset.
 - A candidate is eligible text only when its complete observed content is no
   more than 204,800 bytes, valid UTF-8, and NUL-free. Oversized and non-text
   files are skipped with disclosed aggregate statistics. Other candidate
@@ -144,7 +160,10 @@ complete.
 - Execution is inert until first poll, performs bounded synchronous work, checks
   cancellation around every authority-bearing operation, at fixed intervals
   through line indexing and matching, and before every serialization-trimming
-  attempt, owns all descriptors/buffers, and detaches nothing.
+  attempt. Slashful candidate splitting checks at most every 1,024 candidate
+  bytes, and both recursive and non-recursive dynamic-programming branches
+  retain cancellation checks. Execution owns all descriptors/buffers and
+  detaches nothing.
 - Fixed constructor/tool errors retain and reflect no path, pattern, include,
   entry name, file bytes, match, metadata, OS diagnostic, or errno. Successful
   excerpts and paths are intentionally model-visible durable data.
@@ -186,8 +205,11 @@ record.
   post-observation `NOENT` omission and non-`NOENT` error mapping, growth and
   aggregate-content overflow with oversized accounting, raced nonregular-open
   rejection, line-index cancellation intervals, and a check before every
-  serialization-trimming iteration. These deterministic seams replace flaky
-  sleep-based race tests.
+  serialization-trimming iteration. Second-replacement evidence must
+  additionally prove the charged, cancellation-checked slashful selected-file
+  rejection plus at-most-1,024-byte cancellation intervals while splitting
+  slashful candidates and through both dynamic-programming branches. These
+  deterministic seams replace flaky sleep-based race tests.
 - The dedicated `grep_files_unsupported` integration target compiles for
   `wasm32-wasip1` with its constructor test active rather than cfg-elided. It
   exercises the reachable public boundary: `GrepFilesTool::open` returns the
@@ -239,9 +261,9 @@ Exact final code/test local-gate precursor
   links with zero missing; first-review-to-precursor, post-documentation, and
   final-test diff checks pass with a clean exact-SHA worktree.
 
-These are local exact-SHA results, not replacement-review or remote-delivery
-evidence. No replacement track is green until its reviewer reports on the same
-exact behavior SHA.
+These are local exact-SHA results, not second-replacement or remote-delivery
+evidence. First replacement candidate `ae87bf1` is NOT GREEN. No replacement
+cycle is green until all three reviewers report on the same exact behavior SHA.
 
 ## Explicit nonclaims
 
@@ -260,7 +282,7 @@ Every confirmed production fix and required regression/evidence item below is
 implemented in the recorded remediation lineage and locally green at exact
 `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. The track headings preserve the
 historical first-cycle verdicts; formal closure still requires all three
-replacement reviewers to approve one exact behavior SHA.
+second replacement reviewers to approve one exact behavior SHA.
 
 ### Correctness/API track — NOT GREEN
 
@@ -292,7 +314,9 @@ replacement reviewers to approve one exact behavior SHA.
 - **MEDIUM — confirmed:** the same descendant-path defect violated the promised
   fail-closed path bound before directory retention and special-entry handling.
   The pre-allocation checked-length remediation and adversarial deep directory,
-  symlink, FIFO, and regular-file regressions are locally green.
+  symlink/special-kind, and regular-file regressions are locally green. Separate
+  stable shallow FIFO and pre-poll special-substitution coverage remains green;
+  this does not claim that the deep fixture itself creates a FIFO.
 - **MEDIUM — confirmed:** deterministic evidence for growth witnesses,
   post-observation `NOENT`, raced special replacement, and cancellation
   intervals was absent. Production now exposes deterministic internal
@@ -332,10 +356,41 @@ replacement reviewers to approve one exact behavior SHA.
   through deterministic private cancellation tests.
 
 All first-cycle findings are fixed and their required deterministic evidence is
-implemented and locally green at exact precursor `275d263`. That is local
-resolution, not formal review closure: all three replacement reviews, the exact
-behavior SHA with all three tracks green, documentation seal, and delivery
-evidence remain **PENDING**. Once one exact replacement behavior SHA is green
-across all three tracks, a later documentation-only seal or final delivery
-record needs no additional adversarial review under the user's explicit
-instruction, but exact feature and `main` workflow evidence is still required.
+implemented and locally green at exact precursor `275d263`. First replacement
+candidate `ae87bf1` nevertheless remains NOT GREEN under the findings below.
+
+### First replacement correctness/API track — NOT GREEN
+
+- **LOW — confirmed:** maintained selected-file budget ordering implied that an
+  included file opened and revalidated before every literal-matcher charge, but
+  production constructs the fixed pattern table before resolving the selected
+  root. The normative correction distinguishes fixed once-per-call pattern-table
+  work from later candidate, content-byte, and per-file matching budgets.
+
+### First replacement security/filesystem-robustness track — NOT GREEN
+
+- **LOW — confirmed:** the first-cycle resolution text claimed a deep FIFO
+  regression, while the deep special-kind fixture constructs symlinks. The
+  corrected evidence statement names the deep symlink/special-kind branch and
+  retains the separate stable shallow FIFO and pre-poll substitution coverage.
+  No production filesystem defect was found in this track.
+
+### First replacement performance/concurrency track — NOT GREEN
+
+- **MEDIUM — confirmed:** slashful candidate splitting and false
+  dynamic-programming cells could traverse bounded work without the documented
+  at-most-1,024-byte cancellation interval. The second replacement must make
+  splitting cancellation-aware at that interval and check both recursive and
+  non-recursive dynamic-programming branches, with deterministic checker
+  regressions.
+- **LOW — confirmed:** slashful include rejection for a selected file returned
+  without a charged or local cancellation-checked include decision. The second
+  replacement must charge exactly one decision unit and check cancellation,
+  with deterministic exact-work evidence.
+
+Production and documentation fixes, their independent regressions, local gates,
+and all three second replacement reviews remain **PENDING**. Once one exact
+replacement behavior SHA is green across all three tracks, a later
+documentation-only seal or final delivery record needs no additional
+adversarial review under the user's explicit instruction, but exact feature and
+`main` workflow evidence is still required.

@@ -170,8 +170,10 @@ focused production/test composition green. Documentation component `b04151a`
 produces fully composed behavior `42e4793`; lint fix and exact local gates are
 green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 `355a11a`. Remediation and exact replacement local gates are green at final
-code/test precursor `275d263`; all three replacement reviews, the behavior-
-green SHA, seal, and delivery remain **PENDING**. Its strict preflight
+code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
+GREEN** across all three tracks; production and documentation fixes, all three
+second replacement reviews, the behavior-green SHA, seal, and delivery remain
+**PENDING**. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
 relative no-follow regular-file-only traversal, bounded eligible UTF-8 content
@@ -819,7 +821,14 @@ skipped without open; a raced nonblocking special open is authoritatively
 rejected before read. The optional include is compiled once per call, its
 complete parse/match work is metered, and it cannot prune traversal.
 Selected-file filtering follows no-follow stat classification and precedes
-content open.
+content open. Fixed literal pattern-table work is charged before selected-root
+resolution. Slashful selected-file rejection consumes one charged cancellation-
+checked include decision. An excluded selected file consumes that fixed literal
+and include work but no candidate, content-byte, or per-file matching work; an
+included file opens and is revalidated before those latter budgets. Slashful
+candidate splitting checks cancellation at least every 1,024 candidate bytes,
+and both recursive and non-recursive dynamic-programming branches retain
+cancellation checks.
 
 Regular content is accepted only after the complete observed file is no more
 than 204,800 bytes, valid UTF-8, and NUL-free. Initial or sentinel-observed

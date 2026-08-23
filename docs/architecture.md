@@ -205,9 +205,10 @@ focused production/test composition green. Documentation component `b04151a`
 produces first fully composed behavior candidate `42e4793`; lint fix and exact
 local gates are green at `45ad91f`. All three first-cycle formal tracks are
 **NOT GREEN** on exact candidate `355a11a`. Remediation and exact replacement
-local gates are green at final code/test precursor `275d263`; all three
-replacement reviews, the behavior-green SHA, seal, and delivery evidence remain
-**PENDING**.
+local gates are green at final code/test precursor `275d263`. First replacement
+candidate `ae87bf1` is **NOT GREEN** across all three tracks; production and
+documentation fixes, all three second replacement reviews, the behavior-green
+SHA, seal, and delivery evidence remain **PENDING**.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -473,8 +474,10 @@ production/test composition are named above; documentation component `b04151a`
 produces fully composed behavior `42e4793`, with lint fix and local gates green
 at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
 `355a11a`. Remediation and exact replacement local gates are green at final
-code/test precursor `275d263`; all three replacement reviews, the behavior-
-green SHA, seal, and delivery remain **PENDING**.
+code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
+GREEN** across all three tracks; production and documentation fixes, all three
+second replacement reviews, the behavior-green SHA, seal, and delivery remain
+**PENDING**.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
@@ -970,8 +973,13 @@ objects descriptor-relatively without following symlinks. Directory entries
 are completely validated and bytewise sorted; traversal includes hidden names.
 Every full descendant path must pass its bound before allocation, entry-kind
 handling, or include matching. The optional include is compiled once, and its
-complete parse and matching work shares one aggregate counter. Selected-file
-filtering follows no-follow stat classification and precedes content open.
+complete parse and matching work shares one aggregate counter. Fixed literal
+pattern-table work is charged before selected-root resolution. Selected-file
+filtering follows no-follow stat classification and precedes content open. A
+slashful selected-file rejection is charged and cancellation-checked; an
+excluded selected file consumes fixed pattern-table/include work but no
+candidate, content-byte, or per-file matching work. An included selected file
+opens and is revalidated before those latter budgets.
 Stable specials are skipped; a raced nonblocking special open is authoritatively
 rejected without read or link following. Content matching is
 literal and worst-case linear, with exact bytes or ASCII-only folding, and
@@ -990,7 +998,10 @@ Match/context excerpts are UTF-8-safe and derive from one buffer; pagination
 uses exact totals, `next_offset`, top-level list incompleteness, and distinct
 per-record context truncation. A fired scan/work cap fails without partial
 output. Line indexing checks cancellation at fixed byte intervals and each
-serialized-size trimming attempt begins with a check. Exact shapes, public
+serialized-size trimming attempt begins with a check. Slashful candidate
+splitting checks at most every 1,024 candidate bytes, and both recursive and
+non-recursive dynamic-programming branches remain cancellation-checked. Exact
+shapes, public
 constants, errors, cancellation and race semantics are in
 [`grep-files.md`](grep-files.md).
 
