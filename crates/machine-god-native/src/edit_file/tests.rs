@@ -1,3 +1,5 @@
+#![cfg(any(target_os = "linux", target_os = "macos"))]
+
 use super::*;
 
 #[test]
@@ -384,6 +386,51 @@ mod supported {
     }
 
     #[test]
+    fn bounded_read_phase_faults_are_mapped_and_final_interruption_cancellation_wins() {
+        let temporary = TempFile::new(b"stable");
+        let file = rustix::fs::open(
+            &temporary.path,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .unwrap();
+        for (phase, code) in [
+            (ReadPhase::Staged, "edit_file_write_failed"),
+            (ReadPhase::Revalidate, "edit_file_target_changed"),
+        ] {
+            let error = read_bounded_stable_for_phase_with(
+                &CancellationToken::new(),
+                MAX_EDIT_FILE_EXISTING_BYTES,
+                phase,
+                |_, _| Err(rustix::io::Errno::IO),
+                || rustix::fs::fstat(&file),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, code);
+        }
+
+        let cancellation = CancellationToken::new();
+        let cancellation_on_final = cancellation.clone();
+        let calls = Cell::new(0_usize);
+        let error = read_bounded_stable_with(
+            file.as_fd(),
+            &cancellation,
+            |_, _| {
+                let call = calls.get() + 1;
+                calls.set(call);
+                if call == MAX_INTERRUPTED_SYSCALL_ATTEMPTS {
+                    cancellation_on_final.cancel();
+                }
+                Err(rustix::io::Errno::INTR)
+            },
+            || rustix::fs::fstat(&file),
+        )
+        .unwrap_err();
+        assert_eq!(calls.get(), MAX_INTERRUPTED_SYSCALL_ATTEMPTS);
+        assert_eq!(error.code, "edit_file_cancelled");
+    }
+
+    #[test]
     fn entropy_partial_progress_interrupts_and_total_call_bound_are_exact() {
         let calls = Cell::new(0_usize);
         let name = random_temp_name_with(&CancellationToken::new(), |remaining| {
@@ -561,6 +608,167 @@ mod supported {
         assert_eq!(calls.get(), MAX_INTERRUPTED_SYSCALL_ATTEMPTS);
         assert_eq!(error.code, "edit_file_write_failed");
         assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
+    fn pipeline_same_length_corrupt_stage_is_detected_by_bounded_reread() {
+        let temporary = TempDirectory::new("corrupt-stage");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                |file, expected, cancellation| {
+                    assert_eq!(expected, b"new content");
+                    write_content(file, b"bad content", cancellation)
+                },
+                sync_before_commit,
+                |_, _| {},
+                || {},
+                || {},
+                native_publish_staged,
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "edit_file_write_failed");
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
+    fn pipeline_mode_and_staged_sync_failures_preserve_target_and_clean_stage() {
+        for failed_mode_call in 0..=1 {
+            let temporary = TempDirectory::new(&format!("mode-failure-{failed_mode_call}"));
+            let target = temporary.path().join("target.txt");
+            fs::write(&target, b"old content").unwrap();
+            let mode_calls = Cell::new(0_usize);
+            let error = EditFileTool::open(temporary.path())
+                .unwrap()
+                .execute_supported_with(
+                    "target.txt",
+                    b"old",
+                    b"new",
+                    &CancellationToken::new(),
+                    |file, mode| {
+                        let call = mode_calls.get();
+                        mode_calls.set(call + 1);
+                        if call == failed_mode_call {
+                            Err(rustix::io::Errno::IO)
+                        } else {
+                            native_set_mode(file, mode)
+                        }
+                    },
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {},
+                    || {},
+                    native_publish_staged,
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(mode_calls.get(), failed_mode_call + 1);
+            assert_eq!(error.code, "edit_file_write_failed");
+            assert_eq!(fs::read(&target).unwrap(), b"old content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        let temporary = TempDirectory::new("staged-sync-failure");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let sync_calls = Cell::new(0_usize);
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                |_, cancellation| {
+                    sync_before_commit_with(cancellation, || {
+                        sync_calls.set(sync_calls.get() + 1);
+                        Err(rustix::io::Errno::INTR)
+                    })
+                },
+                |_, _| {},
+                || {},
+                || {},
+                native_publish_staged,
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(sync_calls.get(), MAX_INTERRUPTED_SYSCALL_ATTEMPTS);
+        assert_eq!(error.code, "edit_file_write_failed");
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
+    fn pipeline_rename_failure_is_precommit_but_published_path_mismatch_is_ambiguous() {
+        let temporary = TempDirectory::new("rename-failure");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {},
+                || {},
+                || {},
+                |_, _, _| Err(rustix::io::Errno::ACCESS),
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "edit_file_permission_denied");
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+
+        let temporary = TempDirectory::new("published-mismatch");
+        let target = temporary.path().join("target.txt");
+        let displaced = temporary.path().join("published-stage");
+        fs::write(&target, b"old content").unwrap();
+        let root = temporary.path().to_owned();
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {},
+                || {},
+                || {},
+                |parent, staged_name, basename| {
+                    native_publish_staged(parent, staged_name, basename)?;
+                    rustix::fs::renameat(parent, basename, parent, "published-stage")?;
+                    fs::write(root.join(basename), b"intruder")
+                        .map_err(|_| rustix::io::Errno::IO)?;
+                    Ok(())
+                },
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "edit_file_commit_ambiguous");
+        assert!(!error.retryable);
+        assert_eq!(fs::read(&target).unwrap(), b"intruder");
+        assert_eq!(fs::read(&displaced).unwrap(), b"new content");
         assert_no_staged_files(temporary.path());
     }
 

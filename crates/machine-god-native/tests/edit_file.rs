@@ -662,6 +662,9 @@ fn invalid_utf8_missing_and_nonregular_targets_are_fixed_and_confined() {
         b"old"
     );
     drop(listener);
+
+    let device_tool = EditFileTool::open(Path::new("/dev")).unwrap();
+    assert_path_rejected(edit(&device_tool, "null", "old", "new").unwrap_err());
 }
 
 #[test]
