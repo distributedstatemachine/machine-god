@@ -2777,7 +2777,10 @@ def validate_source_manifest(value: object, field: str) -> list[dict[str, object
 
 def materialized_source_entries(source_dir: Path) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
-    for path in sorted(source_dir.rglob("*")):
+    for path in sorted(
+        source_dir.rglob("*"),
+        key=lambda candidate: candidate.relative_to(source_dir).as_posix(),
+    ):
         relative = path.relative_to(source_dir).as_posix()
         metadata = path.lstat()
         if stat.S_ISDIR(metadata.st_mode):

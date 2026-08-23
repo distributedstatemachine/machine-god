@@ -2102,6 +2102,61 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             )
         self.assertNotEqual(tampered.returncode, 0)
 
+    def test_materialized_source_entries_match_git_relative_path_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.name", "Test"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "test@example.test"],
+                check=True,
+            )
+            source_file = root / "src/edit_file.rs"
+            nested_file = root / "src/edit_file/tests.rs"
+            source_file.parent.mkdir(parents=True)
+            nested_file.parent.mkdir(parents=True)
+            source_file.write_text("pub struct EditFile;\n", encoding="utf-8")
+            nested_file.write_text("#[test]\nfn edit_file() {}\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "source"], check=True
+            )
+            commit = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            git_listing = subprocess.check_output(
+                upstream.machine_tree_command("git", commit), cwd=root
+            )
+            git_paths = [
+                str(entry["path"])
+                for entry in upstream.parse_git_tree_listing(git_listing)
+            ]
+            self.assertEqual(
+                git_paths,
+                ["src/edit_file.rs", "src/edit_file/tests.rs"],
+            )
+
+            scratch = root / ".bench"
+            scratch.mkdir()
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "a" * 32
+            materialization = materialize_machine_source(
+                root,
+                scratch / "machine-source",
+                scratch / "machine-source-manifest.json",
+                commit,
+                "git",
+                environment=environment,
+                timeout_seconds=2.0,
+            )
+            self.assertEqual(
+                [str(entry["path"]) for entry in materialization["entries"]],
+                git_paths,
+            )
+
     def test_materialized_commit_isolated_from_worktree_mutation_during_build(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
