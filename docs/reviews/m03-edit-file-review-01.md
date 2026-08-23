@@ -180,7 +180,8 @@ remote workflows remain required.
 - Contract CI: `32634883133`, green
 - Contract benchmark evidence: `32634883139`, green
 - Local-gate precursor: `31ec79e000589c4fb34599be4aad4f90ea33974f`
-- Documentation component after composition: pending integration handoff
+- Documentation component after composition:
+  `b1210f395a25bc59590c3b4b0164fac56e96bca0`
 - Exact formal behavior candidate: pending
 - Correctness/API track: pending
 - Filesystem/robustness track: pending
