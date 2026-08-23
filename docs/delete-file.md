@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — cycle 2 remediated; replacement review pending**
+Status: **IN PROGRESS — formal cycle 3 not green; remediation in progress**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -25,7 +25,9 @@ remote delivery remain pending. Exact remediation
 local gate. Tree-identical formal cycle-2 candidate
 `88026f10ed8c194c7160a754f226241c276579fc` is **NOT GREEN**;
 exact remediation `225e9617a8a8f469d663693b61cc4f9b97af8094` passes the
-complete replacement local gate. Another fresh same-SHA cycle remains pending.
+complete replacement local gate. Tree-identical formal cycle-3 candidate
+`24f851d2d3db21735124729bb1b0a14adf7ae864` is **NOT GREEN** with
+two low findings; remediation and another fresh same-SHA cycle remain pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -374,6 +376,17 @@ CLI has SHA-256
 and passes bare, help, and unavailable-status smoke paths with empty stderr.
 These results qualify the replacement local gate only, not formal review or
 delivery.
+
+Formal cycle 3 reviewed exact tree-identical candidate
+`24f851d2d3db21735124729bb1b0a14adf7ae864`. Performance/concurrency is
+**GREEN** with zero findings. Correctness/API is **NOT GREEN** with one low
+finding because validation-site `EROFS` did not follow the frozen read-only-
+filesystem permission taxonomy. Filesystem/robustness is **NOT GREEN** with one
+low evidence gap: hostile-umask deletion was required by this matrix but not
+retained in a deterministic regression. It found no production protocol defect,
+and a manual restrictive-umask execution passed. Exact mapping/matrix and
+isolated child-process evidence remediations are in progress; another complete
+local gate and three fresh reviewers remain mandatory.
 
 ## Parallel ownership and formal review
 

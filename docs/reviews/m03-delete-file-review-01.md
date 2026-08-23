@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — cycle 2 remediated; replacement review pending**
+Status: **IN PROGRESS — formal cycle 3 not green; remediation in progress**
 
 ## Base and contract gate
 
@@ -269,6 +269,33 @@ and passes bare/help/unavailable-status smoke with empty stderr.
 
 Cycle 2 remains historically not green. A tree-identical marker must receive
 three fresh cycle-3 reviews before any behavior-green claim.
+
+## Formal adversarial cycle 3
+
+Exact candidate: `24f851d2d3db21735124729bb1b0a14adf7ae864`, tree-identical
+to the recorded cycle-2 remediation local gate.
+
+1. Correctness/API: **NOT GREEN** with one low finding. The normative taxonomy
+   groups read-only-filesystem failures with permission failures at every
+   validation site, but only `EACCES`/`EPERM` received permission precedence;
+   injected `EROFS` still mapped by phase. No other finding remained.
+2. Filesystem/robustness: **NOT GREEN** with one low evidence gap. The required
+   hostile-umask deletion case was not retained. Manual execution under a
+   restrictive umask passed; an extreme `0777` run failed only during fixture
+   construction before product execution. It found no production protocol,
+   confinement, mapping, cancellation, syscall, durability, descriptor, or
+   portability defect.
+3. Performance/concurrency: **GREEN** with zero findings. It reconfirmed bounded
+   path/serialization/traversal/fd/unlink/sync/diagnostic behavior, cancellation
+   ordering, static evidence, fixed host scale, and accurate nonclaims.
+
+Remediation classifies `EROFS` with permission at every validation mapping and
+adds it to the full phase/site/ordinal matrix. Independent public evidence uses
+an isolated child process with a hostile umask, explicitly repairs only the
+fixture workspace mode, creates mode-zero file and empty-directory targets,
+and proves exact deletion while unrelated sentinels remain unchanged. Cycle 3
+remains historically **NOT GREEN**; a new exact candidate receives complete
+local gates and three fresh reviewers.
 
 ## Formal adversarial protocol
 

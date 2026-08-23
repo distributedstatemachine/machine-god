@@ -1031,11 +1031,15 @@ fn cancellation_wins_a_same_call_error_at_every_open_fstat_and_statat_site() {
 }
 
 #[test]
-fn access_and_permission_errors_are_fixed_at_every_precommit_metadata_site() {
+fn permission_errors_are_fixed_at_every_precommit_metadata_site() {
     for (point_index, point) in fault_points_from_trace().into_iter().enumerate() {
-        for (errno_index, errno) in [rustix::io::Errno::ACCESS, rustix::io::Errno::PERM]
-            .into_iter()
-            .enumerate()
+        for (errno_index, errno) in [
+            rustix::io::Errno::ACCESS,
+            rustix::io::Errno::PERM,
+            rustix::io::Errno::ROFS,
+        ]
+        .into_iter()
+        .enumerate()
         {
             let temporary =
                 TemporaryDirectory::new(&format!("permission-matrix-{point_index}-{errno_index}"));

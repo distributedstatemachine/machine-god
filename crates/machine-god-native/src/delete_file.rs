@@ -1044,7 +1044,7 @@ fn map_root_open_error(error: rustix::io::Errno) -> DeleteFileToolOpenError {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_walk_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
     match phase {
-        _ if is_permission_error(error) => permission_denied(),
+        _ if is_permission_or_read_only_error(error) => permission_denied(),
         DeletePhase::Revalidate => target_changed(),
         DeletePhase::Initial => unavailable(),
     }
@@ -1053,7 +1053,7 @@ fn map_walk_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_parent_open_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
     match phase {
-        _ if is_permission_error(error) => permission_denied(),
+        _ if is_permission_or_read_only_error(error) => permission_denied(),
         DeletePhase::Revalidate => target_changed(),
         DeletePhase::Initial if error == rustix::io::Errno::NOENT => not_found(),
         DeletePhase::Initial if is_rejected_type_error(error) => path_rejected(),
@@ -1081,7 +1081,9 @@ fn map_evidence_parent_open_error(error: EvidenceOperationError, phase: DeletePh
 fn map_evidence_metadata_error(error: EvidenceOperationError, phase: DeletePhase) -> ToolError {
     match error {
         EvidenceOperationError::Cancelled => cancelled(),
-        EvidenceOperationError::Os(error) if is_permission_error(error) => permission_denied(),
+        EvidenceOperationError::Os(error) if is_permission_or_read_only_error(error) => {
+            permission_denied()
+        }
         EvidenceOperationError::Os(_) => map_operational_phase(phase),
     }
 }
@@ -1090,7 +1092,9 @@ fn map_evidence_metadata_error(error: EvidenceOperationError, phase: DeletePhase
 fn map_linked_root_metadata_error(error: EvidenceOperationError, phase: DeletePhase) -> ToolError {
     match error {
         EvidenceOperationError::Cancelled => cancelled(),
-        EvidenceOperationError::Os(error) if is_permission_error(error) => permission_denied(),
+        EvidenceOperationError::Os(error) if is_permission_or_read_only_error(error) => {
+            permission_denied()
+        }
         EvidenceOperationError::Os(_) => map_operational_phase(phase),
     }
 }
@@ -1106,7 +1110,7 @@ fn map_evidence_target_error(error: EvidenceOperationError, phase: DeletePhase) 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_target_metadata_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
     match phase {
-        _ if is_permission_error(error) => permission_denied(),
+        _ if is_permission_or_read_only_error(error) => permission_denied(),
         DeletePhase::Revalidate => target_changed(),
         DeletePhase::Initial if error == rustix::io::Errno::NOENT => not_found(),
         DeletePhase::Initial if is_rejected_type_error(error) => path_rejected(),
@@ -1142,7 +1146,7 @@ fn map_unlink_error(error: rustix::io::Errno, kind: TargetKind) -> ToolError {
         && (error == rustix::io::Errno::NOTEMPTY || error == rustix::io::Errno::EXIST)
     {
         directory_not_empty()
-    } else if is_permission_error(error) || error == rustix::io::Errno::ROFS {
+    } else if is_permission_or_read_only_error(error) {
         permission_denied()
     } else {
         delete_failed()
@@ -1177,10 +1181,9 @@ fn map_unlink_error_with_evidence<Evidence: DeleteFileEvidence>(
                 };
             }
             Err(EvidenceOperationError::Cancelled) => return cancelled(),
-            Err(EvidenceOperationError::Os(error)) if is_target_change_error(error) => {
-                return target_changed();
+            Err(EvidenceOperationError::Os(error)) => {
+                return map_unlink_diagnostic_error(error);
             }
-            Err(EvidenceOperationError::Os(_)) => return permission_denied(),
         }
     }
 
@@ -1191,8 +1194,10 @@ fn map_unlink_error_with_evidence<Evidence: DeleteFileEvidence>(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn is_permission_error(error: rustix::io::Errno) -> bool {
-    error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM
+fn is_permission_or_read_only_error(error: rustix::io::Errno) -> bool {
+    error == rustix::io::Errno::ACCESS
+        || error == rustix::io::Errno::PERM
+        || error == rustix::io::Errno::ROFS
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1205,6 +1210,15 @@ fn is_rejected_type_error(error: rustix::io::Errno) -> bool {
 #[cfg(target_os = "macos")]
 fn is_target_change_error(error: rustix::io::Errno) -> bool {
     error == rustix::io::Errno::NOENT || is_rejected_type_error(error)
+}
+
+#[cfg(target_os = "macos")]
+fn map_unlink_diagnostic_error(error: rustix::io::Errno) -> ToolError {
+    if is_target_change_error(error) {
+        target_changed()
+    } else {
+        permission_denied()
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

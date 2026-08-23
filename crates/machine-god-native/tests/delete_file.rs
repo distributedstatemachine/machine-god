@@ -456,6 +456,97 @@ fn execute_deletes_regular_files_and_empty_directories_with_exact_result() {
 }
 
 #[test]
+fn hostile_owner_masking_umask_does_not_prevent_deleting_mode_zero_targets() {
+    const CHILD_ROOT: &str = "MACHINE_GOD_DELETE_FILE_UMASK_TEST_ROOT";
+
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        let root = PathBuf::from(root);
+        let workspace = root.join("PRIVATE_WORKSPACE");
+        fs::create_dir(&workspace).unwrap();
+        assert_eq!(
+            fs::metadata(&workspace).unwrap().permissions().mode() & 0o777,
+            0o000
+        );
+        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let regular = workspace.join("PRIVATE_MODE_ZERO_FILE");
+        let directory = workspace.join("PRIVATE_MODE_ZERO_DIRECTORY");
+        fs::write(&regular, b"unread private content").unwrap();
+        fs::create_dir(&directory).unwrap();
+        assert_eq!(
+            fs::metadata(&regular).unwrap().permissions().mode() & 0o777,
+            0o000
+        );
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o000
+        );
+
+        let tool = tool(&workspace);
+        for path in ["PRIVATE_MODE_ZERO_FILE", "PRIVATE_MODE_ZERO_DIRECTORY"] {
+            assert_eq!(
+                delete(&tool, path).unwrap(),
+                ToolOutput::success(json!({"path": path}))
+            );
+            assert!(!workspace.join(path).exists());
+        }
+
+        assert_eq!(
+            fs::read(root.join("PRIVATE_OUTSIDE_FILE_SENTINEL")).unwrap(),
+            b"outside file sentinel"
+        );
+        assert_eq!(
+            fs::read(root.join("PRIVATE_OUTSIDE_DIRECTORY_SENTINEL/PRIVATE_CHILD_SENTINEL"))
+                .unwrap(),
+            b"outside directory sentinel"
+        );
+        assert!(directory_entries(&workspace).is_empty());
+        return;
+    }
+
+    let temporary = TemporaryDirectory::new();
+    fs::write(
+        temporary.path().join("PRIVATE_OUTSIDE_FILE_SENTINEL"),
+        b"outside file sentinel",
+    )
+    .unwrap();
+    let outside_directory = temporary.path().join("PRIVATE_OUTSIDE_DIRECTORY_SENTINEL");
+    fs::create_dir(&outside_directory).unwrap();
+    fs::write(
+        outside_directory.join("PRIVATE_CHILD_SENTINEL"),
+        b"outside directory sentinel",
+    )
+    .unwrap();
+
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(
+            "umask 0777; exec \"$1\" --exact \
+             hostile_owner_masking_umask_does_not_prevent_deleting_mode_zero_targets --nocapture",
+        )
+        .arg("machine-god-delete-file-umask-test")
+        .arg(std::env::current_exe().unwrap())
+        .env(CHILD_ROOT, temporary.path())
+        .status()
+        .expect("failed to execute isolated hostile-umask test process");
+    assert!(status.success(), "hostile-umask child failed: {status}");
+
+    assert_eq!(
+        fs::read(temporary.path().join("PRIVATE_OUTSIDE_FILE_SENTINEL")).unwrap(),
+        b"outside file sentinel"
+    );
+    assert_eq!(
+        fs::read(
+            temporary
+                .path()
+                .join("PRIVATE_OUTSIDE_DIRECTORY_SENTINEL/PRIVATE_CHILD_SENTINEL")
+        )
+        .unwrap(),
+        b"outside directory sentinel"
+    );
+}
+
+#[test]
 fn missing_targets_and_ancestors_are_fixed_not_found_without_creation() {
     let temporary = TemporaryDirectory::new();
     let tool = tool(temporary.path());

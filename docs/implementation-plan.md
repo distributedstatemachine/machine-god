@@ -63,8 +63,12 @@ robustness found three overlapping medium defects and correctness found one
 additional low Rustdoc mismatch. Remediation and another fresh same-SHA cycle
 remain pending. Exact cycle-2 remediation
 `225e9617a8a8f469d663693b61cc4f9b97af8094` passes the complete replacement
-local gate; tree-identical cycle-3 review remains pending. The remaining native
-tools, CLI ownership, and Milestone 03 completion boundary remain pending.
+local gate. Tree-identical cycle-3 candidate
+`24f851d2d3db21735124729bb1b0a14adf7ae864` is **NOT GREEN** with two
+low findings: validation-site `EROFS` taxonomy and missing retained hostile-
+umask evidence. Remediation and another fresh same-SHA cycle remain pending.
+The remaining native tools, CLI ownership, and Milestone 03 completion boundary
+remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1183,7 +1187,12 @@ local gate: focused totals are 28/29 private, 20 direct, five engine, seven
 host, and one core contract; discovery is 738/788 with zero benchmarks; full
 workspace, Python 130, compatibility, dependency, portability, documentation,
 diff, and fresh release-smoke gates are green. Another fresh tree-identical
-review cycle remains pending.
+review cycle produced exact candidate
+`24f851d2d3db21735124729bb1b0a14adf7ae864`: performance/concurrency is
+green with zero findings; correctness/API is not green only for low validation-
+site `EROFS` taxonomy; filesystem/robustness is not green only for low missing
+hostile-umask evidence and found no production defect. Mapping/matrix and
+isolated child-process evidence remediations are in progress.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1479,9 +1488,12 @@ gate:
   local gate with 28/29 private, 20 direct, five engine, seven host, one core
   contract, 738/788 discovery, workspace, Python, compatibility, dependency,
   portability, documentation, diff, and release-smoke evidence green. Another
-  fresh same-SHA review, feature delivery, and `main` delivery remain pending,
-  so the combined native-tool checkbox stays unchecked and the delivered-slice
-  count remains twenty-one.
+  exact cycle-3 candidate `24f851d` is performance/concurrency green but
+  correctness/API and filesystem/robustness not green with one low finding
+  each: validation-site `EROFS` taxonomy and missing hostile-umask regression.
+  Remediation, another fresh same-SHA review, feature delivery, and `main`
+  delivery remain pending, so the combined native-tool checkbox stays
+  unchecked and the delivered-slice count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
