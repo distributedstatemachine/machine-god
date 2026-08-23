@@ -31,6 +31,7 @@ mod session_lifecycle;
 mod session_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace;
+mod write_file;
 
 pub use ai_gateway::{
     AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION,
@@ -120,6 +121,12 @@ pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
     FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES, MAX_LIST_SESSION_DIRECTORY_ENTRIES,
     MAX_LIST_SESSION_TOTAL_RECORD_BYTES, MAX_LIST_SESSIONS,
+};
+pub use write_file::{
+    MAX_WRITE_FILE_CHUNK_BYTES, MAX_WRITE_FILE_CONTENT_BYTES, MAX_WRITE_FILE_PATH_BYTES,
+    MAX_WRITE_FILE_PATH_COMPONENTS, MAX_WRITE_FILE_SERIALIZED_ARGUMENT_BYTES,
+    MAX_WRITE_FILE_SERIALIZED_RESULT_BYTES, MAX_WRITE_FILE_TEMP_ATTEMPTS, WRITE_FILE_TOOL_NAME,
+    WriteFileTool, WriteFileToolOpenError, WriteFileToolOpenErrorKind,
 };
 
 /// Core API version intentionally supported by this native host.

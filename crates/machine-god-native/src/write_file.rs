@@ -1,0 +1,1286 @@
+use std::error::Error;
+use std::fmt;
+use std::io;
+use std::path::Path;
+
+use machine_god_core::{
+    BoxFuture, CancellationToken, Capability, FilesystemAccess, PreparedToolCall, Tool, ToolCall,
+    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+};
+use serde_json::{Value, json};
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags};
+
+/// Maximum number of UTF-8 bytes accepted in a normalized target path.
+pub const MAX_WRITE_FILE_PATH_BYTES: usize = 4 * 1024;
+/// Maximum number of components accepted in a normalized target path.
+pub const MAX_WRITE_FILE_PATH_COMPONENTS: usize = 256;
+/// Maximum number of raw UTF-8 content bytes accepted.
+pub const MAX_WRITE_FILE_CONTENT_BYTES: usize = 48 * 1024;
+/// Maximum serialized byte size of accepted arguments.
+pub const MAX_WRITE_FILE_SERIALIZED_ARGUMENT_BYTES: usize = 64 * 1024;
+/// Maximum bytes supplied to one native write operation.
+pub const MAX_WRITE_FILE_CHUNK_BYTES: usize = 8 * 1024;
+/// Maximum exclusive temporary-name attempts made by one execution.
+pub const MAX_WRITE_FILE_TEMP_ATTEMPTS: usize = 8;
+/// Maximum serialized [`ToolOutput`] bytes produced by this tool.
+pub const MAX_WRITE_FILE_SERIALIZED_RESULT_BYTES: usize = 16 * 1024;
+
+/// Registered name of [`WriteFileTool`].
+pub const WRITE_FILE_TOOL_NAME: &str = "write_file";
+
+const WRITE_FILE_DESCRIPTION: &str = "Write one file within the configured workspace";
+const PATH_DESCRIPTION: &str = "Workspace-relative file path";
+const CONTENT_DESCRIPTION: &str = "UTF-8 content to write";
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const TEMP_NAME_PREFIX: &str = ".machine-god-write-";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const TEMP_RANDOM_BYTES: usize = 16;
+
+/// Stable category for failure to acquire a writable workspace root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WriteFileToolOpenErrorKind {
+    /// Native file mutation is not supported on this platform.
+    UnsupportedPlatform,
+    /// The injected root path was not absolute.
+    InvalidRoot,
+    /// The injected root did not resolve to a real directory.
+    InvalidFileType,
+    /// The injected root could not be safely opened or inspected.
+    Unavailable,
+}
+
+/// Redacted failure to acquire a [`WriteFileTool`] workspace root.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct WriteFileToolOpenError {
+    kind: WriteFileToolOpenErrorKind,
+}
+
+impl WriteFileToolOpenError {
+    /// Returns the stable category of this failure.
+    #[must_use]
+    pub const fn kind(&self) -> WriteFileToolOpenErrorKind {
+        self.kind
+    }
+
+    const fn new(kind: WriteFileToolOpenErrorKind) -> Self {
+        Self { kind }
+    }
+}
+
+impl fmt::Debug for WriteFileToolOpenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WriteFileToolOpenError")
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl fmt::Display for WriteFileToolOpenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self.kind {
+            WriteFileToolOpenErrorKind::UnsupportedPlatform => {
+                "native write_file is unsupported on this platform"
+            }
+            WriteFileToolOpenErrorKind::InvalidRoot => {
+                "native write_file workspace root is invalid"
+            }
+            WriteFileToolOpenErrorKind::InvalidFileType => {
+                "native write_file workspace root is not a directory"
+            }
+            WriteFileToolOpenErrorKind::Unavailable => {
+                "native write_file workspace root is unavailable"
+            }
+        })
+    }
+}
+
+impl Error for WriteFileToolOpenError {}
+
+/// A native file writer confined to one explicitly opened workspace root.
+///
+/// Construction acquires the only ambient filesystem authority used by this
+/// tool. Supported Linux and macOS implementations retain the opened directory
+/// descriptor; later calls never reopen the workspace root by its injected path.
+pub struct WriteFileTool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    root: OwnedFd,
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    _unsupported: std::convert::Infallible,
+}
+
+impl WriteFileTool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
+        Self { root }
+    }
+
+    /// Opens and retains an absolute workspace root without following its final
+    /// component when native descriptor-relative access is supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted typed failure when the platform is unsupported, the
+    /// path is relative, or the root cannot be opened as a real directory.
+    pub fn open(root: &Path) -> Result<Self, WriteFileToolOpenError> {
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = root;
+            Err(WriteFileToolOpenError::new(
+                WriteFileToolOpenErrorKind::UnsupportedPlatform,
+            ))
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let lexical_root = root.components().collect::<std::path::PathBuf>();
+            if !lexical_root.is_absolute() {
+                return Err(WriteFileToolOpenError::new(
+                    WriteFileToolOpenErrorKind::InvalidRoot,
+                ));
+            }
+
+            let descriptor = rustix::fs::open(&lexical_root, directory_open_flags(), Mode::empty())
+                .map_err(map_root_open_error)?;
+            let metadata = rustix::fs::fstat(&descriptor).map_err(|_| {
+                WriteFileToolOpenError::new(WriteFileToolOpenErrorKind::Unavailable)
+            })?;
+            if !FileType::from_raw_mode(metadata.st_mode).is_dir() {
+                return Err(WriteFileToolOpenError::new(
+                    WriteFileToolOpenErrorKind::InvalidFileType,
+                ));
+            }
+
+            Ok(Self::from_root_descriptor(descriptor))
+        }
+    }
+}
+
+impl fmt::Debug for WriteFileTool {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WriteFileTool")
+            .finish_non_exhaustive()
+    }
+}
+
+struct ValidatedArguments<'a> {
+    requested_path: &'a str,
+    path: String,
+    content: &'a str,
+}
+
+impl Tool for WriteFileTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: write_file_name(),
+            description: WRITE_FILE_DESCRIPTION.to_owned(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": PATH_DESCRIPTION
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": CONTENT_DESCRIPTION
+                    }
+                },
+                "required": ["path", "content"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        if call.name != write_file_name() {
+            return Err(invalid_arguments());
+        }
+        let arguments = validate_arguments(&call.arguments)?;
+        let prepared_arguments = json!({
+            "path": arguments.path,
+            "content": arguments.content,
+        });
+        let path = prepared_arguments["path"]
+            .as_str()
+            .expect("prepared write_file path is a string")
+            .to_owned();
+        Ok(PreparedToolCall::new(
+            Capability::Filesystem {
+                access: FilesystemAccess::Write,
+                path,
+            },
+            prepared_arguments,
+        ))
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let arguments = validate_arguments(&arguments)?;
+            let normalized = arguments.path;
+            if normalized != arguments.requested_path {
+                return Err(invalid_arguments());
+            }
+
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                let _ = cancellation;
+                Err(unsupported_platform())
+            }
+
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                self.execute_supported(&normalized, arguments.content.as_bytes(), &cancellation)
+            }
+        })
+    }
+}
+
+fn validate_arguments(arguments: &Value) -> Result<ValidatedArguments<'_>, ToolError> {
+    let Value::Object(object) = arguments else {
+        return Err(invalid_arguments());
+    };
+    if object.len() != 2 {
+        return Err(invalid_arguments());
+    }
+    let Some(Value::String(path)) = object.get("path") else {
+        return Err(invalid_arguments());
+    };
+    let Some(Value::String(content)) = object.get("content") else {
+        return Err(invalid_arguments());
+    };
+    let normalized = normalize_relative_path(path)?;
+    if content.len() > MAX_WRITE_FILE_CONTENT_BYTES {
+        return Err(content_too_large());
+    }
+    if !serialized_value_fits(arguments, MAX_WRITE_FILE_SERIALIZED_ARGUMENT_BYTES) {
+        return Err(invalid_arguments());
+    }
+    Ok(ValidatedArguments {
+        requested_path: path,
+        path: normalized,
+        content,
+    })
+}
+
+fn serialized_value_fits(value: &(impl serde::Serialize + ?Sized), limit: usize) -> bool {
+    let mut writer = JsonByteCounter { written: 0, limit };
+    serde_json::to_writer(&mut writer, value).is_ok()
+}
+
+struct JsonByteCounter {
+    written: usize,
+    limit: usize,
+}
+
+impl io::Write for JsonByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let Some(written) = self.written.checked_add(bytes.len()) else {
+            return Err(io::Error::other("serialized JSON byte count overflowed"));
+        };
+        if written > self.limit {
+            return Err(io::Error::other("serialized JSON exceeded its byte limit"));
+        }
+        self.written = written;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn normalize_relative_path(path: &str) -> Result<String, ToolError> {
+    if path.is_empty()
+        || path.len() > MAX_WRITE_FILE_PATH_BYTES
+        || path.starts_with('/')
+        || path.chars().any(is_forbidden_path_character)
+    {
+        return Err(invalid_path());
+    }
+
+    let mut normalized = String::with_capacity(path.len());
+    let mut components = 0_usize;
+    for component in path.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." {
+            return Err(invalid_path());
+        }
+        components = components.checked_add(1).ok_or_else(invalid_path)?;
+        if components > MAX_WRITE_FILE_PATH_COMPONENTS {
+            return Err(invalid_path());
+        }
+        if !normalized.is_empty() {
+            normalized.push('/');
+        }
+        normalized.push_str(component);
+    }
+    if normalized.is_empty() || normalized.len() > MAX_WRITE_FILE_PATH_BYTES {
+        return Err(invalid_path());
+    }
+    Ok(normalized)
+}
+
+fn is_forbidden_path_character(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+fn write_file_name() -> ToolName {
+    ToolName::new(WRITE_FILE_TOOL_NAME).expect("write_file is a valid tool name")
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+enum WalkPhase {
+    Initial,
+    Revalidate,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+enum TargetSnapshot {
+    Missing,
+    Existing(rustix::fs::Stat),
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ParentWalk<'a> {
+    parent: OwnedFd,
+    basename: &'a str,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct StagedFile<'a> {
+    cleanup_parent: BorrowedFd<'a>,
+    file: OwnedFd,
+    name: String,
+    identity: rustix::fs::Stat,
+    published: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'a> StagedFile<'a> {
+    fn new(cleanup_parent: BorrowedFd<'a>, file: OwnedFd, name: String) -> Result<Self, ToolError> {
+        let identity = rustix::fs::fstat(&file).map_err(|_| write_failed())?;
+        if !FileType::from_raw_mode(identity.st_mode).is_file() {
+            return Err(write_failed());
+        }
+        Ok(Self {
+            cleanup_parent,
+            file,
+            name,
+            identity,
+            published: false,
+        })
+    }
+
+    fn mark_published(&mut self) {
+        self.published = true;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for StagedFile<'_> {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        let Ok(descriptor_metadata) = rustix::fs::fstat(&self.file) else {
+            return;
+        };
+        let Ok(path_metadata) =
+            rustix::fs::statat(self.cleanup_parent, &self.name, AtFlags::SYMLINK_NOFOLLOW)
+        else {
+            return;
+        };
+        if same_identity(&descriptor_metadata, &self.identity)
+            && same_identity(&path_metadata, &self.identity)
+            && FileType::from_raw_mode(path_metadata.st_mode).is_file()
+        {
+            let _ = rustix::fs::unlinkat(self.cleanup_parent, &self.name, AtFlags::empty());
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl WriteFileTool {
+    fn execute_supported(
+        &self,
+        normalized: &str,
+        content: &[u8],
+        cancellation: &CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        check_cancellation(cancellation)?;
+        let initial = self.walk_parent(normalized, cancellation, WalkPhase::Initial)?;
+        let initial_parent_metadata =
+            rustix::fs::fstat(&initial.parent).map_err(|_| unavailable(true))?;
+        if !FileType::from_raw_mode(initial_parent_metadata.st_mode).is_dir() {
+            return Err(rejected_path());
+        }
+        check_cancellation(cancellation)?;
+        let initial_target = inspect_initial_target(initial.parent.as_fd(), initial.basename)?;
+        let final_mode = match &initial_target {
+            TargetSnapshot::Missing => Mode::from_raw_mode(0o644),
+            TargetSnapshot::Existing(metadata) => Mode::from_raw_mode(metadata.st_mode & 0o777),
+        };
+
+        let (temp_name, temp_file) =
+            create_staged_file(initial.parent.as_fd(), initial.basename, cancellation)?;
+        let mut staged = StagedFile::new(initial.parent.as_fd(), temp_file, temp_name)?;
+
+        check_cancellation(cancellation)?;
+        let private_mode = Mode::from_raw_mode(0o600);
+        rustix::fs::fchmod(&staged.file, private_mode).map_err(map_precommit_io_error)?;
+        verify_staged_descriptor(&staged, 0, Some(private_mode))?;
+        write_content(&staged.file, content, cancellation)?;
+        verify_staged_descriptor(&staged, content.len(), None)?;
+        check_cancellation(cancellation)?;
+        rustix::fs::fchmod(&staged.file, final_mode).map_err(map_precommit_io_error)?;
+        check_cancellation(cancellation)?;
+        sync_before_commit(staged.file.as_fd(), cancellation)?;
+        verify_staged_descriptor(&staged, content.len(), Some(final_mode))?;
+        check_cancellation(cancellation)?;
+
+        let final_walk = self.walk_parent(normalized, cancellation, WalkPhase::Revalidate)?;
+        let final_parent_metadata =
+            rustix::fs::fstat(&final_walk.parent).map_err(|_| target_changed())?;
+        if !same_identity(&initial_parent_metadata, &final_parent_metadata)
+            || !FileType::from_raw_mode(final_parent_metadata.st_mode).is_dir()
+        {
+            return Err(target_changed());
+        }
+        revalidate_target(
+            final_walk.parent.as_fd(),
+            final_walk.basename,
+            &initial_target,
+        )?;
+        check_cancellation(cancellation)?;
+        revalidate_staged_path(
+            final_walk.parent.as_fd(),
+            &staged,
+            content.len(),
+            final_mode,
+        )?;
+
+        check_cancellation(cancellation)?;
+        match initial_target {
+            TargetSnapshot::Missing => rustix::fs::renameat_with(
+                final_walk.parent.as_fd(),
+                &staged.name,
+                final_walk.parent.as_fd(),
+                final_walk.basename,
+                RenameFlags::NOREPLACE,
+            )
+            .map_err(map_create_rename_error)?,
+            TargetSnapshot::Existing(_) => rustix::fs::renameat(
+                final_walk.parent.as_fd(),
+                &staged.name,
+                final_walk.parent.as_fd(),
+                final_walk.basename,
+            )
+            .map_err(map_replace_rename_error)?,
+        }
+        staged.mark_published();
+
+        let published_identity_matches = published_target_matches(
+            final_walk.parent.as_fd(),
+            final_walk.basename,
+            &staged,
+            content.len(),
+            final_mode,
+        );
+        let directory_sync = sync_after_commit(final_walk.parent.as_fd());
+        finish_after_commit(published_identity_matches, directory_sync)?;
+        let output = ToolOutput::success(json!({
+            "path": normalized,
+            "bytes_written": content.len(),
+        }));
+        debug_assert!(serialized_value_fits(
+            &output,
+            MAX_WRITE_FILE_SERIALIZED_RESULT_BYTES
+        ));
+        Ok(output)
+    }
+
+    fn walk_parent<'a>(
+        &self,
+        normalized: &'a str,
+        cancellation: &CancellationToken,
+        phase: WalkPhase,
+    ) -> Result<ParentWalk<'a>, ToolError> {
+        check_cancellation(cancellation)?;
+        let mut parent = rustix::fs::openat(
+            self.root.as_fd(),
+            ".",
+            directory_open_flags(),
+            Mode::empty(),
+        )
+        .map_err(|_| unavailable(true))?;
+        check_cancellation(cancellation)?;
+        ensure_root_is_linked(parent.as_fd())?;
+
+        let mut components = normalized.split('/').peekable();
+        loop {
+            check_cancellation(cancellation)?;
+            let component = components.next().ok_or_else(invalid_arguments)?;
+            if components.peek().is_none() {
+                return Ok(ParentWalk {
+                    parent,
+                    basename: component,
+                });
+            }
+            parent = rustix::fs::openat(
+                parent.as_fd(),
+                component,
+                directory_open_flags(),
+                Mode::empty(),
+            )
+            .map_err(|error| map_parent_open_error(error, phase))?;
+            check_cancellation(cancellation)?;
+            let metadata =
+                rustix::fs::fstat(&parent).map_err(|_| map_parent_revalidation_failure(phase))?;
+            if !FileType::from_raw_mode(metadata.st_mode).is_dir() {
+                return Err(map_parent_rejected(phase));
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn inspect_initial_target(
+    parent: BorrowedFd<'_>,
+    basename: &str,
+) -> Result<TargetSnapshot, ToolError> {
+    match rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(metadata) if FileType::from_raw_mode(metadata.st_mode).is_file() => {
+            Ok(TargetSnapshot::Existing(metadata))
+        }
+        Ok(_) => Err(rejected_path()),
+        Err(error) if error == rustix::io::Errno::NOENT => Ok(TargetSnapshot::Missing),
+        Err(error) if is_permission_error(error) => Err(permission_denied()),
+        Err(error) if is_rejected_type_error(error) => Err(rejected_path()),
+        Err(_) => Err(unavailable(true)),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn create_staged_file(
+    parent: BorrowedFd<'_>,
+    basename: &str,
+    cancellation: &CancellationToken,
+) -> Result<(String, OwnedFd), ToolError> {
+    create_staged_file_with(parent, basename, cancellation, |_| random_temp_name())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn create_staged_file_with(
+    parent: BorrowedFd<'_>,
+    basename: &str,
+    cancellation: &CancellationToken,
+    mut next_name: impl FnMut(usize) -> Result<String, ToolError>,
+) -> Result<(String, OwnedFd), ToolError> {
+    for attempt in 0..MAX_WRITE_FILE_TEMP_ATTEMPTS {
+        check_cancellation(cancellation)?;
+        let name = next_name(attempt)?;
+        if name == basename {
+            continue;
+        }
+        match rustix::fs::openat(
+            parent,
+            &name,
+            OFlags::WRONLY
+                | OFlags::CREATE
+                | OFlags::EXCL
+                | OFlags::NOFOLLOW
+                | OFlags::CLOEXEC
+                | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o600),
+        ) {
+            Ok(file) => return Ok((name, file)),
+            Err(error) if error == rustix::io::Errno::EXIST => {}
+            Err(error) if is_permission_error(error) => return Err(permission_denied()),
+            Err(_) => return Err(unavailable(true)),
+        }
+    }
+    Err(unavailable(true))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn random_temp_name() -> Result<String, ToolError> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut random = [0_u8; TEMP_RANDOM_BYTES];
+    getrandom::fill(&mut random).map_err(|_| unavailable(true))?;
+    let mut name = String::with_capacity(TEMP_NAME_PREFIX.len() + TEMP_RANDOM_BYTES * 2);
+    name.push_str(TEMP_NAME_PREFIX);
+    for byte in random {
+        name.push(char::from(HEX[usize::from(byte >> 4)]));
+        name.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    Ok(name)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_content(
+    file: &OwnedFd,
+    content: &[u8],
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    let mut offset = 0_usize;
+    while offset < content.len() {
+        check_cancellation(cancellation)?;
+        let end = offset
+            .saturating_add(MAX_WRITE_FILE_CHUNK_BYTES)
+            .min(content.len());
+        match rustix::io::write(file, &content[offset..end]) {
+            Ok(0) => return Err(write_failed()),
+            Ok(written) => offset = offset.checked_add(written).ok_or_else(write_failed)?,
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(error) => return Err(map_precommit_io_error(error)),
+        }
+    }
+    check_cancellation(cancellation)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn verify_staged_descriptor(
+    staged: &StagedFile<'_>,
+    content_length: usize,
+    expected_mode: Option<Mode>,
+) -> Result<(), ToolError> {
+    let metadata = rustix::fs::fstat(&staged.file).map_err(|_| write_failed())?;
+    if !same_identity(&metadata, &staged.identity)
+        || !FileType::from_raw_mode(metadata.st_mode).is_file()
+        || usize::try_from(metadata.st_size).ok() != Some(content_length)
+        || expected_mode.is_some_and(|mode| metadata.st_mode & 0o777 != mode.as_raw_mode())
+    {
+        return Err(write_failed());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn revalidate_staged_path(
+    parent: BorrowedFd<'_>,
+    staged: &StagedFile<'_>,
+    content_length: usize,
+    expected_mode: Mode,
+) -> Result<(), ToolError> {
+    let path_metadata = rustix::fs::statat(parent, &staged.name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|_| write_failed())?;
+    if !same_identity(&path_metadata, &staged.identity)
+        || !FileType::from_raw_mode(path_metadata.st_mode).is_file()
+        || usize::try_from(path_metadata.st_size).ok() != Some(content_length)
+        || path_metadata.st_mode & 0o777 != expected_mode.as_raw_mode()
+    {
+        return Err(write_failed());
+    }
+    verify_staged_descriptor(staged, content_length, Some(expected_mode))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn revalidate_target(
+    parent: BorrowedFd<'_>,
+    basename: &str,
+    initial: &TargetSnapshot,
+) -> Result<(), ToolError> {
+    let current = match rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error == rustix::io::Errno::NOENT => None,
+        Err(_) => return Err(target_changed()),
+    };
+    match (initial, current) {
+        (TargetSnapshot::Missing, None) => Ok(()),
+        (TargetSnapshot::Existing(expected), Some(actual))
+            if FileType::from_raw_mode(actual.st_mode).is_file()
+                && same_identity(expected, &actual)
+                && expected.st_mode & 0o777 == actual.st_mode & 0o777 =>
+        {
+            Ok(())
+        }
+        _ => Err(target_changed()),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn published_target_matches(
+    parent: BorrowedFd<'_>,
+    basename: &str,
+    staged: &StagedFile<'_>,
+    content_length: usize,
+    expected_mode: Mode,
+) -> bool {
+    rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(|metadata| {
+        same_identity(&metadata, &staged.identity)
+            && FileType::from_raw_mode(metadata.st_mode).is_file()
+            && usize::try_from(metadata.st_size).ok() == Some(content_length)
+            && metadata.st_mode & 0o777 == expected_mode.as_raw_mode()
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_before_commit(
+    file: BorrowedFd<'_>,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    loop {
+        check_cancellation(cancellation)?;
+        match rustix::fs::fsync(file) {
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Ok(()) => return Ok(()),
+            Err(error) => return Err(map_precommit_io_error(error)),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_after_commit(parent: BorrowedFd<'_>) -> Result<(), rustix::io::Errno> {
+    loop {
+        match rustix::fs::fsync(parent) {
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Ok(()) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn finish_after_commit(
+    published_identity_matches: bool,
+    directory_sync: Result<(), rustix::io::Errno>,
+) -> Result<(), ToolError> {
+    if published_identity_matches && directory_sync.is_ok() {
+        Ok(())
+    } else {
+        Err(commit_ambiguous())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn same_identity(left: &rustix::fs::Stat, right: &rustix::fs::Stat) -> bool {
+    left.st_dev == right.st_dev && left.st_ino == right.st_ino
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn directory_open_flags() -> OFlags {
+    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn ensure_root_is_linked(root: BorrowedFd<'_>) -> Result<(), ToolError> {
+    #[cfg(target_os = "linux")]
+    {
+        if rustix::fs::fstat(root)
+            .map_err(|_| unavailable(true))?
+            .st_nlink
+            == 0
+        {
+            return Err(unavailable(true));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    ensure_macos_root_is_linked(root)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_macos_root_is_linked(root: BorrowedFd<'_>) -> Result<(), ToolError> {
+    let root_metadata = rustix::fs::fstat(root).map_err(|_| unavailable(true))?;
+    let root_path = rustix::fs::getpath(root).map_err(|_| unavailable(true))?;
+    let root_path = root_path.as_bytes();
+    if root_path == b"/" {
+        return Ok(());
+    }
+    let name = root_path
+        .rsplit(|byte| *byte == b'/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| unavailable(true))?;
+    let name = std::ffi::CString::new(name).map_err(|_| unavailable(true))?;
+    let parent = rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
+        .map_err(|_| unavailable(true))?;
+    let linked = rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|_| unavailable(true))?;
+    if !same_identity(&root_metadata, &linked) || !FileType::from_raw_mode(linked.st_mode).is_dir()
+    {
+        return Err(unavailable(true));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_root_open_error(error: rustix::io::Errno) -> WriteFileToolOpenError {
+    let kind = if is_rejected_type_error(error) {
+        WriteFileToolOpenErrorKind::InvalidFileType
+    } else {
+        WriteFileToolOpenErrorKind::Unavailable
+    };
+    WriteFileToolOpenError::new(kind)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_parent_open_error(error: rustix::io::Errno, phase: WalkPhase) -> ToolError {
+    match phase {
+        WalkPhase::Revalidate => target_changed(),
+        WalkPhase::Initial if error == rustix::io::Errno::NOENT => not_found(),
+        WalkPhase::Initial if is_rejected_type_error(error) => rejected_path(),
+        WalkPhase::Initial if is_permission_error(error) => permission_denied(),
+        WalkPhase::Initial => unavailable(true),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_parent_revalidation_failure(phase: WalkPhase) -> ToolError {
+    match phase {
+        WalkPhase::Initial => unavailable(true),
+        WalkPhase::Revalidate => target_changed(),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_parent_rejected(phase: WalkPhase) -> ToolError {
+    match phase {
+        WalkPhase::Initial => rejected_path(),
+        WalkPhase::Revalidate => target_changed(),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_create_rename_error(error: rustix::io::Errno) -> ToolError {
+    if error == rustix::io::Errno::EXIST {
+        target_changed()
+    } else if is_permission_error(error) {
+        permission_denied()
+    } else {
+        write_failed()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_replace_rename_error(error: rustix::io::Errno) -> ToolError {
+    if is_permission_error(error) {
+        permission_denied()
+    } else {
+        write_failed()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_precommit_io_error(_error: rustix::io::Errno) -> ToolError {
+    write_failed()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn is_permission_error(error: rustix::io::Errno) -> bool {
+    error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn is_rejected_type_error(error: rustix::io::Errno) -> bool {
+    error == rustix::io::Errno::LOOP
+        || error == rustix::io::Errno::NOTDIR
+        || error == rustix::io::Errno::ISDIR
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
+    if cancellation.is_cancelled() {
+        Err(cancelled())
+    } else {
+        Ok(())
+    }
+}
+
+fn invalid_arguments() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::InvalidInput,
+        "write_file_invalid_arguments",
+        "write_file arguments are invalid",
+        false,
+    )
+}
+
+fn invalid_path() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::InvalidInput,
+        "write_file_invalid_path",
+        "write_file path is invalid",
+        false,
+    )
+}
+
+fn content_too_large() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::InvalidInput,
+        "write_file_content_too_large",
+        "write_file content exceeds the supported size limit",
+        false,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn not_found() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Unavailable,
+        "write_file_not_found",
+        "requested parent directory is unavailable",
+        false,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn permission_denied() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::PermissionDenied,
+        "write_file_permission_denied",
+        "requested file cannot be written",
+        false,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rejected_path() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::PermissionDenied,
+        "write_file_path_rejected",
+        "requested path is not a confined regular file target",
+        false,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn unavailable(retryable: bool) -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Unavailable,
+        "write_file_unavailable",
+        "requested file is unavailable",
+        retryable,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn target_changed() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Execution,
+        "write_file_target_changed",
+        "requested file changed before commit",
+        true,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_failed() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Execution,
+        "write_file_write_failed",
+        "requested file could not be written",
+        true,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn commit_ambiguous() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Execution,
+        "write_file_commit_ambiguous",
+        "requested file commit status is uncertain",
+        false,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn cancelled() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Cancelled,
+        "write_file_cancelled",
+        "write_file execution was cancelled",
+        false,
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn unsupported_platform() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Unavailable,
+        "write_file_unsupported_platform",
+        "native write_file is unsupported on this platform",
+        false,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_normalization_is_bounded_and_confined() {
+        assert_eq!(
+            normalize_relative_path("./src//nested/./file.txt").unwrap(),
+            "src/nested/file.txt"
+        );
+        let exact_components = std::iter::repeat_n("a", MAX_WRITE_FILE_PATH_COMPONENTS)
+            .collect::<Vec<_>>()
+            .join("/");
+        assert_eq!(
+            normalize_relative_path(&exact_components).unwrap(),
+            exact_components
+        );
+        let too_many_components = format!("{exact_components}/a");
+        for path in [
+            "",
+            ".",
+            "..",
+            "src/../secret",
+            "/absolute",
+            "nul\0byte",
+            "line\u{2028}separator",
+            &too_many_components,
+        ] {
+            assert_eq!(
+                normalize_relative_path(path)
+                    .expect_err("path must be rejected")
+                    .code,
+                "write_file_invalid_path"
+            );
+        }
+    }
+
+    #[test]
+    fn argument_limit_precedence_and_bounded_serialization_are_exact() {
+        let malformed = json!({ "path": "ok", "content": "ok", "extra": false });
+        assert_eq!(
+            validate_arguments(&malformed)
+                .err()
+                .expect("shape must be rejected")
+                .code,
+            "write_file_invalid_arguments"
+        );
+
+        let invalid_path_with_large_content = json!({
+            "path": "../outside",
+            "content": "x".repeat(MAX_WRITE_FILE_CONTENT_BYTES + 1),
+        });
+        assert_eq!(
+            validate_arguments(&invalid_path_with_large_content)
+                .err()
+                .expect("path must be rejected")
+                .code,
+            "write_file_invalid_path"
+        );
+
+        let oversized_content = json!({
+            "path": "file.txt",
+            "content": "x".repeat(MAX_WRITE_FILE_CONTENT_BYTES + 1),
+        });
+        assert_eq!(
+            validate_arguments(&oversized_content)
+                .err()
+                .expect("content must be rejected")
+                .code,
+            "write_file_content_too_large"
+        );
+
+        let escape_heavy = json!({
+            "path": "file.txt",
+            "content": "\0".repeat(MAX_WRITE_FILE_CONTENT_BYTES),
+        });
+        assert_eq!(
+            validate_arguments(&escape_heavy)
+                .err()
+                .expect("serialized input must be rejected")
+                .code,
+            "write_file_invalid_arguments"
+        );
+
+        let three_bytes = json!("x");
+        assert!(serialized_value_fits(&three_bytes, 3));
+        assert!(!serialized_value_fits(&three_bytes, 2));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    mod supported {
+        use std::fmt::Write as _;
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::path::{Path, PathBuf};
+
+        use super::*;
+
+        struct TempDirectory(PathBuf);
+
+        impl TempDirectory {
+            fn new(label: &str) -> Self {
+                for _ in 0..MAX_WRITE_FILE_TEMP_ATTEMPTS {
+                    let mut random = [0_u8; 16];
+                    getrandom::fill(&mut random).expect("test temporary-name randomness");
+                    let mut suffix = String::with_capacity(random.len() * 2);
+                    for byte in random {
+                        write!(&mut suffix, "{byte:02x}").expect("write temporary suffix");
+                    }
+                    let path = std::env::temp_dir().join(format!(
+                        "machine-god-write-file-{label}-{}-{suffix}",
+                        std::process::id()
+                    ));
+                    match fs::create_dir(&path) {
+                        Ok(()) => return Self(path),
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                        Err(error) => panic!("create temporary directory: {error}"),
+                    }
+                }
+                panic!("allocate temporary directory");
+            }
+
+            fn path(&self) -> &Path {
+                &self.0
+            }
+
+            fn descriptor(&self) -> OwnedFd {
+                rustix::fs::open(self.path(), directory_open_flags(), Mode::empty())
+                    .expect("open temporary directory")
+            }
+        }
+
+        impl Drop for TempDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        #[test]
+        fn eight_temp_collisions_are_preserved_and_fail_closed() {
+            let temporary = TempDirectory::new("collisions");
+            let collision_name = ".machine-god-write-collision";
+            let collision_path = temporary.path().join(collision_name);
+            fs::write(&collision_path, b"foreign").unwrap();
+            let parent = temporary.descriptor();
+            let error = create_staged_file_with(
+                parent.as_fd(),
+                "target.txt",
+                &CancellationToken::new(),
+                |_| Ok(collision_name.to_owned()),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "write_file_unavailable");
+            assert_eq!(fs::read(&collision_path).unwrap(), b"foreign");
+        }
+
+        #[test]
+        fn cancellation_between_temp_attempts_preserves_collision() {
+            let temporary = TempDirectory::new("collision-cancel");
+            let collision_name = ".machine-god-write-collision";
+            let collision_path = temporary.path().join(collision_name);
+            fs::write(&collision_path, b"foreign").unwrap();
+            let parent = temporary.descriptor();
+            let cancellation = CancellationToken::new();
+            let cancellation_for_name = cancellation.clone();
+            let error =
+                create_staged_file_with(parent.as_fd(), "target.txt", &cancellation, move |_| {
+                    cancellation_for_name.cancel();
+                    Ok(collision_name.to_owned())
+                })
+                .unwrap_err();
+            assert_eq!(error.code, "write_file_cancelled");
+            assert_eq!(fs::read(&collision_path).unwrap(), b"foreign");
+        }
+
+        #[test]
+        fn cleanup_does_not_unlink_a_swapped_staged_name() {
+            let temporary = TempDirectory::new("cleanup-swap");
+            let parent = temporary.descriptor();
+            let owned_name = ".machine-god-write-owned";
+            let moved_name = ".machine-god-write-moved";
+            let file = rustix::fs::openat(
+                parent.as_fd(),
+                owned_name,
+                OFlags::WRONLY
+                    | OFlags::CREATE
+                    | OFlags::EXCL
+                    | OFlags::NOFOLLOW
+                    | OFlags::CLOEXEC
+                    | OFlags::NONBLOCK,
+                Mode::from_raw_mode(0o600),
+            )
+            .unwrap();
+            let staged = StagedFile::new(parent.as_fd(), file, owned_name.to_owned()).unwrap();
+            rustix::fs::renameat(parent.as_fd(), owned_name, parent.as_fd(), moved_name).unwrap();
+            fs::write(temporary.path().join(owned_name), b"sentinel").unwrap();
+            drop(staged);
+            assert_eq!(
+                fs::read(temporary.path().join(owned_name)).unwrap(),
+                b"sentinel"
+            );
+        }
+
+        #[test]
+        fn target_identity_and_mode_changes_fail_revalidation() {
+            let temporary = TempDirectory::new("target-change");
+            let target_path = temporary.path().join("target.txt");
+            fs::write(&target_path, b"old").unwrap();
+            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o640)).unwrap();
+            let parent = temporary.descriptor();
+            let initial = inspect_initial_target(parent.as_fd(), "target.txt").unwrap();
+            revalidate_target(parent.as_fd(), "target.txt", &initial).unwrap();
+
+            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(
+                revalidate_target(parent.as_fd(), "target.txt", &initial)
+                    .unwrap_err()
+                    .code,
+                "write_file_target_changed"
+            );
+            assert_eq!(fs::read(&target_path).unwrap(), b"old");
+        }
+
+        #[test]
+        fn precommit_and_postcommit_fault_classes_are_fixed() {
+            for error in [
+                map_precommit_io_error(rustix::io::Errno::IO),
+                map_create_rename_error(rustix::io::Errno::IO),
+                map_replace_rename_error(rustix::io::Errno::IO),
+            ] {
+                assert_eq!(error.code, "write_file_write_failed");
+                assert!(error.retryable);
+            }
+            assert_eq!(
+                map_create_rename_error(rustix::io::Errno::EXIST).code,
+                "write_file_target_changed"
+            );
+            assert!(finish_after_commit(true, Ok(())).is_ok());
+            for result in [
+                finish_after_commit(false, Ok(())),
+                finish_after_commit(true, Err(rustix::io::Errno::IO)),
+            ] {
+                let error = result.unwrap_err();
+                assert_eq!(error.code, "write_file_commit_ambiguous");
+                assert!(!error.retryable);
+            }
+        }
+
+        #[test]
+        fn temp_names_are_fixed_length_hex_and_private_prefix() {
+            let name = random_temp_name().unwrap();
+            assert_eq!(name.len(), TEMP_NAME_PREFIX.len() + TEMP_RANDOM_BYTES * 2);
+            let suffix = name.strip_prefix(TEMP_NAME_PREFIX).unwrap();
+            assert!(suffix.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        }
+    }
+}
