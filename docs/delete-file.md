@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — formal cycle 4 not green; remediation in progress**
+Status: **IN PROGRESS — cycle 4 remediated; replacement review pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -31,8 +31,9 @@ two low findings. Exact remediation
 `77884a9fceed6268cbdbec1310de3f94a9c5a230` passes the complete replacement
 local gate. Tree-identical formal cycle-4 candidate
 `0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** with
-one overlapping medium finding; remediation and another fresh cycle remain
-pending.
+one overlapping medium finding. Exact remediation
+`4273de513007175be94829aef85aaaa0d09bc02c` passes the complete replacement
+local gate; another fresh same-SHA cycle remains pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -429,6 +430,41 @@ with the same single medium finding and no others: definitive non-`EINTR`
 the syscall. Source and representative file/directory errno-matrix evidence are
 being remediated; another complete local gate and three fresh reviewers remain
 mandatory.
+
+Exact cycle-4 remediation `4273de513007175be94829aef85aaaa0d09bc02c`
+passes the complete replacement local gate on Rust/Cargo 1.94.1. Definitive
+non-`EINTR` deletion failures now check cancellation after the actual syscall
+and evidence hook but before errno or macOS diagnostic mapping. A ten-case
+file/directory failure matrix covers file `EIO`, `EACCES`, `EPERM`, `EROFS`,
+`ENOENT`, `ENOTDIR`, `EISDIR`, and `ELOOP`, plus directory `ENOTEMPTY` and
+`EEXIST`; every cancelled case retains target and sentinel state, performs one
+delete call with exact flags, and performs zero syncs. Existing success and
+`EINTR` regressions continue to prove later cancellation is ignored only after
+the commit or ambiguity boundary.
+
+Focused totals are 29 default-feature and 30 all-feature private tests, 21
+direct tests plus the hostile-umask child, five engine tests, seven reference-
+host tests, and one core `Delete` contract test. Workspace formatting, all-
+target/all-feature warnings-denied Clippy, tests, and two doctests pass;
+discovery inventories 740 default-feature tests and 790 all-feature tests,
+including two doctests, with zero benchmarks.
+
+The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
+compatibility, cargo-deny 0.20.2, and cargo-audit 0.22.2 over 1,225 advisories
+and 175 dependencies are green. Linux no-default-feature cross-Clippy,
+FreeBSD library check and Clippy plus unsupported-test type-check, WASI
+library/test builds, and Node's active unsupported test 1/1 pass.
+Documentation integrity remains 64/445/295/0. The clean delivered-base diff
+covers 16 files with 6,582 insertions and 63 deletions, adds zero unsafe Rust,
+and changes no Cargo metadata or CLI source. The optional all-feature Linux
+cross-build remains blocked only by the host's missing Linux C sysroot in
+`aws-lc-sys`, before product Rust compilation. A fresh locked 319,152-byte
+arm64 Mach-O release CLI has SHA-256
+`126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107`
+and passes bare, help, human-status, and JSON-status smoke paths with exact
+stdout and empty stderr. These results qualify only the replacement local
+gate; three fresh reviewers must still green-light one tree-identical behavior
+candidate before remote delivery.
 
 ## Parallel ownership and formal review
 

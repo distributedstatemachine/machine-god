@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — formal cycle 4 not green; remediation in progress**
+Status: **IN PROGRESS — cycle 4 remediated; replacement review pending**
 
 ## Base and contract gate
 
@@ -346,6 +346,40 @@ one delete call with exact flags, and performs zero syncs. Existing success and
 `EINTR` tests continue to prove cancellation is ignored after the commit/
 ambiguity boundary. Cycle 4 remains historically **NOT GREEN**; a new exact
 candidate receives complete gates and three fresh reviewers.
+
+## Cycle 4 remediation local gate
+
+Exact remediation: `4273de513007175be94829aef85aaaa0d09bc02c`.
+
+Production now checks cancellation after a definitive non-`EINTR` deletion
+failure and its evidence hook, before every errno or macOS diagnostic mapping.
+Success and `EINTR` remain beyond the cancellation-replacement boundary. A
+ten-case production-seam matrix covers file `EIO`, `EACCES`, `EPERM`, `EROFS`,
+`ENOENT`, `ENOTDIR`, `EISDIR`, and `ELOOP`, plus directory `ENOTEMPTY` and
+`EEXIST`; every cancelled case returns the fixed cancellation result, retains
+target and sentinel state, makes exactly one delete call with exact flags, and
+performs zero syncs.
+
+Rust/Cargo 1.94.1 formatting, workspace all-target/all-feature warnings-denied
+Clippy, workspace tests, and two doctests are green. Focused totals are 29/30
+private, 21 direct plus the hostile-umask child, five engine, seven host, and
+one core `Delete` contract test. Discovery is 740 default / 790 all-feature
+tests including two doctests, with zero benchmarks.
+
+Python 130 with eight expected skips, pinned-fx compatibility, cargo-deny
+0.20.2, cargo-audit 0.22.2 over 1,225 advisories and 175 dependencies,
+Linux/FreeBSD/WASI plus active Node 1/1, and documentation 64/445/295/0 pass.
+The clean 16-file delivered-base diff is +6,582/-63 with zero added unsafe Rust
+and no Cargo or CLI changes. Optional all-feature Linux cross remains a host
+C-sysroot failure in `aws-lc-sys` before product Rust. A fresh locked
+319,152-byte arm64 Mach-O CLI has SHA-256
+`126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107`
+and passes bare/help/human-status/JSON-status smoke with exact stdout and empty
+stderr.
+
+Cycle 4 remains historically not green. This exact local gate does not
+establish behavior approval or delivery; a tree-identical marker must receive
+three fresh cycle-5 reviews before any behavior-green claim.
 
 ## Formal adversarial protocol
 

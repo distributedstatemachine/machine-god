@@ -71,9 +71,10 @@ umask evidence. Exact remediation
 local gate. Tree-identical cycle-4 candidate
 `0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** across all
 three tracks with the same single medium definitive-unlink-failure cancellation
-finding and no others. Remediation and another fresh same-SHA cycle remain
-pending. The remaining native tools, CLI ownership, and Milestone 03 completion
-boundary remain pending.
+finding and no others. Exact remediation
+`4273de513007175be94829aef85aaaa0d09bc02c` passes the complete replacement
+local gate; another fresh same-SHA cycle remains pending. The remaining native
+tools, CLI ownership, and Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1205,8 +1206,20 @@ dependency, portability, docs, diff, and fresh release-smoke gates green.
 Tree-identical cycle-4 candidate
 `0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** in all
 three tracks for the same single medium finding: definitive non-`EINTR` unlink
-failures skipped post-syscall cancellation precedence. Remediation and another
-complete local/fresh-review cycle are in progress.
+failures skipped post-syscall cancellation precedence. Exact remediation
+`4273de513007175be94829aef85aaaa0d09bc02c` checks cancellation after every
+definitive failed delete and before mapping, and its ten-case file/directory
+errno matrix requires an exact cancelled result, intact targets and sentinels,
+one correctly flagged delete call, and zero syncs. Complete replacement gates
+are green: 29/30 private, 21 direct plus hostile-umask child, five engine,
+seven host, one core, 740/790 discovery including two doctests and zero
+benchmarks; workspace, Python 130, compatibility, dependency, portability,
+64/445/295/0 documentation, +6,582/-63 clean diff/no-unsafe/no-Cargo/no-CLI,
+and fresh release-smoke evidence pass. The 319,152-byte arm64 Mach-O CLI has
+SHA-256 `126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107`.
+Optional all-feature Linux cross remains blocked only by the host C sysroot in
+`aws-lc-sys`, before product Rust. Another fresh tree-identical review cycle is
+pending.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1510,10 +1523,16 @@ gate:
   Python, compatibility, dependency, portability, documentation, diff, and
   release-smoke evidence green. Tree-identical cycle-4 candidate `0b732d2` is
   not green across all three tracks for the same single medium definitive-
-  unlink-failure cancellation finding. Remediation, another fresh same-SHA
-  review, feature delivery, and `main` delivery remain pending, so the combined
-  native-tool checkbox stays unchecked and the delivered-slice count remains
-  twenty-one.
+  unlink-failure cancellation finding. Exact remediation `4273de5` passes the
+  complete replacement gate with 29/30 private, 21 direct plus hostile-umask
+  child, five engine, seven host, one core, 740/790 discovery including two
+  doctests and zero benchmarks, workspace, Python, compatibility, dependency,
+  portability, documentation, diff/no-unsafe/no-Cargo/no-CLI, and fresh
+  release-smoke evidence green. Its ten-case definitive-failure matrix proves
+  post-syscall cancellation precedence while preserving the success/`EINTR`
+  commit boundary. Another fresh same-SHA review, feature delivery, and `main`
+  delivery remain pending, so the combined native-tool checkbox stays
+  unchecked and the delivered-slice count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
