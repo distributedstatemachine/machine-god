@@ -1031,6 +1031,43 @@ fn eligibility_accepts_exact_file_limit_and_reports_oversized_utf8_and_nul_skips
 }
 
 #[test]
+fn one_large_then_many_empty_and_tiny_files_have_exact_output_without_false_scan_limit() {
+    let temporary = TemporaryDirectory::new();
+    let mut large = vec![b'x'; MAX_GREP_FILES_FILE_BYTES];
+    large[MAX_GREP_FILES_FILE_BYTES - b"needle".len()..].copy_from_slice(b"needle");
+    fs::write(temporary.path().join("000-large.txt"), large).unwrap();
+
+    const TINY_FILE_COUNT: usize = 384;
+    for index in 0..TINY_FILE_COUNT {
+        let contents: &[u8] = match index % 4 {
+            0 => b"",
+            1 => b"x",
+            2 => b"needle",
+            3 => b"need",
+            _ => unreachable!(),
+        };
+        fs::write(
+            temporary.path().join(format!("tiny-{index:03}.txt")),
+            contents,
+        )
+        .unwrap();
+    }
+
+    let output = count(&tool(temporary.path()), "needle", ".");
+    let mut expected = common_result(
+        "needle",
+        ".",
+        None,
+        "count",
+        TINY_FILE_COUNT + 1,
+        TINY_FILE_COUNT + 1,
+    );
+    expected["matching_lines"] = json!(TINY_FILE_COUNT / 4 + 1);
+    expected["matching_files"] = json!(TINY_FILE_COUNT / 4 + 1);
+    assert_eq!(output, ToolOutput::success(expected));
+}
+
+#[test]
 fn selected_regular_file_is_searchable_and_include_matches_its_workspace_relative_path() {
     let temporary = TemporaryDirectory::new();
     write_files(
