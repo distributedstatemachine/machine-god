@@ -15,8 +15,7 @@ fn unique_match_budget_accepts_exact_steps_and_rejects_one_fewer() {
     let exact_steps = batches.iter().sum::<usize>();
     assert_eq!(exact_steps, 4);
     assert_eq!(
-        find_unique_match_with_budget(b"abc", b"b", &cancellation, exact_steps, |_| {})
-            .unwrap(),
+        find_unique_match_with_budget(b"abc", b"b", &cancellation, exact_steps, |_| {}).unwrap(),
         1
     );
     assert_eq!(
@@ -38,7 +37,7 @@ fn unique_match_is_overlap_aware_and_reports_only_fixed_outcomes() {
             1_000,
             |_| {},
         )
-            .unwrap(),
+        .unwrap(),
         7
     );
     assert_eq!(
@@ -116,7 +115,11 @@ fn postimage_construction_accepts_exact_cap_rejects_one_over_and_batches_copies(
     )
     .unwrap();
     assert_eq!(result.len(), result_len);
-    assert!(batches.iter().all(|batch| *batch <= MAX_EDIT_FILE_CHUNK_BYTES));
+    assert!(
+        batches
+            .iter()
+            .all(|batch| *batch <= MAX_EDIT_FILE_CHUNK_BYTES)
+    );
     assert_eq!(batches.iter().sum::<usize>(), result_len);
     assert_eq!(
         build_postimage_with_budget(
@@ -243,12 +246,7 @@ mod supported {
         }
 
         fn descriptor(&self) -> OwnedFd {
-            rustix::fs::open(
-                self.path(),
-                directory_open_flags(),
-                Mode::empty(),
-            )
-            .unwrap()
+            rustix::fs::open(self.path(), directory_open_flags(), Mode::empty()).unwrap()
         }
     }
 
@@ -295,7 +293,10 @@ mod supported {
         )
         .unwrap();
         assert_eq!(bytes, b"stable partial contents");
-        assert_eq!(fingerprint, FileFingerprint::from_stat(&rustix::fs::fstat(&file).unwrap()));
+        assert_eq!(
+            fingerprint,
+            FileFingerprint::from_stat(&rustix::fs::fstat(&file).unwrap())
+        );
         assert!(calls.get() > 5);
     }
 
@@ -413,8 +414,8 @@ mod supported {
         assert_eq!(error.code, "edit_file_unavailable");
 
         for count in [0_usize, 17] {
-            let error = random_temp_name_with(&CancellationToken::new(), |_| Ok(count))
-                .unwrap_err();
+            let error =
+                random_temp_name_with(&CancellationToken::new(), |_| Ok(count)).unwrap_err();
             assert_eq!(error.code, "edit_file_unavailable");
         }
     }
@@ -469,7 +470,10 @@ mod supported {
         .unwrap_err();
         assert_eq!(attempts.get(), MAX_EDIT_FILE_TEMP_ATTEMPTS);
         assert_eq!(error.code, "edit_file_unavailable");
-        assert_eq!(fs::read(temporary.path().join(collision_name)).unwrap(), b"foreign");
+        assert_eq!(
+            fs::read(temporary.path().join(collision_name)).unwrap(),
+            b"foreign"
+        );
 
         let basename_attempts = Cell::new(0_usize);
         let error = create_staged_file_with(
@@ -581,11 +585,8 @@ mod supported {
                 |parent, staged_name| {
                     rustix::fs::renameat(parent, staged_name, parent, "displaced-stage").unwrap();
                     fs::write(root.join(staged_name), b"intruder").unwrap();
-                    fs::set_permissions(
-                        root.join(staged_name),
-                        fs::Permissions::from_mode(0o640),
-                    )
-                    .unwrap();
+                    fs::set_permissions(root.join(staged_name), fs::Permissions::from_mode(0o640))
+                        .unwrap();
                 },
                 || {},
                 || {},
@@ -603,10 +604,18 @@ mod supported {
         let intruder = fs::read_dir(temporary.path())
             .unwrap()
             .filter_map(Result::ok)
-            .find(|entry| entry.file_name().to_string_lossy().starts_with(TEMP_NAME_PREFIX))
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(TEMP_NAME_PREFIX)
+            })
             .unwrap();
         assert_eq!(fs::read(intruder.path()).unwrap(), b"intruder");
-        assert_eq!(intruder.metadata().unwrap().permissions().mode() & 0o777, 0o640);
+        assert_eq!(
+            intruder.metadata().unwrap().permissions().mode() & 0o777,
+            0o640
+        );
     }
 
     #[test]
