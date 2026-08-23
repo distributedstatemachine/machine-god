@@ -1,6 +1,6 @@
 # Milestone 03 native `edit_file` review 01
 
-Status: **IN PROGRESS — cycle-3 evidence findings remediated; cycle-4 review pending**
+Status: **BEHAVIOR GREEN — delivery pending**
 
 ## Base and contract gate
 
@@ -127,9 +127,11 @@ Cycle-4 remediation has the following exact lineage:
   `3cbb8956477af30cf5f8d63f118e597793267efc`, integrated as exact composed
   remediation SHA `d0d188b39290a50f7f10d7e4665cf694abdfc460`.
 
-This documentation record follows exact integrated remediation SHA `d0d188b`.
-Because a commit cannot self-record its own identifier, its documentation-only
-component SHA is recorded after direct observation in the integration handoff.
+Documentation-only component
+`590ad386ca7c783d9fd463ab48531fa81025f11c` was integrated as exact parent
+`12470d9e6c4c9301a0eeaef34e01a1ab31c84d07`. Formal freeze marker
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca` is tree-identical to that parent
+and is the exact cycle-4 behavior candidate reviewed below.
 
 ## Cycle-1 review result and remediation
 
@@ -289,17 +291,40 @@ Exact integrated remediation SHA
 `d0d188b39290a50f7f10d7e4665cf694abdfc460` passes 43 private `edit_file`
 tests, 24 direct tests, five engine tests, and seven reference-host tests. The
 delivered `write_file` regressions remain green at 30 private, 25 direct, and
-five engine tests. These are remediation and focused regression results, not a
-cycle-4 review, behavior-green, delivery, performance, or equivalence claim.
-This documentation-only record receives no separate adversarial review under
-the user's explicit instruction.
+five engine tests. This documentation-only remediation record received no
+separate adversarial review under the user's explicit instruction.
+
+## Cycle-4 review result
+
+All three fresh tracks reviewed exact tree-identical candidate
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca`:
+
+- correctness/API: **GREEN**, zero findings;
+- filesystem/robustness: **GREEN**, zero findings; and
+- performance/concurrency: **GREEN**, zero findings.
+
+The filesystem/robustness track explicitly confirmed closure of all four
+cycle-3 evidence gaps. The actual generic RAII `StagedFile::drop` path attempts
+both mode reset and unlink under dual failure while retaining descriptor/path
+identity and regular-type gates. `after_final_stage_verification` is reached
+after the last stable content and ACL verification and immediately before the
+last cancellation check and rename. ACL clear, read failure, and unsafe
+nonempty outcomes are independently selected at creation, late-precommit, and
+publication ordinals with exact pre/postcommit mapping and postpublication
+parent sync. Ordinal-aware descriptor `fstat` injection targets the intended
+initial, revalidation, late staged, and published calls while retaining the
+bounded interruption semantics.
+
+The green tracks reported no correctness, API, filesystem, robustness,
+bounded-work, cancellation, concurrency, or review-blocking finding. This is a
+behavior-green result, not feature delivery, compatibility-status promotion,
+product-performance evidence, or an fx-equivalence claim.
 
 ## Required independent evidence
 
-The check marks below record only evidence directly exercised through exact
-integrated cycle-4 remediation `d0d188b`. Unchecked items identify work for the
-fresh cycle-4 review or a subsequent evidence commit; they do not imply a known
-product defect.
+The check marks below record evidence exercised through exact reviewed cycle-4
+candidate `78d6fd7e0c42ec97f4f176e8378ab774c25893ca`. Unchecked items identify
+remote delivery work and do not imply a known product defect.
 
 - [x] Exact public symbols, constants, schema/property descriptions,
   construction/tool errors, serialized forms, and redacted debug/display.
@@ -340,51 +365,49 @@ product defect.
 - [x] Private production-helper evidence proves the exact 16,384-byte
   serialized-result guard because every public success payload is smaller.
 
-## Baseline local-gate evidence
+## Exact cycle-4 local-gate evidence
 
-Exact precursor `31ec79e000589c4fb34599be4aad4f90ea33974f` is locally green under
-Rust and Cargo 1.94.1:
+Exact candidate `78d6fd7e0c42ec97f4f176e8378ab774c25893ca` is locally green
+under Rust and Cargo 1.94.1:
 
-- focused suites pass 25 private production-helper tests, 23 direct tests, five
-  engine tests, and seven reference-host tests;
-- formatting, all-target/all-feature warnings-denied Clippy, workspace tests,
-  and two doctests pass;
-- discovery inventories 665 default-feature tests, 714 all-feature tests, and
+- formatting, workspace all-target/all-feature warnings-denied Clippy,
+  workspace tests, and workspace doctests pass;
+- focused `edit_file` suites pass 43 private production-helper tests, 24 direct
+  tests, five engine tests, and seven reference-host tests;
+- delivered `write_file` regressions pass 30 private tests, 25 direct tests,
+  and five engine tests;
+- discovery inventories 684 default-feature tests, 733 all-feature tests, and
   zero benchmarks;
+- the repository Python harness passes 130 tests with eight expected macOS
+  skips;
 - pinned-fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`
   compatibility is green;
 - cargo-deny 0.20.2 and cargo-audit 0.22.2 are green;
 - Linux, FreeBSD, and WASI gates pass, while Node actively executes the WASI
   unsupported-target `edit_file` test 1/1;
-- a freshly built locked arm64 Mach-O release CLI has recorded SHA-256 prefix
-  `87f452`; bare, help, and status smoke paths pass;
-- the pre-documentation tree contains 62 Markdown files, 437 inline links, 287
-  repository-relative links, and zero missing targets; and
-- no unsafe Rust was added, the whole-feature diff check passes, and the
-  precursor worktree is clean.
+- documentation integrity covers 62 Markdown files, 437 inline links, and 287
+  repository-relative links with zero missing targets;
+- the clean base diff passes and contains zero unsafe Rust; and
+- a freshly built locked arm64 Mach-O release CLI has SHA-256
+  `66d1db86666764b68f79bcb5eb01a6413aab9f27d795a81b27152aa0c24add9d`;
+  bare, help, and status smoke paths pass.
 
-The repository harness first failed honestly at 129 tests because its benchmark
+The repository harness's earlier 129-test failure was honest: its benchmark
 compatibility helper sorted paths while the real Git command supplies source
 order. Component `e4eec3cac30ec923c19fa53a81e5b6ba9b81cfae` preserves Git
-order and adds the thirtieth benchmark-harness test. The final harness is green
-at 130 tests: 122 pass and eight expected macOS skips. This is harness
-correctness evidence, not a product-performance result.
+order and adds the thirtieth benchmark-harness test. The 130-test result and
+pinned compatibility result are harness-correctness evidence, not a product-
+performance result or compatibility-status promotion.
 
-## Cycle-4 review and delivery gates
+## Cycle-4 delivery gates
 
-Cycle 3 is not green. After this documentation component composes, three fresh
-agents must independently inspect one subsequent exact cycle-4 behavior SHA for:
-
-1. correctness and public API;
-2. filesystem confinement, atomicity, durability, and robustness; and
-3. performance, bounded work, cancellation, and concurrency.
-
-Every confirmed finding is fixed and restarts all three tracks with fresh
-agents on one new exact behavior SHA. Delivery then requires exact feature-
-branch CI and benchmark workflows, a no-force fast-forward of `main`, and exact
-`main` CI and benchmark workflows. Documentation-only records are exempt from a
-separate adversarial cycle under the user's instruction, but their applicable
-remote workflows remain required.
+Cycle-4 behavior review is green on exact SHA
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca`. Delivery remains pending until
+the documentation seal receives exact feature-branch CI and benchmark
+workflows, `main` is fast-forwarded without force, and that exact `main` SHA
+receives green CI and benchmark workflows. Documentation-only records are
+exempt from a separate adversarial cycle under the user's instruction, but
+their applicable remote workflows remain required.
 
 ## Pending lineage
 
@@ -439,17 +462,22 @@ remote workflows remain required.
   `3cbb8956477af30cf5f8d63f118e597793267efc`
 - Exact integrated cycle-4 remediation:
   `d0d188b39290a50f7f10d7e4665cf694abdfc460`
-- Cycle-4 correctness/API track: pending
-- Cycle-4 filesystem/robustness track: pending
-- Cycle-4 performance/concurrency track: pending
-- Behavior-green SHA: pending
+- Cycle-4 remediation documentation component:
+  `590ad386ca7c783d9fd463ab48531fa81025f11c`
+- Cycle-4 review-marker parent:
+  `12470d9e6c4c9301a0eeaef34e01a1ab31c84d07`
+- Exact cycle-4 candidate:
+  `78d6fd7e0c42ec97f4f176e8378ab774c25893ca`, tree-identical to its parent
+- Cycle-4 correctness/API track: green, zero findings
+- Cycle-4 filesystem/robustness track: green, zero findings
+- Cycle-4 performance/concurrency track: green, zero findings
+- Behavior-green SHA: `78d6fd7e0c42ec97f4f176e8378ab774c25893ca`
 - Documentation seal: pending
 - Exact feature CI and benchmark evidence: pending
 - No-force fast-forward `main`: pending
 - Exact `main` CI and benchmark evidence: pending
 
-The cycle-4 remediation establishes neither cycle-4-candidate nor cycle-4-
-review status, and no feature-delivery, `main`, compatibility-promotion,
-equivalence, or product-performance approval. Zig remains solely the pinned
-upstream fx benchmark build input; the machine-god product implementation is
-Rust.
+The cycle-4 candidate is behavior-green but establishes no feature-delivery,
+`main`, compatibility-status promotion, equivalence, or product-performance
+approval. Zig remains solely the pinned upstream fx benchmark build input; the
+machine-god product implementation is Rust.

@@ -1,6 +1,6 @@
 # Native `edit_file` contract
 
-Status: **IN PROGRESS — cycle-3 evidence findings remediated; cycle-4 review pending**
+Status: **BEHAVIOR GREEN — delivery pending**
 
 This document freezes the twenty-first bounded Milestone 03 slice from exact
 delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
@@ -25,10 +25,14 @@ production atomicity defect. Cycle-4 source component
 `985b232731883f7a5c18f8f7cbba56dbedfc7c6e` and independent-test component
 `3cbb8956477af30cf5f8d63f118e597793267efc` compose through integrated SHAs
 `1b9ffca9031c61625420279569670c1c80d2d750` and
-`d0d188b39290a50f7f10d7e4665cf694abdfc460`. All three fresh cycle-4 review
-tracks, feature delivery, fast-forward integration, and exact `main` workflows
-remain pending. Documentation-only records are exempt from their own
-adversarial cycle under the user's explicit instruction.
+`d0d188b39290a50f7f10d7e4665cf694abdfc460`. Tree-identical freeze marker
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca`, whose immediate parent is
+`12470d9e6c4c9301a0eeaef34e01a1ab31c84d07`, received three fresh cycle-4
+**GREEN**, zero-finding reviews for correctness/API, filesystem/robustness, and
+performance/concurrency. Exact feature delivery, no-force fast-forward
+integration, and exact `main` workflows remain pending. Documentation-only
+records are exempt from their own adversarial cycle under the user's explicit
+instruction.
 
 `edit_file` replaces exactly one occurrence of exact text in one existing
 workspace file. It does not grant file creation, a general read capability, or
@@ -393,7 +397,7 @@ write_file
 The CLI remains byte-unchanged and thin. The new tool is library-only in this
 slice.
 
-## Local evidence and review remediation
+## Local evidence and adversarial review
 
 Exact precursor `31ec79e000589c4fb34599be4aad4f90ea33974f` is locally green under
 Rust and Cargo 1.94.1. Focused evidence passes 25 private production-helper
@@ -529,14 +533,43 @@ The components are integrated at `1b9ffca9031c61625420279569670c1c80d2d750`
 and `d0d188b39290a50f7f10d7e4665cf694abdfc460`. Focused suites are green at
 43 private `edit_file` tests, 24 direct tests, five engine tests, and seven
 reference-host tests; the delivered `write_file` regression suites remain
-green at 30 private, 25 direct, and five engine tests. These results close the
-four evidence gaps for cycle-4 review preparation. They establish no delivery,
-compatibility promotion, product-performance, or fx-equivalence claim.
+green at 30 private, 25 direct, and five engine tests.
+
+Exact cycle-4 candidate
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca` is tree-identical to immediate
+parent `12470d9e6c4c9301a0eeaef34e01a1ab31c84d07`. All three fresh review tracks
+are **GREEN** with zero findings. Filesystem/robustness confirmed that the four
+cycle-3 evidence gaps are closed in the real pipeline: actual generic RAII
+`Drop` attempts both cleanup operations under dual failure while retaining the
+identity/type gates; the final checkpoint is after the last stable content and
+ACL verification and immediately before cancellation and rename; injected ACL
+clear, read, and unsafe outcomes map at creation, late-precommit, and published
+ordinals with postpublication parent sync; and ordinal-aware `fstat` evidence
+targets the intended initial, revalidation, late staged, and published calls.
+
+The exact candidate is locally green under Rust and Cargo 1.94.1 for formatting,
+workspace all-target/all-feature warnings-denied Clippy, workspace tests, and
+workspace doctests. Focused `edit_file` totals are 43 private, 24 direct, five
+engine, and seven reference-host tests; delivered `write_file` totals remain
+30 private, 25 direct, and five engine tests. Discovery inventories 684 default-
+feature tests, 733 all-feature tests, and zero benchmarks. The repository Python
+harness passes 130 tests with eight expected macOS skips, and pinned-fx revision
+`b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility is green. Cargo-deny
+0.20.2 and cargo-audit 0.22.2 are green. Linux, FreeBSD, and WASI gates are
+green; Node actively executes the unsupported-target test 1/1. Documentation
+integrity covers 62 Markdown files, 437 inline links, and 287 repository-
+relative links with zero missing targets. The clean base diff contains zero
+unsafe Rust. A freshly built locked arm64 Mach-O release CLI has SHA-256
+`66d1db86666764b68f79bcb5eb01a6413aab9f27d795a81b27152aa0c24add9d` and
+passes bare, help, and status smoke paths.
+
+This is behavior-green evidence only. It establishes no delivery,
+compatibility-status promotion, product-performance, or fx-equivalence claim.
 
 ## Required independent evidence
 
-Production and independently owned tests are composed. Fresh cycle-4 review
-must confirm that evidence covers:
+Production and independently owned tests are composed. Three fresh cycle-4
+review tracks confirmed that evidence covers:
 
 - exact exports, constants, schema and descriptions, error kinds/codes/
   messages/retryability, serialized forms, and debug/display redaction;
@@ -574,21 +607,16 @@ must confirm that evidence covers:
 - complete regression of the delivered `write_file` contract if shared private
   staging/publication mechanics are extracted.
 
-Focused suites have run first on the local precursor. A subsequent formal
-behavior candidate must repeat Rust 1.94.1 formatting, workspace all-target/all-
-feature warnings-denied Clippy, workspace and documentation tests, repository
-Python and pinned-compatibility checks, dependency policy/audit, Linux/macOS
-native checks, FreeBSD/WASI gates, documentation links, no-unsafe/diff checks,
-and a freshly built locked release CLI smoke.
+Focused suites ran first, followed by the complete exact-candidate Rust 1.94.1,
+repository, dependency, portability, documentation, diff, release-smoke, and
+clean-worktree gates recorded above. Exact native Linux execution remains part
+of remote delivery rather than a local cross-compilation claim.
 
-After this documentation record composes, three fresh cycle-4 adversarial
-agents must review the same subsequent exact behavior SHA for correctness/API,
-filesystem/robustness, and performance/concurrency. Every confirmed finding is
-fixed and restarts all three fresh tracks on a new exact SHA until all are
-green. The green behavior must then receive exact feature-branch workflows, a
-no-force fast-forward to `main`, and exact `main` workflows. This
-documentation-only remediation record does not receive a separate adversarial
-review under the user's explicit instruction.
+Behavior review is complete. Delivery still requires exact feature-branch CI
+and benchmark workflows, a no-force fast-forward to `main`, and exact `main` CI
+and benchmark workflows. This documentation-only behavior seal does not
+receive a separate adversarial review under the user's explicit instruction,
+but its applicable remote workflows remain required.
 
 ## Pinned fx input and deliberate differences
 

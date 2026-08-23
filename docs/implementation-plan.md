@@ -44,15 +44,17 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with twenty delivered bounded slices. The next bounded `edit_file` slice is
-**IN PROGRESS**. Exact cycle-3 candidate
+**BEHAVIOR GREEN — DELIVERY PENDING**. Exact cycle-3 candidate
 `da1537b229393007101264cd7bc8fd12ee393a3d` was correctness/API and
 performance/concurrency green with zero findings. Filesystem/robustness was not
 green only for four low deterministic-evidence gaps and reported no production
 atomicity defect. Source and independent-test remediation components
 `985b232731883f7a5c18f8f7cbba56dbedfc7c6e` and
 `3cbb8956477af30cf5f8d63f118e597793267efc` compose through exact integrated
-SHA `d0d188b39290a50f7f10d7e4665cf694abdfc460`. Three fresh cycle-4 reviews and
-delivery remain pending.
+SHA `d0d188b39290a50f7f10d7e4665cf694abdfc460`. Exact tree-identical candidate
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca` is green with zero findings in all
+three fresh cycle-4 tracks. Exact feature workflows, no-force fast-forward
+integration, and exact `main` workflows remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -855,8 +857,8 @@ parent creation, external-path access, target-content read, CLI behavior,
 benchmark workload, product-performance claim, or fx-equivalence claim. The
 product remains Rust; Zig remains only the pinned upstream fx benchmark input.
 
-The twenty-first bounded Milestone 03 slice, native `edit_file`, is **IN
-PROGRESS** from exact delivered base
+The twenty-first bounded Milestone 03 slice, native `edit_file`, is **BEHAVIOR
+GREEN — DELIVERY PENDING** from exact delivered base
 `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
 `bb0c381f8b044f7849bef80cc482034e1dd57ecf` is green under exact CI
 `32634883133` and benchmark workflow `32634883139`. Production and independent
@@ -870,9 +872,12 @@ precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`. Remediation documentation 
 review preparation produced exact cycle-2 candidate
 `f84bac87f472fc851eca670764657e5a31ce0256`, which was also not green.
 Cycle-2 production and independent evidence are composed at exact behavior SHA
-`ab6841388838384e27e6299151d50bb83d2ec46e`. This changes no delivered-slice
-count: cycle-3 review, feature workflows, fast-forward integration, and exact
-`main` workflows remain pending.
+`ab6841388838384e27e6299151d50bb83d2ec46e`. Cycle-4 remediation composes at
+`d0d188b39290a50f7f10d7e4665cf694abdfc460`; documentation-only parent
+`12470d9e6c4c9301a0eeaef34e01a1ab31c84d07` and tree-identical freeze marker
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca` produce the exact reviewed
+candidate. This changes no delivered-slice count: feature workflows, no-force
+fast-forward integration, and exact `main` workflows remain pending.
 
 The frozen strict effect-free input is exactly required UTF-8 `path`,
 `old_string`, and `new_string`, with no unknown fields. Path normalization is
@@ -1017,14 +1022,35 @@ focused totals are 43 private, 24 direct, five engine, and seven reference-host
 `edit_file` tests; `write_file` remains green at 30 private, 25 direct, and five
 engine tests.
 
-After this documentation component composes, three fresh correctness/API,
-filesystem/robustness, and performance/concurrency agents must next review the
-same exact cycle-4 behavior SHA. Every confirmed finding is fixed and restarts
-all three fresh tracks on a new SHA until all are green.
+All three fresh correctness/API, filesystem/robustness, and performance/
+concurrency tracks are **GREEN** with zero findings on exact cycle-4 candidate
+`78d6fd7e0c42ec97f4f176e8378ab774c25893ca`. They confirmed closure of the
+four cycle-3 evidence gaps in the actual generic RAII cleanup path, the true
+final verification-to-rename cancellation boundary, phase- and ordinal-exact
+ACL outcomes with postpublication parent sync, and intended ordinal-aware
+initial, revalidation, late staged, and published descriptor `fstat` calls.
+
+The exact candidate is green under Rust and Cargo 1.94.1 formatting, workspace
+all-target/all-feature warnings-denied Clippy, workspace tests, and workspace
+doctests. Focused `edit_file` totals are 43/24/5/7; delivered `write_file`
+totals are 30/25/5. Discovery inventories 684 default-feature tests, 733 all-
+feature tests, and zero benchmarks. The Python harness passes 130 tests with
+eight expected macOS skips; pinned-fx revision
+`b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility, cargo-deny 0.20.2,
+cargo-audit 0.22.2, Linux/FreeBSD/WASI gates, and Node's active unsupported
+test 1/1 are green. Documentation integrity covers 62 Markdown files, 437
+inline links, and 287 repository-relative links with zero missing targets. The
+base diff is clean and contains zero unsafe Rust. A freshly built locked arm64
+Mach-O release CLI has SHA-256
+`66d1db86666764b68f79bcb5eb01a6413aab9f27d795a81b27152aa0c24add9d` and
+passes bare, help, and status smoke paths.
+
 Exact feature workflows, a no-force fast-forward to `main`, and exact `main`
-workflows follow. Documentation-only records are exempt from another
+workflows remain pending. Documentation-only records are exempt from another
 adversarial cycle under the user's instruction, but not from applicable remote
-workflows. The normative boundary and pending lineage are in
+workflows. This records no delivery, compatibility-status promotion, product-
+performance, or fx-equivalence claim. The normative boundary and pending
+lineage are in
 [`edit-file.md`](edit-file.md) and the
 [`edit_file` review](reviews/m03-edit-file-review-01.md). Zig remains solely the
 pinned upstream benchmark build input; the product implementation remains Rust.
@@ -1260,9 +1286,13 @@ gate:
   actual generic RAII cleanup evidence, the after-final-verification checkpoint,
   ACL evidence methods, ordinal-aware fault ranges, and four regressions.
   Focused `edit_file` totals are 43/24/5/7; delivered `write_file` regressions
-  remain green at 30/25/5. All three fresh cycle-4 tracks, exact feature
-  workflows, fast-forward integration, and exact `main` workflows remain
-  pending; `edit_file` is not delivered.
+  remain green at 30/25/5. Exact tree-identical candidate `78d6fd7` is green
+  with zero findings in all three fresh cycle-4 tracks. The exact Rust 1.94.1,
+  684/733-test discovery, 130-test Python, pinned-fx, dependency,
+  Linux/FreeBSD/WASI and active Node, documentation, no-unsafe/diff, and fresh
+  release-smoke gates are green. Exact feature workflows, no-force fast-forward
+  integration, and exact `main` workflows remain pending; `edit_file` is not
+  delivered.
   Documentation-only commits are exempt from a separate adversarial cycle under
   the user's instruction and are included in the replacement candidate. The
   remaining native tools are
