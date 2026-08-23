@@ -44,14 +44,16 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with twenty-one delivered bounded slices. Native `edit_file` is delivered on
-documentation seal `c1268fdf463e11242b7b916add70675ae91ed115`. Exact feature
-CI `32650254095` passed all six jobs, and feature benchmark workflow
-`32650254086` passed both jobs with two nonexpired exact-SHA artifacts. `main`
-was fast-forwarded without force from
-`242adfed4be717baf7cd07275aae40ec8a3637f6` to the seal; exact main CI
-`32650593685` passed all six jobs, and main benchmark workflow `32650593703`
-passed both jobs with two nonexpired exact-SHA artifacts. The remaining native
-tools, CLI ownership, and Milestone 03 completion boundary remain pending.
+final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
+Exact feature CI `32651168514` passed all six jobs, and feature benchmark
+workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
+`main` was fast-forwarded without force from behavior documentation seal
+`c1268fdf463e11242b7b916add70675ae91ed115` to the final record; exact main CI
+`32651488265` passed all six jobs, and main benchmark workflow `32651488282`
+passed both jobs with two nonexpired exact-SHA artifacts. Native `delete_file`
+is the twenty-second bounded slice and is **IN PROGRESS** under its frozen
+library-only contract. The remaining native tools, CLI ownership, and
+Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1054,13 +1056,93 @@ delivered as bounded Milestone 03 slice twenty-one.
 The remaining native tools, CLI ownership, and composed end-to-end boundary
 remain pending, so Milestone 03 is not complete. This final delivery record is
 documentation-only and exempt from adversarial review under the user's
-instruction. Its own exact feature CI and benchmark workflows and exact `main`
-CI and benchmark workflows remain required after push and cannot be self-
-recorded. This records no compatibility-status promotion, product-performance,
-or fx-equivalence claim. The normative boundary and delivery lineage are in
+instruction. Final documentation record
+`719a9bded86fd7ce394d482798b9064c736f43ab` passed exact feature CI
+`32651168514`, feature benchmark workflow `32651168515`, main CI `32651488265`,
+and main benchmark workflow `32651488282`; both benchmark workflows retain two
+nonexpired exact-SHA artifacts. This records no compatibility-status promotion,
+product-performance, or fx-equivalence claim. The normative boundary and
+delivery lineage are in
 [`edit-file.md`](edit-file.md) and the
 [`edit_file` review](reviews/m03-edit-file-review-01.md). Zig remains solely the
 pinned upstream benchmark build input; the product implementation remains Rust.
+
+The twenty-second bounded Milestone 03 slice, native `delete_file`, is
+**IN PROGRESS** from exact delivered base
+`719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green under feature
+CI `32651168514` across all six jobs and feature benchmark workflow
+`32651168515` across both jobs with two nonexpired exact-SHA artifacts. `main`
+was fast-forwarded without force from
+`c1268fdf463e11242b7b916add70675ae91ed115` to the exact base and is green
+under main CI `32651488265` across all six jobs and main benchmark workflow
+`32651488282` across both jobs with two nonexpired exact-SHA artifacts.
+
+The strict effect-free input is exactly required `path: string`, with no
+unknown fields. It uses the delivered mutation-path normalization and
+independently caps requested and canonical UTF-8 paths at 4,096 bytes, the
+canonical path at 256 components, serialized arguments at 65,536 bytes, and
+serialized results at 16,384 bytes. A canonical `.` is rejected, so the
+workspace root cannot be removed. Successful preflight prepares exactly
+`FilesystemAccess::Delete` for the canonical path, and direct use revalidates
+the same strict shape. Success is exactly the normalized path, with no kind or
+count.
+
+Allowed Linux/macOS execution deletes exactly one existing confined regular
+file or empty directory. It does not recurse, follow a symlink, read file
+content, enumerate a directory, create anything, or access an external path.
+It reacquires and validates the linked retained root, no-follow/nonblocking
+walks existing parents, and records the final parent and target identity and
+exact regular-file or directory type. A complete second root/parent walk must
+revalidate that parent identity and target identity/type. The final
+cancellation check occurs immediately after final validation and immediately
+before exactly one `unlinkat`, with empty flags for a regular file and
+`REMOVEDIR` for a directory. The call is never retried: `EINTR` is nonretryable
+commit ambiguity because deletion may already have happened.
+
+After successful deletion, later tool cancellation is ignored while the
+retained parent is synced with at most 16 cumulative interruptions. An
+interrupted ambiguous delete also receives a best-effort bounded parent sync,
+but remains ambiguous. A nonempty directory is reported through its fixed
+nonretryable category without prior enumeration. There is no staging, temporary
+name, content buffer, ACL, chmod, rename, or cleanup protocol.
+
+Portable `unlinkat` is not pathname compare-and-swap. A same-type replacement
+installed after the final target check and before the syscall can be the entry
+deleted. A retained parent moved outside the public workspace path can still
+receive the descriptor-relative deletion. Other hard links and already open
+descriptors survive, and a concurrent actor can recreate the pathname after
+success. These limits are normative disclosures rather than stronger
+concurrent-isolation claims.
+
+Production implementation/wiring, independent tests, and maintained
+documentation have non-overlapping owners. Production must route statically
+dispatched evidence through the real pipeline for root/intermediate opens,
+ordinal `fstat`/`statat`, post-initial and post-final validation checkpoints,
+actual `unlinkat` flags/outcome, the checkpoint after a real delete, and parent
+sync. Evidence must cover schema and limits, effect-free policy agreement,
+files/empty directories, all rejected types and paths, complete revalidation,
+retained-root/parent and final-entry races, one-call interruption ambiguity,
+bounded sync, cancellation/drop/engine recovery, the exact eight-tool
+alphabetical host and one additional descriptor clone, Linux/macOS behavior,
+FreeBSD/WASI compilation, and active unsupported-target behavior.
+
+After exact local gates, three fresh correctness/API, filesystem/robustness,
+and performance/concurrency agents must review the same behavior SHA. Every
+finding is fixed and restarts all three tracks until each reports **GREEN** with
+zero findings. Documentation-only contract, seal, and delivery commits are
+exempt from their own adversarial cycle under the user's instruction but still
+require exact feature and `main` workflows. The complete normative boundary and
+kickoff review are in [`delete-file.md`](delete-file.md) and the
+[`delete_file` review](reviews/m03-delete-file-review-01.md).
+
+Pinned fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef` was observed
+to accept a regular file and empty directory but has broader pathname-based
+behavior. This slice deliberately adds no recursion, symlink following, root
+removal, content read, enumeration, creation, external path, CLI change, new
+dependency, compatibility promotion, benchmark workload, product-performance
+claim, or fx-equivalence claim. It does not increase the delivered-slice count
+until implementation, same-SHA review, feature workflows, fast-forward
+integration, and exact `main` workflows are green.
 
 ### Milestone 03 completion boundary
 
@@ -1304,10 +1386,23 @@ gate:
   `32650593703` with two nonexpired exact-SHA artifacts. Native `edit_file` is
   delivered.
   Documentation-only commits are exempt from a separate adversarial cycle under
-  the user's instruction. This final record's own exact feature CI/benchmark
-  and `main` CI/benchmark workflows are required after push and cannot be self-
-  recorded. The remaining native tools are incomplete, so delivery of this
-  slice does not change the combined checkbox or complete Milestone 03.
+  the user's instruction. Final documentation record `719a9bd` is green under
+  exact feature CI `32651168514`, feature benchmark `32651168515`, main CI
+  `32651488265`, and main benchmark `32651488282`; both benchmark workflows
+  retain two nonexpired exact-SHA artifacts. The remaining native tools are
+  incomplete, so delivery of this slice does not change the combined checkbox
+  or complete Milestone 03. The twenty-second `delete_file` slice is
+  **IN PROGRESS** from exact delivered base
+  `719a9bded86fd7ce394d482798b9064c736f43ab`. Its strict path-only `Delete`
+  authority, one-file-or-empty-directory descriptor protocol, non-retried
+  `unlinkat`, bounded postcommit parent sync, fixed redacted errors, disclosed
+  final different-entry race, eight-tool host composition, parallel ownership,
+  evidence matrix, and fresh same-SHA review protocol are frozen in
+  [`delete-file.md`](delete-file.md) and
+  [`m03-delete-file-review-01.md`](reviews/m03-delete-file-review-01.md).
+  Implementation, review, feature delivery, and `main` delivery remain pending,
+  so the combined native-tool checkbox stays unchecked and the delivered-slice
+  count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
