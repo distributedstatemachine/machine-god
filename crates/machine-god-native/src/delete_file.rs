@@ -1273,4 +1273,7 @@ fn cancelled() -> ToolError {
 }
 
 #[cfg(test)]
+mod race_tests;
+
+#[cfg(test)]
 mod tests;
