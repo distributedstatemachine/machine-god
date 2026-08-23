@@ -250,7 +250,8 @@ remote workflows remain required.
   `59471147817ed7520513fdf51041ec24c822bfe3`
 - Exact composed remediation precursor:
   `482d33c0bc586ff594d5b0decc58de347cb9243e`
-- Cycle-1 remediation documentation component: pending integration handoff
+- Cycle-1 remediation documentation component:
+  `b02b4e9c1262042c7f0aa7fc5112520f8c406924`
 - Exact replacement behavior candidate: pending
 - Replacement correctness/API track: pending
 - Replacement filesystem/robustness track: pending
