@@ -692,7 +692,14 @@ impl DeleteFileTool {
                 let _ = sync_parent_bounded(revalidated.parent.as_fd(), evidence);
                 Err(commit_ambiguous())
             }
-            Err(error) => Err(map_unlink_error(error, final_target.kind)),
+            Err(error) => Err(map_unlink_error_with_evidence(
+                error,
+                final_target.kind,
+                revalidated.parent.as_fd(),
+                revalidated.basename,
+                evidence,
+                &mut ordinals,
+            )),
         }
     }
 
@@ -1094,6 +1101,36 @@ fn map_unlink_error(error: rustix::io::Errno, kind: TargetKind) -> ToolError {
     } else {
         delete_failed()
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_unlink_error_with_evidence<Evidence: DeleteFileEvidence>(
+    error: rustix::io::Errno,
+    kind: TargetKind,
+    parent: BorrowedFd<'_>,
+    basename: &str,
+    evidence: &mut Evidence,
+    ordinals: &mut OperationOrdinals,
+) -> ToolError {
+    #[cfg(target_os = "macos")]
+    if error == rustix::io::Errno::PERM && kind == TargetKind::RegularFile {
+        let ordinal = ordinals.next_statat();
+        if let Ok(metadata) = evidence.statat(
+            DeletePhase::Revalidate,
+            StatatSite::Target,
+            ordinal,
+            parent,
+            OsStr::new(basename),
+        ) && FileType::from_raw_mode(metadata.st_mode).is_dir()
+        {
+            return target_changed();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    let _ = (parent, basename, evidence, ordinals);
+
+    map_unlink_error(error, kind)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
