@@ -268,6 +268,22 @@ mod supported {
         assert!(staged.is_empty(), "staged files were retained: {staged:?}");
     }
 
+    fn overwrite_same_length_at(parent: BorrowedFd<'_>, name: &str, replacement: &[u8]) {
+        let file = rustix::fs::openat(
+            parent,
+            name,
+            OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .unwrap();
+        let before = rustix::fs::fstat(&file).unwrap();
+        assert_eq!(usize::try_from(before.st_size).unwrap(), replacement.len());
+        write_content(file.as_fd(), replacement, &CancellationToken::new()).unwrap();
+        let after = rustix::fs::fstat(&file).unwrap();
+        assert!(same_identity(&before, &after));
+        assert_eq!(after.st_size, before.st_size);
+    }
+
     #[test]
     fn bounded_stable_read_handles_partial_reads_and_cumulative_interrupts() {
         let temporary = TempFile::new(b"stable partial contents");
@@ -693,6 +709,85 @@ mod supported {
     }
 
     #[test]
+    fn pipeline_same_inode_same_size_stage_mutation_before_revalidation_fails_precommit() {
+        let temporary = TempDirectory::new("stage-mutation-before-revalidation");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let publish_calls = Cell::new(0_usize);
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |parent, staged_name| {
+                    overwrite_same_length_at(parent, staged_name, b"bad content");
+                },
+                || {},
+                || {},
+                |parent, staged_name, basename| {
+                    publish_calls.set(publish_calls.get() + 1);
+                    native_publish_staged(parent, staged_name, basename)
+                },
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "edit_file_write_failed");
+        assert!(error.retryable);
+        assert_eq!(publish_calls.get(), 0);
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
+    fn pipeline_same_inode_same_size_stage_mutation_before_rename_fails_precommit() {
+        let temporary = TempDirectory::new("stage-mutation-before-rename");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let parent = temporary.descriptor();
+        let staged_name = RefCell::new(None::<String>);
+        let publish_calls = Cell::new(0_usize);
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, name| {
+                    staged_name.replace(Some(name.to_owned()));
+                },
+                || {},
+                || {
+                    let name = staged_name
+                        .borrow()
+                        .as_deref()
+                        .expect("staged revalidation must precede the rename hook")
+                        .to_owned();
+                    overwrite_same_length_at(parent.as_fd(), &name, b"bad content");
+                },
+                |parent, staged_name, basename| {
+                    publish_calls.set(publish_calls.get() + 1);
+                    native_publish_staged(parent, staged_name, basename)
+                },
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "edit_file_write_failed");
+        assert!(error.retryable);
+        assert_eq!(publish_calls.get(), 0);
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
     fn pipeline_mode_and_staged_sync_failures_preserve_target_and_clean_stage() {
         for failed_mode_call in 0..=1 {
             let temporary = TempDirectory::new(&format!("mode-failure-{failed_mode_call}"));
@@ -824,6 +919,58 @@ mod supported {
     }
 
     #[test]
+    fn pipeline_same_length_published_inode_corruption_is_ambiguous_and_syncs_parent() {
+        let temporary = TempDirectory::new("published-content-corruption");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let staged_identity = Cell::new(None::<(i128, i128)>);
+        let published_identity = Cell::new(None::<(i128, i128)>);
+        let parent_sync_calls = Cell::new(0_usize);
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |parent, staged_name| {
+                    let metadata =
+                        rustix::fs::statat(parent, staged_name, AtFlags::SYMLINK_NOFOLLOW).unwrap();
+                    staged_identity.set(Some((
+                        i128::from(metadata.st_dev),
+                        i128::from(metadata.st_ino),
+                    )));
+                },
+                || {},
+                || {},
+                |parent, staged_name, basename| {
+                    native_publish_staged(parent, staged_name, basename)?;
+                    let metadata = rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW)?;
+                    published_identity.set(Some((
+                        i128::from(metadata.st_dev),
+                        i128::from(metadata.st_ino),
+                    )));
+                    overwrite_same_length_at(parent, basename, b"bad content");
+                    Ok(())
+                },
+                |parent| {
+                    parent_sync_calls.set(parent_sync_calls.get() + 1);
+                    native_sync_parent(parent)
+                },
+            )
+            .unwrap_err();
+        assert_eq!(staged_identity.get(), published_identity.get());
+        assert_eq!(error.code, "edit_file_commit_ambiguous");
+        assert!(!error.retryable);
+        assert_eq!(parent_sync_calls.get(), 1);
+        assert_eq!(fs::read(&target).unwrap(), b"bad content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
     fn pipeline_staged_name_swap_preserves_intruder_and_resets_owned_inode_mode() {
         let temporary = TempDirectory::new("staged-name-swap");
         let target = temporary.path().join("target.txt");
@@ -903,6 +1050,91 @@ mod supported {
         assert_eq!(error.code, "edit_file_target_changed");
         assert_eq!(fs::read(&target).unwrap(), b"raced replacement");
         assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
+    fn pipeline_cancellation_at_final_verification_preserves_target_and_cleans_stage() {
+        let temporary = TempDirectory::new("final-verification-cancel");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        let cancellation = CancellationToken::new();
+        let cancellation_before_verification = cancellation.clone();
+        let publish_calls = Cell::new(0_usize);
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with(
+                "target.txt",
+                b"old",
+                b"new",
+                &cancellation,
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {},
+                || {
+                    cancellation_before_verification.cancel();
+                },
+                || {},
+                |parent, staged_name, basename| {
+                    publish_calls.set(publish_calls.get() + 1);
+                    native_publish_staged(parent, staged_name, basename)
+                },
+                native_sync_parent,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "edit_file_cancelled");
+        assert!(!error.retryable);
+        assert_eq!(publish_calls.get(), 0);
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_no_staged_files(temporary.path());
+    }
+
+    #[test]
+    fn pipeline_native_publish_retains_a_parent_moved_outside_the_public_path() {
+        let temporary = TempDirectory::new("moved-parent-race");
+        let workspace = temporary.path().join("workspace");
+        let original_parent = workspace.join("nested");
+        let moved_parent = temporary.path().join("outside-workspace");
+        fs::create_dir_all(&original_parent).unwrap();
+        fs::write(original_parent.join("target.txt"), b"retained old").unwrap();
+        let raced_original_parent = original_parent.clone();
+        let raced_moved_parent = moved_parent.clone();
+        let before_rename_calls = Cell::new(0_usize);
+        let output = EditFileTool::open(&workspace)
+            .unwrap()
+            .execute_supported_with(
+                "nested/target.txt",
+                b"old",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {},
+                || {},
+                || {
+                    before_rename_calls.set(before_rename_calls.get() + 1);
+                    fs::rename(&raced_original_parent, &raced_moved_parent).unwrap();
+                    fs::create_dir(&raced_original_parent).unwrap();
+                    fs::write(raced_original_parent.join("target.txt"), b"replacement old")
+                        .unwrap();
+                },
+                native_publish_staged,
+                native_sync_parent,
+            )
+            .unwrap();
+        assert_eq!(before_rename_calls.get(), 1);
+        assert!(!output.is_error);
+        assert_eq!(
+            fs::read(moved_parent.join("target.txt")).unwrap(),
+            b"retained new"
+        );
+        assert_eq!(
+            fs::read(original_parent.join("target.txt")).unwrap(),
+            b"replacement old"
+        );
+        assert_no_staged_files(&original_parent);
+        assert_no_staged_files(&moved_parent);
     }
 
     #[test]

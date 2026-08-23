@@ -691,6 +691,36 @@ fn replacement_preserves_only_rwx_replaces_inode_and_separates_old_views() {
 }
 
 #[test]
+fn replacement_preserves_observed_rwx_under_a_hostile_umask() {
+    const CHILD_MARKER: &str = "MACHINE_GOD_EDIT_FILE_UMASK_CHILD";
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        let executable = std::env::current_exe().unwrap();
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(
+                "umask 077; exec \"$1\" --exact replacement_preserves_observed_rwx_under_a_hostile_umask --nocapture",
+            )
+            .arg("machine-god-edit-file-umask")
+            .arg(executable)
+            .env(CHILD_MARKER, "1")
+            .status()
+            .expect("failed to execute isolated hostile-umask test process");
+        assert!(status.success(), "hostile-umask child failed with {status}");
+        return;
+    }
+
+    let temporary = TemporaryDirectory::new();
+    let target = temporary.path().join("mode.txt");
+    fs::write(&target, b"old content").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o664)).unwrap();
+
+    edit(&tool(temporary.path()), "mode.txt", "old", "new").unwrap();
+
+    assert_eq!(mode(&target), 0o664);
+    assert_eq!(fs::read(&target).unwrap(), b"new content");
+}
+
+#[test]
 fn retained_root_rename_and_path_replacement_cannot_redirect_the_edit() {
     let temporary = TemporaryDirectory::new();
     let original = temporary.path().join("workspace");
