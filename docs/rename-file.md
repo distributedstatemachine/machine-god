@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING**
+Status: **CYCLE 4 GREEN; FEATURE DELIVERY PENDING**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -42,8 +42,10 @@ found that device/inode identity was not pinned against reuse. Exact remediation
 `4cbd46f82d3553009824883de2bc243177459207`, tree
 `35f531eb867e1b08375041b3c74fcf1a650ae063`, retains the validated source
 descriptor through commit verification and passes the complete replacement
-local gate. A tree-identical cycle-4 candidate and three fresh reviews remain
-pending before replacement feature delivery.
+local gate. Exact tree-identical cycle-4 candidate
+`13379800ee2ee6eb6802db76c516e81dd087c62b`, tree
+`ab2bdc2b719061faa69749360fd1399177748c24`, is green with zero findings in all
+three fresh tracks. Replacement feature and main delivery remain pending.
 
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
@@ -287,6 +289,7 @@ two fresh tracks found the unpinned device/inode reuse race. Exact remediation
 `4cbd46f`, tree `35f531e`, retains a non-reading source descriptor through
 commit verification, adds direct macOS permission evidence and deterministic
 unlinked-source evidence, and passes the complete replacement local gate. A
-tree-identical cycle-4 candidate, three fresh same-SHA reviews, exact
-replacement feature workflows, fast-forward integration, and exact main
-workflows are still required before delivery.
+tree-identical cycle-4 candidate
+`1337980`, tree `ab2bdc2`, is green with zero findings in all three fresh
+same-SHA tracks. Exact replacement feature workflows, fast-forward integration,
+and exact main workflows remain required before delivery.

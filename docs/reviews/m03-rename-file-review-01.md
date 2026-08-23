@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING**
+Status: **CYCLE 4 GREEN; FEATURE DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -43,6 +43,9 @@ Status: **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING**
 - Exact cycle-3 remediation:
   `4cbd46f82d3553009824883de2bc243177459207` (tree
   `35f531eb867e1b08375041b3c74fcf1a650ae063`).
+- Exact tree-identical cycle-4 candidate:
+  `13379800ee2ee6eb6802db76c516e81dd087c62b` (tree
+  `ab2bdc2b719061faa69749360fd1399177748c24`).
 - All three cycle-1 tracks remain historically **NOT GREEN**. The remediation
   and its complete replacement local gate are green. All three fresh cycle-2
   tracks are **GREEN** with zero findings. The first feature workflow attempt
@@ -50,8 +53,9 @@ Status: **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING**
   remediation and complete replacement local gate are green. Cycle-3
   correctness/API is green; filesystem/robustness and performance/concurrency
   are **NOT GREEN** on the same unpinned source-inode reuse finding. Exact
-  remediation passes the complete replacement local gate. Cycle-4 review and
-  replacement feature/main delivery have not completed.
+  remediation passes the complete replacement local gate. All three fresh
+  cycle-4 tracks are **GREEN** with zero findings. Replacement feature/main
+  delivery has not completed.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are
@@ -301,8 +305,33 @@ links, 312 repository-relative links, and zero missing targets. The 23-file
 base diff has no unsafe Rust, Cargo/dependency, or CLI change. A fresh locked
 319,152-byte arm64 Mach-O release CLI has SHA-256
 `0bdfaf3f4a1bf696030efa0120e52943f7d54a31f383440d38133067b863421c` and
-passes bare, help, human-status, and JSON-status smoke paths. A tree-identical
-cycle-4 candidate and three fresh same-SHA reviews remain required.
+passes bare, help, human-status, and JSON-status smoke paths. The exact
+tree-identical cycle-4 candidate and review results are recorded next.
+
+## Formal review cycle 4
+
+Exact tree-identical candidate
+`13379800ee2ee6eb6802db76c516e81dd087c62b`, tree
+`ab2bdc2b719061faa69749360fd1399177748c24`, is **GREEN** with zero findings in
+all three fresh tracks. Every reviewer independently verified the SHA/tree,
+used a detached read-only worktree, and left it clean.
+
+Correctness/API passed 16 private, 17 direct, five engine, seven host, all 61
+core-contract, and all 14 lifecycle tests, plus 100 focused lifecycle
+repetitions, strict native and Linux Clippy, formatting, and diff checks.
+Filesystem/robustness passed the private/direct suites, exact unlink/reuse and
+terminal-replacement cases, native Clippy, Linux no-default checks, and the
+FreeBSD unsupported library check. It verified descriptor lifetime, hard-link
+equivalence, entry-type rejection, root/parent confinement, no-replace behavior,
+access errors, and durability bounds.
+
+Performance/concurrency verified exactly one bounded non-reading source open,
+one RAII descriptor, no descriptor clone, content read, lock, or unbounded
+loop, and cleanup on every return path. Private/direct/engine/core/lifecycle
+suites are green. Source-pin and lifecycle cases each passed 200 sequential and
+64 parallel repetitions; the complete private suite passed ten low-FD and 24
+parallel repetitions. Replacement feature CI/benchmark, two exact-SHA
+artifacts, fast-forward main integration, and exact main workflows remain.
 
 ## Formal review protocol
 

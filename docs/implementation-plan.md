@@ -94,8 +94,8 @@ zero findings in all three fresh tracks. Replacement seal `fe56f4c` completed
 the exact feature and `main` delivery gates recorded above. The remaining
 native tools, CLI ownership, and Milestone 03 completion boundary remain
 pending.
-The twenty-third bounded slice, native `rename_file`, is **CYCLE 3 REMEDIATED;
-CYCLE 4 REVIEW PENDING** from exact delivered base
+The twenty-third bounded slice, native `rename_file`, is **CYCLE 4 GREEN;
+FEATURE DELIVERY PENDING** from exact delivered base
 `3d76f2e844312e7f3e809524cb72c1a7957975ff`. Its two-endpoint typed
 authority, regular-file-only absent-destination semantics, one no-replace
 rename boundary, bounded two-parent durability, explicit race limitations,
@@ -134,8 +134,9 @@ candidate `5cc1523`, tree `99b88ec`, was not green: correctness/API was green,
 while filesystem/robustness and performance/concurrency found the same
 device/inode-reuse gap. Exact remediation `4cbd46f`, tree `35f531e`, retains a
 non-reading source descriptor through postcommit identity verification and
-passes the complete replacement local gate. A tree-identical cycle-4 candidate,
-three fresh reviews, and replacement feature/main delivery remain pending.
+passes the complete replacement local gate. Tree-identical cycle-4 candidate
+`1337980`, tree `ab2bdc2`, is green with zero findings in all three fresh
+tracks. Replacement feature/main delivery remains pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1646,7 +1647,7 @@ gate:
   exact-SHA artifacts. Native `delete_file` is delivered as slice twenty-two.
   The combined native-tool checkbox stays unchecked because the remaining
   native tools and M03 ownership are incomplete. The twenty-third
-  `rename_file` slice is **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING** from
+  `rename_file` slice is **CYCLE 4 GREEN; FEATURE DELIVERY PENDING** from
   exact base
   `3d76f2e`.
   It is frozen as one existing confined regular file moved to an absent
@@ -1675,8 +1676,9 @@ gate:
   unpinned device/inode-reuse race. Exact remediation `4cbd46f`, tree
   `35f531e`, pins the source with a non-reading descriptor through commit
   verification and passes the complete replacement local gate. A tree-identical
-  cycle-4 candidate, three fresh reviews, and exact replacement feature/main
-  delivery gates remain pending under
+  cycle-4 candidate `1337980`, tree `ab2bdc2`, is green with zero findings in
+  all three fresh tracks. Exact replacement feature/main delivery gates remain
+  pending under
   [`rename-file.md`](rename-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

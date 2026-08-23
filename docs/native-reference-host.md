@@ -12,7 +12,8 @@ an unrelated Linux session-lifecycle test deadlock. Test-only remediation
 changing production. Cycle-3 candidate `5cc1523`, tree `99b88ec`, was not green
 because two tracks found an unpinned source-inode reuse race. Remediation
 `4cbd46f`, tree `35f531e`, retains the source descriptor and passes the complete
-replacement gate. Cycle-4 review and replacement delivery remain pending.
+replacement gate. Cycle-4 candidate `1337980`, tree `ab2bdc2`, is green with
+zero findings in all three fresh tracks. Replacement delivery remains pending.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
