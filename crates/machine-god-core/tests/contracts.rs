@@ -2,8 +2,8 @@ use futures_core::Stream;
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
     BoxFuture, BuildError, CancellationToken, Capability, ContentBlock, Engine, EngineBuilder,
-    EngineError, EngineEvent, EngineLimits, EventSink, EventSinkError, ModelEvent,
-    ModelEventStream, ModelProvider, ModelRequest, PermissionDecision, PermissionError,
+    EngineError, EngineEvent, EngineLimits, EventSink, EventSinkError, FilesystemAccess,
+    ModelEvent, ModelEventStream, ModelProvider, ModelRequest, PermissionDecision, PermissionError,
     PermissionGrantScope, PermissionHandler, PermissionRequest, PreparedToolCall, ProviderError,
     ProviderErrorKind, Role, Session, SessionId, SessionIncarnationId, SessionRecord,
     SessionRevision, SessionStore, SessionStoreError, StopReason, TokenUsage, Tool, ToolCall,
@@ -20,6 +20,30 @@ use std::task::{Context, Poll, Wake, Waker};
 
 trait EngineTestSessions {
     fn create_test_session(&self, id: SessionId) -> Session;
+}
+
+#[test]
+fn search_content_filesystem_access_has_exact_stable_json_contract() {
+    assert_eq!(
+        serde_json::to_value(FilesystemAccess::SearchContent).unwrap(),
+        json!("search_content")
+    );
+    assert_eq!(
+        serde_json::from_value::<FilesystemAccess>(json!("search_content")).unwrap(),
+        FilesystemAccess::SearchContent
+    );
+    assert_eq!(
+        serde_json::to_value(Capability::Filesystem {
+            access: FilesystemAccess::SearchContent,
+            path: "scope/nested".to_owned(),
+        })
+        .unwrap(),
+        json!({
+            "type": "filesystem",
+            "access": "search_content",
+            "path": "scope/nested"
+        })
+    );
 }
 
 impl EngineTestSessions for Engine {

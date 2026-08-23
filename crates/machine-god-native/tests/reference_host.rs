@@ -23,8 +23,8 @@ use machine_god_core::{
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, AiGatewayByteStream, AiGatewayCredentialEnvironment,
     AiGatewayCredentialSource, AiGatewayTransport, AiGatewayTransportRequest, ConfigOrigin,
-    FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig,
-    NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
+    FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME,
+    LoadedNativeConfig, NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
     NativeReferenceHostBuildErrorKind, PermissionPromptDecision, PermissionPromptError,
     PermissionPrompter, READ_FILE_TOOL_NAME, load_native_config,
 };
@@ -200,6 +200,7 @@ fn tool_round_responses(final_text: &str) -> [Vec<u8>; 2] {
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"read-call\",\"toolName\":\"read_file\",\"input\":{\"path\":\"./nested//note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"info-call\",\"toolName\":\"file_info\",\"input\":{\"path\":\"./nested//note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"glob-call\",\"toolName\":\"glob_files\",\"input\":{\"pattern\":\"*.txt\",\"path\":\"./nested//.\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"grep-call\",\"toolName\":\"grep_files\",\"input\":{\"pattern\":\"RETAINED_FILE_CONTENT_SENTINEL\",\"path\":\"./nested//.\",\"include\":\"*.txt\",\"case_insensitive\":false,\"mode\":\"count\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -323,7 +324,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 4);
+    assert_eq!(tools.len(), 5);
     assert_eq!(
         tools
             .iter()
@@ -332,6 +333,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
         [
             FILE_INFO_TOOL_NAME,
             GLOB_FILES_TOOL_NAME,
+            GREP_FILES_TOOL_NAME,
             LIST_FILES_TOOL_NAME,
             READ_FILE_TOOL_NAME
         ]
@@ -341,7 +343,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
 
 fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
     let permission_requests = prompter.requests();
-    assert_eq!(permission_requests.len(), 4);
+    assert_eq!(permission_requests.len(), 5);
     assert_eq!(
         permission_requests[0].capability,
         Capability::Filesystem {
@@ -370,6 +372,13 @@ fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
             path: "nested".to_owned(),
         }
     );
+    assert_eq!(
+        permission_requests[4].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::SearchContent,
+            path: "nested".to_owned(),
+        }
+    );
 }
 
 fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: SessionId) {
@@ -377,16 +386,17 @@ fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: Sessio
         .unwrap()
         .expect("the reference host persisted the completed session");
     let record = loaded_session.record();
-    assert_eq!(record.messages.len(), 7);
+    assert_eq!(record.messages.len(), 8);
     assert_eq!(record.messages[0].role, Role::User);
     assert_eq!(record.messages[1].role, Role::Assistant);
     assert_eq!(record.messages[2].role, Role::Tool);
     assert_eq!(record.messages[3].role, Role::Tool);
     assert_eq!(record.messages[4].role, Role::Tool);
     assert_eq!(record.messages[5].role, Role::Tool);
-    assert_eq!(record.messages[6].role, Role::Assistant);
+    assert_eq!(record.messages[6].role, Role::Tool);
+    assert_eq!(record.messages[7].role, Role::Assistant);
     assert_eq!(
-        record.messages[6].content,
+        record.messages[7].content,
         [ContentBlock::Text {
             text: "composition complete".to_owned()
         }]
@@ -437,7 +447,7 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
     assert_exact_native_tool_permissions(&prompter);
 
     let second = body(&requests[1]);
-    assert_eq!(second["prompt"].as_array().unwrap().len(), 6);
+    assert_eq!(second["prompt"].as_array().unwrap().len(), 7);
     assert_eq!(second["prompt"][2]["content"][0]["toolCallId"], "list-call");
     assert_eq!(
         decoded_tool_output(&second, 2),
@@ -488,6 +498,29 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
                 "mode": "matches",
                 "matches": ["nested/note.txt", "nested/other.txt"],
                 "truncated": false
+            },
+            "is_error": false
+        })
+    );
+    assert_eq!(second["prompt"][6]["content"][0]["toolCallId"], "grep-call");
+    assert_eq!(
+        decoded_tool_output(&second, 6),
+        json!({
+            "content": {
+                "pattern": "RETAINED_FILE_CONTENT_SENTINEL",
+                "path": "nested",
+                "include": "*.txt",
+                "case_insensitive": false,
+                "mode": "count",
+                "head_limit": 100,
+                "offset": 0,
+                "context_lines": 0,
+                "candidate_files": 2,
+                "searched_files": 2,
+                "skipped_oversized_files": 0,
+                "skipped_non_text_files": 0,
+                "matching_lines": 0,
+                "matching_files": 0
             },
             "is_error": false
         })
@@ -791,6 +824,7 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     let read_output = decoded_tool_output(&second, 3);
     let info_output = decoded_tool_output(&second, 4);
     let glob_output = decoded_tool_output(&second, 5);
+    let grep_output = decoded_tool_output(&second, 6);
     assert_eq!(
         list_output["content"]["entries"],
         json!([
@@ -812,6 +846,8 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
         glob_output["content"]["matches"],
         json!(["nested/note.txt", "nested/retained-only.txt"])
     );
+    assert_eq!(grep_output["content"]["matching_lines"], 1);
+    assert_eq!(grep_output["content"]["matching_files"], 1);
     let serialized = serde_json::to_string(&second).unwrap();
     assert!(!serialized.contains("REPLACEMENT_FILE_CONTENT_SENTINEL"));
     assert!(!serialized.contains("replacement-only.txt"));

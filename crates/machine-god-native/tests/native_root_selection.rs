@@ -205,6 +205,7 @@ fn retained_root_responses() -> [Vec<u8>; 2] {
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"read-call\",\"toolName\":\"read_file\",\"input\":{\"path\":\"note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"info-call\",\"toolName\":\"file_info\",\"input\":{\"path\":\"note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"glob-call\",\"toolName\":\"glob_files\",\"input\":{\"pattern\":\"*.txt\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"grep-call\",\"toolName\":\"grep_files\",\"input\":{\"pattern\":\"RETAINED_WORKSPACE_CONTENT_SENTINEL\",\"path\":\"note.txt\",\"mode\":\"count\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -271,7 +272,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
             ..
         })
     ));
-    assert_eq!(prompter.count(), 3);
+    assert_eq!(prompter.count(), 4);
     let requests = transport.request_bodies();
     assert_eq!(requests.len(), 2);
     let second_request = String::from_utf8(requests[1].clone()).unwrap();
@@ -300,6 +301,29 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
             "mode": "matches",
             "matches": ["note.txt"],
             "truncated": false
+        })
+    );
+    let encoded_grep = second_request["prompt"][5]["content"][0]["output"]["value"]
+        .as_str()
+        .expect("grep_files output is encoded as text");
+    let grep_output: Value = serde_json::from_str(encoded_grep).unwrap();
+    assert_eq!(
+        grep_output["content"],
+        serde_json::json!({
+            "pattern": "RETAINED_WORKSPACE_CONTENT_SENTINEL",
+            "path": "note.txt",
+            "include": null,
+            "case_insensitive": false,
+            "mode": "count",
+            "head_limit": 100,
+            "offset": 0,
+            "context_lines": 0,
+            "candidate_files": 1,
+            "searched_files": 1,
+            "skipped_oversized_files": 0,
+            "skipped_non_text_files": 0,
+            "matching_lines": 1,
+            "matching_files": 1
         })
     );
     assert!(!directory_is_empty(&retained_state));
