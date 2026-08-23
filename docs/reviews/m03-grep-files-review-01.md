@@ -1,7 +1,8 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — fully composed behavior and exact local gates are green;
-formal behavior reviews, seal, and delivery evidence are pending**
+Status: **IN PROGRESS — all three first-cycle formal tracks are NOT GREEN on
+exact candidate `355a11a6055b0053dff80e71011d7633e8a6ce97`; fixes,
+replacement composition, replacement reviews, seal, and delivery are pending**
 
 ## Candidate lineage
 
@@ -23,10 +24,19 @@ formal behavior reviews, seal, and delivery evidence are pending**
 - First fully composed behavior candidate:
   `42e4793b27902da7390dc54ef6bedb169da7e1bc`
 - Local-gate precursor: `45ad91fa2689250c47c79d2105f5e3c261cea638`
-- Formal correctness/API review SHA: **PENDING**
-- Formal security/abuse review SHA: **PENDING**
-- Formal performance/concurrency review SHA: **PENDING**
-- Confirmed-finding fixes and rereviews: **PENDING**
+- First formal behavior-review candidate:
+  `355a11a6055b0053dff80e71011d7633e8a6ce97`
+- First-cycle correctness/API review: **NOT GREEN** on exact `355a11a`
+- First-cycle security/filesystem-robustness review: **NOT GREEN** on exact
+  `355a11a`
+- First-cycle performance/concurrency review: **NOT GREEN** on exact `355a11a`
+- Production fix SHA: **PENDING**
+- Independent-test fix SHA: **PENDING**
+- Documentation fix SHA: **PENDING**
+- Composed fix SHA and replacement local gates: **PENDING**
+- Replacement correctness/API review SHA: **PENDING**
+- Replacement security/filesystem-robustness review SHA: **PENDING**
+- Replacement performance/concurrency review SHA: **PENDING**
 - Exact behavior SHA with all three review tracks green: **PENDING**
 - Documentation seal: **PENDING**
 - Feature CI and benchmark-evidence runs: **PENDING**
@@ -39,11 +49,13 @@ directly. Initial production-and-test head `44e33d7` required its reference-host
 fixture fix; focused production-and-test composition is green through
 `bdbb677`. Maintained documentation first composes at `42e4793`; the bounded
 lint and cross-target correction composes at local-gate precursor `45ad91f`.
-No pending SHA or workflow identifier may be inferred
-from a branch tip, tree identity, or another component. Record it only after the
-named artifact exists and was observed. Production, independent tests, and
-maintained docs are parallel, non-overlapping ownership slices and must compose
-without overwriting one another.
+Maintained documentation records that all three first-cycle reviews of exact
+candidate `355a11a` are NOT GREEN. No identifier for a pending fix,
+replacement, seal, or workflow may be inferred from a branch tip, tree
+identity, or another component. Record it only after the named artifact exists
+and was observed. Production, independent tests, and maintained docs are
+parallel, non-overlapping ownership slices and must compose without overwriting
+one another.
 
 The exact base is the final `glob_files` documentation record. It passed feature
 CI `32611623653` and feature benchmark evidence `32611623655`. GitHub did not
@@ -79,10 +91,13 @@ complete.
   authority.
 - The selected path may be one regular file or directory. Directory traversal
   is iterative, hidden-inclusive, fully no-follow, sorted and deterministic for
-  a stable tree. Only regular files are opened. Symlinks and specials are never
-  followed or read.
-- `include` uses the delivered bytewise glob grammar and work accounting before
-  content open. It filters regular candidates but does not prune traversal.
+  a stable tree. Stable specials are skipped without open; any raced nonblocking
+  special open is authoritatively rejected, and no special or symlink target is
+  read or followed.
+- `include` is compiled and preparsed once per call, uses the delivered bytewise
+  glob grammar, and charges complete parse plus match work before content open.
+  It filters regular candidates but does not prune traversal. Selected-file
+  filtering occurs after no-follow stat classification and before content open.
 - Content matching is literal and worst-case linear. Case-insensitive mode folds
   ASCII only. One result represents each matching LF-delimited line and records
   the first matching byte offset.
@@ -99,16 +114,19 @@ complete.
   text after a complete bounded scan. Both list modes implement exact bounded
   offset/head pagination, `next_offset`, and list-completeness `truncated`.
 - One call is bounded by 4,096-byte input/result strings, head 100, offset
-  100,000, context 5, 100,000 entries, 16 MiB entry names, 10,000 candidates,
+  67,108,864, context 5, 100,000 entries, 16 MiB entry names, 10,000 candidates,
   64 MiB aggregate content, 8 Mi include steps, 256 Mi content-match steps,
   depth 256, 8 KiB aggregate result paths, 8 KiB aggregate result text, and a
   48 KiB complete serialized `ToolOutput`.
 - A fired scan/work cap fails without partial output. Output omission occurs
   only after complete scanning and is represented by list truncation/next
   semantics; count has neither field.
+- Every complete descendant path is length-checked before allocation,
+  entry-kind dispatch, or include matching.
 - Execution is inert until first poll, performs bounded synchronous work, checks
-  cancellation around every authority-bearing operation and at bounded CPU
-  intervals, owns all descriptors/buffers, and detaches nothing.
+  cancellation around every authority-bearing operation, at fixed intervals
+  through line indexing and matching, and before every serialization-trimming
+  attempt, owns all descriptors/buffers, and detaches nothing.
 - Fixed constructor/tool errors retain and reflect no path, pattern, include,
   entry name, file bytes, match, metadata, OS diagnostic, or errno. Successful
   excerpts and paths are intentionally model-visible durable data.
@@ -143,8 +161,16 @@ record.
   caps, valid/invalid UTF-8 and NUL, oversized/growing files, rejected empty and
   control-containing patterns, longest-valid patterns, adversarial repeated-
   prefix case-sensitive and ASCII-insensitive inputs, pagination/context
-  interactions, root rename/removal, `NOENT` races,
-  cancellation intervals, unpolled/drop ownership, and diagnostic redaction.
+  interactions, root rename/removal, deterministic pre-poll growth/removal/
+  substitution, cancellation intervals, unpolled/drop ownership, and
+  diagnostic redaction. Private tests or another deterministic internal seam
+  must prove post-observation `NOENT`, growth-witness, raced-special rejection,
+  line-index cancellation, and serialization-trimming cancellation behavior;
+  flaky sleep-based public tests do not satisfy this gate. True concurrent
+  interleaving evidence remains pending unless such a seam exists.
+- Unsupported-target library tests must actually compile on at least one
+  unsupported target and exercise the public unsupported constructor/execution
+  surface rather than being removed by a supported-target-only file gate.
 - Reference-host and prepared-root tests prove exactly five alphabetical tools
   share one opened workspace identity through the original descriptor plus four
   clones.
@@ -195,6 +221,71 @@ combined native-tool checklist and Milestone 03 remain open.
 
 ## Findings and resolution
 
-**PENDING.** Formal review has not begun. No track may be marked green and no
-finding may be described as resolved until the exact fully composed behavior
-SHA exists and the named reviewer has reported on it.
+All three first-cycle tracks reviewed exact candidate
+`355a11a6055b0053dff80e71011d7633e8a6ce97` and are **NOT GREEN**.
+
+### Correctness/API track — NOT GREEN
+
+- **MEDIUM — confirmed:** descendant paths were allocated and retained before
+  the documented 4,096-byte full-path check. The remediation contract requires
+  checked full workspace-relative length before allocation, entry-kind dispatch,
+  or include matching.
+- **MEDIUM — confirmed:** the accepted `offset <= 100000` could reject a
+  non-null `next_offset` emitted from a successful result with more than 100,000
+  matching lines. The remediation raises the bound to 67,108,864, which covers
+  every reusable continuation under the 64 MiB aggregate-content bound and
+  required nonempty pattern.
+- **LOW — confirmed:** the integration test file's Linux/macOS file-level gate
+  removed purported unsupported-platform constructor/execution tests before
+  they could compile on an unsupported target. Replacement evidence must place
+  portable API tests outside that gate or provide equivalent cross-target
+  library coverage.
+- **MEDIUM — confirmed:** the required evidence inventory named deterministic
+  growth, post-observation race, and mid-execution cancellation coverage that
+  the first candidate did not supply. Public synchronous-future tests can cover
+  pre-poll substitution, growth, and removal; true internal interleavings need
+  private deterministic checker/interval tests or another non-flaky seam.
+
+### Security/filesystem-robustness track — NOT GREEN
+
+- **MEDIUM — confirmed:** the same descendant-path defect violated the promised
+  fail-closed path bound before directory retention and special-entry handling.
+- **MEDIUM — confirmed:** deterministic evidence for growth witnesses,
+  post-observation `NOENT`, raced special replacement, and cancellation
+  intervals was absent. Sleep-based races are not acceptable substitutes;
+  evidence remains pending until production exposes or uses a deterministic
+  internal seam.
+- **LOW — confirmed:** selected-file include filtering occurred only after the
+  file had already been content-opened. The remediation requires no-follow stat
+  classification, then include filtering, then content open only when selected.
+- **LOW — confirmed:** maintained wording said special objects were never
+  opened. Stable specials are skipped without open, but a regular-to-special
+  replacement can race into a nonblocking open. The accurate guarantee is that
+  authoritative opened-type validation rejects that descriptor and no special
+  content or symlink target is read or followed.
+
+### Performance/concurrency track — NOT GREEN
+
+- **HIGH — confirmed:** every slashful include invocation reparsed the same
+  4,096-byte pattern, allocated a segment vector, and recounted segments outside
+  the include-work meter. Up to 100,000 visited regular entries could amplify
+  this into multi-gigabyte allocation churn. The remediation compiles once per
+  call and meters complete parse plus match work.
+- **HIGH — confirmed:** unchecked depth-256 prefixes could reach roughly 64 KiB
+  and be recopied for every entry before the later regular-file-only path check,
+  permitting multi-gigabyte prefix-copy amplification. Although correctness and
+  filesystem reviewers rated the contract violation medium, remediation
+  priority is normalized to **HIGH** for this resource-amplification lens.
+- **MEDIUM — confirmed:** line-index construction had no cancellation token or
+  fixed checks, and serialized-size trimming checked only before and after its
+  repeated reconstruction/serialization loop. The remediation requires checks
+  at fixed line-index byte intervals and before every trimming attempt.
+
+Production, independent-test, and documentation fix SHAs; composed replacement;
+replacement local gates; and all three replacement reviews remain **PENDING**.
+No finding is resolved and no replacement track is green merely because this
+remediation contract records the required behavior. Once one exact replacement
+behavior SHA is green across all three tracks, a later documentation-only seal
+or final delivery record needs no additional adversarial review under the
+user's explicit instruction, but exact feature and `main` workflow evidence is
+still required.

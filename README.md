@@ -239,21 +239,28 @@ components exist and initially compose through `9057feb` and `44e33d7`;
 reference-host fixture fix `bdbb677` makes focused production/test composition
 green. Documentation component `b04151a` produces first fully composed behavior
 candidate `42e4793`; lint fix and exact local gates are green at `45ad91f`.
-Formal review, seal, delivery, and exact-workflow evidence remain **PENDING**. Strict effect-
-free preflight accepts exactly `pattern`, `path`, `include`,
+All three first-cycle formal tracks are **NOT GREEN** on exact candidate
+`355a11a`; production, test, and documentation fixes, replacement composition
+and reviews, seal, delivery, and exact-workflow evidence remain **PENDING**.
+Strict effect-free preflight accepts exactly `pattern`, `path`, `include`,
 `case_insensitive`, `mode`, `head_limit`,
 `offset`, and `context_lines`, makes every default explicit, and prepares
 `FilesystemAccess::SearchContent` at the normalized selected file or subtree.
-Allowed execution performs a bounded linear literal search with optional ASCII
-case folding over eligible UTF-8 no-follow regular files reached through the
-retained descriptor. It reports exact matching and eligible-text statistics in
-bounded `matches`, `files_with_matches`, or `count` results, with same-buffer
-context and fixed redacted errors. Candidate composition extends the host to
-exactly five alphabetical tools—`file_info`, `glob_files`, `grep_files`,
-`list_files`, and `read_file`—using the original retained workspace descriptor
-plus four clones. It adds no CLI byte, benchmark workload, compatibility status,
-performance claim, or fx-equivalence claim, and the combined native-tool
-checklist stays open. See the [`grep_files` contract](docs/grep-files.md) and
+The remediation contract requires one fully metered include compilation per
+call, full descendant-path validation before allocation or filtering, reusable
+64 MiB-bounded continuation offsets, selected-file filtering before content
+open, and fixed cancellation checks through line indexing and serialization
+trimming. Allowed execution performs a bounded linear literal search with
+optional ASCII case folding over eligible UTF-8 no-follow regular files reached
+through the retained descriptor. It reports exact matching and eligible-text
+statistics in bounded `matches`, `files_with_matches`, or `count` results, with
+same-buffer context and fixed redacted errors. Candidate composition extends
+the host to exactly five alphabetical tools—`file_info`, `glob_files`,
+`grep_files`, `list_files`, and `read_file`—using the original retained
+workspace descriptor plus four clones. It adds no CLI byte, benchmark workload,
+compatibility status, performance claim, or fx-equivalence claim, and the
+combined native-tool checklist stays open. See the
+[`grep_files` contract](docs/grep-files.md) and
 [review plan](docs/reviews/m03-grep-files-review-01.md).
 
 The project is not yet production-ready. See the exact

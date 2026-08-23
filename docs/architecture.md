@@ -203,8 +203,9 @@ initial independent-test `6eaee93` components exist and initially compose
 through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
 focused production/test composition green. Documentation component `b04151a`
 produces first fully composed behavior candidate `42e4793`; lint fix and exact
-local gates are green at `45ad91f`. Formal-review, seal, and delivery evidence
-are **PENDING**.
+local gates are green at `45ad91f`. All three first-cycle formal tracks are
+**NOT GREEN** on exact candidate `355a11a`; fix components, replacement
+composition/local gates/reviews, seal, and delivery evidence are **PENDING**.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -468,7 +469,8 @@ root-selection, or CLI authority changes. Exact base and kickoff are
 `f6aa458` and tree-identical `f6ab594`. Exact isolated components and focused
 production/test composition are named above; documentation component `b04151a`
 produces fully composed behavior `42e4793`, with lint fix and local gates green
-at `45ad91f`. Review, seal, and delivery evidence remain **PENDING**.
+at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
+`355a11a`; fixes, replacement reviews, seal, and delivery remain **PENDING**.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
@@ -961,9 +963,13 @@ inspection and is not inferred from `Read`, `Metadata`, `Enumerate`, or
 
 Allowed execution applies fresh-root liveness and opens all selected/traversed
 objects descriptor-relatively without following symlinks. Directory entries
-are completely validated and bytewise sorted; traversal includes hidden names
-and opens only regular candidates. Optional include matching reuses the
-delivered glob grammar with its own aggregate work counter. Content matching is
+are completely validated and bytewise sorted; traversal includes hidden names.
+Every full descendant path must pass its bound before allocation, entry-kind
+handling, or include matching. The optional include is compiled once, and its
+complete parse and matching work shares one aggregate counter. Selected-file
+filtering follows no-follow stat classification and precedes content open.
+Stable specials are skipped; a raced nonblocking special open is authoritatively
+rejected without read or link following. Content matching is
 literal and worst-case linear, with exact bytes or ASCII-only folding, and
 returns one record per matching line. Eligible files are complete observed
 NUL-free valid UTF-8 no larger than 204,800 bytes; explicit aggregate counters
@@ -971,14 +977,18 @@ report oversized and non-text exclusions while other read failures fail the
 call.
 
 The complete scan is bounded by 100,000 entries, 16 MiB entry names, 10,000
-candidates, 64 MiB content, 8,388,608 include steps, 268,435,456 content steps,
-depth 256, and 4,096-byte paths. List results retain no more than head 100,
-8 KiB paths, 8 KiB excerpt/context text, and a 48 KiB serialized `ToolOutput`.
+candidates, 64 MiB content, 8,388,608 include compile/match steps, 268,435,456
+content steps, depth 256, and 4,096-byte paths. List results retain no more than
+head 100 and accept offsets through 67,108,864 so every emitted continuation is
+reusable, and retain at most 8 KiB paths, 8 KiB excerpt/context text, and a
+48 KiB serialized `ToolOutput`.
 Match/context excerpts are UTF-8-safe and derive from one buffer; pagination
 uses exact totals, `next_offset`, top-level list incompleteness, and distinct
 per-record context truncation. A fired scan/work cap fails without partial
-output. Exact shapes, public constants, errors, cancellation and race semantics
-are in [`grep-files.md`](grep-files.md).
+output. Line indexing checks cancellation at fixed byte intervals and each
+serialized-size trimming attempt begins with a check. Exact shapes, public
+constants, errors, cancellation and race semantics are in
+[`grep-files.md`](grep-files.md).
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

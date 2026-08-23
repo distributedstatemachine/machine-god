@@ -74,7 +74,8 @@ production `27eec2f` and initial test `6eaee93` components exist and initially
 compose through `9057feb` and `44e33d7`; fixture fix `bdbb677` makes focused
 production/test composition green. Documentation component `b04151a` produces
 fully composed behavior `42e4793`; lint fix and exact local gates are green at
-`45ad91f`. Review, seal, delivery, and exact-workflow evidence remain
+`45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact `355a11a`;
+fixes, replacement reviews, seal, delivery, and exact-workflow evidence remain
 **PENDING**. It makes no compatibility or
 performance claim.
 

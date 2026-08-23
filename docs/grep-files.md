@@ -1,6 +1,8 @@
 # Native `grep_files` tool
 
-Status: **IN PROGRESS** nineteenth bounded Milestone 03 candidate.
+Status: **IN PROGRESS — first formal review cycle NOT GREEN; remediation
+implementation, independent tests, composition, and replacement reviews are
+pending** nineteenth bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
@@ -14,10 +16,14 @@ fixture fix `bdbb677161322e249aea95a12bfb1b2169ff5b48` makes focused production-
 and-test composition green. Documentation component
 `b04151a7d958875118eebddd67526d74e2ea9526` produces first fully composed
 behavior candidate `42e4793b27902da7390dc54ef6bedb169da7e1bc`. Lint fix and
-exact local gates are green at `45ad91fa2689250c47c79d2105f5e3c261cea638`.
-Formal-review SHA, documentation seal, feature workflow runs, integrated `main`
-SHA, and `main` workflow runs remain **PENDING** until those artifacts actually
-exist.
+exact precursor local gates are green at
+`45ad91fa2689250c47c79d2105f5e3c261cea638`. All three first-cycle formal
+reviews are **NOT GREEN** on exact candidate
+`355a11a6055b0053dff80e71011d7633e8a6ce97`. Production, independent-test,
+and documentation fix SHAs, their composed replacement, replacement local
+gates and reviews, documentation seal, feature workflow runs, integrated
+`main` SHA, and `main` workflow runs remain **PENDING** until those artifacts
+actually exist.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal
@@ -82,7 +88,7 @@ The candidate exports `GrepFilesTool`, `GrepFilesToolOpenError`,
 | `MAX_GREP_FILES_INCLUDE_BYTES` | `4,096` |
 | `MAX_GREP_FILES_RESULT_PATH_BYTES` | `4,096` |
 | `MAX_GREP_FILES_HEAD_LIMIT` | `100` |
-| `MAX_GREP_FILES_OFFSET` | `100,000` |
+| `MAX_GREP_FILES_OFFSET` | `67,108,864` |
 | `MAX_GREP_FILES_CONTEXT_LINES` | `5` |
 | `MAX_GREP_FILES_FILE_BYTES` | `204,800` |
 | `MAX_GREP_FILES_RESULT_LINE_BYTES` | `4,096` |
@@ -144,7 +150,7 @@ Omission has these exact defaults:
 | `case_insensitive` | `false`; otherwise a boolean |
 | `mode` | `"matches"`; otherwise exactly `"matches"`, `"files_with_matches"`, or `"count"` |
 | `head_limit` | `100`; otherwise an integer in `1..=100` |
-| `offset` | `0`; otherwise an integer in `0..=100000` |
+| `offset` | `0`; otherwise an integer in `0..=67108864` |
 | `context_lines` | `0`; otherwise an integer in `0..=5` |
 
 Unknown fields, explicit provider `null`, wrong types, invalid enum spellings,
@@ -175,6 +181,15 @@ character rules. Only `/` separates components; repeated separators and exact
 line/paragraph-separator, and bidirectional-formatting forms reject. Backslash,
 brackets, and braces are literal. `?`, `*`, and an exact `**` segment retain
 their bytewise delivered meanings.
+
+Execution compiles the optional normalized include exactly once per call before
+candidate filtering. Slashful patterns retain their parsed segments and
+non-recursive-segment count for reuse; they are not split, counted, or allocated
+again per entry. The aggregate include-work meter charges the complete
+once-per-call parse/compile work as well as every per-candidate basename or path
+match operation, including candidate splitting, dynamic-programming cells, and
+segment transitions. Checked overflow or the first unit beyond the include-work
+cap fails the complete call.
 
 Preflight is deterministic, synchronous, bounded, nonblocking, and effect-free.
 It performs only strict decoding, range validation, and lexical normalization.
@@ -247,16 +262,23 @@ completed bounded scan, not for excluded binary or oversized files.
 ## Descriptor-relative selected roots and traversal
 
 The normalized selected `path` may name either one regular file or one
-directory. Execution classifies its final component without following it and
-opens it with type-appropriate no-follow, close-on-exec, nonblocking flags.
-Opened-descriptor metadata is authoritative. A selected symlink or special
-object fails closed without following or reading it.
+directory. Execution classifies its final component without following it. A
+selected directory is then opened with directory-specific no-follow,
+close-on-exec, and nonblocking flags. For a selected regular file, include
+filtering occurs after that no-follow stat classification but before any content
+open. Only an include-selected file is opened with content-specific no-follow,
+close-on-exec, and nonblocking flags. Opened-descriptor metadata is
+authoritative. A selected symlink or special object fails closed without being
+followed or read.
 
 For a selected regular file, an absent `include` selects it and a slash-free
 `include` applies to its basename. A slashful include has no path beneath a
-single-file search root to match and therefore excludes that file. A selected
-candidate still consumes file, content, and matcher budgets. Its returned path
-is the full normalized workspace-relative selected path.
+single-file search root to match and therefore excludes that file. An excluded
+selected file consumes include work but is not content-opened and does not
+consume candidate or content work. An included selected file is opened and
+authoritatively revalidated as regular before it consumes candidate, content,
+and literal-matcher budgets. Its returned path is the full normalized
+workspace-relative selected path.
 
 For a selected directory, traversal is iterative and descriptor-relative. The
 selected directory is depth zero. Each directory is fully read; only `.` and
@@ -271,20 +293,30 @@ bytewise path order, with each eligible file's lines considered in increasing
 line-number order.
 
 Directories through depth 256 are opened and scanned. Encountering a child
-directory requiring depth 257 fails the call. Every constructed descendant and
-returned full workspace-relative path is bounded to 4,096 bytes.
+directory requiring depth 257 fails the call. For every observed child, checked
+arithmetic computes the complete workspace-relative descendant length before a
+full descendant string is allocated, before entry-kind dispatch can retain or
+use it, and before include matching. A length above 4,096 bytes fails the
+complete call. Thus every constructed, retained, matched, or returned full
+workspace-relative descendant path is bounded to 4,096 bytes, including paths
+for directories, symlinks, and special objects.
 
 Only no-follow regular files can become content candidates. Directory symlinks
 are not descended; file symlinks, including links whose targets are inside the
-workspace, are not opened or searched. FIFO, socket, device, and other special
-objects are not opened. All still consume entry/name budgets. This slice never
-uses a path-based context reread.
+workspace, are never followed or read. A stable FIFO, socket, device, or other
+special classification is skipped without open. Concurrent replacement after
+a regular-file classification may cause a content-specific nonblocking open to
+acquire a special object at that same authorized name; authoritative opened-
+descriptor type validation rejects it before content is read. No raced symlink
+is followed. All observed entries still consume entry/name/path budgets. This
+slice never uses a path-based context reread.
 
-The optional include pattern is tested against each regular candidate before
-content open. A slash-free include matches the basename recursively. A slashful
-include matches the path relative to the selected search root. It filters files
-only and never prunes directory traversal. Every include invocation charges the
-aggregate delivered glob-matcher work budget.
+The once-compiled optional include pattern is tested against each regular
+candidate before content open. A slash-free include matches the basename
+recursively. A slashful include matches the path relative to the selected
+search root. It filters files only and never prunes directory traversal. Its
+single compile plus every invocation charge the aggregate delivered glob-
+matcher work budget completely.
 
 Hidden files are included. No ignore file, Git repository state, subprocess,
 shell, external path, home expansion, or ambient environment participates.
@@ -299,7 +331,8 @@ scan or fails without a partial result. Across one call:
 - at most 10,000 include-selected regular candidates are attempted;
 - at most 64 MiB of bytes returned by content reads are accepted in aggregate,
   including per-file overflow witnesses;
-- include matching receives at most 8,388,608 charged steps;
+- include compilation and matching together receive at most 8,388,608 charged
+  steps;
 - literal content matching receives at most 268,435,456 charged steps;
 - traversal opens directories only through depth 256; and
 - every constructed descendant/result path remains at most 4,096 bytes.
@@ -423,7 +456,12 @@ logical result exists; otherwise it is exactly `offset + emitted_records`.
 `truncated` is true whenever the returned list is not the complete logical
 result: `offset > 0`, a later result exists, or a path/text/serialized-output
 bound omitted a result. Output-bound omission stops the returned prefix rather
-than skipping a nonfitting result to admit a later one.
+than skipping a nonfitting result to admit a later one. The 67,108,864 offset
+maximum equals the aggregate content-byte bound. Because a matching line must
+contain the required nonempty pattern, a successful scan cannot contain more
+than 67,108,864 logical matching-line records; matching-file totals are bounded
+more tightly by candidate count. Every non-null emitted `next_offset` is
+therefore accepted unchanged by a subsequent prepared call.
 
 ### `count`
 
@@ -463,9 +501,13 @@ the acquired retained identity.
 An opened ancestor remains the stable base of later child lookup. Replacement
 before an entry's no-follow classification/open may be observed at the same
 authorized name. Replacement after a regular file opens cannot redirect its
-descriptor. A `NOENT` race after entry observation may omit that entry or
-subtree and still produce a successful bounded result. Other traversal,
-classification, open, metadata, and read failures fail the complete call.
+descriptor. A stable special object is skipped without open. Replacement of a
+classified regular file with a special object may race into a nonblocking open,
+but authoritative descriptor validation rejects it without reading content;
+symlink targets are never followed. A `NOENT` race after entry observation may
+omit that entry or subtree and still produce a successful bounded result. Other
+traversal, classification, open, metadata, and read failures fail the complete
+call.
 
 File contents are not an atomic snapshot. Concurrent writes, growth, shrink,
 or replacement before open can affect observed bytes; the opened descriptor
@@ -516,10 +558,13 @@ Creating the execution future is inert. Its first poll performs bounded
 synchronous native work. Cancellation is checked before and after fresh-root
 acquisition/liveness, around every selected-component and descendant open,
 directory read, classification, file open and metadata operation, before and
-after bounded content reads, at bounded intervals through include/content
-matching and result construction, and immediately before return. It cannot
-preempt one syscall already in flight. CPU matching may advance only to the
-next fixed cancellation interval.
+after bounded content reads, at fixed intervals through include compilation,
+include/content matching, and line-index construction, before every serialized-
+size trimming reconstruction/serialization attempt, and immediately before
+return. The fixed byte-processing interval is at most 1,024 source or candidate
+bytes; directory-entry loops retain their per-entry checks, and every output-
+trimming iteration begins with a check. Cancellation cannot preempt one syscall
+already in flight.
 
 No task, thread, process, timer, cache, indexer, or producer is detached.
 Dropping an unpolled future performs no filesystem work. Dropping after work

@@ -560,10 +560,14 @@ root liveness rule. Selected ancestors, the selected file/directory, traversed
 directories, and candidate regular files use descriptor-relative no-follow,
 close-on-exec, and nonblocking operations with authoritative opened-type checks.
 Traversal is iterative, includes hidden entries, fully validates and bytewise
-sorts each directory, opens only regular files, and never follows or reads a
-symlink or special object. Optional include filtering uses the delivered
-bytewise glob grammar before content open, charges its complete matcher work,
-and does not prune directory traversal. No ignore, Git, subprocess, external-
+sorts each directory, and bounds every complete descendant path before
+allocation, entry-kind handling, or include matching. Stable special objects
+are skipped; a raced nonblocking special open is rejected before read, and no
+symlink is followed. Optional include filtering is compiled once per call,
+uses the delivered bytewise glob grammar, charges complete parse and match
+work, and does not prune directory traversal. Selected-file filtering occurs
+after no-follow stat classification and before content open. No ignore, Git,
+subprocess, external-
 path, or ambient discovery behavior is added.
 
 Content matching is literal and worst-case linear, with exact byte comparison
@@ -577,14 +581,17 @@ from the same validated buffer, and per-record `context_truncated` distinguishes
 budgeted context omission from top-level page incompleteness.
 
 Each mode either completes the same bounded scan or fails without partial
-output under exact 4,096-byte input/path limits, head 100, offset 100,000,
+output under exact 4,096-byte input/path limits, head 100, offset 67,108,864,
 context 5, 100,000 entries, 16 MiB name bytes, 10,000 candidates, 64 MiB
-aggregate content, 8,388,608 include-match steps, 268,435,456 literal-match
+aggregate content, 8,388,608 include compile/match steps, 268,435,456 literal-match
 steps, depth 256, 8 KiB aggregate result paths, 8 KiB aggregate result text,
 and a 48 KiB serialized `ToolOutput`. `matches` and `files_with_matches`
 return deterministic bounded pages with exact totals, scan statistics,
 `next_offset`, and list-completeness `truncated`; `count` returns exact eligible-
-text matching-line/file totals without pagination fields.
+text matching-line/file totals without pagination fields. Every emitted
+`next_offset` is reusable under the accepted bound. Cancellation is checked at
+fixed intervals while indexing lines and at every serialized-output trimming
+iteration.
 
 The candidate extends reference-host composition to exactly five alphabetical
 workspace tools: `file_info`, `glob_files`, `grep_files`, `list_files`, and
@@ -606,8 +613,12 @@ fixture fix and focused production/test head
 component is `b04151a7d958875118eebddd67526d74e2ea9526`, producing first fully
 composed behavior candidate `42e4793b27902da7390dc54ef6bedb169da7e1bc`.
 Lint fix and exact local gates are green at
-`45ad91fa2689250c47c79d2105f5e3c261cea638`. Formal review, documentation seal,
-and feature/`main` delivery SHAs or runs remain **PENDING**. The maintained
+`45ad91fa2689250c47c79d2105f5e3c261cea638`. All three first-cycle formal
+tracks are **NOT GREEN** on exact candidate
+`355a11a6055b0053dff80e71011d7633e8a6ce97`. Production, test, and
+documentation fixes; replacement composition, local gates, and reviews;
+documentation seal; and feature/`main` delivery SHAs or runs remain **PENDING**.
+The maintained
 documentation must compose into the exact behavior SHA reviewed by all three
 adversarial tracks. A later documentation-only seal or delivery record is
 exempt from another adversarial cycle under the user's instruction but still
@@ -710,7 +721,8 @@ gate:
   exist and initially compose through `9057feb` and `44e33d7`; fixture fix
   `bdbb677` makes focused production/test composition green. Documentation
   component `b04151a` produces first fully composed behavior `42e4793`; lint
-  fix and exact local gates are green at `45ad91f`. Review, seal, feature,
+  fix and exact local gates are green at `45ad91f`. All three first-cycle tracks
+  are **NOT GREEN** on exact `355a11a`; fixes, replacement reviews, seal, feature,
   integration, and `main` evidence remain **PENDING**. The remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

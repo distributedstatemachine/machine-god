@@ -516,10 +516,13 @@ the selected path. Preparation opens no filesystem object.
 
 The Linux/macOS native implementation, not core, owns retained workspace
 identity and liveness, selected-file/directory classification, iterative
-descriptor-relative no-follow sorted traversal, regular-file-only open and
-eligibility, the delivered include grammar, a worst-case-linear literal matcher
-with ASCII-only folding, same-buffer context, complete scan/work/output budgets,
-fixed redacted errors, and synchronous cancellation/race limitations. Its
+descriptor-relative no-follow sorted traversal, pre-allocation full-path bounds,
+selected-file include filtering before content open, stable-special skipping and
+raced-special opened-type rejection, once-per-call fully metered include
+compilation, regular-file eligibility, a worst-case-linear literal matcher with
+ASCII-only folding, same-buffer context, complete scan/work/output budgets,
+reusable 64 MiB-bounded offsets, fixed redacted errors, and fixed cancellation
+checks through line indexing and serialization trimming. Its
 `matches`, `files_with_matches`, and `count` shapes echo the canonical request,
 return exact eligible-text totals plus candidate/search/skip statistics, and
 remain under an independent 48 KiB complete serialized `ToolOutput` cap. Core
@@ -534,11 +537,12 @@ initial independent-test `6eaee93` components exist and initially compose
 through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
 focused production/test composition green. Documentation component `b04151a`
 produces fully composed behavior `42e4793`; lint fix and exact local gates are
-green at `45ad91f`. Formal review, seal, and delivery evidence are **PENDING**. Maintained behavior
-must compose into the exact SHA reviewed by all three adversarial tracks. A
-later documentation-only seal or
-delivery record is exempt from another adversarial cycle under the user's
-instruction but still requires exact feature and `main` workflows.
+green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
+`355a11a`; fix components, replacement composition/gates/reviews, seal, and
+delivery evidence are **PENDING**. Maintained behavior must compose into the
+exact SHA reviewed by all three adversarial tracks. A later documentation-only
+seal or delivery record is exempt from another adversarial cycle under the
+user's instruction but still requires exact feature and `main` workflows.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

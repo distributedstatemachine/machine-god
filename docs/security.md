@@ -168,7 +168,9 @@ initial independent-test `6eaee93` components exist and initially compose
 through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
 focused production/test composition green. Documentation component `b04151a`
 produces fully composed behavior `42e4793`; lint fix and exact local gates are
-green at `45ad91f`. Review, seal, and delivery evidence remain **PENDING**. Its strict preflight
+green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
+`355a11a`; fixes, replacement composition/gates/reviews, seal, and delivery
+remain **PENDING**. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
 relative no-follow regular-file-only traversal, bounded eligible UTF-8 content
@@ -808,21 +810,25 @@ Allowed execution first performs fresh-root linked-identity validation. Every
 selected ancestor, selected file/directory, traversed directory, and candidate
 regular file is opened descriptor-relatively with no-follow, close-on-exec,
 nonblocking, and authoritative type requirements. Entry names are fully read,
-validated as confined safe UTF-8, and bytewise sorted. Hidden names are
-included. Symlinks are never followed or searched, even when their targets are
-inside the workspace. FIFO, socket, device, and other special objects are not
-opened. Optional include matching uses the delivered bytewise glob grammar and
-cannot prune traversal.
+validated as confined safe UTF-8, and bytewise sorted. Every complete
+descendant path is checked before allocation, entry-kind handling, or include
+matching. Hidden names are included. Symlinks are never followed or searched,
+even when their targets are inside the workspace. Stable special objects are
+skipped without open; a raced nonblocking special open is authoritatively
+rejected before read. The optional include is compiled once per call, its
+complete parse/match work is metered, and it cannot prune traversal.
+Selected-file filtering follows no-follow stat classification and precedes
+content open.
 
 Regular content is accepted only after the complete observed file is no more
 than 204,800 bytes, valid UTF-8, and NUL-free. Initial or sentinel-observed
 oversize and invalid-text files are excluded and disclosed through aggregate
 statistics; an unrelated open/metadata/read failure fails the entire call.
 Apparent matches are not retained before whole-file eligibility is known.
-Aggregate content bytes, candidate count, traversal/name/depth, include work,
-and literal matcher work all have checked exact caps. The literal engine is
-worst-case linear and folds ASCII only when requested, preventing pattern-
-length multiplication from becoming unmetered work.
+Aggregate content bytes, candidate count, traversal/name/depth, include
+compile/match work, and literal matcher work all have checked exact caps. The
+literal engine is worst-case linear and folds ASCII only when requested,
+preventing pattern-length multiplication from becoming unmetered work.
 
 Matching and requested context derive from one validated buffer. No path-based
 context reopen can redirect content or observe a second file identity. UTF-8-
@@ -830,7 +836,8 @@ safe bounded excerpts contain the complete first match, and bounded context
 records distinguish line clipping from omitted requested context. Aggregate
 path/text and complete serialized-output caps limit retained and escaped data.
 Both list modes return deterministic bounded pages only after the complete scan,
-with exact eligible-text totals, `next_offset`, list-completeness `truncated`,
+with exact eligible-text totals, reusable `next_offset` values under the
+67,108,864 offset bound, list-completeness `truncated`,
 and explicit context truncation. Count mode has exact eligible matching-line
 and matching-file totals and no pagination fields. A fired scan/work cap is a
 fixed failure, never a partial success.
@@ -844,9 +851,10 @@ and aggregate read budget prevent growth from extending work without bound.
 
 The future is inert before first poll and detaches nothing. Cancellation is
 checked around root liveness, every directory/file authority operation and
-bounded read, at bounded intervals through include/content CPU matching and
-result construction, and immediately before return. It cannot preempt one
-syscall already in flight. Drop closes every owned descriptor and buffer.
+bounded read, at fixed intervals through include compilation, matching, and line
+indexing, before every serialization-trimming attempt, and immediately before
+return. It cannot preempt one syscall already in flight. Drop closes every owned
+descriptor and buffer.
 Fixed errors retain no path, pattern, include, entry name, file byte, match,
 metadata, OS diagnostic, or errno. Successful paths, excerpts, context, and
 counts are intentionally sensitive model-visible durable data rather than
