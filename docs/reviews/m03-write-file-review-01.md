@@ -1,7 +1,6 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FORMAL REVIEW CANDIDATE — formal reviews, seal, and delivery are
-pending**
+Status: **FORMAL REVIEW CYCLE 1 NOT GREEN — remediation is pending**
 
 ## Base and prior delivery
 
@@ -27,9 +26,10 @@ pending**
 
 The three component branches started from the exact contract commit and owned
 non-overlapping files. Their commits are not behavior candidates in isolation.
-The integration branch has composed all three without overwriting one another;
-formal review remains pending until final local-gate evidence freezes one exact
-SHA.
+The integration branch has composed all three without overwriting one another.
+Exact candidate `119938240807f8279f83e2ace65a69706e8fcfed` completed the first
+formal review cycle, and all three tracks reported **NOT GREEN**. Code and
+evidence remediation must be composed before a replacement candidate is named.
 
 ## Frozen boundary
 
@@ -54,7 +54,7 @@ equivalence.
 ## Required independent evidence
 
 Production and test owners remained separate. The composed branch supplies the
-following candidate evidence; formal same-SHA review remains pending:
+following evidence, but cycle 1 found the explicitly unchecked gaps:
 
 - [x] Exact public symbols, constants, tool/schema descriptions, strict
   arguments, result shape, open errors, tool errors, and redacted debug/display.
@@ -68,16 +68,25 @@ following candidate evidence; formal same-SHA review remains pending:
   special-bit stripping.
 - [x] Missing parents, every symlink position, final special objects, retained-
   root replacement/removal, and unchanged outside sentinels.
-- [x] Deterministic target appearance/replacement, parent identity change/move,
-  staged-name replacement, eight collisions, collision preservation, cleanup
-  swap protection, and residue handling.
+- [ ] Deterministic target appearance, existing-target replacement, and final-
+  parent postvalidation races are proven through the real production pipeline.
+  Helper/seam coverage exists, but cycle 1 correctly rejected it as insufficient
+  evidence for these three real-pipeline transitions. Staged-name replacement,
+  eight collisions, collision preservation, cleanup swap protection, and
+  residue handling are covered.
 - [x] Injected write/chmod/file-sync/rename/directory-sync failures establish
   unchanged-target precommit behavior and post-rename commit ambiguity.
-- [x] Cancellation at every stated boundary, inert-until-poll/drop behavior,
-  engine same-poll post-effect recovery, and absence of detached work.
-- [x] Exact six-tool alphabetical host catalog, original-plus-five-clone
-  workspace identity, Linux/macOS behavior, FreeBSD/WASI compilation, and an
-  active unsupported-target construction test.
+- [ ] Cancellation is proven through the real production pipeline during the
+  verification phase. Traversal, final-prepublish, inert-until-poll/drop, engine
+  same-poll post-effect recovery, and absence of detached work are covered.
+- [ ] Every interrupt retry path has a finite work bound. Cycle 1 found
+  unbounded `EINTR` retry loops in write and sync helpers.
+- [ ] Exact six-tool alphabetical host catalog, original-plus-five-clone
+  workspace identity, and the complete platform matrix are green. The catalog
+  and workspace identity pass locally; native behavior is locally exercised on
+  macOS, Linux and FreeBSD are cross-compiled, and the WASI unsupported-target
+  test is actively executed. Exact feature CI still must exercise supported
+  native Linux and macOS behavior.
 
 ## Formal gates
 
@@ -86,7 +95,8 @@ warnings-denied workspace Clippy, workspace and documentation tests, repository
 Python and compatibility checks, dependency policy/audit, Linux/macOS native
 tests, FreeBSD/WASI checks, a clean locked release smoke, and three fresh
 same-SHA adversarial tracks for correctness/API, filesystem/robustness, and
-performance/concurrency. Every finding restarts all three tracks. A later
+performance/concurrency. Cycle 1 does not satisfy that gate. Every finding
+restarts all three tracks on a new exact behavior candidate. A later
 documentation-only seal or delivery record is exempt from another adversarial
 cycle under the user's instruction, but exact feature and `main` workflows are
 still required.
@@ -113,11 +123,19 @@ still required.
   `c7fdef2d65a3f498673dde470a09bbda4a547b59`
 - Local-gate-green behavior precursor:
   `072bd69eb6f73944d1db00363da0f965f09dda9f`
-- First exact behavior candidate: the tree-identical marker immediately after
-  the local-evidence commit; its exact SHA is supplied to every formal track
-  and will be retained by the documentation-only seal
-- Three formal adversarial reviews: **PENDING**
+- Formal-review preparation:
+  `a7841c19b4b34cecf40e55d7cd001fd1547133c1`
+- First exact behavior candidate:
+  `119938240807f8279f83e2ace65a69706e8fcfed`
+- Candidate tree lineage: `119938240807f8279f83e2ace65a69706e8fcfed` is
+  tree-identical only to its immediate parent
+  `a7841c19b4b34cecf40e55d7cd001fd1547133c1`. Precursor
+  `072bd69eb6f73944d1db00363da0f965f09dda9f` has a different documentation
+  tree and is not an exact-tree substitute for the formal candidate.
+- Formal adversarial cycle 1: correctness/API **NOT GREEN**;
+  filesystem/robustness **NOT GREEN**; performance/concurrency **NOT GREEN**
 - Behavior-green SHA: **PENDING**
+- Remediation and replacement candidate: **PENDING**
 - Documentation seal: **PENDING**
 - Feature CI and benchmark evidence: **PENDING**
 - Fast-forward `main` and exact workflows: **PENDING**
@@ -140,7 +158,8 @@ several fault, race, cancellation, and unsupported-target branches through the
 real pipeline. These audits are not formal adversarial tracks and do not count
 toward the required same-SHA green cycle.
 
-The confirmed evidence gaps are closed before the first formal candidate:
+The preformal evidence work closed several earlier gaps before the first formal
+candidate:
 
 - `a9a7c99` proves exact collision counts, same-mode inode replacement, final-
   parent identity changes, bounded partial/interrupted writes, cancellation
@@ -157,8 +176,34 @@ The confirmed evidence gaps are closed before the first formal candidate:
 - `a717e22` corrects the maintained contract, plan, and review lineage from the
   contract-only five-tool/pending state to the composed six-tool candidate.
 
-Final exact local gates and the three formal same-SHA review tracks remain
-pending; no preformal result is promoted into delivery evidence.
+Formal cycle 1 subsequently found remaining bounded-progress, real-pipeline
+race, real-pipeline verification-cancellation, and documentation-evidence
+defects. No preformal result is promoted into delivery evidence.
+
+## Formal adversarial cycle 1
+
+All three fresh tracks inspected exact candidate
+`119938240807f8279f83e2ace65a69706e8fcfed` and returned **NOT GREEN**. The
+confirmed findings are:
+
+- **High/medium:** write and sync helpers can retry `EINTR` without a finite
+  attempt or work bound, contradicting the bounded synchronous execution
+  contract and weakening cancellation responsiveness under repeated
+  interruption.
+- **Medium:** deterministic evidence does not yet drive target appearance,
+  existing-target replacement, or final-parent postvalidation identity races
+  through the real production pipeline.
+- **Medium:** verification-phase cancellation is not yet exercised through the
+  real production pipeline.
+- **Low:** the maintained documents conflated the local-gate precursor with the
+  later formal-candidate tree and overstated platform evidence. This record now
+  distinguishes local native macOS execution, Linux/FreeBSD cross-compilation,
+  active WASI execution, and the still-pending exact feature-CI Linux/macOS
+  native matrix.
+
+No replacement candidate or green behavior SHA is claimed. After remediation
+and exact local gates, all three fresh tracks must rerun on the same new exact
+candidate.
 
 ## Local gate results
 
@@ -179,7 +224,8 @@ is green under Rust and Cargo 1.94.1 exactly:
 - cargo-deny 0.19.9 passes with only the accepted `syn` and `windows-sys`
   duplicate warnings; cargo-audit 0.22.2 checks 1,225 cached advisories over 175
   dependencies with zero findings;
-- Linux no-default native Clippy passes with warnings denied; FreeBSD
+- Linux no-default native cross-target Clippy passes with warnings denied;
+  FreeBSD
   no-default library/tests compile and library Clippy passes with only two
   pre-existing test-only `glob_files` warnings; WASI builds the dedicated
   unsupported-target test with only the pre-existing `read_file` dead-code
@@ -193,9 +239,11 @@ is green under Rust and Cargo 1.94.1 exactly:
   added, and the exact precursor worktree is clean.
 
 These are local precursor results, not formal-review or remote-delivery
-evidence. The immediately following tree-identical marker freezes the exact
-first formal behavior candidate supplied independently to all three fresh
-review tracks.
+evidence. They were recorded at `072bd69eb6f73944d1db00363da0f965f09dda9f`;
+that commit has a different documentation tree from the formal candidate.
+Candidate `119938240807f8279f83e2ace65a69706e8fcfed` is tree-identical only to
+its immediate parent `a7841c19b4b34cecf40e55d7cd001fd1547133c1` and failed
+formal cycle 1 as recorded above.
 
 ## Explicit nonclaims
 

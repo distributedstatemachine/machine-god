@@ -1,6 +1,6 @@
 # Native `write_file` contract
 
-Status: **FORMAL REVIEW CANDIDATE — formal review and delivery are pending**
+Status: **FORMAL REVIEW CYCLE 1 NOT GREEN — remediation is pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -241,12 +241,17 @@ race, and cleanup failure or identity disagreement may leave a private
 temporary residue. Perfect identity-safe unlink would require platform-specific
 primitives not shared by Linux and macOS and is not promised.
 
-The execution future is inert until polled, performs bounded synchronous work
-on the polling thread, and spawns no task, thread, subprocess, timer, or other
-detached work. Cancellation is checked during root/parent traversal, every
-temporary attempt, every write chunk, staged and target verification, and
-immediately before rename. It cannot preempt an individual open, metadata,
-write, chmod, rename, unlink, or sync syscall already in flight.
+The required execution future is inert until polled, performs bounded
+synchronous work on the polling thread, and spawns no task, thread, subprocess,
+timer, or other detached work. Cancellation is checked during root/parent
+traversal, every temporary attempt, every write chunk, staged and target
+verification, and immediately before rename. It cannot preempt an individual
+open, metadata, write, chmod, rename, unlink, or sync syscall already in flight.
+Formal cycle 1 found that candidate
+`119938240807f8279f83e2ace65a69706e8fcfed` does not yet satisfy the bounded-
+work requirement because write and sync helpers can retry `EINTR` without a
+finite bound. That behavior is a candidate defect, not a relaxation of this
+contract.
 
 Rename is the irreversible boundary. Once it succeeds, the tool ignores its own
 later cancellation observation, completes parent sync, and returns success or
@@ -289,9 +294,29 @@ identity-preserving clones and registers exactly six tools alphabetically:
 `write_file`.
 
 Production, independent tests, and the maintained documentation are composed on
-the feature branch. This six-tool catalog is candidate behavior until the exact
+the feature branch. The first exact candidate failed all three formal tracks.
+This six-tool catalog remains candidate behavior until a remediated exact
 composed SHA passes local gates, three fresh same-SHA adversarial tracks, exact
 feature workflows, and fast-forward `main` delivery.
+
+## Formal review status
+
+All three fresh formal tracks returned **NOT GREEN** on exact cycle-1 candidate
+`119938240807f8279f83e2ace65a69706e8fcfed`. The confirmed findings are
+unbounded `EINTR` retries in write and sync helpers; missing deterministic real-
+pipeline proofs for target appearance, existing-target replacement, and final-
+parent postvalidation races; missing real-pipeline verification-phase
+cancellation evidence; and stale platform/local-gate and lineage statements in
+the maintained documents.
+
+The candidate is tree-identical only to its immediate parent
+`a7841c19b4b34cecf40e55d7cd001fd1547133c1`. Local-gate precursor
+`072bd69eb6f73944d1db00363da0f965f09dda9f` has a different documentation tree
+and is retained only as precursor evidence. No replacement candidate or green
+behavior SHA is claimed. After code and evidence remediation, all three tracks
+must rerun fresh on the same replacement SHA. A later documentation-only seal
+or delivery record remains exempt from another adversarial cycle under the
+user's instruction, while exact feature and `main` workflows remain required.
 
 ## Independent evidence checklist
 
@@ -315,18 +340,21 @@ items are still candidate evidence until the formal exact-SHA gates complete:
 - [x] Parents are never created; ancestor/final symlinks and directory, FIFO,
   socket, device, and other special targets fail closed and outside sentinels
   remain unchanged.
-- [x] Retained-root removal/replacement, target appearance/replacement, final-
-  parent identity change/movement, and the disclosed final validation-to-rename
-  races are exercised through deterministic seams.
+- [ ] Target appearance, existing-target replacement, and final-parent
+  postvalidation races are exercised deterministically through the real
+  production pipeline. Retained-root and helper/seam evidence exists, but the
+  three named pipeline proofs remain pending after cycle 1.
 - [x] Eight temporary-name collisions exhaust exactly; foreign collisions are
   preserved; staged-name replacement and cleanup-name swaps never intentionally
   remove a mismatched sentinel; possible residue is accounted for.
 - [x] Injected write, chmod, staged-file sync, rename, and parent-directory sync
   failures prove precommit unchanged-target behavior and post-rename commit
   ambiguity.
-- [x] Cancellation is exercised at traversal, temporary-attempt, write,
-  verification, and final-precommit boundaries; unpolled/drop behavior and the
-  core same-poll durable unknown-result path are covered.
+- [ ] Cancellation is exercised through the real production pipeline during
+  verification. Traversal, temporary-attempt, write, final-precommit,
+  unpolled/drop, and core same-poll durable unknown-result evidence exists.
+- [ ] Write and sync interruption handling has a finite retry/work bound; cycle
+  1 found unbounded `EINTR` retries.
 - [x] Engine deny/allow events and durable results, exact six-tool alphabetical
   catalog, and original-plus-five-clones workspace identity all pass.
 - [ ] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
@@ -334,15 +362,17 @@ items are still candidate evidence until the formal exact-SHA gates complete:
   failure without fabricating an unsafe instance.
 
 Exact local-gate-green behavior precursor
-`072bd69eb6f73944d1db00363da0f965f09dda9f` passed the complete native macOS
-gate, Linux and FreeBSD cross-target checks, WASI compilation and active
-unsupported execution, and the repository-wide checks recorded in the
+`072bd69eb6f73944d1db00363da0f965f09dda9f` passed the native macOS gate,
+Linux and FreeBSD cross-compilation checks, WASI compilation and active
+unsupported-target execution, and the repository-wide checks recorded in the
 [`write_file` review](reviews/m03-write-file-review-01.md). The combined
 platform item remains unchecked until exact feature CI executes the supported
-native behavior on the repository's Linux and macOS runner matrix.
+native behavior on the repository's Linux and macOS runner matrix. Those local
+results belong to the precursor, whose documentation tree differs from formal
+candidate `119938240807f8279f83e2ace65a69706e8fcfed`.
 
-Passing only a subset of this list does not establish delivery. The exact
-composed behavior SHA must also pass repository gates and three fresh
+Passing only a subset of this list does not establish delivery. A remediated
+exact composed behavior SHA must pass repository gates and three fresh
 adversarial tracks as recorded in the
 [`write_file` review](reviews/m03-write-file-review-01.md).
 

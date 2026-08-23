@@ -739,12 +739,27 @@ regression `8b5847f` close the first preformal evidence gaps. Full-pipeline
 fault and phase evidence `c7fdef2` covers both mode stages, write, staged sync,
 create/replace rename, staged-name tampering, traversal and final-prepublish
 cancellation, real-rename parent-sync ambiguity, and device rejection. Exact
-local gates are green at composed precursor `072bd69`: formatting, warnings-
-denied workspace Clippy, 651 workspace tests, two doctests, focused native and
-engine suites, Python and pinned-compatibility gates, dependency policy/audit,
-Linux/FreeBSD/WASI checks with active unsupported execution, documentation
-links, diff checks, and a freshly built release CLI smoke. Evidence
-must cover exact schema and
+local precursor gates are green at `072bd69`: formatting, warnings-denied
+workspace Clippy, 651 workspace tests, two doctests, focused native and engine
+suites, Python and pinned-compatibility gates, dependency policy/audit, native
+macOS execution, Linux and FreeBSD cross-compilation, WASI compilation with
+active unsupported-target execution, documentation links, diff checks, and a
+freshly built release CLI smoke. Exact candidate
+`119938240807f8279f83e2ace65a69706e8fcfed` is tree-identical only to its
+immediate parent `a7841c19b4b34cecf40e55d7cd001fd1547133c1`; precursor
+`072bd69eb6f73944d1db00363da0f965f09dda9f` has a different documentation tree.
+
+All three first-cycle formal tracks are **NOT GREEN** on exact candidate
+`119938240807f8279f83e2ace65a69706e8fcfed`. Confirmed findings are high/medium
+unbounded `EINTR` retries in write and sync helpers; medium missing
+deterministic real-pipeline proofs for target appearance, existing-target
+replacement, and final-parent postvalidation races; medium missing real-
+pipeline verification-phase cancellation evidence; and low stale platform,
+local-gate, and lineage claims in maintained documentation. Code and evidence
+remediation, exact replacement local gates, and three fresh same-SHA review
+tracks are pending. No replacement candidate or behavior-green SHA is claimed.
+
+Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
 visibility, exact modes under hostile umask, missing parents, symlink and
 special rejection, retained-root changes, all eight temporary collisions,
@@ -753,8 +768,9 @@ ambiguity, cancellation through the final precommit check, engine recovery,
 the exact six-tool alphabetical reference host, Linux/macOS execution,
 FreeBSD/WASI compilation, and active unsupported behavior. Three fresh
 correctness/API, filesystem/robustness, and performance/concurrency agents must
-all report green on the same composed behavior SHA; every finding restarts all
-three tracks. Documentation-only seal and delivery commits are exempt from a
+all report green on the same replacement behavior SHA; every finding restarts
+all three tracks. Exact feature CI must still execute supported native Linux and
+macOS behavior. Documentation-only seal and delivery commits are exempt from a
 new adversarial cycle under the user's instruction. The complete normative
 contract and kickoff lineage are in [`write-file.md`](write-file.md) and the
 [`write_file` review](reviews/m03-write-file-review-01.md). The slice adds no
@@ -901,9 +917,17 @@ gate:
   fixture correction `8509933`, deterministic seam hardening `a9a7c99`, and
   core same-poll recovery regression `8b5847f` are present; full-pipeline fault
   and phase evidence is `c7fdef2`. Exact local gates are green at composed
-  precursor `072bd69`; the immediately following tree-identical marker is the
-  exact formal candidate supplied to three fresh same-SHA adversarial tracks.
-  Those tracks remain pending. The
+  precursor `072bd69`. Formal-review preparation is `a7841c1`; exact first
+  candidate `119938240807f8279f83e2ace65a69706e8fcfed` is tree-identical only to
+  that immediate parent, while `072bd69` has a different documentation tree.
+  All three first-cycle tracks are **NOT GREEN**: remediation is pending for
+  unbounded `EINTR` retries, missing real-pipeline target/parent race evidence,
+  and missing real-pipeline verification-phase cancellation evidence. No
+  replacement candidate is claimed. Local evidence is native macOS, Linux and
+  FreeBSD cross-compilation, and active WASI unsupported-target execution;
+  exact feature CI native Linux/macOS remains pending. A later documentation-
+  only seal or delivery record remains exempt from adversarial review under the
+  user's instruction. The
   remaining native tools are
   incomplete, so this pending slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
