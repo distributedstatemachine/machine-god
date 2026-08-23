@@ -200,24 +200,29 @@ fn collect_turn(host: &NativeReferenceHost) -> Vec<TurnEvent> {
     })
 }
 
-fn retained_root_responses() -> [Vec<u8>; 2] {
+fn retained_root_responses() -> [Vec<u8>; 3] {
     let first = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"read-call\",\"toolName\":\"read_file\",\"input\":{\"path\":\"note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"info-call\",\"toolName\":\"file_info\",\"input\":{\"path\":\"note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"glob-call\",\"toolName\":\"glob_files\",\"input\":{\"pattern\":\"*.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"grep-call\",\"toolName\":\"grep_files\",\"input\":{\"pattern\":\"RETAINED_WORKSPACE_CONTENT_SENTINEL\",\"path\":\"note.txt\",\"mode\":\"count\"}}\n\n",
-        "data: {\"type\":\"tool-call\",\"toolCallId\":\"write-call\",\"toolName\":\"write_file\",\"input\":{\"path\":\"generated.txt\",\"content\":\"RETAINED_GENERATED_CONTENT\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
     .to_vec();
     let second = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"write-call\",\"toolName\":\"write_file\",\"input\":{\"path\":\"generated.txt\",\"content\":\"RETAINED_GENERATED_CONTENT\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let third = concat!(
         "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"done\"}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
     )
     .as_bytes()
     .to_vec();
-    [first, second]
+    [first, second, third]
 }
 
 #[test]
@@ -276,7 +281,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
     ));
     assert_eq!(prompter.count(), 5);
     let requests = transport.request_bodies();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     let second_request = String::from_utf8(requests[1].clone()).unwrap();
     assert!(second_request.contains("RETAINED_WORKSPACE_CONTENT_SENTINEL"));
     assert!(!second_request.contains("REPLACEMENT_WORKSPACE_CONTENT_SENTINEL"));
@@ -328,7 +333,8 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
             "matching_files": 1
         })
     );
-    let encoded_write = second_request["prompt"][6]["content"][0]["output"]["value"]
+    let third_request: Value = serde_json::from_slice(&requests[2]).unwrap();
+    let encoded_write = third_request["prompt"][7]["content"][0]["output"]["value"]
         .as_str()
         .expect("write_file output is encoded as text");
     let write_output: Value = serde_json::from_str(encoded_write).unwrap();
