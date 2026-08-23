@@ -134,10 +134,10 @@ fn assert_tool_error(
     message: &str,
     retryable: bool,
 ) {
-    assert_eq!(error.kind(), kind);
-    assert_eq!(error.code(), code);
-    assert_eq!(error.message(), message);
-    assert_eq!(error.retryable(), retryable);
+    assert_eq!(error.kind, kind);
+    assert_eq!(error.code, code);
+    assert_eq!(error.message, message);
+    assert_eq!(error.retryable, retryable);
     assert_eq!(error.to_string(), format!("{code}: {message}"));
     assert_eq!(
         format!("{error:?}"),
@@ -145,6 +145,7 @@ fn assert_tool_error(
             "ToolError {{ kind: {kind:?}, code: {code:?}, message: {message:?}, retryable: {retryable} }}"
         )
     );
+    drop(error);
 }
 
 fn assert_invalid_arguments(error: ToolError) {
@@ -322,10 +323,14 @@ fn prepare_rejects_escapes_controls_roots_and_equal_canonical_paths() {
         ("old", "."),
         ("old\n", "new"),
         ("old", "new\u{202e}"),
-        ("same", "same"),
-        ("./same", "same/."),
     ] {
         assert_invalid_path(
+            tool.prepare(call(arguments(old_path, new_path)))
+                .unwrap_err(),
+        );
+    }
+    for (old_path, new_path) in [("same", "same"), ("./same", "same/.")] {
+        assert_invalid_arguments(
             tool.prepare(call(arguments(old_path, new_path)))
                 .unwrap_err(),
         );
@@ -505,12 +510,12 @@ fn retained_root_rename_replacement_and_removal_cannot_redirect_authority() {
     let retained = temporary.path().join("retained");
     fs::create_dir(&original).unwrap();
     fs::write(original.join("source"), b"retained source").unwrap();
-    let tool = tool(&original);
+    let rename_tool = tool(&original);
     fs::rename(&original, &retained).unwrap();
     fs::create_dir(&original).unwrap();
     fs::write(original.join("source"), b"replacement source").unwrap();
 
-    rename(&tool, "source", "destination").unwrap();
+    rename(&rename_tool, "source", "destination").unwrap();
     assert!(!retained.join("source").exists());
     assert_eq!(
         fs::read(retained.join("destination")).unwrap(),

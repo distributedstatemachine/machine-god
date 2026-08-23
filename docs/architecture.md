@@ -21,7 +21,9 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has nineteen delivered bounded slices.
+Milestone 03 has twenty-two delivered bounded slices. The twenty-third,
+library-only native `rename_file`, has composed production and independent
+evidence but has not completed its exact local, review, or delivery gates.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -560,6 +562,17 @@ This final delivery record is documentation-only and exempt from adversarial
 review; its own exact remote workflows are required after push and cannot be
 self-recorded.
 
+Slices twenty through twenty-three extend the same workspace bundle with
+`write_file`, `edit_file`, `delete_file`, and the in-progress `rename_file`.
+The current composed host registers exactly nine tools in alphabetical order:
+`delete_file`, `edit_file`, `file_info`, `glob_files`, `grep_files`,
+`list_files`, `read_file`, `rename_file`, and `write_file`. One tool consumes
+the originally retained workspace descriptor and the other eight receive
+identity-preserving clones; both path and prepared-root constructors therefore
+give every tool the same opened workspace identity. These later slices do not
+change provider, permission-handler, session-store, credential, transport,
+runtime, root-selection, or CLI authority.
+
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
 reach session artifacts beneath the workspace after permission is granted.
@@ -580,7 +593,9 @@ descriptor-relative parent walking. New
 workspace identity to the registered workspace tools and its state-root identity
 to `FileSessionStore` without reopening either path. The delivered seventeenth
 slice extends that transfer to three tools; the delivered eighteenth slice
-extends it to four; and the nineteenth candidate extends it to five. Config
+extends it to four; the nineteenth extends it to five; and slices twenty
+through twenty-three extend it to the current nine-tool bundle using the
+original descriptor plus eight clones. Config
 selection is validated by the composing constructor, and production credential
 discovery remains after the already prepared retained roots are accepted.
 Production and focused tests for this behavior are present. Formal adversarial
@@ -1038,7 +1053,7 @@ when an observed match was omitted. Count mode reports the exact count. The
 complete matcher, result, scan, error, cancellation, compatibility, and deferred
 contracts are in [`glob-files.md`](glob-files.md).
 
-The nineteenth native `grep_files` candidate uses strict effect-free preflight
+The delivered nineteenth native `grep_files` slice uses strict effect-free preflight
 for required literal `pattern` and optional `path`, `include`,
 `case_insensitive`, `mode`, `head_limit`, `offset`, and `context_lines`.
 Prepared arguments contain all eight canonical values with explicit defaults,
@@ -1085,6 +1100,31 @@ non-recursive dynamic-programming branches remain cancellation-checked. Exact
 shapes, public
 constants, errors, cancellation and race semantics are in
 [`grep-files.md`](grep-files.md).
+
+The twenty-third slice adds `Capability::FilesystemRename { old_path,
+new_path }` rather than trying to encode a two-endpoint move as single-path
+`FilesystemAccess`. Strict effect-free preflight canonicalizes both required
+paths and gives policy and execution the same pair. Allowed Linux/macOS
+execution reacquires and validates the linked retained root, walks both
+existing parents descriptor-relatively without following symlinks, validates
+an existing regular-file source and absent destination twice, and performs
+exactly one `renameat_with(..., RenameFlags::NOREPLACE)` after the final
+cancellation check. It never retries that call, including after `EINTR`, and
+never creates a parent, overwrites a destination, reads content, stages a file,
+or falls back to copy-and-delete.
+
+After a successful call, later cancellation is ignored while execution checks
+the destination's original device/inode/type and performs bounded parent
+durability work. A same-parent move syncs once; a cross-parent move attempts
+source then destination even if the first fails, with at most 16 cumulative
+`fsync` calls per unique parent including interrupted calls. Success returns
+only the canonical old and new paths. A successful syscall followed by failed
+verification or sync, and every `EINTR`, is a fixed nonretryable ambiguous
+outcome. `NOREPLACE` closes destination replacement but portable rename offers
+no source-inode compare-and-swap, so a final source replacement can be moved;
+postcommit identity checking prevents false success but cannot roll it back.
+The full limits, fixed redacted errors, cancellation points, and race boundary
+are normative in [`rename-file.md`](rename-file.md).
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

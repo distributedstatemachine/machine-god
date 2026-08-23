@@ -396,10 +396,11 @@ the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
 The concrete consumers are the native
-[`read_file` tool](read-file.md), [`list_files` tool](list-files.md), the
-delivered seventeenth-slice [`file_info` tool](file-info.md), and the delivered
-eighteenth [`glob_files` tool](glob-files.md), plus the nineteenth in-progress
-[`grep_files` candidate](grep-files.md).
+[`read_file` tool](read-file.md), [`list_files` tool](list-files.md),
+[`file_info` tool](file-info.md), [`glob_files` tool](glob-files.md),
+[`grep_files` tool](grep-files.md), [`write_file` tool](write-file.md),
+[`edit_file` tool](edit-file.md), [`delete_file` tool](delete-file.md), and the
+twenty-third in-progress [`rename_file` tool](rename-file.md).
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -496,7 +497,7 @@ This delivered slice does not alter
 core result limits, generic durable error mapping, CLI behavior, benchmark
 evidence, or compatibility/performance status.
 
-The nineteenth candidate adds `FilesystemAccess::SearchContent` as a distinct
+The delivered nineteenth slice adds `FilesystemAccess::SearchContent` as a distinct
 serialized filesystem operation. It authorizes bounded recursive entry-name
 observation and bounded regular-file content inspection at exactly one
 normalized selected path: that object if it is a regular file, or eligible
@@ -583,10 +584,26 @@ run `32623904784` is **GREEN** for exact `0f`: all six jobs and every step
 passed without reruns. Main benchmark-evidence run `32623904800` is **GREEN**
 on attempt 1 for exact `0f`: both jobs and every step passed, with two valid
 non-expired exact-SHA artifacts retained. The `grep_files` slice is delivered;
-the remaining native tools remain pending.
+later mutation-tool slices are recorded in their own normative contracts.
 This final delivery record is documentation-only and exempt from adversarial
 review; its own exact remote workflows are required after push and cannot be
-self-recorded. Maintained behavior
+self-recorded.
+
+The twenty-third slice adds the provider-neutral typed capability
+`Capability::FilesystemRename { old_path, new_path }`, serialized with the
+exact tag `filesystem_rename`. Unlike single-path `Capability::Filesystem`, it
+places both canonical endpoints in the permission request so policy can decide
+the complete move. The variant contains no embedded JSON value: the existing
+whole-capability serialized-byte cap still applies, while JSON depth and node
+walking remain limited to `Tool` and `Custom` values. Native `rename_file`
+strictly prepares the same canonical `old_path` and `new_path` pair for policy
+and execution. Core assigns no overwrite, parent-creation, traversal, or
+durability semantics to the variant; the Linux/macOS implementation owns the
+confined no-follow, regular-file-only, absent-destination, exactly-once
+`NOREPLACE`, postcommit identity-check, and bounded parent-sync contract in
+[`rename-file.md`](rename-file.md).
+
+Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
 later documentation-only seal or delivery record is exempt from another
 adversarial cycle under the user's instruction but still requires exact feature

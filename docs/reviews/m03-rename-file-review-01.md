@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **CONTRACT IN PROGRESS**
+Status: **IMPLEMENTATION IN PROGRESS**
 
 ## Base and boundary
 
@@ -11,6 +11,16 @@ Status: **CONTRACT IN PROGRESS**
 - Base feature CI `32665981665` and benchmark `32665981641` are green.
 - Base main CI `32666261656` and benchmark `32666261525` are green.
 - Both benchmark workflows retain two nonexpired exact-SHA artifacts.
+- Frozen contract commit:
+  `19cad7d10a8fc885e2e70a7345fc0ba27d76872a`.
+- Exact contract benchmark workflow `32667647846` is green with both jobs and
+  two exact-SHA artifacts. Contract CI `32667647822` is still in progress and
+  is not claimed as green.
+- Production composes at
+  `d8f73676fcfce2cead385fa5b36598da989abe8f`.
+- Independent evidence composes at
+  `1dab9a0dfcb4ec2d204625c744171ae923cca458`.
+- Exact composed local gates and formal review have not yet completed.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are

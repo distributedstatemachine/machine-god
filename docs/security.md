@@ -159,7 +159,7 @@ and main benchmark evidence `32611208415`; benchmark success is delivery
 evidence only and makes no product-performance claim. Its security contract is in
 [`glob-files.md`](glob-files.md).
 
-The nineteenth bounded candidate adds Linux/macOS `grep_files` under distinct
+The nineteenth bounded slice adds Linux/macOS `grep_files` under distinct
 `FilesystemAccess::SearchContent`. Exact base
 `f6aa458bb875d6cb26565adc878703fe140916d3` and tree-identical kickoff
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` precede parallel production,
@@ -290,11 +290,10 @@ acquisition kind may appear in config debug output; the model remains redacted.
 The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
-expansion, native tools beyond the bounded library-level `read_file`,
-`list_files`, delivered `file_info`, delivered `glob_files`, and candidate
-`grep_files`, composed
-release-binary end-to-end host evidence, and compatibility or performance
-claims remain open. The
+expansion, composed release-binary end-to-end host evidence, and compatibility
+or performance claims remain open. The current library composition includes
+the nine bounded workspace tools documented below; `rename_file` delivery is
+still in progress. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -303,9 +302,11 @@ or CLI authority.
 The integrated `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. The thirteenth
 slice also requires configured credential source `environment`. It then
-opens the existing absolute workspace once and, in the delivered seventeenth slice,
-clones that retained descriptor so exactly `list_files`, `read_file`, and
-`file_info` share one opened directory identity. This
+opens the existing absolute workspace once and clones that retained descriptor
+so exactly `delete_file`, `edit_file`, `file_info`, `glob_files`, `grep_files`,
+`list_files`, `read_file`, `rename_file`, and `write_file` share one opened
+directory identity. One tool consumes the original and the other eight consume
+identity-preserving clones. This
 prevents path replacement between separate tool-construction opens from giving
 the tools different roots. The same trusted-host ancestor and subordinate-mount
 limits as the individual tool contracts still apply. A separately supplied
@@ -788,7 +789,7 @@ It cannot preempt one open or metadata syscall
 already in flight. Dropping before poll is effect-free; dropping later closes
 per-call descriptors and discards any unreturned result.
 
-Candidate `glob_files` uses the same retained workspace boundary for the new
+Delivered `glob_files` uses the same retained workspace boundary for the new
 `FilesystemAccess::EnumerateRecursive` operation. This is separate from one-
 level `Enumerate` and does not imply content `Read`, `Metadata`, mutation,
 symlink-target, or external-path authority. Strict effect-free preflight accepts
@@ -838,7 +839,7 @@ selected component opens, each directory read, entry classification and child-
 directory opens, match accounting, and return. It cannot preempt one syscall
 already in flight and starts no detached work.
 
-Candidate `grep_files` uses the same retained workspace boundary for distinct
+Delivered `grep_files` uses the same retained workspace boundary for distinct
 `FilesystemAccess::SearchContent`. It conservatively authorizes bounded entry-
 name observation and regular-file content inspection at the selected regular
 file or beneath the selected directory. It does not imply or inherit `Read`,
@@ -921,18 +922,49 @@ metadata, OS diagnostic, or errno. Successful paths, excerpts, context, and
 counts are intentionally sensitive model-visible durable data rather than
 redacted diagnostics.
 
+In-progress `rename_file` uses a separate typed
+`Capability::FilesystemRename { old_path, new_path }` so policy observes both
+canonical endpoints of the proposed move. Strict effect-free preflight accepts
+only the two required strings, rejects broader or same-canonical-path input,
+and gives policy and execution the exact same pair. Allowed Linux/macOS
+execution remains rooted in the retained workspace descriptor, reacquires and
+validates the linked root, walks both existing parents descriptor-relatively
+without following symlinks, and requires an existing regular-file source and
+absent destination through both validation passes.
+
+The irreversible boundary is exactly one no-replace `renameat_with` call after
+the final cancellation check. It is never retried, including after `EINTR`;
+there is no overwrite, parent creation, directory or symlink move, external
+path, content read, staging, or copy/delete fallback. After success, later
+cancellation is ignored while the destination's device/inode/type is compared
+with the validated source and each unique parent is synchronized under a
+16-call cumulative `fsync` cap. Distinct source and destination parents are
+both attempted in that order even if the first sync fails; one shared parent
+is synchronized once.
+
+A successful rename followed by failed identity verification or durability,
+and every `EINTR`, is returned as fixed nonretryable commit ambiguity because
+the move may already be durable. `NOREPLACE` prevents destination replacement,
+but portable Linux/macOS rename has no source-inode compare-and-swap: a final
+different entry installed at the source name can be moved. Postcommit identity
+checking prevents false success but cannot undo that move. Fixed diagnostics
+retain no paths, entries, metadata, OS text, or errno. The complete normative
+boundary is [`rename-file.md`](rename-file.md).
+
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
 points visible beneath a retained directory are trusted inputs. Hardened
 non-Linux/macOS workspace construction and traversal remain deferred for
-`list_files`, delivered `file_info`, delivered `glob_files`, and candidate
+`list_files`, delivered `file_info`, delivered `glob_files`, and delivered
 `grep_files`; `read_file`
 retains its separate
 supported-Unix boundary. The normative surfaces are
 [`read-file.md`](read-file.md), [`list-files.md`](list-files.md),
 [`file-info.md`](file-info.md), [`glob-files.md`](glob-files.md), and
-[`grep-files.md`](grep-files.md).
+[`grep-files.md`](grep-files.md), with mutation contracts in
+[`write-file.md`](write-file.md), [`edit-file.md`](edit-file.md),
+[`delete-file.md`](delete-file.md), and [`rename-file.md`](rename-file.md).
 
 The injected-transport AI Gateway provider preserves network authority at an
 explicit trusted-host boundary. `AiGatewayProvider` accepts only an owned body,

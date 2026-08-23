@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **CONTRACT IN PROGRESS**
+Status: **IMPLEMENTATION IN PROGRESS**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -8,6 +8,16 @@ green under exact feature CI `32665981665`, feature benchmark workflow
 `32665981641`, main CI `32666261656`, and main benchmark workflow
 `32666261525`. Both benchmark workflows retained two nonexpired exact-SHA
 artifacts.
+
+The frozen contract is commit
+`19cad7d10a8fc885e2e70a7345fc0ba27d76872a`. Exact contract benchmark
+workflow `32667647846` is green with both jobs and two exact-SHA artifacts;
+contract CI `32667647822` is not yet complete and is not claimed as green.
+Production composes on the feature branch at
+`d8f73676fcfce2cead385fa5b36598da989abe8f`, and independent evidence
+composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. The exact composed
+local gate, fresh same-SHA review cycles, feature delivery, fast-forward main
+integration, and exact main workflows remain pending.
 
 `rename_file` moves one existing regular file between two confined names while
 preserving the file object. It does not read content, overwrite a destination,
@@ -216,6 +226,7 @@ fx-equivalence or product-performance claim.
 Destination overwrite, parent creation, directory trees, symlink moves,
 external paths, cross-filesystem copy/delete, non-Linux/macOS hardening, CLI
 ownership, richer permission modes, benchmark workloads, and performance claims
-remain outside this slice. Production, independent evidence, three fresh same-
-SHA adversarial reviews, exact feature workflows, fast-forward integration, and
-exact main workflows are required before delivery.
+remain outside this slice. Production and independent evidence are composed but
+not yet locally sealed. Three fresh same-SHA adversarial reviews, exact feature
+workflows, fast-forward integration, and exact main workflows are still required
+before delivery.

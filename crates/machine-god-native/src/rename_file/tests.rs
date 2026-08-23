@@ -185,10 +185,10 @@ fn execute_with(
 }
 
 fn assert_cancelled(error: &ToolError) {
-    assert_eq!(error.kind(), ToolErrorKind::Cancelled);
-    assert_eq!(error.code(), "rename_file_cancelled");
-    assert_eq!(error.message(), "rename_file execution was cancelled");
-    assert!(!error.retryable());
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "rename_file_cancelled");
+    assert_eq!(error.message, "rename_file execution was cancelled");
+    assert!(!error.retryable);
 }
 
 #[test]
@@ -253,8 +253,16 @@ fn real_pipeline_trace_covers_both_endpoints_phases_one_rename_and_ordered_syncs
             )));
         }
     }
-    assert!(evidence.checkpoints.contains(&RenameCheckpoint::FinalPreRename));
-    assert!(evidence.checkpoints.contains(&RenameCheckpoint::AfterRename));
+    assert!(
+        evidence
+            .checkpoints
+            .contains(&RenameCheckpoint::FinalPreRename)
+    );
+    assert!(
+        evidence
+            .checkpoints
+            .contains(&RenameCheckpoint::AfterRename)
+    );
     assert!(!temporary.path().join("old-parent/source").exists());
     assert_eq!(
         fs::read(temporary.path().join("new-parent/destination")).unwrap(),
@@ -264,7 +272,7 @@ fn real_pipeline_trace_covers_both_endpoints_phases_one_rename_and_ordered_syncs
 
 #[test]
 fn every_real_precommit_checkpoint_honors_cancellation_without_rename() {
-    let (_, trace_tool) = nested_fixture("checkpoint-trace");
+    let (_trace_directory, trace_tool) = nested_fixture("checkpoint-trace");
     let mut trace = TraceEvidence::new();
     execute_with(&trace_tool, &CancellationToken::new(), &mut trace).unwrap();
     let final_index = trace
@@ -293,7 +301,7 @@ fn every_real_precommit_checkpoint_honors_cancellation_without_rename() {
 
 #[test]
 fn operation_faults_are_precommit_and_same_call_cancellation_wins() {
-    let (_, trace_tool) = nested_fixture("operation-trace");
+    let (_trace_directory, trace_tool) = nested_fixture("operation-trace");
     let mut trace = TraceEvidence::new();
     execute_with(&trace_tool, &CancellationToken::new(), &mut trace).unwrap();
     let operations = trace
@@ -307,7 +315,7 @@ fn operation_faults_are_precommit_and_same_call_cancellation_wins() {
         let mut fault = TraceEvidence::new();
         fault.fault = Some(operation);
         let error = execute_with(&tool, &CancellationToken::new(), &mut fault).unwrap_err();
-        assert_ne!(error.kind(), ToolErrorKind::Cancelled);
+        assert_ne!(error.kind, ToolErrorKind::Cancelled);
         assert_eq!(fault.rename_calls, 0, "operation {operation:?}");
         assert!(temporary.path().join("old-parent/source").exists());
 
@@ -370,7 +378,11 @@ impl RenameFileEvidence for InitialRaceEvidence {
 fn source_identity_and_destination_absence_are_revalidated_before_rename() {
     for race in [InitialRace::ReplaceSource, InitialRace::CreateDestination] {
         let (temporary, tool) = nested_fixture("revalidation");
-        fs::write(temporary.path().join("old-parent/replacement"), b"replacement").unwrap();
+        fs::write(
+            temporary.path().join("old-parent/replacement"),
+            b"replacement",
+        )
+        .unwrap();
         fs::write(temporary.path().join("new-parent/intruder"), b"intruder").unwrap();
         let mut evidence = InitialRaceEvidence { race };
         let error = tool
@@ -381,8 +393,11 @@ fn source_identity_and_destination_absence_are_revalidated_before_rename() {
                 &mut evidence,
             )
             .unwrap_err();
-        assert_eq!(error.code(), "rename_file_target_changed");
-        assert!(!temporary.path().join("new-parent/destination").is_file()
-            || fs::read(temporary.path().join("new-parent/destination")).unwrap() == b"intruder");
+        assert_eq!(error.code, "rename_file_target_changed");
+        assert!(
+            !temporary.path().join("new-parent/destination").is_file()
+                || fs::read(temporary.path().join("new-parent/destination")).unwrap()
+                    == b"intruder"
+        );
     }
 }

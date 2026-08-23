@@ -1,6 +1,13 @@
 # Native reference-host composition
 
-Status: integrated contract for the twelfth bounded Milestone 03 library slice,
+Status: the current feature composition contains exactly nine alphabetical
+workspace tools. Twenty-two bounded Milestone 03 slices are delivered;
+twenty-third-slice `rename_file` production and independent evidence are
+composed, while its exact local, review, feature-delivery, and main-delivery
+gates remain pending.
+
+Historical delivery lineage: integrated contract for the twelfth bounded
+Milestone 03 library slice,
 with its workspace-tool composition extended by the delivered seventeenth and
 eighteenth slices. Eighteen slices are delivered. The nineteenth bounded
 `grep_files` candidate is **IN PROGRESS** from exact base
@@ -123,10 +130,11 @@ lineage is recorded in the
 
 `NativeReferenceHost` composes the existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and—in the nineteenth candidate—five confined read-only tools into one
-provider-neutral `Engine`. Their exact membership is `file_info`, `glob_files`,
-`grep_files`, `list_files`, and `read_file`, and core exposes that catalog in
-deterministic alphabetical order. It is a library surface in
+adapter, and exactly nine confined workspace tools into one provider-neutral
+`Engine`. Their exact membership is `delete_file`, `edit_file`, `file_info`,
+`glob_files`, `grep_files`, `list_files`, `read_file`, `rename_file`, and
+`write_file`; core exposes that catalog in deterministic alphabetical order.
+It is a library surface in
 `machine-god-native`. The `machine-god-cli` crate and every existing CLI output
 byte remain unchanged.
 
@@ -233,8 +241,13 @@ without requiring `ai-gateway-http`; other targets receive its fixed
 unsupported-platform construction failure. Registration through
 `NativeReferenceHost` inherits the composition gate above.
 
-Candidate standalone `GrepFilesTool` has the same Linux/macOS platform boundary
+Delivered standalone `GrepFilesTool` has the same Linux/macOS platform boundary
 without requiring `ai-gateway-http`; other targets receive its fixed
+unsupported-platform construction failure. Registration through
+`NativeReferenceHost` inherits the composition gate above.
+
+In-progress standalone `RenameFileTool` has the same Linux/macOS platform
+boundary without requiring `ai-gateway-http`; other targets receive its fixed
 unsupported-platform construction failure. Registration through
 `NativeReferenceHost` inherits the composition gate above.
 
@@ -311,7 +324,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the five tools;
+   identity for the nine tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -319,10 +332,10 @@ this order:
 6. construct `AiGatewayProvider` with the loaded configuration's projected
    model;
 7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly `file_info`, `glob_files`, `grep_files`,
-   `list_files`, and `read_file`, default `EngineLimits`, and the default
-   `NoopEventSink`; core's catalog exposes those names in deterministic
-   alphabetical order.
+8. build `Engine` with exactly `delete_file`, `edit_file`, `file_info`,
+   `glob_files`, `grep_files`, `list_files`, `read_file`, `rename_file`, and
+   `write_file`, default `EngineLimits`, and the default `NoopEventSink`;
+   core's catalog exposes those names in deterministic alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
 credential discovery and bearer-token handoff. A selection, workspace, or
@@ -333,11 +346,9 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and four descriptor clones of the same opened directory object
-feed the others. The candidate composed engine registers exactly the existing
-one-level `list_files`, bounded UTF-8 `read_file`, no-follow metadata
-`file_info`, bounded recursive `glob_files`, and bounded literal `grep_files`;
-it discovers or registers no other tool. This shared retained
+with one tool and eight descriptor clones of the same opened directory object
+feed the others. The composed engine registers exactly the nine alphabetical
+tools listed above and discovers or registers no other tool. This shared retained
 identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
 tool construction steps. It does not make the workspace a sandbox against the
@@ -358,7 +369,7 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same five tools, and
+the same provider and permission adapter, registers the same nine tools, and
 uses the same default engine limits and no-op sink. It deliberately performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
 
@@ -415,11 +426,20 @@ effect-free, and creating its execution future is inert. Its first poll performs
 the complete bounded synchronous scan after approval; it creates no task,
 thread, file, directory, subprocess, timer, or background work.
 
-The nineteenth candidate adds no construction effect beyond the fourth
+The delivered nineteenth slice adds no construction effect beyond the fourth
 descriptor clone and retention for the fifth tool. `grep_files` preparation is
 effect-free, and creating its execution future is inert. Its first poll performs
 the complete bounded synchronous content search after approval; it creates no
 task, thread, file, directory, subprocess, timer, or background work.
+
+Slices twenty through twenty-three add four identity-preserving descriptor
+clones and retention for `write_file`, `edit_file`, `delete_file`, and
+`rename_file`. `rename_file` preparation is effect-free and its execution
+future is inert until first poll. After approval, that first poll performs the
+bounded synchronous two-parent validation, one no-replace rename, postcommit
+identity check, and parent synchronization documented in
+[`rename-file.md`](rename-file.md); construction itself performs none of those
+effects and starts no background work.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
@@ -629,6 +649,6 @@ final-record feature and `main` workflows are green at integrated SHA
 fifteenth supplies create/resume/replay/reset, and the delivered sixteenth
 slice supplies bounded IDs-only listing. The combined root-and-session-lifecycle
 item is complete: the replacement reviews and exact feature and `main` gates
-are green. Milestone 03 remains in
-progress because the other remaining native tools, top-level CLI/slash-command
-ownership, and composed release-binary end-to-end evidence remain open.
+are green. Milestone 03 remains in progress because `rename_file` has not
+completed its local/review/delivery gates and top-level CLI/slash-command
+ownership plus composed release-binary end-to-end evidence remain open.
