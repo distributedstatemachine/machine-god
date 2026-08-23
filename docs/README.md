@@ -10,6 +10,7 @@
 - [Native `list_files` tool](list-files.md)
 - [Native `file_info` tool](file-info.md)
 - [Native `glob_files` tool](glob-files.md)
+- [Native `grep_files` tool](grep-files.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
 - [Native AI Gateway credential discovery](ai-gateway-credentials.md)
@@ -35,3 +36,4 @@
 - [Milestone 03 native session-listing delivery review](reviews/m03-native-session-listing-review-01.md)
 - [Milestone 03 native `file_info` delivery review](reviews/m03-file-info-review-01.md)
 - [Milestone 03 native `glob_files` delivery review](reviews/m03-glob-files-review-01.md)
+- [Milestone 03 native `grep_files` candidate review](reviews/m03-grep-files-review-01.md)

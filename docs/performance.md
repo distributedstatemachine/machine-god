@@ -211,6 +211,23 @@ but no latency, throughput, allocation, or comparative-performance result has
 been measured or claimed. Existing bootstrap classifications, eligibility,
 thresholds, workflows, and the pinned upstream Zig input remain unchanged.
 
+The nineteenth [`grep_files` candidate](grep-files.md) likewise adds no
+benchmark workload or result data. Its eight strict fields, literal matcher,
+include-glob grammar, three modes, and structured outputs are compatibility
+inputs only, not equivalence evidence. No latency, throughput, allocation, or
+comparative-performance result has been measured or claimed. The candidate
+starts from exact base `f6aa458bb875d6cb26565adc878703fe140916d3`; its
+tree-identical integration kickoff is
+`f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
+and documentation are parallel, non-overlapping components. Exact production
+`27eec2f` and initial test `6eaee93` components exist and initially compose
+through `9057feb` and `44e33d7`; fixture fix `bdbb677` makes focused
+production/test composition green. Documentation, first fully composed
+behavior, adversarial reviews, seal, delivery, and exact-workflow evidence
+remain **PENDING**. Existing bootstrap
+classifications, eligibility, thresholds, workflows, and pinned upstream Zig
+input remain unchanged; machine-god remains a Rust product.
+
 ## Milestone 02 orchestration note
 
 The durable tool loop checks the complete transcript before each provider

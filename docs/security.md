@@ -159,6 +159,24 @@ and main benchmark evidence `32611208415`; benchmark success is delivery
 evidence only and makes no product-performance claim. Its security contract is in
 [`glob-files.md`](glob-files.md).
 
+The nineteenth bounded candidate adds Linux/macOS `grep_files` under distinct
+`FilesystemAccess::SearchContent`. Exact base
+`f6aa458bb875d6cb26565adc878703fe140916d3` and tree-identical kickoff
+`f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` precede parallel production,
+independent-test, and documentation ownership. Exact production `27eec2f` and
+initial independent-test `6eaee93` components exist and initially compose
+through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
+focused production/test composition green. Documentation, fully composed
+behavior, review, seal, and delivery
+evidence remain **PENDING**. Its strict preflight
+prepares all eight canonical request fields and conservative search authority
+at the selected file or subtree. Execution performs retained descriptor-
+relative no-follow regular-file-only traversal, bounded eligible UTF-8 content
+reads, metered linear literal matching, same-buffer context, and exact
+structured results with explicit skip statistics. It adds no external path,
+symlink-target, Git/ignore/subprocess, regex, CLI, performance, or equivalence
+claim. Its security contract is in [`grep-files.md`](grep-files.md).
+
 Status resolution recognizes only the `machine-god` namespace. Empty XDG
 values fall back to `HOME`; a selected nonempty relative or non-Unicode root is
 invalid and cannot be bypassed through a `HOME` fallback. Missing or empty
@@ -229,7 +247,8 @@ The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, native tools beyond the bounded library-level `read_file`,
-`list_files`, delivered `file_info`, and delivered `glob_files`, composed
+`list_files`, delivered `file_info`, delivered `glob_files`, and candidate
+`grep_files`, composed
 release-binary end-to-end host evidence, and compatibility or performance
 claims remain open. The
 twelfth slice composes the existing library components only after an already
@@ -298,6 +317,16 @@ catalog alphabetically. A required clone failure remains the same fixed
 redacted `WorkspaceRoot` stage before engine construction. `glob_files`
 preflight remains effect-free, and creating its execution future remains inert
 until the first poll after exact recursive-enumeration approval.
+
+The nineteenth candidate changes only that workspace-tool bundle again. Path
+and prepared-root constructors distribute the original retained descriptor plus
+four clones across exactly `file_info`, `glob_files`, `grep_files`,
+`list_files`, and `read_file`, all under the same already validated identity;
+core exposes the catalog alphabetically. Clone failure remains the fixed
+redacted `WorkspaceRoot` stage. `grep_files` preflight is effect-free, and its
+execution future remains inert until first poll after exact `SearchContent`
+approval. Composition adds no process, network, environment, credential,
+session, runtime, or CLI authority.
 
 Reference-host failures retain only a non-exhaustive fixed stage kind:
 unsupported selection, workspace root, session store, credential, HTTP
@@ -765,16 +794,76 @@ selected component opens, each directory read, entry classification and child-
 directory opens, match accounting, and return. It cannot preempt one syscall
 already in flight and starts no detached work.
 
+Candidate `grep_files` uses the same retained workspace boundary for distinct
+`FilesystemAccess::SearchContent`. It conservatively authorizes bounded entry-
+name observation and regular-file content inspection at the selected regular
+file or beneath the selected directory. It does not imply or inherit `Read`,
+`Metadata`, `Enumerate`, or `EnumerateRecursive`, and it grants no mutation,
+external-path, or symlink-target authority. Strict effect-free preflight
+accepts exactly the eight fields in [`grep-files.md`](grep-files.md), bounds and
+normalizes them without I/O, makes all defaults explicit, and gives policy and
+execution the same selected path and canonical arguments.
+
+Allowed execution first performs fresh-root linked-identity validation. Every
+selected ancestor, selected file/directory, traversed directory, and candidate
+regular file is opened descriptor-relatively with no-follow, close-on-exec,
+nonblocking, and authoritative type requirements. Entry names are fully read,
+validated as confined safe UTF-8, and bytewise sorted. Hidden names are
+included. Symlinks are never followed or searched, even when their targets are
+inside the workspace. FIFO, socket, device, and other special objects are not
+opened. Optional include matching uses the delivered bytewise glob grammar and
+cannot prune traversal.
+
+Regular content is accepted only after the complete observed file is no more
+than 204,800 bytes, valid UTF-8, and NUL-free. Initial or sentinel-observed
+oversize and invalid-text files are excluded and disclosed through aggregate
+statistics; an unrelated open/metadata/read failure fails the entire call.
+Apparent matches are not retained before whole-file eligibility is known.
+Aggregate content bytes, candidate count, traversal/name/depth, include work,
+and literal matcher work all have checked exact caps. The literal engine is
+worst-case linear and folds ASCII only when requested, preventing pattern-
+length multiplication from becoming unmetered work.
+
+Matching and requested context derive from one validated buffer. No path-based
+context reopen can redirect content or observe a second file identity. UTF-8-
+safe bounded excerpts contain the complete first match, and bounded context
+records distinguish line clipping from omitted requested context. Aggregate
+path/text and complete serialized-output caps limit retained and escaped data.
+Both list modes return deterministic bounded pages only after the complete scan,
+with exact eligible-text totals, `next_offset`, list-completeness `truncated`,
+and explicit context truncation. Count mode has exact eligible matching-line
+and matching-file totals and no pagination fields. A fired scan/work cap is a
+fixed failure, never a partial success.
+
+The retained/opened descriptors resist path replacement, but the operation is
+not a filesystem or content snapshot. A candidate replaced before its own open
+may be observed; one that vanishes in the documented `NOENT` window may be
+omitted. Once opened, pathname replacement cannot redirect its descriptor.
+Concurrent file writes can affect the bounded bytes read. The overflow witness
+and aggregate read budget prevent growth from extending work without bound.
+
+The future is inert before first poll and detaches nothing. Cancellation is
+checked around root liveness, every directory/file authority operation and
+bounded read, at bounded intervals through include/content CPU matching and
+result construction, and immediately before return. It cannot preempt one
+syscall already in flight. Drop closes every owned descriptor and buffer.
+Fixed errors retain no path, pattern, include, entry name, file byte, match,
+metadata, OS diagnostic, or errno. Successful paths, excerpts, context, and
+counts are intentionally sensitive model-visible durable data rather than
+redacted diagnostics.
+
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
 points visible beneath a retained directory are trusted inputs. Hardened
 non-Linux/macOS workspace construction and traversal remain deferred for
-`list_files`, delivered `file_info`, and delivered `glob_files`; `read_file`
+`list_files`, delivered `file_info`, delivered `glob_files`, and candidate
+`grep_files`; `read_file`
 retains its separate
 supported-Unix boundary. The normative surfaces are
 [`read-file.md`](read-file.md), [`list-files.md`](list-files.md),
-[`file-info.md`](file-info.md), and [`glob-files.md`](glob-files.md).
+[`file-info.md`](file-info.md), [`glob-files.md`](glob-files.md), and
+[`grep-files.md`](grep-files.md).
 
 The injected-transport AI Gateway provider preserves network authority at an
 explicit trusted-host boundary. `AiGatewayProvider` accepts only an owned body,

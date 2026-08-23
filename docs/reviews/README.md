@@ -28,3 +28,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native session-listing delivery review](m03-native-session-listing-review-01.md)
 - [Milestone 03 native `file_info` delivery review](m03-file-info-review-01.md)
 - [Milestone 03 native `glob_files` candidate review](m03-glob-files-review-01.md)
+- [Milestone 03 native `grep_files` candidate review](m03-grep-files-review-01.md)

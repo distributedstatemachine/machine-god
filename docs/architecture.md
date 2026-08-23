@@ -21,7 +21,8 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has eighteen delivered bounded slices.
+Milestone 03 has eighteen delivered bounded slices and a nineteenth bounded
+candidate in progress.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -193,6 +194,31 @@ three replacement tracks are green on exact behavior SHA `523df858`; exact
 seal and delivery gates are green at `35c8536`. Its contract and review record are
 [`glob-files.md`](glob-files.md) and
 [`m03-glob-files-review-01.md`](reviews/m03-glob-files-review-01.md).
+The nineteenth candidate adds bounded Linux/macOS `grep_files` content search
+under distinct `FilesystemAccess::SearchContent`. Exact base
+`f6aa458bb875d6cb26565adc878703fe140916d3` and tree-identical integration
+kickoff `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` precede parallel production,
+independent-test, and documentation ownership. Exact production `27eec2f` and
+initial independent-test `6eaee93` components exist and initially compose
+through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
+focused production/test composition green. The documentation component, first
+fully composed behavior,
+local-gate, formal-review, seal, and delivery evidence are **PENDING**.
+Strict effect-free preflight accepts all eight pinned field names and prepares
+their explicit defaults. Allowed execution accepts a selected regular file or
+directory, applies fresh-root liveness and complete descriptor-relative no-
+follow traversal, searches only bounded eligible UTF-8 regular files with a
+linear literal matcher and ASCII-only folding, and returns one of three exact
+structured result modes with disclosed skip/scan totals. Same-buffer context,
+aggregate traversal/content/matcher/output budgets, fixed redacted errors, and
+cancellation/race semantics are normative in
+[`grep-files.md`](grep-files.md). The composed host candidate has exactly five
+alphabetical tools, distributing one retained workspace descriptor plus four
+clones to `file_info`, `glob_files`, `grep_files`, `list_files`, and
+`read_file`. The candidate adds no CLI, regex, symlink-target, Git/ignore/
+subprocess, external-path, benchmark, compatibility, or performance claim.
+Its review record is
+[`m03-grep-files-review-01.md`](reviews/m03-grep-files-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
 [`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md);
 it is integrated on `main` at
@@ -207,8 +233,9 @@ loader, and owns no product state. The exact surfaces are documented in
 [`cli.md`](cli.md) and [`configuration.md`](configuration.md). The separate
 [`read_file` contract](read-file.md),
 [`list_files` contract](list-files.md), delivered
-[`file_info` contract](file-info.md), and delivered eighteenth
-[`glob_files` slice](glob-files.md) do not change either CLI surface. The
+[`file_info` contract](file-info.md), delivered eighteenth
+[`glob_files` slice](glob-files.md), and nineteenth
+[`grep_files` candidate](grep-files.md) do not change either CLI surface. The
 separate [`AI Gateway provider contract`](ai-gateway.md) also remains a library
 surface and does not change CLI bytes. The same is true of the normative
 [`native file session store`](session-store.md). The ask-handler slice is
@@ -294,7 +321,8 @@ uses `symlink_metadata` on the final path, reports
 missing/inaccessible/wrong-kind states, and treats a final symlink as
 wrong-kind. It does not open, read, or parse the config file. Permission mode is
 fixed to `ask`; the CLI does not construct an engine, register `read_file`,
-`list_files`, delivered `file_info`, or delivered `glob_files`, or prompt for
+`list_files`, delivered `file_info`, delivered `glob_files`, or candidate
+`grep_files`, or prompt for
 permission. The CLI
 serializes paths as JSON strings
 even in human status so path contents do not become terminal controls. Bare
@@ -352,7 +380,8 @@ concrete selected OIDC-token or API-key source; the custom-transport override
 skips discovery and reports `None`. Configuration mutation or migration,
 permission modes beyond `ask`, a concrete prompt UI, runtime ownership, token
 fields in config, CLI composition, the native tools beyond bounded `read_file`,
-`list_files`, delivered `file_info`, and delivered `glob_files` library
+`list_files`, delivered `file_info`, delivered `glob_files`, and candidate
+`grep_files` library
 capabilities, session
 migration/encryption, CLI expansion, and composed release-binary end-to-end
 evidence remain open. The by-ID lifecycle, session-listing extension, and
@@ -425,6 +454,20 @@ exact feature CI `32610950593`, feature benchmark evidence `32610950594`, main
 CI `32611208411`, and main benchmark evidence `32611208415`; all four report
 that exact seal SHA.
 
+The nineteenth candidate extends that workspace bundle from four to exactly
+five descriptors of one retained identity: the original plus four clones.
+Both path and prepared-root constructors supply exactly `file_info`,
+`glob_files`, `grep_files`, `list_files`, and `read_file`; core exposes that
+catalog alphabetically. `grep_files` preflight and execution agree on the exact
+normalized `SearchContent` selected path and all eight canonical request
+values. Literal/include/mode/pagination/context values attenuate output but do
+not substitute for subtree content-search authority. No provider, permission-
+handler, session-store, credential, transport, runtime, constructor argument,
+root-selection, or CLI authority changes. Exact base and kickoff are
+`f6aa458` and tree-identical `f6ab594`. Exact isolated components and focused
+production/test composition are named above; the documentation component, fully
+composed behavior, review, seal, and delivery evidence remain **PENDING**.
+
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
 reach session artifacts beneath the workspace after permission is granted.
@@ -444,11 +487,12 @@ descriptor-relative parent walking. New
 `NativeReferenceHost` constructors consume that prepared value and transfer its
 workspace identity to the registered workspace tools and its state-root identity
 to `FileSessionStore` without reopening either path. The delivered seventeenth
-slice extends that transfer to three tools; the delivered eighteenth slice extends it
-to all four. Config selection is validated
-by the composing constructor, and production credential discovery remains after
-the already prepared retained roots are accepted. Production and focused tests
-for this behavior are present. Formal adversarial review was green on
+slice extends that transfer to three tools; the delivered eighteenth slice
+extends it to four; and the nineteenth candidate extends it to five. Config
+selection is validated by the composing constructor, and production credential
+discovery remains after the already prepared retained roots are accepted.
+Production and focused tests for this behavior are present. Formal adversarial
+review was green on
 exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
 `90d8f96`, all three final tracks are green on exact candidate `72cf64f6`.
 Replacement seal `f08dbd9e`, feature record `6f66b6e5`, and exact `main`
@@ -902,11 +946,44 @@ when an observed match was omitted. Count mode reports the exact count. The
 complete matcher, result, scan, error, cancellation, compatibility, and deferred
 contracts are in [`glob-files.md`](glob-files.md).
 
+The nineteenth native `grep_files` candidate uses strict effect-free preflight
+for required literal `pattern` and optional `path`, `include`,
+`case_insensitive`, `mode`, `head_limit`, `offset`, and `context_lines`.
+Prepared arguments contain all eight canonical values with explicit defaults,
+and policy receives a distinct filesystem capability with
+`FilesystemAccess::SearchContent` at the same normalized selected path. That
+path can be a regular file or directory after approval. `SearchContent` owns
+bounded enumeration plus content
+inspection and is not inferred from `Read`, `Metadata`, `Enumerate`, or
+`EnumerateRecursive`.
+
+Allowed execution applies fresh-root liveness and opens all selected/traversed
+objects descriptor-relatively without following symlinks. Directory entries
+are completely validated and bytewise sorted; traversal includes hidden names
+and opens only regular candidates. Optional include matching reuses the
+delivered glob grammar with its own aggregate work counter. Content matching is
+literal and worst-case linear, with exact bytes or ASCII-only folding, and
+returns one record per matching line. Eligible files are complete observed
+NUL-free valid UTF-8 no larger than 204,800 bytes; explicit aggregate counters
+report oversized and non-text exclusions while other read failures fail the
+call.
+
+The complete scan is bounded by 100,000 entries, 16 MiB entry names, 10,000
+candidates, 64 MiB content, 8,388,608 include steps, 268,435,456 content steps,
+depth 256, and 4,096-byte paths. List results retain no more than head 100,
+8 KiB paths, 8 KiB excerpt/context text, and a 48 KiB serialized `ToolOutput`.
+Match/context excerpts are UTF-8-safe and derive from one buffer; pagination
+uses exact totals, `next_offset`, top-level list incompleteness, and distinct
+per-record context truncation. A fired scan/work cap fails without partial
+output. Exact shapes, public constants, errors, cancellation and race semantics
+are in [`grep-files.md`](grep-files.md).
+
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's
 ancestors and mount points beneath a retained root belong to that trusted host
 boundary. Hardened construction and traversal beyond Linux and macOS remain
-deferred for `list_files`, delivered `file_info`, and delivered `glob_files`;
+deferred for `list_files`, delivered `file_info`, delivered `glob_files`, and
+candidate `grep_files`;
 `read_file` retains its separately documented supported-Unix boundary.
 
 A preparation error consults no permission handler and starts no tool. It

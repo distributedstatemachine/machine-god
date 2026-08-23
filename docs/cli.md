@@ -54,7 +54,28 @@ green on exact behavior SHA `523df858`. Documentation seal and integrated
 `main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
 `32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
 and main benchmark evidence `32611208415`. The slice makes no compatibility or
-performance claim; benchmark success is delivery evidence only.
+performance claim; benchmark success is delivery evidence only. Final docs
+record `f6aa458bb875d6cb26565adc878703fe140916d3` passed feature CI
+`32611623653` and benchmark evidence `32611623655`. Because GitHub did not
+materialize workflows for its first `main` event, tree-identical non-behavior
+successor `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` passed feature CI
+`32612424382` and benchmark evidence `32612424383`, then exact main CI
+`32612662260` and benchmark evidence `32612662203` after fast-forward.
+
+The nineteenth [`grep_files` candidate](grep-files.md) is also library-only.
+It adds no `grep_files`, workspace, or slash command and changes none of the
+accepted invocations, output bytes, diagnostics, or exit statuses below. Its
+bounded structured match, file, and count results are not exposed as CLI
+output. The candidate starts from exact base
+`f6aa458bb875d6cb26565adc878703fe140916d3`; the tree-identical integration
+kickoff is `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent
+tests, and documentation are parallel, non-overlapping components. Exact
+production `27eec2f` and initial test `6eaee93` components exist and initially
+compose through `9057feb` and `44e33d7`; fixture fix `bdbb677` makes focused
+production/test composition green. The documentation component, fully composed
+behavior, review, seal, delivery, and exact-workflow evidence remain
+**PENDING**. It makes no compatibility or
+performance claim.
 
 ## Accepted invocations
 

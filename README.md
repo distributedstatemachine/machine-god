@@ -7,7 +7,8 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-eighteen delivered bounded slices. The
+eighteen delivered bounded slices plus a nineteenth bounded `grep_files`
+candidate. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -59,7 +60,8 @@ and macOS behind the optional `ai-gateway-http` and non-WebAssembly gate. It
 composes an already validated native configuration with the AI Gateway
 provider, either production HTTP from an injected credential snapshot or a
 trusted injected custom transport, one shared retained workspace feeding the
-delivered `file_info`, `list_files`, and `read_file` tools under that same
+current `file_info`, `glob_files`, `grep_files`, `list_files`, and `read_file`
+candidate tool catalog under that same
 retained identity, the existing file session store, and the
 ask handler over an injected prompter. Construction remains synchronous and
 creates no root, runtime, network request, prompt operation, session record, or
@@ -214,18 +216,52 @@ that exact seal SHA. Benchmark success is delivery evidence only and makes no
 product-performance claim. This documentation-only commit is the final
 `glob_files` delivery record, is explicitly exempt from another adversarial
 review after behavior was green, and reports its own exact workflows at
-handoff. See the
+handoff. Final documentation record
+`f6aa458bb875d6cb26565adc878703fe140916d3` passed exact feature CI
+`32611623653` and feature benchmark evidence `32611623655`. GitHub did not
+materialize workflows for its first `main` event, so tree-identical
+non-behavior successor `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` passed
+feature CI `32612424382` and feature benchmark evidence `32612424383`, was
+fast-forwarded to `main`, and passed exact main CI `32612662260` and main
+benchmark evidence `32612662203`. Neither docs-only record reopened behavior
+review. See the
 [`glob_files` contract](docs/glob-files.md) or
 [review record](docs/reviews/m03-glob-files-review-01.md). The reviewed behavior changes
 no CLI byte, benchmark workload, compatibility status, or performance claim,
 and the combined native-tool checklist remains open.
+
+The nineteenth bounded candidate adds Linux/macOS library-only `grep_files`
+from exact base `f6aa458bb875d6cb26565adc878703fe140916d3`, with tree-identical
+integration kickoff `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production,
+independent tests, and maintained documentation are parallel, non-overlapping
+components. Exact production `27eec2f` and initial independent-test `6eaee93`
+components exist and initially compose through `9057feb` and `44e33d7`;
+reference-host fixture fix `bdbb677` makes focused production/test composition
+green. The documentation component, first fully composed behavior, review,
+seal, delivery, and exact-workflow evidence remain **PENDING**. Strict effect-
+free preflight accepts exactly `pattern`, `path`, `include`,
+`case_insensitive`, `mode`, `head_limit`,
+`offset`, and `context_lines`, makes every default explicit, and prepares
+`FilesystemAccess::SearchContent` at the normalized selected file or subtree.
+Allowed execution performs a bounded linear literal search with optional ASCII
+case folding over eligible UTF-8 no-follow regular files reached through the
+retained descriptor. It reports exact matching and eligible-text statistics in
+bounded `matches`, `files_with_matches`, or `count` results, with same-buffer
+context and fixed redacted errors. Candidate composition extends the host to
+exactly five alphabetical tools—`file_info`, `glob_files`, `grep_files`,
+`list_files`, and `read_file`—using the original retained workspace descriptor
+plus four clones. It adds no CLI byte, benchmark workload, compatibility status,
+performance claim, or fx-equivalence claim, and the combined native-tool
+checklist stays open. See the [`grep_files` contract](docs/grep-files.md) and
+[review plan](docs/reviews/m03-grep-files-review-01.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
 [`read_file` contract](docs/read-file.md),
 [`list_files` contract](docs/list-files.md),
 [`file_info` contract](docs/file-info.md),
-[`glob_files` contract](docs/glob-files.md), and
+[`glob_files` contract](docs/glob-files.md),
+[`grep_files` contract](docs/grep-files.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the

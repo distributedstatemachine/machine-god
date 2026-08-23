@@ -43,7 +43,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with eighteen delivered bounded slices.
+with eighteen delivered bounded slices and a nineteenth bounded candidate in
+progress.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -529,16 +530,96 @@ All three replacement adversarial tracks are green on exact behavior SHA
 `32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
 and main benchmark evidence `32611208415`; all four report that exact seal SHA.
 Benchmark success is delivery evidence only, not a product-performance claim.
-Per the user's instruction, this documentation-only final delivery record is
-exempt from another adversarial cycle after behavior is green. The slice adds no
+Final documentation record `f6aa458bb875d6cb26565adc878703fe140916d3`
+passed exact feature CI `32611623653` and benchmark evidence `32611623655`.
+GitHub did not materialize workflows for its first `main` event, so
+tree-identical non-behavior grep kickoff marker
+`f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` passed exact feature CI
+`32612424382` and benchmark evidence `32612424383`, was fast-forwarded to
+`main`, and passed exact main CI `32612662260` and benchmark evidence
+`32612662203`. Per the user's instruction, these documentation-only/tree-
+identical records are exempt from another adversarial cycle after behavior is
+green. The slice adds no
 CLI behavior, external-path access, ignore or Git/subprocess behavior, content
 read, mutation, dependency, benchmark workload, product-performance claim, or
 fx-equivalence claim.
 
+The nineteenth bounded candidate adds Linux/macOS library-only `grep_files`
+from exact base `f6aa458bb875d6cb26565adc878703fe140916d3`. Strict effect-free
+preflight owns all eight pinned field names: required literal `pattern` plus
+optional `path`, `include`, `case_insensitive`, `mode`, `head_limit`, `offset`,
+and `context_lines`. It rejects unknown or mistyped values and prepares the
+explicit defaults `.`, `null`, `false`, `matches`, `100`, `0`, and `0`.
+Policy receives the distinct `FilesystemAccess::SearchContent` capability at
+the normalized selected path, which may resolve after approval to a regular
+file or directory. Search authority is separate from `Read`, `Metadata`,
+`Enumerate`, and `EnumerateRecursive`.
+
+Allowed execution reacquires the retained workspace under the delivered linked-
+root liveness rule. Selected ancestors, the selected file/directory, traversed
+directories, and candidate regular files use descriptor-relative no-follow,
+close-on-exec, and nonblocking operations with authoritative opened-type checks.
+Traversal is iterative, includes hidden entries, fully validates and bytewise
+sorts each directory, opens only regular files, and never follows or reads a
+symlink or special object. Optional include filtering uses the delivered
+bytewise glob grammar before content open, charges its complete matcher work,
+and does not prune directory traversal. No ignore, Git, subprocess, external-
+path, or ambient discovery behavior is added.
+
+Content matching is literal and worst-case linear, with exact byte comparison
+or ASCII-only case folding and one result per matching LF-delimited line. A
+candidate is eligible text only when its complete observed content is at most
+204,800 bytes, valid UTF-8, and NUL-free. Oversized and non-text candidates are
+skipped with disclosed aggregate statistics; other candidate failures fail the
+complete call. Match excerpts are UTF-8-safe, at most 4,096 bytes, and contain
+the complete first matched substring. Requested before/after context comes
+from the same validated buffer, and per-record `context_truncated` distinguishes
+budgeted context omission from top-level page incompleteness.
+
+Each mode either completes the same bounded scan or fails without partial
+output under exact 4,096-byte input/path limits, head 100, offset 100,000,
+context 5, 100,000 entries, 16 MiB name bytes, 10,000 candidates, 64 MiB
+aggregate content, 8,388,608 include-match steps, 268,435,456 literal-match
+steps, depth 256, 8 KiB aggregate result paths, 8 KiB aggregate result text,
+and a 48 KiB serialized `ToolOutput`. `matches` and `files_with_matches`
+return deterministic bounded pages with exact totals, scan statistics,
+`next_offset`, and list-completeness `truncated`; `count` returns exact eligible-
+text matching-line/file totals without pagination fields.
+
+The candidate extends reference-host composition to exactly five alphabetical
+workspace tools: `file_info`, `glob_files`, `grep_files`, `list_files`, and
+`read_file`. Prepared roots distribute the original retained descriptor plus
+four clones of one identity. The complete provider schema, authority,
+descriptor, matcher, eligibility, result, error, cancellation, race, and
+deferred contract is normative in [`grep-files.md`](grep-files.md). Parallel
+production, independent-test, and documentation ownership and the review gates
+are recorded in the
+[`grep_files` review](reviews/m03-grep-files-review-01.md). Integration kickoff
+marker `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` is tree-identical to the exact
+base. Exact production component
+`27eec2f3c25ffecd1ba8ff3c0a4fe0129dbeeac3` and initial independent-test
+component `6eaee93398de8fbf6e87e77cf4d3e7de56e2a8cb` exist. Initial integration
+heads are `9057feb24fd3f24657148ca8e78198b88c9dbab4` after production and
+`44e33d7e24c6650a1e375cd095eb9efae31f4e78` after the tests. Reference-host
+fixture fix and focused production/test head
+`bdbb677161322e249aea95a12bfb1b2169ff5b48` is green. The documentation
+component, fully composed behavior, local-gate, formal review, documentation
+seal, and feature/`main` delivery SHAs or runs remain **PENDING**. The maintained
+documentation must compose into the exact behavior SHA reviewed by all three
+adversarial tracks. A later documentation-only seal or delivery record is
+exempt from another adversarial cycle under the user's instruction but still
+requires exact feature and `main` workflows.
+
+The candidate adds no regex, Unicode case folding, binary search, alternate
+encoding, symlink-target search, context reread, CLI behavior, benchmark
+workload, compatibility-status change, product-performance claim, or fx-
+equivalence claim. Zig remains only the pinned upstream benchmark build input;
+the product remains Rust.
+
 ### Milestone 03 completion boundary
 
-The eighteen delivered slices do not complete
-Milestone 03.
+The eighteen delivered slices and the nineteenth in-progress candidate do not
+complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -614,8 +695,20 @@ gate:
   seal and integrated `main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4`
   passed exact feature CI `32610950593`, feature benchmark evidence
   `32610950594`, main CI `32611208411`, and main benchmark evidence
-  `32611208415`. The remaining native tools are incomplete, so this delivery
-  does not change the combined checkbox.
+  `32611208415`. Final documentation record `f6aa458` passed exact feature CI
+  `32611623653` and benchmark evidence `32611623655`; tree-identical kickoff
+  marker `f6ab594` supplied the missing exact `main` handoff evidence under
+  feature CI `32612424382`, feature benchmark `32612424383`, main CI
+  `32612662260`, and main benchmark `32612662203`. The nineteenth
+  `grep_files` candidate is frozen from exact base `f6aa458`; its parallel
+  production, independent tests, and maintained documentation must compose into
+  one exact behavior candidate with all three formal review tracks green.
+  Exact production `27eec2f` and initial independent-test `6eaee93` components
+  exist and initially compose through `9057feb` and `44e33d7`; fixture fix
+  `bdbb677` makes focused production/test composition green. Documentation,
+  fully composed behavior, review, seal, feature, integration, and `main`
+  evidence remain **PENDING**. The remaining native tools are incomplete, so
+  this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
@@ -638,8 +731,8 @@ Ownership beyond that boundary is also fixed:
 | M07 | Claim-eligible performance comparison, threshold enforcement, optimization, packaging evidence, and final hardening. Earlier milestones retain regression/size evidence needed by CI but make no product performance claim. |
 
 Existing CLI bytes, benchmark evidence, workflows, and Zig inputs are unchanged
-by the tenth through fifteenth slices and the delivered sixteenth through
-eighteenth slices; Zig remains only the pinned
+by the tenth through fifteenth slices, the delivered sixteenth through
+eighteenth slices, and the nineteenth candidate; Zig remains only the pinned
 upstream benchmark build input, not a machine-god product language or runtime
 dependency. The provider is explicitly scoped to a pinned wire shape and makes
 no current-protocol or full fx-equivalence claim. Help and status remain

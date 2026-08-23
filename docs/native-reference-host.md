@@ -2,7 +2,16 @@
 
 Status: integrated contract for the twelfth bounded Milestone 03 library slice,
 with its workspace-tool composition extended by the delivered seventeenth and
-eighteenth `glob_files` slices. Eighteen slices are delivered; eighteenth-slice
+eighteenth slices. Eighteen slices are delivered. The nineteenth bounded
+`grep_files` candidate is **IN PROGRESS** from exact base
+`f6aa458bb875d6cb26565adc878703fe140916d3`; its tree-identical integration
+kickoff is `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Its production, independent
+tests, and maintained documentation are parallel, non-overlapping components;
+exact production `27eec2f` and initial test `6eaee93` components exist and
+initially compose through `9057feb` and `44e33d7`. Reference-host fixture fix
+`bdbb677` makes focused production/test composition green. The documentation
+component, fully composed behavior, review, seal,
+delivery, and exact-workflow evidence remain **PENDING**. Eighteenth-slice
 production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
 first formal review at `1f5de6a` found a high matcher-work bound defect. Its fix,
@@ -69,9 +78,9 @@ lineage is recorded in the
 
 `NativeReferenceHost` composes the existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and—through the delivered eighteenth slice—four confined read-only tools into
-one provider-neutral `Engine`. Their exact membership is `file_info`,
-`glob_files`, `list_files`, and `read_file`, and core exposes that catalog in
+adapter, and—in the nineteenth candidate—five confined read-only tools into one
+provider-neutral `Engine`. Their exact membership is `file_info`, `glob_files`,
+`grep_files`, `list_files`, and `read_file`, and core exposes that catalog in
 deterministic alphabetical order. It is a library surface in
 `machine-god-native`. The `machine-god-cli` crate and every existing CLI output
 byte remain unchanged.
@@ -126,6 +135,17 @@ session, runtime, credential, root-selection, or CLI authority. Exact composed,
 review, and delivery lineage is recorded in the
 [`review record`](reviews/m03-glob-files-review-01.md).
 
+The nineteenth candidate adds `grep_files` beside those four delivered tools.
+It prepares the distinct `FilesystemAccess::SearchContent` capability at the
+normalized selected file or subtree, performs a complete bounded literal
+search through descriptor-relative no-follow regular-file-only traversal, and
+returns exact eligible-text statistics with bounded structured match, file, or
+count results. Its frozen candidate contract is
+[`grep-files.md`](grep-files.md), and its pending evidence requirements are in
+the [`review record`](reviews/m03-grep-files-review-01.md). It changes no
+constructor arguments, provider, transport, permission handler, session,
+runtime, credential, root-selection, or CLI authority.
+
 ## Feature and platform boundary
 
 The integrated composition API is exported only under this gate:
@@ -160,7 +180,12 @@ macOS without requiring `ai-gateway-http`; other targets receive its fixed
 unsupported-platform construction failure. Registration through
 `NativeReferenceHost` inherits the composition gate above.
 
-Candidate standalone `GlobFilesTool` has the same Linux/macOS platform boundary
+Delivered standalone `GlobFilesTool` has the same Linux/macOS platform boundary
+without requiring `ai-gateway-http`; other targets receive its fixed
+unsupported-platform construction failure. Registration through
+`NativeReferenceHost` inherits the composition gate above.
+
+Candidate standalone `GrepFilesTool` has the same Linux/macOS platform boundary
 without requiring `ai-gateway-http`; other targets receive its fixed
 unsupported-platform construction failure. Registration through
 `NativeReferenceHost` inherits the composition gate above.
@@ -238,7 +263,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the four tools;
+   identity for the five tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -246,9 +271,10 @@ this order:
 6. construct `AiGatewayProvider` with the loaded configuration's projected
    model;
 7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly `file_info`, `glob_files`, `list_files`, and
-   `read_file`, default `EngineLimits`, and the default `NoopEventSink`; core's
-   catalog exposes those names in deterministic alphabetical order.
+8. build `Engine` with exactly `file_info`, `glob_files`, `grep_files`,
+   `list_files`, and `read_file`, default `EngineLimits`, and the default
+   `NoopEventSink`; core's catalog exposes those names in deterministic
+   alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
 credential discovery and bearer-token handoff. A selection, workspace, or
@@ -259,11 +285,11 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and three descriptor clones of the same opened directory object
-feed the others. The composed engine registers exactly the existing one-level
-`list_files`, bounded UTF-8 `read_file`, no-follow metadata `file_info`, and
-delivered bounded recursive `glob_files`; it discovers or registers no other
-tool. This shared retained
+with one tool and four descriptor clones of the same opened directory object
+feed the others. The candidate composed engine registers exactly the existing
+one-level `list_files`, bounded UTF-8 `read_file`, no-follow metadata
+`file_info`, bounded recursive `glob_files`, and bounded literal `grep_files`;
+it discovers or registers no other tool. This shared retained
 identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
 tool construction steps. It does not make the workspace a sandbox against the
@@ -284,7 +310,7 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same four tools, and
+the same provider and permission adapter, registers the same five tools, and
 uses the same default engine limits and no-op sink. It deliberately performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
 
@@ -340,6 +366,12 @@ descriptor clone and retention for the fourth tool. `glob_files` preparation is
 effect-free, and creating its execution future is inert. Its first poll performs
 the complete bounded synchronous scan after approval; it creates no task,
 thread, file, directory, subprocess, timer, or background work.
+
+The nineteenth candidate adds no construction effect beyond the fourth
+descriptor clone and retention for the fifth tool. `grep_files` preparation is
+effect-free, and creating its execution future is inert. Its first poll performs
+the complete bounded synchronous content search after approval; it creates no
+task, thread, file, directory, subprocess, timer, or background work.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
@@ -441,10 +473,10 @@ Neither that root slice nor this integrated composition implements a concrete
 terminal `PermissionPrompter`, allocates a session ID or
 `SessionIncarnationId`, or adds create/list/resume/replay/reset session
 lifecycle CLI commands. The delivered seventeenth slice adds only `file_info`,
-and the delivered eighteenth slice adds only `glob_files`; neither adds the other
-remaining native tools, composes or runs the CLI, or changes any existing CLI
-byte. A reset under a reused session ID
-still requires a new host-generated incarnation before reuse.
+the delivered eighteenth slice adds only `glob_files`, and the nineteenth
+candidate adds only `grep_files`; none adds the other remaining native tools,
+composes or runs the CLI, or changes any existing CLI byte. A reset under a
+reused session ID still requires a new host-generated incarnation before reuse.
 
 The delivered fifteenth slice fills the library-level by-ID create, resume,
 durable-record replay, and reset sub-boundary. `NativeSessionLifecycle` uses the
@@ -485,6 +517,14 @@ green at `523df858`. Documentation seal and integrated `main` SHA
 `32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
 and main benchmark evidence `32611208415`; the combined native-tool checklist
 stays open because the other listed tools remain incomplete.
+
+The nineteenth `grep_files` candidate likewise adds no benchmark workload or
+workflow change and makes no compatibility or product-performance claim. Its
+isolated production and initial independent-test components exist. The fixture
+fix is green at `bdbb677`; the documentation component, first fully composed
+behavior SHA, local gates,
+adversarial reviews, seal, and feature and `main` workflows remain **PENDING**.
+The combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature

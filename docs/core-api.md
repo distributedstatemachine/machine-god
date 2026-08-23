@@ -398,7 +398,8 @@ must not reinterpret their prepared arguments into broader authority.
 The concrete consumers are the native
 [`read_file` tool](read-file.md), [`list_files` tool](list-files.md), the
 delivered seventeenth-slice [`file_info` tool](file-info.md), and the delivered
-eighteenth [`glob_files` tool](glob-files.md).
+eighteenth [`glob_files` tool](glob-files.md), plus the nineteenth in-progress
+[`grep_files` candidate](grep-files.md).
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -494,6 +495,50 @@ and main benchmark evidence `32611208415`; all four report that exact seal SHA.
 This delivered slice does not alter
 core result limits, generic durable error mapping, CLI behavior, benchmark
 evidence, or compatibility/performance status.
+
+The nineteenth candidate adds `FilesystemAccess::SearchContent` as a distinct
+serialized filesystem operation. It authorizes bounded recursive entry-name
+observation and bounded regular-file content inspection at exactly one
+normalized selected path: that object if it is a regular file, or eligible
+regular files beneath it if it is a directory. It neither implies nor is
+implied by `Read`, `Metadata`, `Enumerate`, or `EnumerateRecursive`, and it does
+not imply mutation, external-path, or symlink-target authority. Core treats it
+as an auditable value and infers none of those relationships.
+
+`grep_files` effect-free preflight accepts exactly required `pattern` and
+optional `path`, `include`, `case_insensitive`, `mode`, `head_limit`, `offset`,
+and `context_lines`. It prepares all eight canonical values with explicit
+defaults `.`, `null`, `false`, `matches`, `100`, `0`, and `0`, plus the
+`SearchContent` capability at the exact normalized selected path. Pattern,
+include, case, mode, pagination, and context attenuate one invocation's output;
+the capability remains conservative authority to search content at or beneath
+the selected path. Preparation opens no filesystem object.
+
+The Linux/macOS native implementation, not core, owns retained workspace
+identity and liveness, selected-file/directory classification, iterative
+descriptor-relative no-follow sorted traversal, regular-file-only open and
+eligibility, the delivered include grammar, a worst-case-linear literal matcher
+with ASCII-only folding, same-buffer context, complete scan/work/output budgets,
+fixed redacted errors, and synchronous cancellation/race limitations. Its
+`matches`, `files_with_matches`, and `count` shapes echo the canonical request,
+return exact eligible-text totals plus candidate/search/skip statistics, and
+remain under an independent 48 KiB complete serialized `ToolOutput` cap. Core
+adds no content-search grammar, traversal, eligibility, pagination, excerpt,
+context, ordering, race, or snapshot semantics. The complete contract is in
+[`grep-files.md`](grep-files.md).
+
+This candidate starts from exact base
+`f6aa458bb875d6cb26565adc878703fe140916d3` with tree-identical kickoff
+`f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Exact production `27eec2f` and
+initial independent-test `6eaee93` components exist and initially compose
+through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
+focused production/test composition green. The documentation component, fully
+composed behavior, local-gate,
+formal review, seal, and delivery evidence are **PENDING**. Maintained behavior
+must compose into the exact SHA reviewed by all three adversarial tracks. A
+later documentation-only seal or
+delivery record is exempt from another adversarial cycle under the user's
+instruction but still requires exact feature and `main` workflows.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

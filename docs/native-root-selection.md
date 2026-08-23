@@ -58,6 +58,15 @@ green on exact behavior SHA `523df858`. Documentation seal and integrated
 `main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
 `32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
 and main benchmark evidence `32611208415`; all four report that exact seal SHA.
+The nineteenth bounded `grep_files` candidate is **IN PROGRESS** from exact
+base `f6aa458bb875d6cb26565adc878703fe140916d3`; its tree-identical integration
+kickoff is `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent
+tests, and documentation are parallel, non-overlapping components. Exact
+production `27eec2f` and initial test `6eaee93` components exist and initially
+compose through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677`
+makes focused production/test composition green. The documentation component,
+fully composed behavior, review, seal, delivery,
+and exact-workflow evidence remain **PENDING**.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
@@ -278,12 +287,12 @@ and macOS; other targets receive no public runtime API for this slice.
 The new
 `NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots` and
 `NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots`
-constructors consume one `PreparedNativeRoots`. Under the delivered eighteenth slice,
-they transfer its original retained workspace descriptor plus three clones to
-exactly `file_info`, `glob_files`, `list_files`, and `read_file`, and its
-separately retained state-root identity to `FileSessionStore`, without reopening
-either path. The exact tool membership is `file_info`, `glob_files`,
-`list_files`, and `read_file`, which core
+constructors consume one `PreparedNativeRoots`. Under the nineteenth candidate,
+they transfer its original retained workspace descriptor plus four clones to
+exactly `file_info`, `glob_files`, `grep_files`, `list_files`, and `read_file`,
+and its separately retained state-root identity to `FileSessionStore`, without
+reopening either path. The exact tool membership is `file_info`, `glob_files`,
+`grep_files`, `list_files`, and `read_file`, which core
 exposes in deterministic alphabetical catalog order. The selected `machine-god`
 state root itself is the store root; no extra
 `sessions` suffix is inserted. The existing loaded configuration, permission
@@ -305,7 +314,7 @@ Root failure therefore does not discover or hand off a credential. The custom
 transport path still performs no native credential discovery or production HTTP
 construction.
 
-If transferring the prepared workspace descriptor into the four tools cannot
+If transferring the prepared workspace descriptor into the five tools cannot
 clone it, the existing reference-host `WorkspaceRoot` stage is returned. The
 session store has already accepted the retained state descriptor during
 preparation, so prepared-root composition does not reopen a session path.
@@ -340,9 +349,9 @@ library behavior. It does not allocate a session ID or a new incarnation for res
 change the session record schema, migrate or encrypt state, add a cleanup or
 repair command, supply a terminal prompter, or expand CLI ownership. The
 delivered seventeenth slice consumes its retained workspace identity for
-`file_info`; the delivered eighteenth slice additionally consumes a clone of that
-same identity for `glob_files`. Neither adds root-selection authority or
-behavior.
+`file_info`; the delivered eighteenth slice additionally consumes a clone of
+that same identity for `glob_files`; and the nineteenth candidate consumes one
+more clone for `grep_files`. None adds root-selection authority or behavior.
 
 The slice makes no compatibility, upstream-equivalence, or product-performance
 claim and does not change the pinned fx inventory, benchmark workloads,
