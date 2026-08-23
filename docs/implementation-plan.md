@@ -54,8 +54,10 @@ passed both jobs with two nonexpired exact-SHA artifacts. Native `delete_file`
 is the twenty-second bounded slice and is **IN PROGRESS**. Formal cycle 1 is
 **NOT GREEN** on exact candidate
 `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf`; remediation, replacement
-same-SHA adversarial review, and delivery remain pending. The remaining native
-tools, CLI ownership, and Milestone 03 completion boundary remain pending.
+same-SHA adversarial review, and delivery remain pending. Exact remediation
+`60e81a633557bc90aca01e3579782340c7c154c9` passes the complete replacement
+local gate. The remaining native tools, CLI ownership, and Milestone 03
+completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1154,8 +1156,15 @@ reported **NOT GREEN**. The four unique findings cover requested-path work
 precedence, retained-root permission taxonomy, macOS cancellation around the
 post-`EPERM` diagnostic metadata operation, and the under-specified portable
 file-class replacement race. Remediation and a fresh three-track same-SHA
-cycle are in progress. Neither precursor nor failed candidate establishes
-delivery, compatibility promotion, performance, or fx-equivalence approval.
+cycle are in progress. Exact remediation
+`60e81a633557bc90aca01e3579782340c7c154c9` passes the complete replacement
+local gate: focused totals are 22/23 private, 20 direct, five engine, and seven
+host; discovery is 732/782 with zero benchmarks; workspace Rust, Python 130,
+pinned compatibility, dependency, Linux/FreeBSD/WASI and active Node,
+64/445/295/0 documentation, no-unsafe/diff, and fresh release-smoke gates are
+green. Neither precursor, failed candidate, nor remediation local gate
+establishes delivery, compatibility promotion, performance, or fx-equivalence
+approval.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1440,10 +1449,13 @@ gate:
   cycle-1 candidate `7c6f7ee` is **NOT GREEN** across all three fresh tracks,
   with four unique findings covering requested-path work precedence, root
   permission taxonomy, macOS diagnostic-metadata cancellation, and the
-  portable final non-directory replacement boundary. Remediation, fresh
-  same-SHA review, feature delivery, and `main` delivery remain pending, so
-  the combined native-tool checkbox stays unchecked and the delivered-slice
-  count remains twenty-one.
+  portable final non-directory replacement boundary. Exact remediation
+  `60e81a6` passes the complete replacement local gate with 22/23 private, 20
+  direct, five engine, seven host, 732/782 discovery, workspace, Python,
+  compatibility, dependency, portability, documentation, diff, and release-
+  smoke evidence green. Fresh same-SHA review, feature delivery, and `main`
+  delivery remain pending, so the combined native-tool checkbox stays
+  unchecked and the delivered-slice count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

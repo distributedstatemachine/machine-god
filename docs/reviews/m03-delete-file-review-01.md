@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — formal cycle 1 not green; remediation in progress**
+Status: **IN PROGRESS — cycle 1 remediated; replacement review pending**
 
 ## Base and contract gate
 
@@ -170,6 +170,40 @@ aware with cancellation precedence after a definitive noncommit; and freeze
 and test the portable file-class replacement boundary for symlink, FIFO, and
 socket entries with referent/sentinel preservation. A new candidate receives
 the complete local gate and three entirely fresh same-SHA reviewers.
+
+## Cycle 1 remediation local gate
+
+Exact remediation: `60e81a633557bc90aca01e3579782340c7c154c9`.
+
+The production path now validates the requested path bound before serialized
+accounting, preserves `EACCES`/`EPERM` for retained and linked-root operations
+in both phases, and routes the macOS post-`EPERM` target diagnosis through the
+cancellation-aware ordinal metadata wrapper. Independent regressions cover
+far-oversized preparation and direct execution, real post-construction root
+mode loss with restoration, both permission errnos at every root operation,
+cancellation during the second native macOS target `statat`, and final-window
+symlink/FIFO/socket replacement with displaced and unrelated sentinels.
+
+Rust/Cargo 1.94.1 formatting, workspace all-target/all-feature warnings-denied
+Clippy, workspace tests, and two doctests are green. Focused totals are 22
+default-feature and 23 all-feature private tests, 20 direct, five engine, and
+seven reference-host tests. Discovery reports 732 default-feature tests, 782
+all-feature tests, and zero benchmarks.
+
+The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
+compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 1,225 advisories and
+175 dependencies, Linux/FreeBSD/WASI gates, and Node's active unsupported test
+1/1 are green. Documentation integrity remains 64/445/295/0; the base diff has
+zero added unsafe Rust, Cargo metadata changes, or CLI source changes. The
+optional all-feature Linux cross-build remains blocked in `aws-lc-sys` by the
+host's missing Linux C sysroot before product Rust. A fresh locked 319,152-byte
+arm64 Mach-O CLI has SHA-256
+`d143cb7ef8ba0871a4449cd1f3a6ebb868dcb0f43f433819ea5110698e260304`
+and passes bare, help, and unavailable-environment status smoke paths with
+empty stderr.
+
+This exact local gate does not make cycle 1 green. A tree-identical marker must
+receive three fresh formal cycle-2 reviews before any behavior-green claim.
 
 ## Formal adversarial protocol
 
