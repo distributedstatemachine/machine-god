@@ -23,11 +23,11 @@ use machine_god_core::{
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, AiGatewayByteStream, AiGatewayCredentialEnvironment,
     AiGatewayCredentialSource, AiGatewayTransport, AiGatewayTransportRequest, ConfigOrigin,
-    EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME,
-    LIST_FILES_TOOL_NAME, LoadedNativeConfig, NativeEnvironment, NativeReferenceHost,
-    NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind, PermissionPromptDecision,
-    PermissionPromptError, PermissionPrompter, READ_FILE_TOOL_NAME, WRITE_FILE_TOOL_NAME,
-    load_native_config,
+    DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME,
+    GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig, NativeEnvironment,
+    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+    PermissionPromptDecision, PermissionPromptError, PermissionPrompter, READ_FILE_TOOL_NAME,
+    WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
 
@@ -209,6 +209,7 @@ fn tool_round_responses(final_text: &str) -> [Vec<u8>; 3] {
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"grep-call\",\"toolName\":\"grep_files\",\"input\":{\"pattern\":\"RETAINED_FILE_CONTENT_SENTINEL\",\"path\":\"./nested//.\",\"include\":\"*.txt\",\"case_insensitive\":false,\"mode\":\"count\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"write-call\",\"toolName\":\"write_file\",\"input\":{\"path\":\"./nested//generated.txt\",\"content\":\"generated retained content\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"edit-call\",\"toolName\":\"edit_file\",\"input\":{\"path\":\"./nested//generated.txt\",\"old_string\":\"retained\",\"new_string\":\"edited\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"delete-call\",\"toolName\":\"delete_file\",\"input\":{\"path\":\"./nested//generated.txt\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -332,13 +333,14 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 7);
+    assert_eq!(tools.len(), 8);
     assert_eq!(
         tools
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
+            DELETE_FILE_TOOL_NAME,
             EDIT_FILE_TOOL_NAME,
             FILE_INFO_TOOL_NAME,
             GLOB_FILES_TOOL_NAME,
@@ -353,7 +355,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
 
 fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
     let permission_requests = prompter.requests();
-    assert_eq!(permission_requests.len(), 7);
+    assert_eq!(permission_requests.len(), 8);
     assert_eq!(
         permission_requests[0].capability,
         Capability::Filesystem {
@@ -403,6 +405,13 @@ fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
             path: "nested/generated.txt".to_owned(),
         }
     );
+    assert_eq!(
+        permission_requests[7].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::Delete,
+            path: "nested/generated.txt".to_owned(),
+        }
+    );
 }
 
 fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: SessionId) {
@@ -410,7 +419,7 @@ fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: Sessio
         .unwrap()
         .expect("the reference host persisted the completed session");
     let record = loaded_session.record();
-    assert_eq!(record.messages.len(), 11);
+    assert_eq!(record.messages.len(), 12);
     assert_eq!(record.messages[0].role, Role::User);
     assert_eq!(record.messages[1].role, Role::Assistant);
     assert_eq!(record.messages[2].role, Role::Tool);
@@ -421,9 +430,10 @@ fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: Sessio
     assert_eq!(record.messages[7].role, Role::Tool);
     assert_eq!(record.messages[8].role, Role::Tool);
     assert_eq!(record.messages[9].role, Role::Tool);
-    assert_eq!(record.messages[10].role, Role::Assistant);
+    assert_eq!(record.messages[10].role, Role::Tool);
+    assert_eq!(record.messages[11].role, Role::Assistant);
     assert_eq!(
-        record.messages[10].content,
+        record.messages[11].content,
         [ContentBlock::Text {
             text: "composition complete".to_owned()
         }]
@@ -531,7 +541,7 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
         })
     );
     let third = body(&requests[2]);
-    assert_eq!(third["prompt"].as_array().unwrap().len(), 10);
+    assert_eq!(third["prompt"].as_array().unwrap().len(), 11);
     assert_eq!(third["prompt"][7]["content"][0]["toolCallId"], "grep-call");
     assert_eq!(
         decoded_tool_output(&third, 7),
@@ -578,9 +588,17 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
         })
     );
     assert_eq!(
-        fs::read(nested.join("generated.txt")).unwrap(),
-        b"generated edited content"
+        third["prompt"][10]["content"][0]["toolCallId"],
+        "delete-call"
     );
+    assert_eq!(
+        decoded_tool_output(&third, 10),
+        json!({
+            "content": {"path": "nested/generated.txt"},
+            "is_error": false
+        })
+    );
+    assert!(!nested.join("generated.txt").exists());
 
     drop(events);
     assert_persisted_composed_turn(&host, session_id);
@@ -871,6 +889,11 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     )
     .unwrap();
     fs::write(workspace.join("nested/replacement-only.txt"), b"decoy").unwrap();
+    fs::write(
+        workspace.join("nested/generated.txt"),
+        b"REPLACEMENT_DELETE_DECOY_SENTINEL",
+    )
+    .unwrap();
 
     let (_, events) = collect_turn(&host, "retained-root-identity");
     assert_completed(&events);
@@ -884,6 +907,7 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     let grep_output = decoded_tool_output(&third, 7);
     let write_output = decoded_tool_output(&third, 8);
     let edit_output = decoded_tool_output(&third, 9);
+    let delete_output = decoded_tool_output(&third, 10);
     assert_eq!(
         list_output["content"]["entries"],
         json!([
@@ -918,11 +942,16 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
         "generated edited content".len()
     );
     assert_eq!(
-        fs::read(retained.join("nested/generated.txt")).unwrap(),
-        b"generated edited content"
+        delete_output["content"],
+        json!({"path": "nested/generated.txt"})
     );
-    assert!(!workspace.join("nested/generated.txt").exists());
+    assert!(!retained.join("nested/generated.txt").exists());
+    assert_eq!(
+        fs::read(workspace.join("nested/generated.txt")).unwrap(),
+        b"REPLACEMENT_DELETE_DECOY_SENTINEL"
+    );
     let serialized = serde_json::to_string(&third).unwrap();
     assert!(!serialized.contains("REPLACEMENT_FILE_CONTENT_SENTINEL"));
     assert!(!serialized.contains("replacement-only.txt"));
+    assert!(!serialized.contains("REPLACEMENT_DELETE_DECOY_SENTINEL"));
 }

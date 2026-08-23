@@ -70,6 +70,30 @@ fn edit_filesystem_access_has_exact_stable_json_contract() {
     );
 }
 
+#[test]
+fn delete_filesystem_access_has_exact_stable_json_contract() {
+    assert_eq!(
+        serde_json::to_value(FilesystemAccess::Delete).unwrap(),
+        json!("delete")
+    );
+    assert_eq!(
+        serde_json::from_value::<FilesystemAccess>(json!("delete")).unwrap(),
+        FilesystemAccess::Delete
+    );
+    assert_eq!(
+        serde_json::to_value(Capability::Filesystem {
+            access: FilesystemAccess::Delete,
+            path: "scope/nested".to_owned(),
+        })
+        .unwrap(),
+        json!({
+            "type": "filesystem",
+            "access": "delete",
+            "path": "scope/nested"
+        })
+    );
+}
+
 impl EngineTestSessions for Engine {
     fn create_test_session(&self, id: SessionId) -> Session {
         let incarnation = test_incarnation(&id);
