@@ -1,6 +1,6 @@
 # Native `write_file` contract
 
-Status: **FORMAL REPLACEMENT REVIEW NOT GREEN — production remediation, a new
+Status: **CYCLE-2 PRODUCTION REMEDIATION COMPOSED — full local gates, a new
 exact candidate, fresh formal reviews, and delivery are pending**
 
 The contract commit is
@@ -182,15 +182,15 @@ On Linux and macOS, execution performs this bounded sequence:
 4. In that exact parent, try at most eight fixed-short, high-entropy temporary
    basenames that cannot equal the target basename. Open with write-only,
    create, exclusive, no-follow, close-on-exec, and nonblocking flags at mode
-   `0600`. A collision is never deleted and consumes one attempt. Formal cycle
-   2 found that candidate `708f2d0` does not yet bound Linux entropy-source
-   retries; a production-used cumulative partial-read/interruption bound with
-   cancellation checks remains pending. The intended Linux path is direct
-   `rustix` `getrandom` with `NONBLOCK`, failing closed as retryable
-   `write_file_unavailable` on `ENOSYS`, `EPERM`, or `EAGAIN` rather than using
-   a fallback or blocking. The intended macOS path retains pinned `getrandom`
-   0.4.3, whose 16-byte request uses one `getentropy` call. Neither path is a
-   completed claim until its production change and evidence are composed.
+   `0600`. A collision is never deleted and consumes one attempt. Remediation
+   `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d` uses direct Linux `rustix`
+   `getrandom` with `NONBLOCK`. Each 16-byte name fill accepts at most 16
+   cumulative `EINTR` results and makes at most 31 calls including partial
+   progress, with cancellation checked before and after every call. Linux
+   `ENOSYS`, `EPERM`, and `EAGAIN` fail closed as retryable
+   `write_file_unavailable` without fallback or blocking. On macOS, pinned
+   `getrandom` 0.4.3 makes one `getentropy` call for the 16-byte request and is
+   routed through the same bound and cancellation checks.
 5. Write in chunks of at most 8 KiB with cancellation and exact-byte checks.
    Verify the staged descriptor identity and byte count. Apply final ordinary
    rwx bits with `fchmod`, then `fsync` the staged file.
@@ -248,13 +248,11 @@ The implementation never intentionally removes a mismatched entry or a
 preexisting collision. Portable metadata-check-to-unlink still has a final
 race. Formal cycle 2 found that the exact candidate can leave its owned staged
 inode carrying the already-applied final mode when cleanup cannot unlink it, so
-such residue is not yet guaranteed private. Pending remediation will first make
-one best-effort `fchmod(0600)` call on the held staged descriptor, then retain
-the same identity-checked best-effort unlink. If that mode reset itself fails
-and the entry also remains, the residue can still retain final mode bits;
-perfect mode restoration and identity-safe unlink are not promised. This
-remediation is not complete until its production change and evidence are
-composed into a new exact candidate.
+such residue is not unconditionally guaranteed private. Remediation `9302ec3`
+now makes one best-effort `fchmod(0600)` call on the held, unpublished staged
+descriptor before the same identity-checked best-effort unlink. If both mode
+restoration and unlink fail, residue can still retain final mode bits; perfect
+mode restoration and identity-safe unlink are not promised.
 
 The required execution future is inert until polled, performs bounded
 synchronous work on the polling thread, and spawns no task, thread, subprocess,
@@ -343,10 +341,15 @@ Filesystem/robustness is **NOT GREEN** with two medium findings: retained staged
 inode mode can remain more permissive than `0600`, and Linux entropy acquisition
 can retry interruptions without the contract's finite work/cancellation bound.
 Performance/concurrency is **NOT GREEN** with the same medium entropy finding.
-The intended bounded entropy helper, cancellation evidence, and best-effort
-`0600` cleanup reset remain pending production work. No green behavior SHA or
-replacement claim is made. After remediation and exact local gates, all three
-fresh tracks must review the same new exact behavior candidate. A later
+Production remediation `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`
+implements the bounded entropy path, cancellation evidence, and one-shot best-
+effort `0600` cleanup reset with the failure caveat above. Focused checks are
+green at that exact remediation SHA: 28 private `write_file` tests, 109 native
+library tests, 25 direct integration tests, formatting, workspace/all-target/
+all-feature warnings-denied Clippy, and the Linux cross-check. Full local gates
+and cycle 3 remain pending. No green behavior SHA or replacement claim is made.
+After exact local gates, all three fresh tracks must review the same new exact
+behavior candidate. A later
 documentation-only seal or delivery record remains
 exempt from another adversarial cycle under the user's instruction, while exact
 feature and `main` workflows remain required.
@@ -377,11 +380,11 @@ items are still candidate evidence until the formal exact-SHA gates complete:
   postvalidation races are exercised deterministically through the real
   production pipeline, including native publication into a retained parent
   moved outside the configured workspace.
-- [ ] Eight temporary-name collisions exhaust exactly and foreign collisions
-  are preserved, but complete cleanup evidence is pending: staged-name and
-  cleanup-name swaps must avoid a mismatched sentinel, and a retained owned
-  staged inode must receive the pending best-effort `0600` reset with its
-  restoration-failure caveat tested and documented.
+- [x] Eight temporary-name collisions exhaust exactly and foreign collisions
+  are preserved; staged-name and cleanup-name swaps avoid a mismatched sentinel;
+  and a retained owned staged inode receives one best-effort `0600` reset before
+  identity-checked unlink, with the restoration-plus-unlink failure caveat
+  documented and successful reset behavior tested.
 - [x] Injected write, chmod, staged-file sync, rename, and parent-directory sync
   failures prove precommit unchanged-target behavior and post-rename commit
   ambiguity.
@@ -392,11 +395,12 @@ items are still candidate evidence until the formal exact-SHA gates complete:
   cumulative interleaved write interruptions do not reset on partial progress,
   precommit cancellation wins on the final allowed interruption, and
   postcommit exhaustion is ambiguous.
-- [ ] Temporary-name entropy acquisition has a finite cumulative bound across
+- [x] Temporary-name entropy acquisition has a finite cumulative bound across
   partial progress and interruptions, checks cancellation at each retry
   boundary including exhaustion, and fails before staging or target effects.
-  The exact cycle-2 candidate does not satisfy this item; production remediation
-  and deterministic evidence are pending.
+  Linux uses direct nonblocking `rustix` entropy with at most 16 cumulative
+  interruptions and 31 calls per name; macOS's one-call entropy path routes
+  through the same checks.
 - [x] Engine deny/allow events and durable results, exact six-tool alphabetical
   catalog, and original-plus-five-clones workspace identity all pass.
 - [ ] Linux and macOS execute the native behavior; FreeBSD and WASI compile;

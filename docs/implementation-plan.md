@@ -710,7 +710,8 @@ descriptor and requires every parent to exist. It no-follow walks parents,
 records parent and target identity, rejects symlink and special targets, and
 never opens or reads existing target content. It stages into one exclusive,
 initially private `0600`, same-parent regular file chosen within eight high-
-entropy name attempts; writes and cancellation checks use at most 8 KiB chunks. The staged
+entropy name attempts; writes and cancellation checks use at most 8 KiB chunks.
+The staged
 file receives exact `0644` ordinary rwx bits for creation or the initially
 observed replacement target's `st_mode & 0o777`, then is file-synced,
 identity-revalidated, and published atomically at the pathname. Missing-target
@@ -776,18 +777,24 @@ entropy acquisition can retry partial reads or interruptions without a finite
 work/cancellation bound. Performance/concurrency is **NOT GREEN** with the same
 medium entropy finding. No behavior-green SHA is claimed.
 
-The next remediation remains pending. Linux entropy acquisition is intended to
-use direct `rustix` `getrandom` with `NONBLOCK`, one cumulative partial-
-progress/interruption bound, and cancellation at retry and exhaustion
-boundaries. `ENOSYS`, `EPERM`, and `EAGAIN` will fail closed as retryable
-`write_file_unavailable` rather than invoke a fallback or block. The pinned
-macOS `getrandom` 0.4.3 path uses one `getentropy` call for the 16-byte request.
-Cleanup is intended to make one best-effort `fchmod(0600)` call on the retained
-held staged descriptor before the existing identity-checked best-effort unlink.
-If mode restoration and unlink both fail, residue can retain final mode bits.
-These descriptions are pending design requirements, not completed behavior.
-After production remediation and exact local gates compose into a new behavior
-candidate, all three fresh tracks must review that same SHA again.
+Production remediation is composed at exact
+`9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`. Linux entropy acquisition now
+uses direct `rustix` `getrandom` with `NONBLOCK`, at most 16 cumulative `EINTR`
+results and 31 calls per 16-byte name including partial progress, and
+cancellation checks before and after every call. `ENOSYS`, `EPERM`, and `EAGAIN`
+fail closed as retryable `write_file_unavailable` rather than invoke a fallback
+or block. The pinned macOS `getrandom` 0.4.3 path makes one `getentropy` call for
+the 16-byte request and routes through the same bounds. Cleanup now makes one
+best-effort `fchmod(0600)` call on the held, unpublished staged descriptor
+before the existing identity-checked best-effort unlink. If mode restoration
+and unlink both fail, residue can retain final mode bits.
+
+Focused remediation checks pass 28 private `write_file` tests, 109 native
+library tests, 25 direct integration tests, formatting, workspace/all-target/
+all-feature warnings-denied Clippy, and the Linux cross-check. These are not the
+full local gates and do not establish a new behavior candidate or green cycle
+3. After exact local gates compose into a new behavior candidate, all three
+fresh tracks must review that same SHA again.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -959,11 +966,16 @@ gate:
   `491496aa22aa8855717b74f6a026e8c602bb02e9`. Correctness/API is **GREEN** with
   zero findings; filesystem/robustness is **NOT GREEN** with medium private-
   residue-mode and unbounded-Linux-entropy findings; and performance/concurrency
-  is **NOT GREEN** with the same medium entropy finding. The production-used
-  bounded entropy path and best-effort held-descriptor `0600` reset, including
-  the restoration-failure caveat, remain pending. No behavior-green or
-  replacement claim is made; a new exact candidate must repeat all three fresh
-  tracks. Local
+  is **NOT GREEN** with the same medium entropy finding. Exact production
+  remediation `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d` supplies direct
+  nonblocking Linux entropy with cumulative 16-interruption/31-call bounds,
+  the bounded one-call macOS path, cancellation before and after each entropy
+  call, and one best-effort held-descriptor `fchmod(0600)` before cleanup. If
+  mode restoration and unlink both fail, residue can retain final bits. Focused
+  checks pass 28 private tests, 109 native library tests, 25 direct tests,
+  formatting, workspace warnings-denied Clippy, and the Linux cross-check; full
+  local gates remain pending. No behavior-green or replacement claim is made;
+  a new exact candidate must repeat all three fresh tracks. Local
   evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-

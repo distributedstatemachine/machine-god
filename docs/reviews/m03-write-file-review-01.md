@@ -1,6 +1,6 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FORMAL REPLACEMENT REVIEW NOT GREEN — production remediation, a new
+Status: **CYCLE-2 PRODUCTION REMEDIATION COMPOSED — full local gates, a new
 exact candidate, fresh formal reviews, seal, and delivery are pending**
 
 ## Base and prior delivery
@@ -34,8 +34,10 @@ evidence remediation is composed through `3010e6d`, and replacement exact local
 gates are green at `581fe6a`. Formal-review preparation
 `491496aa22aa8855717b74f6a026e8c602bb02e9` is the immediate parent of the
 tree-identical exact cycle-2 candidate
-`708f2d08d72d610ca387a62a4cec1f656c188a7d`. Cycle 2 is also **NOT GREEN**;
-production remediation and another fresh same-SHA cycle are pending.
+`708f2d08d72d610ca387a62a4cec1f656c188a7d`. Cycle 2 is also **NOT GREEN**.
+Production remediation is composed at
+`9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`; full local gates and another fresh
+same-SHA cycle remain pending.
 
 ## Frozen boundary
 
@@ -60,7 +62,7 @@ equivalence.
 ## Required independent evidence
 
 Production and test owners remained separate. The composed branch supplies the
-following evidence after cycle-1 remediation:
+following evidence through cycle-2 production remediation:
 
 - [x] Exact public symbols, constants, tool/schema descriptions, strict
   arguments, result shape, open errors, tool errors, and redacted debug/display.
@@ -80,9 +82,10 @@ following evidence after cycle-1 remediation:
   replacement, and retained-parent publication after a move outside the root.
   Staged-name replacement, eight collisions, collision preservation, and
   cleanup swap protection are also covered.
-- [ ] Retained owned staging residue is returned to private `0600` mode before
-  best-effort identity-checked unlink, with the unavoidable mode-restoration-
-  failure caveat tested and documented. This production change remains pending.
+- [x] Retained owned staging residue receives one best-effort `fchmod(0600)`
+  before best-effort identity-checked unlink, with the unavoidable mode-
+  restoration-plus-unlink failure caveat documented and successful reset
+  behavior tested.
 - [x] Injected write/chmod/file-sync/rename/directory-sync failures establish
   unchanged-target precommit behavior and post-rename commit ambiguity.
 - [x] Cancellation is proven through the real production pipeline during and
@@ -90,13 +93,14 @@ following evidence after cycle-1 remediation:
   drop, engine same-poll post-effect recovery, and absence of detached work are
   covered.
 - [x] Content-write and sync paths have an exact 16-interruption phase bound.
-  Cumulative
-  interleaved write interruptions, both precommit sync and cancellation
-  outcomes, and real-rename postcommit ambiguity are covered.
-- [ ] Temporary-name entropy acquisition has a production-used finite
+  Cumulative interleaved write interruptions, both precommit sync and
+  cancellation outcomes, and real-rename postcommit ambiguity are covered.
+- [x] Temporary-name entropy acquisition has a production-used finite
   cumulative partial-progress/interruption bound, cancellation checks at retry
   and exhaustion boundaries, and deterministic no-staging/no-target-effect
-  evidence. The exact cycle-2 candidate remains unbounded on Linux.
+  evidence. Linux uses direct nonblocking `rustix` entropy with at most 16
+  cumulative interruptions and 31 calls per name; the one-call macOS path is
+  routed through the same checks.
 - [ ] Exact six-tool alphabetical host catalog, original-plus-five-clone
   workspace identity, and the complete platform matrix are green. The catalog
   and workspace identity pass locally; native behavior is locally exercised on
@@ -168,9 +172,14 @@ still required.
 - Formal adversarial cycle 2: correctness/API **GREEN** with zero findings;
   filesystem/robustness **NOT GREEN** with two medium findings;
   performance/concurrency **NOT GREEN** with one medium finding
-- Cycle-2 findings documentation: this documentation-only commit; it is exempt
-  from adversarial review under the user's instruction
-- Cycle-2 production remediation: **PENDING**
+- Cycle-2 findings documentation:
+  `5e7e61a1da8aa39f31126d3c474dba9880d3a4b1`
+- Pending-remediation specification:
+  `526aa4abddb4aa004a1623d328ae5ea1af241473`
+- Those two documentation-only commits are exempt from adversarial review under
+  the user's instruction
+- Cycle-2 production remediation:
+  `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`
 - Next exact behavior candidate: **PENDING**
 - Behavior-green SHA: **PENDING**
 - Next formal review result: **PENDING**
@@ -275,18 +284,24 @@ All three fresh tracks inspected exact candidate
   precedence on the final interruption, and proof of no target or staging
   effect remain missing.
 
-No green or replacement claim follows from cycle 2. Intended production
-remediation is still pending. Linux entropy acquisition will use direct
-`rustix` `getrandom` with `NONBLOCK`, a cumulative partial-progress/interruption
-bound, and cancellation checks; `ENOSYS`, `EPERM`, and `EAGAIN` will fail closed
-as retryable `write_file_unavailable` rather than invoke a fallback or block.
-The pinned macOS `getrandom` 0.4.3 path uses one `getentropy` call for the
-16-byte request. Cleanup will make one best-effort `fchmod(0600)` call on the
-held staged descriptor before the existing identity-checked best-effort unlink.
-If that mode restoration and unlink both fail, residue can retain its final
-mode. These are planned corrections, not completed behavior. Once production
-fixes and exact local gates compose into a new candidate, three fresh agents
-must repeat all tracks on that same SHA.
+No green or replacement claim follows from cycle 2. Production remediation
+`9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d` uses direct Linux `rustix`
+`getrandom` with `NONBLOCK`, at most 16 cumulative `EINTR` results and 31 calls
+per 16-byte name including partial progress, and cancellation checks before and
+after every call. `ENOSYS`, `EPERM`, and `EAGAIN` fail closed as retryable
+`write_file_unavailable` rather than invoke a fallback or block. The pinned
+macOS `getrandom` 0.4.3 path makes one `getentropy` call for the 16-byte request
+and routes through the same bounds. Cleanup now makes one best-effort
+`fchmod(0600)` call on the held, unpublished staged descriptor before the
+existing identity-checked best-effort unlink. If mode restoration and unlink
+both fail, residue can retain its final mode.
+
+Focused remediation checks are green: 28 private `write_file` tests, 109 native
+library tests, 25 direct integration tests, formatting, workspace/all-target/
+all-feature warnings-denied Clippy, and the Linux cross-check. These focused
+results do not establish full local gates, a new exact behavior candidate, or a
+green cycle 3. After all exact local gates compose, three fresh agents must
+repeat all tracks on that same new SHA.
 
 ## Local gate results
 
@@ -328,7 +343,7 @@ Candidate `119938240807f8279f83e2ace65a69706e8fcfed` is tree-identical only to
 its immediate parent `a7841c19b4b34cecf40e55d7cd001fd1547133c1` and failed
 formal cycle 1 as recorded above.
 
-## Remediated local gate results
+## Cycle-1 remediation local gate results
 
 Exact composed remediation precursor
 `581fe6aa9a4190ba8cc303371e02af5aba68a5a1` is green under Rust and Cargo
