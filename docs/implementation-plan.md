@@ -759,8 +759,12 @@ local-gate, and lineage claims in maintained documentation. Documentation
 correction `016f8df` and code/evidence remediation `3010e6d` close those
 findings with an exact cumulative 16-interruption phase bound, native
 postvalidation race tests, and post-verification cancellation/cleanup evidence.
-Exact replacement local gates and three fresh same-SHA review tracks are
-pending. No replacement candidate or behavior-green SHA is claimed.
+Exact replacement local gates are green at `581fe6a`: 655 workspace tests, two
+doctests, focused native/engine suites, warnings-denied workspace Clippy,
+Python/compatibility/dependency gates, cross-target and active WASI checks,
+documentation/diff/no-unsafe checks, and a fresh release CLI smoke. Three fresh
+same-SHA review tracks remain pending. No replacement candidate or behavior-
+green SHA is claimed.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -926,8 +930,8 @@ gate:
   All three first-cycle tracks are **NOT GREEN**. Documentation correction
   `016f8df` and code/evidence remediation `3010e6d` close the unbounded `EINTR`,
   real-pipeline target/parent race, and verification-phase cancellation
-  findings. Replacement exact local gates and all three fresh review tracks
-  remain pending. No
+  findings. Replacement exact local gates are green at `581fe6a`; all three
+  fresh review tracks remain pending. No
   replacement candidate is claimed. Local evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-

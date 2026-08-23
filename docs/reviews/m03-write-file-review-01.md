@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FORMAL REVIEW CYCLE 1 REMEDIATED — replacement local gates and
-reviews are pending**
+Status: **REPLACEMENT LOCAL-GATE-GREEN PRECURSOR — fresh formal reviews, seal,
+and delivery are pending**
 
 ## Base and prior delivery
 
@@ -142,6 +142,8 @@ still required.
   `016f8dff13dffbacce3010342ee5b62f0af23b82`
 - Cycle-1 code and evidence remediation:
   `3010e6d883b5f894083c6925b2b4412b8102b750`
+- Remediated local-gate precursor:
+  `581fe6aa9a4190ba8cc303371e02af5aba68a5a1`
 - Behavior-green SHA: **PENDING**
 - Remediation and replacement candidate: **PENDING**
 - Documentation seal: **PENDING**
@@ -264,6 +266,45 @@ that commit has a different documentation tree from the formal candidate.
 Candidate `119938240807f8279f83e2ace65a69706e8fcfed` is tree-identical only to
 its immediate parent `a7841c19b4b34cecf40e55d7cd001fd1547133c1` and failed
 formal cycle 1 as recorded above.
+
+## Remediated local gate results
+
+Exact composed remediation precursor
+`581fe6aa9a4190ba8cc303371e02af5aba68a5a1` is green under Rust and Cargo
+1.94.1 exactly:
+
+- formatting and workspace/all-target/all-feature warnings-denied Clippy pass;
+- the workspace all-target/all-feature inventory and gate pass 655 tests plus
+  two doctests;
+- focused evidence passes 27 private `write_file` tests, 25 direct integration
+  tests, five real-engine tests, seven reference-host tests, and three prepared-
+  root tests;
+- the repository Python gate runs 129 tests: 121 pass and eight expected macOS
+  skips, with zero failures or errors;
+- the clean pinned fx checkout at
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` passes compatibility-inventory
+  generation check;
+- cargo-deny 0.19.9 passes with only the accepted `syn` and `windows-sys`
+  duplicate warnings; cargo-audit 0.22.2 checks 1,225 cached advisories over 175
+  dependencies with zero findings;
+- Linux no-default native cross-target Clippy passes with warnings denied;
+  FreeBSD no-default library/tests compile and library Clippy passes with only
+  two pre-existing test-only `glob_files` warnings; WASI builds the dedicated
+  unsupported-target test with only the pre-existing `read_file` dead-code
+  warning, and Node's WASI runner actively passes that exact test 1/1;
+- a fresh locked release build passes and produces an arm64 Mach-O CLI with
+  SHA-256 `57025124a24a636e7fc9639ca5a0f53c75690d3610667d11cc87f2eaeda7f494`;
+  executing that binary directly prints the exact version/API line and exits
+  zero; and
+- 60 Markdown files contain 429 inline links, including 279 repository-relative
+  links with zero missing; whole-feature diff checks pass, no unsafe Rust was
+  added, and the exact precursor worktree is clean.
+
+These results close the replacement local gate. They do not make cycle 1 green,
+do not replace native Linux/macOS feature CI, and do not count as formal
+replacement review. The next formal-review preparation commit and its
+immediately following tree-identical marker will freeze the replacement SHA
+supplied to all three fresh tracks.
 
 ## Explicit nonclaims
 

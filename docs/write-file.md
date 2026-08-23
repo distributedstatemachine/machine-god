@@ -1,7 +1,7 @@
 # Native `write_file` contract
 
-Status: **FORMAL REVIEW CYCLE 1 REMEDIATED — replacement local gates and
-reviews are pending**
+Status: **REPLACEMENT LOCAL-GATE-GREEN PRECURSOR — fresh formal reviews and
+delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -379,6 +379,15 @@ platform item remains unchecked until exact feature CI executes the supported
 native behavior on the repository's Linux and macOS runner matrix. Those local
 results belong to the precursor, whose documentation tree differs from formal
 candidate `119938240807f8279f83e2ace65a69706e8fcfed`.
+
+Exact remediated local-gate precursor
+`581fe6aa9a4190ba8cc303371e02af5aba68a5a1` passes 655 workspace tests,
+two doctests, all focused suites, warnings-denied workspace Clippy, repository
+Python and pinned-compatibility checks, dependency policy/audit, Linux and
+FreeBSD cross-target checks, WASI compilation with active unsupported-target
+execution, documentation links, diff/no-unsafe checks, and a fresh release CLI
+smoke. The platform item remains unchecked only until exact feature CI executes
+the supported native behavior on both Linux and macOS.
 
 Passing only a subset of this list does not establish delivery. A remediated
 exact composed behavior SHA must pass repository gates and three fresh
