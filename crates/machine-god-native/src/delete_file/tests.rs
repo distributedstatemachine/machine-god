@@ -735,6 +735,7 @@ enum RevalidationAction {
 
 struct RevalidationEvidence {
     action: Option<RevalidationAction>,
+    retained_unlinked_target: Option<fs::File>,
     mode_restore: Option<ModeRestoreGuard>,
     mode_was_enforced: bool,
     unlink_calls: usize,
@@ -745,6 +746,7 @@ impl RevalidationEvidence {
     const fn new(action: RevalidationAction) -> Self {
         Self {
             action: Some(action),
+            retained_unlinked_target: None,
             mode_restore: None,
             mode_was_enforced: false,
             unlink_calls: 0,
@@ -769,6 +771,7 @@ impl DeleteFileEvidence for RevalidationEvidence {
         };
         match action {
             RevalidationAction::ReplaceTargetWithFile(target) => {
+                self.retained_unlinked_target = Some(fs::File::open(&target).unwrap());
                 fs::remove_file(&target).unwrap();
                 fs::write(target, b"replacement bytes").unwrap();
             }
