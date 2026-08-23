@@ -3,8 +3,8 @@
 Status: the current feature composition contains exactly nine alphabetical
 workspace tools. Twenty-two bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
-composed, while its exact local, review, feature-delivery, and main-delivery
-gates remain pending.
+composed and its exact local gate is green at `43847fe`; formal review,
+feature delivery, and main delivery remain pending.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,

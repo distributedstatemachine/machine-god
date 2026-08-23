@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **IMPLEMENTATION IN PROGRESS**
+Status: **LOCAL GATE GREEN — FORMAL REVIEW PENDING**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -15,9 +15,11 @@ workflow `32667647846` is green with both jobs and two exact-SHA artifacts;
 contract CI `32667647822` is not yet complete and is not claimed as green.
 Production composes on the feature branch at
 `d8f73676fcfce2cead385fa5b36598da989abe8f`, and independent evidence
-composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. The exact composed
-local gate, fresh same-SHA review cycles, feature delivery, fast-forward main
-integration, and exact main workflows remain pending.
+composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. Exact composed
+local-gate precursor `43847fe5fd405e8b1d28808f0495dac859ebab15`, tree
+`80cb9a17d9bb2c1151bc43b72faebcb305dd78c2`, is green. Fresh same-SHA review
+cycles, feature delivery, fast-forward main integration, and exact main
+workflows remain pending.
 
 `rename_file` moves one existing regular file between two confined names while
 preserving the file object. It does not read content, overwrite a destination,
@@ -226,7 +228,7 @@ fx-equivalence or product-performance claim.
 Destination overwrite, parent creation, directory trees, symlink moves,
 external paths, cross-filesystem copy/delete, non-Linux/macOS hardening, CLI
 ownership, richer permission modes, benchmark workloads, and performance claims
-remain outside this slice. Production and independent evidence are composed but
-not yet locally sealed. Three fresh same-SHA adversarial reviews, exact feature
-workflows, fast-forward integration, and exact main workflows are still required
-before delivery.
+remain outside this slice. Production, independent evidence, and the exact
+composed local gate are green. Three fresh same-SHA adversarial reviews, exact
+feature workflows, fast-forward integration, and exact main workflows are still
+required before delivery.

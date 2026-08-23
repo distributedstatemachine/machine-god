@@ -94,8 +94,8 @@ zero findings in all three fresh tracks. Replacement seal `fe56f4c` completed
 the exact feature and `main` delivery gates recorded above. The remaining
 native tools, CLI ownership, and Milestone 03 completion boundary remain
 pending.
-The twenty-third bounded slice, native `rename_file`, is **IMPLEMENTATION IN
-PROGRESS** from exact delivered base
+The twenty-third bounded slice, native `rename_file`, is **LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base
 `3d76f2e844312e7f3e809524cb72c1a7957975ff`. Its two-endpoint typed
 authority, regular-file-only absent-destination semantics, one no-replace
 rename boundary, bounded two-parent durability, explicit race limitations,
@@ -110,8 +110,11 @@ benchmark workflow `32667647846` is green with both jobs and two exact-SHA
 artifacts, while exact contract CI `32667647822` has not completed and is not
 claimed as green. Production composes at
 `d8f73676fcfce2cead385fa5b36598da989abe8f`, and independent evidence
-composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. Exact composed local
-gates, three-track review, and delivery remain pending.
+composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. Exact composed local-gate
+precursor `43847fe5fd405e8b1d28808f0495dac859ebab15`, tree `80cb9a1`, is green
+with the full Rust, focused, Python, compatibility, dependency, portability,
+documentation, diff, and release-smoke evidence recorded in the review. Three-
+track same-SHA review and delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1622,7 +1625,7 @@ gate:
   exact-SHA artifacts. Native `delete_file` is delivered as slice twenty-two.
   The combined native-tool checkbox stays unchecked because the remaining
   native tools and M03 ownership are incomplete. The twenty-third
-  `rename_file` slice is **IMPLEMENTATION IN PROGRESS** from exact base
+  `rename_file` slice is **LOCAL GATE GREEN — FORMAL REVIEW PENDING** from exact base
   `3d76f2e`.
   It is frozen as one existing confined regular file moved to an absent
   destination through exact two-endpoint `FilesystemRename` policy input,
@@ -1632,8 +1635,9 @@ gate:
   copy/delete fallback, CLI behavior, new dependency, benchmark workload,
   performance claim, or fx-equivalence claim. Contract `19cad7d`, production
   composition `d8f7367`, and independent-evidence composition `1dab9a0` are
-  present. The exact composed local gate, three fresh same-SHA reviews, and
-  exact feature/main delivery gates remain pending under
+  present. Exact composed local-gate precursor `43847fe`, tree `80cb9a1`, is
+  green. Three fresh same-SHA reviews and exact feature/main delivery gates
+  remain pending under
   [`rename-file.md`](rename-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
