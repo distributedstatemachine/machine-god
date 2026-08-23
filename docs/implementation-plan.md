@@ -807,6 +807,13 @@ green, proving validation-method contention rather than a product failure.
 These exact local gates resolve both cycle-2 findings for formal-review
 preparation, but do not retroactively make cycle 2 green or establish a new
 behavior candidate. All three fresh tracks must review the same next exact SHA.
+Exact gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
+retains that evidence. The immediately following tree-identical marker after
+this documentation-only formal cycle-3 preparation will be supplied to three
+fresh correctness/API, filesystem/robustness, and performance/concurrency
+agents. No behavior-green or replacement claim is made before all three approve
+the same marker; every finding restarts all tracks. The later documentation-only
+seal/delivery exemption remains in force.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -995,7 +1002,9 @@ gate:
   rerun establish that its earlier LTO-overlapped two-second timeout was
   validation-method contention, not a product failure. No behavior-green or
   replacement claim is made; a new exact candidate must repeat all three fresh
-  tracks. Local
+  tracks. Exact local-gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
+  is retained by the formal cycle-3 preparation; its immediately following
+  tree-identical marker will be supplied to all three fresh agents. Local
   evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-

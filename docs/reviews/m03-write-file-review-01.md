@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **CYCLE-2 REMEDIATION LOCAL GATES GREEN — cycle-3 preparation, fresh
-formal reviews, seal, and delivery are pending**
+Status: **FORMAL CYCLE-3 REVIEW PREPARATION — the immediate tree-identical
+marker, fresh formal reviews, seal, and delivery are pending**
 
 ## Base and prior delivery
 
@@ -183,6 +183,8 @@ still required.
   `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`
 - Cycle-2 remediation local-gate precursor:
   `8432c0c6b5d5955b78a882b651a5bfec76af8814`
+- Exact cycle-2 remediation gate record:
+  `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
 - Cycle-2 remediation resolution: both confirmed findings are closed by exact
   production and deterministic evidence locally; historical cycle 2 remains
   **NOT GREEN** and cycle 3 is required
@@ -432,6 +434,18 @@ three-track cycle 3, prove the native Linux/macOS feature-CI matrix, or establis
 remote delivery. A later documentation-only seal or delivery record remains
 exempt from another adversarial cycle under the user's instruction, while its
 exact feature and `main` workflows remain required.
+
+## Formal cycle-3 preparation
+
+Exact gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
+retains the complete precursor evidence. This documentation-only preparation
+changes no behavior. The immediately following tree-identical marker will be
+supplied independently to three fresh correctness/API, filesystem/robustness,
+and performance/concurrency agents. No behavior-green SHA or replacement review
+result is claimed until all three approve that same exact marker. Every finding
+restarts all three tracks. A later documentation-only seal or delivery record
+remains exempt from another adversarial cycle, while exact feature and `main`
+workflows remain required.
 
 ## Explicit nonclaims
 

@@ -1,7 +1,7 @@
 # Native `write_file` contract
 
-Status: **CYCLE-2 REMEDIATION LOCAL GATES GREEN — cycle-3 preparation, fresh
-formal reviews, and delivery are pending**
+Status: **FORMAL CYCLE-3 REVIEW PREPARATION — the immediate tree-identical
+marker, fresh formal reviews, and delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -453,6 +453,17 @@ runner contention rather than a product failure. This exact local evidence
 closes the two cycle-2 findings for review preparation only. It does not make
 historical cycle 2 green, replace cycle 3, satisfy native Linux/macOS feature
 CI, or establish delivery.
+
+## Formal cycle-3 preparation
+
+Exact local-gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
+retains the complete evidence above. This documentation-only preparation commit
+changes no behavior. The immediately following tree-identical marker will be
+supplied independently to three fresh correctness/API, filesystem/robustness,
+and performance/concurrency agents. No behavior-green or replacement claim is
+made before all three approve that same exact marker. Every finding restarts all
+three tracks. The later documentation-only seal/delivery exemption remains in
+force; exact feature and `main` workflows are still required.
 
 ## Pinned fx input and deliberate differences
 
