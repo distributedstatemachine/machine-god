@@ -1,6 +1,6 @@
 # Native `edit_file` contract
 
-Status: **IN PROGRESS — composed local gates green; formal review pending**
+Status: **IN PROGRESS — cycle 1 remediated locally; replacement review pending**
 
 This document freezes the twenty-first bounded Milestone 03 slice from exact
 delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
@@ -9,11 +9,14 @@ delivered base `242adfed4be717baf7cd07275aae40ec8a3637f6`. Contract commit
 workflows are not implementation or delivery evidence. Production,
 independently owned tests, and the benchmark harness ordering correction are
 composed through exact local-gate precursor
-`31ec79e000589c4fb34599be4aad4f90ea33974f`. Formal same-SHA adversarial review,
-feature delivery, fast-forward integration, and exact `main` workflows remain
-pending. Under the user's explicit instruction, documentation-only kickoff,
-seal, and delivery commits are exempt from adversarial review; their own exact
-remote workflows remain required.
+`31ec79e000589c4fb34599be4aad4f90ea33974f`. Formal same-SHA adversarial review
+on exact candidate `8fdb67892f34a0fbfbb90a54e8eda982159813bf` was not green.
+The confirmed staged-content race is remediated with independent evidence on
+exact composed precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`.
+A replacement candidate and all three fresh review tracks, feature delivery,
+fast-forward integration, and exact `main` workflows remain pending. Under the
+user's explicit instruction, documentation-only records are exempt from their
+own adversarial cycle; they are included in the next behavior candidate review.
 
 `edit_file` replaces exactly one occurrence of exact text in one existing
 workspace file. It does not grant file creation, a general read capability, or
@@ -222,24 +225,32 @@ On Linux and macOS, allowed execution performs this bounded sequence:
    temporary basenames that cannot equal the target basename. Each stage opens
    read/write, create, exclusive, no-follow, close-on-exec, and nonblocking at
    `0600`. A collision is preserved and consumes one attempt.
-7. Write the postimage in at most 8 KiB chunks; verify staged pathname and held-
-   descriptor identity and exact size. Apply only the original target's
-   `st_mode & 0o777`, sync the staged file, reread it through the held descriptor
-   within the same size/chunk bounds, and require exact postimage bytes plus a
-   stable identity, size, and ordinary-mode view.
-8. Reacquire and validate the root, rewalk the parent, require its recorded
-   device and inode, and reopen the target no-follow. Require the original
+7. Write the postimage in at most 8 KiB chunks and keep the staged inode at
+   `0600`. Require its pathname to name the held staged descriptor, and require
+   exact postimage bytes plus a mutation-sensitive stable identity, type, size,
+   mode, modification-time, and change-time view through a complete bounded
+   held-descriptor reread.
+8. While the stage remains `0600`, reacquire and validate the root, rewalk the
+   parent, require its recorded device and inode, and reopen the target no-
+   follow. Require the original
    device, inode, mode, size, and complete bytes. The verification reread uses
    the same 49,152-byte-plus-witness and 8 KiB-chunk bounds and stable-view
-   checks. Revalidate the staged name against the held staged descriptor.
-9. Perform the final precommit cancellation check, atomically rename the staged
-   regular file over that existing target in the same parent, and cross the
-   irreversible boundary.
-10. Ignore later tool-level cancellation. Verify by no-follow metadata that the
-    published pathname names the staged device/inode with its expected size and
-    ordinary mode, sync the parent directory, and return success. A publication-
-    verification or parent-sync failure returns nonretryable commit ambiguity
-    because new bytes may already be live.
+   checks. After both package-private staged-race hooks, independently repeat a
+   complete exact postimage reread and mutation-sensitive staged-path/held-
+   descriptor validation while the stage is still `0600`.
+9. Only near publication, apply the original target's `st_mode & 0o777`, sync
+   staged content and metadata, and repeat the complete exact path/held-
+   descriptor content and stable-metadata verification. Perform the final
+   precommit cancellation check, atomically rename over the existing target in
+   the same parent, and cross the irreversible boundary.
+10. Ignore later tool-level cancellation. Require the published pathname to
+    name the staged device/inode and perform a complete bounded stable reread
+    through the retained staged descriptor. Require exact postimage bytes,
+    regular type, size, ordinary mode, identity, and mutation-sensitive stable
+    metadata, with the published pathname still matching afterward. Always
+    attempt parent-directory sync even if this verification fails. Any post-
+    rename verification or parent-sync failure returns nonretryable commit
+    ambiguity because new bytes may already be live.
 
 Temporary-name entropy inherits the delivered bounded implementation: Linux
 uses direct `rustix` `getrandom` with `NONBLOCK`; macOS uses the pinned one-call
@@ -248,9 +259,10 @@ results and at most 31 calls including partial progress, with cancellation
 checked before and after every call. `ENOSYS`, `EPERM`, and `EAGAIN` fail closed
 without a fallback or blocking source.
 
-Each initial-read, verification-read, staged-write, staged-file-sync, and post-
-rename parent-sync phase accepts at most 16 interrupted syscall results. A
-phase's interruption count does not reset after partial progress. Precommit
+Each initial-read, verification-read, staged verification-read, staged-write,
+staged-file-sync, post-rename verification-read, and parent-sync phase accepts
+at most 16 interrupted syscall results. A phase's interruption count does not
+reset after partial progress. Precommit
 cancellation checked on the terminal interruption wins; otherwise exhausted
 precommit work fails without publication. Once rename succeeds, later
 interruption exhaustion is nonretryable commit ambiguity.
@@ -273,6 +285,15 @@ moved outside the configured workspace after validation can receive
 publication. The slice states these limits and does not claim adversarial
 concurrent-rename confinement.
 
+Private `0600` staging blocks group/other writers through the long target
+rewalk and reread, but it is not a lock. The same UID and root can still write
+the staged inode, and final-mode permissions may admit other writers near
+publication. Complete checks after both deterministic race hooks, after final
+mode and sync, and after rename detect observed same-inode/same-size corruption,
+but a writer can still act in a final check-to-rename window or after the post-
+rename verification. Success therefore reports the verified observation, not
+permanent content isolation; post-verification writers can change the live file.
+
 Before rename, every failure leaves the target pathname unchanged. Cleanup is
 best-effort and identity-checked: one best-effort `fchmod(0600)` is attempted on
 the held unpublished staged descriptor before the staged pathname is compared
@@ -289,8 +310,9 @@ entropy attempt, every write chunk, verification, and immediately before
 rename. It cannot preempt a native syscall already in flight.
 
 Rename is the irreversible boundary. Once it succeeds, the tool does not
-report its own clean cancellation and instead completes parent sync or returns
-commit ambiguity. Core's existing same-poll post-effect cancellation recovery
+report its own clean cancellation. It completes exact publication verification,
+always attempts parent sync, and returns commit ambiguity if either fails.
+Core's existing same-poll post-effect cancellation recovery
 can still persist an unknown-result placeholder; a caller must recover rather
 than blindly retry. Dropping an unpolled future is effect-free. Dropping a
 polled precommit future publishes no target change and invokes only the bounded
@@ -347,7 +369,7 @@ write_file
 The CLI remains byte-unchanged and thin. The new tool is library-only in this
 slice.
 
-## Composed local evidence
+## Local evidence and cycle-1 remediation
 
 Exact precursor `31ec79e000589c4fb34599be4aad4f90ea33974f` is locally green under
 Rust and Cargo 1.94.1. Focused evidence passes 25 private production-helper
@@ -376,6 +398,32 @@ diff check passes, and the precursor worktree is clean.
 These are local precursor results only. They establish neither a formal
 behavior candidate nor adversarial, feature-delivery, `main`, compatibility,
 equivalence, or product-performance approval.
+
+Documentation component `b1210f395a25bc59590c3b4b0164fac56e96bca0` and
+formal-preparation commit `3934d9d26ced78d5164e9ff2620c44ebb6480dd1`
+produced exact cycle-1 candidate
+`8fdb67892f34a0fbfbb90a54e8eda982159813bf`. Correctness/API was **GREEN**
+with zero findings. Filesystem/robustness was **NOT GREEN** with one high
+finding: a same-inode, same-size staged-content mutation after the only content
+check could be published while the tool returned success; it also recorded one
+low finding for incomplete mandatory evidence. Performance/concurrency was
+**NOT GREEN** with the same high finding.
+
+Production remediation `578ef3cf2061568d02a160fbe7a498203880b9e9` composes as
+`013016f276e023838ffe7ddf8a79121a3ee463a1`. Independent test component
+`59471147817ed7520513fdf51041ec24c822bfe3` is red on the failed candidate for
+both precommit same-inode/same-size staged-mutation windows and postpublication
+held-inode corruption, then composes green as exact precursor
+`482d33c0bc586ff594d5b0decc58de347cb9243e`. Focused remediation evidence now
+passes 30 private production-helper tests, 24 direct tests, five engine tests,
+and seven reference-host tests. It also directly proves hostile-umask mode
+preservation and the disclosed behavior when a retained parent moves outside
+its public path.
+
+This precursor is locally remediated, not a replacement formal candidate. The
+next candidate must include this documentation and pass three fresh review
+tracks. No delivery, compatibility promotion, product-performance, or fx-
+equivalence claim follows from the remediation.
 
 ## Required independent evidence
 

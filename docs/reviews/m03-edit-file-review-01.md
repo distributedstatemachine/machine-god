@@ -1,6 +1,6 @@
 # Milestone 03 native `edit_file` review 01
 
-Status: **IN PROGRESS — composed local gates green; formal review pending**
+Status: **IN PROGRESS — cycle 1 remediated locally; replacement review pending**
 
 ## Base and contract gate
 
@@ -34,6 +34,16 @@ The contract freezes:
 - bounded target/content/parent/staged-name revalidation, cancellation,
   cleanup, race disclosure, and post-rename ambiguity semantics; and
 - exact seven-tool alphabetical reference-host composition.
+
+The remediated publication protocol keeps the stage at `0600` through the long
+target rewalk and reread, performs complete mutation-sensitive staged-path and
+held-descriptor exact-content checks after both deterministic race hooks,
+applies final mode only near publication, syncs content and metadata, and
+repeats exact verification immediately before rename. After rename it ignores
+tool cancellation, stably rereads exact bytes through the retained descriptor,
+verifies the published path, and always attempts parent sync; any verification
+or sync failure is nonretryable commit ambiguity. This narrows but does not
+remove same-UID, root, final check-window, or post-verification writer races.
 
 Preparation remains effect-free, so this slice deliberately defers pinned fx's
 preapproval preimage read and computed diff. It also defers external paths,
@@ -76,13 +86,58 @@ Those components were composed on the integration branch as, in order:
 Benchmark-harness correction component
 `e4eec3cac30ec923c19fa53a81e5b6ba9b81cfae` was integrated as exact clean
 local-gate precursor `31ec79e000589c4fb34599be4aad4f90ea33974f`.
+Documentation component `b1210f395a25bc59590c3b4b0164fac56e96bca0` and
+formal-preparation commit `3934d9d26ced78d5164e9ff2620c44ebb6480dd1`
+produced exact cycle-1 candidate
+`8fdb67892f34a0fbfbb90a54e8eda982159813bf`.
+
+Cycle-1 remediation has the following exact lineage:
+
+- production component `578ef3cf2061568d02a160fbe7a498203880b9e9`,
+  integrated as `013016f276e023838ffe7ddf8a79121a3ee463a1`; and
+- independent-test component `59471147817ed7520513fdf51041ec24c822bfe3`,
+  integrated as exact composed precursor
+  `482d33c0bc586ff594d5b0decc58de347cb9243e`.
+
 This documentation record follows that precursor. Because a commit cannot
 self-record its own identifier, its documentation-only component SHA is
 recorded after direct observation in the integration handoff.
 
+## Cycle-1 review result and remediation
+
+All three fresh tracks reviewed exact candidate
+`8fdb67892f34a0fbfbb90a54e8eda982159813bf`:
+
+- correctness/API: **GREEN**, zero findings;
+- filesystem/robustness: **NOT GREEN**, with one high finding that a same-
+  inode, same-size staged mutation after the only content check could be
+  published while returning success, plus one low finding that mandatory
+  hostile-umask, parent-race, universal-fault, and cancellation evidence was
+  incomplete; and
+- performance/concurrency: **NOT GREEN**, with the same high staged-content
+  race.
+
+The production remediation closes the false-success path by preserving private
+stage mode through long validation, rereading exact staged content after both
+race hooks, syncing only after applying final mode near publication, and adding
+the cancellation-ignoring exact published-content verification described
+above. The independent component's three corruption regressions are red against
+the failed candidate and green with the production remediation: two precommit
+same-inode/same-size staged mutations fail without publication, while a real
+rename followed by same-length held-inode corruption returns commit ambiguity
+and still attempts parent sync.
+
+Exact composed precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`
+passes 30 private production-helper tests, 24 direct tests, five engine tests,
+and seven reference-host tests. Newly direct evidence also covers exact mode
+preservation under hostile umask, cancellation at final verification, and the
+disclosed publication into a retained parent moved outside its public path.
+The precursor is locally remediated, not an exact replacement candidate; all
+three fresh replacement tracks remain pending.
+
 ## Required independent evidence
 
-The check marks below record only evidence directly exercised on the composed
+The check marks below record only evidence directly exercised on the remediated
 precursor. Unchecked items identify work for formal review or a subsequent
 evidence commit; they do not imply a known product defect.
 
@@ -99,14 +154,12 @@ evidence commit; they do not imply a known product defect.
   headroom, and bounded cancellation polling with fixed failure mapping.
 - [x] Existing regular-file-only behavior, missing target/parents, invalid UTF-
   8, oversize/growing content, ancestor/final symlinks, and special types.
-- [ ] Exact original ordinary-rwx preservation under hostile umask, inode
+- [x] Exact original ordinary-rwx preservation under hostile umask, inode
   replacement, old-descriptor/new-path visibility, hard-link behavior, and
-  deliberate nonpreservation of other metadata. The composed direct suite
-  proves every listed behavior except hostile-umask independence.
-- [ ] Retained-root changes and deterministic target identity/mode/content,
-  staged-name, and parent races through the real production pipeline. Retained-
-  root replacement/removal, target change, and staged-name swap are directly
-  proven; a deterministic parent-race seam remains for review.
+  deliberate nonpreservation of other metadata.
+- [x] Retained-root changes and deterministic target identity/mode/content,
+  staged-name, and moved-parent races through the real production pipeline,
+  including the disclosed retained-parent publication behavior.
 - [ ] Every read/match/construction/write/chmod/file-sync/rename/parent-sync
   fault with unchanged-target precommit and nonretryable postcommit ambiguity.
   Broad phase fault coverage is green, but the universal claim remains for
@@ -117,8 +170,8 @@ evidence commit; they do not imply a known product defect.
   dual-failure residue outcome are directly exercised.
 - [ ] Cancellation during both reads, matching, construction, traversal,
   entropy/staging, final verification, immediately before rename, unpolled/
-  drop, and engine same-poll durable recovery. Multiple bounded phase cases are
-  green; the complete phase matrix remains for formal audit.
+  drop, and engine same-poll durable recovery. Final-verification cancellation
+  is now direct; the complete phase matrix remains for formal audit.
 - [x] Exact seven-tool alphabetical host catalog, original-plus-six-clone
   descriptor identity, complete `write_file` regression, native macOS behavior,
   Linux/FreeBSD/WASI compilation, and active unsupported behavior.
@@ -127,7 +180,7 @@ evidence commit; they do not imply a known product defect.
 - [x] Private production-helper evidence proves the exact 16,384-byte
   serialized-result guard because every public success payload is smaller.
 
-## Composed local-gate evidence
+## Baseline local-gate evidence
 
 Exact precursor `31ec79e000589c4fb34599be4aad4f90ea33974f` is locally green under
 Rust and Cargo 1.94.1:
@@ -157,10 +210,11 @@ order and adds the thirtieth benchmark-harness test. The final harness is green
 at 130 tests: 122 pass and eight expected macOS skips. This is harness
 correctness evidence, not a product-performance result.
 
-## Formal review and delivery gates
+## Replacement review and delivery gates
 
-This record is pre-adversarial. Three fresh agents must independently inspect
-one subsequent exact composed behavior SHA for:
+Cycle 1 is not green. After this documentation component composes, three fresh
+agents must independently inspect one subsequent exact replacement behavior SHA
+for:
 
 1. correctness and public API;
 2. filesystem confinement, atomicity, durability, and robustness; and
@@ -182,17 +236,33 @@ remote workflows remain required.
 - Local-gate precursor: `31ec79e000589c4fb34599be4aad4f90ea33974f`
 - Documentation component after composition:
   `b1210f395a25bc59590c3b4b0164fac56e96bca0`
-- Exact formal behavior candidate: pending
-- Correctness/API track: pending
-- Filesystem/robustness track: pending
-- Performance/concurrency track: pending
+- Cycle-1 formal-preparation commit:
+  `3934d9d26ced78d5164e9ff2620c44ebb6480dd1`
+- Failed cycle-1 candidate: `8fdb67892f34a0fbfbb90a54e8eda982159813bf`
+- Cycle-1 correctness/API track: green, zero findings
+- Cycle-1 filesystem/robustness track: not green, one high and one low finding
+- Cycle-1 performance/concurrency track: not green, one high finding
+- Production remediation component:
+  `578ef3cf2061568d02a160fbe7a498203880b9e9`
+- Integrated production remediation:
+  `013016f276e023838ffe7ddf8a79121a3ee463a1`
+- Independent remediation-test component:
+  `59471147817ed7520513fdf51041ec24c822bfe3`
+- Exact composed remediation precursor:
+  `482d33c0bc586ff594d5b0decc58de347cb9243e`
+- Cycle-1 remediation documentation component: pending integration handoff
+- Exact replacement behavior candidate: pending
+- Replacement correctness/API track: pending
+- Replacement filesystem/robustness track: pending
+- Replacement performance/concurrency track: pending
 - Behavior-green SHA: pending
 - Documentation seal: pending
 - Exact feature CI and benchmark evidence: pending
 - No-force fast-forward `main`: pending
 - Exact `main` CI and benchmark evidence: pending
 
-The local precursor establishes neither formal candidate status nor
-adversarial, feature-delivery, `main`, compatibility-promotion, equivalence, or
-product-performance approval. Zig remains solely the pinned upstream fx
-benchmark build input; the machine-god product implementation is Rust.
+The remediation precursor establishes neither replacement-candidate nor
+replacement-review status, and no feature-delivery, `main`, compatibility-
+promotion, equivalence, or product-performance approval. Zig remains solely the
+pinned upstream fx benchmark build input; the machine-god product
+implementation is Rust.

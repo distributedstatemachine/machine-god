@@ -44,9 +44,11 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with twenty delivered bounded slices. The next bounded `edit_file` slice is
-**IN PROGRESS** on exact composed local-gate precursor
-`31ec79e000589c4fb34599be4aad4f90ea33974f`; formal adversarial review and
-delivery remain pending.
+**IN PROGRESS**. Exact cycle-1 candidate
+`8fdb67892f34a0fbfbb90a54e8eda982159813bf` was not green; its confirmed high
+staged-content race is locally remediated through exact composed precursor
+`482d33c0bc586ff594d5b0decc58de347cb9243e`. Replacement review and delivery
+remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -855,8 +857,13 @@ PROGRESS** from exact delivered base
 `bb0c381f8b044f7849bef80cc482034e1dd57ecf` is green under exact CI
 `32634883133` and benchmark workflow `32634883139`. Production and independent
 evidence are now composed through exact local-gate precursor
-`31ec79e000589c4fb34599be4aad4f90ea33974f`. This changes no delivered-slice
-count: formal adversarial review, feature workflows, fast-forward integration,
+`31ec79e000589c4fb34599be4aad4f90ea33974f`. Documentation
+`b1210f395a25bc59590c3b4b0164fac56e96bca0` and formal preparation
+`3934d9d26ced78d5164e9ff2620c44ebb6480dd1` produced exact cycle-1 candidate
+`8fdb67892f34a0fbfbb90a54e8eda982159813bf`, which was not green. Production
+and independent remediation evidence are locally composed through exact
+precursor `482d33c0bc586ff594d5b0decc58de347cb9243e`. This changes no delivered-
+slice count: replacement review, feature workflows, fast-forward integration,
 and exact `main` workflows remain pending.
 
 The frozen strict effect-free input is exactly required UTF-8 `path`,
@@ -891,20 +898,27 @@ reacquisition, existing no-follow parents, initial bounded stable target read,
 one private same-parent stage selected within eight entropy names, at most 16
 cumulative interrupted results per I/O/sync phase, and at most 16 interruptions
 and 31 native entropy calls per 16-byte name including partial progress. The
-stage receives only the original target's nine ordinary rwx bits. Before
-rename, execution revalidates parent identity, target identity/mode/size and
-complete current bytes, and staged identity, then checks cancellation and
-atomically replaces the pathname. Post-rename parent-sync or required
-verification failure is nonretryable commit ambiguity. Precommit cleanup makes
-the delivered best-effort held-descriptor `fchmod(0600)` and identity-checked
-unlink attempts with the same disclosed race and dual-failure residue caveat.
+stage stays `0600` throughout the long parent/target rewalk and complete target
+reread. Complete mutation-sensitive staged-path and held-descriptor postimage
+checks follow both deterministic staged-race hooks. Only near publication does
+the stage receive the original target's nine ordinary rwx bits; content and
+metadata are synced and completely reverified immediately before the final
+cancellation check and atomic rename. After rename, tool cancellation is
+ignored while the retained staged descriptor is stably reread for exact bytes,
+identity, type, size, mode, and metadata and the published path is rechecked.
+Parent sync is always attempted, even when verification fails; either failure
+is nonretryable commit ambiguity. Precommit cleanup makes the delivered best-
+effort held-descriptor `fchmod(0600)` and identity-checked unlink attempts with
+the same disclosed race and dual-failure residue caveat.
 
 This is not inode compare-and-swap isolation: a target or retained parent can
 change after the last validation, and a moved retained parent can receive
-publication. Replacing the inode preserves only ordinary rwx bits and breaks
-the edited pathname away from other hard links; ownership, ACLs, xattrs,
-timestamps, and other metadata are not preserved. The slice adds no missing-
-file insertion, parent creation, external path, binary/alternate-encoding
+publication. Private mode narrows staged access but cannot exclude the same UID
+or root. Final-mode and check-to-rename windows remain, and writers can mutate
+the file after post-rename verification. Replacing the inode preserves only
+ordinary rwx bits and breaks the edited pathname away from other hard links;
+ownership, ACLs, xattrs, timestamps, and other metadata are not preserved. The
+slice adds no missing-file insertion, parent creation, external path, binary/alternate-encoding
 editing, regex, patch/range/multi-edit, append, symlink-target access, CLI
 behavior, non-Linux/macOS hardening, benchmark change, performance claim, or fx
 equivalence.
@@ -937,8 +951,26 @@ whole-feature diff, and clean-worktree checks are green. These are local
 precursor results, not compatibility promotion, performance, equivalence,
 formal candidate, review, or delivery approval.
 
-Three fresh correctness/API, filesystem/robustness, and performance/concurrency
-agents must next review the same exact behavior SHA. Every confirmed finding is
+Cycle-1 correctness/API was **GREEN** with zero findings. Filesystem/robustness
+was **NOT GREEN** with a high same-inode/same-size staged-mutation false-success
+finding and a low incomplete-mandatory-evidence finding. Performance/
+concurrency was **NOT GREEN** with the same high finding. Production remediation
+`578ef3cf2061568d02a160fbe7a498203880b9e9` composes as
+`013016f276e023838ffe7ddf8a79121a3ee463a1`; independent test component
+`59471147817ed7520513fdf51041ec24c822bfe3` is red on the failed candidate for
+three corruption windows and composes green as
+`482d33c0bc586ff594d5b0decc58de347cb9243e`. Focused remediation suites pass 30
+private, 24 direct, five engine, and seven reference-host tests. They directly
+cover both precommit same-inode/same-size staged mutation windows,
+postpublication held-inode corruption with parent sync still attempted, hostile-
+umask mode preservation, final-verification cancellation, and moved retained-
+parent publication. Universal fault and cancellation matrices remain pending.
+This is local remediation evidence, not a replacement-candidate, delivery,
+performance, or equivalence claim.
+
+After this documentation component composes, three fresh correctness/API,
+filesystem/robustness, and performance/concurrency agents must next review the
+same exact replacement behavior SHA. Every confirmed finding is
 fixed and restarts all three fresh tracks on a new SHA until all are green.
 Exact feature workflows, a no-force fast-forward to `main`, and exact `main`
 workflows follow. Documentation-only records are exempt from another
@@ -1146,11 +1178,24 @@ gate:
   `31ec79e000589c4fb34599be4aad4f90ea33974f`; focused suites, the Rust 1.94.1
   workspace gate, 130-test repository harness, pinned-fx compatibility,
   dependency, portability, documentation, release-smoke, no-unsafe, diff, and
-  clean-worktree checks are green. Formal candidate preparation, all three
-  adversarial tracks, exact feature workflows, fast-forward integration, and
+  clean-worktree checks are green. Exact cycle-1 candidate
+  `8fdb67892f34a0fbfbb90a54e8eda982159813bf` was not green: correctness/API
+  was green with zero findings; filesystem/robustness had a high staged-
+  mutation false-success finding and a low incomplete-evidence finding; and
+  performance/concurrency had the same high finding. Production remediation
+  `578ef3cf2061568d02a160fbe7a498203880b9e9` composes as
+  `013016f276e023838ffe7ddf8a79121a3ee463a1`, and
+  independent test component `59471147817ed7520513fdf51041ec24c822bfe3`
+  composes as exact precursor
+  `482d33c0bc586ff594d5b0decc58de347cb9243e`. Its three corruption regressions
+  are red on the failed candidate and green on the fix; focused totals are 30
+  private, 24 direct, five engine, and seven reference-host tests. Hostile-
+  umask and moved-retained-parent evidence are now direct. Universal fault and
+  cancellation matrices, replacement candidate preparation, all three fresh
+  replacement tracks, exact feature workflows, fast-forward integration, and
   exact `main` workflows remain pending; `edit_file` is not delivered.
   Documentation-only commits are exempt from a separate adversarial cycle under
-  the user's instruction. The
+  the user's instruction and are included in the replacement candidate. The
   remaining native tools are
   incomplete, so delivery of this slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
