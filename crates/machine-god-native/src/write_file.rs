@@ -29,6 +29,12 @@ pub const MAX_WRITE_FILE_TEMP_ATTEMPTS: usize = 8;
 /// Maximum serialized [`ToolOutput`] bytes produced by this tool.
 pub const MAX_WRITE_FILE_SERIALIZED_RESULT_BYTES: usize = 16 * 1024;
 
+// A native syscall may be interrupted repeatedly without making progress. Cap
+// the total interrupted attempts in each write or durability phase so every
+// operation remains bounded even when interrupts are interleaved with progress.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS: usize = 16;
+
 /// Registered name of [`WriteFileTool`].
 pub const WRITE_FILE_TOOL_NAME: &str = "write_file";
 
@@ -739,6 +745,7 @@ fn write_content_with(
     mut write: impl FnMut(&[u8]) -> Result<usize, rustix::io::Errno>,
 ) -> Result<(), ToolError> {
     let mut offset = 0_usize;
+    let mut interrupted_attempts = 0_usize;
     while offset < content.len() {
         check_cancellation(cancellation)?;
         let end = offset
@@ -751,7 +758,15 @@ fn write_content_with(
                 offset = offset.checked_add(written).ok_or_else(write_failed)?;
             }
             Ok(_) => return Err(write_failed()),
-            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(error) if error == rustix::io::Errno::INTR => {
+                interrupted_attempts = interrupted_attempts
+                    .checked_add(1)
+                    .ok_or_else(write_failed)?;
+                check_cancellation(cancellation)?;
+                if interrupted_attempts >= MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS {
+                    return Err(map_precommit_io_error(error));
+                }
+            }
             Err(error) => return Err(map_precommit_io_error(error)),
         }
     }
@@ -859,27 +874,31 @@ fn sync_before_commit_with(
     cancellation: &CancellationToken,
     mut sync: impl FnMut() -> Result<(), rustix::io::Errno>,
 ) -> Result<(), ToolError> {
-    loop {
+    for _ in 0..MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS {
         check_cancellation(cancellation)?;
         match sync() {
-            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(error) if error == rustix::io::Errno::INTR => {
+                check_cancellation(cancellation)?;
+            }
             Ok(()) => return Ok(()),
             Err(error) => return Err(map_precommit_io_error(error)),
         }
     }
+    Err(map_precommit_io_error(rustix::io::Errno::INTR))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn sync_after_commit_with(
     mut sync: impl FnMut() -> Result<(), rustix::io::Errno>,
 ) -> Result<(), rustix::io::Errno> {
-    loop {
+    for _ in 0..MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS {
         match sync() {
             Err(error) if error == rustix::io::Errno::INTR => {}
             Ok(()) => return Ok(()),
             Err(error) => return Err(error),
         }
     }
+    Err(rustix::io::Errno::INTR)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1237,7 +1256,7 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     mod supported {
-        use std::cell::Cell;
+        use std::cell::{Cell, RefCell};
         use std::fmt::Write as _;
         use std::fs;
         use std::os::unix::fs::PermissionsExt as _;
@@ -1344,7 +1363,7 @@ mod tests {
         }
 
         #[test]
-        fn pipeline_write_failure_preserves_the_target_and_cleans_the_stage() {
+        fn pipeline_write_interrupt_exhaustion_preserves_target_and_cleans_stage() {
             let temporary = TempDirectory::new("write-failure");
             let target_path = temporary.path().join("target.txt");
             fs::write(&target_path, b"old content").unwrap();
@@ -1359,7 +1378,7 @@ mod tests {
                     |_, content, cancellation| {
                         write_content_with(content, cancellation, |_| {
                             write_calls.set(write_calls.get() + 1);
-                            Err(rustix::io::Errno::IO)
+                            Err(rustix::io::Errno::INTR)
                         })
                     },
                     sync_before_commit,
@@ -1369,7 +1388,10 @@ mod tests {
                     native_sync_parent,
                 )
                 .unwrap_err();
-            assert_eq!(write_calls.get(), 1);
+            assert_eq!(
+                write_calls.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
             assert_eq!(error.code, "write_file_write_failed");
             assert!(error.retryable);
             assert_eq!(fs::read(&target_path).unwrap(), b"old content");
@@ -1377,7 +1399,7 @@ mod tests {
         }
 
         #[test]
-        fn pipeline_staged_sync_failure_preserves_the_target_and_cleans_the_stage() {
+        fn pipeline_staged_sync_interrupt_exhaustion_preserves_target_and_cleans_stage() {
             let temporary = TempDirectory::new("staged-sync-failure");
             let target_path = temporary.path().join("target.txt");
             fs::write(&target_path, b"old content").unwrap();
@@ -1393,7 +1415,7 @@ mod tests {
                     |_, cancellation| {
                         sync_before_commit_with(cancellation, || {
                             sync_calls.set(sync_calls.get() + 1);
-                            Err(rustix::io::Errno::IO)
+                            Err(rustix::io::Errno::INTR)
                         })
                     },
                     |_, _| {},
@@ -1402,7 +1424,10 @@ mod tests {
                     native_sync_parent,
                 )
                 .unwrap_err();
-            assert_eq!(sync_calls.get(), 1);
+            assert_eq!(
+                sync_calls.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
             assert_eq!(error.code, "write_file_write_failed");
             assert!(error.retryable);
             assert_eq!(fs::read(&target_path).unwrap(), b"old content");
@@ -1546,6 +1571,167 @@ mod tests {
         }
 
         #[test]
+        fn pipeline_cancellation_after_staged_verification_cleans_without_publication() {
+            let temporary = TempDirectory::new("post-sync-cancel");
+            let target_path = temporary.path().join("target.txt");
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let cancellation = CancellationToken::new();
+            let cancellation_after_verification = cancellation.clone();
+            let staged_name = RefCell::new(None);
+            let publish_calls = Cell::new(0_usize);
+            let error = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"fully staged content",
+                    &cancellation,
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |parent, name| {
+                        let metadata = rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                            .expect("the synced staged file remains linked before verification");
+                        assert!(FileType::from_raw_mode(metadata.st_mode).is_file());
+                        assert_eq!(
+                            usize::try_from(metadata.st_size).unwrap(),
+                            b"fully staged content".len()
+                        );
+                        assert_eq!(metadata.st_mode & 0o777, 0o644);
+                        *staged_name.borrow_mut() = Some(name.to_owned());
+                    },
+                    || {
+                        cancellation_after_verification.cancel();
+                    },
+                    |parent, staged_name, basename, creating| {
+                        publish_calls.set(publish_calls.get() + 1);
+                        native_publish_staged(parent, staged_name, basename, creating)
+                    },
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(error.code, "write_file_cancelled");
+            assert!(!error.retryable);
+            assert_eq!(publish_calls.get(), 0);
+            assert!(!target_path.exists());
+            let staged_name = staged_name
+                .into_inner()
+                .expect("the post-sync verification seam must run");
+            assert!(!temporary.path().join(staged_name).exists());
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn pipeline_native_create_preserves_a_target_raced_in_before_rename() {
+            let temporary = TempDirectory::new("create-race");
+            let target_path = temporary.path().join("target.txt");
+            let raced_target = target_path.clone();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let before_rename_calls = Cell::new(0_usize);
+            let error = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"owned content",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {
+                        before_rename_calls.set(before_rename_calls.get() + 1);
+                        fs::write(&raced_target, b"raced content")
+                            .expect("race in a target after final validation");
+                    },
+                    native_publish_staged,
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(before_rename_calls.get(), 1);
+            assert_eq!(error.code, "write_file_target_changed");
+            assert!(error.retryable);
+            assert_eq!(fs::read(&target_path).unwrap(), b"raced content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn pipeline_native_replace_can_replace_a_target_raced_in_before_rename() {
+            let temporary = TempDirectory::new("replace-race");
+            let target_path = temporary.path().join("target.txt");
+            let displaced_path = temporary.path().join("displaced.txt");
+            fs::write(&target_path, b"initial content").unwrap();
+            let raced_target = target_path.clone();
+            let raced_displaced = displaced_path.clone();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let before_rename_calls = Cell::new(0_usize);
+            let output = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"owned replacement",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {
+                        before_rename_calls.set(before_rename_calls.get() + 1);
+                        fs::rename(&raced_target, &raced_displaced)
+                            .expect("displace the validated target");
+                        fs::write(&raced_target, b"raced replacement")
+                            .expect("race in a replacement after final validation");
+                    },
+                    native_publish_staged,
+                    native_sync_parent,
+                )
+                .expect("ordinary replacement rename may replace the raced target");
+            assert_eq!(before_rename_calls.get(), 1);
+            assert!(!output.is_error);
+            assert_eq!(fs::read(&target_path).unwrap(), b"owned replacement");
+            assert_eq!(fs::read(&displaced_path).unwrap(), b"initial content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn pipeline_native_publish_can_land_in_a_retained_moved_parent() {
+            let temporary = TempDirectory::new("moved-parent-race");
+            let workspace = temporary.path().join("workspace");
+            fs::create_dir(&workspace).unwrap();
+            let original_parent = workspace.join("nested");
+            let moved_parent = temporary.path().join("outside-workspace");
+            fs::create_dir(&original_parent).unwrap();
+            let raced_original_parent = original_parent.clone();
+            let raced_moved_parent = moved_parent.clone();
+            let tool = WriteFileTool::open(&workspace).unwrap();
+            let before_rename_calls = Cell::new(0_usize);
+            let output = tool
+                .execute_supported_with(
+                    "nested/target.txt",
+                    b"retained-parent content",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {
+                        before_rename_calls.set(before_rename_calls.get() + 1);
+                        fs::rename(&raced_original_parent, &raced_moved_parent)
+                            .expect("move the validated parent");
+                        fs::create_dir(&raced_original_parent)
+                            .expect("replace the workspace-visible parent path");
+                    },
+                    native_publish_staged,
+                    native_sync_parent,
+                )
+                .expect("descriptor-relative publication retains the parent moved outside root");
+            assert_eq!(before_rename_calls.get(), 1);
+            assert!(!output.is_error);
+            assert!(!original_parent.join("target.txt").exists());
+            assert_eq!(
+                fs::read(moved_parent.join("target.txt")).unwrap(),
+                b"retained-parent content"
+            );
+            assert_no_staged_files(&original_parent);
+            assert_no_staged_files(&moved_parent);
+        }
+
+        #[test]
         fn pipeline_parent_sync_failure_is_ambiguous_after_a_real_rename() {
             let temporary = TempDirectory::new("post-rename-sync-failure");
             let target_path = temporary.path().join("target.txt");
@@ -1564,17 +1750,15 @@ mod tests {
                     || {},
                     native_publish_staged,
                     |_| {
-                        let call = sync_calls.get();
-                        sync_calls.set(call + 1);
-                        if call == 0 {
-                            Err(rustix::io::Errno::INTR)
-                        } else {
-                            Err(rustix::io::Errno::IO)
-                        }
+                        sync_calls.set(sync_calls.get() + 1);
+                        Err(rustix::io::Errno::INTR)
                     },
                 )
                 .unwrap_err();
-            assert_eq!(sync_calls.get(), 2);
+            assert_eq!(
+                sync_calls.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
             assert_eq!(error.code, "write_file_commit_ambiguous");
             assert!(!error.retryable);
             assert_eq!(fs::read(&target_path).unwrap(), b"committed content");
@@ -1801,6 +1985,39 @@ mod tests {
             })
             .unwrap_err();
             assert_eq!(overreported.code, "write_file_write_failed");
+
+            let interrupted_calls = Cell::new(0_usize);
+            let interrupted = write_content_with(b"content", &CancellationToken::new(), |_| {
+                interrupted_calls.set(interrupted_calls.get() + 1);
+                Err(rustix::io::Errno::INTR)
+            })
+            .unwrap_err();
+            assert_eq!(
+                interrupted_calls.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
+            assert_eq!(interrupted.code, "write_file_write_failed");
+            assert!(interrupted.retryable);
+
+            let interleaved_calls = Cell::new(0_usize);
+            let interleaved_content = vec![b'x'; MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS + 1];
+            let interleaved =
+                write_content_with(&interleaved_content, &CancellationToken::new(), |_| {
+                    let call = interleaved_calls.get();
+                    interleaved_calls.set(call + 1);
+                    if call.is_multiple_of(2) {
+                        Ok(1)
+                    } else {
+                        Err(rustix::io::Errno::INTR)
+                    }
+                })
+                .unwrap_err();
+            assert_eq!(
+                interleaved_calls.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS * 2
+            );
+            assert_eq!(interleaved.code, "write_file_write_failed");
+            assert!(interleaved.retryable);
         }
 
         #[test]
@@ -1815,6 +2032,24 @@ mod tests {
             })
             .unwrap_err();
             assert_eq!(calls.get(), 1);
+            assert_eq!(error.code, "write_file_cancelled");
+
+            let final_interrupt_cancellation = CancellationToken::new();
+            let cancel_on_final_interrupt = final_interrupt_cancellation.clone();
+            let interrupted_calls = Cell::new(0_usize);
+            let error = write_content_with(b"content", &final_interrupt_cancellation, |_| {
+                let call = interrupted_calls.get() + 1;
+                interrupted_calls.set(call);
+                if call == MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS {
+                    cancel_on_final_interrupt.cancel();
+                }
+                Err(rustix::io::Errno::INTR)
+            })
+            .unwrap_err();
+            assert_eq!(
+                interrupted_calls.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
             assert_eq!(error.code, "write_file_cancelled");
         }
 
@@ -1853,6 +2088,37 @@ mod tests {
             .unwrap_err();
             assert_eq!(cancelled_attempts.get(), 1);
             assert_eq!(error.code, "write_file_cancelled");
+
+            let exhausted_attempts = Cell::new(0_usize);
+            let exhausted = sync_before_commit_with(&CancellationToken::new(), || {
+                exhausted_attempts.set(exhausted_attempts.get() + 1);
+                Err(rustix::io::Errno::INTR)
+            })
+            .unwrap_err();
+            assert_eq!(
+                exhausted_attempts.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
+            assert_eq!(exhausted.code, "write_file_write_failed");
+            assert!(exhausted.retryable);
+
+            let final_interrupt_cancellation = CancellationToken::new();
+            let cancel_on_final_interrupt = final_interrupt_cancellation.clone();
+            let final_interrupt_attempts = Cell::new(0_usize);
+            let cancelled = sync_before_commit_with(&final_interrupt_cancellation, || {
+                let attempt = final_interrupt_attempts.get() + 1;
+                final_interrupt_attempts.set(attempt);
+                if attempt == MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS {
+                    cancel_on_final_interrupt.cancel();
+                }
+                Err(rustix::io::Errno::INTR)
+            })
+            .unwrap_err();
+            assert_eq!(
+                final_interrupt_attempts.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
+            assert_eq!(cancelled.code, "write_file_cancelled");
         }
 
         #[test]
@@ -1934,6 +2200,19 @@ mod tests {
             });
             assert_eq!(retry_attempts.get(), 2);
             assert!(finish_after_commit(true, successful_sync).is_ok());
+
+            let exhausted_attempts = Cell::new(0_usize);
+            let exhausted_sync = sync_after_commit_with(|| {
+                exhausted_attempts.set(exhausted_attempts.get() + 1);
+                Err(rustix::io::Errno::INTR)
+            });
+            assert_eq!(
+                exhausted_attempts.get(),
+                MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS
+            );
+            let exhausted = finish_after_commit(true, exhausted_sync).unwrap_err();
+            assert_eq!(exhausted.code, "write_file_commit_ambiguous");
+            assert!(!exhausted.retryable);
 
             assert!(finish_after_commit(true, Ok(())).is_ok());
             for result in [
