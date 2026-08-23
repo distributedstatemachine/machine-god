@@ -755,7 +755,8 @@ fn workspace_composition_uses_one_original_descriptor_and_seven_identity_clones(
     use crate::workspace::{WorkspaceRoot, WorkspaceRootError};
 
     let temporary = TempDirectory::new("workspace-clones");
-    let root = WorkspaceRoot::open(temporary.path()).unwrap();
+    let root = WorkspaceRoot::open(temporary.path())
+        .unwrap_or_else(|_| panic!("open workspace root for clone evidence"));
     let original_metadata = rustix::fs::fstat(root.descriptor()).unwrap();
     let original_identity = (
         i128::from(original_metadata.st_dev),
@@ -780,7 +781,7 @@ fn workspace_composition_uses_one_original_descriptor_and_seven_identity_clones(
             ));
             Ok(clone)
         })
-        .unwrap();
+        .unwrap_or_else(|_| panic!("compose workspace tools for clone evidence"));
 
     assert_eq!(clone_identities, vec![original_identity; 7]);
     let names = [
