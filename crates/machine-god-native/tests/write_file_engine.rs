@@ -7,9 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_util::StreamExt;
 use machine_god_core::{
-    Capability, ContentBlock, Engine, EngineEvent, FilesystemAccess, Message, ModelEvent,
-    PermissionDecision, PermissionGrantScope, Role, SessionId, SessionIncarnationId, StopReason,
-    ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
+    BoxFuture, CancellationToken, Capability, ContentBlock, Engine, EngineEvent, FilesystemAccess,
+    Message, ModelEvent, PermissionDecision, PermissionGrantScope, PreparedToolCall, Role,
+    SessionId, SessionIncarnationId, StopReason, Tool, ToolCall, ToolCallId, ToolContext,
+    ToolError, ToolName, ToolOutput, ToolSpec, TurnEvent,
 };
 use machine_god_native::{WRITE_FILE_TOOL_NAME, WriteFileTool};
 use machine_god_testkit::{
@@ -22,6 +23,37 @@ static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TemporaryDirectory {
     path: PathBuf,
+}
+
+struct CancelAfterReadyWriteTool {
+    inner: WriteFileTool,
+}
+
+impl Tool for CancelAfterReadyWriteTool {
+    fn spec(&self) -> ToolSpec {
+        self.inner.spec()
+    }
+
+    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        self.inner.prepare(call)
+    }
+
+    fn execute(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        let execution = self.inner.execute(context, arguments, cancellation.clone());
+        Box::pin(async move {
+            let result = execution.await;
+            assert!(
+                cancellation.cancel(),
+                "write execution was unexpectedly cancelled before becoming ready"
+            );
+            result
+        })
+    }
 }
 
 impl TemporaryDirectory {
@@ -337,4 +369,71 @@ fn engine_allowed_execution_error_is_generic_nonretryable_and_durable_after_tool
     assert_eq!(output, expected);
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
     assert!(!temporary.path().join("missing").exists());
+}
+
+#[test]
+fn same_poll_cancellation_after_write_commit_keeps_durable_unknown_result() {
+    let temporary = TemporaryDirectory::new();
+    let target = temporary.path().join("committed.txt");
+    let content = "committed before same-poll cancellation";
+    let provider = provider(
+        "committed.txt",
+        content,
+        "native-write-same-poll-cancellation",
+    );
+    let store = InMemorySessionStore::new();
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+            scope: PermissionGrantScope::Once,
+        })]);
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(CancelAfterReadyWriteTool {
+            inner: WriteFileTool::open(temporary.path()).unwrap(),
+        })
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "native-write-same-poll-cancellation");
+
+    assert!(matches!(
+        events.last().map(|event| &event.payload),
+        Some(TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        })
+    ));
+    assert_exact_capability(&policy, "committed.txt");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event.payload, TurnEvent::ToolFinished { .. }))
+    );
+    assert_eq!(provider.requests().len(), 1);
+    assert_eq!(fs::read(&target).unwrap(), content.as_bytes());
+
+    let record = store.record(&session_id).unwrap();
+    assert_eq!(record.messages.len(), 3);
+    assert_eq!(record.messages[2].role, Role::Tool);
+    let ContentBlock::ToolResult { call_id, output } = &record.messages[2].content[0] else {
+        panic!("expected durable unknown tool result placeholder")
+    };
+    assert_eq!(call_id.as_str(), "write-file-call");
+    assert_eq!(
+        output,
+        &ToolOutput {
+            content: json!({
+                "code": "tool_result_unknown",
+                "message": "tool result status is unknown",
+            }),
+            is_error: true,
+        }
+    );
 }
