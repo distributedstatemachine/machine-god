@@ -1,7 +1,7 @@
 # Native `write_file` contract
 
-Status: **FORMAL CYCLE-3 REVIEW PREPARATION — the immediate tree-identical
-marker, fresh formal reviews, and delivery are pending**
+Status: **FORMAL CYCLE-3 REVIEW GREEN — documentation-only seal; exact feature
+workflows and delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -454,16 +454,24 @@ closes the two cycle-2 findings for review preparation only. It does not make
 historical cycle 2 green, replace cycle 3, satisfy native Linux/macOS feature
 CI, or establish delivery.
 
-## Formal cycle-3 preparation
+## Formal adversarial cycle 3
 
 Exact local-gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
-retains the complete evidence above. This documentation-only preparation commit
-changes no behavior. The immediately following tree-identical marker will be
-supplied independently to three fresh correctness/API, filesystem/robustness,
-and performance/concurrency agents. No behavior-green or replacement claim is
-made before all three approve that same exact marker. Every finding restarts all
-three tracks. The later documentation-only seal/delivery exemption remains in
-force; exact feature and `main` workflows are still required.
+retains the complete precursor evidence above. Exact behavior candidate
+`db78c6407c4f603f18e2839a8a291f2de33e579c` is tree-identical to its immediate
+formal-preparation parent `5ed38f3c61d3f29677f41c0b4a41468616a59c7e`.
+Three fresh tracks all returned **GREEN** with zero findings: correctness/API,
+filesystem/robustness, and performance/concurrency. Filesystem/robustness also
+reran 30 private module tests, 25 direct tests, and five engine tests under Rust
+1.94.1 exactly. Candidate formatting, workspace/all-target/all-feature warnings-
+denied Clippy, workspace tests, two doctests, and diff/clean checks are green.
+
+The behavior-green SHA is exactly `db78c6407c4f603f18e2839a8a291f2de33e579c`.
+The earlier full gate record at `8432c0c`/`9a09172` remains applicable evidence,
+including the transparently recorded contended Python timeout and isolated plus
+full sequential green reruns. Exact feature CI, benchmark evidence, fast-forward
+`main`, and exact `main` workflows remain pending. This seal is documentation-
+only and is exempt from further adversarial review under the user's instruction.
 
 ## Pinned fx input and deliberate differences
 

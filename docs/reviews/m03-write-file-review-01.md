@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FORMAL CYCLE-3 REVIEW PREPARATION — the immediate tree-identical
-marker, fresh formal reviews, seal, and delivery are pending**
+Status: **FORMAL CYCLE-3 REVIEW GREEN — documentation-only seal; exact feature
+workflows and delivery are pending**
 
 ## Base and prior delivery
 
@@ -188,10 +188,16 @@ still required.
 - Cycle-2 remediation resolution: both confirmed findings are closed by exact
   production and deterministic evidence locally; historical cycle 2 remains
   **NOT GREEN** and cycle 3 is required
-- Next exact behavior candidate: **PENDING**
-- Behavior-green SHA: **PENDING**
-- Next formal review result: **PENDING**
-- Documentation seal: **PENDING**
+- Exact cycle-3 behavior candidate:
+  `db78c6407c4f603f18e2839a8a291f2de33e579c`
+- Cycle-3 candidate tree lineage: exact candidate `db78c640` is tree-identical
+  to immediate formal-review preparation parent `5ed38f3c`
+- Behavior-green SHA: `db78c6407c4f603f18e2839a8a291f2de33e579c`
+- Formal adversarial cycle 3: correctness/API **GREEN** zero findings;
+  filesystem/robustness **GREEN** zero findings; performance/concurrency
+  **GREEN** zero findings
+- Documentation seal: this documentation-only commit; exempt from further
+  adversarial review under the user's instruction
 - Feature CI and benchmark evidence: **PENDING**
 - Fast-forward `main` and exact workflows: **PENDING**
 
@@ -435,17 +441,29 @@ remote delivery. A later documentation-only seal or delivery record remains
 exempt from another adversarial cycle under the user's instruction, while its
 exact feature and `main` workflows remain required.
 
-## Formal cycle-3 preparation
+## Formal adversarial cycle 3
 
 Exact gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
-retains the complete precursor evidence. This documentation-only preparation
-changes no behavior. The immediately following tree-identical marker will be
-supplied independently to three fresh correctness/API, filesystem/robustness,
-and performance/concurrency agents. No behavior-green SHA or replacement review
-result is claimed until all three approve that same exact marker. Every finding
-restarts all three tracks. A later documentation-only seal or delivery record
-remains exempt from another adversarial cycle, while exact feature and `main`
-workflows remain required.
+retains the complete precursor evidence. Exact behavior candidate
+`db78c6407c4f603f18e2839a8a291f2de33e579c` is tree-identical to immediate
+formal-review preparation parent
+`5ed38f3c61d3f29677f41c0b4a41468616a59c7e`. All three fresh tracks returned
+**GREEN** with zero findings on that same exact SHA:
+
+- correctness/API: **GREEN**, zero findings;
+- filesystem/robustness: **GREEN**, zero findings, with 30 private module tests,
+  25 direct tests, and five engine tests rerun under Rust 1.94.1 exactly; and
+- performance/concurrency: **GREEN**, zero findings.
+
+Exact-candidate formatting, workspace/all-target/all-feature warnings-denied
+Clippy, workspace tests, two doctests, and diff/clean checks are green. The full
+precursor gate at `8432c0c` and exact gate record `9a09172` remain retained,
+including the initial LTO-overlapped Python timeout and the isolated plus full
+sequential green reruns that establish validation-method contention rather than
+a product failure. The behavior-green SHA is exactly `db78c640`. Feature CI,
+benchmark evidence, fast-forward `main`, and exact `main` workflows remain
+pending. This seal changes documentation only and is exempt from further
+adversarial review under the user's instruction.
 
 ## Explicit nonclaims
 

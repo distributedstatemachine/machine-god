@@ -808,12 +808,16 @@ These exact local gates resolve both cycle-2 findings for formal-review
 preparation, but do not retroactively make cycle 2 green or establish a new
 behavior candidate. All three fresh tracks must review the same next exact SHA.
 Exact gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
-retains that evidence. The immediately following tree-identical marker after
-this documentation-only formal cycle-3 preparation will be supplied to three
-fresh correctness/API, filesystem/robustness, and performance/concurrency
-agents. No behavior-green or replacement claim is made before all three approve
-the same marker; every finding restarts all tracks. The later documentation-only
-seal/delivery exemption remains in force.
+retains that evidence. Exact candidate
+`db78c6407c4f603f18e2839a8a291f2de33e579c` is tree-identical to its immediate
+formal-preparation parent `5ed38f3c61d3f29677f41c0b4a41468616a59c7e`.
+All three fresh correctness/API, filesystem/robustness, and performance/
+concurrency tracks are **GREEN** with zero findings on that same SHA.
+Filesystem/robustness reran 30 private, 25 direct, and five engine tests under
+Rust 1.94.1 exactly. Exact-candidate formatting, workspace warnings-denied
+Clippy, workspace tests, two doctests, and diff/clean checks are green. Behavior-
+green SHA is `db78c640`; feature workflows and delivery remain pending. This
+documentation-only seal is exempt from further adversarial review.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -1001,10 +1005,14 @@ gate:
   checks, and a clean worktree. The isolated Python retry and sequential full
   rerun establish that its earlier LTO-overlapped two-second timeout was
   validation-method contention, not a product failure. No behavior-green or
-  replacement claim is made; a new exact candidate must repeat all three fresh
-  tracks. Exact local-gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
-  is retained by the formal cycle-3 preparation; its immediately following
-  tree-identical marker will be supplied to all three fresh agents. Local
+  replacement claim arose from cycle 2 alone. Exact local-gate record
+  `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632` is retained. Its immediately
+  following formal-preparation and tree-identical exact candidate
+  `db78c6407c4f603f18e2839a8a291f2de33e579c` are now **GREEN** with zero
+  findings in all three fresh tracks. Candidate fmt, workspace Clippy/tests, two
+  doctests, and diff/clean checks are green. Behavior-green SHA is `db78c640`;
+  feature CI/benchmark evidence and `main` delivery remain pending. This docs-
+  only seal is exempt from further adversarial review. Local
   evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-
