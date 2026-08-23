@@ -55,6 +55,7 @@ const MAX_INTERRUPTED_SYSCALL_ATTEMPTS: usize = 16;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_ENTROPY_SYSCALL_ATTEMPTS: usize =
     TEMP_RANDOM_BYTES + MAX_INTERRUPTED_SYSCALL_ATTEMPTS - 1;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MATCH_CANCELLATION_BATCH_STEPS: usize = 1_024;
 
 /// Stable category for failure to acquire an editable workspace root.
@@ -709,6 +710,7 @@ fn is_rejected_type_error(error: rustix::io::Errno) -> bool {
         || error == rustix::io::Errno::ISDIR
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
     if cancellation.is_cancelled() {
         Err(cancelled())
@@ -822,6 +824,7 @@ fn invalid_utf8() -> ToolError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn match_not_found() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -831,6 +834,7 @@ fn match_not_found() -> ToolError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn match_ambiguous() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -840,6 +844,7 @@ fn match_ambiguous() -> ToolError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn match_work_exceeded() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -849,6 +854,7 @@ fn match_work_exceeded() -> ToolError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn result_too_large() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -878,6 +884,7 @@ fn target_changed() -> ToolError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_failed() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -897,6 +904,7 @@ fn commit_ambiguous() -> ToolError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn cancelled() -> ToolError {
     ToolError::new(
         ToolErrorKind::Cancelled,
@@ -1113,6 +1121,7 @@ impl io::Write for JsonByteCounter {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct MatchWorkMeter<'a, Notify> {
     cancellation: &'a CancellationToken,
     limit: usize,
@@ -1121,6 +1130,7 @@ struct MatchWorkMeter<'a, Notify> {
     notify: Notify,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl<Notify: FnMut(usize)> MatchWorkMeter<'_, Notify> {
     fn charge(&mut self) -> Result<(), ToolError> {
         self.total = self.total.checked_add(1).ok_or_else(match_work_exceeded)?;
@@ -1145,6 +1155,7 @@ impl<Notify: FnMut(usize)> MatchWorkMeter<'_, Notify> {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn find_unique_match_with_budget(
     preimage: &[u8],
     pattern: &[u8],
@@ -1215,6 +1226,7 @@ pub(super) fn find_unique_match_with_budget(
     unique_offset.ok_or_else(match_not_found)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn find_unique_match(
     preimage: &[u8],
     pattern: &[u8],
@@ -1229,6 +1241,7 @@ fn find_unique_match(
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn build_postimage_with_budget(
     preimage: &[u8],
     match_offset: usize,
@@ -1267,6 +1280,7 @@ pub(super) fn build_postimage_with_budget(
     Ok(result)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn build_postimage(
     preimage: &[u8],
     match_offset: usize,
@@ -1285,6 +1299,7 @@ fn build_postimage(
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn build_success_output_with_limit(
     normalized: &str,
     bytes_written: usize,
