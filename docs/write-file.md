@@ -1,6 +1,6 @@
 # Native `write_file` contract
 
-Status: **LOCAL-GATE-GREEN PRECURSOR — formal review and delivery are pending**
+Status: **FORMAL REVIEW CANDIDATE — formal review and delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run

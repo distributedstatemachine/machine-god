@@ -901,8 +901,9 @@ gate:
   fixture correction `8509933`, deterministic seam hardening `a9a7c99`, and
   core same-poll recovery regression `8b5847f` are present; full-pipeline fault
   and phase evidence is `c7fdef2`. Exact local gates are green at composed
-  precursor `072bd69`; the exact formal candidate marker and three fresh same-
-  SHA adversarial tracks remain pending. The
+  precursor `072bd69`; the immediately following tree-identical marker is the
+  exact formal candidate supplied to three fresh same-SHA adversarial tracks.
+  Those tracks remain pending. The
   remaining native tools are
   incomplete, so this pending slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

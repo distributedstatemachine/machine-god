@@ -1,6 +1,6 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **LOCAL-GATE-GREEN PRECURSOR — formal reviews, seal, and delivery are
+Status: **FORMAL REVIEW CANDIDATE — formal reviews, seal, and delivery are
 pending**
 
 ## Base and prior delivery
@@ -113,7 +113,9 @@ still required.
   `c7fdef2d65a3f498673dde470a09bbda4a547b59`
 - Local-gate-green behavior precursor:
   `072bd69eb6f73944d1db00363da0f965f09dda9f`
-- First exact behavior candidate: **PENDING**
+- First exact behavior candidate: the tree-identical marker immediately after
+  the local-evidence commit; its exact SHA is supplied to every formal track
+  and will be retained by the documentation-only seal
 - Three formal adversarial reviews: **PENDING**
 - Behavior-green SHA: **PENDING**
 - Documentation seal: **PENDING**
@@ -191,8 +193,9 @@ is green under Rust and Cargo 1.94.1 exactly:
   added, and the exact precursor worktree is clean.
 
 These are local precursor results, not formal-review or remote-delivery
-evidence. The next tree-identical marker freezes the exact first formal behavior
-candidate supplied independently to all three fresh review tracks.
+evidence. The immediately following tree-identical marker freezes the exact
+first formal behavior candidate supplied independently to all three fresh
+review tracks.
 
 ## Explicit nonclaims
 
