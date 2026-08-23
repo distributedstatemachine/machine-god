@@ -26,6 +26,7 @@ mod read_file;
     any(target_os = "linux", target_os = "macos")
 ))]
 mod reference_host;
+mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod root_selection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -119,6 +120,11 @@ pub use read_file::{
 ))]
 pub use reference_host::{
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+};
+pub use rename_file::{
+    MAX_RENAME_FILE_PATH_BYTES, MAX_RENAME_FILE_PATH_COMPONENTS,
+    MAX_RENAME_FILE_SERIALIZED_ARGUMENT_BYTES, MAX_RENAME_FILE_SERIALIZED_RESULT_BYTES,
+    RENAME_FILE_TOOL_NAME, RenameFileTool, RenameFileToolOpenError, RenameFileToolOpenErrorKind,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use root_selection::{

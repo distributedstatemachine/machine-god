@@ -6,7 +6,7 @@ use rustix::fs::{FileType, Mode, OFlags};
 #[cfg(feature = "ai-gateway-http")]
 use crate::{
     DeleteFileTool, EditFileTool, FileInfoTool, GlobFilesTool, GrepFilesTool, ListFilesTool,
-    ReadFileTool, WriteFileTool,
+    ReadFileTool, RenameFileTool, WriteFileTool,
 };
 
 #[cfg(feature = "ai-gateway-http")]
@@ -18,6 +18,7 @@ pub(crate) struct WorkspaceTools {
     pub(crate) grep_files: GrepFilesTool,
     pub(crate) list_files: ListFilesTool,
     pub(crate) read_file: ReadFileTool,
+    pub(crate) rename_file: RenameFileTool,
     pub(crate) write_file: WriteFileTool,
 }
 
@@ -74,6 +75,7 @@ impl WorkspaceRoot {
         let grep_files_root = clone_descriptor(&self.descriptor)?;
         let list_files_root = clone_descriptor(&self.descriptor)?;
         let read_file_root = clone_descriptor(&self.descriptor)?;
+        let rename_file_root = clone_descriptor(&self.descriptor)?;
         let write_file_root = clone_descriptor(&self.descriptor)?;
         Ok(WorkspaceTools {
             delete_file: DeleteFileTool::from_root_descriptor(delete_file_root),
@@ -83,6 +85,7 @@ impl WorkspaceRoot {
             grep_files: GrepFilesTool::from_root_descriptor(grep_files_root),
             list_files: ListFilesTool::from_root_descriptor(list_files_root),
             read_file: ReadFileTool::from_root_descriptor(read_file_root),
+            rename_file: RenameFileTool::from_root_descriptor(rename_file_root),
             write_file: WriteFileTool::from_root_descriptor(write_file_root),
         })
     }

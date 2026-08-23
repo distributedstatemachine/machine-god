@@ -94,6 +94,7 @@ impl Drop for PreparedToolCall {
                 crate::session::drop_json_value_iterative(std::mem::take(details));
             }
             Capability::Filesystem { .. }
+            | Capability::FilesystemRename { .. }
             | Capability::Process { .. }
             | Capability::Network { .. } => {}
         }

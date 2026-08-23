@@ -1695,9 +1695,10 @@ fn capability_json_value(capability: &Capability) -> Option<&Value> {
     match capability {
         Capability::Tool { arguments, .. } => Some(arguments),
         Capability::Custom { details, .. } => Some(details),
-        Capability::Filesystem { .. } | Capability::Process { .. } | Capability::Network { .. } => {
-            None
-        }
+        Capability::Filesystem { .. }
+        | Capability::FilesystemRename { .. }
+        | Capability::Process { .. }
+        | Capability::Network { .. } => None,
     }
 }
 

@@ -310,6 +310,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.grep_files)
             .tool(workspace_tools.list_files)
             .tool(workspace_tools.read_file)
+            .tool(workspace_tools.rename_file)
             .tool(workspace_tools.write_file)
             .build()
             .map_err(|_| {

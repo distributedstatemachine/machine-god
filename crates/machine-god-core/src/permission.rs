@@ -43,6 +43,10 @@ pub enum Capability {
         access: FilesystemAccess,
         path: String,
     },
+    FilesystemRename {
+        old_path: String,
+        new_path: String,
+    },
     Process {
         program: String,
         arguments: Vec<String>,
