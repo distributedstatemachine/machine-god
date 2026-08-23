@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **BEHAVIOR GREEN — replacement evidence review pending**
+Status: **BEHAVIOR GREEN — delivery pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -41,8 +41,10 @@ workflow `32663557187` across both jobs with two nonexpired exact-SHA artifacts,
 but exact feature CI `32663557182` failed one of six jobs because its aarch64
 Linux filesystem immediately reused a test fixture's unlinked inode. Exact
 test-only remediation `c6744ab5416fc4bde330d09f59dd507bd9991d72`
-passes the complete replacement local gate; fresh exact-candidate review and
-remote delivery remain pending.
+passes the complete replacement local gate. Tree-identical cycle-6 candidate
+`9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e` is **GREEN** with zero
+findings in all three fresh tracks; replacement remote delivery remains
+pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -530,8 +532,31 @@ host C sysroot in `aws-lc-sys`, before product Rust. A fresh locked 319,152-byte
 arm64 Mach-O release CLI has SHA-256
 `d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
 and passes exact bare/help/human-status/JSON-status smoke with empty stderr.
-This test-evidence change receives three fresh exact-candidate reviewers before
-a replacement seal is pushed; this documentation-only record does not.
+This test-evidence change required three fresh exact-candidate reviewers before
+a replacement seal could be pushed; its documentation-only record did not.
+
+Formal cycle 6 reviewed exact tree-identical candidate
+`9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e`, tree
+`d63a92fd606ac14467eda1e1d86d2f6980547176`. Correctness/API,
+filesystem/robustness, and performance/concurrency all report **GREEN** with
+zero findings from clean detached worktrees. Production and public integration
+content remain byte-identical to the cycle-5-reviewed behavior.
+
+Correctness/API and filesystem/robustness each stress-ran the repaired same-type
+identity case 500/500 times. Both confirmed that the owned original handle spans
+unlink, replacement creation, and final revalidation, then closes by RAII.
+Performance/concurrency passed 64 parallel focused invocations and confirmed
+one bounded per-fixture handle, no shared state, no leak on success or unwind,
+and zero production runtime overhead. The reviewers also reran exact Rust 1.94.1
+formatting, warnings-denied Clippy, workspace tests/doctests, 29/30 private, 21
+direct, five engine, seven host, one core, Linux no-default, FreeBSD, WASI, and
+active Node evidence applicable to their tracks. All historical production and
+evidence findings remain closed.
+
+This replacement documentation seal is docs-only and exempt from another
+adversarial cycle under the user's instruction. Delivery still requires its
+exact feature CI and benchmark workflows, a no-force fast-forward to `main`,
+and exact `main` CI and benchmark workflows.
 
 ## Parallel ownership and formal review
 

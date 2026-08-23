@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **BEHAVIOR GREEN — replacement evidence review pending**
+Status: **BEHAVIOR GREEN — delivery pending**
 
 ## Base and contract gate
 
@@ -432,7 +432,9 @@ cycle-5 marker is empty.
   two nonexpired exact-SHA artifacts
 - Test-only portable evidence remediation:
   `c6744ab5416fc4bde330d09f59dd507bd9991d72`
-- Replacement exact-candidate review: pending
+- Replacement exact-candidate review:
+  `9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e`, green with zero findings in
+  all three fresh tracks
 - Exact feature CI and benchmark evidence: pending
 - No-force fast-forward `main`: pending
 - Exact `main` CI and benchmark evidence: pending
@@ -475,8 +477,38 @@ has SHA-256
 and passes exact bare/help/human-status/JSON-status smoke with empty stderr.
 
 Because the remediation changes executable test evidence rather than only
-documentation, its tree-identical marker receives three fresh cycle-6 reviews.
-This documentation record itself remains exempt under the user's instruction.
+documentation, its tree-identical marker required three fresh cycle-6 reviews.
+That documentation record itself remained exempt under the user's instruction.
+
+## Formal adversarial cycle 6
+
+Exact candidate: `9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e`.
+Exact tree: `d63a92fd606ac14467eda1e1d86d2f6980547176`.
+
+All three fresh tracks used clean detached worktrees and reported **GREEN** with
+zero findings:
+
+1. Correctness/API verified the three-line fix pins the original inode without
+   changing replacement operations, assertions, production, public API, or
+   historical semantics. Exact Rust/Cargo 1.94.1 formatting, Clippy, two
+   doctests, 29/30 private, 21 direct, five engine, seven host, and one core
+   check passed; the repaired regression passed 500/500 stress runs.
+2. Filesystem/robustness verified the retained handle spans unlink,
+   replacement creation, and final revalidation; Linux/macOS cannot recycle
+   the still-live filesystem object's inode, and RAII closes it when evidence
+   drops. The same 500/500 stress plus focused, FreeBSD, WASI, and active Node
+   1/1 gates passed. All historical confinement, race, errno, cancellation,
+   and durability behavior is byte-identical.
+3. Performance/concurrency verified one bounded per-fixture RAII handle, no
+   shared state, close on success or unwind, and zero production code or
+   overhead. The fixed case passed 64 parallel invocations, plus formatting,
+   workspace warnings-denied Clippy, tests/doctests, and Linux no-default
+   test-target Clippy.
+
+This exact candidate is behavior- and evidence-green. The replacement
+documentation seal is exempt from another adversarial cycle under the user's
+instruction, but its exact feature and `main` delivery workflows remain
+mandatory.
 
 ## Formal adversarial protocol
 
