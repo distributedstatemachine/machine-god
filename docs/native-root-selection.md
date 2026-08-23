@@ -86,9 +86,12 @@ green. Formal third-cycle candidate
 `0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
 **GREEN** with zero findings. Correctness/API and performance/concurrency are
 **NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
-confirmed zero production defects. The wording-remediation component and
-composed SHAs, fourth-cycle rereviews, behavior-green SHA, seal, and remote
-delivery remain **PENDING**.
+confirmed zero production defects. Isolated wording remediation
+`993b618bf78d30f6a68f3b248b572e33e4de1126` composes at exact
+`f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`; its documentation gates are
+green, and its behavior tree remains `a8f6179` except for documentation. The
+formal fourth-cycle review SHA and all three tracks, behavior-green SHA, seal,
+and remote delivery remain **PENDING**.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host

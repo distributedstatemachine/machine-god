@@ -4,7 +4,9 @@ Status: **IN PROGRESS — formal third-cycle candidate
 `0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness green
 with zero findings; correctness/API and performance/concurrency are not green
 only for the same low documentation mismatch, with zero production defects;
-wording remediation, fourth-cycle rereviews, and delivery remain pending**
+wording remediation `993b618` composes at exact documentation-gate-green
+`f87f6be`, while the formal fourth-cycle review SHA, all three tracks, and
+delivery remain pending**
 nineteenth bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
@@ -75,10 +77,16 @@ two 10,000-file boundary scans at `5aeddc1` requested approximately
 `0bfe68a` requested approximately 7,459,007 bytes and made zero maximum-sized
 allocations. Its maximum-plus-384 regression requested approximately 3,349,064
 bytes and made one high-water allocation. Allocation and timing instrumentation
-is diagnostic only, not a contract or product-performance result. The wording-
-remediation component and composed SHAs, fourth-cycle rereviews, exact behavior
-SHA with all tracks green, documentation seal, feature workflows, integrated
-`main`, and exact `main` workflows remain **PENDING**.
+is diagnostic only, not a contract or product-performance result. Isolated
+wording remediation `993b618bf78d30f6a68f3b248b572e33e4de1126` composes at
+exact `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`. Exact f87 documentation
+gates are green: formatting and two doctests pass; 58 Markdown files contain
+420 inline links, including 270 repository-relative links with zero missing;
+and diff, added-line-length, exact 11-file ownership, and clean-worktree checks
+pass. Its behavior tree remains `a8f6179` except for documentation. The formal
+fourth-cycle review SHA and all three tracks, exact behavior SHA with all tracks
+green, documentation seal, feature workflows, integrated `main`, and exact
+`main` workflows remain **PENDING**.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal

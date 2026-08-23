@@ -4,7 +4,9 @@ Status: **IN PROGRESS — formal third-cycle candidate
 `0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness green
 with zero findings; correctness/API and performance/concurrency are not green
 only for the same low documentation mismatch, with zero production defects;
-wording remediation, fourth-cycle rereviews, and delivery remain pending**
+wording remediation `993b618` composes at exact documentation-gate-green
+`f87f6be`, while the formal fourth-cycle review SHA, all three tracks, and
+delivery remain pending**
 
 ## Candidate lineage
 
@@ -104,8 +106,13 @@ wording remediation, fourth-cycle rereviews, and delivery remain pending**
 - Third-cycle performance/concurrency review: **NOT GREEN — the same one LOW
   documentation contract mismatch** on exact `0bfe68a`
 - Third-cycle confirmed production defects: **zero**
-- Documentation wording-remediation component SHA: **PENDING**
-- Composed wording-remediation SHA: **PENDING**
+- Documentation wording-remediation component:
+  `993b618bf78d30f6a68f3b248b572e33e4de1126`
+- Composed wording-remediation head:
+  `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`
+- Exact f87 documentation gates: **GREEN**
+- Behavior tree: **unchanged from `a8f6179` except for documentation**
+- Formal fourth-cycle review SHA: **PENDING**
 - Fourth-cycle correctness/API rereview SHA: **PENDING**
 - Fourth-cycle security/filesystem-robustness rereview SHA: **PENDING**
 - Fourth-cycle performance/concurrency rereview SHA: **PENDING**
@@ -139,8 +146,10 @@ cross-target, dependency, link, compatibility, release, and CLI-smoke gates are
 green. Formal third-cycle candidate `0bfe68a` has filesystem/robustness green
 with zero findings. Correctness/API and performance/concurrency are not green
 only for the same low documentation contract mismatch; reviewers confirmed
-zero production defects. The wording-remediation component and composed SHAs,
-fourth-cycle rereviews, behavior-green SHA, seal, and workflows remain pending.
+zero production defects. Isolated wording remediation `993b618` composes at
+exact `f87f6be`; its documentation gates are green, and its behavior tree
+remains `a8f6179` except for documentation. The formal fourth-cycle review SHA
+and all three tracks, behavior-green SHA, seal, and workflows remain pending.
 Every listed identifier was observed directly; no production/test/documentation
 remediation, replacement rereview, behavior-green, seal, or workflow identifier
 may be inferred from a branch tip, tree identity, or another component.
@@ -599,10 +608,17 @@ zero findings on the security/filesystem-robustness track.
   made one high-water allocation. Allocation and timing instrumentation is
   diagnostic only, not a contractual or product-performance result.
 
-The documentation wording-remediation component and composed SHAs, all three
-fourth-cycle rereviews, behavior-green SHA, documentation seal, and remote
-delivery evidence remain **PENDING**. Once one exact replacement behavior SHA
-is green across all three tracks, a later documentation-only seal or final
-delivery record needs no additional adversarial review under the user's
-explicit instruction, but exact feature and `main` workflow evidence is still
-required.
+Isolated documentation wording remediation
+`993b618bf78d30f6a68f3b248b572e33e4de1126` composes at exact
+`f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`. On exact f87, formatting and two
+doctests pass; 58 Markdown files contain 420 inline links, including 270
+repository-relative links with zero missing; and diff, added-line-length, exact
+11-file ownership, and clean-worktree checks pass. Its behavior tree remains
+`a8f6179` except for documentation. The formal fourth-cycle review SHA and all
+three tracks, behavior-green SHA, documentation seal, and remote delivery
+evidence remain **PENDING**. This documentation child will be the formal fourth-
+cycle candidate, but cannot name its own review SHA and therefore does not
+preclaim any fourth-cycle verdict. Once one exact replacement behavior SHA is
+green across all three tracks, a later documentation-only seal or final delivery
+record needs no additional adversarial review under the user's explicit
+instruction, but exact feature and `main` workflow evidence is still required.

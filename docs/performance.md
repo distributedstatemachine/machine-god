@@ -263,9 +263,12 @@ two 10,000-file boundary scans at `5aeddc1` requested approximately
 `0bfe68a` requested approximately 7,459,007 bytes and made zero maximum-sized
 allocations. Its maximum-plus-384 regression requested approximately 3,349,064
 bytes and made one high-water allocation. Allocation and timing instrumentation
-is diagnostic only, not a contract or product-performance result. The wording-
-remediation component and composed SHAs, fourth-cycle rereviews, behavior-green
-SHA, seal, and remote delivery remain **PENDING**. The corrected behavior
+is diagnostic only, not a contract or product-performance result. Isolated
+wording remediation `993b618bf78d30f6a68f3b248b572e33e4de1126` composes at
+exact `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`; its documentation gates are
+green, and its behavior tree remains `a8f6179` except for documentation. The
+formal fourth-cycle review SHA and all three tracks, behavior-green SHA, seal,
+and remote delivery remain **PENDING**. The corrected behavior
 contract requires cancellation-aware
 slashful candidate splitting at intervals of at most 1,024 bytes, checks in
 both dynamic-programming branches, and one charged cancellation-checked
