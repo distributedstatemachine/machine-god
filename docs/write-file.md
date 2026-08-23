@@ -1,7 +1,7 @@
 # Native `write_file` contract
 
-Status: **CYCLE-2 PRODUCTION REMEDIATION COMPOSED — full local gates, a new
-exact candidate, fresh formal reviews, and delivery are pending**
+Status: **CYCLE-2 REMEDIATION LOCAL GATES GREEN — cycle-3 preparation, fresh
+formal reviews, and delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -346,10 +346,11 @@ implements the bounded entropy path, cancellation evidence, and one-shot best-
 effort `0600` cleanup reset with the failure caveat above. Focused checks are
 green at that exact remediation SHA: 28 private `write_file` tests, 109 native
 library tests, 25 direct integration tests, formatting, workspace/all-target/
-all-feature warnings-denied Clippy, and the Linux cross-check. Full local gates
-and cycle 3 remain pending. No green behavior SHA or replacement claim is made.
-After exact local gates, all three fresh tracks must review the same new exact
-behavior candidate. A later
+all-feature warnings-denied Clippy, and the Linux cross-check. Exact remediation
+precursor `8432c0c6b5d5955b78a882b651a5bfec76af8814` now passes the complete
+local gate recorded below. Cycle 3 remains pending. No green behavior SHA or
+replacement claim is made. All three fresh tracks must review the same new
+exact behavior candidate. A later
 documentation-only seal or delivery record remains
 exempt from another adversarial cycle under the user's instruction, while exact
 feature and `main` workflows remain required.
@@ -430,6 +431,28 @@ Passing only a subset of this list does not establish delivery. A remediated
 exact composed behavior SHA must pass repository gates and three fresh
 adversarial tracks as recorded in the
 [`write_file` review](reviews/m03-write-file-review-01.md).
+
+## Cycle-2 remediation local gates
+
+Exact clean precursor `8432c0c6b5d5955b78a882b651a5bfec76af8814`
+passes the complete Rust 1.94.1 local gate. Formatting, workspace/all-target/
+all-feature warnings-denied Clippy, workspace tests, and two doctests are green.
+Discovery reports 611 default-feature tests, 660 all-feature tests, and zero
+benchmarks. Focused evidence passes all 30 private module tests, including 28 in
+the supported-platform submodule, plus 25 direct integration tests and five
+engine tests.
+
+Linux, FreeBSD, and WASI cross-platform gates are green under the exact scope
+recorded in the review. Dependency policy and the offline vulnerability audit,
+the sequential 129-test Python rerun, clean pinned-fx compatibility generation,
+the 60/429/279/0 documentation inventory, fresh isolated locked release smoke,
+and whole-feature diff/no-unsafe/clean checks are also green. The first Python
+attempt overlapped an LTO release build and produced one two-second timeout;
+the isolated case and complete sequential rerun both passed, establishing test-
+runner contention rather than a product failure. This exact local evidence
+closes the two cycle-2 findings for review preparation only. It does not make
+historical cycle 2 green, replace cycle 3, satisfy native Linux/macOS feature
+CI, or establish delivery.
 
 ## Pinned fx input and deliberate differences
 

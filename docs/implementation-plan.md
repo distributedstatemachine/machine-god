@@ -789,12 +789,24 @@ best-effort `fchmod(0600)` call on the held, unpublished staged descriptor
 before the existing identity-checked best-effort unlink. If mode restoration
 and unlink both fail, residue can retain final mode bits.
 
-Focused remediation checks pass 28 private `write_file` tests, 109 native
-library tests, 25 direct integration tests, formatting, workspace/all-target/
-all-feature warnings-denied Clippy, and the Linux cross-check. These are not the
-full local gates and do not establish a new behavior candidate or green cycle
-3. After exact local gates compose into a new behavior candidate, all three
-fresh tracks must review that same SHA again.
+Exact clean remediation precursor
+`8432c0c6b5d5955b78a882b651a5bfec76af8814` passes the complete local gate
+under Rust and Cargo 1.94.1. Formatting, workspace/all-target/all-feature
+warnings-denied Clippy, workspace tests, two doctests, 30 private module tests
+including 28 in the supported-platform submodule, 25 direct tests, and five
+engine tests are green. Discovery reports 611 default-feature and 660 all-
+feature tests with zero benchmarks. Linux, FreeBSD, and active WASI cross-gates;
+cargo-deny 0.19.9; cargo-audit 0.22.2 `--no-fetch` over 1,225 advisories and 175
+dependencies with zero findings; the sequential 129-test Python gate; clean
+pinned-fx compatibility; the 60/429/279/0 documentation inventory; fresh
+isolated locked release smoke; and diff/no-unsafe/clean checks are green. The
+first Python attempt incorrectly overlapped the LTO release build and produced
+one two-second timeout; its isolated 1/1 retry and the full sequential rerun are
+green, proving validation-method contention rather than a product failure.
+
+These exact local gates resolve both cycle-2 findings for formal-review
+preparation, but do not retroactively make cycle 2 green or establish a new
+behavior candidate. All three fresh tracks must review the same next exact SHA.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -972,10 +984,18 @@ gate:
   the bounded one-call macOS path, cancellation before and after each entropy
   call, and one best-effort held-descriptor `fchmod(0600)` before cleanup. If
   mode restoration and unlink both fail, residue can retain final bits. Focused
-  checks pass 28 private tests, 109 native library tests, 25 direct tests,
-  formatting, workspace warnings-denied Clippy, and the Linux cross-check; full
-  local gates remain pending. No behavior-green or replacement claim is made;
-  a new exact candidate must repeat all three fresh tracks. Local
+  checks pass 28 supported-submodule private tests, 109 native library tests,
+  25 direct tests, formatting, workspace warnings-denied Clippy, and the Linux
+  cross-check. Exact clean remediation precursor
+  `8432c0c6b5d5955b78a882b651a5bfec76af8814` then passes the complete local
+  Rust 1.94.1 gate: 30 total private module tests, 25 direct tests, five engine
+  tests, 611 default/660 all-feature discovered tests, two doctests, zero
+  benchmarks, cross/dependency/Python/compatibility/documentation/release/diff
+  checks, and a clean worktree. The isolated Python retry and sequential full
+  rerun establish that its earlier LTO-overlapped two-second timeout was
+  validation-method contention, not a product failure. No behavior-green or
+  replacement claim is made; a new exact candidate must repeat all three fresh
+  tracks. Local
   evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-

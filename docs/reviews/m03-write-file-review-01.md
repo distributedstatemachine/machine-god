@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **CYCLE-2 PRODUCTION REMEDIATION COMPOSED — full local gates, a new
-exact candidate, fresh formal reviews, seal, and delivery are pending**
+Status: **CYCLE-2 REMEDIATION LOCAL GATES GREEN — cycle-3 preparation, fresh
+formal reviews, seal, and delivery are pending**
 
 ## Base and prior delivery
 
@@ -36,8 +36,9 @@ gates are green at `581fe6a`. Formal-review preparation
 tree-identical exact cycle-2 candidate
 `708f2d08d72d610ca387a62a4cec1f656c188a7d`. Cycle 2 is also **NOT GREEN**.
 Production remediation is composed at
-`9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`; full local gates and another fresh
-same-SHA cycle remain pending.
+`9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`; exact local gates are green at
+`8432c0c6b5d5955b78a882b651a5bfec76af8814`, while another fresh same-SHA cycle
+remains pending.
 
 ## Frozen boundary
 
@@ -180,6 +181,11 @@ still required.
   the user's instruction
 - Cycle-2 production remediation:
   `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`
+- Cycle-2 remediation local-gate precursor:
+  `8432c0c6b5d5955b78a882b651a5bfec76af8814`
+- Cycle-2 remediation resolution: both confirmed findings are closed by exact
+  production and deterministic evidence locally; historical cycle 2 remains
+  **NOT GREEN** and cycle 3 is required
 - Next exact behavior candidate: **PENDING**
 - Behavior-green SHA: **PENDING**
 - Next formal review result: **PENDING**
@@ -299,11 +305,11 @@ both fail, residue can retain its final mode.
 Focused remediation checks are green: 28 private `write_file` tests, 109 native
 library tests, 25 direct integration tests, formatting, workspace/all-target/
 all-feature warnings-denied Clippy, and the Linux cross-check. These focused
-results do not establish full local gates, a new exact behavior candidate, or a
-green cycle 3. After all exact local gates compose, three fresh agents must
-repeat all tracks on that same new SHA.
+results preceded the complete exact local gate now recorded at `8432c0c`. They
+do not establish a new exact behavior candidate or a green cycle 3. Three fresh
+agents must repeat all tracks on that same new SHA.
 
-## Local gate results
+## Initial local gate results
 
 Exact composed precursor `072bd69eb6f73944d1db00363da0f965f09dda9f`
 is green under Rust and Cargo 1.94.1 exactly:
@@ -381,6 +387,51 @@ do not replace native Linux/macOS feature CI, and do not count as formal
 replacement review. Later preparation `491496a` and its immediate tree-identical
 marker freeze exact cycle-2 candidate `708f2d0`, which did not pass all three
 tracks as recorded above.
+
+## Cycle-2 remediation local gate results
+
+Exact clean remediation precursor
+`8432c0c6b5d5955b78a882b651a5bfec76af8814` is green under Rust and Cargo
+1.94.1 exactly:
+
+- formatting, workspace/all-target/all-feature warnings-denied Clippy,
+  workspace tests, and two doctests pass;
+- workspace discovery reports 611 default-feature tests, 660 all-feature tests,
+  and zero benchmarks;
+- focused evidence passes 30 private `write_file` module tests, including all
+  28 supported-platform-submodule tests, 25 direct integration tests, and five
+  engine tests;
+- Linux no-default native cross-target Clippy passes with warnings denied;
+- FreeBSD no-default library and tests compile with exactly two pre-existing
+  test-only `glob_files` warnings, and its library Clippy passes with warnings
+  denied;
+- WASI compiles the `write_file` unsupported-target case and Node actively
+  passes it 1/1, with one pre-existing `read_file` warning;
+- cargo-deny 0.19.9 passes with only the accepted `syn` and `windows-sys`
+  duplicate warnings; cargo-audit 0.22.2 `--no-fetch` checks 1,225 advisories
+  over 175 dependencies with zero findings;
+- the first Python run was incorrectly overlapped with the LTO release build
+  and had one two-second timeout; the isolated retry passes 1/1 and the full
+  sequential rerun is green across 129 tests, with 121 passes and eight expected
+  macOS skips. This is validation-method contention, not a product failure;
+- a fresh clean checkout of pinned fx commit
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` passes the compatibility
+  generation `--check`;
+- 60 Markdown files contain 429 inline links and 279 repository-relative links
+  with zero missing;
+- a fresh isolated locked release build produces an arm64 Mach-O binary with
+  SHA-256 `f82465e2ac522c3a59b158b8e7bc26e2d369710c2931f8d7483e1fcea4931794`,
+  and executing that exact binary emits
+  `machine-god 0.1.0 (engine API 1)` and exits zero; and
+- whole-feature diff checks pass, no unsafe Rust was added, and the exact
+  precursor worktree is clean.
+
+These local gates resolve the two cycle-2 findings in the composed remediation
+evidence. They do not retroactively make cycle 2 green, replace the required
+three-track cycle 3, prove the native Linux/macOS feature-CI matrix, or establish
+remote delivery. A later documentation-only seal or delivery record remains
+exempt from another adversarial cycle under the user's instruction, while its
+exact feature and `main` workflows remain required.
 
 ## Explicit nonclaims
 
