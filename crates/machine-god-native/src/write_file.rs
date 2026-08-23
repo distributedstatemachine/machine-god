@@ -464,11 +464,7 @@ impl WriteFileTool {
         let final_walk = self.walk_parent(normalized, cancellation, WalkPhase::Revalidate)?;
         let final_parent_metadata =
             rustix::fs::fstat(&final_walk.parent).map_err(|_| target_changed())?;
-        if !same_identity(&initial_parent_metadata, &final_parent_metadata)
-            || !FileType::from_raw_mode(final_parent_metadata.st_mode).is_dir()
-        {
-            return Err(target_changed());
-        }
+        revalidate_parent_identity(&initial_parent_metadata, &final_parent_metadata)?;
         revalidate_target(
             final_walk.parent.as_fd(),
             final_walk.basename,
@@ -645,15 +641,30 @@ fn write_content(
     content: &[u8],
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
+    write_content_with(content, cancellation, |chunk| {
+        rustix::io::write(file, chunk)
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_content_with(
+    content: &[u8],
+    cancellation: &CancellationToken,
+    mut write: impl FnMut(&[u8]) -> Result<usize, rustix::io::Errno>,
+) -> Result<(), ToolError> {
     let mut offset = 0_usize;
     while offset < content.len() {
         check_cancellation(cancellation)?;
         let end = offset
             .saturating_add(MAX_WRITE_FILE_CHUNK_BYTES)
             .min(content.len());
-        match rustix::io::write(file, &content[offset..end]) {
+        let chunk = &content[offset..end];
+        match write(chunk) {
             Ok(0) => return Err(write_failed()),
-            Ok(written) => offset = offset.checked_add(written).ok_or_else(write_failed)?,
+            Ok(written) if written <= chunk.len() => {
+                offset = offset.checked_add(written).ok_or_else(write_failed)?;
+            }
+            Ok(_) => return Err(write_failed()),
             Err(error) if error == rustix::io::Errno::INTR => {}
             Err(error) => return Err(map_precommit_io_error(error)),
         }
@@ -722,6 +733,18 @@ fn revalidate_target(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn revalidate_parent_identity(
+    initial: &rustix::fs::Stat,
+    current: &rustix::fs::Stat,
+) -> Result<(), ToolError> {
+    if same_identity(initial, current) && FileType::from_raw_mode(current.st_mode).is_dir() {
+        Ok(())
+    } else {
+        Err(target_changed())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn published_target_matches(
     parent: BorrowedFd<'_>,
     basename: &str,
@@ -742,9 +765,17 @@ fn sync_before_commit(
     file: BorrowedFd<'_>,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
+    sync_before_commit_with(cancellation, || rustix::fs::fsync(file))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_before_commit_with(
+    cancellation: &CancellationToken,
+    mut sync: impl FnMut() -> Result<(), rustix::io::Errno>,
+) -> Result<(), ToolError> {
     loop {
         check_cancellation(cancellation)?;
-        match rustix::fs::fsync(file) {
+        match sync() {
             Err(error) if error == rustix::io::Errno::INTR => {}
             Ok(()) => return Ok(()),
             Err(error) => return Err(map_precommit_io_error(error)),
@@ -754,8 +785,15 @@ fn sync_before_commit(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn sync_after_commit(parent: BorrowedFd<'_>) -> Result<(), rustix::io::Errno> {
+    sync_after_commit_with(|| rustix::fs::fsync(parent))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_after_commit_with(
+    mut sync: impl FnMut() -> Result<(), rustix::io::Errno>,
+) -> Result<(), rustix::io::Errno> {
     loop {
-        match rustix::fs::fsync(parent) {
+        match sync() {
             Err(error) if error == rustix::io::Errno::INTR => {}
             Ok(()) => return Ok(()),
             Err(error) => return Err(error),
@@ -1118,6 +1156,7 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     mod supported {
+        use std::cell::Cell;
         use std::fmt::Write as _;
         use std::fs;
         use std::os::unix::fs::PermissionsExt as _;
@@ -1172,14 +1211,20 @@ mod tests {
             let collision_path = temporary.path().join(collision_name);
             fs::write(&collision_path, b"foreign").unwrap();
             let parent = temporary.descriptor();
+            let attempts = Cell::new(0_usize);
             let error = create_staged_file_with(
                 parent.as_fd(),
                 "target.txt",
                 &CancellationToken::new(),
-                |_| Ok(collision_name.to_owned()),
+                |attempt| {
+                    assert_eq!(attempt, attempts.get());
+                    attempts.set(attempts.get() + 1);
+                    Ok(collision_name.to_owned())
+                },
             )
             .unwrap_err();
             assert_eq!(error.code, "write_file_unavailable");
+            assert_eq!(attempts.get(), MAX_WRITE_FILE_TEMP_ATTEMPTS);
             assert_eq!(fs::read(&collision_path).unwrap(), b"foreign");
         }
 
@@ -1231,8 +1276,8 @@ mod tests {
         }
 
         #[test]
-        fn target_identity_and_mode_changes_fail_revalidation() {
-            let temporary = TempDirectory::new("target-change");
+        fn target_identity_replacement_with_the_same_mode_fails_revalidation() {
+            let temporary = TempDirectory::new("target-identity-change");
             let target_path = temporary.path().join("target.txt");
             fs::write(&target_path, b"old").unwrap();
             fs::set_permissions(&target_path, fs::Permissions::from_mode(0o640)).unwrap();
@@ -1240,30 +1285,253 @@ mod tests {
             let initial = inspect_initial_target(parent.as_fd(), "target.txt").unwrap();
             revalidate_target(parent.as_fd(), "target.txt", &initial).unwrap();
 
-            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o600)).unwrap();
+            let displaced_path = temporary.path().join("displaced.txt");
+            fs::rename(&target_path, &displaced_path).unwrap();
+            fs::write(&target_path, b"replacement").unwrap();
+            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o640)).unwrap();
+            let replacement =
+                rustix::fs::statat(parent.as_fd(), "target.txt", AtFlags::SYMLINK_NOFOLLOW)
+                    .unwrap();
+            let TargetSnapshot::Existing(initial_metadata) = &initial else {
+                panic!("target must initially exist");
+            };
+            assert!(!same_identity(initial_metadata, &replacement));
+            assert_eq!(
+                initial_metadata.st_mode & 0o777,
+                replacement.st_mode & 0o777
+            );
             assert_eq!(
                 revalidate_target(parent.as_fd(), "target.txt", &initial)
                     .unwrap_err()
                     .code,
                 "write_file_target_changed"
             );
-            assert_eq!(fs::read(&target_path).unwrap(), b"old");
+            assert_eq!(fs::read(&target_path).unwrap(), b"replacement");
+            assert_eq!(fs::read(&displaced_path).unwrap(), b"old");
         }
 
         #[test]
-        fn precommit_and_postcommit_fault_classes_are_fixed() {
-            for error in [
-                map_precommit_io_error(rustix::io::Errno::IO),
-                map_create_rename_error(rustix::io::Errno::IO),
-                map_replace_rename_error(rustix::io::Errno::IO),
+        fn final_parent_replacement_after_move_is_target_changed() {
+            let temporary = TempDirectory::new("parent-identity-change");
+            let original_path = temporary.path().join("nested");
+            fs::create_dir(&original_path).unwrap();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let cancellation = CancellationToken::new();
+            let initial = tool
+                .walk_parent("nested/target.txt", &cancellation, WalkPhase::Initial)
+                .unwrap();
+            let initial_metadata = rustix::fs::fstat(&initial.parent).unwrap();
+            revalidate_parent_identity(&initial_metadata, &initial_metadata).unwrap();
+
+            let moved_path = temporary.path().join("moved");
+            fs::rename(&original_path, &moved_path).unwrap();
+            fs::create_dir(&original_path).unwrap();
+            let current = tool
+                .walk_parent("nested/target.txt", &cancellation, WalkPhase::Revalidate)
+                .unwrap();
+            let current_metadata = rustix::fs::fstat(&current.parent).unwrap();
+            assert!(!same_identity(&initial_metadata, &current_metadata));
+            let error = revalidate_parent_identity(&initial_metadata, &current_metadata)
+                .expect_err("moved/replaced final parent must fail revalidation");
+            assert_eq!(error.code, "write_file_target_changed");
+            assert!(error.retryable);
+
+            for classified in [
+                map_parent_open_error(rustix::io::Errno::NOENT, WalkPhase::Revalidate),
+                map_parent_revalidation_failure(WalkPhase::Revalidate),
+                map_parent_rejected(WalkPhase::Revalidate),
             ] {
-                assert_eq!(error.code, "write_file_write_failed");
-                assert!(error.retryable);
+                assert_eq!(classified.code, "write_file_target_changed");
             }
-            assert_eq!(
-                map_create_rename_error(rustix::io::Errno::EXIST).code,
-                "write_file_target_changed"
+        }
+
+        #[test]
+        fn partial_interrupted_writes_are_bounded_and_complete() {
+            let content = vec![b'x'; MAX_WRITE_FILE_CHUNK_BYTES * 2 + 37];
+            let mut observed = Vec::new();
+            let mut requested = Vec::new();
+            let mut calls = 0_usize;
+            write_content_with(&content, &CancellationToken::new(), |chunk| {
+                calls += 1;
+                requested.push(chunk.len());
+                if calls == 1 {
+                    return Err(rustix::io::Errno::INTR);
+                }
+                let written = chunk.len().min(997);
+                observed.extend_from_slice(&chunk[..written]);
+                Ok(written)
+            })
+            .unwrap();
+            assert_eq!(observed, content);
+            assert!(
+                requested
+                    .iter()
+                    .all(|requested| *requested <= MAX_WRITE_FILE_CHUNK_BYTES)
             );
+            assert_eq!(requested[0], MAX_WRITE_FILE_CHUNK_BYTES);
+            assert_eq!(requested[1], MAX_WRITE_FILE_CHUNK_BYTES);
+        }
+
+        #[test]
+        fn zero_and_failed_writes_fail_without_an_unbounded_retry() {
+            let zero_calls = Cell::new(0_usize);
+            let zero_error = write_content_with(b"content", &CancellationToken::new(), |_| {
+                zero_calls.set(zero_calls.get() + 1);
+                Ok(0)
+            })
+            .unwrap_err();
+            assert_eq!(zero_calls.get(), 1);
+            assert_eq!(zero_error.code, "write_file_write_failed");
+
+            let error_calls = Cell::new(0_usize);
+            let io_error = write_content_with(b"content", &CancellationToken::new(), |_| {
+                error_calls.set(error_calls.get() + 1);
+                Err(rustix::io::Errno::IO)
+            })
+            .unwrap_err();
+            assert_eq!(error_calls.get(), 1);
+            assert_eq!(io_error.code, "write_file_write_failed");
+            assert!(io_error.retryable);
+
+            let overreported = write_content_with(b"content", &CancellationToken::new(), |chunk| {
+                Ok(chunk.len() + 1)
+            })
+            .unwrap_err();
+            assert_eq!(overreported.code, "write_file_write_failed");
+        }
+
+        #[test]
+        fn write_cancellation_is_checked_between_partial_syscalls() {
+            let cancellation = CancellationToken::new();
+            let cancellation_after_write = cancellation.clone();
+            let calls = Cell::new(0_usize);
+            let error = write_content_with(b"content", &cancellation, |chunk| {
+                calls.set(calls.get() + 1);
+                cancellation_after_write.cancel();
+                Ok(chunk.len().min(1))
+            })
+            .unwrap_err();
+            assert_eq!(calls.get(), 1);
+            assert_eq!(error.code, "write_file_cancelled");
+        }
+
+        #[test]
+        fn precommit_file_sync_retries_interrupts_and_checks_cancellation() {
+            let attempts = Cell::new(0_usize);
+            sync_before_commit_with(&CancellationToken::new(), || {
+                let attempt = attempts.get();
+                attempts.set(attempt + 1);
+                if attempt == 0 {
+                    Err(rustix::io::Errno::INTR)
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap();
+            assert_eq!(attempts.get(), 2);
+
+            let error_attempts = Cell::new(0_usize);
+            let error = sync_before_commit_with(&CancellationToken::new(), || {
+                error_attempts.set(error_attempts.get() + 1);
+                Err(rustix::io::Errno::IO)
+            })
+            .unwrap_err();
+            assert_eq!(error_attempts.get(), 1);
+            assert_eq!(error.code, "write_file_write_failed");
+
+            let cancellation = CancellationToken::new();
+            let cancellation_after_interrupt = cancellation.clone();
+            let cancelled_attempts = Cell::new(0_usize);
+            let error = sync_before_commit_with(&cancellation, || {
+                cancelled_attempts.set(cancelled_attempts.get() + 1);
+                cancellation_after_interrupt.cancel();
+                Err(rustix::io::Errno::INTR)
+            })
+            .unwrap_err();
+            assert_eq!(cancelled_attempts.get(), 1);
+            assert_eq!(error.code, "write_file_cancelled");
+        }
+
+        #[test]
+        fn create_and_replace_rename_error_classes_are_fixed() {
+            let cases = [
+                (
+                    map_create_rename_error(rustix::io::Errno::EXIST),
+                    "write_file_target_changed",
+                    true,
+                ),
+                (
+                    map_create_rename_error(rustix::io::Errno::ACCESS),
+                    "write_file_permission_denied",
+                    false,
+                ),
+                (
+                    map_create_rename_error(rustix::io::Errno::PERM),
+                    "write_file_permission_denied",
+                    false,
+                ),
+                (
+                    map_create_rename_error(rustix::io::Errno::IO),
+                    "write_file_write_failed",
+                    true,
+                ),
+                (
+                    map_replace_rename_error(rustix::io::Errno::ACCESS),
+                    "write_file_permission_denied",
+                    false,
+                ),
+                (
+                    map_replace_rename_error(rustix::io::Errno::PERM),
+                    "write_file_permission_denied",
+                    false,
+                ),
+                (
+                    map_replace_rename_error(rustix::io::Errno::EXIST),
+                    "write_file_write_failed",
+                    true,
+                ),
+                (
+                    map_replace_rename_error(rustix::io::Errno::IO),
+                    "write_file_write_failed",
+                    true,
+                ),
+            ];
+            for (error, expected_code, expected_retryable) in cases {
+                assert_eq!(error.code, expected_code);
+                assert_eq!(error.retryable, expected_retryable);
+            }
+        }
+
+        #[test]
+        fn postrename_directory_sync_interrupt_and_error_are_ambiguous() {
+            let attempts = Cell::new(0_usize);
+            let directory_sync = sync_after_commit_with(|| {
+                let attempt = attempts.get();
+                attempts.set(attempt + 1);
+                if attempt == 0 {
+                    Err(rustix::io::Errno::INTR)
+                } else {
+                    Err(rustix::io::Errno::IO)
+                }
+            });
+            assert_eq!(attempts.get(), 2);
+            let error = finish_after_commit(true, directory_sync).unwrap_err();
+            assert_eq!(error.code, "write_file_commit_ambiguous");
+            assert!(!error.retryable);
+
+            let retry_attempts = Cell::new(0_usize);
+            let successful_sync = sync_after_commit_with(|| {
+                let attempt = retry_attempts.get();
+                retry_attempts.set(attempt + 1);
+                if attempt == 0 {
+                    Err(rustix::io::Errno::INTR)
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(retry_attempts.get(), 2);
+            assert!(finish_after_commit(true, successful_sync).is_ok());
+
             assert!(finish_after_commit(true, Ok(())).is_ok());
             for result in [
                 finish_after_commit(false, Ok(())),
