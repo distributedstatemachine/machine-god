@@ -204,6 +204,7 @@ fn retained_root_responses() -> [Vec<u8>; 2] {
     let first = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"read-call\",\"toolName\":\"read_file\",\"input\":{\"path\":\"note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"info-call\",\"toolName\":\"file_info\",\"input\":{\"path\":\"note.txt\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"glob-call\",\"toolName\":\"glob_files\",\"input\":{\"pattern\":\"*.txt\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -270,7 +271,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
             ..
         })
     ));
-    assert_eq!(prompter.count(), 2);
+    assert_eq!(prompter.count(), 3);
     let requests = transport.request_bodies();
     assert_eq!(requests.len(), 2);
     let second_request = String::from_utf8(requests[1].clone()).unwrap();
@@ -286,6 +287,20 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
     assert_eq!(
         info_output["content"]["size_bytes"],
         "RETAINED_WORKSPACE_CONTENT_SENTINEL".len()
+    );
+    let encoded_glob = second_request["prompt"][4]["content"][0]["output"]["value"]
+        .as_str()
+        .expect("glob_files output is encoded as text");
+    let glob_output: Value = serde_json::from_str(encoded_glob).unwrap();
+    assert_eq!(
+        glob_output["content"],
+        serde_json::json!({
+            "path": ".",
+            "pattern": "*.txt",
+            "mode": "matches",
+            "matches": ["note.txt"],
+            "truncated": false
+        })
     );
     assert!(!directory_is_empty(&retained_state));
     assert!(directory_is_empty(&state_root));
