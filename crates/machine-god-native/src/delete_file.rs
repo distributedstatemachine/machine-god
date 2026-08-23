@@ -1234,3 +1234,6 @@ fn cancelled() -> ToolError {
         false,
     )
 }
+
+#[cfg(test)]
+mod tests;
