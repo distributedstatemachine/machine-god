@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING**
+Status: **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -12,7 +12,8 @@ artifacts.
 The frozen contract is commit
 `19cad7d10a8fc885e2e70a7345fc0ba27d76872a`. Exact contract benchmark
 workflow `32667647846` is green with both jobs and two exact-SHA artifacts;
-contract CI `32667647822` is not yet complete and is not claimed as green.
+contract CI `32667647822` was cancelled when a later feature push superseded
+it and is not claimed as green.
 Production composes on the feature branch at
 `d8f73676fcfce2cead385fa5b36598da989abe8f`, and independent evidence
 composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. Exact composed
@@ -34,8 +35,15 @@ pre-existing Linux deadlock in an unrelated session-lifecycle test fixture.
 Exact test-only remediation `2c771edf3d4385c0c94f2cbbee93427ea9e8b13a`, tree
 `5de94a6f90d5316ab84b7f9451e51b7cc25fd6a2`, changes no production or rename
 behavior and passes the complete replacement local gate. A tree-identical
-cycle-3 candidate and three fresh reviews remain pending before replacement
-feature delivery.
+cycle-3 candidate `5cc1523ebf1ba20264a80f3e703891ace58e1473`, tree
+`99b88ec8653679ca5386c9b0f1c368543f487796`, was **NOT GREEN**: correctness/API
+was green, while filesystem/robustness and performance/concurrency independently
+found that device/inode identity was not pinned against reuse. Exact remediation
+`4cbd46f82d3553009824883de2bc243177459207`, tree
+`35f531eb867e1b08375041b3c74fcf1a650ae063`, retains the validated source
+descriptor through commit verification and passes the complete replacement
+local gate. A tree-identical cycle-4 candidate and three fresh reviews remain
+pending before replacement feature delivery.
 
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
@@ -140,21 +148,25 @@ authority. For one call it performs this bounded sequence:
    exact linked workspace identity.
 2. Walk the source and destination parent paths through descriptor-relative,
    no-follow, nonblocking directory opens. Both parents must already exist.
-3. Record both parent identities. Inspect the source with no-follow metadata
-   and require a regular file. Inspect the destination with no-follow metadata
-   and require `ENOENT`; every existing entry type is a conflict.
+3. Record both parent identities. Open and retain the source without reading
+   content or following its final component, then `fstat` it and require a
+   regular file. Linux uses `O_PATH`; macOS uses `O_EVTONLY`. Inspect the
+   destination with no-follow metadata and require `ENOENT`; every existing
+   entry type is a conflict.
 4. Reacquire and revalidate the linked root, completely rewalk both parents,
-   require the same parent identities and source device/inode/regular type, and
-   require the destination still absent.
+   require the same parent identities and require the source path still names
+   the retained source device/inode/regular type, and require the destination
+   still absent.
 5. Perform the final cancellation check immediately before exactly one
    `renameat_with` using `RenameFlags::NOREPLACE`. The rename is never retried,
    including after `EINTR`.
 6. After success, ignore later tool cancellation. Inspect the destination with
-   no-follow metadata and require the original source device, inode, and
-   regular-file type. Sync the source parent, then the destination parent. If
-   both identities are equal, sync that directory once. Each unique parent
-   allows at most 16 cumulative `fsync` calls, including interrupted calls;
-   distinct parents are both attempted even if the first fails.
+   no-follow metadata and require the retained source device, inode, and
+   regular-file type. The retained descriptor prevents that inode from being
+   recycled during the comparison. Sync the source parent, then the destination
+   parent. If both identities are equal, sync that directory once. Each unique
+   parent allows at most 16 cumulative `fsync` calls, including interrupted
+   calls; distinct parents are both attempted even if the first fails.
 
 Success is exactly:
 
@@ -170,6 +182,10 @@ created. Cross-filesystem or kernel/filesystem lack of no-replace support fails
 without copy/delete fallback. The implementation allocates no content buffer,
 temporary name, staging file, backup, or cleanup residue.
 
+macOS applies access checks to `O_EVTONLY`; if it cannot retain an unreadable
+source, execution returns the fixed permission error before rename and preserves
+both endpoints. Linux `O_PATH` continues to accept a mode-000 regular source.
+
 ## Commit boundary, cancellation, and races
 
 The sole no-replace rename syscall is the irreversible boundary. Before it is
@@ -182,7 +198,9 @@ parents receive the same bounded best-effort sync.
 `NOREPLACE` closes the destination replacement race, but portable Linux/macOS
 rename has no inode compare-and-swap for the source. A different entry installed
 after final validation can be the entry moved. The postcommit identity check
-prevents false success but cannot roll back that move; it returns ambiguity.
+against the descriptor-pinned source prevents false success but cannot roll back
+that move; it returns ambiguity. Retaining the source prevents device/inode
+reuse from making a different file appear to be the validated object.
 Regular-file, symlink, FIFO or other special-file, and directory replacements
 can therefore be moved as directory entries in this final window without
 following referents. None can produce success unless its identity is the
@@ -190,8 +208,9 @@ original validated regular file. The tool does not promise the old name remains
 absent or the new name remains unchanged after return because another actor can
 recreate, remove, or replace pathnames.
 
-Retained descriptors prevent pathname replacement from redirecting traversal.
-A retained source or destination parent moved elsewhere before the syscall can
+Retained descriptors prevent pathname replacement from redirecting traversal
+and pin the validated source object through commit verification. A retained
+source or destination parent moved elsewhere before the syscall can
 still receive the descriptor-relative operation; the tool does not claim a
 filesystem snapshot or global namespace lock. Mounts visible below the trusted
 root remain host-selected authority.
@@ -263,6 +282,11 @@ First seal `a03a57b` passed the exact feature benchmark workflow, while exact
 feature CI reproduced an unrelated Linux session-lifecycle fixture deadlock.
 Test-only remediation `2c771ed`, tree `5de94a6`, deterministically removes the
 fixture cycle and passes the complete replacement local gate without changing
-production. A tree-identical cycle-3 candidate, three fresh same-SHA reviews,
-exact replacement feature workflows, fast-forward integration, and exact main
+production. Cycle-3 candidate `5cc1523`, tree `99b88ec`, was not green because
+two fresh tracks found the unpinned device/inode reuse race. Exact remediation
+`4cbd46f`, tree `35f531e`, retains a non-reading source descriptor through
+commit verification, adds direct macOS permission evidence and deterministic
+unlinked-source evidence, and passes the complete replacement local gate. A
+tree-identical cycle-4 candidate, three fresh same-SHA reviews, exact
+replacement feature workflows, fast-forward integration, and exact main
 workflows are still required before delivery.

@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING**
+Status: **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -14,8 +14,8 @@ Status: **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING**
 - Frozen contract commit:
   `19cad7d10a8fc885e2e70a7345fc0ba27d76872a`.
 - Exact contract benchmark workflow `32667647846` is green with both jobs and
-  two exact-SHA artifacts. Contract CI `32667647822` is still in progress and
-  is not claimed as green.
+  two exact-SHA artifacts. Contract CI `32667647822` was cancelled when a later
+  feature push superseded it and is not claimed as green.
 - Production composes at
   `d8f73676fcfce2cead385fa5b36598da989abe8f`.
 - Independent evidence composes at
@@ -37,12 +37,21 @@ Status: **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING**
 - Exact remote-test remediation:
   `2c771edf3d4385c0c94f2cbbee93427ea9e8b13a` (tree
   `5de94a6f90d5316ab84b7f9451e51b7cc25fd6a2`).
+- Exact failed cycle-3 candidate:
+  `5cc1523ebf1ba20264a80f3e703891ace58e1473` (tree
+  `99b88ec8653679ca5386c9b0f1c368543f487796`).
+- Exact cycle-3 remediation:
+  `4cbd46f82d3553009824883de2bc243177459207` (tree
+  `35f531eb867e1b08375041b3c74fcf1a650ae063`).
 - All three cycle-1 tracks remain historically **NOT GREEN**. The remediation
   and its complete replacement local gate are green. All three fresh cycle-2
   tracks are **GREEN** with zero findings. The first feature workflow attempt
   exposed an unrelated pre-existing Linux test-fixture deadlock; its test-only
-  remediation and complete replacement local gate are green. Cycle-3 review
-  and replacement feature/main delivery have not completed.
+  remediation and complete replacement local gate are green. Cycle-3
+  correctness/API is green; filesystem/robustness and performance/concurrency
+  are **NOT GREEN** on the same unpinned source-inode reuse finding. Exact
+  remediation passes the complete replacement local gate. Cycle-4 review and
+  replacement feature/main delivery have not completed.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are
@@ -65,7 +74,8 @@ CLI behavior, benchmark workload, performance claim, or fx-equivalence claim.
 ## Parallel ownership
 
 - Production owns core authority, native implementation/exports, deterministic
-  evidence seams, retained-root composition, and reference-host registration.
+  evidence seams, retained-root/source composition, and reference-host
+  registration.
 - Independent evidence owns direct, private, race, engine, host, core-contract,
   unsupported-target, cancellation, bounds, and redaction tests.
 - Documentation owns the normative contract, implementation plan, and this
@@ -198,11 +208,10 @@ Performance/concurrency reran the same 15/16/5 focused suites and
 `git diff --check`. Every reviewer independently verified the exact SHA and
 tree and left the worktree clean and unchanged.
 
-This closes adversarial review for the feature behavior. The documentation-
-only review seal is exempt from another adversarial cycle under the user's
-explicit instruction. Exact feature CI and benchmark workflows, both exact-SHA
-benchmark artifacts, fast-forward main integration, and exact main workflows
-remain required.
+This closed cycle-2 adversarial review for that exact feature behavior. The
+documentation-only review seal was exempt from another adversarial cycle under
+the user's explicit instruction. Exact feature CI later required the unrelated
+test-only remediation below, so the replacement behavior proceeded to cycle 3.
 
 ## First feature workflow attempt and test-only remediation
 
@@ -243,9 +252,57 @@ repository-relative links, and zero missing targets. The base diff is now 23
 files with no unsafe Rust, Cargo/dependency, or CLI change. A fresh locked
 319,152-byte arm64 Mach-O release CLI has SHA-256
 `126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107` and
+passes bare, help, human-status, and JSON-status smoke paths. At that checkpoint,
+a tree-identical cycle-3 candidate and three fresh same-SHA reviews remained
+required before the replacement feature push.
+
+## Formal review cycle 3 and remediation local gate
+
+Exact candidate `5cc1523ebf1ba20264a80f3e703891ace58e1473`, tree
+`99b88ec8653679ca5386c9b0f1c368543f487796`, is **NOT GREEN**. Correctness/API
+is green with zero findings after 16 direct, five engine, 15 private, one core,
+seven host, all 14 lifecycle tests, and 100 repetitions of the formerly hanging
+case. Filesystem/robustness and performance/concurrency independently found the
+same medium defect: source identity retained only device/inode numbers, so an
+unlink and inode reuse could make a different file pass revalidation and
+postcommit comparison. The prior replacement test moved the original to a
+linked name, which itself prevented reuse and did not cover that state.
+
+Exact remediation `4cbd46f82d3553009824883de2bc243177459207`, tree
+`35f531eb867e1b08375041b3c74fcf1a650ae063`, atomically opens the initial source
+without following or reading it, requires a regular file by `fstat`, and keeps
+the descriptor alive through postcommit comparison. Linux uses
+`O_PATH | O_NOFOLLOW | O_CLOEXEC`; macOS uses the cfg-gated existing-libc
+`O_EVTONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK` flags. Final-path and
+published-destination identities are compared to the pinned object. One bounded
+open and one constant descriptor replace the initial metadata-only inspection;
+there is no content buffer, new lock, or dependency. Deterministic private
+evidence unlinks the validated source while proving its retained descriptor has
+zero links, moves a replacement, and requires commit ambiguity. Direct macOS
+evidence records that a mode-000 source is preserved with the fixed permission
+error because the kernel denies `O_EVTONLY`; Linux `O_PATH` continues to accept
+that source mode.
+
+The exact remediation passes the complete replacement gate under Rust/Cargo
+1.94.1. Formatting, workspace all-target/all-feature warnings-denied Clippy,
+workspace default/all-feature tests, both doctest modes, 16 private tests, 17
+macOS direct tests, five engine tests, seven all-feature host tests, one core
+contract, all 14 lifecycle tests, and 100 focused lifecycle repetitions are
+green. Discovery is 779 default, 829 all-feature, and zero benchmarks on macOS.
+The supported Linux rename targets compile and pass strict Clippy; Linux has 16
+direct tests because the explicit macOS permission case is cfg-gated.
+
+All 130 Python tests pass with eight expected macOS skips. Pinned-fx
+compatibility, cargo-deny 0.19.9, cargo-audit 0.22.2 over 1,225 advisories and
+175 dependencies, Linux/FreeBSD/WASI matrices, and active Node WASI 1/1 are
+green. Only the established unrelated FreeBSD `glob_files` and WASI `read_file`
+warnings remain. Documentation integrity is 66 Markdown files, 462 inline
+links, 312 repository-relative links, and zero missing targets. The 23-file
+base diff has no unsafe Rust, Cargo/dependency, or CLI change. A fresh locked
+319,152-byte arm64 Mach-O release CLI has SHA-256
+`0bdfaf3f4a1bf696030efa0120e52943f7d54a31f383440d38133067b863421c` and
 passes bare, help, human-status, and JSON-status smoke paths. A tree-identical
-cycle-3 candidate and three fresh same-SHA reviews remain required before the
-replacement feature push.
+cycle-4 candidate and three fresh same-SHA reviews remain required.
 
 ## Formal review protocol
 

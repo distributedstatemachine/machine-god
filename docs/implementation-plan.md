@@ -94,8 +94,8 @@ zero findings in all three fresh tracks. Replacement seal `fe56f4c` completed
 the exact feature and `main` delivery gates recorded above. The remaining
 native tools, CLI ownership, and Milestone 03 completion boundary remain
 pending.
-The twenty-third bounded slice, native `rename_file`, is **REMOTE TEST
-REMEDIATED; CYCLE 3 REVIEW PENDING** from exact delivered base
+The twenty-third bounded slice, native `rename_file`, is **CYCLE 3 REMEDIATED;
+CYCLE 4 REVIEW PENDING** from exact delivered base
 `3d76f2e844312e7f3e809524cb72c1a7957975ff`. Its two-endpoint typed
 authority, regular-file-only absent-destination semantics, one no-replace
 rename boundary, bounded two-parent durability, explicit race limitations,
@@ -107,8 +107,8 @@ base is green under exact feature CI `32665981665`, feature benchmark
 benchmark workflows retain two nonexpired exact-SHA artifacts. The frozen
 contract commit is `19cad7d10a8fc885e2e70a7345fc0ba27d76872a`; its exact
 benchmark workflow `32667647846` is green with both jobs and two exact-SHA
-artifacts, while exact contract CI `32667647822` has not completed and is not
-claimed as green. Production composes at
+artifacts, while exact contract CI `32667647822` was cancelled when a later
+feature push superseded it and is not claimed as green. Production composes at
 `d8f73676fcfce2cead385fa5b36598da989abe8f`, and independent evidence
 composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. Exact composed local-gate
 precursor `43847fe5fd405e8b1d28808f0495dac859ebab15`, tree `80cb9a1`, is green
@@ -129,9 +129,13 @@ feature benchmark `32671805335` with both jobs and two exact-SHA artifacts;
 feature CI `32671805412` was cancelled after reproducing an unrelated
 pre-existing Linux session-lifecycle fixture deadlock. Exact test-only
 remediation `2c771ed`, tree `5de94a6`, passes the complete replacement local
-gate without changing production or rename behavior. A tree-identical cycle-3
-candidate, three fresh reviews, and replacement feature/main delivery remain
-pending.
+gate without changing production or rename behavior. Tree-identical cycle-3
+candidate `5cc1523`, tree `99b88ec`, was not green: correctness/API was green,
+while filesystem/robustness and performance/concurrency found the same
+device/inode-reuse gap. Exact remediation `4cbd46f`, tree `35f531e`, retains a
+non-reading source descriptor through postcommit identity verification and
+passes the complete replacement local gate. A tree-identical cycle-4 candidate,
+three fresh reviews, and replacement feature/main delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1642,7 +1646,8 @@ gate:
   exact-SHA artifacts. Native `delete_file` is delivered as slice twenty-two.
   The combined native-tool checkbox stays unchecked because the remaining
   native tools and M03 ownership are incomplete. The twenty-third
-  `rename_file` slice is **REMOTE TEST REMEDIATED; CYCLE 3 REVIEW PENDING** from exact base
+  `rename_file` slice is **CYCLE 3 REMEDIATED; CYCLE 4 REVIEW PENDING** from
+  exact base
   `3d76f2e`.
   It is frozen as one existing confined regular file moved to an absent
   destination through exact two-endpoint `FilesystemRename` policy input,
@@ -1665,9 +1670,13 @@ gate:
   benchmark `32671805335`; feature CI `32671805412` reproduced an unrelated
   pre-existing Linux session-lifecycle fixture deadlock. Exact test-only
   remediation `2c771ed`, tree `5de94a6`, passes the complete replacement local
-  gate without changing production. A tree-identical cycle-3 candidate, three
-  fresh reviews, and exact replacement feature/main delivery gates remain
-  pending under
+  gate without changing production. Tree-identical cycle-3 candidate
+  `5cc1523`, tree `99b88ec`, was not green because two fresh tracks found the
+  unpinned device/inode-reuse race. Exact remediation `4cbd46f`, tree
+  `35f531e`, pins the source with a non-reading descriptor through commit
+  verification and passes the complete replacement local gate. A tree-identical
+  cycle-4 candidate, three fresh reviews, and exact replacement feature/main
+  delivery gates remain pending under
   [`rename-file.md`](rename-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

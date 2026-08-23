@@ -29,7 +29,10 @@ tree `cb75dca`, is green with zero findings in all three fresh tracks. First
 seal `a03a57b` passed exact feature benchmark evidence; feature CI reproduced
 an unrelated Linux session-lifecycle test deadlock. Test-only remediation
 `2c771ed`, tree `5de94a6`, passes the complete replacement local gate without
-changing production. Cycle-3 review and replacement delivery remain pending.
+changing production. Cycle-3 candidate `5cc1523`, tree `99b88ec`, was not green
+because two tracks found an unpinned source-inode reuse race. Remediation
+`4cbd46f`, tree `35f531e`, retains the source descriptor and passes the complete
+replacement gate. Cycle-4 review and replacement delivery remain pending.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
