@@ -1032,12 +1032,13 @@ fn eligibility_accepts_exact_file_limit_and_reports_oversized_utf8_and_nul_skips
 
 #[test]
 fn one_large_then_many_empty_and_tiny_files_have_exact_output_without_false_scan_limit() {
+    const TINY_FILE_COUNT: usize = 384;
+
     let temporary = TemporaryDirectory::new();
     let mut large = vec![b'x'; MAX_GREP_FILES_FILE_BYTES];
     large[MAX_GREP_FILES_FILE_BYTES - b"needle".len()..].copy_from_slice(b"needle");
     fs::write(temporary.path().join("000-large.txt"), large).unwrap();
 
-    const TINY_FILE_COUNT: usize = 384;
     for index in 0..TINY_FILE_COUNT {
         let contents: &[u8] = match index % 4 {
             0 => b"",
