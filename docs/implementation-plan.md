@@ -94,6 +94,18 @@ zero findings in all three fresh tracks. Replacement seal `fe56f4c` completed
 the exact feature and `main` delivery gates recorded above. The remaining
 native tools, CLI ownership, and Milestone 03 completion boundary remain
 pending.
+The twenty-third bounded slice, native `rename_file`, is **CONTRACT IN
+PROGRESS** from exact delivered base
+`3d76f2e844312e7f3e809524cb72c1a7957975ff`. Its two-endpoint typed
+authority, regular-file-only absent-destination semantics, one no-replace
+rename boundary, bounded two-parent durability, explicit race limitations,
+parallel ownership, and fresh same-SHA review protocol are frozen in
+[`rename-file.md`](rename-file.md) and
+[`m03-rename-file-review-01.md`](reviews/m03-rename-file-review-01.md). The
+base is green under exact feature CI `32665981665`, feature benchmark
+`32665981641`, main CI `32666261656`, and main benchmark `32666261525`; both
+benchmark workflows retain two nonexpired exact-SHA artifacts. Implementation,
+independent evidence, review, and delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1603,7 +1615,17 @@ gate:
   main benchmark `32665564382`; both benchmark workflows retain two nonexpired
   exact-SHA artifacts. Native `delete_file` is delivered as slice twenty-two.
   The combined native-tool checkbox stays unchecked because the remaining
-  native tools and M03 ownership are incomplete.
+  native tools and M03 ownership are incomplete. The twenty-third
+  `rename_file` slice is **CONTRACT IN PROGRESS** from exact base `3d76f2e`.
+  It is frozen as one existing confined regular file moved to an absent
+  destination through exact two-endpoint `FilesystemRename` policy input,
+  existing no-follow parents, one `NOREPLACE` rename, postcommit identity
+  verification, and bounded one- or two-parent sync. It deliberately adds no
+  overwrite, directory move, parent creation, external path, content read,
+  copy/delete fallback, CLI behavior, new dependency, benchmark workload,
+  performance claim, or fx-equivalence claim. Production, independent tests,
+  three fresh same-SHA reviews, and exact feature/main delivery gates remain
+  pending under [`rename-file.md`](rename-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
