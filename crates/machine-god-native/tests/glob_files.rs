@@ -767,6 +767,82 @@ fn depth_two_hundred_fifty_six_candidates_are_eligible_but_child_descent_is_limi
     }
 }
 
+#[test]
+fn matcher_work_limit_fails_both_modes_after_simple_scan_of_same_deep_tree_succeeds() {
+    const LEAF_CANDIDATES: usize = 64;
+    const EXPECTED_MATCHER_STEP_LIMIT: usize = 8 * 1_024 * 1_024;
+
+    let temporary = TemporaryDirectory::new();
+    let mut deepest = temporary.path().to_path_buf();
+    for _ in 0..MAX_GLOB_FILES_DEPTH {
+        deepest.push("d");
+        fs::create_dir(&deepest).unwrap();
+    }
+
+    let path_prefix = "d/".repeat(MAX_GLOB_FILES_DEPTH);
+    let mut expected_paths = Vec::with_capacity(LEAF_CANDIDATES);
+    for index in 0..LEAF_CANDIDATES {
+        let name = format!("leaf-{index:02}.txt");
+        fs::write(deepest.join(&name), []).unwrap();
+        expected_paths.push(format!("{path_prefix}{name}"));
+    }
+    let tool = tool(temporary.path());
+
+    let simple_count = count(&tool, "*", ".");
+    assert_eq!(simple_count.content["count"], LEAF_CANDIDATES);
+    let simple_matches = matches(&tool, "*", ".");
+    let mut retained_bytes = 0_usize;
+    let expected_prefix = expected_paths
+        .iter()
+        .map(String::as_str)
+        .take_while(|path| {
+            let next = retained_bytes + path.len();
+            if next > MAX_GLOB_FILES_TOTAL_MATCH_PATH_BYTES {
+                false
+            } else {
+                retained_bytes = next;
+                true
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(match_paths(&simple_matches), expected_prefix);
+    assert_eq!(simple_matches.content["truncated"], true);
+
+    let alternating_pattern = (0..MAX_GLOB_FILES_DEPTH)
+        .flat_map(|_| ["**", "*"])
+        .collect::<Vec<_>>()
+        .join("/");
+    assert!(alternating_pattern.len() <= MAX_GLOB_FILES_PATTERN_BYTES);
+    let candidate_components = MAX_GLOB_FILES_DEPTH + 1;
+    let steps_per_candidate =
+        MAX_GLOB_FILES_DEPTH * ((candidate_components + 1) + candidate_components);
+    assert_eq!(steps_per_candidate, 131_840);
+    assert!(steps_per_candidate * (LEAF_CANDIDATES - 1) <= EXPECTED_MATCHER_STEP_LIMIT);
+    assert!(steps_per_candidate * LEAF_CANDIDATES > EXPECTED_MATCHER_STEP_LIMIT);
+
+    let outcomes = ["matches", "count"].map(|mode| {
+        (
+            mode,
+            execute(
+                &tool,
+                arguments(&alternating_pattern, ".", mode),
+                CancellationToken::new(),
+            ),
+        )
+    });
+    let mut unexpected_successes = Vec::new();
+    for (mode, outcome) in outcomes {
+        match outcome {
+            Ok(_) => unexpected_successes.push(mode),
+            Err(error) => assert_scan_limit(error),
+        }
+    }
+    assert!(
+        unexpected_successes.is_empty(),
+        "matcher work limit returned partial successes: {unexpected_successes:?}"
+    );
+}
+
 fn create_deep_result_fixture(root: &Path) -> (Vec<OwnedFd>, String, String, String) {
     let root = rustix::fs::open(
         root,
