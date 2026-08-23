@@ -308,6 +308,28 @@ fn create_file_at(parent: &OwnedFd, name: &str, contents: &[u8]) {
     assert_eq!(rustix::io::write(&file, contents).unwrap(), contents.len());
 }
 
+fn create_directory_at(parent: &OwnedFd, name: &str) {
+    rustix::fs::mkdirat(parent.as_fd(), name, Mode::from_raw_mode(0o700)).unwrap();
+}
+
+fn create_symlink_at(parent: &OwnedFd, name: &str) {
+    rustix::fs::symlinkat("harmless-missing-target", parent.as_fd(), name).unwrap();
+}
+
+fn remove_deep_fixture_entries(
+    directories: &[OwnedFd],
+    component: &str,
+    entries: &[(&str, AtFlags)],
+) {
+    let deepest = directories.last().unwrap();
+    for (name, flags) in entries {
+        rustix::fs::unlinkat(deepest.as_fd(), *name, *flags).unwrap();
+    }
+    for parent in directories.iter().take(16).rev() {
+        rustix::fs::unlinkat(parent.as_fd(), component, AtFlags::REMOVEDIR).unwrap();
+    }
+}
+
 #[test]
 fn exported_contract_limits_and_spec_are_exact() {
     assert_eq!(GREP_FILES_TOOL_NAME, "grep_files");
@@ -316,7 +338,7 @@ fn exported_contract_limits_and_spec_are_exact() {
     assert_eq!(MAX_GREP_FILES_INCLUDE_BYTES, 4_096);
     assert_eq!(MAX_GREP_FILES_RESULT_PATH_BYTES, 4_096);
     assert_eq!(MAX_GREP_FILES_HEAD_LIMIT, 100);
-    assert_eq!(MAX_GREP_FILES_OFFSET, 100_000);
+    assert_eq!(MAX_GREP_FILES_OFFSET, 64 * 1_024 * 1_024);
     assert_eq!(MAX_GREP_FILES_CONTEXT_LINES, 5);
     assert_eq!(MAX_GREP_FILES_FILE_BYTES, 200 * 1_024);
     assert_eq!(MAX_GREP_FILES_RESULT_LINE_BYTES, 4_096);
@@ -377,7 +399,7 @@ fn exported_contract_limits_and_spec_are_exact() {
                 "offset": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 100_000,
+                    "maximum": 64 * 1_024 * 1_024,
                     "description": "Zero-based result offset for matches or files_with_matches; defaults to 0"
                 },
                 "context_lines": {
@@ -411,7 +433,7 @@ fn prepare_requires_exact_name_shape_types_modes_and_numeric_ranges() {
         call(json!({"pattern": "x", "head_limit": 101})),
         call(json!({"pattern": "x", "head_limit": 1.0})),
         call(json!({"pattern": "x", "offset": -1})),
-        call(json!({"pattern": "x", "offset": 100_001})),
+        call(json!({"pattern": "x", "offset": MAX_GREP_FILES_OFFSET + 1})),
         call(json!({"pattern": "x", "context_lines": -1})),
         call(json!({"pattern": "x", "context_lines": 6})),
         call(json!({"pattern": "x", "extra": true})),
@@ -695,6 +717,46 @@ fn matches_are_globally_path_then_line_sorted_with_exact_pagination_metadata() {
 }
 
 #[test]
+fn continuation_after_the_old_offset_ceiling_is_accepted_and_reusable() {
+    let temporary = TemporaryDirectory::new();
+    let matching_lines = 100_101_usize;
+    fs::write(
+        temporary.path().join("many-lines.txt"),
+        "x\n".repeat(matching_lines),
+    )
+    .unwrap();
+    let tool = tool(temporary.path());
+
+    let mut first_arguments = canonical("x", "many-lines.txt", None, "matches");
+    first_arguments["head_limit"] = json!(100);
+    first_arguments["offset"] = json!(100_000);
+    let first = run(&tool, first_arguments);
+    assert_eq!(first.content["total_matches"], matching_lines);
+    assert_eq!(first.content["matches"].as_array().unwrap().len(), 100);
+    assert_eq!(first.content["matches"][0]["line_number"], 100_001);
+    assert_eq!(first.content["matches"][99]["line_number"], 100_100);
+    assert_eq!(first.content["next_offset"], 100_100);
+    assert_eq!(first.content["truncated"], true);
+
+    let continuation = first.content["next_offset"].as_u64().unwrap();
+    let prepared = tool
+        .prepare(call(json!({
+            "pattern": "x",
+            "path": "many-lines.txt",
+            "mode": "matches",
+            "head_limit": 100,
+            "offset": continuation
+        })))
+        .unwrap();
+    assert_eq!(prepared.arguments()["offset"], continuation);
+    let last = run(&tool, prepared.arguments().clone());
+    assert_eq!(last.content["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(last.content["matches"][0]["line_number"], 100_101);
+    assert_eq!(last.content["next_offset"], Value::Null);
+    assert_eq!(last.content["truncated"], true);
+}
+
+#[test]
 fn files_with_matches_and_count_have_exact_distinct_shapes_and_complete_totals() {
     let temporary = TemporaryDirectory::new();
     write_files(
@@ -790,6 +852,32 @@ fn include_uses_delivered_glob_grammar_recursively_and_filters_before_reads() {
 }
 
 #[test]
+fn hidden_files_and_files_below_hidden_directories_are_searchable_and_sorted() {
+    let temporary = TemporaryDirectory::new();
+    write_files(
+        temporary.path(),
+        &[
+            ("visible.txt", b"needle"),
+            (".hidden.txt", b"needle"),
+            (".hidden-directory/nested.txt", b"needle"),
+        ],
+    );
+    let output = run(
+        &tool(temporary.path()),
+        canonical("needle", ".", Some("*.txt"), "files_with_matches"),
+    );
+
+    assert_eq!(
+        output.content["files"],
+        json!([".hidden-directory/nested.txt", ".hidden.txt", "visible.txt"])
+    );
+    assert_eq!(output.content["candidate_files"], 3);
+    assert_eq!(output.content["searched_files"], 3);
+    assert_eq!(output.content["matching_lines"], 3);
+    assert_eq!(output.content["total_files"], 3);
+}
+
+#[test]
 fn context_is_chronological_retains_cr_and_uses_exact_record_shapes() {
     let temporary = TemporaryDirectory::new();
     fs::write(
@@ -823,6 +911,49 @@ fn context_is_chronological_retains_cr_and_uses_exact_record_shapes() {
     );
     assert_eq!(output.content["total_matches"], 1);
     assert_eq!(output.content["truncated"], false);
+}
+
+#[test]
+fn pagination_selects_match_records_before_attaching_their_exact_context() {
+    let temporary = TemporaryDirectory::new();
+    fs::write(
+        temporary.path().join("context-page.txt"),
+        b"zero\nneedle one\nbetween\nneedle two\ntail\nneedle three\nend",
+    )
+    .unwrap();
+    let tool = tool(temporary.path());
+    let mut arguments = canonical("needle", ".", None, "matches");
+    arguments["head_limit"] = json!(1);
+    arguments["offset"] = json!(1);
+    arguments["context_lines"] = json!(1);
+    let output = run(&tool, arguments);
+
+    assert_eq!(output.content["total_matches"], 3);
+    assert_eq!(output.content["matching_files"], 1);
+    assert_eq!(output.content["next_offset"], 2);
+    assert_eq!(output.content["truncated"], true);
+    assert_eq!(
+        output.content["matches"],
+        json!([{
+            "path": "context-page.txt",
+            "line_number": 4,
+            "match_start_byte": 0,
+            "excerpt_start_byte": 0,
+            "line": "needle two",
+            "line_truncated": false,
+            "context_before": [{
+                "line_number": 3,
+                "line": "between",
+                "line_truncated": false
+            }],
+            "context_after": [{
+                "line_number": 5,
+                "line": "tail",
+                "line_truncated": false
+            }],
+            "context_truncated": false
+        }])
+    );
 }
 
 #[test]
@@ -928,6 +1059,37 @@ fn selected_regular_file_is_searchable_and_include_matches_its_workspace_relativ
     );
     assert_eq!(excluded.content["candidate_files"], 0);
     assert_eq!(excluded.content["searched_files"], 0);
+}
+
+#[test]
+fn selected_regular_file_excluded_by_include_does_not_require_content_open_permission() {
+    let temporary = TemporaryDirectory::new();
+    let selected = temporary.path().join("excluded.txt");
+    fs::write(&selected, b"PRIVATE_UNREADABLE_NEEDLE").unwrap();
+    let tool = tool(temporary.path());
+    fs::set_permissions(&selected, fs::Permissions::from_mode(0o000)).unwrap();
+    let operating_system_enforces_mode = fs::File::open(&selected).is_err();
+
+    let result = execute(
+        &tool,
+        canonical("PRIVATE", "excluded.txt", Some("*.rs"), "count"),
+        CancellationToken::new(),
+    );
+    fs::set_permissions(&selected, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let output = result.unwrap_or_else(|error| {
+        panic!(
+            "an include-excluded selected file must not be content-opened; mode enforcement={operating_system_enforces_mode}: {error:?}"
+        )
+    });
+    assert_eq!(output.content["candidate_files"], 0);
+    assert_eq!(output.content["searched_files"], 0);
+    assert_eq!(output.content["matching_lines"], 0);
+    assert!(
+        !serde_json::to_string(&output)
+            .unwrap()
+            .contains("PRIVATE_UNREADABLE_NEEDLE")
+    );
 }
 
 #[test]
@@ -1065,6 +1227,111 @@ fn exact_four_kib_result_path_is_allowed_and_one_byte_more_is_scan_limit() {
 }
 
 #[test]
+fn every_constructed_empty_directory_path_obeys_the_exact_four_kib_boundary() {
+    let temporary = TemporaryDirectory::new();
+    let (directories, component, exact_name, overflow_name) =
+        create_deep_result_fixture(temporary.path());
+    let deepest = directories.last().unwrap();
+    create_directory_at(deepest, &exact_name);
+    let tool = tool(temporary.path());
+    let exact = execute(
+        &tool,
+        canonical("needle", ".", None, "count"),
+        CancellationToken::new(),
+    );
+    create_directory_at(deepest, &overflow_name);
+    let overflow = execute(
+        &tool,
+        canonical("needle", ".", None, "count"),
+        CancellationToken::new(),
+    );
+    remove_deep_fixture_entries(
+        &directories,
+        &component,
+        &[
+            (&exact_name, AtFlags::REMOVEDIR),
+            (&overflow_name, AtFlags::REMOVEDIR),
+        ],
+    );
+
+    let exact = exact.unwrap();
+    assert_eq!(exact.content["candidate_files"], 0);
+    assert_scan_limit(overflow.unwrap_err());
+}
+
+#[test]
+fn every_constructed_include_excluded_file_path_obeys_the_exact_four_kib_boundary() {
+    let temporary = TemporaryDirectory::new();
+    let (directories, component, exact_name, overflow_name) =
+        create_deep_result_fixture(temporary.path());
+    let deepest = directories.last().unwrap();
+    create_file_at(deepest, &exact_name, b"PRIVATE_EXCLUDED_NEEDLE");
+    let tool = tool(temporary.path());
+    let exact = execute(
+        &tool,
+        canonical("PRIVATE", ".", Some("*.rs"), "count"),
+        CancellationToken::new(),
+    );
+    create_file_at(deepest, &overflow_name, b"PRIVATE_EXCLUDED_NEEDLE");
+    let overflow = execute(
+        &tool,
+        canonical("PRIVATE", ".", Some("*.rs"), "count"),
+        CancellationToken::new(),
+    );
+    remove_deep_fixture_entries(
+        &directories,
+        &component,
+        &[
+            (&exact_name, AtFlags::empty()),
+            (&overflow_name, AtFlags::empty()),
+        ],
+    );
+
+    let exact = exact.unwrap();
+    assert_eq!(exact.content["candidate_files"], 0);
+    assert_eq!(exact.content["searched_files"], 0);
+    assert!(
+        !serde_json::to_string(&exact)
+            .unwrap()
+            .contains("PRIVATE_EXCLUDED_NEEDLE")
+    );
+    assert_scan_limit(overflow.unwrap_err());
+}
+
+#[test]
+fn every_constructed_symlink_or_special_path_obeys_the_exact_four_kib_boundary() {
+    let temporary = TemporaryDirectory::new();
+    let (directories, component, exact_name, overflow_name) =
+        create_deep_result_fixture(temporary.path());
+    let deepest = directories.last().unwrap();
+    create_symlink_at(deepest, &exact_name);
+    let tool = tool(temporary.path());
+    let exact = execute(
+        &tool,
+        canonical("needle", ".", None, "count"),
+        CancellationToken::new(),
+    );
+    create_symlink_at(deepest, &overflow_name);
+    let overflow = execute(
+        &tool,
+        canonical("needle", ".", None, "count"),
+        CancellationToken::new(),
+    );
+    remove_deep_fixture_entries(
+        &directories,
+        &component,
+        &[
+            (&exact_name, AtFlags::empty()),
+            (&overflow_name, AtFlags::empty()),
+        ],
+    );
+
+    let exact = exact.unwrap();
+    assert_eq!(exact.content["candidate_files"], 0);
+    assert_scan_limit(overflow.unwrap_err());
+}
+
+#[test]
 fn head_and_aggregate_text_caps_emit_only_a_sorted_prefix_with_exact_resume_offset() {
     let temporary = TemporaryDirectory::new();
     let long_line = format!("needle{}", "x".repeat(MAX_GREP_FILES_RESULT_LINE_BYTES - 6));
@@ -1161,6 +1428,39 @@ fn escaped_json_output_is_valid_and_bounded_by_the_serialized_result_cap() {
 }
 
 #[test]
+fn serialized_result_trimming_removes_context_before_the_match_record() {
+    let temporary = TemporaryDirectory::new();
+    let before = "\u{0001}".repeat(MAX_GREP_FILES_RESULT_LINE_BYTES);
+    let after = "\u{0001}".repeat(
+        MAX_GREP_FILES_TOTAL_RESULT_TEXT_BYTES - MAX_GREP_FILES_RESULT_LINE_BYTES - "needle".len(),
+    );
+    fs::write(
+        temporary.path().join("escaped-context.txt"),
+        format!("{before}\nneedle\n{after}"),
+    )
+    .unwrap();
+    let tool = tool(temporary.path());
+    let mut arguments = canonical("needle", ".", None, "matches");
+    arguments["context_lines"] = json!(1);
+    let output = run(&tool, arguments);
+    let serialized = serde_json::to_vec(&output).unwrap();
+    let record = &output.content["matches"][0];
+
+    assert!(serialized.len() <= MAX_GREP_FILES_SERIALIZED_RESULT_BYTES);
+    assert_eq!(output.content["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(output.content["total_matches"], 1);
+    assert_eq!(output.content["next_offset"], Value::Null);
+    assert_eq!(output.content["truncated"], false);
+    assert_eq!(record["line"], "needle");
+    assert_eq!(
+        record["context_before"][0]["line"].as_str().unwrap().len(),
+        MAX_GREP_FILES_RESULT_LINE_BYTES
+    );
+    assert_eq!(record["context_after"], json!([]));
+    assert_eq!(record["context_truncated"], true);
+}
+
+#[test]
 fn hostile_repeated_prefix_search_has_exact_complete_result_without_naive_work() {
     let temporary = TemporaryDirectory::new();
     let pattern = format!("{}b", "a".repeat(MAX_GREP_FILES_PATTERN_BYTES - 1));
@@ -1177,6 +1477,15 @@ fn hostile_repeated_prefix_search_has_exact_complete_result_without_naive_work()
     assert_eq!(output.content["searched_files"], 64);
     assert_eq!(output.content["matching_lines"], 0);
     assert_eq!(output.content["matching_files"], 0);
+
+    let folded_pattern = format!("{}B", "A".repeat(MAX_GREP_FILES_PATTERN_BYTES - 1));
+    let mut folded_arguments = canonical(&folded_pattern, ".", None, "count");
+    folded_arguments["case_insensitive"] = json!(true);
+    let folded = run(&tool(temporary.path()), folded_arguments);
+    assert_eq!(folded.content["candidate_files"], 64);
+    assert_eq!(folded.content["searched_files"], 64);
+    assert_eq!(folded.content["matching_lines"], 0);
+    assert_eq!(folded.content["matching_files"], 0);
 }
 
 #[test]
@@ -1363,6 +1672,47 @@ fn execution_future_is_inert_until_polled_drop_detaches_nothing_and_pre_cancel_w
         "grep_files execution was cancelled",
         false,
     );
+}
+
+#[test]
+fn first_poll_observes_preexecution_growth_removal_and_special_substitution_without_stale_reads() {
+    let temporary = TemporaryDirectory::new();
+    fs::write(temporary.path().join("grown.txt"), b"needle").unwrap();
+    fs::write(
+        temporary.path().join("removed.txt"),
+        b"PRIVATE_REMOVED_NEEDLE",
+    )
+    .unwrap();
+    fs::write(
+        temporary.path().join("special-substitution.txt"),
+        b"PRIVATE_SUBSTITUTED_NEEDLE",
+    )
+    .unwrap();
+    let tool = tool(temporary.path());
+    let future = tool.execute(
+        context(),
+        canonical("NEEDLE", ".", None, "count"),
+        CancellationToken::new(),
+    );
+
+    fs::write(
+        temporary.path().join("grown.txt"),
+        vec![b'x'; MAX_GREP_FILES_FILE_BYTES + 1],
+    )
+    .unwrap();
+    fs::remove_file(temporary.path().join("removed.txt")).unwrap();
+    fs::remove_file(temporary.path().join("special-substitution.txt")).unwrap();
+    create_fifo(&temporary.path().join("special-substitution.txt"));
+
+    let output = poll_immediately_ready(future).unwrap();
+    assert_eq!(output.content["candidate_files"], 1);
+    assert_eq!(output.content["searched_files"], 0);
+    assert_eq!(output.content["skipped_oversized_files"], 1);
+    assert_eq!(output.content["matching_lines"], 0);
+    assert_eq!(output.content["matching_files"], 0);
+    let serialized = serde_json::to_string(&output).unwrap();
+    assert!(!serialized.contains("PRIVATE_REMOVED_NEEDLE"));
+    assert!(!serialized.contains("PRIVATE_SUBSTITUTED_NEEDLE"));
 }
 
 #[test]
