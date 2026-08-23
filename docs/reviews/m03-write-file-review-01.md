@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **COMPOSED IMPLEMENTATION — final local gates, formal reviews, seal,
-and delivery are pending**
+Status: **LOCAL-GATE-GREEN PRECURSOR — formal reviews, seal, and delivery are
+pending**
 
 ## Base and prior delivery
 
@@ -111,6 +111,8 @@ still required.
   `8b5847f355e685a145557e98b1719cf1e154ae83`
 - Full-pipeline fault and phase evidence:
   `c7fdef2d65a3f498673dde470a09bbda4a547b59`
+- Local-gate-green behavior precursor:
+  `072bd69eb6f73944d1db00363da0f965f09dda9f`
 - First exact behavior candidate: **PENDING**
 - Three formal adversarial reviews: **PENDING**
 - Behavior-green SHA: **PENDING**
@@ -155,6 +157,42 @@ The confirmed evidence gaps are closed before the first formal candidate:
 
 Final exact local gates and the three formal same-SHA review tracks remain
 pending; no preformal result is promoted into delivery evidence.
+
+## Local gate results
+
+Exact composed precursor `072bd69eb6f73944d1db00363da0f965f09dda9f`
+is green under Rust and Cargo 1.94.1 exactly:
+
+- formatting and workspace/all-target/all-feature warnings-denied Clippy pass;
+- the workspace all-target/all-feature inventory and gate pass 651 tests plus
+  two doctests;
+- focused evidence passes 23 private `write_file` tests, 25 direct integration
+  tests, five real-engine tests including same-poll recovery, seven reference-
+  host tests, and three prepared-root tests;
+- the repository Python gate runs 129 tests: 121 pass and eight expected macOS
+  skips, with zero failures or errors;
+- a fresh credential-stripped checkout of pinned fx commit
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` passes compatibility-inventory
+  generation check;
+- cargo-deny 0.19.9 passes with only the accepted `syn` and `windows-sys`
+  duplicate warnings; cargo-audit 0.22.2 checks 1,225 cached advisories over 175
+  dependencies with zero findings;
+- Linux no-default native Clippy passes with warnings denied; FreeBSD
+  no-default library/tests compile and library Clippy passes with only two
+  pre-existing test-only `glob_files` warnings; WASI builds the dedicated
+  unsupported-target test with only the pre-existing `read_file` dead-code
+  warning, and Node's WASI runner actively passes that exact test 1/1;
+- a fresh locked release build passes and produces an arm64 Mach-O CLI with
+  SHA-256 `57025124a24a636e7fc9639ca5a0f53c75690d3610667d11cc87f2eaeda7f494`;
+  executing that binary directly prints the exact version/API line and exits
+  zero; and
+- 60 Markdown files contain 428 inline links, including 278 repository-relative
+  links with zero missing; whole-feature diff checks pass, no unsafe Rust was
+  added, and the exact precursor worktree is clean.
+
+These are local precursor results, not formal-review or remote-delivery
+evidence. The next tree-identical marker freezes the exact first formal behavior
+candidate supplied independently to all three fresh review tracks.
 
 ## Explicit nonclaims
 

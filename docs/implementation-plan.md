@@ -738,7 +738,12 @@ hardening component `1d30ff9` composed as `a9a7c99`, and core same-poll recovery
 regression `8b5847f` close the first preformal evidence gaps. Full-pipeline
 fault and phase evidence `c7fdef2` covers both mode stages, write, staged sync,
 create/replace rename, staged-name tampering, traversal and final-prepublish
-cancellation, real-rename parent-sync ambiguity, and device rejection. Evidence
+cancellation, real-rename parent-sync ambiguity, and device rejection. Exact
+local gates are green at composed precursor `072bd69`: formatting, warnings-
+denied workspace Clippy, 651 workspace tests, two doctests, focused native and
+engine suites, Python and pinned-compatibility gates, dependency policy/audit,
+Linux/FreeBSD/WASI checks with active unsupported execution, documentation
+links, diff checks, and a freshly built release CLI smoke. Evidence
 must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
 visibility, exact modes under hostile umask, missing parents, symlink and
@@ -895,8 +900,9 @@ gate:
   documentation `9285fe9` compose through `c0d555b`, `c4c5ce6`, and `de46c3e`;
   fixture correction `8509933`, deterministic seam hardening `a9a7c99`, and
   core same-poll recovery regression `8b5847f` are present; full-pipeline fault
-  and phase evidence is `c7fdef2`. Final exact local gates and three fresh
-  same-SHA adversarial tracks remain pending. The
+  and phase evidence is `c7fdef2`. Exact local gates are green at composed
+  precursor `072bd69`; the exact formal candidate marker and three fresh same-
+  SHA adversarial tracks remain pending. The
   remaining native tools are
   incomplete, so this pending slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

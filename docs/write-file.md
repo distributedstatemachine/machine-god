@@ -1,7 +1,6 @@
 # Native `write_file` contract
 
-Status: **COMPOSED IMPLEMENTATION — final local validation, formal review, and
-delivery are pending**
+Status: **LOCAL-GATE-GREEN PRECURSOR — formal review and delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -333,6 +332,14 @@ items are still candidate evidence until the formal exact-SHA gates complete:
 - [ ] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
   an active unsupported-target test reaches the fixed public construction
   failure without fabricating an unsafe instance.
+
+Exact local-gate-green behavior precursor
+`072bd69eb6f73944d1db00363da0f965f09dda9f` passed the complete native macOS
+gate, Linux and FreeBSD cross-target checks, WASI compilation and active
+unsupported execution, and the repository-wide checks recorded in the
+[`write_file` review](reviews/m03-write-file-review-01.md). The combined
+platform item remains unchecked until exact feature CI executes the supported
+native behavior on the repository's Linux and macOS runner matrix.
 
 Passing only a subset of this list does not establish delivery. The exact
 composed behavior SHA must also pass repository gates and three fresh
