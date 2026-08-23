@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **BEHAVIOR GREEN — delivery pending**
+Status: **DELIVERED — final documentation record workflows pending**
 
 ## Base and contract gate
 
@@ -415,7 +415,7 @@ remediation `4273de513007175be94829aef85aaaa0d09bc02c`; intervening commit
 `cef8827a97e1d54685cbae24861dc9057b153ea7` is documentation-only and the
 cycle-5 marker is empty.
 
-## Pending delivery lineage
+## Delivery lineage
 
 - Exact delivered base:
   `719a9bded86fd7ce394d482798b9064c736f43ab`
@@ -435,9 +435,18 @@ cycle-5 marker is empty.
 - Replacement exact-candidate review:
   `9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e`, green with zero findings in
   all three fresh tracks
-- Exact feature CI and benchmark evidence: pending
-- No-force fast-forward `main`: pending
-- Exact `main` CI and benchmark evidence: pending
+- Replacement documentation seal:
+  `fe56f4c57ef18f87c742340a6060dc56b91f00f9`
+- Exact feature CI: `32665295323`, all six jobs green
+- Exact feature benchmark evidence: `32665295321`, both jobs green with two
+  nonexpired exact-SHA artifacts
+- No-force fast-forward `main`: from
+  `719a9bded86fd7ce394d482798b9064c736f43ab` to the replacement seal
+- Exact `main` CI: `32665564381`, all six jobs green
+- Exact `main` benchmark evidence: `32665564382`, both jobs green with two
+  nonexpired exact-SHA artifacts
+- Final documentation record workflows: pending after push and cannot be
+  self-recorded
 
 The documentation-only seal and later delivery record are exempt from another
 adversarial cycle under the user's instruction. Their applicable exact remote
@@ -505,10 +514,18 @@ zero findings:
    workspace warnings-denied Clippy, tests/doctests, and Linux no-default
    test-target Clippy.
 
-This exact candidate is behavior- and evidence-green. The replacement
-documentation seal is exempt from another adversarial cycle under the user's
-instruction, but its exact feature and `main` delivery workflows remain
-mandatory.
+This exact candidate is behavior- and evidence-green. Replacement documentation
+seal `fe56f4c57ef18f87c742340a6060dc56b91f00f9` passed feature CI
+`32665295323` across all six jobs and benchmark workflow `32665295321` across
+both jobs with two nonexpired exact-SHA artifacts. It was fast-forwarded without
+force from exact prior main `719a9bded86fd7ce394d482798b9064c736f43ab` to
+`main`, where exact CI `32665564381` passed all six jobs and benchmark workflow
+`32665564382` passed both jobs with two nonexpired exact-SHA artifacts. Native
+`delete_file` is delivered as the twenty-second bounded Milestone 03 slice.
+
+This final delivery record is documentation-only and exempt from another
+adversarial cycle under the user's instruction. Its own exact feature and
+`main` workflows remain required after push and cannot be self-recorded.
 
 ## Formal adversarial protocol
 

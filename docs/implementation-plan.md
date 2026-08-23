@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-one delivered bounded slices. Native `edit_file` is delivered on
+with twenty-two delivered bounded slices. Native `edit_file` is delivered on
 final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
 Exact feature CI `32651168514` passed all six jobs, and feature benchmark
 workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
@@ -51,8 +51,14 @@ workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
 `c1268fdf463e11242b7b916add70675ae91ed115` to the final record; exact main CI
 `32651488265` passed all six jobs, and main benchmark workflow `32651488282`
 passed both jobs with two nonexpired exact-SHA artifacts. Native `delete_file`
-is the twenty-second bounded slice and is **BEHAVIOR GREEN — DELIVERY
-PENDING**. Formal cycle 1 is
+is delivered as the twenty-second bounded slice on replacement documentation
+seal `fe56f4c57ef18f87c742340a6060dc56b91f00f9`. Exact feature CI
+`32665295323` passed all six jobs, and feature benchmark workflow `32665295321`
+passed both jobs with two nonexpired exact-SHA artifacts. `main` was fast-
+forwarded without force from `719a9bded86fd7ce394d482798b9064c736f43ab`
+to the seal; exact main CI `32665564381` passed all six jobs, and main benchmark
+workflow `32665564382` passed both jobs with two nonexpired exact-SHA artifacts.
+Formal cycle 1 was
 **NOT GREEN** on exact candidate
 `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf`; remediation, replacement
 same-SHA adversarial review, and delivery remain pending. Exact remediation
@@ -84,10 +90,10 @@ passed. Exact test-only remediation
 `c6744ab5416fc4bde330d09f59dd507bd9991d72` passes the complete replacement
 gate without changing production behavior. Tree-identical cycle-6 candidate
 `9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e`, tree `d63a92f`, is green with
-zero findings in all three fresh tracks. Replacement feature workflows,
-no-force fast-forward integration, and exact `main` workflows remain pending.
-The remaining native tools, CLI ownership, and Milestone 03 completion boundary
-remain pending.
+zero findings in all three fresh tracks. Replacement seal `fe56f4c` completed
+the exact feature and `main` delivery gates recorded above. The remaining
+native tools, CLI ownership, and Milestone 03 completion boundary remain
+pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1239,7 +1245,7 @@ findings. Clean detached worktrees and focused exact Rust 1.94.1 reruns covered
 29/30 private, 21 direct including hostile umask, five engine, seven host, one
 core, reference-host composition, and relevant FreeBSD/WASI gates. Crate
 content is identical to remediation `4273de5`. Exact feature and `main`
-delivery workflows remain pending. First documentation seal `9e2a276` passed
+delivery workflows remained pending at that point. First documentation seal `9e2a276` passed
 exact benchmark workflow `32663557187` with both jobs and two exact-SHA
 artifacts. Exact CI `32663557182` passed five jobs but failed aarch64 Linux when
 its same-type replacement fixture allowed immediate inode reuse. Test-only
@@ -1261,8 +1267,16 @@ concurrency are all green with zero findings. The repaired identity regression
 passed 500/500 sequential stress in two tracks and 64 parallel invocations in
 the performance track; reviewers confirmed bounded RAII cleanup, Linux/macOS
 inode pinning, zero production overhead, byte-identical production behavior,
-and all applicable focused/portable gates. Replacement remote delivery remains
-pending.
+and all applicable focused/portable gates. Replacement documentation seal
+`fe56f4c57ef18f87c742340a6060dc56b91f00f9` passed feature CI
+`32665295323` across all six jobs and benchmark workflow `32665295321` across
+both jobs with two exact-SHA artifacts. It was fast-forwarded without force from
+prior main `719a9bded86fd7ce394d482798b9064c736f43ab`; main CI `32665564381`
+passed all six jobs and benchmark workflow `32665564382` passed both jobs with
+two nonexpired exact-SHA artifacts. Native `delete_file` is delivered as
+bounded Milestone 03 slice twenty-two. The docs-only final record's own exact
+feature and `main` workflows remain required after push and cannot be self-
+recorded.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1278,13 +1292,13 @@ to accept a regular file and empty directory but has broader pathname-based
 behavior. This slice deliberately adds no recursion, symlink following, root
 removal, content read, enumeration, creation, external path, CLI change, new
 dependency, compatibility promotion, benchmark workload, product-performance
-claim, or fx-equivalence claim. It does not increase the delivered-slice count
-until implementation, same-SHA review, feature workflows, fast-forward
-integration, and exact `main` workflows are green.
+claim, or fx-equivalence claim. Exact implementation, same-SHA review, feature
+workflows, fast-forward integration, and `main` workflows are green, increasing
+the delivered-slice count to twenty-two without completing Milestone 03.
 
 ### Milestone 03 completion boundary
 
-The twenty-one delivered slices do not complete Milestone 03.
+The twenty-two delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -1576,7 +1590,7 @@ gate:
   commit boundary. Tree-identical cycle-5 candidate `8575354`, tree `13f28f2`,
   is green with zero findings in all three fresh correctness/API, filesystem/
   robustness, and performance/concurrency tracks. Feature delivery and `main`
-  delivery remain pending. First seal `9e2a276` passed benchmark workflow
+  delivery remained pending at that point. First seal `9e2a276` passed benchmark workflow
   `32663557187` with two artifacts but CI `32663557182` failed only aarch64
   Linux after same-type test-fixture inode reuse. Test-only remediation
   `c6744ab`, tree `2ac83ee`, retains the original unlinked handle through
@@ -1584,9 +1598,12 @@ gate:
   release-smoke gates without changing production behavior. Tree-identical
   cycle-6 candidate `9e817be`, tree `d63a92f`, is green with zero findings in
   all three fresh tracks; 500/500 sequential and 64 parallel repaired-fixture
-  stress checks pass. Replacement remote delivery remains pending, so the
-  combined native-tool checkbox stays unchecked and the delivered-slice count
-  remains twenty-one.
+  stress checks pass. Replacement seal `fe56f4c` passed exact feature CI
+  `32665295323`, feature benchmark `32665295321`, main CI `32665564381`, and
+  main benchmark `32665564382`; both benchmark workflows retain two nonexpired
+  exact-SHA artifacts. Native `delete_file` is delivered as slice twenty-two.
+  The combined native-tool checkbox stays unchecked because the remaining
+  native tools and M03 ownership are incomplete.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

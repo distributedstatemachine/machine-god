@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **BEHAVIOR GREEN — delivery pending**
+Status: **DELIVERED — final documentation record workflows pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -43,8 +43,14 @@ Linux filesystem immediately reused a test fixture's unlinked inode. Exact
 test-only remediation `c6744ab5416fc4bde330d09f59dd507bd9991d72`
 passes the complete replacement local gate. Tree-identical cycle-6 candidate
 `9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e` is **GREEN** with zero
-findings in all three fresh tracks; replacement remote delivery remains
-pending.
+findings in all three fresh tracks. Replacement documentation seal
+`fe56f4c57ef18f87c742340a6060dc56b91f00f9` is green under exact feature CI
+`32665295323` across all six jobs and benchmark workflow `32665295321` across
+both jobs with two nonexpired exact-SHA artifacts. `main` was fast-forwarded
+without force from the delivered base to that seal and is green under exact CI
+`32665564381` across all six jobs and benchmark workflow `32665564382` across
+both jobs with two nonexpired exact-SHA artifacts. Native `delete_file` is
+delivered as the twenty-second bounded Milestone 03 slice.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -553,10 +559,24 @@ direct, five engine, seven host, one core, Linux no-default, FreeBSD, WASI, and
 active Node evidence applicable to their tracks. All historical production and
 evidence findings remain closed.
 
-This replacement documentation seal is docs-only and exempt from another
-adversarial cycle under the user's instruction. Delivery still requires its
-exact feature CI and benchmark workflows, a no-force fast-forward to `main`,
-and exact `main` CI and benchmark workflows.
+Replacement documentation seal
+`fe56f4c57ef18f87c742340a6060dc56b91f00f9` passed exact feature CI
+`32665295323` across all six jobs. Exact feature benchmark workflow
+`32665295321` passed both jobs and retains two nonexpired artifacts bound to the
+seal SHA. `main` was fast-forwarded without force from exact prior main
+`719a9bded86fd7ce394d482798b9064c736f43ab` to the replacement seal. Exact
+main CI `32665564381` passed all six jobs; exact main benchmark workflow
+`32665564382` passed both jobs and retains two nonexpired exact-SHA artifacts.
+This completes delivery of native `delete_file` as the twenty-second bounded
+Milestone 03 slice.
+
+The remaining Milestone 03 native tools, top-level CLI ownership, and composed
+end-to-end boundary remain pending, so Milestone 03 is not complete. This final
+delivery record is documentation-only and exempt from adversarial review under
+the user's instruction. Its own exact feature CI and benchmark workflows and
+exact `main` CI and benchmark workflows remain required after push and cannot
+be self-recorded. This record makes no product-performance, fx-equivalence, or
+compatibility-status promotion claim.
 
 ## Parallel ownership and formal review
 
