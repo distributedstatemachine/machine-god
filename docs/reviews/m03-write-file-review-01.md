@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **REPLACEMENT LOCAL-GATE-GREEN PRECURSOR — fresh formal reviews, seal,
-and delivery are pending**
+Status: **FORMAL REPLACEMENT REVIEW CANDIDATE — fresh formal reviews, seal, and
+delivery are pending**
 
 ## Base and prior delivery
 
@@ -30,8 +30,9 @@ non-overlapping files. Their commits are not behavior candidates in isolation.
 The integration branch has composed all three without overwriting one another.
 Exact candidate `119938240807f8279f83e2ace65a69706e8fcfed` completed the first
 formal review cycle, and all three tracks reported **NOT GREEN**. Code and
-evidence remediation is composed through `3010e6d`; replacement exact local
-gates must pass before a replacement candidate is named.
+evidence remediation is composed through `3010e6d`, and replacement exact local
+gates are green at `581fe6a`. The immediately following tree-identical marker is
+the replacement candidate.
 
 ## Frozen boundary
 
@@ -144,8 +145,11 @@ still required.
   `3010e6d883b5f894083c6925b2b4412b8102b750`
 - Remediated local-gate precursor:
   `581fe6aa9a4190ba8cc303371e02af5aba68a5a1`
+- Replacement formal-review candidate: the tree-identical marker immediately
+  after the formal-review preparation commit; its exact SHA is supplied to all
+  three fresh tracks and will be retained by the documentation-only seal
 - Behavior-green SHA: **PENDING**
-- Remediation and replacement candidate: **PENDING**
+- Replacement formal review result: **PENDING**
 - Documentation seal: **PENDING**
 - Feature CI and benchmark evidence: **PENDING**
 - Fast-forward `main` and exact workflows: **PENDING**
@@ -222,10 +226,10 @@ nonretryable ambiguity with the new bytes live.
 Native-publish pipeline tests now prove raced-create preservation, ordinary-
 rename replacement of a postvalidation racer, publication into a retained
 parent moved outside the configured workspace, and cancellation after staged
-and target verification with zero publish calls plus exact-name cleanup. No
-replacement candidate or green behavior SHA is claimed yet. After replacement
-exact local gates, all three fresh tracks must rerun on the same new exact
-candidate.
+and target verification with zero publish calls plus exact-name cleanup.
+Replacement local gates are green at `581fe6a`; the immediately following tree-
+identical marker is the replacement candidate. No green behavior SHA is claimed
+until all three fresh tracks approve that exact marker.
 
 ## Local gate results
 
@@ -302,9 +306,8 @@ Exact composed remediation precursor
 
 These results close the replacement local gate. They do not make cycle 1 green,
 do not replace native Linux/macOS feature CI, and do not count as formal
-replacement review. The next formal-review preparation commit and its
-immediately following tree-identical marker will freeze the replacement SHA
-supplied to all three fresh tracks.
+replacement review. The immediately following tree-identical marker freezes
+the replacement SHA supplied to all three fresh tracks.
 
 ## Explicit nonclaims
 

@@ -763,8 +763,12 @@ Exact replacement local gates are green at `581fe6a`: 655 workspace tests, two
 doctests, focused native/engine suites, warnings-denied workspace Clippy,
 Python/compatibility/dependency gates, cross-target and active WASI checks,
 documentation/diff/no-unsafe checks, and a fresh release CLI smoke. Three fresh
-same-SHA review tracks remain pending. No replacement candidate or behavior-
-green SHA is claimed.
+same-SHA review tracks remain pending. The immediately following tree-identical
+marker is the replacement candidate; no behavior-green SHA is claimed.
+
+The replacement formal-review preparation commit is followed immediately by a
+tree-identical marker. That exact marker is supplied independently to all three
+fresh replacement tracks and will be retained by the documentation-only seal.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -931,8 +935,9 @@ gate:
   `016f8df` and code/evidence remediation `3010e6d` close the unbounded `EINTR`,
   real-pipeline target/parent race, and verification-phase cancellation
   findings. Replacement exact local gates are green at `581fe6a`; all three
-  fresh review tracks remain pending. No
-  replacement candidate is claimed. Local evidence is native macOS, Linux and
+  fresh review tracks remain pending. The immediately following tree-identical
+  marker is the replacement candidate; no behavior-green SHA is claimed. Local
+  evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-
   only seal or delivery record remains exempt from adversarial review under the

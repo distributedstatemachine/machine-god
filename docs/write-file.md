@@ -1,6 +1,6 @@
 # Native `write_file` contract
 
-Status: **REPLACEMENT LOCAL-GATE-GREEN PRECURSOR — fresh formal reviews and
+Status: **FORMAL REPLACEMENT REVIEW CANDIDATE — fresh formal reviews and
 delivery are pending**
 
 The contract commit is
@@ -319,9 +319,10 @@ The candidate is tree-identical only to its immediate parent
 `072bd69eb6f73944d1db00363da0f965f09dda9f` has a different documentation tree
 and is retained only as precursor evidence. Documentation correction
 `016f8df` and code/evidence remediation `3010e6d` close the confirmed cycle-1
-findings. No replacement candidate or green behavior SHA is claimed yet. After
-replacement exact local gates, all three tracks must rerun fresh on the same
-replacement SHA. A later documentation-only seal or delivery record remains
+findings. Replacement local gates are green at `581fe6a`; the immediately
+following tree-identical marker is the replacement candidate supplied to all
+three fresh tracks. No green behavior SHA is claimed yet. A later documentation-
+only seal or delivery record remains
 exempt from another adversarial cycle under the user's instruction, while exact
 feature and `main` workflows remain required.
 
