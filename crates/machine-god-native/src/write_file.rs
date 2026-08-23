@@ -46,6 +46,12 @@ const CONTENT_DESCRIPTION: &str = "UTF-8 content to write";
 const TEMP_NAME_PREFIX: &str = ".machine-god-write-";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const TEMP_RANDOM_BYTES: usize = 16;
+// Every successful partial entropy read initializes at least one of the fixed
+// 16 bytes. The sixteenth interruption is terminal, so one fill can make at
+// most 31 native calls (16 successful one-byte reads plus 15 interruptions).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_WRITE_FILE_ENTROPY_SYSCALL_ATTEMPTS: usize =
+    TEMP_RANDOM_BYTES + MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS - 1;
 
 /// Stable category for failure to acquire a writable workspace root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -411,6 +417,11 @@ impl Drop for StagedFile<'_> {
         if self.published {
             return;
         }
+        // Publication mode may already have been applied when a later
+        // precommit check fails. Restore the held inode to its private mode
+        // before identity-checked best-effort unlinking, including when its
+        // directory entry was moved or replaced.
+        let _ = rustix::fs::fchmod(&self.file, Mode::from_raw_mode(0o600));
         let Ok(descriptor_metadata) = rustix::fs::fstat(&self.file) else {
             return;
         };
@@ -677,7 +688,9 @@ fn create_staged_file(
     basename: &str,
     cancellation: &CancellationToken,
 ) -> Result<(String, OwnedFd), ToolError> {
-    create_staged_file_with(parent, basename, cancellation, |_| random_temp_name())
+    create_staged_file_with(parent, basename, cancellation, |_| {
+        random_temp_name(cancellation)
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -714,10 +727,18 @@ fn create_staged_file_with(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn random_temp_name() -> Result<String, ToolError> {
+fn random_temp_name(cancellation: &CancellationToken) -> Result<String, ToolError> {
+    random_temp_name_with(cancellation, native_entropy_read)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn random_temp_name_with(
+    cancellation: &CancellationToken,
+    read: impl FnMut(&mut [u8]) -> Result<usize, rustix::io::Errno>,
+) -> Result<String, ToolError> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut random = [0_u8; TEMP_RANDOM_BYTES];
-    getrandom::fill(&mut random).map_err(|_| unavailable(true))?;
+    fill_random_with(&mut random, cancellation, read)?;
     let mut name = String::with_capacity(TEMP_NAME_PREFIX.len() + TEMP_RANDOM_BYTES * 2);
     name.push_str(TEMP_NAME_PREFIX);
     for byte in random {
@@ -725,6 +746,67 @@ fn random_temp_name() -> Result<String, ToolError> {
         name.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     Ok(name)
+}
+
+#[cfg(target_os = "linux")]
+fn native_entropy_read(buffer: &mut [u8]) -> Result<usize, rustix::io::Errno> {
+    rustix::rand::getrandom(buffer, rustix::rand::GetRandomFlags::NONBLOCK)
+}
+
+#[cfg(target_os = "macos")]
+fn native_entropy_read(buffer: &mut [u8]) -> Result<usize, rustix::io::Errno> {
+    let requested = buffer.len();
+    getrandom::fill(buffer).map_or_else(
+        |error| {
+            Err(error.raw_os_error().map_or(rustix::io::Errno::IO, |raw| {
+                rustix::io::Errno::from_raw_os_error(raw)
+            }))
+        },
+        |()| Ok(requested),
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fill_random_with(
+    buffer: &mut [u8],
+    cancellation: &CancellationToken,
+    mut read: impl FnMut(&mut [u8]) -> Result<usize, rustix::io::Errno>,
+) -> Result<(), ToolError> {
+    let mut offset = 0_usize;
+    let mut interrupted_attempts = 0_usize;
+    let mut syscall_attempts = 0_usize;
+    while offset < buffer.len() {
+        check_cancellation(cancellation)?;
+        if syscall_attempts >= MAX_WRITE_FILE_ENTROPY_SYSCALL_ATTEMPTS {
+            return Err(unavailable(true));
+        }
+        syscall_attempts = syscall_attempts
+            .checked_add(1)
+            .ok_or_else(|| unavailable(true))?;
+        let remaining = &mut buffer[offset..];
+        let result = read(remaining);
+        // A synchronous syscall cannot observe cancellation while it runs, so
+        // give cancellation precedence immediately after every return.
+        check_cancellation(cancellation)?;
+        match result {
+            Ok(0) => return Err(unavailable(true)),
+            Ok(initialized) if initialized <= remaining.len() => {
+                offset = offset
+                    .checked_add(initialized)
+                    .ok_or_else(|| unavailable(true))?;
+            }
+            Err(error) if error == rustix::io::Errno::INTR => {
+                interrupted_attempts = interrupted_attempts
+                    .checked_add(1)
+                    .ok_or_else(|| unavailable(true))?;
+                if interrupted_attempts >= MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS {
+                    return Err(unavailable(true));
+                }
+            }
+            Ok(_) | Err(_) => return Err(unavailable(true)),
+        }
+    }
+    check_cancellation(cancellation)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1497,6 +1579,9 @@ mod tests {
             let tool = WriteFileTool::open(temporary.path()).unwrap();
             let displaced_name = ".displaced-machine-god-stage";
             let root = temporary.path().to_owned();
+            let target_path = root.join("target.txt");
+            fs::write(&target_path, b"old content").unwrap();
+            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o777)).unwrap();
             let error = tool
                 .execute_supported_with(
                     "target.txt",
@@ -1510,6 +1595,11 @@ mod tests {
                             .expect("displace the owned staged name");
                         fs::write(root.join(staged_name), b"intruder")
                             .expect("replace the staged name");
+                        fs::set_permissions(
+                            root.join(staged_name),
+                            fs::Permissions::from_mode(0o640),
+                        )
+                        .expect("set intruder mode");
                     },
                     || {},
                     native_publish_staged,
@@ -1518,10 +1608,18 @@ mod tests {
                 .unwrap_err();
             assert_eq!(error.code, "write_file_write_failed");
             assert!(error.retryable);
-            assert!(!temporary.path().join("target.txt").exists());
+            assert_eq!(fs::read(&target_path).unwrap(), b"old content");
             assert_eq!(
                 fs::read(temporary.path().join(displaced_name)).unwrap(),
                 b"owned content"
+            );
+            assert_eq!(
+                fs::metadata(temporary.path().join(displaced_name))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
             );
             let intruder = fs::read_dir(temporary.path())
                 .unwrap()
@@ -1534,6 +1632,10 @@ mod tests {
                 })
                 .expect("the identity-checked cleanup must preserve the intruder");
             assert_eq!(fs::read(intruder.path()).unwrap(), b"intruder");
+            assert_eq!(
+                intruder.metadata().unwrap().permissions().mode() & 0o777,
+                0o640
+            );
         }
 
         #[test]
@@ -1790,6 +1892,103 @@ mod tests {
         }
 
         #[test]
+        fn entropy_interrupt_exhaustion_is_exact_and_has_no_filesystem_effect() {
+            let temporary = TempDirectory::new("entropy-interrupt-exhaustion");
+            let target_path = temporary.path().join("target.txt");
+            fs::write(&target_path, b"old content").unwrap();
+            let parent = temporary.descriptor();
+            let calls = Cell::new(0_usize);
+            let cancellation = CancellationToken::new();
+            let error =
+                create_staged_file_with(parent.as_fd(), "target.txt", &cancellation, |_| {
+                    random_temp_name_with(&cancellation, |_| {
+                        calls.set(calls.get() + 1);
+                        Err(rustix::io::Errno::INTR)
+                    })
+                })
+                .unwrap_err();
+            assert_eq!(calls.get(), MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS);
+            assert_eq!(error.code, "write_file_unavailable");
+            assert!(error.retryable);
+            assert_eq!(fs::read(&target_path).unwrap(), b"old content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn entropy_partial_progress_and_interruptions_have_one_total_call_bound() {
+            let calls = Cell::new(0_usize);
+            let name = random_temp_name_with(&CancellationToken::new(), |remaining| {
+                let call = calls.get();
+                calls.set(call + 1);
+                if call.is_multiple_of(2) {
+                    Ok(1.min(remaining.len()))
+                } else {
+                    Err(rustix::io::Errno::INTR)
+                }
+            })
+            .unwrap();
+            assert_eq!(calls.get(), MAX_WRITE_FILE_ENTROPY_SYSCALL_ATTEMPTS);
+            assert_eq!(name, format!("{TEMP_NAME_PREFIX}{}", "00".repeat(16)));
+
+            // Five early interruptions remain charged after five interleaved
+            // one-byte successes. Eleven later interruptions therefore reach
+            // the cumulative limit after 21 calls rather than resetting on
+            // each successful partial read.
+            let cumulative_calls = Cell::new(0_usize);
+            let cumulative = random_temp_name_with(&CancellationToken::new(), |remaining| {
+                let call = cumulative_calls.get();
+                cumulative_calls.set(call + 1);
+                if call < 10 && call.is_multiple_of(2) {
+                    Ok(1.min(remaining.len()))
+                } else {
+                    Err(rustix::io::Errno::INTR)
+                }
+            })
+            .unwrap_err();
+            assert_eq!(cumulative_calls.get(), 21);
+            assert_eq!(cumulative.code, "write_file_unavailable");
+
+            let overreported = random_temp_name_with(&CancellationToken::new(), |remaining| {
+                Ok(remaining.len() + 1)
+            })
+            .unwrap_err();
+            assert_eq!(overreported.code, "write_file_unavailable");
+            let zero = random_temp_name_with(&CancellationToken::new(), |_| Ok(0)).unwrap_err();
+            assert_eq!(zero.code, "write_file_unavailable");
+        }
+
+        #[test]
+        fn entropy_cancellation_wins_on_the_final_interruption() {
+            let cancellation = CancellationToken::new();
+            let cancellation_on_final = cancellation.clone();
+            let calls = Cell::new(0_usize);
+            let error = random_temp_name_with(&cancellation, |_| {
+                let call = calls.get() + 1;
+                calls.set(call);
+                if call == MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS {
+                    cancellation_on_final.cancel();
+                }
+                Err(rustix::io::Errno::INTR)
+            })
+            .unwrap_err();
+            assert_eq!(calls.get(), MAX_WRITE_FILE_INTERRUPTED_SYSCALL_ATTEMPTS);
+            assert_eq!(error.code, "write_file_cancelled");
+            assert!(!error.retryable);
+
+            let partial_cancellation = CancellationToken::new();
+            let cancel_after_partial = partial_cancellation.clone();
+            let partial_calls = Cell::new(0_usize);
+            let error = random_temp_name_with(&partial_cancellation, |_| {
+                partial_calls.set(partial_calls.get() + 1);
+                cancel_after_partial.cancel();
+                Ok(1)
+            })
+            .unwrap_err();
+            assert_eq!(partial_calls.get(), 1);
+            assert_eq!(error.code, "write_file_cancelled");
+        }
+
+        #[test]
         fn cancellation_between_temp_attempts_preserves_collision() {
             let temporary = TempDirectory::new("collision-cancel");
             let collision_name = ".machine-god-write-collision";
@@ -1827,12 +2026,34 @@ mod tests {
             )
             .unwrap();
             let staged = StagedFile::new(parent.as_fd(), file, owned_name.to_owned()).unwrap();
+            rustix::fs::fchmod(&staged.file, Mode::from_raw_mode(0o777)).unwrap();
             rustix::fs::renameat(parent.as_fd(), owned_name, parent.as_fd(), moved_name).unwrap();
             fs::write(temporary.path().join(owned_name), b"sentinel").unwrap();
+            fs::set_permissions(
+                temporary.path().join(owned_name),
+                fs::Permissions::from_mode(0o640),
+            )
+            .unwrap();
             drop(staged);
             assert_eq!(
                 fs::read(temporary.path().join(owned_name)).unwrap(),
                 b"sentinel"
+            );
+            assert_eq!(
+                fs::metadata(temporary.path().join(owned_name))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o640
+            );
+            assert_eq!(
+                fs::metadata(temporary.path().join(moved_name))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
             );
         }
 
@@ -2227,7 +2448,7 @@ mod tests {
 
         #[test]
         fn temp_names_are_fixed_length_hex_and_private_prefix() {
-            let name = random_temp_name().unwrap();
+            let name = random_temp_name(&CancellationToken::new()).unwrap();
             assert_eq!(name.len(), TEMP_NAME_PREFIX.len() + TEMP_RANDOM_BYTES * 2);
             let suffix = name.strip_prefix(TEMP_NAME_PREFIX).unwrap();
             assert!(suffix.bytes().all(|byte| byte.is_ascii_hexdigit()));
