@@ -408,20 +408,43 @@ mod supported {
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct EvidenceReadFault {
+        phase: ReadPhase,
+        operation: EvidenceOperation,
+        first_ordinal: usize,
+        count: usize,
+        fault: EvidenceFault,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum AclReadFault {
+        Error,
+        Unsafe,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum EvidenceCheckpoint {
         StageError,
         StageCancel,
         FinalSyncCorrupt,
+        FinalVerificationError,
+        FinalVerificationCancel,
         RenameCancel,
     }
 
     struct ScriptedEvidence {
         cancellation: CancellationToken,
         walk_fault: Option<(WalkPhase, WalkStep, EvidenceFault)>,
-        read_fault: Option<(ReadPhase, EvidenceOperation, EvidenceFault)>,
+        read_fault: Option<EvidenceReadFault>,
+        read_operation_calls: RefCell<Vec<(ReadPhase, EvidenceOperation, usize)>>,
+        clear_acl_error: bool,
+        clear_acl_calls: Cell<usize>,
+        acl_read_fault: Option<(ReadPhase, usize, AclReadFault)>,
+        acl_read_calls: RefCell<Vec<(ReadPhase, usize)>>,
         stage_open_error: bool,
         checkpoint: Option<EvidenceCheckpoint>,
         selected_calls: Cell<usize>,
+        final_stage_sync_calls: Cell<usize>,
         published_pread_calls: Cell<usize>,
     }
 
@@ -431,11 +454,36 @@ mod supported {
                 cancellation: cancellation.clone(),
                 walk_fault: None,
                 read_fault: None,
+                read_operation_calls: RefCell::new(Vec::new()),
+                clear_acl_error: false,
+                clear_acl_calls: Cell::new(0),
+                acl_read_fault: None,
+                acl_read_calls: RefCell::new(Vec::new()),
                 stage_open_error: false,
                 checkpoint: None,
                 selected_calls: Cell::new(0),
+                final_stage_sync_calls: Cell::new(0),
                 published_pread_calls: Cell::new(0),
             }
+        }
+
+        fn set_read_fault(
+            &mut self,
+            phase: ReadPhase,
+            operation: EvidenceOperation,
+            first_ordinal: usize,
+            count: usize,
+            fault: EvidenceFault,
+        ) {
+            assert!(first_ordinal > 0);
+            assert!(count > 0);
+            self.read_fault = Some(EvidenceReadFault {
+                phase,
+                operation,
+                first_ordinal,
+                count,
+                fault,
+            });
         }
 
         fn selected_read(
@@ -443,10 +491,61 @@ mod supported {
             phase: ReadPhase,
             operation: EvidenceOperation,
         ) -> Option<EvidenceFault> {
-            self.read_fault
-                .and_then(|(selected_phase, selected, fault)| {
-                    (phase == selected_phase && operation == selected).then_some(fault)
+            let ordinal = {
+                let mut calls = self.read_operation_calls.borrow_mut();
+                if let Some((_, _, count)) =
+                    calls
+                        .iter_mut()
+                        .find(|(recorded_phase, recorded_operation, _)| {
+                            *recorded_phase == phase && *recorded_operation == operation
+                        })
+                {
+                    *count += 1;
+                    *count
+                } else {
+                    calls.push((phase, operation, 1));
+                    1
+                }
+            };
+            self.read_fault.and_then(|selected| {
+                let selected_offset = ordinal.checked_sub(selected.first_ordinal)?;
+                (phase == selected.phase
+                    && operation == selected.operation
+                    && selected_offset < selected.count)
+                    .then_some(selected.fault)
+            })
+        }
+
+        fn read_call_count(&self, phase: ReadPhase, operation: EvidenceOperation) -> usize {
+            self.read_operation_calls
+                .borrow()
+                .iter()
+                .find_map(|(recorded_phase, recorded_operation, count)| {
+                    (*recorded_phase == phase && *recorded_operation == operation).then_some(*count)
                 })
+                .unwrap_or(0)
+        }
+
+        fn acl_read_ordinal(&self, phase: ReadPhase) -> usize {
+            let mut calls = self.acl_read_calls.borrow_mut();
+            if let Some((_, count)) = calls
+                .iter_mut()
+                .find(|(recorded_phase, _)| *recorded_phase == phase)
+            {
+                *count += 1;
+                *count
+            } else {
+                calls.push((phase, 1));
+                1
+            }
+        }
+
+        fn acl_read_call_count(&self, phase: ReadPhase) -> usize {
+            self.acl_read_calls
+                .borrow()
+                .iter()
+                .find_map(|(recorded_phase, count)| (*recorded_phase == phase).then_some(*count))
+                .unwrap_or(0)
         }
 
         fn record_selected_call(&self) {
@@ -591,6 +690,36 @@ mod supported {
             rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
         }
 
+        fn clear_staged_acl(&mut self, _file: BorrowedFd<'_>) -> Result<(), ToolError> {
+            self.clear_acl_calls.set(self.clear_acl_calls.get() + 1);
+            if self.clear_acl_error {
+                self.record_selected_call();
+                Err(write_failed())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn staged_acl_is_empty(
+            &mut self,
+            _file: BorrowedFd<'_>,
+            phase: ReadPhase,
+        ) -> Result<bool, ToolError> {
+            let ordinal = self.acl_read_ordinal(phase);
+            match self.acl_read_fault {
+                Some((selected_phase, selected_ordinal, fault))
+                    if phase == selected_phase && ordinal == selected_ordinal =>
+                {
+                    self.record_selected_call();
+                    match fault {
+                        AclReadFault::Error => Err(map_read_phase_failure(phase)),
+                        AclReadFault::Unsafe => Ok(false),
+                    }
+                }
+                _ => Ok(true),
+            }
+        }
+
         fn after_stage_created(
             &mut self,
             _parent: BorrowedFd<'_>,
@@ -619,11 +748,34 @@ mod supported {
             name: &str,
             _cancellation: &CancellationToken,
         ) -> Result<(), ToolError> {
+            self.final_stage_sync_calls
+                .set(self.final_stage_sync_calls.get() + 1);
             if self.checkpoint == Some(EvidenceCheckpoint::FinalSyncCorrupt) {
                 self.record_selected_call();
                 overwrite_same_length_at(parent, name, b"bad content");
             }
             Ok(())
+        }
+
+        fn after_final_stage_verification(
+            &mut self,
+            _parent: BorrowedFd<'_>,
+            _file: BorrowedFd<'_>,
+            _name: &str,
+            _cancellation: &CancellationToken,
+        ) -> Result<(), ToolError> {
+            match self.checkpoint {
+                Some(EvidenceCheckpoint::FinalVerificationError) => {
+                    self.record_selected_call();
+                    Err(write_failed())
+                }
+                Some(EvidenceCheckpoint::FinalVerificationCancel) => {
+                    self.record_selected_call();
+                    self.cancellation.cancel();
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
         }
 
         fn after_rename(
@@ -638,6 +790,75 @@ mod supported {
                 self.cancellation.cancel();
             }
             Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum CleanupOperation {
+        SetMode,
+        Fstat,
+        Statat,
+        Unlink,
+    }
+
+    struct ScriptedCleanupEvidence {
+        operations: RefCell<Vec<CleanupOperation>>,
+        descriptor_fingerprint: RefCell<Option<FileFingerprint>>,
+        path_fingerprint: RefCell<Option<FileFingerprint>>,
+        fail_set_mode: bool,
+        fail_unlink: bool,
+    }
+
+    impl ScriptedCleanupEvidence {
+        fn dual_failure() -> Self {
+            Self {
+                operations: RefCell::new(Vec::new()),
+                descriptor_fingerprint: RefCell::new(None),
+                path_fingerprint: RefCell::new(None),
+                fail_set_mode: true,
+                fail_unlink: true,
+            }
+        }
+    }
+
+    impl EditFileCleanupEvidence for ScriptedCleanupEvidence {
+        fn set_mode(&self, file: BorrowedFd<'_>, mode: Mode) -> Result<(), rustix::io::Errno> {
+            self.operations.borrow_mut().push(CleanupOperation::SetMode);
+            assert_eq!(mode.as_raw_mode(), 0o600);
+            if self.fail_set_mode {
+                Err(rustix::io::Errno::IO)
+            } else {
+                rustix::fs::fchmod(file, mode)
+            }
+        }
+
+        fn fstat(&self, file: BorrowedFd<'_>) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+            self.operations.borrow_mut().push(CleanupOperation::Fstat);
+            let metadata = rustix::fs::fstat(file)?;
+            self.descriptor_fingerprint
+                .replace(Some(FileFingerprint::from_stat(&metadata)));
+            Ok(metadata)
+        }
+
+        fn statat(
+            &self,
+            parent: BorrowedFd<'_>,
+            name: &str,
+        ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+            self.operations.borrow_mut().push(CleanupOperation::Statat);
+            let metadata = rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)?;
+            self.path_fingerprint
+                .replace(Some(FileFingerprint::from_stat(&metadata)));
+            Ok(metadata)
+        }
+
+        fn unlink(&self, parent: BorrowedFd<'_>, name: &str) -> Result<(), rustix::io::Errno> {
+            self.operations.borrow_mut().push(CleanupOperation::Unlink);
+            if self.fail_unlink {
+                Err(rustix::io::Errno::IO)
+            } else {
+                rustix::fs::unlinkat(parent, name, AtFlags::empty())
+            }
         }
     }
 
@@ -751,7 +972,17 @@ mod supported {
             ] {
                 let cancellation = CancellationToken::new();
                 let mut evidence = ScriptedEvidence::new(&cancellation);
-                evidence.read_fault = Some((phase, EvidenceOperation::Pread, fault));
+                evidence.set_read_fault(
+                    phase,
+                    EvidenceOperation::Pread,
+                    1,
+                    if fault == EvidenceFault::Interrupted {
+                        MAX_INTERRUPTED_SYSCALL_ATTEMPTS
+                    } else {
+                        1
+                    },
+                    fault,
+                );
                 let cancelled = fault == EvidenceFault::Cancel;
                 let expected_code = if cancelled {
                     "edit_file_cancelled"
@@ -784,7 +1015,7 @@ mod supported {
                 for fault in [EvidenceFault::Error, EvidenceFault::Interrupted] {
                     let cancellation = CancellationToken::new();
                     let mut evidence = ScriptedEvidence::new(&cancellation);
-                    evidence.read_fault = Some((phase, operation, fault));
+                    evidence.set_read_fault(phase, operation, 1, 1, fault);
                     assert_scripted_pipeline_failure(
                         &format!("target-metadata-{phase:?}-{operation:?}-{fault:?}"),
                         &cancellation,
@@ -864,7 +1095,7 @@ mod supported {
             for (operation, fault, expected_calls) in cases {
                 let cancellation = CancellationToken::new();
                 let mut evidence = ScriptedEvidence::new(&cancellation);
-                evidence.read_fault = Some((phase, operation, fault));
+                evidence.set_read_fault(phase, operation, 1, expected_calls, fault);
                 let published = phase == ReadPhase::Published;
                 assert_scripted_pipeline_failure(
                     &format!("stage-publish-{phase:?}-{operation:?}-{fault:?}"),
@@ -881,6 +1112,153 @@ mod supported {
                 );
             }
         }
+    }
+
+    #[test]
+    fn pipeline_descriptor_and_late_fstat_faults_target_exact_ordinals() {
+        let cases = [
+            (ReadPhase::Initial, 2, "edit_file_unavailable", true, false),
+            (
+                ReadPhase::Revalidate,
+                2,
+                "edit_file_target_changed",
+                true,
+                false,
+            ),
+            (ReadPhase::Staged, 18, "edit_file_write_failed", true, false),
+            (ReadPhase::Staged, 19, "edit_file_write_failed", true, false),
+            (
+                ReadPhase::Published,
+                3,
+                "edit_file_commit_ambiguous",
+                false,
+                true,
+            ),
+            (
+                ReadPhase::Published,
+                4,
+                "edit_file_commit_ambiguous",
+                false,
+                true,
+            ),
+        ];
+        for (phase, ordinal, expected_code, retryable, postcommit) in cases {
+            let cancellation = CancellationToken::new();
+            let mut evidence = ScriptedEvidence::new(&cancellation);
+            evidence.set_read_fault(
+                phase,
+                EvidenceOperation::Fstat,
+                ordinal,
+                1,
+                EvidenceFault::Error,
+            );
+            assert_scripted_pipeline_failure(
+                &format!("fstat-{phase:?}-ordinal-{ordinal}"),
+                &cancellation,
+                &mut evidence,
+                expected_code,
+                retryable,
+                1,
+                postcommit,
+            );
+            assert_eq!(
+                evidence.read_call_count(phase, EvidenceOperation::Fstat),
+                ordinal,
+                "fault did not land on the intended {phase:?} fstat"
+            );
+        }
+    }
+
+    #[test]
+    fn pipeline_acl_clear_read_and_unsafe_outcomes_map_at_exact_ordinals() {
+        let cancellation = CancellationToken::new();
+        let mut evidence = ScriptedEvidence::new(&cancellation);
+        evidence.clear_acl_error = true;
+        assert_scripted_pipeline_failure(
+            "acl-clear-error",
+            &cancellation,
+            &mut evidence,
+            "edit_file_write_failed",
+            true,
+            1,
+            false,
+        );
+        assert_eq!(evidence.clear_acl_calls.get(), 1);
+        assert_eq!(evidence.acl_read_call_count(ReadPhase::Staged), 0);
+
+        for fault in [AclReadFault::Error, AclReadFault::Unsafe] {
+            let cancellation = CancellationToken::new();
+            let mut evidence = ScriptedEvidence::new(&cancellation);
+            evidence.acl_read_fault = Some((ReadPhase::Staged, 1, fault));
+            assert_scripted_pipeline_failure(
+                &format!("acl-create-read-{fault:?}"),
+                &cancellation,
+                &mut evidence,
+                "edit_file_write_failed",
+                true,
+                1,
+                false,
+            );
+            assert_eq!(evidence.clear_acl_calls.get(), 1);
+            assert_eq!(evidence.acl_read_call_count(ReadPhase::Staged), 1);
+            assert_eq!(evidence.final_stage_sync_calls.get(), 0);
+        }
+
+        for fault in [AclReadFault::Error, AclReadFault::Unsafe] {
+            let cancellation = CancellationToken::new();
+            let mut evidence = ScriptedEvidence::new(&cancellation);
+            evidence.acl_read_fault = Some((ReadPhase::Staged, 9, fault));
+            assert_scripted_pipeline_failure(
+                &format!("acl-final-staged-read-{fault:?}"),
+                &cancellation,
+                &mut evidence,
+                "edit_file_write_failed",
+                true,
+                1,
+                false,
+            );
+            assert_eq!(evidence.final_stage_sync_calls.get(), 1);
+            assert_eq!(evidence.acl_read_call_count(ReadPhase::Staged), 9);
+        }
+
+        for fault in [AclReadFault::Error, AclReadFault::Unsafe] {
+            let cancellation = CancellationToken::new();
+            let mut evidence = ScriptedEvidence::new(&cancellation);
+            evidence.acl_read_fault = Some((ReadPhase::Published, 2, fault));
+            assert_scripted_pipeline_failure(
+                &format!("acl-published-read-{fault:?}"),
+                &cancellation,
+                &mut evidence,
+                "edit_file_commit_ambiguous",
+                false,
+                1,
+                true,
+            );
+            assert_eq!(evidence.final_stage_sync_calls.get(), 1);
+            assert_eq!(evidence.acl_read_call_count(ReadPhase::Staged), 9);
+            assert_eq!(evidence.acl_read_call_count(ReadPhase::Published), 2);
+            assert!(evidence.published_pread_calls.get() > 0);
+        }
+    }
+
+    #[test]
+    fn pipeline_cancellation_after_final_verification_precedes_rename_and_cleans_stage() {
+        let cancellation = CancellationToken::new();
+        let mut evidence = ScriptedEvidence::new(&cancellation);
+        evidence.checkpoint = Some(EvidenceCheckpoint::FinalVerificationCancel);
+        assert_scripted_pipeline_failure(
+            "cancel-after-final-verification",
+            &cancellation,
+            &mut evidence,
+            "edit_file_cancelled",
+            false,
+            1,
+            false,
+        );
+        assert!(cancellation.is_cancelled());
+        assert_eq!(evidence.final_stage_sync_calls.get(), 1);
+        assert_eq!(evidence.acl_read_call_count(ReadPhase::Staged), 9);
+        assert_eq!(evidence.acl_read_call_count(ReadPhase::Published), 0);
     }
 
     #[test]
@@ -991,6 +1369,97 @@ mod supported {
         assert_eq!(
             fs::metadata(&staged_path).unwrap().permissions().mode() & 0o777,
             0o751
+        );
+    }
+
+    #[test]
+    fn pipeline_drop_attempts_dual_failure_cleanup_after_final_verification() {
+        let temporary = TempDirectory::new("pipeline-drop-dual-failure");
+        let target = temporary.path().join("target.txt");
+        fs::write(&target, b"old content").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o751)).unwrap();
+        let original_target = FileFingerprint::from_stat(&rustix::fs::stat(&target).unwrap());
+        let cancellation = CancellationToken::new();
+        let mut evidence = ScriptedEvidence::new(&cancellation);
+        evidence.checkpoint = Some(EvidenceCheckpoint::FinalVerificationError);
+        let cleanup = ScriptedCleanupEvidence::dual_failure();
+        let publish_calls = Cell::new(0_usize);
+        let parent_sync_calls = Cell::new(0_usize);
+
+        let error = EditFileTool::open(temporary.path())
+            .unwrap()
+            .execute_supported_with_evidence_and_cleanup(
+                "target.txt",
+                b"old",
+                b"new",
+                &cancellation,
+                &mut evidence,
+                &cleanup,
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {},
+                || {},
+                || {},
+                |parent, staged_name, basename| {
+                    publish_calls.set(publish_calls.get() + 1);
+                    native_publish_staged(parent, staged_name, basename)
+                },
+                |parent| {
+                    parent_sync_calls.set(parent_sync_calls.get() + 1);
+                    native_sync_parent(parent)
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "edit_file_write_failed");
+        assert!(error.retryable);
+        assert_eq!(evidence.selected_calls.get(), 1);
+        assert_eq!(evidence.final_stage_sync_calls.get(), 1);
+        assert_eq!(evidence.acl_read_call_count(ReadPhase::Staged), 9);
+        assert_eq!(publish_calls.get(), 0);
+        assert_eq!(parent_sync_calls.get(), 0);
+        assert_eq!(fs::read(&target).unwrap(), b"old content");
+        assert_eq!(
+            FileFingerprint::from_stat(&rustix::fs::stat(&target).unwrap()),
+            original_target
+        );
+        assert_eq!(
+            cleanup.operations.borrow().as_slice(),
+            [
+                CleanupOperation::SetMode,
+                CleanupOperation::Fstat,
+                CleanupOperation::Statat,
+                CleanupOperation::Unlink,
+            ]
+        );
+
+        let staged_paths = fs::read_dir(temporary.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(TEMP_NAME_PREFIX)
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(staged_paths.len(), 1);
+        let residue = &staged_paths[0];
+        assert_eq!(fs::read(residue).unwrap(), b"new content");
+        assert_eq!(
+            fs::metadata(residue).unwrap().permissions().mode() & 0o777,
+            0o751
+        );
+        let residue_fingerprint = FileFingerprint::from_stat(&rustix::fs::stat(residue).unwrap());
+        assert_eq!(
+            *cleanup.descriptor_fingerprint.borrow(),
+            Some(residue_fingerprint)
+        );
+        assert_eq!(
+            *cleanup.path_fingerprint.borrow(),
+            Some(residue_fingerprint)
         );
     }
 
