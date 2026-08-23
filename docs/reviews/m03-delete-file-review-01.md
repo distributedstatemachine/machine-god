@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — formal cycle 2 not green; remediation in progress**
+Status: **IN PROGRESS — cycle 2 remediated; replacement review pending**
 
 ## Base and contract gate
 
@@ -225,14 +225,50 @@ to the recorded cycle-1 remediation local gate.
    traversal and found no remaining bounded-work, cancellation-frequency,
    resource-lifetime, or concurrency defect.
 
-The four unique remediations require every precommit operation to save its
-result, always run the after-check, and give cancellation precedence; complete
-identity-aware macOS diagnosis with explicitly frozen diagnostic errno
-precedence; permission-errno precedence at every root, parent, and target site
-in both phases; full combined error/cancellation, permission, and diagnostic
-race matrices; and corrected public Rustdoc. Cycle 2 remains historically
-**NOT GREEN**. A new exact candidate receives the complete local gate and three
-entirely fresh reviewers.
+The four unique remediations require every root/parent open and metadata
+operation to save its result, always run the after-check, and give cancellation
+precedence; complete identity-aware macOS diagnosis with explicitly frozen
+diagnostic errno precedence; permission-errno precedence at every root, parent,
+and target site in both phases; full combined error/cancellation, permission,
+and diagnostic race matrices; and corrected public Rustdoc. Cycle 2 remains
+historically **NOT GREEN**. A new exact candidate receives the complete local
+gate and three entirely fresh reviewers.
+
+## Cycle 2 remediation local gate
+
+Exact remediation: `225e9617a8a8f469d663693b61cc4f9b97af8094`.
+
+Production now captures each root/parent open and metadata result, always runs
+the matching after-check, and gives cancellation precedence before mapping a
+saved noncommit error. Every `EACCES`/`EPERM` at a root, parent, or target site
+in either phase has permission precedence. The macOS `EPERM` diagnosis receives
+and compares complete target identity and has the contract's fixed cancellation,
+absence/type-change, permission, and other-error precedence. Public Rustdoc
+discloses the complete flags-compatible replacement boundary.
+
+Independent evidence injects cancellation plus `EIO` at every traced open,
+`fstat`, and `statat` site/ordinal and requires the after-check, cancelled result,
+zero unlink/sync, and an intact target. It covers both permission errnos at
+every site in both phases, real intermediate mode loss with RAII restoration,
+macOS directory-to-absent/symlink/FIFO/socket/different-file diagnostic races,
+unchanged identity, the complete diagnostic errno matrix, and cancellation
+plus diagnostic failure.
+
+Rust/Cargo 1.94.1 formatting, workspace all-target/all-feature warnings-denied
+Clippy, workspace tests, and two doctests are green. Focused totals are 28/29
+private, 20 direct, five engine, seven host, and one core-contract test;
+discovery is 738/788 with zero benchmarks. Python 130, pinned-fx, cargo-deny
+0.20.2, cargo-audit 0.22.2 over 1,225 advisories and 175 dependencies,
+Linux/FreeBSD/WASI plus active Node 1/1, and documentation 64/445/295/0 pass.
+The 16-file delivered-base diff is +6,172/-63 with zero added unsafe Rust and
+no Cargo or CLI changes. Optional all-feature Linux cross remains a host C-
+sysroot failure in `aws-lc-sys` before product Rust. A fresh locked 319,152-byte
+arm64 Mach-O CLI has SHA-256
+`951ff7ce945a6fa446dfd87a7d54a6dd962776a8a021d4af6e68d6bd18e963e8`
+and passes bare/help/unavailable-status smoke with empty stderr.
+
+Cycle 2 remains historically not green. A tree-identical marker must receive
+three fresh cycle-3 reviews before any behavior-green claim.
 
 ## Formal adversarial protocol
 

@@ -61,8 +61,10 @@ local gate. Tree-identical cycle-2 candidate
 performance/concurrency is green, while correctness/API and filesystem/
 robustness found three overlapping medium defects and correctness found one
 additional low Rustdoc mismatch. Remediation and another fresh same-SHA cycle
-remain pending. The remaining native tools, CLI ownership, and Milestone 03
-completion boundary remain pending.
+remain pending. Exact cycle-2 remediation
+`225e9617a8a8f469d663693b61cc4f9b97af8094` passes the complete replacement
+local gate; tree-identical cycle-3 review remains pending. The remaining native
+tools, CLI ownership, and Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1175,8 +1177,13 @@ approval. Tree-identical cycle-2 candidate
 **NOT GREEN**. Three overlapping medium findings cover failed-operation
 cancellation precedence, complete-identity macOS `EPERM` diagnosis, and
 non-root revalidation permission taxonomy; correctness adds one low public-
-Rustdoc mismatch. Remediation and another full local/fresh-review cycle are in
-progress.
+Rustdoc mismatch. Exact cycle-2 remediation
+`225e9617a8a8f469d663693b61cc4f9b97af8094` passes the complete replacement
+local gate: focused totals are 28/29 private, 20 direct, five engine, seven
+host, and one core contract; discovery is 738/788 with zero benchmarks; full
+workspace, Python 130, compatibility, dependency, portability, documentation,
+diff, and fresh release-smoke gates are green. Another fresh tree-identical
+review cycle remains pending.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1468,9 +1475,13 @@ gate:
   smoke evidence green. Tree-identical cycle-2 candidate `88026f1` is
   performance/concurrency green but correctness/API and filesystem/robustness
   not green with three overlapping medium defects and one additional low
-  Rustdoc mismatch. Remediation, another fresh same-SHA review, feature
-  delivery, and `main` delivery remain pending, so the combined native-tool
-  checkbox stays unchecked and the delivered-slice count remains twenty-one.
+  Rustdoc mismatch. Exact remediation `225e961` passes the complete replacement
+  local gate with 28/29 private, 20 direct, five engine, seven host, one core
+  contract, 738/788 discovery, workspace, Python, compatibility, dependency,
+  portability, documentation, diff, and release-smoke evidence green. Another
+  fresh same-SHA review, feature delivery, and `main` delivery remain pending,
+  so the combined native-tool checkbox stays unchecked and the delivered-slice
+  count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

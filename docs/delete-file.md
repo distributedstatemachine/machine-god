@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — formal cycle 2 not green; remediation in progress**
+Status: **IN PROGRESS — cycle 2 remediated; replacement review pending**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -24,7 +24,8 @@ remote delivery remain pending. Exact remediation
 `60e81a633557bc90aca01e3579782340c7c154c9` passes the complete replacement
 local gate. Tree-identical formal cycle-2 candidate
 `88026f10ed8c194c7160a754f226241c276579fc` is **NOT GREEN**;
-remediation and another fresh same-SHA cycle remain pending.
+exact remediation `225e9617a8a8f469d663693b61cc4f9b97af8094` passes the
+complete replacement local gate. Another fresh same-SHA cycle remains pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -186,13 +187,14 @@ The execution future is inert until polled, performs bounded synchronous work
 on its polling thread, and starts no detached task, thread, subprocess, timer,
 or runtime. Cancellation is checked before and after root acquisition, around
 each parent open and metadata operation, after initial and final validation,
-and at the exact final pre-`unlinkat` boundary. Every precommit operation's
-after-check runs even when that operation returns an error; cancellation then
-takes precedence over the saved noncommit error. It cannot preempt a syscall
-already in flight. Once the delete call has succeeded or returned `EINTR`,
-later tool cancellation is ignored while the bounded parent durability attempt
-completes. Dropping an unpolled future is effect-free; dropping at a documented
-precommit boundary closes owned descriptors without deleting anything.
+and at the exact final pre-`unlinkat` boundary. Every root/parent open and
+metadata after-check runs even when that operation returns an error;
+cancellation then takes precedence over the saved noncommit error. It cannot
+preempt a syscall already in flight. Once the delete call has succeeded or
+returned `EINTR`, later tool cancellation is ignored while the bounded parent
+durability attempt completes. Dropping an unpolled future is effect-free;
+dropping at a documented precommit boundary closes owned descriptors without
+deleting anything.
 
 This protocol is not pathname compare-and-swap. A same-directory actor can
 replace the target after final no-follow validation and before `unlinkat`.
@@ -350,6 +352,28 @@ their after-cancellation checks, macOS `EPERM` diagnosis did not compare full
 identity, and non-root revalidation permission errors lost the fixed taxonomy.
 Correctness/API also found one low public-Rustdoc race-boundary mismatch.
 Remediation and another complete local and fresh three-track cycle are pending.
+
+Exact cycle-2 remediation `225e9617a8a8f469d663693b61cc4f9b97af8094`
+passes the complete replacement local gate on Rust/Cargo 1.94.1. Focused totals
+are 28 default-feature and 29 all-feature private tests, 20 direct tests, five
+engine tests, seven reference-host tests, and one core `Delete` contract test.
+Workspace formatting, all-target/all-feature warnings-denied Clippy, tests, and
+two doctests pass; discovery inventories 738 default-feature tests, 788 all-
+feature tests, and zero benchmarks.
+
+The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
+compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 1,225 advisories and
+175 dependencies, Linux/FreeBSD/WASI gates, and Node's active unsupported test
+1/1 are green. Documentation integrity remains 64/445/295/0. The delivered-
+base diff covers 16 files with 6,172 insertions and 63 deletions, adds zero
+unsafe Rust, and changes no Cargo metadata or CLI source. The optional all-
+feature Linux cross-build remains blocked in `aws-lc-sys` by the host's missing
+Linux C sysroot before product Rust. A fresh locked 319,152-byte arm64 Mach-O
+CLI has SHA-256
+`951ff7ce945a6fa446dfd87a7d54a6dd962776a8a021d4af6e68d6bd18e963e8`
+and passes bare, help, and unavailable-status smoke paths with empty stderr.
+These results qualify the replacement local gate only, not formal review or
+delivery.
 
 ## Parallel ownership and formal review
 
