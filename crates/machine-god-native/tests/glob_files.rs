@@ -20,8 +20,8 @@ use machine_god_core::{
 };
 use machine_god_native::{
     GLOB_FILES_TOOL_NAME, GlobFilesTool, GlobFilesToolOpenError, GlobFilesToolOpenErrorKind,
-    MAX_GLOB_FILES_DEPTH, MAX_GLOB_FILES_MATCHES, MAX_GLOB_FILES_PATH_BYTES,
-    MAX_GLOB_FILES_PATTERN_BYTES, MAX_GLOB_FILES_RESULT_PATH_BYTES,
+    MAX_GLOB_FILES_DEPTH, MAX_GLOB_FILES_MATCH_STEPS, MAX_GLOB_FILES_MATCHES,
+    MAX_GLOB_FILES_PATH_BYTES, MAX_GLOB_FILES_PATTERN_BYTES, MAX_GLOB_FILES_RESULT_PATH_BYTES,
     MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES, MAX_GLOB_FILES_TOTAL_MATCH_PATH_BYTES,
     MAX_GLOB_FILES_VISITED_ENTRIES,
 };
@@ -259,6 +259,7 @@ fn exported_contract_limits_and_spec_are_exact() {
     assert_eq!(MAX_GLOB_FILES_TOTAL_MATCH_PATH_BYTES, 16 * 1_024);
     assert_eq!(MAX_GLOB_FILES_VISITED_ENTRIES, 100_000);
     assert_eq!(MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES, 16 * 1_024 * 1_024);
+    assert_eq!(MAX_GLOB_FILES_MATCH_STEPS, 8 * 1_024 * 1_024);
     assert_eq!(MAX_GLOB_FILES_DEPTH, 256);
     assert_eq!(
         format!("{:?}", GlobFilesToolOpenErrorKind::UnsupportedPlatform),
@@ -770,8 +771,6 @@ fn depth_two_hundred_fifty_six_candidates_are_eligible_but_child_descent_is_limi
 #[test]
 fn matcher_work_limit_fails_both_modes_after_simple_scan_of_same_deep_tree_succeeds() {
     const LEAF_CANDIDATES: usize = 64;
-    const EXPECTED_MATCHER_STEP_LIMIT: usize = 8 * 1_024 * 1_024;
-
     let temporary = TemporaryDirectory::new();
     let mut deepest = temporary.path().to_path_buf();
     for _ in 0..MAX_GLOB_FILES_DEPTH {
@@ -817,8 +816,8 @@ fn matcher_work_limit_fails_both_modes_after_simple_scan_of_same_deep_tree_succe
     let steps_per_candidate =
         MAX_GLOB_FILES_DEPTH * ((candidate_components + 1) + candidate_components);
     assert_eq!(steps_per_candidate, 131_840);
-    assert!(steps_per_candidate * (LEAF_CANDIDATES - 1) <= EXPECTED_MATCHER_STEP_LIMIT);
-    assert!(steps_per_candidate * LEAF_CANDIDATES > EXPECTED_MATCHER_STEP_LIMIT);
+    assert!(steps_per_candidate * (LEAF_CANDIDATES - 1) <= MAX_GLOB_FILES_MATCH_STEPS);
+    assert!(steps_per_candidate * LEAF_CANDIDATES > MAX_GLOB_FILES_MATCH_STEPS);
 
     let outcomes = ["matches", "count"].map(|mode| {
         (
