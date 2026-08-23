@@ -430,6 +430,52 @@ impl WriteFileTool {
         content: &[u8],
         cancellation: &CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
+        self.execute_supported_with(
+            normalized,
+            content,
+            cancellation,
+            native_set_mode,
+            write_content,
+            sync_before_commit,
+            |_, _| {},
+            || {},
+            native_publish_staged,
+            native_sync_parent,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_supported_with<
+        SetMode,
+        WriteContent,
+        SyncStaged,
+        BeforeStagedRevalidation,
+        BeforeRename,
+        Publish,
+        SyncParent,
+    >(
+        &self,
+        normalized: &str,
+        content: &[u8],
+        cancellation: &CancellationToken,
+        mut set_mode: SetMode,
+        mut write: WriteContent,
+        mut sync_staged: SyncStaged,
+        mut before_staged_revalidation: BeforeStagedRevalidation,
+        mut before_rename: BeforeRename,
+        mut publish: Publish,
+        mut sync_parent: SyncParent,
+    ) -> Result<ToolOutput, ToolError>
+    where
+        SetMode: for<'fd> FnMut(BorrowedFd<'fd>, Mode) -> Result<(), rustix::io::Errno>,
+        WriteContent:
+            for<'fd> FnMut(BorrowedFd<'fd>, &[u8], &CancellationToken) -> Result<(), ToolError>,
+        SyncStaged: for<'fd> FnMut(BorrowedFd<'fd>, &CancellationToken) -> Result<(), ToolError>,
+        BeforeStagedRevalidation: for<'fd> FnMut(BorrowedFd<'fd>, &str),
+        BeforeRename: FnMut(),
+        Publish: for<'fd> FnMut(BorrowedFd<'fd>, &str, &str, bool) -> Result<(), rustix::io::Errno>,
+        SyncParent: for<'fd> FnMut(BorrowedFd<'fd>) -> Result<(), rustix::io::Errno>,
+    {
         check_cancellation(cancellation)?;
         let initial = self.walk_parent(normalized, cancellation, WalkPhase::Initial)?;
         let initial_parent_metadata =
@@ -450,14 +496,14 @@ impl WriteFileTool {
 
         check_cancellation(cancellation)?;
         let private_mode = Mode::from_raw_mode(0o600);
-        rustix::fs::fchmod(&staged.file, private_mode).map_err(map_precommit_io_error)?;
+        set_mode(staged.file.as_fd(), private_mode).map_err(map_precommit_io_error)?;
         verify_staged_descriptor(&staged, 0, Some(private_mode))?;
-        write_content(&staged.file, content, cancellation)?;
+        write(staged.file.as_fd(), content, cancellation)?;
         verify_staged_descriptor(&staged, content.len(), None)?;
         check_cancellation(cancellation)?;
-        rustix::fs::fchmod(&staged.file, final_mode).map_err(map_precommit_io_error)?;
+        set_mode(staged.file.as_fd(), final_mode).map_err(map_precommit_io_error)?;
         check_cancellation(cancellation)?;
-        sync_before_commit(staged.file.as_fd(), cancellation)?;
+        sync_staged(staged.file.as_fd(), cancellation)?;
         verify_staged_descriptor(&staged, content.len(), Some(final_mode))?;
         check_cancellation(cancellation)?;
 
@@ -471,6 +517,7 @@ impl WriteFileTool {
             &initial_target,
         )?;
         check_cancellation(cancellation)?;
+        before_staged_revalidation(final_walk.parent.as_fd(), &staged.name);
         revalidate_staged_path(
             final_walk.parent.as_fd(),
             &staged,
@@ -478,24 +525,22 @@ impl WriteFileTool {
             final_mode,
         )?;
 
+        before_rename();
         check_cancellation(cancellation)?;
-        match initial_target {
-            TargetSnapshot::Missing => rustix::fs::renameat_with(
-                final_walk.parent.as_fd(),
-                &staged.name,
-                final_walk.parent.as_fd(),
-                final_walk.basename,
-                RenameFlags::NOREPLACE,
-            )
-            .map_err(map_create_rename_error)?,
-            TargetSnapshot::Existing(_) => rustix::fs::renameat(
-                final_walk.parent.as_fd(),
-                &staged.name,
-                final_walk.parent.as_fd(),
-                final_walk.basename,
-            )
-            .map_err(map_replace_rename_error)?,
-        }
+        let creating = matches!(initial_target, TargetSnapshot::Missing);
+        publish(
+            final_walk.parent.as_fd(),
+            &staged.name,
+            final_walk.basename,
+            creating,
+        )
+        .map_err(|error| {
+            if creating {
+                map_create_rename_error(error)
+            } else {
+                map_replace_rename_error(error)
+            }
+        })?;
         staged.mark_published();
 
         let published_identity_matches = published_target_matches(
@@ -505,7 +550,7 @@ impl WriteFileTool {
             content.len(),
             final_mode,
         );
-        let directory_sync = sync_after_commit(final_walk.parent.as_fd());
+        let directory_sync = sync_after_commit_with(|| sync_parent(final_walk.parent.as_fd()));
         finish_after_commit(published_identity_matches, directory_sync)?;
         let output = ToolOutput::success(json!({
             "path": normalized,
@@ -523,6 +568,16 @@ impl WriteFileTool {
         normalized: &'a str,
         cancellation: &CancellationToken,
         phase: WalkPhase,
+    ) -> Result<ParentWalk<'a>, ToolError> {
+        self.walk_parent_with(normalized, cancellation, phase, || {})
+    }
+
+    fn walk_parent_with<'a>(
+        &self,
+        normalized: &'a str,
+        cancellation: &CancellationToken,
+        phase: WalkPhase,
+        mut after_parent_component_opened: impl FnMut(),
     ) -> Result<ParentWalk<'a>, ToolError> {
         check_cancellation(cancellation)?;
         let mut parent = rustix::fs::openat(
@@ -558,8 +613,39 @@ impl WriteFileTool {
             if !FileType::from_raw_mode(metadata.st_mode).is_dir() {
                 return Err(map_parent_rejected(phase));
             }
+            after_parent_component_opened();
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn native_set_mode(file: BorrowedFd<'_>, mode: Mode) -> Result<(), rustix::io::Errno> {
+    rustix::fs::fchmod(file, mode)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn native_publish_staged(
+    parent: BorrowedFd<'_>,
+    staged_name: &str,
+    basename: &str,
+    creating: bool,
+) -> Result<(), rustix::io::Errno> {
+    if creating {
+        rustix::fs::renameat_with(
+            parent,
+            staged_name,
+            parent,
+            basename,
+            RenameFlags::NOREPLACE,
+        )
+    } else {
+        rustix::fs::renameat(parent, staged_name, parent, basename)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn native_sync_parent(parent: BorrowedFd<'_>) -> Result<(), rustix::io::Errno> {
+    rustix::fs::fsync(parent)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -637,7 +723,7 @@ fn random_temp_name() -> Result<String, ToolError> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_content(
-    file: &OwnedFd,
+    file: BorrowedFd<'_>,
     content: &[u8],
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
@@ -781,11 +867,6 @@ fn sync_before_commit_with(
             Err(error) => return Err(map_precommit_io_error(error)),
         }
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn sync_after_commit(parent: BorrowedFd<'_>) -> Result<(), rustix::io::Errno> {
-    sync_after_commit_with(|| rustix::fs::fsync(parent))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1204,6 +1285,302 @@ mod tests {
             }
         }
 
+        fn assert_no_staged_files(root: &Path) {
+            let staged = fs::read_dir(root)
+                .expect("read temporary workspace")
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name())
+                .filter(|name| name.to_string_lossy().starts_with(TEMP_NAME_PREFIX))
+                .collect::<Vec<_>>();
+            assert!(staged.is_empty(), "staged files were retained: {staged:?}");
+        }
+
+        #[test]
+        fn device_target_is_rejected_before_staging() {
+            let device_directory = rustix::fs::open("/dev", directory_open_flags(), Mode::empty())
+                .expect("open the standard Unix device directory");
+            let error = inspect_initial_target(device_directory.as_fd(), "null")
+                .err()
+                .expect("the null device must not be accepted as a regular-file target");
+            assert_eq!(error.code, "write_file_path_rejected");
+            assert!(!error.retryable);
+        }
+
+        #[test]
+        fn pipeline_fchmod_failures_clean_each_precommit_stage() {
+            for failed_call in 0..=1 {
+                let label = format!("chmod-failure-{failed_call}");
+                let temporary = TempDirectory::new(&label);
+                let tool = WriteFileTool::open(temporary.path()).unwrap();
+                let mode_calls = Cell::new(0_usize);
+                let error = tool
+                    .execute_supported_with(
+                        "target.txt",
+                        b"new content",
+                        &CancellationToken::new(),
+                        |file, mode| {
+                            let call = mode_calls.get();
+                            mode_calls.set(call + 1);
+                            if call == failed_call {
+                                Err(rustix::io::Errno::IO)
+                            } else {
+                                native_set_mode(file, mode)
+                            }
+                        },
+                        write_content,
+                        sync_before_commit,
+                        |_, _| {},
+                        || {},
+                        native_publish_staged,
+                        native_sync_parent,
+                    )
+                    .unwrap_err();
+                assert_eq!(mode_calls.get(), failed_call + 1);
+                assert_eq!(error.code, "write_file_write_failed");
+                assert!(error.retryable);
+                assert!(!temporary.path().join("target.txt").exists());
+                assert_no_staged_files(temporary.path());
+            }
+        }
+
+        #[test]
+        fn pipeline_write_failure_preserves_the_target_and_cleans_the_stage() {
+            let temporary = TempDirectory::new("write-failure");
+            let target_path = temporary.path().join("target.txt");
+            fs::write(&target_path, b"old content").unwrap();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let write_calls = Cell::new(0_usize);
+            let error = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"replacement",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    |_, content, cancellation| {
+                        write_content_with(content, cancellation, |_| {
+                            write_calls.set(write_calls.get() + 1);
+                            Err(rustix::io::Errno::IO)
+                        })
+                    },
+                    sync_before_commit,
+                    |_, _| {},
+                    || {},
+                    native_publish_staged,
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(write_calls.get(), 1);
+            assert_eq!(error.code, "write_file_write_failed");
+            assert!(error.retryable);
+            assert_eq!(fs::read(&target_path).unwrap(), b"old content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn pipeline_staged_sync_failure_preserves_the_target_and_cleans_the_stage() {
+            let temporary = TempDirectory::new("staged-sync-failure");
+            let target_path = temporary.path().join("target.txt");
+            fs::write(&target_path, b"old content").unwrap();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let sync_calls = Cell::new(0_usize);
+            let error = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"replacement",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    |_, cancellation| {
+                        sync_before_commit_with(cancellation, || {
+                            sync_calls.set(sync_calls.get() + 1);
+                            Err(rustix::io::Errno::IO)
+                        })
+                    },
+                    |_, _| {},
+                    || {},
+                    native_publish_staged,
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(sync_calls.get(), 1);
+            assert_eq!(error.code, "write_file_write_failed");
+            assert!(error.retryable);
+            assert_eq!(fs::read(&target_path).unwrap(), b"old content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn pipeline_create_and_replace_rename_failures_preserve_targets() {
+            let temporary = TempDirectory::new("rename-failures");
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let create_calls = Cell::new(0_usize);
+            let create_error = tool
+                .execute_supported_with(
+                    "new.txt",
+                    b"new content",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {},
+                    |_, _, _, creating| {
+                        assert!(creating);
+                        create_calls.set(create_calls.get() + 1);
+                        Err(rustix::io::Errno::EXIST)
+                    },
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(create_calls.get(), 1);
+            assert_eq!(create_error.code, "write_file_target_changed");
+            assert!(create_error.retryable);
+            assert!(!temporary.path().join("new.txt").exists());
+            assert_no_staged_files(temporary.path());
+
+            let existing_path = temporary.path().join("existing.txt");
+            fs::write(&existing_path, b"old content").unwrap();
+            let replace_calls = Cell::new(0_usize);
+            let replace_error = tool
+                .execute_supported_with(
+                    "existing.txt",
+                    b"replacement",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {},
+                    |_, _, _, creating| {
+                        assert!(!creating);
+                        replace_calls.set(replace_calls.get() + 1);
+                        Err(rustix::io::Errno::ACCESS)
+                    },
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(replace_calls.get(), 1);
+            assert_eq!(replace_error.code, "write_file_permission_denied");
+            assert!(!replace_error.retryable);
+            assert_eq!(fs::read(&existing_path).unwrap(), b"old content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn pipeline_rejects_a_swapped_staged_name_without_deleting_the_intruder() {
+            let temporary = TempDirectory::new("staged-name-swap");
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let displaced_name = ".displaced-machine-god-stage";
+            let root = temporary.path().to_owned();
+            let error = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"owned content",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |parent, staged_name| {
+                        rustix::fs::renameat(parent, staged_name, parent, displaced_name)
+                            .expect("displace the owned staged name");
+                        fs::write(root.join(staged_name), b"intruder")
+                            .expect("replace the staged name");
+                    },
+                    || {},
+                    native_publish_staged,
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(error.code, "write_file_write_failed");
+            assert!(error.retryable);
+            assert!(!temporary.path().join("target.txt").exists());
+            assert_eq!(
+                fs::read(temporary.path().join(displaced_name)).unwrap(),
+                b"owned content"
+            );
+            let intruder = fs::read_dir(temporary.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(TEMP_NAME_PREFIX)
+                })
+                .expect("the identity-checked cleanup must preserve the intruder");
+            assert_eq!(fs::read(intruder.path()).unwrap(), b"intruder");
+        }
+
+        #[test]
+        fn pipeline_cancellation_immediately_before_rename_preserves_the_target() {
+            let temporary = TempDirectory::new("pre-rename-cancel");
+            let target_path = temporary.path().join("target.txt");
+            fs::write(&target_path, b"old content").unwrap();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let cancellation = CancellationToken::new();
+            let cancellation_before_rename = cancellation.clone();
+            let publish_calls = Cell::new(0_usize);
+            let error = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"replacement",
+                    &cancellation,
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {
+                        cancellation_before_rename.cancel();
+                    },
+                    |parent, staged_name, basename, creating| {
+                        publish_calls.set(publish_calls.get() + 1);
+                        native_publish_staged(parent, staged_name, basename, creating)
+                    },
+                    native_sync_parent,
+                )
+                .unwrap_err();
+            assert_eq!(error.code, "write_file_cancelled");
+            assert_eq!(publish_calls.get(), 0);
+            assert_eq!(fs::read(&target_path).unwrap(), b"old content");
+            assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn pipeline_parent_sync_failure_is_ambiguous_after_a_real_rename() {
+            let temporary = TempDirectory::new("post-rename-sync-failure");
+            let target_path = temporary.path().join("target.txt");
+            fs::write(&target_path, b"old content").unwrap();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let sync_calls = Cell::new(0_usize);
+            let error = tool
+                .execute_supported_with(
+                    "target.txt",
+                    b"committed content",
+                    &CancellationToken::new(),
+                    native_set_mode,
+                    write_content,
+                    sync_before_commit,
+                    |_, _| {},
+                    || {},
+                    native_publish_staged,
+                    |_| {
+                        let call = sync_calls.get();
+                        sync_calls.set(call + 1);
+                        if call == 0 {
+                            Err(rustix::io::Errno::INTR)
+                        } else {
+                            Err(rustix::io::Errno::IO)
+                        }
+                    },
+                )
+                .unwrap_err();
+            assert_eq!(sync_calls.get(), 2);
+            assert_eq!(error.code, "write_file_commit_ambiguous");
+            assert!(!error.retryable);
+            assert_eq!(fs::read(&target_path).unwrap(), b"committed content");
+            assert_no_staged_files(temporary.path());
+        }
+
         #[test]
         fn eight_temp_collisions_are_preserved_and_fail_closed() {
             let temporary = TempDirectory::new("collisions");
@@ -1343,6 +1720,32 @@ mod tests {
             ] {
                 assert_eq!(classified.code, "write_file_target_changed");
             }
+        }
+
+        #[test]
+        fn traversal_cancellation_after_an_opened_parent_component_stops_the_walk() {
+            let temporary = TempDirectory::new("walk-cancel");
+            fs::create_dir(temporary.path().join("nested")).unwrap();
+            fs::create_dir(temporary.path().join("nested/deeper")).unwrap();
+            let tool = WriteFileTool::open(temporary.path()).unwrap();
+            let cancellation = CancellationToken::new();
+            let cancellation_after_open = cancellation.clone();
+            let opened_components = Cell::new(0_usize);
+            let error = tool
+                .walk_parent_with(
+                    "nested/deeper/target.txt",
+                    &cancellation,
+                    WalkPhase::Initial,
+                    || {
+                        opened_components.set(opened_components.get() + 1);
+                        cancellation_after_open.cancel();
+                    },
+                )
+                .err()
+                .expect("cancellation after opening a parent must stop traversal");
+            assert_eq!(opened_components.get(), 1);
+            assert_eq!(error.code, "write_file_cancelled");
+            assert!(!error.retryable);
         }
 
         #[test]
