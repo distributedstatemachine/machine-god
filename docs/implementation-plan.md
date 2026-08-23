@@ -94,8 +94,8 @@ zero findings in all three fresh tracks. Replacement seal `fe56f4c` completed
 the exact feature and `main` delivery gates recorded above. The remaining
 native tools, CLI ownership, and Milestone 03 completion boundary remain
 pending.
-The twenty-third bounded slice, native `rename_file`, is **CYCLE 1 REMEDIATION
-IN PROGRESS** from exact delivered base
+The twenty-third bounded slice, native `rename_file`, is **CYCLE 1 REMEDIATED;
+CYCLE 2 REVIEW PENDING** from exact delivered base
 `3d76f2e844312e7f3e809524cb72c1a7957975ff`. Its two-endpoint typed
 authority, regular-file-only absent-destination semantics, one no-replace
 rename boundary, bounded two-parent durability, explicit race limitations,
@@ -119,10 +119,11 @@ track review candidate `2bc4f9a8ad809cd38a6b7b36488b27bf9bd531f6`, tree
 tracks. The consolidated findings require retained terminal replacement-race,
 `EINTR`/errno, postcommit, sync-bound, late-cancellation, and moved-parent
 evidence, plus a low documentation correction for final directory replacement.
-The uncommitted remediation expands the private suite to 15 tests for that
-matrix and clarifies the directory race; it has no replacement SHA or complete
-replacement local-gate claim. Replacement same-SHA review and delivery remain
-pending.
+Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
+`0b195bdf29e7873a4d77169ec4d031491b1b336a`, expands the private suite to 15
+tests for that matrix, clarifies the directory race, and passes the complete
+replacement local gate recorded in the review. A tree-identical cycle-2
+candidate, three fresh same-SHA reviews, and delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1633,7 +1634,7 @@ gate:
   exact-SHA artifacts. Native `delete_file` is delivered as slice twenty-two.
   The combined native-tool checkbox stays unchecked because the remaining
   native tools and M03 ownership are incomplete. The twenty-third
-  `rename_file` slice is **CYCLE 1 REMEDIATION IN PROGRESS** from exact base
+  `rename_file` slice is **CYCLE 1 REMEDIATED; CYCLE 2 REVIEW PENDING** from exact base
   `3d76f2e`.
   It is frozen as one existing confined regular file moved to an absent
   destination through exact two-endpoint `FilesystemRename` policy input,
@@ -1648,10 +1649,11 @@ gate:
   in all three fresh tracks because retained terminal race, `EINTR`/errno,
   postcommit, sync-bound, late-cancellation, and moved-parent evidence was
   incomplete; a low documentation finding also required the final directory-
-  replacement race to be explicit. Uncommitted remediation expands the private
-  suite to 15 tests for the requested matrix and clarifies that race, without a
-  replacement SHA or complete replacement local-gate claim. Three fresh same-
-  SHA reviews and exact feature/main delivery gates remain pending under
+  replacement race to be explicit. Exact remediation `a3491cf`, tree
+  `0b195bd`, expands the private suite to 15 tests for the requested matrix,
+  clarifies that race, and passes the complete replacement local gate. A tree-
+  identical cycle-2 candidate, three fresh same-SHA reviews, and exact
+  feature/main delivery gates remain pending under
   [`rename-file.md`](rename-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

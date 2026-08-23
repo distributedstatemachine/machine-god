@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **CYCLE 1 REMEDIATION IN PROGRESS**
+Status: **CYCLE 1 REMEDIATED; CYCLE 2 REVIEW PENDING**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -20,9 +20,12 @@ local-gate precursor `43847fe5fd405e8b1d28808f0495dac859ebab15`, tree
 `80cb9a17d9bb2c1151bc43b72faebcb305dd78c2`, is green. Fresh same-SHA review
 cycle 1 is **NOT GREEN** in all three tracks on exact candidate
 `2bc4f9a8ad809cd38a6b7b36488b27bf9bd531f6`, tree
-`44558a0e88019ad9063234642c08097b4123c5f2`. Remediation is in progress;
-replacement review, feature delivery, fast-forward main integration, and exact
-main workflows remain pending.
+`44558a0e88019ad9063234642c08097b4123c5f2`. Exact remediation
+`a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
+`0b195bdf29e7873a4d77169ec4d031491b1b336a`, passes the complete replacement
+local gate. A tree-identical cycle-2 candidate, three fresh reviews, feature
+delivery, fast-forward main integration, and exact main workflows remain
+pending.
 
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
@@ -241,8 +244,9 @@ precursor local gate were green before formal cycle 1. That exact candidate is
 not green: retained evidence was missing for the terminal replacement-race,
 `EINTR`/errno, postcommit, sync-bound, late-cancellation, and moved-parent
 matrix, and the final directory-replacement wording required clarification.
-The working-tree remediation expands the private suite to 15 tests and
-clarifies the directory race, but no replacement SHA or complete replacement
-local gate is claimed. Three fresh same-SHA adversarial reviews, exact feature
-workflows, fast-forward integration, and exact main workflows are still
-required before delivery.
+Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
+`0b195bdf29e7873a4d77169ec4d031491b1b336a`, expands the private suite to 15
+tests, clarifies the directory race, and passes the complete replacement local
+gate recorded in the review. A tree-identical cycle-2 candidate, three fresh
+same-SHA adversarial reviews, exact feature workflows, fast-forward
+integration, and exact main workflows are still required before delivery.

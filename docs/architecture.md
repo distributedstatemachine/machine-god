@@ -23,8 +23,8 @@ an async executor.
 
 Milestone 03 has twenty-two delivered bounded slices. The twenty-third,
 library-only native `rename_file`, has composed production and independent
-evidence and a green exact local gate at `43847fe`; formal review and delivery
-remain pending.
+evidence; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
+complete replacement local gate. Cycle-2 review and delivery remain pending.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate

@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **CYCLE 1 REMEDIATION IN PROGRESS**
+Status: **CYCLE 1 REMEDIATED; CYCLE 2 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -26,8 +26,12 @@ Status: **CYCLE 1 REMEDIATION IN PROGRESS**
 - Exact failed cycle-1 candidate:
   `2bc4f9a8ad809cd38a6b7b36488b27bf9bd531f6` (tree
   `44558a0e88019ad9063234642c08097b4123c5f2`).
-- All three cycle-1 tracks are **NOT GREEN**. Remediation is in progress;
-  replacement review and delivery have not completed.
+- Exact cycle-1 remediation:
+  `a3491cf8d5e6c388c896374e768794d06bf7be0b` (tree
+  `0b195bdf29e7873a4d77169ec4d031491b1b336a`).
+- All three cycle-1 tracks remain historically **NOT GREEN**. The remediation
+  and its complete replacement local gate are green; cycle-2 review and
+  delivery have not completed.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are
@@ -131,12 +135,45 @@ documentation finding identified that the contract described only symlink and
 special-file final replacements even though a directory entry can also be
 moved in that window.
 
-No replacement behavior SHA exists yet. The uncommitted remediation in
-progress expands the private module suite from five to 15 tests to cover the
-requested terminal-race, syscall, postcommit, durability, cancellation, and
-moved-parent matrix. The contract now clarifies the final directory-
-replacement race. These working-tree changes have not passed a complete
-replacement local gate and are not review or delivery evidence.
+Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
+`0b195bdf29e7873a4d77169ec4d031491b1b336a`, expands the private module suite
+from five to 15 tests to cover the requested terminal-race, syscall,
+postcommit, durability, cancellation, and moved-parent matrix. The contract
+clarifies the final directory-replacement race. The complete replacement local
+gate below is green. A tree-identical cycle-2 behavior candidate and three
+fresh reviews remain required.
+
+## Cycle 1 remediation local gate
+
+Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
+`0b195bdf29e7873a4d77169ec4d031491b1b336a`, passes the complete replacement
+local gate under Rust and Cargo 1.94.1. Formatting, workspace all-target and
+all-feature warnings-denied Clippy, workspace tests, all-feature tests, and
+both doctests are green. Focused evidence passes 15 private module tests, 16
+direct tests, five real-engine tests, seven all-feature reference-host tests,
+and one core serialization contract. Discovery reports 777 default-feature
+tests, 827 all-feature tests, and zero benchmarks.
+
+All 130 repository Python tests pass with eight expected macOS skips. The
+pinned fx compatibility inventory is unchanged at
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Local cargo-deny 0.19.9 accepts
+the policy with only the established duplicate warnings, and cargo-audit
+0.22.2 checks 1,225 advisories across 175 lockfile dependencies with no
+finding. Linux no-default test-target check and warnings-denied Clippy pass.
+FreeBSD no-default library/tests, library Clippy, and the dedicated unsupported
+test type-check pass with only the established unrelated test-only
+`glob_files` warnings. WASI builds the dedicated unsupported target with only
+the established unrelated `read_file` warning, and Node 22.22.0 actively
+passes that test 1/1.
+
+Documentation integrity covers 66 Markdown files, 462 inline links, 312
+repository-relative links, and zero missing targets. The 22-file base diff is
+clean, adds no unsafe Rust, Cargo metadata, dependency, or CLI source change.
+A fresh locked 319,152-byte arm64 Mach-O release CLI has SHA-256
+`687b6f8068ea34709c0f6d0ec536febf7d5be62c9ff8fa7b940dc48ba74f6415` and
+passes exact bare, help, human-status, and JSON-status smoke paths. These
+results qualify the replacement local gate only, not cycle-2 review, remote
+delivery, fx equivalence, or product performance.
 
 ## Formal review protocol
 
