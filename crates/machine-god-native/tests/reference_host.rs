@@ -194,23 +194,28 @@ fn roots(base: &Path) -> (PathBuf, PathBuf) {
     (workspace, sessions)
 }
 
-fn tool_round_responses(final_text: &str) -> [Vec<u8>; 2] {
+fn tool_round_responses(final_text: &str) -> [Vec<u8>; 3] {
     let first = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"list-call\",\"toolName\":\"list_files\",\"input\":{\"path\":\"./nested//.\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"read-call\",\"toolName\":\"read_file\",\"input\":{\"path\":\"./nested//note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"info-call\",\"toolName\":\"file_info\",\"input\":{\"path\":\"./nested//note.txt\"}}\n\n",
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"glob-call\",\"toolName\":\"glob_files\",\"input\":{\"pattern\":\"*.txt\",\"path\":\"./nested//.\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let second = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"grep-call\",\"toolName\":\"grep_files\",\"input\":{\"pattern\":\"RETAINED_FILE_CONTENT_SENTINEL\",\"path\":\"./nested//.\",\"include\":\"*.txt\",\"case_insensitive\":false,\"mode\":\"count\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
     .to_vec();
-    let second = format!(
+    let third = format!(
         "data: {{\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":{}}}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"stop\"}}}}\n\n",
         serde_json::to_string(final_text).unwrap()
     )
     .into_bytes();
-    [first, second]
+    [first, second, third]
 }
 
 fn compose_with_transport(
@@ -386,17 +391,18 @@ fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: Sessio
         .unwrap()
         .expect("the reference host persisted the completed session");
     let record = loaded_session.record();
-    assert_eq!(record.messages.len(), 8);
+    assert_eq!(record.messages.len(), 9);
     assert_eq!(record.messages[0].role, Role::User);
     assert_eq!(record.messages[1].role, Role::Assistant);
     assert_eq!(record.messages[2].role, Role::Tool);
     assert_eq!(record.messages[3].role, Role::Tool);
     assert_eq!(record.messages[4].role, Role::Tool);
     assert_eq!(record.messages[5].role, Role::Tool);
-    assert_eq!(record.messages[6].role, Role::Tool);
-    assert_eq!(record.messages[7].role, Role::Assistant);
+    assert_eq!(record.messages[6].role, Role::Assistant);
+    assert_eq!(record.messages[7].role, Role::Tool);
+    assert_eq!(record.messages[8].role, Role::Assistant);
     assert_eq!(
-        record.messages[7].content,
+        record.messages[8].content,
         [ContentBlock::Text {
             text: "composition complete".to_owned()
         }]
@@ -440,14 +446,14 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
     assert_completed(&events);
 
     let requests = transport.requests();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     assert_eq!(header(&requests[0], "ai-language-model-id"), model);
     let first = body(&requests[0]);
     assert_exact_native_tool_catalog(&first);
     assert_exact_native_tool_permissions(&prompter);
 
     let second = body(&requests[1]);
-    assert_eq!(second["prompt"].as_array().unwrap().len(), 7);
+    assert_eq!(second["prompt"].as_array().unwrap().len(), 6);
     assert_eq!(second["prompt"][2]["content"][0]["toolCallId"], "list-call");
     assert_eq!(
         decoded_tool_output(&second, 2),
@@ -502,9 +508,11 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
             "is_error": false
         })
     );
-    assert_eq!(second["prompt"][6]["content"][0]["toolCallId"], "grep-call");
+    let third = body(&requests[2]);
+    assert_eq!(third["prompt"].as_array().unwrap().len(), 8);
+    assert_eq!(third["prompt"][7]["content"][0]["toolCallId"], "grep-call");
     assert_eq!(
-        decoded_tool_output(&second, 6),
+        decoded_tool_output(&third, 7),
         json!({
             "content": {
                 "pattern": "RETAINED_FILE_CONTENT_SENTINEL",
@@ -819,12 +827,13 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     let (_, events) = collect_turn(&host, "retained-root-identity");
     assert_completed(&events);
     let requests = transport.requests();
-    let second = body(&requests[1]);
-    let list_output = decoded_tool_output(&second, 2);
-    let read_output = decoded_tool_output(&second, 3);
-    let info_output = decoded_tool_output(&second, 4);
-    let glob_output = decoded_tool_output(&second, 5);
-    let grep_output = decoded_tool_output(&second, 6);
+    assert_eq!(requests.len(), 3);
+    let third = body(&requests[2]);
+    let list_output = decoded_tool_output(&third, 2);
+    let read_output = decoded_tool_output(&third, 3);
+    let info_output = decoded_tool_output(&third, 4);
+    let glob_output = decoded_tool_output(&third, 5);
+    let grep_output = decoded_tool_output(&third, 7);
     assert_eq!(
         list_output["content"]["entries"],
         json!([
@@ -848,7 +857,7 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     );
     assert_eq!(grep_output["content"]["matching_lines"], 1);
     assert_eq!(grep_output["content"]["matching_files"], 1);
-    let serialized = serde_json::to_string(&second).unwrap();
+    let serialized = serde_json::to_string(&third).unwrap();
     assert!(!serialized.contains("REPLACEMENT_FILE_CONTENT_SENTINEL"));
     assert!(!serialized.contains("replacement-only.txt"));
 }
