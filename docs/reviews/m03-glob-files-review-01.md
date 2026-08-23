@@ -1,7 +1,8 @@
 # Milestone 03 native `glob_files` review 01
 
-Status: **CANDIDATE — composition and local gates green; three formal reviews
-and remote exact-SHA delivery pending**
+Status: **REPLACEMENT CANDIDATE — first review found a high matcher-work bound
+defect; fix and replacement local gates are green; three same-SHA rereviews and
+remote exact-SHA delivery pending**
 
 ## Candidate
 
@@ -13,9 +14,14 @@ and remote exact-SHA delivery pending**
 - Composed production head: `df3017cdae2508d4c82f85e4f1480760dc351906`
 - Composed production-and-test head: `c9eccb7f09b67ddf4b7e9123519abcc013ca5532`
 - First fully composed behavior candidate: `60070d899b7ac298960f6d01826d3876cf8b5835`
-- Local-gate precursor: `60070d899b7ac298960f6d01826d3876cf8b5835`
-- Formal review head shared by all three tracks: **PENDING**
-- Finding-fix and rereview heads: **PENDING if required**
+- Initial local-gate precursor: `60070d899b7ac298960f6d01826d3876cf8b5835`
+- Initial formal review head: `1f5de6ac45e292f38b1853ab0a6212de70f4cc51`
+- Isolated matcher-work fix: `f3fd13b33e30e084295ae722ec48b469292932a4`
+- Isolated independent finding regression: `825bbd36d4173ca3393859f38bd301ad98aaddac`
+- Composed matcher-work fix: `fe33ba944ebdcfada36d6299d451dbb2818a341e`
+- Composed finding regression: `aba282128b1ae8ab586a925e96a25bc27c1db020`
+- Replacement local-gate precursor: `4171a4a8811a98888b7e4e161281a1216564746f`
+- Replacement formal rereview head shared by all three tracks: **PENDING**
 - Documentation seal: **PENDING**
 - Feature and `main` delivery evidence: **PENDING**
 - Delivery branch: `agent/m03-glob-files`
@@ -65,8 +71,10 @@ or make a compatibility or product-performance claim.
   and no content or link target is read. Results use full workspace-relative
   paths.
 - Both modes complete the entire bounded traversal. The scan permits at most
-  100,000 non-dot entries, 16 MiB of aggregate raw entry-name bytes, and child-
-  directory traversal depth 256. The selected root is depth 0; a directory at
+  100,000 non-dot entries, 16 MiB of aggregate raw entry-name bytes, child-
+  directory traversal depth 256, and 8,388,608 aggregate matcher-work steps.
+  Steps meter slashful candidate splitting, pattern/DP-state visits, and inner
+  component-byte matching. The selected root is depth 0; a directory at
   depth 256 is scanned and its regular/symlink children are eligible, while an
   attempted child-directory open at depth 257 is `scan_limit`. Any full
   workspace-relative candidate path over 4,096 bytes is also `scan_limit`.
@@ -111,10 +119,12 @@ Three isolated worktrees own non-overlapping surfaces from exact base
   indexes and guides, implementation-plan/status updates, and this review
   record.
 
-The coordinator composed the isolated commits onto `agent/m03-glob-files`
-without reverting unrelated work. Production behavior, independent evidence,
-and documentation are present together at `60070d8`; formal review begins only
-from its local-evidence child after the gates below are recorded.
+The coordinator composed the initial isolated commits onto
+`agent/m03-glob-files` without reverting unrelated work. Production behavior,
+independent evidence, and documentation were present together at `60070d8`;
+the first formal review ran on its local-evidence child `1f5de6a`. The accepted
+finding fix and independent regression now compose through replacement
+code-and-test head `4171a4a`.
 
 ## Required local gates
 
@@ -135,17 +145,19 @@ The current `machine-god` CLI bytes must be exercised through the freshly built
 `target/release/machine-god` binary even though this candidate adds no CLI
 behavior.
 
-The 39 focused direct/engine/root/host integration tests and five private
-matcher/schema unit tests are green at exact composed SHA `60070d8`. Formatting,
-workspace/all-target/all-feature warnings-denied Clippy, workspace tests,
-documentation tests, dependency policy, the 1,225-advisory vulnerability check
-over 175 dependencies, the fresh pinned-fx compatibility-inventory check, and
-release-binary bare/help/status smoke are also green under Rust and Cargo
-1.94.1 exactly. The 129-test repository Python gate is green with eight
-expected macOS skips. Linux, FreeBSD, and WASI no-default-feature native
-library checks pass; WASI retains the existing non-fatal `read_file`
-`check_cancellation` dead-code warning. This slice changes no benchmark
-behavior.
+The initial 39 focused direct/engine/root/host integration tests and five
+private matcher/schema unit tests were green at exact composed SHA `60070d8`.
+After finding hardening, 40 focused integration tests and nine private matcher/
+schema/budget unit tests are green at replacement code-and-test SHA `4171a4a`.
+Formatting, workspace/all-target/all-feature warnings-denied Clippy, workspace
+all-feature tests, documentation tests, dependency policy, the 1,225-advisory
+vulnerability check over 175 dependencies, the fresh pinned-fx compatibility-
+inventory check, and release-binary bare/help/status smoke are also green there
+under Rust and Cargo 1.94.1 exactly. The 129-test repository Python gate is
+green with eight expected macOS skips. Linux, FreeBSD, and WASI no-default-
+feature native library checks pass; WASI retains the existing non-fatal
+`read_file` `check_cancellation` dead-code warning. This slice changes no
+benchmark behavior.
 
 ## Required adversarial tracks
 
@@ -173,10 +185,37 @@ and `main` delivery gates remain mandatory for that later SHA.
 
 ## Review results
 
-**PENDING.** No formal adversarial review has begun, and no track is represented
-as green. Findings, fixes, rejected rationales, exact rereview SHA, and track
-outcomes will be recorded here after the composed behavior candidate passes its
-local gates.
+The first formal cycle reviewed exact SHA
+`1f5de6ac45e292f38b1853ab0a6212de70f4cc51`:
+
+- **Correctness/API/matcher semantics — GREEN.** The reviewer reproduced 29
+  focused direct/engine tests and five private tests, differentially checked
+  344,043 component and 1,596,221 path cases, and passed Linux, FreeBSD, WASI,
+  and macOS target checks.
+- **Filesystem and resource robustness — NOT GREEN.** The reviewer confirmed a
+  high finding: the accepted 4,096-byte pattern, depth-256, and 100,000-entry
+  bounds permitted roughly 13.2 billion unmetered path-matcher DP cells. A
+  1,000-leaf release diagnostic took 12.88 seconds rather than the simple
+  pattern's 0.253 seconds, and one synchronous poll could therefore monopolize
+  its executor thread between cancellation checks.
+- **Composition, documentation, and evidence — GREEN.** Permission separation,
+  exact prepared arguments, exports, alphabetical catalog, original-plus-three-
+  clone identity, tests, lineage, CLI non-change, and compatibility/benchmark/
+  performance non-claims all passed.
+
+The high finding was accepted. `f3fd13b` adds a public checked 8,388,608-step
+aggregate matcher budget covering slashful candidate splitting, all pattern/
+DP-state visits, and component-byte matcher transitions; overflow or the next
+step fails both modes as `glob_files_scan_limit` without partial output. Its
+nine private tests cover exact-cap, overflow, detailed accounting, semantics,
+and 100,000 simple candidates. Independent commit `825bbd3` adds one depth-256,
+64-leaf regression that was red before the fix in both modes while its simple
+scan succeeded. The fix and regression compose through `aba2821`; `4171a4a`
+also binds the exported public cap in the integration contract test.
+
+**PENDING replacement review.** All three first-cycle outcomes are invalidated
+by the behavior fix. Three fresh tracks must report green on the same exact
+replacement formal-review SHA before delivery.
 
 ## Remote delivery gates
 

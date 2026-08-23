@@ -490,8 +490,13 @@ only; specials are ignored; and symlinks are never descended through or read.
 Returned candidates use full workspace-relative paths.
 
 Both modes complete a bounded traversal of no more than 100,000 non-dot
-entries, 16 MiB of aggregate raw entry-name bytes, and directory traversal depth
-256. The selected root is depth 0; a depth-256 directory is scanned and its
+entries, 16 MiB of aggregate raw entry-name bytes, directory traversal depth
+256, and 8,388,608 aggregate matcher-work steps. A step is charged for each
+slashful candidate byte inspected while splitting, pattern-segment loop visit,
+dynamic-programming cell write, and invoked component-matcher transition or
+trailing-star consumption. Exactly the cap is permitted; checked overflow or
+the next step is a scan-limit error. The selected root is depth 0; a depth-256
+directory is scanned and its
 regular/symlink children remain eligible, while attempting to open a child
 directory at depth 257 is a scan-limit error. Any candidate full workspace path
 over 4,096 bytes is also a scan-limit error. A fired scan cap fails either mode
@@ -513,11 +518,15 @@ independent-test, and documentation ownership is recorded in the
 [`glob_files` review](reviews/m03-glob-files-review-01.md). Isolated components,
 composed behavior, and local-gate lineage are recorded there: production
 `a5d1399`, schema correction `f1584f5`, independent tests `948994d`, and
-documentation `f2f0fc1` compose through exact local-gate precursor
-`60070d899b7ac298960f6d01826d3876cf8b5835`. Review, seal, and delivery SHAs
-remain explicitly pending and must not be invented. Three fresh adversarial
-tracks must review one exact composed behavior SHA after local gates, with fixes
-and same-SHA rereview until green. Per the user's instruction, a later
+documentation `f2f0fc1` compose through initial local-gate precursor `60070d8`.
+The first formal review at `1f5de6a` found a high unmetered matcher-work defect.
+Production fix `f3fd13b` and independent regression `825bbd3` compose through
+`aba2821`; the public-cap assertion and replacement local gates are green at
+exact code-and-test head `4171a4a8811a98888b7e4e161281a1216564746f`.
+Replacement review, seal, and delivery SHAs remain explicitly pending and must
+not be invented. Three fresh adversarial tracks must review one exact composed
+behavior SHA after local gates, with fixes and same-SHA rereview until green.
+Per the user's instruction, a later
 documentation-only seal is exempt
 from another adversarial cycle after behavior is green. The candidate adds no
 CLI behavior, external-path access, ignore or Git/subprocess behavior, content
@@ -594,10 +603,13 @@ gate:
   eighteenth `glob_files` candidate has a frozen contract from base
   `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production, 39 focused
   integration tests, five private unit tests, documentation, composition, and
-  all required local gates are green at exact precursor
-  `60070d899b7ac298960f6d01826d3876cf8b5835`. Three same-SHA adversarial tracks
-  and exact remote delivery remain pending. It therefore does not change this
-  checkbox.
+  initial local gates were green at `60070d8`, but the first formal review at
+  `1f5de6a` found a high unmetered matcher-work defect. The checked matcher-
+  budget fix, independent both-mode regression, 40 focused integration tests,
+  nine private tests, and replacement local gates are green at exact code-and-
+  test head `4171a4a8811a98888b7e4e161281a1216564746f`. Three same-SHA replacement
+  adversarial tracks and exact remote delivery remain pending. It therefore
+  does not change this checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

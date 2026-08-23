@@ -194,16 +194,19 @@ search root and `matches`/`count` mode, prepares the distinct
 and makes defaults explicit to allowed execution. Descriptor-relative,
 no-follow iterative traversal includes hidden entries, never descends through
 symlinks, reads no content, and fails without partial output if its entry,
-name-byte, depth, or candidate-path scan cap fires. Match output is the globally
+name-byte, depth, candidate-path, or 8,388,608-step aggregate matcher-work cap
+fires. Match output is the globally
 bytewise-smallest sorted prefix under exact 100-path and 16 KiB aggregate path-
 byte caps; count mode completes the same bounded scan and is exact. The
 candidate extends the composed host catalog to `file_info`, `glob_files`,
 `list_files`, and `read_file`, with one retained workspace identity distributed
 as the original descriptor plus three clones. Production, independent tests,
-and documentation are composed and all required local gates are green at exact
-candidate `60070d899b7ac298960f6d01826d3876cf8b5835`. Three same-SHA adversarial
-tracks and remote exact-SHA delivery remain pending; no later SHA is invented
-in the
+and documentation are composed. The first formal review at `1f5de6a` found a
+high unmetered matcher-work defect; the checked 8,388,608-step fix, independent
+both-mode regression, and all replacement local gates are green at exact
+code-and-test head `4171a4a8811a98888b7e4e161281a1216564746f`. Three same-
+SHA replacement adversarial tracks and remote exact-SHA delivery remain
+pending; no later SHA is invented in the
 [`glob_files` contract](docs/glob-files.md) or
 [review record](docs/reviews/m03-glob-files-review-01.md). The candidate changes
 no CLI byte, benchmark workload, compatibility status, or performance claim,

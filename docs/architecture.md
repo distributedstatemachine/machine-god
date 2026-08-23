@@ -186,10 +186,12 @@ sorted match prefix or an exact count after a complete bounded scan. The
 candidate extends the host catalog to `file_info`, `glob_files`, `list_files`,
 and `read_file`, distributing the original retained descriptor plus three
 clones of one workspace identity. Production, independent-test, documentation,
-composed-behavior, and local-gate lineage is green through exact precursor
-`60070d899b7ac298960f6d01826d3876cf8b5835` from base
-`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; review and delivery gates remain
-pending. Its contract and pending review record are
+composed-behavior, and initial local-gate lineage is green through `60070d8`
+from base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first review at
+`1f5de6a` found a high matcher-work bound defect; its fix, regression, public-
+bound assertion, and replacement local gates are green at exact `4171a4a`.
+Replacement review and delivery gates remain pending. Its contract and review
+record are
 [`glob-files.md`](glob-files.md) and
 [`m03-glob-files-review-01.md`](reviews/m03-glob-files-review-01.md).
 The seventh slice's exact feature-branch evidence is retained in the
@@ -415,9 +417,10 @@ recursive-enumeration policy and execution receive the same normalized selected
 subtree, while exact prepared pattern/path/mode arguments attenuate only the
 output. No provider, permission handler, session-store, credential, transport,
 runtime, constructor argument, root-selection, or CLI authority changes.
-Production, independent tests, documentation, composition, and local gates are
-green at exact precursor `60070d8`; three formal tracks and exact remote
-delivery remain pending.
+Production, independent tests, documentation, and composition are present. The
+first review at `1f5de6a` found a matcher-work bound defect; its fix, regression,
+and replacement local gates are green at `4171a4a`. Three same-SHA replacement
+formal tracks and exact remote delivery remain pending.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
@@ -880,7 +883,9 @@ traversal-only, specials are ignored, and neither symlinks nor content are read.
 
 Both modes either complete or fail without partial output under 100,000 visited
 non-dot entries, 16 MiB aggregate entry-name bytes, directory traversal depth
-256, and a 4,096-byte full workspace-relative candidate-path bound. The selected
+256, an 8,388,608-step aggregate matcher-work budget, and a 4,096-byte full
+workspace-relative candidate-path bound. Matcher steps cover slashful candidate
+splitting, pattern/DP cell visits, and component-byte matching. The selected
 root is directory depth 0; directories through depth 256 are scanned, their
 regular/symlink children remain eligible, and attempting to open a directory at
 depth 257 is `scan_limit`. A `NOENT` race may omit an entry; other failures are

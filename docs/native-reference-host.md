@@ -3,10 +3,12 @@
 Status: integrated contract for the twelfth bounded Milestone 03 library slice,
 with its workspace-tool composition extended by the delivered seventeenth
 slice and the eighteenth `glob_files` candidate. Seventeen slices are
-delivered; eighteenth-slice production, independent tests, documentation,
-composition, and local gates are green at exact precursor `60070d8`, while
-three same-SHA formal reviews and exact remote delivery remain pending from
-base `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
+delivered; eighteenth-slice production, independent tests, documentation, and
+composition are present. Initial local gates were green at `60070d8`, but the
+first formal review at `1f5de6a` found a high matcher-work bound defect. Its fix,
+regression, and replacement local gates are green at `4171a4a`; three same-SHA
+replacement reviews and exact remote delivery remain pending from base
+`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. Seventeenth-slice
 production `5c2d129` and independent tests `ca0091c` compose at `f228c06`,
 where all 34 focused tests are green. Review hardening composes at `b69ec4b`,
 bringing the focused total to 36 plus five private unit tests. The first formal
@@ -473,9 +475,11 @@ benchmark build input; machine-god remains a Rust product.
 
 The `glob_files` candidate adds no benchmark workload or workflow change and
 makes no compatibility or product-performance claim. Production, independent
-tests, documentation, composition, and local gates are green at exact precursor
-`60070d8`; formal reviews and remote exact-SHA delivery remain pending, so the
-combined native-tool checklist stays open.
+tests, documentation, and composition are present. Its first review at
+`1f5de6a` found a matcher-work bound defect; the fix, regression, and replacement
+local gates are green at `4171a4a`. Three same-SHA replacement reviews and
+remote exact-SHA delivery remain pending, so the combined native-tool checklist
+stays open.
 
 The frozen reference-host composition checklist item is complete: the
 implementation, independent tests, composed adversarial review, exact feature

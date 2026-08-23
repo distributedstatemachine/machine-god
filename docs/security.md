@@ -148,8 +148,10 @@ operations, follows no symlink, reads no content, includes hidden entries, and
 fails without partial output if any fixed scan cap fires. The same complete
 bounded traversal produces either a globally bytewise-smallest sorted match
 prefix or an exact count. Production, independent tests, documentation,
-composition, and local gates are green at exact precursor
-`60070d899b7ac298960f6d01826d3876cf8b5835`; three same-SHA adversarial tracks
+composition, and initial local gates were green at `60070d8`; the first formal
+review at `1f5de6a` found a high unmetered matcher-work defect. Its checked work-
+budget fix, both-mode regression, and replacement local gates are green at
+`4171a4a8811a98888b7e4e161281a1216564746f`; three same-SHA replacement tracks
 and remote delivery remain pending. Its security contract is in
 [`glob-files.md`](glob-files.md).
 
@@ -742,7 +744,9 @@ snapshot.
 
 Both modes complete or fail without partial output under 100,000 visited non-
 dot entries, 16 MiB aggregate raw entry-name bytes, directory traversal depth
-256, and 4,096-byte full workspace-relative candidate paths. A directory at
+256, 8,388,608 aggregate matcher-work steps, and 4,096-byte full workspace-
+relative candidate paths. Matcher steps meter slashful path splitting,
+pattern/DP-state visits, and inner component-byte matching. A directory at
 depth 256 is scanned and its candidate children are eligible; a child-directory
 open at depth 257 is `scan_limit`. Matches mode emits the longest globally
 bytewise-sorted prefix under 100 paths and 16 KiB aggregate raw path bytes,

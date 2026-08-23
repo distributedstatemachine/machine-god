@@ -1,11 +1,13 @@
 # Native `glob_files` tool
 
 Status: composed candidate for the eighteenth bounded Milestone 03 slice.
-The exact base is `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production,
-independent tests, and documentation are composed and local gates are green at
-`60070d899b7ac298960f6d01826d3876cf8b5835`. Formal review, seal, and delivery
-remain pending. Milestone 03 remains `IN PROGRESS`, and its combined native-tool
-checklist remains unchecked.
+The exact base is `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first formal
+review at `1f5de6a` found a high unmetered matcher-work defect. The checked
+matcher budget, independent both-mode regression, and all replacement local
+gates are green at exact code-and-test head
+`4171a4a8811a98888b7e4e161281a1216564746f`; replacement review, seal, and
+delivery remain pending. Milestone 03 remains `IN PROGRESS`, and its combined
+native-tool checklist remains unchecked.
 
 `glob_files` is a Linux/macOS library capability in `machine-god-native`. The
 current CLI does not construct an engine, register or invoke this tool, prompt
@@ -63,6 +65,7 @@ The candidate exports `GlobFilesTool`, `GlobFilesToolOpenError`,
 | `MAX_GLOB_FILES_VISITED_ENTRIES` | `100,000` |
 | `MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES` | `16,777,216` |
 | `MAX_GLOB_FILES_DEPTH` | `256` |
+| `MAX_GLOB_FILES_MATCH_STEPS` | `8,388,608` |
 
 `GlobFilesTool::open` returns this complete fixed construction taxonomy:
 
@@ -216,13 +219,25 @@ Both modes traverse the complete bounded selected subtree. Across the entire
 call, the tool permits at most:
 
 - 100,000 visited non-dot entries of every type;
-- 16 MiB of aggregate raw UTF-8 entry-name bytes; and
-- directory traversal depth 256 under the exact boundary above.
+- 16 MiB of aggregate raw UTF-8 entry-name bytes;
+- directory traversal depth 256 under the exact boundary above; and
+- 8,388,608 aggregate bytewise matcher-work steps.
+
+Matcher work is charged deterministically across the whole call. One step is
+charged for each candidate byte inspected while splitting a slashful candidate,
+each pattern-segment loop visit (including a consecutive `**` that is skipped),
+each dynamic-programming cell written (including column zero), and each main
+loop transition or trailing-star consumption in an invoked component matcher.
+Slash-free matching uses only the component-matcher charges. Pattern splitting
+and the non-`**` segment count are computed once outside candidate matching and
+do not consume the per-call counter. Checked counter overflow is exhaustion.
+Exactly 8,388,608 steps are permitted; the next charged step fails closed.
 
 Every non-`.`/`..` entry counts against the visit and name-byte budgets,
 including hidden entries, directories, nonmatching candidates, symlinks, and
-ignored special objects. Attempting to exceed any scan budget, or the candidate
-path bound, is `glob_files_scan_limit` in both `matches` and `count` mode. A
+ignored special objects. Attempting to exceed any scan budget, the matcher-work
+budget, or the candidate path bound is `glob_files_scan_limit` in both
+`matches` and `count` mode. A
 scan-limit failure returns no partial result. Pattern and mode do not permit a
 caller to bypass work required to establish a complete bounded result.
 

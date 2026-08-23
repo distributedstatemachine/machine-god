@@ -47,9 +47,11 @@ The eighteenth [`glob_files` candidate](glob-files.md) is also library-only.
 It adds no `glob_files`, workspace, or slash command and changes none of the
 accepted invocations, output bytes, diagnostics, or exit statuses below. Its
 bounded path/count result is not exposed as CLI output. Production, independent
-tests, documentation, composition, and local gates are green at exact precursor
-`60070d8`; three formal review tracks and exact remote delivery remain pending.
-The candidate makes no compatibility or performance claim.
+tests, documentation, and composition are present. The first review at
+`1f5de6a` found a matcher-work bound defect; its fix, regression, and replacement
+local gates are green at `4171a4a`. Three same-SHA replacement review tracks and
+exact remote delivery remain pending. The candidate makes no compatibility or
+performance claim.
 
 ## Accepted invocations
 

@@ -51,9 +51,11 @@ The remaining
 native tools, CLI ownership, and composed end-to-end evidence also stay open.
 The eighteenth candidate starts from exact base
 `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production, independent tests,
-documentation, composition, and local gates are green at exact precursor
-`60070d899b7ac298960f6d01826d3876cf8b5835`. Formal reviews and remote exact-SHA
-delivery remain pending.
+documentation, composition, and initial local gates were green at `60070d8`.
+The first formal review at `1f5de6a` found a high matcher-work bound defect; its
+fix, independent regression, and replacement local gates are green at exact
+`4171a4a8811a98888b7e4e161281a1216564746f`. Three replacement reviews and
+remote exact-SHA delivery remain pending.
 
 This slice adds an explicit Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
