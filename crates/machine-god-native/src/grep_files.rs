@@ -540,6 +540,38 @@ fn search_root_type_is_stable(initial: EntryKind, opened: EntryKind) -> bool {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn classify_file_type(file_type: FileType) -> EntryKind {
+    if file_type.is_dir() {
+        EntryKind::Directory
+    } else if file_type.is_file() {
+        EntryKind::RegularFile
+    } else {
+        EntryKind::Other
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn classify_opened_candidate(initial: EntryKind, opened: EntryKind) -> Result<(), ToolError> {
+    if initial == EntryKind::RegularFile && opened == EntryKind::RegularFile {
+        Ok(())
+    } else {
+        Err(rejected_path())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn classify_post_observation_result<T>(
+    result: Result<T, rustix::io::Errno>,
+    map_error: impl FnOnce(rustix::io::Errno) -> ToolError,
+) -> Result<Option<T>, ToolError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error == rustix::io::Errno::NOENT => Ok(None),
+        Err(error) => Err(map_error(error)),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct DirectoryEntry {
     name: String,
     sort_key: Vec<u8>,
@@ -958,14 +990,8 @@ impl GrepFilesTool {
             check_cancellation(cancellation)?;
             let selected_metadata = rustix::fs::fstat(&selected).map_err(|_| unavailable())?;
             check_cancellation(cancellation)?;
-            let file_type = FileType::from_raw_mode(selected_metadata.st_mode);
-            let opened_type = if file_type.is_dir() {
-                EntryKind::Directory
-            } else if file_type.is_file() {
-                EntryKind::RegularFile
-            } else {
-                EntryKind::Other
-            };
+            let opened_type =
+                classify_file_type(FileType::from_raw_mode(selected_metadata.st_mode));
             if !search_root_type_is_stable(expected_type, opened_type) {
                 return Err(rejected_path());
             }
@@ -1053,15 +1079,17 @@ fn scan_directory_tree(
                     return Err(scan_limit());
                 }
                 check_cancellation(cancellation)?;
-                let child = match rustix::fs::openat(
-                    frame.directory.as_fd(),
-                    entry.name.as_str(),
-                    directory_open_flags(),
-                    Mode::empty(),
-                ) {
-                    Ok(child) => child,
-                    Err(error) if error == rustix::io::Errno::NOENT => continue,
-                    Err(error) => return Err(map_descendant_open_error(error)),
+                let child = classify_post_observation_result(
+                    rustix::fs::openat(
+                        frame.directory.as_fd(),
+                        entry.name.as_str(),
+                        directory_open_flags(),
+                        Mode::empty(),
+                    ),
+                    map_descendant_open_error,
+                )?;
+                let Some(child) = child else {
+                    continue;
                 };
                 check_cancellation(cancellation)?;
                 stack.push(make_directory_frame(
@@ -1086,15 +1114,17 @@ fn scan_directory_tree(
                 let workspace_path = join_workspace_path(&arguments.path, &relative_path)?;
                 outcome.budget.observe_candidate()?;
                 check_cancellation(cancellation)?;
-                let file = match rustix::fs::openat(
-                    frame.directory.as_fd(),
-                    entry.name.as_str(),
-                    content_open_flags(),
-                    Mode::empty(),
-                ) {
-                    Ok(file) => file,
-                    Err(error) if error == rustix::io::Errno::NOENT => continue,
-                    Err(error) => return Err(map_content_open_error(error)),
+                let file = classify_post_observation_result(
+                    rustix::fs::openat(
+                        frame.directory.as_fd(),
+                        entry.name.as_str(),
+                        content_open_flags(),
+                        Mode::empty(),
+                    ),
+                    map_content_open_error,
+                )?;
+                let Some(file) = file else {
+                    continue;
                 };
                 check_cancellation(cancellation)?;
                 scan_open_file(
@@ -1157,20 +1187,15 @@ fn read_directory_entries(
             return Err(invalid_entry_name());
         }
         check_cancellation(cancellation)?;
-        let metadata = match rustix::fs::statat(directory, name, AtFlags::SYMLINK_NOFOLLOW) {
-            Ok(metadata) => metadata,
-            Err(error) if error == rustix::io::Errno::NOENT => continue,
-            Err(error) => return Err(map_scan_metadata_error(error)),
+        let metadata = classify_post_observation_result(
+            rustix::fs::statat(directory, name, AtFlags::SYMLINK_NOFOLLOW),
+            map_scan_metadata_error,
+        )?;
+        let Some(metadata) = metadata else {
+            continue;
         };
         check_cancellation(cancellation)?;
-        let file_type = FileType::from_raw_mode(metadata.st_mode);
-        let kind = if file_type.is_dir() {
-            EntryKind::Directory
-        } else if file_type.is_file() {
-            EntryKind::RegularFile
-        } else {
-            EntryKind::Other
-        };
+        let kind = classify_file_type(FileType::from_raw_mode(metadata.st_mode));
         let mut sort_key = name_bytes.to_vec();
         if kind == EntryKind::Directory {
             sort_key.push(b'/');
@@ -1199,9 +1224,10 @@ fn scan_open_file(
     check_cancellation(cancellation)?;
     let metadata = rustix::fs::fstat(file).map_err(|_| read_failed())?;
     check_cancellation(cancellation)?;
-    if !FileType::from_raw_mode(metadata.st_mode).is_file() {
-        return Err(rejected_path());
-    }
+    classify_opened_candidate(
+        EntryKind::RegularFile,
+        classify_file_type(FileType::from_raw_mode(metadata.st_mode)),
+    )?;
     let size = u64::try_from(metadata.st_size).map_err(|_| read_failed())?;
     if size > MAX_GREP_FILES_FILE_BYTES as u64 {
         outcome.stats.skipped_oversized_files = outcome
@@ -1213,14 +1239,9 @@ fn scan_open_file(
     }
 
     let bytes = read_bounded_content(file, &mut outcome.budget, cancellation)?;
-    if bytes.len() > MAX_GREP_FILES_FILE_BYTES {
-        outcome.stats.skipped_oversized_files = outcome
-            .stats
-            .skipped_oversized_files
-            .checked_add(1)
-            .ok_or_else(scan_limit)?;
+    let Some(bytes) = classify_observed_content_size(bytes, &mut outcome.stats)? else {
         return Ok(());
-    }
+    };
     if bytes.contains(&0) {
         outcome.stats.skipped_non_text_files = outcome
             .stats
@@ -1255,15 +1276,43 @@ fn scan_open_file(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn classify_observed_content_size(
+    bytes: Vec<u8>,
+    stats: &mut ScanStats,
+) -> Result<Option<Vec<u8>>, ToolError> {
+    if bytes.len() <= MAX_GREP_FILES_FILE_BYTES {
+        return Ok(Some(bytes));
+    }
+    stats.skipped_oversized_files = stats
+        .skipped_oversized_files
+        .checked_add(1)
+        .ok_or_else(scan_limit)?;
+    Ok(None)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_bounded_content(
     file: &OwnedFd,
     budget: &mut ScanBudget,
     cancellation: &CancellationToken,
 ) -> Result<Vec<u8>, ToolError> {
+    read_bounded_content_with(
+        budget,
+        |buffer| rustix::io::read(file, buffer),
+        || check_cancellation(cancellation),
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_bounded_content_with(
+    budget: &mut ScanBudget,
+    mut read: impl FnMut(&mut [u8]) -> Result<usize, rustix::io::Errno>,
+    mut check: impl FnMut() -> Result<(), ToolError>,
+) -> Result<Vec<u8>, ToolError> {
     let mut bytes = vec![0_u8; MAX_GREP_FILES_FILE_BYTES + 1];
     let mut length = 0_usize;
     loop {
-        check_cancellation(cancellation)?;
+        check()?;
         if length == bytes.len() {
             break;
         }
@@ -1274,12 +1323,15 @@ fn read_bounded_content(
         if requested == 0 {
             return Err(scan_limit());
         }
-        match rustix::io::read(file, &mut bytes[length..length + requested]) {
+        match read(&mut bytes[length..length + requested]) {
             Ok(0) => break,
             Ok(read) => {
+                if read > requested {
+                    return Err(read_failed());
+                }
                 budget.observe_content_bytes(read)?;
                 length = length.checked_add(read).ok_or_else(scan_limit)?;
-                check_cancellation(cancellation)?;
+                check()?;
             }
             Err(error) if error == rustix::io::Errno::INTR => {}
             Err(_) => return Err(read_failed()),
@@ -2276,12 +2328,15 @@ fn scan_limit() -> ToolError {
 mod tests {
     use super::{
         CancellationToken, ContextRecord, EntryKind, ExecutionArguments, GrepMode, IncludeMatcher,
-        LiteralMatcher, MAX_GREP_FILES_CONTENT_MATCH_STEPS, MAX_GREP_FILES_INCLUDE_MATCH_STEPS,
-        MAX_GREP_FILES_OFFSET, MAX_GREP_FILES_SERIALIZED_RESULT_BYTES,
-        MAX_GREP_FILES_TOTAL_CONTENT_BYTES, MatchRecord, RetainedResults, ScanBudget, ScanOutcome,
-        ScanStats, checked_descendant_path_length, excerpt_containing_match,
-        grep_files_input_schema, line_ranges_with_check, normalize_include_pattern,
-        normalize_literal_pattern, normalize_relative_path, pagination_fields, path_matches,
+        LiteralMatcher, MAX_GREP_FILES_CONTENT_MATCH_STEPS, MAX_GREP_FILES_FILE_BYTES,
+        MAX_GREP_FILES_INCLUDE_MATCH_STEPS, MAX_GREP_FILES_OFFSET,
+        MAX_GREP_FILES_SERIALIZED_RESULT_BYTES, MAX_GREP_FILES_TOTAL_CONTENT_BYTES, MatchRecord,
+        RetainedResults, ScanBudget, ScanOutcome, ScanStats, checked_descendant_path_length,
+        classify_observed_content_size, classify_opened_candidate,
+        classify_post_observation_result, excerpt_containing_match, grep_files_input_schema,
+        line_ranges_with_check, map_content_open_error, map_descendant_open_error,
+        map_scan_metadata_error, normalize_include_pattern, normalize_literal_pattern,
+        normalize_relative_path, pagination_fields, path_matches, read_bounded_content_with,
         render_output_with_check, search_root_type_is_stable, segment_matches,
     };
     use serde_json::json;
@@ -2407,6 +2462,104 @@ mod tests {
             EntryKind::RegularFile,
             EntryKind::Other
         ));
+    }
+
+    #[test]
+    fn post_observation_noent_is_omitted_and_other_failures_remain_mapped() {
+        let present = classify_post_observation_result::<u8>(Ok(7), |_| {
+            panic!("successful observation must not invoke its error mapper")
+        })
+        .unwrap();
+        assert_eq!(present, Some(7));
+
+        let omitted = classify_post_observation_result::<u8>(Err(rustix::io::Errno::NOENT), |_| {
+            panic!("NOENT omission must not invoke its error mapper")
+        })
+        .unwrap();
+        assert_eq!(omitted, None);
+
+        let mappers: [fn(rustix::io::Errno) -> machine_god_core::ToolError; 3] = [
+            map_scan_metadata_error,
+            map_descendant_open_error,
+            map_content_open_error,
+        ];
+        for mapper in mappers {
+            let omitted =
+                classify_post_observation_result::<()>(Err(rustix::io::Errno::NOENT), mapper)
+                    .unwrap();
+            assert_eq!(omitted, None);
+
+            let error =
+                classify_post_observation_result::<()>(Err(rustix::io::Errno::ACCESS), mapper)
+                    .unwrap_err();
+            assert_eq!(error.code, "grep_files_permission_denied");
+        }
+    }
+
+    #[test]
+    fn bounded_reader_observes_growth_witness_and_aggregate_overflow() {
+        let mut delivered = 0_usize;
+        let mut checks = 0_usize;
+        let mut budget = ScanBudget::default();
+        let bytes = read_bounded_content_with(
+            &mut budget,
+            |buffer| {
+                let remaining = (MAX_GREP_FILES_FILE_BYTES + 1) - delivered;
+                let read = buffer.len().min(remaining);
+                buffer[..read].fill(b'x');
+                delivered += read;
+                Ok(read)
+            },
+            || {
+                checks += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(delivered, MAX_GREP_FILES_FILE_BYTES + 1);
+        assert_eq!(bytes.len(), MAX_GREP_FILES_FILE_BYTES + 1);
+        assert_eq!(budget.total_content_bytes, MAX_GREP_FILES_FILE_BYTES + 1);
+        assert_eq!(checks, 3);
+
+        let mut stats = ScanStats::default();
+        assert!(
+            classify_observed_content_size(bytes, &mut stats)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(stats.skipped_oversized_files, 1);
+
+        let mut aggregate_budget = ScanBudget {
+            total_content_bytes: MAX_GREP_FILES_TOTAL_CONTENT_BYTES,
+            ..ScanBudget::default()
+        };
+        let mut aggregate_witnesses = 0_usize;
+        let error = read_bounded_content_with(
+            &mut aggregate_budget,
+            |buffer| {
+                assert_eq!(buffer.len(), 1);
+                buffer[0] = b'x';
+                aggregate_witnesses += 1;
+                Ok(1)
+            },
+            || Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(aggregate_witnesses, 1);
+        assert_eq!(
+            aggregate_budget.total_content_bytes,
+            MAX_GREP_FILES_TOTAL_CONTENT_BYTES + 1
+        );
+        assert_eq!(error.code, "grep_files_scan_limit");
+    }
+
+    #[test]
+    fn descendant_candidate_open_race_rejects_nonregular_result() {
+        classify_opened_candidate(EntryKind::RegularFile, EntryKind::RegularFile).unwrap();
+        for opened in [EntryKind::Directory, EntryKind::Other] {
+            let error = classify_opened_candidate(EntryKind::RegularFile, opened).unwrap_err();
+            assert_eq!(error.code, "grep_files_path_rejected");
+        }
     }
 
     #[test]
