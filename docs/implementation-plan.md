@@ -735,7 +735,10 @@ owners and are composed on `agent/m03-write-file`. Exact production component
 composes as `c4c5ce6`; exact documentation component `9285fe9` composes as
 `de46c3e`. Retained-root fixture correction `8509933`, deterministic seam
 hardening component `1d30ff9` composed as `a9a7c99`, and core same-poll recovery
-regression `8b5847f` close the preformal evidence gaps found so far. Evidence
+regression `8b5847f` close the first preformal evidence gaps. Full-pipeline
+fault and phase evidence `c7fdef2` covers both mode stages, write, staged sync,
+create/replace rename, staged-name tampering, traversal and final-prepublish
+cancellation, real-rename parent-sync ambiguity, and device rejection. Evidence
 must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
 visibility, exact modes under hostile umask, missing parents, symlink and
@@ -891,8 +894,9 @@ gate:
   `bc042536`. Production `e9b3ad8`, independent tests `59a06a3`, and maintained
   documentation `9285fe9` compose through `c0d555b`, `c4c5ce6`, and `de46c3e`;
   fixture correction `8509933`, deterministic seam hardening `a9a7c99`, and
-  core same-poll recovery regression `8b5847f` are present. Final exact local
-  gates and three fresh same-SHA adversarial tracks remain pending. The
+  core same-poll recovery regression `8b5847f` are present; full-pipeline fault
+  and phase evidence is `c7fdef2`. Final exact local gates and three fresh
+  same-SHA adversarial tracks remain pending. The
   remaining native tools are
   incomplete, so this pending slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

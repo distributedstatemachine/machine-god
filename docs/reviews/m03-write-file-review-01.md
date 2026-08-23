@@ -71,9 +71,9 @@ following candidate evidence; formal same-SHA review remains pending:
 - [x] Deterministic target appearance/replacement, parent identity change/move,
   staged-name replacement, eight collisions, collision preservation, cleanup
   swap protection, and residue handling.
-- [ ] Injected write/chmod/file-sync/rename/directory-sync failures establish
+- [x] Injected write/chmod/file-sync/rename/directory-sync failures establish
   unchanged-target precommit behavior and post-rename commit ambiguity.
-- [ ] Cancellation at every stated boundary, inert-until-poll/drop behavior,
+- [x] Cancellation at every stated boundary, inert-until-poll/drop behavior,
   engine same-poll post-effect recovery, and absence of detached work.
 - [x] Exact six-tool alphabetical host catalog, original-plus-five-clone
   workspace identity, Linux/macOS behavior, FreeBSD/WASI compilation, and an
@@ -109,6 +109,8 @@ still required.
   composed as `a9a7c99`
 - Core same-poll recovery regression:
   `8b5847f355e685a145557e98b1719cf1e154ae83`
+- Full-pipeline fault and phase evidence:
+  `c7fdef2d65a3f498673dde470a09bbda4a547b59`
 - First exact behavior candidate: **PENDING**
 - Three formal adversarial reviews: **PENDING**
 - Behavior-green SHA: **PENDING**
@@ -123,6 +125,36 @@ cannot be used to infer an identifier or green status.
 The two contract workflows validate the documentation kickoff only. They do
 not satisfy any production, independent-test, composed behavior, adversarial,
 feature-delivery, or `main` gate.
+
+## Preformal evidence audit
+
+Two read-only preformal audits inspected exact composed SHA
+`85099337520a4215ee3d2a24b638dfbd8c8ca187`. They found no production
+confinement, atomicity, durability-classification, bound, or liveness defect,
+but both correctly reported that mapper-only and indirect tests did not prove
+several fault, race, cancellation, and unsupported-target branches through the
+real pipeline. These audits are not formal adversarial tracks and do not count
+toward the required same-SHA green cycle.
+
+The confirmed evidence gaps are closed before the first formal candidate:
+
+- `a9a7c99` proves exact collision counts, same-mode inode replacement, final-
+  parent identity changes, bounded partial/interrupted writes, cancellation
+  between partial writes, and file/directory-sync retry and error semantics
+  through production-used helpers;
+- `8b5847f` drives the real tool through the engine's same-poll post-effect
+  cancellation path and proves live committed bytes plus the exact durable
+  `tool_result_unknown` placeholder;
+- `c7fdef2` drives both `fchmod` stages, write, staged-file sync, create and
+  replace rename, staged-name tampering, traversal cancellation, final
+  prepublish cancellation, and post-rename parent-sync failure through the
+  production pipeline, and also classifies `/dev/null` as a rejected device
+  target; and
+- `a717e22` corrects the maintained contract, plan, and review lineage from the
+  contract-only five-tool/pending state to the composed six-tool candidate.
+
+Final exact local gates and the three formal same-SHA review tracks remain
+pending; no preformal result is promoted into delivery evidence.
 
 ## Explicit nonclaims
 

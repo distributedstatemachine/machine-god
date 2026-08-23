@@ -322,10 +322,10 @@ items are still candidate evidence until the formal exact-SHA gates complete:
 - [x] Eight temporary-name collisions exhaust exactly; foreign collisions are
   preserved; staged-name replacement and cleanup-name swaps never intentionally
   remove a mismatched sentinel; possible residue is accounted for.
-- [ ] Injected write, chmod, staged-file sync, rename, and parent-directory sync
+- [x] Injected write, chmod, staged-file sync, rename, and parent-directory sync
   failures prove precommit unchanged-target behavior and post-rename commit
   ambiguity.
-- [ ] Cancellation is exercised at traversal, temporary-attempt, write,
+- [x] Cancellation is exercised at traversal, temporary-attempt, write,
   verification, and final-precommit boundaries; unpolled/drop behavior and the
   core same-poll durable unknown-result path are covered.
 - [x] Engine deny/allow events and durable results, exact six-tool alphabetical
