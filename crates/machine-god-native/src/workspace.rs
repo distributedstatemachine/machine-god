@@ -5,18 +5,19 @@ use rustix::fs::{FileType, Mode, OFlags};
 
 #[cfg(feature = "ai-gateway-http")]
 use crate::{
-    EditFileTool, FileInfoTool, GlobFilesTool, GrepFilesTool, ListFilesTool, ReadFileTool,
-    WriteFileTool,
+    DeleteFileTool, EditFileTool, FileInfoTool, GlobFilesTool, GrepFilesTool, ListFilesTool,
+    ReadFileTool, WriteFileTool,
 };
 
 #[cfg(feature = "ai-gateway-http")]
 pub(crate) struct WorkspaceTools {
+    pub(crate) delete_file: DeleteFileTool,
     pub(crate) edit_file: EditFileTool,
-    pub(crate) list_files: ListFilesTool,
-    pub(crate) read_file: ReadFileTool,
     pub(crate) file_info: FileInfoTool,
     pub(crate) glob_files: GlobFilesTool,
     pub(crate) grep_files: GrepFilesTool,
+    pub(crate) list_files: ListFilesTool,
+    pub(crate) read_file: ReadFileTool,
     pub(crate) write_file: WriteFileTool,
 }
 
@@ -54,38 +55,35 @@ impl WorkspaceRoot {
 
     #[cfg(feature = "ai-gateway-http")]
     pub(crate) fn into_tools(self) -> Result<WorkspaceTools, WorkspaceRootError> {
-        let edit_file_root = self
-            .descriptor
-            .try_clone()
-            .map_err(|_| WorkspaceRootError)?;
-        let list_files_root = self
-            .descriptor
-            .try_clone()
-            .map_err(|_| WorkspaceRootError)?;
-        let read_file_root = self
-            .descriptor
-            .try_clone()
-            .map_err(|_| WorkspaceRootError)?;
-        let file_info_root = self
-            .descriptor
-            .try_clone()
-            .map_err(|_| WorkspaceRootError)?;
-        let grep_files_root = self
-            .descriptor
-            .try_clone()
-            .map_err(|_| WorkspaceRootError)?;
-        let write_file_root = self
-            .descriptor
-            .try_clone()
-            .map_err(|_| WorkspaceRootError)?;
+        self.into_tools_with_clone(|descriptor| {
+            descriptor.try_clone().map_err(|_| WorkspaceRootError)
+        })
+    }
+
+    #[cfg(feature = "ai-gateway-http")]
+    pub(crate) fn into_tools_with_clone<CloneDescriptor>(
+        self,
+        mut clone_descriptor: CloneDescriptor,
+    ) -> Result<WorkspaceTools, WorkspaceRootError>
+    where
+        CloneDescriptor: FnMut(&OwnedFd) -> Result<OwnedFd, WorkspaceRootError>,
+    {
+        let delete_file_root = clone_descriptor(&self.descriptor)?;
+        let edit_file_root = clone_descriptor(&self.descriptor)?;
+        let file_info_root = clone_descriptor(&self.descriptor)?;
+        let grep_files_root = clone_descriptor(&self.descriptor)?;
+        let list_files_root = clone_descriptor(&self.descriptor)?;
+        let read_file_root = clone_descriptor(&self.descriptor)?;
+        let write_file_root = clone_descriptor(&self.descriptor)?;
         Ok(WorkspaceTools {
+            delete_file: DeleteFileTool::from_root_descriptor(delete_file_root),
             edit_file: EditFileTool::from_root_descriptor(edit_file_root),
+            file_info: FileInfoTool::from_root_descriptor(file_info_root),
+            glob_files: GlobFilesTool::from_root_descriptor(self.descriptor),
+            grep_files: GrepFilesTool::from_root_descriptor(grep_files_root),
             list_files: ListFilesTool::from_root_descriptor(list_files_root),
             read_file: ReadFileTool::from_root_descriptor(read_file_root),
-            file_info: FileInfoTool::from_root_descriptor(file_info_root),
-            grep_files: GrepFilesTool::from_root_descriptor(grep_files_root),
             write_file: WriteFileTool::from_root_descriptor(write_file_root),
-            glob_files: GlobFilesTool::from_root_descriptor(self.descriptor),
         })
     }
 

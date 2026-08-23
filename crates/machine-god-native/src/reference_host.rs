@@ -303,6 +303,7 @@ impl NativeReferenceHost {
             .provider(provider)
             .shared_session_store(engine_session_store)
             .permission_handler(permission_handler)
+            .tool(workspace_tools.delete_file)
             .tool(workspace_tools.edit_file)
             .tool(workspace_tools.file_info)
             .tool(workspace_tools.glob_files)

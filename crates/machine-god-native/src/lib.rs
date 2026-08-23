@@ -13,6 +13,7 @@ mod ai_gateway_credential;
 mod ai_gateway_http;
 mod ask_permission;
 mod config;
+mod delete_file;
 mod edit_file;
 mod file_info;
 mod glob_files;
@@ -67,6 +68,11 @@ pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigOrigin, LoadedNativeConfig, MAX_CONFIG_BYTES, NativeConfig,
     NativeConfigError, NativeConfigErrorKind, NativeCredentialSourceKind, NativeProviderKind,
     NativeTransportKind, load_native_config, load_process_config,
+};
+pub use delete_file::{
+    DELETE_FILE_TOOL_NAME, DeleteFileTool, DeleteFileToolOpenError, DeleteFileToolOpenErrorKind,
+    MAX_DELETE_FILE_PATH_BYTES, MAX_DELETE_FILE_PATH_COMPONENTS,
+    MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES, MAX_DELETE_FILE_SERIALIZED_RESULT_BYTES,
 };
 pub use edit_file::{
     EDIT_FILE_TOOL_NAME, EditFileTool, EditFileToolOpenError, EditFileToolOpenErrorKind,
