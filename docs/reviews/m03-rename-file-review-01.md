@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **CYCLE 1 REMEDIATED; CYCLE 2 REVIEW PENDING**
+Status: **CYCLE 2 GREEN; FEATURE DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -29,9 +29,13 @@ Status: **CYCLE 1 REMEDIATED; CYCLE 2 REVIEW PENDING**
 - Exact cycle-1 remediation:
   `a3491cf8d5e6c388c896374e768794d06bf7be0b` (tree
   `0b195bdf29e7873a4d77169ec4d031491b1b336a`).
+- Exact tree-identical cycle-2 candidate:
+  `4f224a5447a61a76a3cdea5ced035c164240c02c` (tree
+  `cb75dca76eeec80dc526946c9d39d6e3da882c68`).
 - All three cycle-1 tracks remain historically **NOT GREEN**. The remediation
-  and its complete replacement local gate are green; cycle-2 review and
-  delivery have not completed.
+  and its complete replacement local gate are green. All three fresh cycle-2
+  tracks are **GREEN** with zero findings; feature and main delivery have not
+  completed.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are
@@ -140,8 +144,8 @@ Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
 from five to 15 tests to cover the requested terminal-race, syscall,
 postcommit, durability, cancellation, and moved-parent matrix. The contract
 clarifies the final directory-replacement race. The complete replacement local
-gate below is green. A tree-identical cycle-2 behavior candidate and three
-fresh reviews remain required.
+gate below is green. The tree-identical cycle-2 behavior candidate and three
+fresh green reviews are recorded below.
 
 ## Cycle 1 remediation local gate
 
@@ -172,8 +176,26 @@ clean, adds no unsafe Rust, Cargo metadata, dependency, or CLI source change.
 A fresh locked 319,152-byte arm64 Mach-O release CLI has SHA-256
 `687b6f8068ea34709c0f6d0ec536febf7d5be62c9ff8fa7b940dc48ba74f6415` and
 passes exact bare, help, human-status, and JSON-status smoke paths. These
-results qualify the replacement local gate only, not cycle-2 review, remote
-delivery, fx equivalence, or product performance.
+results qualify the replacement local gate only, not remote delivery, fx
+equivalence, or product performance.
+
+## Formal review cycle 2
+
+Exact tree-identical candidate
+`4f224a5447a61a76a3cdea5ced035c164240c02c`, tree
+`cb75dca76eeec80dc526946c9d39d6e3da882c68`, is **GREEN** with zero findings
+in all three fresh tracks. Correctness/API reran 16 direct, five engine, 15
+private, one core-contract, and seven all-feature reference-host tests.
+Filesystem/robustness reran the 15 private, 16 direct, and five engine tests.
+Performance/concurrency reran the same 15/16/5 focused suites and
+`git diff --check`. Every reviewer independently verified the exact SHA and
+tree and left the worktree clean and unchanged.
+
+This closes adversarial review for the feature behavior. The documentation-
+only review seal is exempt from another adversarial cycle under the user's
+explicit instruction. Exact feature CI and benchmark workflows, both exact-SHA
+benchmark artifacts, fast-forward main integration, and exact main workflows
+remain required.
 
 ## Formal review protocol
 

@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **CYCLE 1 REMEDIATED; CYCLE 2 REVIEW PENDING**
+Status: **CYCLE 2 GREEN; FEATURE DELIVERY PENDING**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -23,9 +23,11 @@ cycle 1 is **NOT GREEN** in all three tracks on exact candidate
 `44558a0e88019ad9063234642c08097b4123c5f2`. Exact remediation
 `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
 `0b195bdf29e7873a4d77169ec4d031491b1b336a`, passes the complete replacement
-local gate. A tree-identical cycle-2 candidate, three fresh reviews, feature
-delivery, fast-forward main integration, and exact main workflows remain
-pending.
+local gate. Tree-identical cycle-2 candidate
+`4f224a5447a61a76a3cdea5ced035c164240c02c`, tree
+`cb75dca76eeec80dc526946c9d39d6e3da882c68`, is green with zero findings in
+all three fresh tracks. Feature delivery, fast-forward main integration, and
+exact main workflows remain pending.
 
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
@@ -247,6 +249,7 @@ matrix, and the final directory-replacement wording required clarification.
 Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
 `0b195bdf29e7873a4d77169ec4d031491b1b336a`, expands the private suite to 15
 tests, clarifies the directory race, and passes the complete replacement local
-gate recorded in the review. A tree-identical cycle-2 candidate, three fresh
-same-SHA adversarial reviews, exact feature workflows, fast-forward
-integration, and exact main workflows are still required before delivery.
+gate recorded in the review. Tree-identical cycle-2 candidate `4f224a5`, tree
+`cb75dca`, is green with zero findings in all three fresh same-SHA tracks.
+Exact feature workflows, fast-forward integration, and exact main workflows
+are still required before delivery.
