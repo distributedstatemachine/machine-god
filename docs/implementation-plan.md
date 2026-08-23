@@ -709,8 +709,8 @@ Allowed Linux/macOS execution operates only beneath the retained workspace
 descriptor and requires every parent to exist. It no-follow walks parents,
 records parent and target identity, rejects symlink and special targets, and
 never opens or reads existing target content. It stages into one exclusive,
-private `0600`, same-parent regular file chosen within eight high-entropy name
-attempts; writes and cancellation checks use at most 8 KiB chunks. The staged
+initially private `0600`, same-parent regular file chosen within eight high-
+entropy name attempts; writes and cancellation checks use at most 8 KiB chunks. The staged
 file receives exact `0644` ordinary rwx bits for creation or the initially
 observed replacement target's `st_mode & 0o777`, then is file-synced,
 identity-revalidated, and published atomically at the pathname. Missing-target
@@ -721,8 +721,11 @@ sync completes durability. Success is exactly normalized `path` plus
 
 The irreversible boundary is rename. Precommit failures leave the target name
 unchanged and use best-effort identity-checked temporary cleanup, with the
-portable metadata-check-to-unlink race and possible private residue explicitly
-disclosed. After rename, the tool completes parent sync and returns success or
+portable metadata-check-to-unlink race explicitly disclosed. Formal cycle 2
+found that exact candidate `708f2d0` can leave retained owned residue carrying
+its already-applied final mode rather than private `0600`, so the earlier
+private-residue statement is not a satisfied candidate claim. After rename,
+the tool completes parent sync and returns success or
 nonretryable commit ambiguity rather than its own cancellation error. Creation
 cannot clobber a raced target, but replacement is not inode compare-and-swap:
 the final validation-to-rename race and a final-parent move outside the
@@ -763,12 +766,25 @@ Exact replacement local gates are green at `581fe6a`: 655 workspace tests, two
 doctests, focused native/engine suites, warnings-denied workspace Clippy,
 Python/compatibility/dependency gates, cross-target and active WASI checks,
 documentation/diff/no-unsafe checks, and a fresh release CLI smoke. Three fresh
-same-SHA review tracks remain pending. The immediately following tree-identical
-marker is the replacement candidate; no behavior-green SHA is claimed.
+same-SHA review tracks then inspected exact candidate
+`708f2d08d72d610ca387a62a4cec1f656c188a7d`, which is tree-identical only to
+its immediate formal-review preparation parent
+`491496aa22aa8855717b74f6a026e8c602bb02e9`. Correctness/API is **GREEN** with
+zero findings. Filesystem/robustness is **NOT GREEN** with two medium findings:
+retained staged inode mode can remain more permissive than `0600`, and Linux
+entropy acquisition can retry partial reads or interruptions without a finite
+work/cancellation bound. Performance/concurrency is **NOT GREEN** with the same
+medium entropy finding. No behavior-green SHA is claimed.
 
-The replacement formal-review preparation commit is followed immediately by a
-tree-identical marker. That exact marker is supplied independently to all three
-fresh replacement tracks and will be retained by the documentation-only seal.
+The next remediation remains pending. It is intended to give production-used
+entropy acquisition one cumulative partial-progress/interruption bound with
+cancellation at retry and exhaustion boundaries, and to reset a retained held
+staged descriptor to `0600` before the existing identity-checked best-effort
+unlink. Mode restoration itself remains best-effort: if it fails and unlink
+also leaves the entry, residue can retain final mode bits. These descriptions
+are pending design requirements, not completed behavior. After production
+remediation and exact local gates compose into a new behavior candidate, all
+three fresh tracks must review that same SHA again.
 
 Evidence must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
@@ -934,9 +950,17 @@ gate:
   All three first-cycle tracks are **NOT GREEN**. Documentation correction
   `016f8df` and code/evidence remediation `3010e6d` close the unbounded `EINTR`,
   real-pipeline target/parent race, and verification-phase cancellation
-  findings. Replacement exact local gates are green at `581fe6a`; all three
-  fresh review tracks remain pending. The immediately following tree-identical
-  marker is the replacement candidate; no behavior-green SHA is claimed. Local
+  findings. Replacement exact local gates are green at `581fe6a`. Exact cycle-2
+  candidate `708f2d08d72d610ca387a62a4cec1f656c188a7d` is tree-identical only
+  to immediate formal-review preparation parent
+  `491496aa22aa8855717b74f6a026e8c602bb02e9`. Correctness/API is **GREEN** with
+  zero findings; filesystem/robustness is **NOT GREEN** with medium private-
+  residue-mode and unbounded-Linux-entropy findings; and performance/concurrency
+  is **NOT GREEN** with the same medium entropy finding. The production-used
+  bounded entropy path and best-effort held-descriptor `0600` reset, including
+  the restoration-failure caveat, remain pending. No behavior-green or
+  replacement claim is made; a new exact candidate must repeat all three fresh
+  tracks. Local
   evidence is native macOS, Linux and
   FreeBSD cross-compilation, and active WASI unsupported-target execution;
   exact feature CI native Linux/macOS remains pending. A later documentation-

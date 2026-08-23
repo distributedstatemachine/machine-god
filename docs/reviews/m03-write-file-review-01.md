@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FORMAL REPLACEMENT REVIEW CANDIDATE — fresh formal reviews, seal, and
-delivery are pending**
+Status: **FORMAL REPLACEMENT REVIEW NOT GREEN — production remediation, a new
+exact candidate, fresh formal reviews, seal, and delivery are pending**
 
 ## Base and prior delivery
 
@@ -31,8 +31,11 @@ The integration branch has composed all three without overwriting one another.
 Exact candidate `119938240807f8279f83e2ace65a69706e8fcfed` completed the first
 formal review cycle, and all three tracks reported **NOT GREEN**. Code and
 evidence remediation is composed through `3010e6d`, and replacement exact local
-gates are green at `581fe6a`. The immediately following tree-identical marker is
-the replacement candidate.
+gates are green at `581fe6a`. Formal-review preparation
+`491496aa22aa8855717b74f6a026e8c602bb02e9` is the immediate parent of the
+tree-identical exact cycle-2 candidate
+`708f2d08d72d610ca387a62a4cec1f656c188a7d`. Cycle 2 is also **NOT GREEN**;
+production remediation and another fresh same-SHA cycle are pending.
 
 ## Frozen boundary
 
@@ -75,17 +78,25 @@ following evidence after cycle-1 remediation:
   parent postvalidation races are proven through the real production pipeline.
   Native publication proves raced-create preservation, ordinary-rename raced
   replacement, and retained-parent publication after a move outside the root.
-  Staged-name replacement, eight collisions, collision preservation, cleanup
-  swap protection, and residue handling are also covered.
+  Staged-name replacement, eight collisions, collision preservation, and
+  cleanup swap protection are also covered.
+- [ ] Retained owned staging residue is returned to private `0600` mode before
+  best-effort identity-checked unlink, with the unavoidable mode-restoration-
+  failure caveat tested and documented. This production change remains pending.
 - [x] Injected write/chmod/file-sync/rename/directory-sync failures establish
   unchanged-target precommit behavior and post-rename commit ambiguity.
 - [x] Cancellation is proven through the real production pipeline during and
   after the verification phase. Traversal, final-prepublish, inert-until-poll/
   drop, engine same-poll post-effect recovery, and absence of detached work are
   covered.
-- [x] Every interrupt path has an exact 16-interruption phase bound. Cumulative
+- [x] Content-write and sync paths have an exact 16-interruption phase bound.
+  Cumulative
   interleaved write interruptions, both precommit sync and cancellation
   outcomes, and real-rename postcommit ambiguity are covered.
+- [ ] Temporary-name entropy acquisition has a production-used finite
+  cumulative partial-progress/interruption bound, cancellation checks at retry
+  and exhaustion boundaries, and deterministic no-staging/no-target-effect
+  evidence. The exact cycle-2 candidate remains unbounded on Linux.
 - [ ] Exact six-tool alphabetical host catalog, original-plus-five-clone
   workspace identity, and the complete platform matrix are green. The catalog
   and workspace identity pass locally; native behavior is locally exercised on
@@ -100,8 +111,8 @@ warnings-denied workspace Clippy, workspace and documentation tests, repository
 Python and compatibility checks, dependency policy/audit, Linux/macOS native
 tests, FreeBSD/WASI checks, a clean locked release smoke, and three fresh
 same-SHA adversarial tracks for correctness/API, filesystem/robustness, and
-performance/concurrency. Cycle 1 does not satisfy that gate. Every finding
-restarts all three tracks on a new exact behavior candidate. A later
+performance/concurrency. Neither cycle 1 nor cycle 2 satisfies that gate. Every
+finding restarts all three tracks on a new exact behavior candidate. A later
 documentation-only seal or delivery record is exempt from another adversarial
 cycle under the user's instruction, but exact feature and `main` workflows are
 still required.
@@ -145,11 +156,24 @@ still required.
   `3010e6d883b5f894083c6925b2b4412b8102b750`
 - Remediated local-gate precursor:
   `581fe6aa9a4190ba8cc303371e02af5aba68a5a1`
-- Replacement formal-review candidate: the tree-identical marker immediately
-  after the formal-review preparation commit; its exact SHA is supplied to all
-  three fresh tracks and will be retained by the documentation-only seal
+- Replacement formal-review preparation:
+  `491496aa22aa8855717b74f6a026e8c602bb02e9`
+- Exact cycle-2 replacement candidate:
+  `708f2d08d72d610ca387a62a4cec1f656c188a7d`
+- Cycle-2 candidate tree lineage:
+  `708f2d08d72d610ca387a62a4cec1f656c188a7d` is tree-identical only to its
+  immediate parent `491496aa22aa8855717b74f6a026e8c602bb02e9`. Remediated
+  local-gate precursor `581fe6aa9a4190ba8cc303371e02af5aba68a5a1` has a
+  different documentation tree and is not an exact-tree substitute.
+- Formal adversarial cycle 2: correctness/API **GREEN** with zero findings;
+  filesystem/robustness **NOT GREEN** with two medium findings;
+  performance/concurrency **NOT GREEN** with one medium finding
+- Cycle-2 findings documentation: this documentation-only commit; it is exempt
+  from adversarial review under the user's instruction
+- Cycle-2 production remediation: **PENDING**
+- Next exact behavior candidate: **PENDING**
 - Behavior-green SHA: **PENDING**
-- Replacement formal review result: **PENDING**
+- Next formal review result: **PENDING**
 - Documentation seal: **PENDING**
 - Feature CI and benchmark evidence: **PENDING**
 - Fast-forward `main` and exact workflows: **PENDING**
@@ -227,9 +251,39 @@ Native-publish pipeline tests now prove raced-create preservation, ordinary-
 rename replacement of a postvalidation racer, publication into a retained
 parent moved outside the configured workspace, and cancellation after staged
 and target verification with zero publish calls plus exact-name cleanup.
-Replacement local gates are green at `581fe6a`; the immediately following tree-
-identical marker is the replacement candidate. No green behavior SHA is claimed
-until all three fresh tracks approve that exact marker.
+Replacement local gates are green at `581fe6a`; later documentation prepares
+the replacement review at `491496a`, whose immediate tree-identical marker is
+exact candidate `708f2d0`. Cycle 2 did not approve that marker, so no green
+behavior SHA is claimed.
+
+## Formal adversarial cycle 2
+
+All three fresh tracks inspected exact candidate
+`708f2d08d72d610ca387a62a4cec1f656c188a7d`. Their exact results are:
+
+- Correctness/API: **GREEN**, zero findings.
+- Filesystem/robustness: **NOT GREEN**, with two medium findings. First, final
+  mode is applied before publication but cleanup does not restore the held
+  staged descriptor to `0600`; cancellation, rename failure, or staged-identity
+  disagreement can therefore retain an owned inode with `0644` or an observed
+  target mode as permissive as `0777`, contradicting the private-residue claim.
+  Second, Linux temporary-name entropy delegates to a backend that can retry
+  partial reads or `EINTR` without the feature's finite work and cancellation
+  bound.
+- Performance/concurrency: **NOT GREEN**, with the same medium Linux entropy
+  finding. Exact exhaustion, cumulative interruption accounting, cancellation
+  precedence on the final interruption, and proof of no target or staging
+  effect remain missing.
+
+No green or replacement claim follows from cycle 2. Intended production
+remediation is still pending: entropy acquisition will use a production-used
+cumulative partial-progress/interruption bound with cancellation checks, and
+cleanup will first attempt to restore the held staged descriptor to `0600`
+before the existing identity-checked best-effort unlink. The latter remains
+best-effort: if mode restoration itself fails and unlink does not remove the
+entry, residue can retain its final mode. These are planned corrections, not
+completed behavior. Once production fixes and exact local gates compose into a
+new candidate, three fresh agents must repeat all tracks on that same SHA.
 
 ## Local gate results
 
@@ -306,8 +360,9 @@ Exact composed remediation precursor
 
 These results close the replacement local gate. They do not make cycle 1 green,
 do not replace native Linux/macOS feature CI, and do not count as formal
-replacement review. The immediately following tree-identical marker freezes
-the replacement SHA supplied to all three fresh tracks.
+replacement review. Later preparation `491496a` and its immediate tree-identical
+marker freeze exact cycle-2 candidate `708f2d0`, which did not pass all three
+tracks as recorded above.
 
 ## Explicit nonclaims
 

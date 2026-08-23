@@ -1,7 +1,7 @@
 # Native `write_file` contract
 
-Status: **FORMAL REPLACEMENT REVIEW CANDIDATE — fresh formal reviews and
-delivery are pending**
+Status: **FORMAL REPLACEMENT REVIEW NOT GREEN — production remediation, a new
+exact candidate, fresh formal reviews, and delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -182,7 +182,10 @@ On Linux and macOS, execution performs this bounded sequence:
 4. In that exact parent, try at most eight fixed-short, high-entropy temporary
    basenames that cannot equal the target basename. Open with write-only,
    create, exclusive, no-follow, close-on-exec, and nonblocking flags at mode
-   `0600`. A collision is never deleted and consumes one attempt.
+   `0600`. A collision is never deleted and consumes one attempt. Formal cycle
+   2 found that candidate `708f2d0` does not yet bound Linux entropy-source
+   retries; a production-used cumulative partial-read/interruption bound with
+   cancellation checks remains pending.
 5. Write in chunks of at most 8 KiB with cancellation and exact-byte checks.
    Verify the staged descriptor identity and byte count. Apply final ordinary
    rwx bits with `fchmod`, then `fsync` the staged file.
@@ -238,9 +241,15 @@ best-effort and identity-checked: the staged name is compared by no-follow
 device and inode with the held staged descriptor before unlink is attempted.
 The implementation never intentionally removes a mismatched entry or a
 preexisting collision. Portable metadata-check-to-unlink still has a final
-race, and cleanup failure or identity disagreement may leave a private
-temporary residue. Perfect identity-safe unlink would require platform-specific
-primitives not shared by Linux and macOS and is not promised.
+race. Formal cycle 2 found that the exact candidate can leave its owned staged
+inode carrying the already-applied final mode when cleanup cannot unlink it, so
+such residue is not yet guaranteed private. Pending remediation will first make
+a best-effort reset of the held staged descriptor to `0600`, then retain the
+same identity-checked best-effort unlink. If that mode reset itself fails and
+the entry also remains, the residue can still retain final mode bits; perfect
+mode restoration and identity-safe unlink are not promised. This remediation
+is not complete until its production change and evidence are composed into a
+new exact candidate.
 
 The required execution future is inert until polled, performs bounded
 synchronous work on the polling thread, and spawns no task, thread, subprocess,
@@ -314,15 +323,26 @@ parent postvalidation races; missing real-pipeline verification-phase
 cancellation evidence; and stale platform/local-gate and lineage statements in
 the maintained documents.
 
-The candidate is tree-identical only to its immediate parent
+The cycle-1 candidate is tree-identical only to its immediate parent
 `a7841c19b4b34cecf40e55d7cd001fd1547133c1`. Local-gate precursor
 `072bd69eb6f73944d1db00363da0f965f09dda9f` has a different documentation tree
 and is retained only as precursor evidence. Documentation correction
 `016f8df` and code/evidence remediation `3010e6d` close the confirmed cycle-1
-findings. Replacement local gates are green at `581fe6a`; the immediately
-following tree-identical marker is the replacement candidate supplied to all
-three fresh tracks. No green behavior SHA is claimed yet. A later documentation-
-only seal or delivery record remains
+findings. Replacement local gates are green at `581fe6a`. Formal-review
+preparation `491496aa22aa8855717b74f6a026e8c602bb02e9` is the immediate parent
+of tree-identical exact cycle-2 candidate
+`708f2d08d72d610ca387a62a4cec1f656c188a7d`.
+
+Cycle 2 is **NOT GREEN**. Correctness/API is **GREEN** with zero findings.
+Filesystem/robustness is **NOT GREEN** with two medium findings: retained staged
+inode mode can remain more permissive than `0600`, and Linux entropy acquisition
+can retry interruptions without the contract's finite work/cancellation bound.
+Performance/concurrency is **NOT GREEN** with the same medium entropy finding.
+The intended bounded entropy helper, cancellation evidence, and best-effort
+`0600` cleanup reset remain pending production work. No green behavior SHA or
+replacement claim is made. After remediation and exact local gates, all three
+fresh tracks must review the same new exact behavior candidate. A later
+documentation-only seal or delivery record remains
 exempt from another adversarial cycle under the user's instruction, while exact
 feature and `main` workflows remain required.
 
@@ -352,9 +372,11 @@ items are still candidate evidence until the formal exact-SHA gates complete:
   postvalidation races are exercised deterministically through the real
   production pipeline, including native publication into a retained parent
   moved outside the configured workspace.
-- [x] Eight temporary-name collisions exhaust exactly; foreign collisions are
-  preserved; staged-name replacement and cleanup-name swaps never intentionally
-  remove a mismatched sentinel; possible residue is accounted for.
+- [ ] Eight temporary-name collisions exhaust exactly and foreign collisions
+  are preserved, but complete cleanup evidence is pending: staged-name and
+  cleanup-name swaps must avoid a mismatched sentinel, and a retained owned
+  staged inode must receive the pending best-effort `0600` reset with its
+  restoration-failure caveat tested and documented.
 - [x] Injected write, chmod, staged-file sync, rename, and parent-directory sync
   failures prove precommit unchanged-target behavior and post-rename commit
   ambiguity.
@@ -365,6 +387,11 @@ items are still candidate evidence until the formal exact-SHA gates complete:
   cumulative interleaved write interruptions do not reset on partial progress,
   precommit cancellation wins on the final allowed interruption, and
   postcommit exhaustion is ambiguous.
+- [ ] Temporary-name entropy acquisition has a finite cumulative bound across
+  partial progress and interruptions, checks cancellation at each retry
+  boundary including exhaustion, and fails before staging or target effects.
+  The exact cycle-2 candidate does not satisfy this item; production remediation
+  and deterministic evidence are pending.
 - [x] Engine deny/allow events and durable results, exact six-tool alphabetical
   catalog, and original-plus-five-clones workspace identity all pass.
 - [ ] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
