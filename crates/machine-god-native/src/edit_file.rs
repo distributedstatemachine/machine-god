@@ -204,6 +204,7 @@ fn open_target(
                 ReadPhase::Initial => rejected_path(),
                 ReadPhase::Staged => write_failed(),
                 ReadPhase::Revalidate => target_changed(),
+                ReadPhase::Published => commit_ambiguous(),
             });
         }
         Err(error) => return Err(map_target_open_error(error, phase)),
@@ -228,18 +229,21 @@ fn fingerprint_and_validate_path(
         ReadPhase::Initial => unavailable(true),
         ReadPhase::Staged => write_failed(),
         ReadPhase::Revalidate => target_changed(),
+        ReadPhase::Published => commit_ambiguous(),
     })?;
     if !FileType::from_raw_mode(descriptor_metadata.st_mode).is_file() {
         return Err(match phase {
             ReadPhase::Initial => rejected_path(),
             ReadPhase::Staged => write_failed(),
             ReadPhase::Revalidate => target_changed(),
+            ReadPhase::Published => commit_ambiguous(),
         });
     }
     let path_metadata = rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW).map_err(
         |_| match phase {
             ReadPhase::Staged => write_failed(),
             ReadPhase::Initial | ReadPhase::Revalidate => target_changed(),
+            ReadPhase::Published => commit_ambiguous(),
         },
     )?;
     if !FileType::from_raw_mode(path_metadata.st_mode).is_file()
@@ -249,6 +253,7 @@ fn fingerprint_and_validate_path(
         return Err(match phase {
             ReadPhase::Initial | ReadPhase::Revalidate => target_changed(),
             ReadPhase::Staged => write_failed(),
+            ReadPhase::Published => commit_ambiguous(),
         });
     }
     Ok(FileFingerprint::from_stat(&descriptor_metadata))
@@ -516,65 +521,39 @@ fn verify_staged_descriptor(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn verify_staged_content(
+fn verify_staged_content_at_path(
+    parent: BorrowedFd<'_>,
+    name: &str,
     staged: &StagedFile<'_>,
     expected: &[u8],
     expected_mode: Mode,
     cancellation: &CancellationToken,
-) -> Result<(), ToolError> {
+    phase: ReadPhase,
+) -> Result<FileFingerprint, ToolError> {
+    let before = fingerprint_and_validate_path(parent, name, staged.file.as_fd(), phase)?;
     let read_file = staged.file.as_fd();
     let stat_file = staged.file.as_fd();
     let (actual, fingerprint) = read_bounded_stable_for_phase_with(
         cancellation,
         MAX_EDIT_FILE_RESULTING_BYTES,
-        ReadPhase::Staged,
+        phase,
         |buffer, offset| rustix::io::pread(read_file, buffer, offset),
         || rustix::fs::fstat(stat_file),
     )?;
     if actual != expected
+        || fingerprint != before
         || fingerprint.device != i128::from(staged.identity.st_dev)
         || fingerprint.inode != i128::from(staged.identity.st_ino)
         || fingerprint.mode != expected_mode.as_raw_mode()
         || usize::try_from(fingerprint.size).ok() != Some(expected.len())
     {
-        return Err(write_failed());
+        return Err(map_read_phase_failure(phase));
     }
-    Ok(())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn revalidate_staged_path(
-    parent: BorrowedFd<'_>,
-    staged: &StagedFile<'_>,
-    content_length: usize,
-    expected_mode: Mode,
-) -> Result<(), ToolError> {
-    let path_metadata = rustix::fs::statat(parent, &staged.name, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|_| write_failed())?;
-    if !same_identity(&path_metadata, &staged.identity)
-        || !FileType::from_raw_mode(path_metadata.st_mode).is_file()
-        || usize::try_from(path_metadata.st_size).ok() != Some(content_length)
-        || path_metadata.st_mode & 0o777 != expected_mode.as_raw_mode()
-    {
-        return Err(write_failed());
+    let after = fingerprint_and_validate_path(parent, name, staged.file.as_fd(), phase)?;
+    if after != fingerprint {
+        return Err(map_read_phase_failure(phase));
     }
-    verify_staged_descriptor(staged, content_length, Some(expected_mode))
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn published_target_matches(
-    parent: BorrowedFd<'_>,
-    basename: &str,
-    staged: &StagedFile<'_>,
-    content_length: usize,
-    expected_mode: Mode,
-) -> bool {
-    rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(|metadata| {
-        same_identity(&metadata, &staged.identity)
-            && FileType::from_raw_mode(metadata.st_mode).is_file()
-            && usize::try_from(metadata.st_size).ok() == Some(content_length)
-            && metadata.st_mode & 0o777 == expected_mode.as_raw_mode()
-    })
+    Ok(fingerprint)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -681,7 +660,9 @@ fn map_parent_open_error(error: rustix::io::Errno, phase: WalkPhase) -> ToolErro
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_target_open_error(error: rustix::io::Errno, phase: ReadPhase) -> ToolError {
     match phase {
-        ReadPhase::Revalidate | ReadPhase::Staged => target_changed(),
+        ReadPhase::Staged => write_failed(),
+        ReadPhase::Revalidate => target_changed(),
+        ReadPhase::Published => commit_ambiguous(),
         ReadPhase::Initial if error == rustix::io::Errno::NOENT => not_found(),
         ReadPhase::Initial if is_permission_error(error) => permission_denied(),
         ReadPhase::Initial if is_rejected_type_error(error) => rejected_path(),
@@ -1347,16 +1328,8 @@ impl FileFingerprint {
         Mode::from_raw_mode(self.mode)
     }
 
-    fn stable_for_phase(self, other: Self, phase: ReadPhase) -> bool {
-        match phase {
-            ReadPhase::Initial | ReadPhase::Revalidate => self == other,
-            ReadPhase::Staged => {
-                self.device == other.device
-                    && self.inode == other.inode
-                    && self.mode == other.mode
-                    && self.size == other.size
-            }
-        }
+    fn stable_for_phase(self, other: Self, _phase: ReadPhase) -> bool {
+        self == other
     }
 }
 
@@ -1366,6 +1339,7 @@ enum ReadPhase {
     Initial,
     Staged,
     Revalidate,
+    Published,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1374,6 +1348,7 @@ fn map_read_phase_failure(phase: ReadPhase) -> ToolError {
         ReadPhase::Initial => unavailable(true),
         ReadPhase::Staged => write_failed(),
         ReadPhase::Revalidate => target_changed(),
+        ReadPhase::Published => commit_ambiguous(),
     }
 }
 
@@ -1383,6 +1358,20 @@ fn map_read_phase_too_large(phase: ReadPhase) -> ToolError {
         ReadPhase::Initial => existing_too_large(),
         ReadPhase::Staged => write_failed(),
         ReadPhase::Revalidate => target_changed(),
+        ReadPhase::Published => commit_ambiguous(),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn check_read_phase_cancellation(
+    phase: ReadPhase,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    match phase {
+        ReadPhase::Published => Ok(()),
+        ReadPhase::Initial | ReadPhase::Staged | ReadPhase::Revalidate => {
+            check_cancellation(cancellation)
+        }
     }
 }
 
@@ -1410,36 +1399,43 @@ fn read_bounded_stable_for_phase_with(
     mut read: impl FnMut(&mut [u8], u64) -> Result<usize, rustix::io::Errno>,
     mut stat: impl FnMut() -> Result<rustix::fs::Stat, rustix::io::Errno>,
 ) -> Result<(Vec<u8>, FileFingerprint), ToolError> {
-    check_cancellation(cancellation)?;
+    check_read_phase_cancellation(phase, cancellation)?;
     let initial = stat().map_err(|_| map_read_phase_failure(phase))?;
-    check_cancellation(cancellation)?;
+    check_read_phase_cancellation(phase, cancellation)?;
     if !FileType::from_raw_mode(initial.st_mode).is_file() {
         return Err(match phase {
             ReadPhase::Initial => rejected_path(),
             ReadPhase::Staged => write_failed(),
             ReadPhase::Revalidate => target_changed(),
+            ReadPhase::Published => commit_ambiguous(),
         });
     }
 
-    let capacity = max_bytes.checked_add(1).ok_or_else(write_failed)?;
+    let capacity = max_bytes
+        .checked_add(1)
+        .ok_or_else(|| map_read_phase_failure(phase))?;
     let mut bytes = vec![0_u8; capacity];
     let mut length = 0_usize;
     let mut interrupted = 0_usize;
     while length < capacity {
-        check_cancellation(cancellation)?;
+        check_read_phase_cancellation(phase, cancellation)?;
         let end = length
             .saturating_add(MAX_EDIT_FILE_CHUNK_BYTES)
             .min(capacity);
-        let offset = u64::try_from(length).map_err(|_| write_failed())?;
+        let offset = u64::try_from(length).map_err(|_| map_read_phase_failure(phase))?;
         let result = read(&mut bytes[length..end], offset);
-        check_cancellation(cancellation)?;
+        check_read_phase_cancellation(phase, cancellation)?;
         match result {
             Ok(0) => break,
             Ok(count) if count <= end - length => {
-                length = length.checked_add(count).ok_or_else(write_failed)?;
+                length = length
+                    .checked_add(count)
+                    .ok_or_else(|| map_read_phase_failure(phase))?;
             }
             Err(error) if error == rustix::io::Errno::INTR => {
-                interrupted = interrupted.checked_add(1).ok_or_else(write_failed)?;
+                interrupted = interrupted
+                    .checked_add(1)
+                    .ok_or_else(|| map_read_phase_failure(phase))?;
                 if interrupted >= MAX_INTERRUPTED_SYSCALL_ATTEMPTS {
                     return Err(map_read_phase_failure(phase));
                 }
@@ -1448,9 +1444,9 @@ fn read_bounded_stable_for_phase_with(
         }
     }
 
-    check_cancellation(cancellation)?;
+    check_read_phase_cancellation(phase, cancellation)?;
     let final_metadata = stat().map_err(|_| map_read_phase_failure(phase))?;
-    check_cancellation(cancellation)?;
+    check_read_phase_cancellation(phase, cancellation)?;
     if !FileType::from_raw_mode(final_metadata.st_mode).is_file() {
         return Err(map_read_phase_failure(phase));
     }
@@ -1460,6 +1456,7 @@ fn read_bounded_stable_for_phase_with(
         return Err(match phase {
             ReadPhase::Initial | ReadPhase::Revalidate => target_changed(),
             ReadPhase::Staged => write_failed(),
+            ReadPhase::Published => commit_ambiguous(),
         });
     }
     let stable_size =
@@ -1667,15 +1664,16 @@ impl EditFileTool {
         check_cancellation(cancellation)?;
         verify_staged_descriptor(&staged, 0, Some(private_mode))?;
         write(staged.file.as_fd(), &postimage, cancellation)?;
-        verify_staged_descriptor(&staged, postimage.len(), None)?;
-
-        let final_mode = initial_fingerprint.ordinary_mode();
-        check_cancellation(cancellation)?;
-        set_mode(staged.file.as_fd(), final_mode).map_err(|_| write_failed())?;
-        check_cancellation(cancellation)?;
-        sync_staged(staged.file.as_fd(), cancellation)?;
-        verify_staged_descriptor(&staged, postimage.len(), Some(final_mode))?;
-        verify_staged_content(&staged, &postimage, final_mode, cancellation)?;
+        verify_staged_descriptor(&staged, postimage.len(), Some(private_mode))?;
+        verify_staged_content_at_path(
+            initial_walk.parent.as_fd(),
+            &staged.name,
+            &staged,
+            &postimage,
+            private_mode,
+            cancellation,
+            ReadPhase::Staged,
+        )?;
 
         let final_walk = self.walk_parent(normalized, cancellation, WalkPhase::Revalidate)?;
         let final_parent_metadata =
@@ -1718,28 +1716,58 @@ impl EditFileTool {
         check_cancellation(cancellation)?;
         before_staged_revalidation(final_walk.parent.as_fd(), &staged.name);
         check_cancellation(cancellation)?;
-        revalidate_staged_path(
+        verify_staged_content_at_path(
             final_walk.parent.as_fd(),
+            &staged.name,
             &staged,
-            postimage.len(),
-            final_mode,
+            &postimage,
+            private_mode,
+            cancellation,
+            ReadPhase::Staged,
         )?;
 
         before_rename();
+        check_cancellation(cancellation)?;
+        verify_staged_content_at_path(
+            final_walk.parent.as_fd(),
+            &staged.name,
+            &staged,
+            &postimage,
+            private_mode,
+            cancellation,
+            ReadPhase::Staged,
+        )?;
+
+        let final_mode = initial_fingerprint.ordinary_mode();
+        check_cancellation(cancellation)?;
+        set_mode(staged.file.as_fd(), final_mode).map_err(|_| write_failed())?;
+        check_cancellation(cancellation)?;
+        sync_staged(staged.file.as_fd(), cancellation)?;
+        verify_staged_content_at_path(
+            final_walk.parent.as_fd(),
+            &staged.name,
+            &staged,
+            &postimage,
+            final_mode,
+            cancellation,
+            ReadPhase::Staged,
+        )?;
         check_cancellation(cancellation)?;
         publish(final_walk.parent.as_fd(), &staged.name, final_walk.basename)
             .map_err(map_publish_error)?;
         staged.mark_published();
 
-        let published_identity_matches = published_target_matches(
+        let published_verification = verify_staged_content_at_path(
             final_walk.parent.as_fd(),
             final_walk.basename,
             &staged,
-            postimage.len(),
+            &postimage,
             final_mode,
+            cancellation,
+            ReadPhase::Published,
         );
         let directory_sync = sync_after_commit_with(|| sync_parent(final_walk.parent.as_fd()));
-        if !published_identity_matches || directory_sync.is_err() {
+        if published_verification.is_err() || directory_sync.is_err() {
             return Err(commit_ambiguous());
         }
 
