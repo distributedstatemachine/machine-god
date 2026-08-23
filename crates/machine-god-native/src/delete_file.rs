@@ -1082,6 +1082,7 @@ fn map_unlink_error(error: rustix::io::Errno, kind: TargetKind) -> ToolError {
     if error == rustix::io::Errno::NOENT
         || error == rustix::io::Errno::NOTDIR
         || error == rustix::io::Errno::ISDIR
+        || error == rustix::io::Errno::LOOP
     {
         target_changed()
     } else if kind == TargetKind::Directory
