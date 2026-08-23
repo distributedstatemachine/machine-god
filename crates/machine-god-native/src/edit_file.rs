@@ -1491,8 +1491,12 @@ struct StagedFile<'a> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl<'a> StagedFile<'a> {
     fn new(cleanup_parent: BorrowedFd<'a>, file: OwnedFd, name: String) -> Result<Self, ToolError> {
-        let identity = rustix::fs::fstat(&file).map_err(|_| write_failed())?;
+        let Ok(identity) = rustix::fs::fstat(&file) else {
+            cleanup_unpublished_file(cleanup_parent, file.as_fd(), &name);
+            return Err(write_failed());
+        };
         if !FileType::from_raw_mode(identity.st_mode).is_file() {
+            cleanup_unpublished_file(cleanup_parent, file.as_fd(), &name);
             return Err(write_failed());
         }
         Ok(Self {
