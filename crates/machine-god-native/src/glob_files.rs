@@ -42,6 +42,15 @@ pub const MAX_GLOB_FILES_DEPTH: usize = 256;
 /// Registered name of [`GlobFilesTool`].
 pub const GLOB_FILES_TOOL_NAME: &str = "glob_files";
 
+const GLOB_FILES_DESCRIPTION: &str =
+    "Find file paths matching a glob pattern within the configured workspace";
+const GLOB_FILES_PATTERN_DESCRIPTION: &str =
+    "Glob pattern relative to the search root, such as src/**/*.rs or *.md";
+const GLOB_FILES_PATH_DESCRIPTION: &str =
+    "Workspace-relative directory search root; defaults to the workspace root";
+const GLOB_FILES_MODE_DESCRIPTION: &str =
+    "Return matching paths or an exact count; defaults to matches";
+
 /// Stable category for failure to acquire a read-only workspace root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GlobFilesToolOpenErrorKind {
@@ -209,28 +218,8 @@ impl Tool for GlobFilesTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: glob_files_name(),
-            description: "Find file paths matching a glob pattern within the configured workspace"
-                .to_owned(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Glob pattern using / as the path separator"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Workspace-relative directory path; defaults to the workspace root"
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["matches", "count"],
-                        "description": "Return matching paths or only their count; defaults to matches"
-                    }
-                },
-                "required": ["pattern"],
-                "additionalProperties": false
-            }),
+            description: GLOB_FILES_DESCRIPTION.to_owned(),
+            input_schema: glob_files_input_schema(),
         }
     }
 
@@ -285,6 +274,29 @@ impl Tool for GlobFilesTool {
             }
         })
     }
+}
+
+fn glob_files_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "pattern": {
+                "type": "string",
+                "description": GLOB_FILES_PATTERN_DESCRIPTION
+            },
+            "path": {
+                "type": "string",
+                "description": GLOB_FILES_PATH_DESCRIPTION
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["matches", "count"],
+                "description": GLOB_FILES_MODE_DESCRIPTION
+            }
+        },
+        "required": ["pattern"],
+        "additionalProperties": false
+    })
 }
 
 fn decode_requested_arguments(arguments: Value) -> Result<RequestedArguments, ToolError> {
@@ -1102,11 +1114,44 @@ fn scan_limit() -> ToolError {
 
 #[cfg(test)]
 mod tests {
+    use super::{GLOB_FILES_DESCRIPTION, glob_files_input_schema};
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
         MAX_GLOB_FILES_TOTAL_ENTRY_NAME_BYTES, MAX_GLOB_FILES_VISITED_ENTRIES, ScanBudget,
     };
     use super::{normalize_pattern, normalize_relative_path, path_matches, segment_matches};
+    use serde_json::json;
+
+    #[test]
+    fn model_visible_description_and_schema_text_are_exact() {
+        assert_eq!(
+            GLOB_FILES_DESCRIPTION,
+            "Find file paths matching a glob pattern within the configured workspace"
+        );
+        assert_eq!(
+            glob_files_input_schema(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern relative to the search root, such as src/**/*.rs or *.md"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace-relative directory search root; defaults to the workspace root"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["matches", "count"],
+                        "description": "Return matching paths or an exact count; defaults to matches"
+                    }
+                },
+                "required": ["pattern"],
+                "additionalProperties": false
+            })
+        );
+    }
 
     #[test]
     fn normalization_is_confined_and_canonical() {
