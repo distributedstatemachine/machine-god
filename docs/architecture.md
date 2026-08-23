@@ -21,8 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has eighteen delivered bounded slices and a nineteenth bounded
-candidate in progress.
+Milestone 03 has nineteen delivered bounded slices.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -194,7 +193,7 @@ three replacement tracks are green on exact behavior SHA `523df858`; exact
 seal and delivery gates are green at `35c8536`. Its contract and review record are
 [`glob-files.md`](glob-files.md) and
 [`m03-glob-files-review-01.md`](reviews/m03-glob-files-review-01.md).
-The nineteenth candidate adds bounded Linux/macOS `grep_files` content search
+The delivered nineteenth slice adds bounded Linux/macOS `grep_files` content search
 under distinct `FilesystemAccess::SearchContent`. Exact base
 `f6aa458bb875d6cb26565adc878703fe140916d3` and tree-identical integration
 kickoff `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4` precede parallel production,
@@ -237,8 +236,18 @@ tests, 40 direct `grep_files` tests, four engine tests, and the 58/420/270/0
 documentation inventory are green. All historical findings are closed,
 including the attempted-read-window storage wording. This documentation-only
 seal is exempt from another adversarial review under the user's explicit
-instruction. Feature and `main` remote workflow IDs and the final delivery SHA
-remain **PENDING**.
+instruction. Documentation seal `0f48806310882caf3c668c72fe1b9d211cae744b`
+is feature-green: CI run `32623585346` passed all six jobs and benchmark-
+evidence run `32623585349` passed both jobs and artifacts, all for exact `0f`.
+`main` was fast-forwarded without force from `f6ab594` to exact `0f`. Main CI
+run `32623904784` is **GREEN** for exact `0f`: all six jobs and every step
+passed without reruns. Main benchmark-evidence run `32623904800` is **GREEN**
+on attempt 1 for exact `0f`: both jobs and every step passed, with two valid
+non-expired exact-SHA artifacts retained. The `grep_files` slice is delivered;
+the remaining native tools remain pending.
+This final delivery record is documentation-only and exempt from adversarial
+review; its own exact remote workflows are required after push and cannot be
+self-recorded.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -538,8 +547,18 @@ tests, 40 direct `grep_files` tests, four engine tests, and the 58/420/270/0
 documentation inventory are green. All historical findings are closed,
 including the attempted-read-window storage wording. This documentation-only
 seal is exempt from another adversarial review under the user's explicit
-instruction. Feature and `main` remote workflow IDs and the final delivery SHA
-remain **PENDING**.
+instruction. Documentation seal `0f48806310882caf3c668c72fe1b9d211cae744b`
+is feature-green: CI run `32623585346` passed all six jobs and benchmark-
+evidence run `32623585349` passed both jobs and artifacts, all for exact `0f`.
+`main` was fast-forwarded without force from `f6ab594` to exact `0f`. Main CI
+run `32623904784` is **GREEN** for exact `0f`: all six jobs and every step
+passed without reruns. Main benchmark-evidence run `32623904800` is **GREEN**
+on attempt 1 for exact `0f`: both jobs and every step passed, with two valid
+non-expired exact-SHA artifacts retained. The `grep_files` slice is delivered;
+the remaining native tools remain pending.
+This final delivery record is documentation-only and exempt from adversarial
+review; its own exact remote workflows are required after push and cannot be
+self-recorded.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

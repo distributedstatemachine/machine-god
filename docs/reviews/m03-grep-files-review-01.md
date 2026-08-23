@@ -1,10 +1,10 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — formal fourth-cycle exact behavior SHA
+Status: **DELIVERED — formal fourth-cycle exact behavior SHA
 `8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is green with zero findings
 across correctness/API, filesystem/robustness, and performance/concurrency;
-this documentation-only seal needs no further adversarial review, while remote
-workflow IDs and final delivery remain pending**
+documentation seal `0f48806` is exact-feature-green and fast-forwarded without
+force to `main`, where exact CI and benchmark-evidence workflows are green**
 
 ## Candidate lineage
 
@@ -120,12 +120,28 @@ workflow IDs and final delivery remain pending**
   exact `8e5fcce`
 - Exact behavior SHA with all three review tracks green:
   `8e5fccea1b12483d2de2448e7a4ece0dc840ba39`
-- Documentation-only seal: **THIS COMMIT — explicitly exempt from another
-  adversarial review; self-SHA cannot be embedded**
-- Feature CI and benchmark-evidence workflow IDs: **PENDING**
-- Integrated `main` SHA: **PENDING**
-- Exact `main` CI and benchmark-evidence workflow IDs: **PENDING**
-- Final delivery SHA: **PENDING**
+- Documentation-only seal:
+  `0f48806310882caf3c668c72fe1b9d211cae744b`; explicitly exempt from another
+  adversarial review
+- Feature CI run `32623585346`: **GREEN — all six jobs, exact `0f`**
+  <https://github.com/distributedstatemachine/machine-god/actions/runs/32623585346>
+- Feature benchmark-evidence run `32623585349`: **GREEN — both jobs and
+  artifacts, exact `0f`**
+  <https://github.com/distributedstatemachine/machine-god/actions/runs/32623585349>
+- Integrated `main` SHA:
+  `0f48806310882caf3c668c72fe1b9d211cae744b`, fast-forwarded without force
+  from `f6ab594`
+- Exact `main` CI run `32623904784`: **GREEN — exact `0f`, all six jobs and
+  every step passed without reruns**
+- Exact `main` CI URL:
+  <https://github.com/distributedstatemachine/machine-god/actions/runs/32623904784>
+- Exact `main` benchmark-evidence run `32623904800`: **GREEN — attempt 1,
+  exact `0f`, both jobs and every step passed, two valid non-expired exact-SHA
+  artifacts retained**
+- Exact `main` benchmark-evidence URL:
+  <https://github.com/distributedstatemachine/machine-god/actions/runs/32623904800>
+- Final delivery record: **THIS COMMIT — documentation-only; own exact remote
+  workflows are required after push and cannot be self-recorded**
 - Required toolchain: Rust and Cargo 1.94.1 exactly
 
 The three isolated component SHAs and all integration heads above were observed
@@ -156,8 +172,16 @@ exact `f87f6be`; its documentation gates are green, and its behavior tree
 remains `a8f6179` except for documentation. Formal fourth-cycle exact behavior
 SHA `8e5fcce` is green with zero findings across all three fresh tracks. All
 historical findings are closed, including the attempted-read-window storage
-wording. This documentation-only seal is exempt from further adversarial review;
-feature and `main` workflow IDs and the final delivery SHA remain pending.
+wording. Documentation seal `0f48806` is exempt from further adversarial review
+and is feature-green under exact CI `32623585346` and benchmark evidence
+`32623585349`. It was fast-forwarded without force from `f6ab594` to exact
+`main` SHA `0f48806`. Main CI `32623904784` is green for exact `0f`, with all
+six jobs and every step passed without reruns. Benchmark evidence `32623904800`
+is green on attempt 1 for exact `0f`: both jobs and every step passed, with two
+valid non-expired exact-SHA artifacts. The `grep_files` slice is delivered;
+remaining native tools stay pending. This final delivery record is
+documentation-only; its own exact remote workflows are required after push and
+cannot be self-recorded.
 Every listed identifier was observed directly; no production/test/documentation
 remediation, replacement rereview, behavior-green, seal, or workflow identifier
 may be inferred from a branch tip, tree identity, or another component.
@@ -655,7 +679,25 @@ and zero missing. All historical correctness, filesystem, performance,
 cancellation, evidence, inventory, and attempted-window wording findings are
 closed. Exact behavior SHA `8e5fcce` is green across all three fresh tracks.
 
-This commit is a documentation-only review seal. The user's explicit
+Seal `0f48806310882caf3c668c72fe1b9d211cae744b` passed exact feature CI run
+`32623585346` with all six jobs green:
+<https://github.com/distributedstatemachine/machine-god/actions/runs/32623585346>
+It passed exact feature benchmark-evidence run `32623585349` with both jobs and
+retained artifacts green:
+<https://github.com/distributedstatemachine/machine-god/actions/runs/32623585349>
+Both report exact `0f`. `main` was
+fast-forwarded without force from `f6ab594` to exact `0f`. Main CI run
+`32623904784` is **GREEN** for exact `0f`, with all six jobs and every step
+passed without reruns. Main benchmark-evidence run `32623904800` is **GREEN**
+on attempt 1 for exact `0f`. Bootstrap job `97156183263` passed every step in
+34 seconds; pinned job `97156183379` passed every step in 4 minutes 43 seconds.
+Valid non-expired exact-SHA artifacts `9489157277` and `9489204264` were
+retained. The pinned path used fx `b1774fbf6c7602b503026f96f6e960e946c692ef`,
+Rust and Cargo 1.94.1, Zig 0.16, and clean source and build state. The bootstrap
+job remains bootstrap-only and non-claim-eligible. The `grep_files` slice is
+delivered; the remaining native-tool inventory remains pending.
+
+This final delivery record is documentation-only. The user's explicit
 instruction exempts it from another adversarial review after behavior is green.
-Feature and `main` CI and benchmark-evidence workflow IDs, integrated `main`,
-and the final delivery SHA remain **PENDING**.
+Its own exact feature and `main` workflows are required after push and cannot
+be self-recorded in this commit.

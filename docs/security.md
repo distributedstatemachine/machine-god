@@ -201,8 +201,18 @@ tests, 40 direct `grep_files` tests, four engine tests, and the 58/420/270/0
 documentation inventory are green. All historical findings are closed,
 including the attempted-read-window storage wording. This documentation-only
 seal is exempt from another adversarial review under the user's explicit
-instruction. Feature and `main` remote workflow IDs and the final delivery SHA
-remain **PENDING**. Its strict preflight
+instruction. Documentation seal `0f48806310882caf3c668c72fe1b9d211cae744b`
+is feature-green: CI run `32623585346` passed all six jobs and benchmark-
+evidence run `32623585349` passed both jobs and artifacts, all for exact `0f`.
+`main` was fast-forwarded without force from `f6ab594` to exact `0f`. Main CI
+run `32623904784` is **GREEN** for exact `0f`: all six jobs and every step
+passed without reruns. Main benchmark-evidence run `32623904800` is **GREEN**
+on attempt 1 for exact `0f`: both jobs and every step passed, with two valid
+non-expired exact-SHA artifacts retained. The `grep_files` slice is delivered;
+the remaining native tools remain pending.
+This final delivery record is documentation-only and exempt from adversarial
+review; its own exact remote workflows are required after push and cannot be
+self-recorded. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
 relative no-follow regular-file-only traversal, bounded eligible UTF-8 content

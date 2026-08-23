@@ -1,11 +1,11 @@
 # Native `grep_files` tool
 
-Status: **IN PROGRESS — formal fourth-cycle exact behavior SHA
+Status: **DELIVERED — formal fourth-cycle exact behavior SHA
 `8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is green with zero findings
 across correctness/API, filesystem/robustness, and performance/concurrency;
-this documentation-only seal needs no further adversarial review, while remote
-workflow IDs and final delivery remain pending**
-nineteenth bounded Milestone 03 candidate.
+documentation seal `0f48806` is exact-feature-green and fast-forwarded without
+force to `main`, where exact CI and benchmark-evidence workflows are green**
+nineteenth bounded Milestone 03 slice.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
@@ -91,8 +91,19 @@ workspace Clippy/tests, Linux/FreeBSD cross-target and WASI gates, two doctests,
 58/420/270/0 documentation inventory. All historical findings are closed,
 including the attempted-read-window storage wording, so behavior is green.
 This commit is a documentation-only seal and is exempt from another adversarial
-review under the user's explicit instruction. Feature and `main` remote
-workflow IDs, integrated `main`, and the final delivery SHA remain **PENDING**.
+review under the user's explicit instruction. Documentation seal
+`0f48806310882caf3c668c72fe1b9d211cae744b` passed exact feature CI run
+`32623585346` with all six jobs green and benchmark-evidence run `32623585349`
+with both jobs and artifacts green. Both runs report exact `0f`. `main` was
+fast-forwarded without force from `f6ab594` to exact `0f`. Main CI run
+`32623904784` is **GREEN** for exact `0f`: all six jobs and every step passed
+without reruns. Main benchmark-evidence run `32623904800` is **GREEN** on
+attempt 1 for exact `0f`: both jobs and every step passed, with two valid non-
+expired exact-SHA artifacts retained. The `grep_files` slice is delivered; the
+remaining native-tool inventory remains pending.
+This final delivery record is documentation-only and explicitly exempt from
+another adversarial review. Its own exact feature and `main` workflows remain
+required after push and cannot be self-recorded in this commit.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal
