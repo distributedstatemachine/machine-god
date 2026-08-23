@@ -248,12 +248,13 @@ fn validate_arguments(arguments: &Value) -> Result<ValidatedArguments<'_>, ToolE
     let Some(Value::String(path)) = object.get("path") else {
         return Err(invalid_arguments());
     };
+    let normalized = normalize_relative_path(path)?;
     if !serialized_value_fits(arguments, MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES) {
         return Err(invalid_arguments());
     }
     Ok(ValidatedArguments {
         requested_path: path,
-        path: normalize_relative_path(path)?,
+        path: normalized,
     })
 }
 
@@ -697,6 +698,7 @@ impl DeleteFileTool {
                 final_target.kind,
                 revalidated.parent.as_fd(),
                 revalidated.basename,
+                cancellation,
                 evidence,
                 &mut ordinals,
             )),
@@ -834,7 +836,7 @@ fn validate_linked_root<Evidence: DeleteFileEvidence>(
         evidence,
         ordinals,
     )
-    .map_err(|error| map_evidence_metadata_error(error, phase))?;
+    .map_err(|error| map_linked_root_metadata_error(error, phase))?;
     if !FileType::from_raw_mode(root_metadata.st_mode).is_dir() {
         return Err(map_rejected_phase(phase));
     }
@@ -866,7 +868,7 @@ fn validate_linked_macos_root<Evidence: DeleteFileEvidence>(
     evidence: &mut Evidence,
     ordinals: &mut OperationOrdinals,
 ) -> Result<(), ToolError> {
-    let root_path = rustix::fs::getpath(root).map_err(|_| map_operational_phase(phase))?;
+    let root_path = rustix::fs::getpath(root).map_err(|error| map_walk_error(error, phase))?;
     let root_path = root_path.as_bytes();
     if root_path == b"/" {
         return Ok(());
@@ -900,7 +902,7 @@ fn validate_linked_macos_root<Evidence: DeleteFileEvidence>(
         evidence,
         ordinals,
     )
-    .map_err(|error| map_evidence_metadata_error(error, phase))?;
+    .map_err(|error| map_linked_root_metadata_error(error, phase))?;
     if linked.st_dev != root_metadata.st_dev
         || linked.st_ino != root_metadata.st_ino
         || !FileType::from_raw_mode(linked.st_mode).is_dir()
@@ -1026,8 +1028,12 @@ fn map_root_open_error(error: rustix::io::Errno) -> DeleteFileToolOpenError {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn map_walk_error(_error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
-    map_operational_phase(phase)
+fn map_walk_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolError {
+    match phase {
+        _ if is_permission_error(error) => permission_denied(),
+        DeletePhase::Revalidate => target_changed(),
+        DeletePhase::Initial => unavailable(),
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1045,6 +1051,15 @@ fn map_parent_open_error(error: rustix::io::Errno, phase: DeletePhase) -> ToolEr
 fn map_evidence_metadata_error(error: EvidenceOperationError, phase: DeletePhase) -> ToolError {
     match error {
         EvidenceOperationError::Cancelled => cancelled(),
+        EvidenceOperationError::Os(_) => map_operational_phase(phase),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_linked_root_metadata_error(error: EvidenceOperationError, phase: DeletePhase) -> ToolError {
+    match error {
+        EvidenceOperationError::Cancelled => cancelled(),
+        EvidenceOperationError::Os(error) if is_permission_error(error) => permission_denied(),
         EvidenceOperationError::Os(_) => map_operational_phase(phase),
     }
 }
@@ -1109,26 +1124,31 @@ fn map_unlink_error_with_evidence<Evidence: DeleteFileEvidence>(
     kind: TargetKind,
     parent: BorrowedFd<'_>,
     basename: &str,
+    cancellation: &CancellationToken,
     evidence: &mut Evidence,
     ordinals: &mut OperationOrdinals,
 ) -> ToolError {
     #[cfg(target_os = "macos")]
     if error == rustix::io::Errno::PERM && kind == TargetKind::RegularFile {
-        let ordinal = ordinals.next_statat();
-        if let Ok(metadata) = evidence.statat(
-            DeletePhase::Revalidate,
-            StatatSite::Target,
-            ordinal,
+        match evidence_statat(
             parent,
             OsStr::new(basename),
-        ) && FileType::from_raw_mode(metadata.st_mode).is_dir()
-        {
-            return target_changed();
+            DeletePhase::Revalidate,
+            StatatSite::Target,
+            cancellation,
+            evidence,
+            ordinals,
+        ) {
+            Ok(metadata) if FileType::from_raw_mode(metadata.st_mode).is_dir() => {
+                return target_changed();
+            }
+            Err(EvidenceOperationError::Cancelled) => return cancelled(),
+            Ok(_) | Err(EvidenceOperationError::Os(_)) => {}
         }
     }
 
     #[cfg(target_os = "linux")]
-    let _ = (parent, basename, evidence, ordinals);
+    let _ = (parent, basename, cancellation, evidence, ordinals);
 
     map_unlink_error(error, kind)
 }

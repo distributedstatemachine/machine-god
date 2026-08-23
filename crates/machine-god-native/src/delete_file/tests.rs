@@ -100,6 +100,16 @@ fn assert_unavailable(error: &ToolError) {
     );
 }
 
+fn assert_invalid_path(error: &ToolError) {
+    assert_error(
+        error,
+        ToolErrorKind::InvalidInput,
+        "delete_file_invalid_path",
+        "delete_file path is invalid",
+        false,
+    );
+}
+
 fn assert_not_found(error: &ToolError) {
     assert_error(
         error,
@@ -705,11 +715,12 @@ fn fault_points_from_trace() -> Vec<FaultPoint> {
 
 fn is_operational_fault_point(point: FaultPoint) -> bool {
     match point {
-        FaultPoint::Open(_, OpenSite::Root, _) | FaultPoint::Fstat(_, _, _) => true,
+        FaultPoint::Open(_, OpenSite::Root, _) | FaultPoint::Fstat(_, FstatSite::Root, _) => true,
         #[cfg(target_os = "macos")]
         FaultPoint::Open(_, OpenSite::RootParent, _)
         | FaultPoint::Statat(_, StatatSite::LinkedRoot, _) => true,
         FaultPoint::Open(_, OpenSite::Intermediate(_), _)
+        | FaultPoint::Fstat(_, FstatSite::Intermediate(_) | FstatSite::FinalParent, _)
         | FaultPoint::Statat(_, StatatSite::Target, _) => false,
     }
 }
@@ -767,6 +778,21 @@ fn serialized_argument_and_result_helpers_enforce_exact_one_under_and_one_over_b
         "requested path could not be deleted",
         true,
     );
+}
+
+#[test]
+fn path_bound_precedes_serialized_argument_bound_for_a_far_oversized_path() {
+    let arguments = json!({
+        "path": "x".repeat(MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES * 4)
+    });
+    assert!(
+        serde_json::to_vec(&arguments).unwrap().len() > MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES
+    );
+
+    let Err(error) = validate_arguments(&arguments) else {
+        panic!("far oversized path was unexpectedly accepted");
+    };
+    assert_invalid_path(&error);
 }
 
 #[test]
@@ -846,6 +872,7 @@ fn root_link_and_descriptor_faults_keep_phase_mapping_for_all_errno_classes() {
         for (errno_index, errno) in [
             rustix::io::Errno::NOENT,
             rustix::io::Errno::ACCESS,
+            rustix::io::Errno::PERM,
             rustix::io::Errno::LOOP,
         ]
         .into_iter()
@@ -865,9 +892,12 @@ fn root_link_and_descriptor_faults_keep_phase_mapping_for_all_errno_classes() {
 
             let error = execute_with(&tool, "a/b/target", &mut evidence).unwrap_err();
 
-            match phase {
-                DeletePhase::Initial => assert_unavailable(&error),
-                DeletePhase::Revalidate => assert_target_changed(&error),
+            match (phase, errno) {
+                (_, rustix::io::Errno::ACCESS | rustix::io::Errno::PERM) => {
+                    assert_permission_denied(&error);
+                }
+                (DeletePhase::Initial, _) => assert_unavailable(&error),
+                (DeletePhase::Revalidate, _) => assert_target_changed(&error),
             }
             assert_eq!(evidence.hits, 1);
             assert_eq!(evidence.unlink_calls, 0);

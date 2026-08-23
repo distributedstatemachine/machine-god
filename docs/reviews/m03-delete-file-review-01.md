@@ -1,6 +1,6 @@
 # Milestone 03 native `delete_file` review 01
 
-Status: **IN PROGRESS — composed local gates green; formal review pending**
+Status: **IN PROGRESS — formal cycle 1 not green; remediation in progress**
 
 ## Base and contract gate
 
@@ -139,9 +139,37 @@ CLI checks are clean. A fresh locked arm64 Mach-O release CLI has SHA-256
 `d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
 and passes bare, help, and status smoke paths.
 
-This local precursor is not yet a reviewed behavior candidate. Three fresh
-tracks must inspect the same next exact SHA before any behavior-green or
-delivery claim.
+The tree-identical behavior marker
+`7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf` became formal cycle 1's exact
+candidate. All three fresh tracks reviewed detached clean worktrees at that
+same SHA and reported **NOT GREEN**. No candidate or delivery claim is made.
+
+## Formal adversarial cycle 1
+
+Exact candidate: `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf`.
+
+1. Correctness/API: **NOT GREEN**, with two medium findings. Retained-root
+   acquisition and linked-root metadata discarded `EACCES`/`EPERM`, violating
+   the fixed nonretryable permission taxonomy in both validation phases. The
+   macOS regular-file `EPERM` diagnostic metadata call also bypassed the frozen
+   cancellation checks and could suppress precommit cancellation after a
+   definitive failed unlink.
+2. Filesystem/robustness: **NOT GREEN**, with two medium findings. It confirmed
+   the retained-root permission mismatch independently and demonstrated that
+   empty-flag `unlinkat` can remove a final-window symlink replacement, while
+   the contract incorrectly characterized type changes as generally failing.
+3. Performance/concurrency: **NOT GREEN**, with one medium finding. Serialized
+   argument accounting preceded the requested path's 4,096-byte rejection, so
+   a direct caller could force arbitrarily input-sized synchronous JSON string
+   scanning before the fixed path bound fired.
+
+The four unique remediations are: validate the requested path bound before
+serialized-size accounting; preserve permission errors across retained-root
+operations in either phase; make the macOS diagnostic metadata cancellation-
+aware with cancellation precedence after a definitive noncommit; and freeze
+and test the portable file-class replacement boundary for symlink, FIFO, and
+socket entries with referent/sentinel preservation. A new candidate receives
+the complete local gate and three entirely fresh same-SHA reviewers.
 
 ## Formal adversarial protocol
 

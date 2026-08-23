@@ -1,6 +1,6 @@
 # Native `delete_file` contract
 
-Status: **IN PROGRESS — composed local gates green; formal review pending**
+Status: **IN PROGRESS — formal cycle 1 not green; remediation in progress**
 
 This document freezes the twenty-second bounded Milestone 03 slice from exact
 delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
@@ -17,8 +17,10 @@ Documentation-only contract commit
 both jobs with two nonexpired exact-SHA artifacts. Those workflows froze only
 the contract. Production and independently owned evidence are now composed
 through exact local-gate precursor
-`5e340155f9a38b81a2812942d6ad0a796164beb5`; formal same-SHA review and remote
-delivery remain pending.
+`5e340155f9a38b81a2812942d6ad0a796164beb5`. Formal cycle 1 reviewed exact
+behavior candidate `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf` and all three
+tracks reported **NOT GREEN**. Remediation, replacement same-SHA review, and
+remote delivery remain pending.
 
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
@@ -62,9 +64,12 @@ The advertised schema and preparation input are exactly:
 ```
 
 `path` must be a string. It has no default, and no unknown field is accepted.
-The serialized argument object is independently capped at 65,536 bytes before
+The requested path's lexical validity and 4,096-byte bound are checked before
+the serialized argument object is independently capped at 65,536 bytes. The
+remaining canonical path and component bounds follow normalization before
 canonical arguments are retained. Direct execution revalidates the same exact
-canonical shape, so bypassing provider preparation cannot widen authority.
+shape and precedence, so bypassing provider preparation cannot widen authority
+or impose unbounded serialized-value work through an over-limit path string.
 
 `DeleteFileTool::open` accepts one explicitly injected absolute workspace root.
 Its complete fixed construction taxonomy is:
@@ -185,12 +190,16 @@ precommit boundary closes owned descriptors without deleting anything.
 
 This protocol is not pathname compare-and-swap. A same-directory actor can
 replace the target after final no-follow validation and before `unlinkat`.
-Because portable `unlinkat` accepts only a parent descriptor and name, it may
-remove a different same-type entry installed in that final window. A type
-change generally fails through the flags/type mismatch rather than crossing
-the type boundary, but that does not close the different-entry race within a
-type. This limitation is disclosed and tested; the slice makes no stronger
-adversarial concurrent-mutation claim.
+Because portable `unlinkat` accepts only a parent descriptor and name, a
+regular-file deletion using empty flags may remove any non-directory entry
+installed in that final window, including a different regular file, symlink,
+FIFO, or Unix-domain socket. It never follows a replacement symlink, and the
+symlink referent and unrelated sentinels remain untouched. A directory
+replacement presented to the file-class call fails the flags/type boundary;
+the inverse file-class replacement presented to a `REMOVEDIR` call likewise
+fails. The directory-class call may still remove a different empty directory.
+These portable final-window limits are disclosed and tested; the slice makes
+no stronger adversarial concurrent-mutation or final-entry-type claim.
 
 A retained final parent can be renamed outside the public workspace path after
 validation. Descriptor-relative `unlinkat` can then remove the entry in that
@@ -228,10 +237,12 @@ An initially absent target or ancestor is `delete_file_not_found`. Absence or a
 type mismatch during final revalidation or the delete call is
 `delete_file_target_changed`. A nonempty directory is
 `delete_file_directory_not_empty`. Permission and read-only-filesystem failures
-are `delete_file_permission_denied`. `unlinkat` interruption and any failure
-after successful deletion are `delete_file_commit_ambiguous`; `unlinkat` is
-never retried. Other bounded operational failures map to the fixed unavailable,
-target-changed, or delete-failed category according to the documented phase.
+are `delete_file_permission_denied`, including retained-root acquisition and
+linked-root metadata in either validation phase. `unlinkat` interruption and
+any failure after successful deletion are `delete_file_commit_ambiguous`;
+`unlinkat` is never retried. Other bounded operational failures map to the
+fixed unavailable, target-changed, or delete-failed category according to the
+documented phase.
 
 No public error or tool `Debug` form reflects the requested/canonical path,
 workspace root, device or inode, file type, raw errno, operating-system text,
@@ -284,9 +295,13 @@ Rust files under crates. A fresh locked arm64 Mach-O release CLI has SHA-256
 `d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
 and passes bare, help, and status smoke paths.
 
-These are local precursor results only. They establish neither a formal
-behavior candidate nor adversarial, feature-delivery, `main`, compatibility,
-equivalence, or product-performance approval.
+These are local precursor results only. Formal cycle 1 then reviewed exact
+candidate `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf` and found four
+unique issues: over-limit path work precedence, retained-root permission
+taxonomy, macOS cancellation around post-`EPERM` diagnostic metadata, and an
+under-specified non-directory replacement race. The cycle is **NOT GREEN** and
+establishes no feature-delivery, `main`, compatibility, equivalence, or
+product-performance approval.
 
 ## Parallel ownership and formal review
 
@@ -332,8 +347,9 @@ The composed candidate must prove:
   sentinel changes;
 - retained-root rename, replacement, and removal; complete initial/final parent
   and target identity/type revalidation; retained-parent movement outside the
-  public workspace; different-entry final-window races; hard-link/open-
-  descriptor survival; and immediate pathname recreation;
+  public workspace; final same-class and file-to-symlink/FIFO/socket replacement
+  races with referent/sentinel preservation; hard-link/open-descriptor
+  survival; and immediate pathname recreation;
 - production-routed root/intermediate-open, ordinal `fstat`/`statat`,
   `unlinkat`, and parent-sync faults with exact precommit, committed, and
   ambiguous mappings;

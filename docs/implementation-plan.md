@@ -51,9 +51,10 @@ workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
 `c1268fdf463e11242b7b916add70675ae91ed115` to the final record; exact main CI
 `32651488265` passed all six jobs, and main benchmark workflow `32651488282`
 passed both jobs with two nonexpired exact-SHA artifacts. Native `delete_file`
-is the twenty-second bounded slice and is **IN PROGRESS** on exact composed
-local-gate precursor `5e340155f9a38b81a2812942d6ad0a796164beb5`; formal
-same-SHA adversarial review and delivery remain pending. The remaining native
+is the twenty-second bounded slice and is **IN PROGRESS**. Formal cycle 1 is
+**NOT GREEN** on exact candidate
+`7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf`; remediation, replacement
+same-SHA adversarial review, and delivery remain pending. The remaining native
 tools, CLI ownership, and Milestone 03 completion boundary remain pending.
 The first
 formal sixteenth-slice
@@ -1107,13 +1108,18 @@ but remains ambiguous. A nonempty directory is reported through its fixed
 nonretryable category without prior enumeration. There is no staging, temporary
 name, content buffer, ACL, chmod, rename, or cleanup protocol.
 
-Portable `unlinkat` is not pathname compare-and-swap. A same-type replacement
-installed after the final target check and before the syscall can be the entry
-deleted. A retained parent moved outside the public workspace path can still
-receive the descriptor-relative deletion. Other hard links and already open
-descriptors survive, and a concurrent actor can recreate the pathname after
-success. These limits are normative disclosures rather than stronger
-concurrent-isolation claims.
+Portable `unlinkat` is not pathname compare-and-swap. A replacement installed
+after the final target check and before the syscall can be the entry deleted.
+For a validated regular file, empty-flag `unlinkat` may remove any replacement
+non-directory entry, including a regular file, symlink, FIFO, or Unix-domain
+socket; it never follows a replacement symlink, and unrelated referents and
+sentinels remain untouched. File/directory boundary replacements fail through
+the flags mismatch, while a validated directory may still be replaced by and
+remove another empty directory. A retained parent moved outside the public
+workspace path can still receive the descriptor-relative deletion. Other hard
+links and already open descriptors survive, and a concurrent actor can
+recreate the pathname after success. These limits are normative disclosures
+rather than stronger concurrent-isolation or final-entry-type claims.
 
 Production implementation/wiring, independent tests, and maintained
 documentation have non-overlapping owners. Production must route statically
@@ -1142,9 +1148,14 @@ cargo-audit 0.22.2, Linux/FreeBSD/WASI gates, and Node's active unsupported test
 adds no unsafe Rust, and changes neither Cargo metadata nor CLI source. A fresh
 locked arm64 Mach-O release CLI has SHA-256
 `d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
-and passes bare, help, and status smoke paths. These results are local precursor
-evidence only, not formal review, delivery, compatibility promotion,
-performance, or fx-equivalence approval.
+and passes bare, help, and status smoke paths. Formal cycle 1 reviewed exact
+candidate `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf`; all three tracks
+reported **NOT GREEN**. The four unique findings cover requested-path work
+precedence, retained-root permission taxonomy, macOS cancellation around the
+post-`EPERM` diagnostic metadata operation, and the under-specified portable
+file-class replacement race. Remediation and a fresh three-track same-SHA
+cycle are in progress. Neither precursor nor failed candidate establishes
+delivery, compatibility promotion, performance, or fx-equivalence approval.
 
 After exact local gates, three fresh correctness/API, filesystem/robustness,
 and performance/concurrency agents must review the same behavior SHA. Every
@@ -1425,10 +1436,14 @@ gate:
   exact-SHA artifacts. Implementation and independent evidence compose through
   exact local-gate precursor `5e340155f9a38b81a2812942d6ad0a796164beb5`;
   focused, workspace, Python, compatibility, dependency, portability,
-  documentation, no-unsafe/diff, and release-smoke gates are green. Formal
-  same-SHA review, feature delivery, and `main` delivery remain pending, so the
-  combined native-tool checkbox stays unchecked and the delivered-slice count
-  remains twenty-one.
+  documentation, no-unsafe/diff, and release-smoke gates are green. Exact
+  cycle-1 candidate `7c6f7ee` is **NOT GREEN** across all three fresh tracks,
+  with four unique findings covering requested-path work precedence, root
+  permission taxonomy, macOS diagnostic-metadata cancellation, and the
+  portable final non-directory replacement boundary. Remediation, fresh
+  same-SHA review, feature delivery, and `main` delivery remain pending, so
+  the combined native-tool checkbox stays unchecked and the delivered-slice
+  count remains twenty-one.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

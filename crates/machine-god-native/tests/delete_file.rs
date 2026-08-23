@@ -67,6 +67,26 @@ impl Drop for TemporaryDirectory {
     }
 }
 
+struct ModeRestoreGuard {
+    path: PathBuf,
+    mode: u32,
+}
+
+impl ModeRestoreGuard {
+    fn new(path: &Path, mode: u32) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            mode,
+        }
+    }
+}
+
+impl Drop for ModeRestoreGuard {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode));
+    }
+}
+
 struct NoopWake;
 
 impl Wake for NoopWake {
@@ -332,6 +352,14 @@ fn prepare_enforces_requested_canonical_component_and_serialized_bounds() {
         )))
         .unwrap_err(),
     );
+
+    let far_oversized_path = "x".repeat(MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES * 4);
+    let far_oversized_arguments = arguments(&far_oversized_path);
+    assert!(
+        serde_json::to_vec(&far_oversized_arguments).unwrap().len()
+            > MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES
+    );
+    assert_invalid_path(tool.prepare(call(far_oversized_arguments)).unwrap_err());
 }
 
 #[test]
@@ -556,6 +584,42 @@ fn permission_failure_is_fixed_and_redacted_when_modes_are_enforced() {
 }
 
 #[test]
+fn post_construction_root_permission_loss_is_fixed_and_cleanup_restores_mode() {
+    let temporary = TemporaryDirectory::new();
+    let workspace = temporary.path().join("PRIVATE_WORKSPACE_ROOT");
+    let target = workspace.join("PRIVATE_DELETE_TARGET");
+    fs::create_dir(&workspace).unwrap();
+    fs::write(&target, b"private target").unwrap();
+    let tool = tool(&workspace);
+
+    let (operating_system_enforces_mode, result) = {
+        let _restore_mode = ModeRestoreGuard::new(&workspace, 0o700);
+        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o000)).unwrap();
+        let operating_system_enforces_mode = fs::read_dir(&workspace).is_err();
+        let result = delete(&tool, "PRIVATE_DELETE_TARGET");
+        (operating_system_enforces_mode, result)
+    };
+
+    if operating_system_enforces_mode {
+        let error = result.unwrap_err();
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        assert_tool_error(
+            error,
+            ToolErrorKind::PermissionDenied,
+            "delete_file_permission_denied",
+            "requested path cannot be deleted",
+            false,
+        );
+        for secret in ["PRIVATE_WORKSPACE_ROOT", "PRIVATE_DELETE_TARGET"] {
+            assert!(!display.contains(secret));
+            assert!(!debug.contains(secret));
+        }
+        assert_eq!(fs::read(target).unwrap(), b"private target");
+    }
+}
+
+#[test]
 fn retained_root_rename_and_path_replacement_cannot_redirect_deletion() {
     let temporary = TemporaryDirectory::new();
     let original = temporary.path().join("workspace");
@@ -677,6 +741,14 @@ fn direct_execute_requires_exact_canonical_arguments_and_reapplies_all_limits() 
     }
     assert_invalid_path(delete(&tool, "../target").unwrap_err());
     assert_invalid_path(delete(&tool, &"x".repeat(MAX_DELETE_FILE_PATH_BYTES + 1)).unwrap_err());
+    let far_oversized_path = "x".repeat(MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES * 4);
+    assert!(
+        serde_json::to_vec(&arguments(&far_oversized_path))
+            .unwrap()
+            .len()
+            > MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES
+    );
+    assert_invalid_path(delete(&tool, &far_oversized_path).unwrap_err());
     assert_invalid_arguments(
         execute(
             &tool,
