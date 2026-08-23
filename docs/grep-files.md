@@ -1,10 +1,11 @@
 # Native `grep_files` tool
 
-Status: **IN PROGRESS — formal second replacement candidate
-`5aeddc1b4cb210b00cb967b938db8d5232062916` is historically not green; third
-remediation and exact local gates are green at precursor
-`a8f61794ee5e279558856220b5789526b908015a`, while exact replacement rereview
-and delivery remain pending** nineteenth bounded Milestone 03 candidate.
+Status: **IN PROGRESS — formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness green
+with zero findings; correctness/API and performance/concurrency are not green
+only for the same low documentation mismatch, with zero production defects;
+wording remediation, fourth-cycle rereviews, and delivery remain pending**
+nineteenth bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
@@ -64,9 +65,20 @@ Exact Rust 1.94.1 formatting, warnings-denied workspace Clippy, 598 non-
 documentation tests plus two doctests, 25 private native tests, 40 direct
 `grep_files` tests, four engine tests, and diff checks are green. Exact a8f
 cross-target/dependency/link and compatibility/release validators are green.
-The exact replacement rereview candidate and all three rereviews,
-exact behavior SHA with all tracks green, documentation seal, feature workflows,
-integrated `main`, and exact `main` workflows remain **PENDING**.
+Formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
+**GREEN** with zero findings. Correctness/API and performance/concurrency are
+**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
+confirmed zero production defects. In diagnostic allocator instrumentation,
+two 10,000-file boundary scans at `5aeddc1` requested approximately
+4,103,462,456 bytes and made 20,000 allocations of exactly 204,801 bytes;
+`0bfe68a` requested approximately 7,459,007 bytes and made zero maximum-sized
+allocations. Its maximum-plus-384 regression requested approximately 3,349,064
+bytes and made one high-water allocation. Allocation and timing instrumentation
+is diagnostic only, not a contract or product-performance result. The wording-
+remediation component and composed SHAs, fourth-cycle rereviews, exact behavior
+SHA with all tracks green, documentation seal, feature workflows, integrated
+`main`, and exact `main` workflows remain **PENDING**.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal
@@ -397,13 +409,16 @@ structured output. An output `truncated` flag never represents incomplete
 scanning.
 
 One content buffer belongs to one scan and is never shared between concurrent
-or reentrant scans. Each file begins with a logical length of zero, reads through
-an 8 KiB window, and reuses the same allocation at its prior high-water mark.
-Initialized storage length grows only as observed bytes require and never beyond
-204,801 bytes: the 204,800-byte eligible-file ceiling plus one overflow witness.
-Logical reset prevents stale bytes from entering a later file view. Actual bytes read,
-including the per-file overflow witness and the first aggregate-overflow
-witness, remain charged to the aggregate content counter exactly as before.
+or reentrant scans. Each file begins with a logical length of zero and reuses
+the same allocation at its prior high-water mark. Initialized storage is
+acquired or grown before each read in an attempted-read window of at most 8 KiB,
+and its high-water length never exceeds 204,801 bytes: the 204,800-byte eligible-
+file ceiling plus one overflow witness. A short or zero-byte read therefore may
+initialize storage beyond the bytes that read returns. Only the logical length,
+visible file slice, and charged content-byte counters advance by bytes actually
+read. Logical reset prevents stale bytes from entering a later file view;
+actual per-file and aggregate-overflow witnesses remain charged exactly as
+before.
 
 The two list modes retain at most the requested `head_limit`, never more than
 100 mode records, after discarding the first `offset` logical results from the

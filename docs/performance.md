@@ -253,9 +253,20 @@ with deterministic recursive and non-recursive regressions. Exact Rust 1.94.1
 formatting, warnings-denied workspace Clippy, 598 non-documentation tests plus
 two doctests, 25 private native tests, 40 direct `grep_files` tests, four engine
 tests, cross-target/dependency/link validation, and diff checks are green.
-Compatibility/release validation is green. Exact replacement rereviews,
-behavior-green SHA, seal, and remote delivery remain **PENDING**. The corrected
-behavior contract requires cancellation-aware
+Compatibility/release validation is green. Formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
+**GREEN** with zero findings. Correctness/API and performance/concurrency are
+**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
+confirmed zero production defects. In diagnostic allocator instrumentation,
+two 10,000-file boundary scans at `5aeddc1` requested approximately
+4,103,462,456 bytes and made 20,000 allocations of exactly 204,801 bytes;
+`0bfe68a` requested approximately 7,459,007 bytes and made zero maximum-sized
+allocations. Its maximum-plus-384 regression requested approximately 3,349,064
+bytes and made one high-water allocation. Allocation and timing instrumentation
+is diagnostic only, not a contract or product-performance result. The wording-
+remediation component and composed SHAs, fourth-cycle rereviews, behavior-green
+SHA, seal, and remote delivery remain **PENDING**. The corrected behavior
+contract requires cancellation-aware
 slashful candidate splitting at intervals of at most 1,024 bytes, checks in
 both dynamic-programming branches, and one charged cancellation-checked
 slashful selected-file rejection.

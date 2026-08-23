@@ -27,8 +27,13 @@ composed local-gate precursor `a8f6179`. Exact Rust 1.94.1 formatting,
 warnings-denied workspace Clippy, 598 non-documentation tests plus two doctests,
 25 private native tests, 40 direct `grep_files` tests, four engine tests, and
 diff checks are green. Exact a8f cross-target/dependency/link validation is
-green; compatibility/release validation is green. Exact replacement
-rereviews, behavior-green SHA, seal, and remote delivery remain **PENDING**.
+green; compatibility/release validation is green. Formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
+**GREEN** with zero findings. Correctness/API and performance/concurrency are
+**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
+confirmed zero production defects. The wording-remediation component and
+composed SHAs, fourth-cycle rereviews, behavior-green SHA, seal, and remote
+delivery remain **PENDING**.
 Eighteenth-slice
 production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
@@ -561,8 +566,13 @@ programming branches route through injectable cancellation checks. Exact Rust
 1.94.1 formatting, warnings-denied workspace Clippy, 598 non-documentation tests
 plus two doctests, 25 private native tests, 40 direct tests, four engine tests,
 cross-target/dependency/link validation, and diff checks are green.
-Compatibility/release validation is green. Exact replacement rereviews,
-behavior-green SHA, seal, and feature and `main` workflows remain **PENDING**.
+Compatibility/release validation is green. Formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
+**GREEN** with zero findings. Correctness/API and performance/concurrency are
+**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
+confirmed zero production defects. The wording-remediation component and
+composed SHAs, fourth-cycle rereviews, behavior-green SHA, seal, and feature
+and `main` workflows remain **PENDING**.
 The combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the

@@ -1,10 +1,10 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — formal second replacement candidate
-`5aeddc1b4cb210b00cb967b938db8d5232062916` is historically not green; third
-remediation and exact local gates are green at precursor
-`a8f61794ee5e279558856220b5789526b908015a`, while exact replacement rereview
-and delivery remain pending**
+Status: **IN PROGRESS — formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness green
+with zero findings; correctness/API and performance/concurrency are not green
+only for the same low documentation mismatch, with zero production defects;
+wording remediation, fourth-cycle rereviews, and delivery remain pending**
 
 ## Candidate lineage
 
@@ -95,10 +95,20 @@ and delivery remain pending**
 - Fully composed third-remediation local-gate precursor:
   `a8f61794ee5e279558856220b5789526b908015a`
 - Third-remediation local gates: **GREEN** on exact `a8f6179`
-- Exact replacement rereview candidate SHA: **PENDING**
-- Replacement correctness/API rereview SHA: **PENDING**
-- Replacement security/filesystem-robustness rereview SHA: **PENDING**
-- Replacement performance/concurrency rereview SHA: **PENDING**
+- Formal third-cycle behavior-review candidate:
+  `0bfe68a9692837187c057b5b4efa08ebe3dee058`
+- Third-cycle correctness/API review: **NOT GREEN — one LOW documentation
+  contract mismatch** on exact `0bfe68a`
+- Third-cycle security/filesystem-robustness review: **GREEN — zero findings**
+  on exact `0bfe68a`
+- Third-cycle performance/concurrency review: **NOT GREEN — the same one LOW
+  documentation contract mismatch** on exact `0bfe68a`
+- Third-cycle confirmed production defects: **zero**
+- Documentation wording-remediation component SHA: **PENDING**
+- Composed wording-remediation SHA: **PENDING**
+- Fourth-cycle correctness/API rereview SHA: **PENDING**
+- Fourth-cycle security/filesystem-robustness rereview SHA: **PENDING**
+- Fourth-cycle performance/concurrency rereview SHA: **PENDING**
 - Exact behavior SHA with all three review tracks green: **PENDING**
 - Documentation seal: **PENDING**
 - Feature CI and benchmark-evidence runs: **PENDING**
@@ -126,8 +136,11 @@ regression `dcf57ad` composes at `d7526d4`; review-findings documentation
 `44afb23` composes at `f08c5f2`; and exact-toolchain lint follow-up `1f13f9a`
 produces fully composed local-gate precursor `a8f6179`. Its exact local,
 cross-target, dependency, link, compatibility, release, and CLI-smoke gates are
-green. The exact replacement rereview candidate and its three reviews remain
-pending.
+green. Formal third-cycle candidate `0bfe68a` has filesystem/robustness green
+with zero findings. Correctness/API and performance/concurrency are not green
+only for the same low documentation contract mismatch; reviewers confirmed
+zero production defects. The wording-remediation component and composed SHAs,
+fourth-cycle rereviews, behavior-green SHA, seal, and workflows remain pending.
 Every listed identifier was observed directly; no production/test/documentation
 remediation, replacement rereview, behavior-green, seal, or workflow identifier
 may be inferred from a branch tip, tree identity, or another component.
@@ -187,11 +200,13 @@ complete.
   more than 204,800 bytes, valid UTF-8, and NUL-free. Oversized and non-text
   files are skipped with disclosed aggregate statistics. Other candidate
   failures fail the whole call.
-- One content buffer is local to one scan, reads through an 8 KiB window, grows
-  only as observed bytes require up to the 204,801-byte file-plus-witness cap,
-  and logically resets between files. Reentrant scans do not share it, reset
-  exposes no stale bytes, and actual per-file and aggregate overflow witnesses
-  remain charged.
+- One content buffer is local to one scan. Initialized storage is acquired or
+  grown before reads in attempted-read windows of at most 8 KiB and has a high-
+  water length no greater than the 204,801-byte file-plus-witness cap. Logical
+  length, the visible file slice, and charged content-byte counters advance only
+  by bytes actually read. The buffer logically resets between files; reentrant
+  scans do not share it, reset exposes no stale bytes, and actual per-file and
+  aggregate overflow witnesses remain charged.
 - Context is taken from the same validated logical file view of that reusable
   buffer. Match excerpts are UTF-8-safe, at most 4,096 bytes, and contain the
   complete first match. Retained output owns its bytes before buffer reuse.
@@ -533,14 +548,16 @@ zero findings on the security/filesystem-robustness track.
   accumulated approximately 2,048,010,000 allocated bytes and observed 6.10
   seconds. The allocation total demonstrates amplification; the observed time
   is diagnostic only and is not a contractual timing or product-performance
-  result. Third production remediation `8777825` creates one scan-local buffer,
-  reads through an 8 KiB window, grows only as observed bytes require up to the
-  204,801-byte high-water cap, and logically resets it between files. It retains
-  exact file and aggregate overflow-witness accounting, isolates reentrant
-  scans, and composes at `ab1c133`. Private tests cover empty reuse, maximum-to-
-  empty/tiny stale-byte exclusion, interrupt/error/cancellation semantics, and
-  reentrant isolation; independent regression `dcf57ad`, composed at `d7526d4`,
-  covers one maximum file followed by many empty and tiny files.
+  result. Third production remediation `8777825` creates one scan-local buffer.
+  It acquires or grows initialized storage before reads in attempted-read
+  windows of at most 8 KiB, never beyond the 204,801-byte high-water cap, and
+  logically resets it between files. Only logical length, visible bytes, and
+  charged content bytes advance by bytes actually read. It retains exact file
+  and aggregate overflow-witness accounting, isolates reentrant scans, and
+  composes at `ab1c133`. Private tests cover empty reuse, maximum-to-empty/tiny
+  stale-byte exclusion, interrupt/error/cancellation semantics, and reentrant
+  isolation; independent regression `dcf57ad`, composed at `d7526d4`, covers
+  one maximum file followed by many empty and tiny files.
 - **LOW — confirmed:** the second-fix local-gate record reported 57 Markdown
   files, but the measured inventory is 58. This record corrects the count;
   review-findings documentation `44afb23` composes at `f08c5f2`.
@@ -554,10 +571,38 @@ zero findings on the security/filesystem-robustness track.
 Production, independent-test, review-findings documentation, and lint
 remediation compose through `ab1c133`, `d7526d4`, `f08c5f2`, and exact fully
 composed local-gate precursor `a8f6179`. Its exact local, cross-target,
-dependency, link, compatibility, release, and CLI-smoke gates are green. The
-exact replacement rereview candidate and all three replacement rereviews,
-behavior-green SHA, documentation seal, and remote delivery evidence remain
-**PENDING**. Once one exact replacement behavior SHA is green across all three
-tracks, a later documentation-only seal or final delivery record needs no
-additional adversarial review under the user's explicit instruction, but exact
-feature and `main` workflow evidence is still required.
+dependency, link, compatibility, release, and CLI-smoke gates are green.
+
+### Third-cycle correctness/API track — NOT GREEN
+
+- **LOW — confirmed documentation mismatch:** exact candidate
+  `0bfe68a9692837187c057b5b4efa08ebe3dee058` says initialized storage grows
+  only as observed bytes require. Production instead acquires or grows storage
+  before each read in an attempted window of at most 8 KiB. Logical length,
+  visible file bytes, and charged content-byte counters advance only by bytes
+  actually read. This is a contract-wording defect, not a production defect.
+
+### Third-cycle security/filesystem-robustness track — GREEN
+
+Exact candidate `0bfe68a9692837187c057b5b4efa08ebe3dee058` is **GREEN** with
+zero findings on the security/filesystem-robustness track.
+
+### Third-cycle performance/concurrency track — NOT GREEN
+
+- **LOW — confirmed documentation mismatch:** this track confirmed the same
+  attempted-read-window versus observed-byte storage-growth mismatch and zero
+  production defects. Diagnostic allocator instrumentation over two 10,000-file
+  boundary scans requested approximately 4,103,462,456 bytes and made 20,000
+  allocations of exactly 204,801 bytes at `5aeddc1`, versus approximately
+  7,459,007 requested bytes and zero maximum-sized allocations at `0bfe68a`.
+  The maximum-plus-384 regression requested approximately 3,349,064 bytes and
+  made one high-water allocation. Allocation and timing instrumentation is
+  diagnostic only, not a contractual or product-performance result.
+
+The documentation wording-remediation component and composed SHAs, all three
+fourth-cycle rereviews, behavior-green SHA, documentation seal, and remote
+delivery evidence remain **PENDING**. Once one exact replacement behavior SHA
+is green across all three tracks, a later documentation-only seal or final
+delivery record needs no additional adversarial review under the user's
+explicit instruction, but exact feature and `main` workflow evidence is still
+required.

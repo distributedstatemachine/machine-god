@@ -184,7 +184,12 @@ precursor `a8f6179`. Exact Rust 1.94.1 formatting, warnings-denied workspace
 Clippy, 598 non-documentation tests plus two doctests, 25 private native tests,
 40 direct `grep_files` tests, four engine tests, cross-target/dependency/link
 validation, and diff checks are green. Compatibility/release validation is
-green. Exact replacement rereviews, behavior-green SHA, seal, and remote
+green. Formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
+**GREEN** with zero findings. Correctness/API and performance/concurrency are
+**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
+confirmed zero production defects. The wording-remediation component and
+composed SHAs, fourth-cycle rereviews, behavior-green SHA, seal, and remote
 delivery remain **PENDING**. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
@@ -852,12 +857,14 @@ compile/match work, and literal matcher work all have checked exact caps. The
 literal engine is worst-case linear and folds ASCII only when requested,
 preventing pattern-length multiplication from becoming unmetered work.
 
-One content buffer is local to one scan. It reads through an 8 KiB window,
-grows only as observed bytes require up to the 204,801-byte file-plus-witness
-ceiling, and logically resets between files. Concurrent and reentrant scans do
-not share it. Reset prevents stale bytes from entering the next logical file;
-actual per-file and aggregate overflow witnesses remain retained in the checked
-content budget.
+One content buffer is local to one scan. Initialized storage is acquired or
+grown before reads in attempted-read windows of at most 8 KiB, with a high-water
+length no greater than the 204,801-byte file-plus-witness ceiling. The buffer
+logically resets between files. Only logical length, the visible slice, and
+checked content-byte accounting advance by bytes actually read. Concurrent and
+reentrant scans do not share the buffer. Reset prevents stale bytes from
+entering the next logical file; actual per-file and aggregate overflow
+witnesses remain retained in the checked content budget.
 
 Matching and requested context derive from one validated logical file view of
 that reusable buffer. No path-based context reopen can redirect content or

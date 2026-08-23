@@ -220,9 +220,13 @@ composed local-gate precursor `a8f6179`. Exact Rust 1.94.1 formatting,
 warnings-denied workspace Clippy, 598 non-documentation tests plus two doctests,
 25 private native tests, 40 direct `grep_files` tests, four engine tests, and
 diff checks are green. Exact a8f cross-target/dependency/link and compatibility/
-release validators are green. The exact replacement rereview candidate,
-all three rereviews, behavior-green SHA, seal, and remote delivery evidence
-remain **PENDING**.
+release validators are green. Formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
+**GREEN** with zero findings. Correctness/API and performance/concurrency are
+**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
+confirmed zero production defects. The wording-remediation component and
+composed SHAs, fourth-cycle rereviews, behavior-green SHA, seal, and remote
+delivery evidence remain **PENDING**.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -505,8 +509,13 @@ through `8777825`, `ab1c133`, `dcf57ad`, `d7526d4`, `44afb23`, `f08c5f2`, and
 1.94.1 formatting, warnings-denied workspace Clippy, 598 non-documentation tests
 plus two doctests, 25 private native tests, 40 direct tests, four engine tests,
 and diff checks are green. Exact a8f cross-target/dependency/link and
-compatibility/release validators are green. Exact replacement rereviews,
-behavior-green SHA, seal, and remote delivery remain **PENDING**.
+compatibility/release validators are green. Formal third-cycle candidate
+`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
+**GREEN** with zero findings. Correctness/API and performance/concurrency are
+**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
+confirmed zero production defects. The wording-remediation component and
+composed SHAs, fourth-cycle rereviews, behavior-green SHA, seal, and remote
+delivery remain **PENDING**.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
