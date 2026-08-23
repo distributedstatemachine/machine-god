@@ -43,7 +43,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty delivered bounded slices.
+with twenty delivered bounded slices. The next bounded `edit_file` slice is
+**IN PROGRESS** at its contract-only kickoff and is not delivered.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -846,6 +847,87 @@ parent creation, external-path access, target-content read, CLI behavior,
 benchmark workload, product-performance claim, or fx-equivalence claim. The
 product remains Rust; Zig remains only the pinned upstream fx benchmark input.
 
+The twenty-first bounded Milestone 03 slice, native `edit_file`, is **IN
+PROGRESS** from exact delivered base
+`242adfed4be717baf7cd07275aae40ec8a3637f6`. Its contract-only kickoff is
+documentation and is exempt from adversarial review under the user's explicit
+instruction. It does not establish production behavior or change the count of
+twenty delivered slices. Its exact feature workflows remain required after
+push and cannot be recorded by the commit that triggers them.
+
+The frozen strict effect-free input is exactly required UTF-8 `path`,
+`old_string`, and `new_string`, with no unknown fields. Path normalization is
+the delivered `write_file` rule and independently caps requested and canonical
+paths at 4,096 bytes and 256 components. `old_string` is nonempty and must
+differ from `new_string`; old and new are independently capped at 49,152 raw
+bytes, complete serialized arguments at 65,536 bytes, and the existing
+preimage and resulting postimage independently at 49,152 bytes. NUL is valid,
+empty replacement is valid, I/O and construction chunks are at most 8,192
+bytes, and success is exactly normalized path plus resulting
+`bytes_written`.
+
+Core gains distinct `FilesystemAccess::Edit`, serialized `edit`, because one
+allowed edit must read the complete existing preimage before deriving and
+atomically replacing it. Reusing `Write` would contradict `write_file`'s
+explicit no-target-read authority. Preparation remains effect-free, so it
+cannot pre-read the file or compute pinned fx's preapproval diff. Policy sees
+only the normalized path and edit authority. Preview-bearing authorization is
+deferred rather than moving ambient filesystem authority into core.
+
+Allowed execution requires a valid-UTF-8 existing Linux/macOS regular file,
+uses a cancellation-metered worst-case-linear prefix-table matcher, counts
+overlapping occurrences as ambiguous, and stops after the second. The public
+matcher-work cap is 393,216 charged comparison/transition steps, with
+cancellation at bounded intervals. Exactly one occurrence constructs one
+checked postimage; zero, multiple, oversize, invalid-UTF-8, or changing inputs
+fail without publication.
+
+The native effect reuses the hardened retained-descriptor pattern: linked-root
+reacquisition, existing no-follow parents, initial bounded stable target read,
+one private same-parent stage selected within eight entropy names, at most 16
+cumulative interrupted results per I/O/sync phase, and at most 16 interruptions
+and 31 native entropy calls per 16-byte name including partial progress. The
+stage receives only the original target's nine ordinary rwx bits. Before
+rename, execution revalidates parent identity, target identity/mode/size and
+complete current bytes, and staged identity, then checks cancellation and
+atomically replaces the pathname. Post-rename parent-sync or required
+verification failure is nonretryable commit ambiguity. Precommit cleanup makes
+the delivered best-effort held-descriptor `fchmod(0600)` and identity-checked
+unlink attempts with the same disclosed race and dual-failure residue caveat.
+
+This is not inode compare-and-swap isolation: a target or retained parent can
+change after the last validation, and a moved retained parent can receive
+publication. Replacing the inode preserves only ordinary rwx bits and breaks
+the edited pathname away from other hard links; ownership, ACLs, xattrs,
+timestamps, and other metadata are not preserved. The slice adds no missing-
+file insertion, parent creation, external path, binary/alternate-encoding
+editing, regex, patch/range/multi-edit, append, symlink-target access, CLI
+behavior, non-Linux/macOS hardening, benchmark change, performance claim, or fx
+equivalence.
+
+Production, independent tests, and maintained documentation have separate,
+non-overlapping owners. Production owns core `Edit` authority, native behavior,
+exports, prepared-root/reference-host wiring, and any narrow package-private
+staging extraction while preserving every delivered `write_file` behavior.
+Independent tests own public direct, engine, host, portability, fault, race,
+bound, cancellation, and unsupported-target evidence. Documentation owns the
+normative contract, plan/index status, and lineage record. Composition will
+register exactly seven alphabetical workspace tools: `edit_file`, `file_info`,
+`glob_files`, `grep_files`, `list_files`, `read_file`, and `write_file`, backed
+by one retained workspace descriptor plus six identity-preserving clones.
+
+After production, tests, and docs compose and the exact Rust 1.94.1 local gate
+is green, three fresh correctness/API, filesystem/robustness, and performance/
+concurrency agents must review the same exact behavior SHA. Every confirmed
+finding is fixed and restarts all three fresh tracks on a new SHA until all are
+green. Exact feature workflows, a no-force fast-forward to `main`, and exact
+`main` workflows follow. Documentation-only kickoff, seal, and delivery
+records are exempt from another adversarial cycle, but not from their own exact
+remote workflows. The normative boundary and pending lineage are in
+[`edit-file.md`](edit-file.md) and the
+[`edit_file` review](reviews/m03-edit-file-review-01.md). Zig remains solely the
+pinned upstream benchmark build input; the product implementation remains Rust.
+
 ### Milestone 03 completion boundary
 
 The twenty delivered slices do not complete Milestone 03.
@@ -1031,6 +1113,17 @@ gate:
   record is documentation-only and exempt from adversarial review under the
   user's instruction; its own exact feature and `main` workflows are required
   after push and cannot be self-recorded. The
+  twenty-first `edit_file` slice is **IN PROGRESS** from exact delivered base
+  `242adfed4be717baf7cd07275aae40ec8a3637f6`. Its strict effect-free contract,
+  distinct `FilesystemAccess::Edit` authority, exact-one overlapping matcher,
+  393,216-step public work cap, bounded existing-file atomic-replacement
+  protocol, parallel ownership, and fresh same-SHA review requirements are
+  frozen in [`edit-file.md`](edit-file.md) and
+  [`m03-edit-file-review-01.md`](reviews/m03-edit-file-review-01.md). This
+  documentation-only kickoff is exempt from adversarial review. Production,
+  independent evidence, composed local gates, all three formal tracks, exact
+  feature workflows, fast-forward integration, and exact `main` workflows are
+  pending; `edit_file` is not delivered. The
   remaining native tools are
   incomplete, so delivery of this slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

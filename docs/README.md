@@ -12,6 +12,7 @@
 - [Native `glob_files` tool](glob-files.md)
 - [Native `grep_files` tool](grep-files.md)
 - [Native `write_file` composed candidate](write-file.md)
+- [Native `edit_file` contract candidate](edit-file.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
 - [Native AI Gateway credential discovery](ai-gateway-credentials.md)
@@ -39,3 +40,4 @@
 - [Milestone 03 native `glob_files` delivery review](reviews/m03-glob-files-review-01.md)
 - [Milestone 03 native `grep_files` candidate review](reviews/m03-grep-files-review-01.md)
 - [Milestone 03 native `write_file` candidate review](reviews/m03-write-file-review-01.md)
+- [Milestone 03 native `edit_file` contract review](reviews/m03-edit-file-review-01.md)
