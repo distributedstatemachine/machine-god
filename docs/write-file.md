@@ -1,7 +1,7 @@
 # Native `write_file` contract
 
-Status: **FROZEN CONTRACT — implementation, independent tests, composition,
-formal review, and delivery are pending**
+Status: **COMPOSED IMPLEMENTATION — final local validation, formal review, and
+delivery are pending**
 
 The contract commit is
 `3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
@@ -17,7 +17,7 @@ input.
 
 ## Public API, schema, and limits
 
-`machine-god-native` will export `WRITE_FILE_TOOL_NAME`, `WriteFileTool`,
+`machine-god-native` exports `WRITE_FILE_TOOL_NAME`, `WriteFileTool`,
 `WriteFileToolOpenError`, `WriteFileToolOpenErrorKind`, and these public limits:
 
 | Public constant | Exact value |
@@ -284,40 +284,42 @@ status is uncertain.
 
 ## Reference-host composition
 
-The reference host will distribute one retained workspace descriptor plus five
-identity-preserving clones and register exactly six tools alphabetically:
+The reference host distributes one retained workspace descriptor plus five
+identity-preserving clones and registers exactly six tools alphabetically:
 `file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`, and
 `write_file`.
 
-This is pending composition. Until the production and independent-test
-components are integrated, the delivered reference host continues to expose
-the existing five-tool catalog and no documentation may claim otherwise.
+Production, independent tests, and the maintained documentation are composed on
+the feature branch. This six-tool catalog is candidate behavior until the exact
+composed SHA passes local gates, three fresh same-SHA adversarial tracks, exact
+feature workflows, and fast-forward `main` delivery.
 
 ## Independent evidence checklist
 
-Every item is pending on this frozen-contract commit:
+The composed feature branch supplies the following local evidence. Checked
+items are still candidate evidence until the formal exact-SHA gates complete:
 
-- [ ] Exact exports, constant values, tool/schema descriptions, strict shape,
+- [x] Exact exports, constant values, tool/schema descriptions, strict shape,
   fixed construction/tool errors, `Display`, and debug redaction.
-- [ ] Requested and normalized path byte boundaries, component boundary,
+- [x] Requested and normalized path byte boundaries, component boundary,
   forbidden forms, raw-content exact/one-over, serialized-argument exact/one-
   over including escape-heavy JSON, and serialized-result bound.
-- [ ] Preparation is effect-free; denial produces no filesystem effect; policy
+- [x] Preparation is effect-free; denial produces no filesystem effect; policy
   and execution observe the same normalized path and exact canonical content.
-- [ ] Empty, NUL-containing, Unicode, and maximum-sized content round-trip
+- [x] Empty, NUL-containing, Unicode, and maximum-sized content round-trip
   byte-for-byte with exact `bytes_written`.
-- [ ] Missing-target creation, existing-target replacement, identical-content
+- [x] Missing-target creation, existing-target replacement, identical-content
   inode replacement, old-descriptor/new-path atomic visibility, and exact result
   shapes.
-- [ ] New files are `0644` under hostile umask; replacements preserve only the
+- [x] New files are `0644` under hostile umask; replacements preserve only the
   nine ordinary rwx bits and strip set-id/sticky bits.
-- [ ] Parents are never created; ancestor/final symlinks and directory, FIFO,
+- [x] Parents are never created; ancestor/final symlinks and directory, FIFO,
   socket, device, and other special targets fail closed and outside sentinels
   remain unchanged.
-- [ ] Retained-root removal/replacement, target appearance/replacement, final-
+- [x] Retained-root removal/replacement, target appearance/replacement, final-
   parent identity change/movement, and the disclosed final validation-to-rename
   races are exercised through deterministic seams.
-- [ ] Eight temporary-name collisions exhaust exactly; foreign collisions are
+- [x] Eight temporary-name collisions exhaust exactly; foreign collisions are
   preserved; staged-name replacement and cleanup-name swaps never intentionally
   remove a mismatched sentinel; possible residue is accounted for.
 - [ ] Injected write, chmod, staged-file sync, rename, and parent-directory sync
@@ -326,7 +328,7 @@ Every item is pending on this frozen-contract commit:
 - [ ] Cancellation is exercised at traversal, temporary-attempt, write,
   verification, and final-precommit boundaries; unpolled/drop behavior and the
   core same-poll durable unknown-result path are covered.
-- [ ] Engine deny/allow events and durable results, exact six-tool alphabetical
+- [x] Engine deny/allow events and durable results, exact six-tool alphabetical
   catalog, and original-plus-five-clones workspace identity all pass.
 - [ ] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
   an active unsupported-target test reaches the fixed public construction

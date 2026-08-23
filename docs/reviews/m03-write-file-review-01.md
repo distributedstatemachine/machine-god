@@ -1,7 +1,7 @@
 # Milestone 03 native `write_file` review 01
 
-Status: **FROZEN CONTRACT — production, independent tests, composition, formal
-reviews, seal, and delivery are pending**
+Status: **COMPOSED IMPLEMENTATION — final local gates, formal reviews, seal,
+and delivery are pending**
 
 ## Base and prior delivery
 
@@ -25,10 +25,11 @@ reviews, seal, and delivery are pending**
 - Documentation owner `agent/m03-write-file-docs` owns the normative contract,
   maintained indexes and plan status, and this review record.
 
-The three branches start from the exact contract commit and own non-overlapping
-files. Their commits are not behavior candidates in isolation. The integration
-owner must compose all three without overwriting one another before any formal
-review begins.
+The three component branches started from the exact contract commit and owned
+non-overlapping files. Their commits are not behavior candidates in isolation.
+The integration branch has composed all three without overwriting one another;
+formal review remains pending until final local-gate evidence freezes one exact
+SHA.
 
 ## Frozen boundary
 
@@ -52,28 +53,29 @@ equivalence.
 
 ## Required independent evidence
 
-Production and test owners remain separate. Every item below is pending:
+Production and test owners remained separate. The composed branch supplies the
+following candidate evidence; formal same-SHA review remains pending:
 
-- [ ] Exact public symbols, constants, tool/schema descriptions, strict
+- [x] Exact public symbols, constants, tool/schema descriptions, strict
   arguments, result shape, open errors, tool errors, and redacted debug/display.
-- [ ] Exact and one-over path, component, raw-content, serialized-argument,
+- [x] Exact and one-over path, component, raw-content, serialized-argument,
   write-chunk, temporary-attempt, and serialized-result boundaries.
-- [ ] Effect-free normalized preparation and exact
+- [x] Effect-free normalized preparation and exact
   `FilesystemAccess::Write` policy/execution agreement, including engine denial
   before any filesystem mutation.
-- [ ] Empty/NUL/Unicode/maximum content, create, replace, identical replacement,
+- [x] Empty/NUL/Unicode/maximum content, create, replace, identical replacement,
   atomic descriptor visibility, hostile-umask `0644`, rwx preservation, and
   special-bit stripping.
-- [ ] Missing parents, every symlink position, final special objects, retained-
+- [x] Missing parents, every symlink position, final special objects, retained-
   root replacement/removal, and unchanged outside sentinels.
-- [ ] Deterministic target appearance/replacement, parent identity change/move,
+- [x] Deterministic target appearance/replacement, parent identity change/move,
   staged-name replacement, eight collisions, collision preservation, cleanup
   swap protection, and residue handling.
 - [ ] Injected write/chmod/file-sync/rename/directory-sync failures establish
   unchanged-target precommit behavior and post-rename commit ambiguity.
 - [ ] Cancellation at every stated boundary, inert-until-poll/drop behavior,
   engine same-poll post-effect recovery, and absence of detached work.
-- [ ] Exact six-tool alphabetical host catalog, original-plus-five-clone
+- [x] Exact six-tool alphabetical host catalog, original-plus-five-clone
   workspace identity, Linux/macOS behavior, FreeBSD/WASI compilation, and an
   active unsupported-target construction test.
 
@@ -96,9 +98,17 @@ still required.
 - Contract feature CI: `32626410935` — **GREEN** on exact contract commit
 - Contract benchmark evidence: `32626410931` — **GREEN** on exact contract
   commit
-- Production component: **PENDING**
-- Independent-test component: **PENDING**
-- Documentation component: **PENDING**
+- Production component: `e9b3ad8e8bd3ab831d93178eea583b09782f5f69`,
+  composed as `c0d555b`
+- Independent-test component: `59a06a34c25afce4289d7c7b9d214cef9d89a8e8`,
+  composed as `c4c5ce6`
+- Documentation component: `9285fe900dbc019edeb26b89c97a8fda6855447b`,
+  composed as `de46c3e`
+- Retained-root fixture correction: `85099337520a4215ee3d2a24b638dfbd8c8ca187`
+- Deterministic seam hardening: `1d30ff906017fbb592062dde0f44ae71c492e1d3`,
+  composed as `a9a7c99`
+- Core same-poll recovery regression:
+  `8b5847f355e685a145557e98b1719cf1e154ae83`
 - First exact behavior candidate: **PENDING**
 - Three formal adversarial reviews: **PENDING**
 - Behavior-green SHA: **PENDING**

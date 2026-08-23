@@ -729,8 +729,14 @@ the final validation-to-rename race and a final-parent move outside the
 workspace remain documented limitations. The slice claims neither perfect
 identity-safe cleanup nor adversarial concurrent-rename confinement.
 
-Production, independent tests, and maintained documentation have separate
-owners and must compose before review. Evidence must cover exact schema and
+Production, independent tests, and maintained documentation had separate
+owners and are composed on `agent/m03-write-file`. Exact production component
+`e9b3ad8` composes as `c0d555b`; exact independent-test component `59a06a3`
+composes as `c4c5ce6`; exact documentation component `9285fe9` composes as
+`de46c3e`. Retained-root fixture correction `8509933`, deterministic seam
+hardening component `1d30ff9` composed as `a9a7c99`, and core same-poll recovery
+regression `8b5847f` close the preformal evidence gaps found so far. Evidence
+must cover exact schema and
 limits, normalization and policy agreement, create/replace and atomic
 visibility, exact modes under hostile umask, missing parents, symlink and
 special rejection, retained-root changes, all eight temporary collisions,
@@ -882,9 +888,12 @@ gate:
   record is documentation-only and exempt from adversarial review; its own exact
   remote workflows are required after push and cannot be self-recorded. The
   twentieth `write_file` contract is frozen at exact `3ee52fd` from exact base
-  `bc042536`; its separate production, independent-test, and maintained-
-  documentation components remain pending composition, exact local gates, and
-  three fresh same-SHA adversarial tracks. The remaining native tools are
+  `bc042536`. Production `e9b3ad8`, independent tests `59a06a3`, and maintained
+  documentation `9285fe9` compose through `c0d555b`, `c4c5ce6`, and `de46c3e`;
+  fixture correction `8509933`, deterministic seam hardening `a9a7c99`, and
+  core same-poll recovery regression `8b5847f` are present. Final exact local
+  gates and three fresh same-SHA adversarial tracks remain pending. The
+  remaining native tools are
   incomplete, so this pending slice does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
