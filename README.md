@@ -240,8 +240,9 @@ reference-host fixture fix `bdbb677` makes focused production/test composition
 green. Documentation component `b04151a` produces first fully composed behavior
 candidate `42e4793`; lint fix and exact local gates are green at `45ad91f`.
 All three first-cycle formal tracks are **NOT GREEN** on exact candidate
-`355a11a`; production, test, and documentation fixes, replacement composition
-and reviews, seal, delivery, and exact-workflow evidence remain **PENDING**.
+`355a11a`. Remediation and exact replacement local gates are green at final
+code/test precursor `275d263`; all three replacement reviews, the behavior-
+green SHA, seal, delivery, and exact-workflow evidence remain **PENDING**.
 Strict effect-free preflight accepts exactly `pattern`, `path`, `include`,
 `case_insensitive`, `mode`, `head_limit`,
 `offset`, and `context_lines`, makes every default explicit, and prepares

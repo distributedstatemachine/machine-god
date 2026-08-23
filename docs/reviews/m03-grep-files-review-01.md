@@ -1,8 +1,8 @@
 # Milestone 03 native `grep_files` review 01
 
-Status: **IN PROGRESS — all three first-cycle formal tracks are NOT GREEN on
-exact candidate `355a11a6055b0053dff80e71011d7633e8a6ce97`; fixes,
-replacement composition, replacement reviews, seal, and delivery are pending**
+Status: **IN PROGRESS — remediation and exact replacement local gates are
+green at `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`; all three replacement
+reviews, the behavior-green SHA, seal, and delivery remain pending**
 
 ## Candidate lineage
 
@@ -30,10 +30,27 @@ replacement composition, replacement reviews, seal, and delivery are pending**
 - First-cycle security/filesystem-robustness review: **NOT GREEN** on exact
   `355a11a`
 - First-cycle performance/concurrency review: **NOT GREEN** on exact `355a11a`
-- Production fix SHA: **PENDING**
-- Independent-test fix SHA: **PENDING**
-- Documentation fix SHA: **PENDING**
-- Composed fix SHA and replacement local gates: **PENDING**
+- Isolated production remediation:
+  `012f14d273b15085713fba9092e93486d4e6f0e4`
+- Composed production remediation head:
+  `35defb5c7cee021064411535070b9ecd62387e2f`
+- Isolated independent-test remediation:
+  `646286203ab665e9dc9d0a86f7de6d036b7c5c86`
+- Composed production-and-test remediation head:
+  `58550734b77a5a44c4b9452438e34f265013c40b`
+- Isolated documentation remediation:
+  `771a3e34816d2d67cd1e08d73abdac7c807313a3`
+- Composed production, test, and documentation remediation head:
+  `3cd282fafb26bb069ac73407fde0fd30c7d1ff82`
+- Isolated deterministic production-evidence component:
+  `842d36ae5f7cc8aa5a3011a41bba209e0f35172c`
+- Composed deterministic-evidence head:
+  `630acbb384f2e1b79b6916a10baaac26acafbf41`
+- Isolated unsupported-target test component:
+  `325350ce558a7e6f21ef4cf2d4d030e30cc4f740`
+- Final code/test local-gate precursor:
+  `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`
+- Replacement local gates: **GREEN** on exact `275d263`
 - Replacement correctness/API review SHA: **PENDING**
 - Replacement security/filesystem-robustness review SHA: **PENDING**
 - Replacement performance/concurrency review SHA: **PENDING**
@@ -50,12 +67,13 @@ fixture fix; focused production-and-test composition is green through
 `bdbb677`. Maintained documentation first composes at `42e4793`; the bounded
 lint and cross-target correction composes at local-gate precursor `45ad91f`.
 Maintained documentation records that all three first-cycle reviews of exact
-candidate `355a11a` are NOT GREEN. No identifier for a pending fix,
-replacement, seal, or workflow may be inferred from a branch tip, tree
-identity, or another component. Record it only after the named artifact exists
-and was observed. Production, independent tests, and maintained docs are
-parallel, non-overlapping ownership slices and must compose without overwriting
-one another.
+candidate `355a11a` are NOT GREEN. The five isolated remediation/evidence
+components above compose in order through `35defb5`, `5855073`, `3cd282f`,
+`630acbb`, and final local-gate precursor `275d263`. Every listed identifier was
+observed directly; no replacement-review, seal, or workflow identifier may be
+inferred from a branch tip, tree identity, or another component. Production,
+independent tests, and maintained docs remain non-overlapping ownership slices
+and must compose without overwriting one another.
 
 The exact base is the final `glob_files` documentation record. It passed feature
 CI `32611623653` and feature benchmark evidence `32611623655`. GitHub did not
@@ -163,14 +181,20 @@ record.
   prefix case-sensitive and ASCII-insensitive inputs, pagination/context
   interactions, root rename/removal, deterministic pre-poll growth/removal/
   substitution, cancellation intervals, unpolled/drop ownership, and
-  diagnostic redaction. Private tests or another deterministic internal seam
-  must prove post-observation `NOENT`, growth-witness, raced-special rejection,
-  line-index cancellation, and serialization-trimming cancellation behavior;
-  flaky sleep-based public tests do not satisfy this gate. True concurrent
-  interleaving evidence remains pending unless such a seam exists.
-- Unsupported-target library tests must actually compile on at least one
-  unsupported target and exercise the public unsupported constructor/execution
-  surface rather than being removed by a supported-target-only file gate.
+  diagnostic redaction. Public synchronous-future tests prove pre-poll growth,
+  removal, and special substitution. Deterministic internal classifiers prove
+  post-observation `NOENT` omission and non-`NOENT` error mapping, growth and
+  aggregate-content overflow with oversized accounting, raced nonregular-open
+  rejection, line-index cancellation intervals, and a check before every
+  serialization-trimming iteration. These deterministic seams replace flaky
+  sleep-based race tests.
+- The dedicated `grep_files_unsupported` integration target compiles for
+  `wasm32-wasip1` with its constructor test active rather than cfg-elided. It
+  exercises the reachable public boundary: `GrepFilesTool::open` returns the
+  exact redacted `UnsupportedPlatform` failure without touching its private
+  path. Execution is uninhabited and unreachable through safe public code on
+  that target because construction cannot produce a tool; no fabricated unsafe
+  instance is required or permitted as evidence.
 - Reference-host and prepared-root tests prove exactly five alphabetical tools
   share one opened workspace identity through the original descriptor plus four
   clones.
@@ -185,15 +209,16 @@ record.
 
 ## Local gate results
 
-Exact local-gate precursor `45ad91fa2689250c47c79d2105f5e3c261cea638`
-is green under Rust and Cargo 1.94.1 exactly:
+Exact final code/test local-gate precursor
+`275d263dd3c7981e66f6a0f90f3779c271eb4cc3` is green under Rust and Cargo
+1.94.1 exactly:
 
-- formatting, workspace/all-target/all-feature warnings-denied Clippy, 571
-  workspace unit/integration tests plus two doctests, explicit 2/2 workspace
-  doctests, and 63/63 native private library tests pass;
-- the focused behavior represented in the workspace suite includes 30 direct
-  `grep_files`, four real-engine, seven reference-host, three prepared-root,
-  and 58 core contract tests;
+- formatting and workspace/all-target/all-feature warnings-denied Clippy pass;
+- the workspace gate passes 589 non-documentation tests plus two doctests, the
+  explicit documentation gate passes 2/2, and the native private-library gate
+  passes 72/72;
+- focused coverage includes 39 direct `grep_files` integration tests and four
+  real-engine tests;
 - the repository Python gate runs 129 tests: 121 pass and eight expected macOS
   skips, with no failure or error;
 - a fresh exact upstream fx checkout at
@@ -201,14 +226,22 @@ is green under Rust and Cargo 1.94.1 exactly:
   generation check; a clean locked release build and all eight accepted CLI
   bare/version/help/status forms pass exact-output, empty-stderr, and no-create
   checks;
-- cargo-deny 0.20.2 passes with only the accepted `syn` and `windows-sys`
+- cargo-deny 0.19.9 passes with only the accepted `syn` and `windows-sys`
   duplicate warnings; cargo-audit 0.22.2 checks 1,225 cached advisories over 175
   dependencies with zero findings;
 - Linux and FreeBSD no-default native Clippy pass with warnings denied; WASI
   no-default and all-feature checks pass with only the pre-existing
-  `read_file::check_cancellation` dead-code warning; and
-- 58 Markdown files contain 420 valid relative links with zero missing, while
-  both base-to-candidate and kickoff-to-candidate diff checks pass.
+  `read_file::check_cancellation` dead-code warning; the dedicated unsupported-
+  target test compiles to a WASI artifact containing its exact test function,
+  closure, private sentinel, expected fixed diagnostics, and harness `main`, so
+  it is active rather than a zero-test cfg elision; and
+- 58 Markdown files contain 420 inline links, including 270 repository-relative
+  links with zero missing; first-review-to-precursor, post-documentation, and
+  final-test diff checks pass with a clean exact-SHA worktree.
+
+These are local exact-SHA results, not replacement-review or remote-delivery
+evidence. No replacement track is green until its reviewer reports on the same
+exact behavior SHA.
 
 ## Explicit nonclaims
 
@@ -223,69 +256,86 @@ combined native-tool checklist and Milestone 03 remain open.
 
 All three first-cycle tracks reviewed exact candidate
 `355a11a6055b0053dff80e71011d7633e8a6ce97` and are **NOT GREEN**.
+Every confirmed production fix and required regression/evidence item below is
+implemented in the recorded remediation lineage and locally green at exact
+`275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. The track headings preserve the
+historical first-cycle verdicts; formal closure still requires all three
+replacement reviewers to approve one exact behavior SHA.
 
 ### Correctness/API track — NOT GREEN
 
 - **MEDIUM — confirmed:** descendant paths were allocated and retained before
-  the documented 4,096-byte full-path check. The remediation contract requires
+  the documented 4,096-byte full-path check. The implemented remediation uses
   checked full workspace-relative length before allocation, entry-kind dispatch,
-  or include matching.
+  or include matching, with exact-bound and one-over regressions.
 - **MEDIUM — confirmed:** the accepted `offset <= 100000` could reject a
   non-null `next_offset` emitted from a successful result with more than 100,000
-  matching lines. The remediation raises the bound to 67,108,864, which covers
-  every reusable continuation under the 64 MiB aggregate-content bound and
-  required nonempty pattern.
+  matching lines. The implemented remediation raises the bound to 67,108,864,
+  which covers every reusable continuation under the 64 MiB aggregate-content
+  bound and required nonempty pattern; a regression consumes a continuation
+  beyond the old ceiling.
 - **LOW — confirmed:** the integration test file's Linux/macOS file-level gate
   removed purported unsupported-platform constructor/execution tests before
-  they could compile on an unsupported target. Replacement evidence must place
-  portable API tests outside that gate or provide equivalent cross-target
-  library coverage.
+  they could compile on an unsupported target. The dedicated WASI integration
+  target now compiles an active test of the reachable constructor boundary and
+  its exact redacted failure. Execution remains safely unreachable because the
+  failed constructor cannot produce an instance.
 - **MEDIUM — confirmed:** the required evidence inventory named deterministic
   growth, post-observation race, and mid-execution cancellation coverage that
-  the first candidate did not supply. Public synchronous-future tests can cover
-  pre-poll substitution, growth, and removal; true internal interleavings need
-  private deterministic checker/interval tests or another non-flaky seam.
+  the first candidate did not supply. Public synchronous-future regressions now
+  cover pre-poll substitution, growth, and removal; deterministic internal
+  classifiers cover `NOENT`, growth/overflow accounting, raced nonregular
+  rejection, and cancellation intervals without sleeps.
 
 ### Security/filesystem-robustness track — NOT GREEN
 
 - **MEDIUM — confirmed:** the same descendant-path defect violated the promised
   fail-closed path bound before directory retention and special-entry handling.
+  The pre-allocation checked-length remediation and adversarial deep directory,
+  symlink, FIFO, and regular-file regressions are locally green.
 - **MEDIUM — confirmed:** deterministic evidence for growth witnesses,
   post-observation `NOENT`, raced special replacement, and cancellation
-  intervals was absent. Sleep-based races are not acceptable substitutes;
-  evidence remains pending until production exposes or uses a deterministic
-  internal seam.
+  intervals was absent. Production now exposes deterministic internal
+  classifiers for `NOENT` omission/error mapping, growth and aggregate overflow
+  with oversized accounting, raced nonregular rejection, and fixed cancellation
+  checks; their private tests replace sleep-based races.
 - **LOW — confirmed:** selected-file include filtering occurred only after the
-  file had already been content-opened. The remediation requires no-follow stat
-  classification, then include filtering, then content open only when selected.
+  file had already been content-opened. The implementation now performs
+  no-follow stat classification, then include filtering, then content open only
+  when selected, with a no-read regression for an excluded selected file.
 - **LOW — confirmed:** maintained wording said special objects were never
-  opened. Stable specials are skipped without open, but a regular-to-special
-  replacement can race into a nonblocking open. The accurate guarantee is that
-  authoritative opened-type validation rejects that descriptor and no special
-  content or symlink target is read or followed.
+  opened. Maintained wording now says stable specials are skipped without open,
+  while a regular-to-special replacement can race into a nonblocking open whose
+  authoritative type validation rejects it before read. Deterministic
+  classification evidence covers that rejection; no special content or symlink
+  target is read or followed.
 
 ### Performance/concurrency track — NOT GREEN
 
 - **HIGH — confirmed:** every slashful include invocation reparsed the same
   4,096-byte pattern, allocated a segment vector, and recounted segments outside
   the include-work meter. Up to 100,000 visited regular entries could amplify
-  this into multi-gigabyte allocation churn. The remediation compiles once per
-  call and meters complete parse plus match work.
+  this into multi-gigabyte allocation churn. The implementation compiles and
+  preparses once per call, reuses the compiled form, and meters complete parse
+  plus match work; exact-cap and reuse regressions are locally green.
 - **HIGH — confirmed:** unchecked depth-256 prefixes could reach roughly 64 KiB
   and be recopied for every entry before the later regular-file-only path check,
   permitting multi-gigabyte prefix-copy amplification. Although correctness and
   filesystem reviewers rated the contract violation medium, remediation
-  priority is normalized to **HIGH** for this resource-amplification lens.
+  priority is normalized to **HIGH** for this resource-amplification lens. The
+  checked pre-allocation full-path bound and hostile deep-tree evidence are now
+  locally green.
 - **MEDIUM — confirmed:** line-index construction had no cancellation token or
   fixed checks, and serialized-size trimming checked only before and after its
-  repeated reconstruction/serialization loop. The remediation requires checks
-  at fixed line-index byte intervals and before every trimming attempt.
+  repeated reconstruction/serialization loop. Fixed line-index byte-interval
+  checks and a check before every trimming attempt are implemented and proven
+  through deterministic private cancellation tests.
 
-Production, independent-test, and documentation fix SHAs; composed replacement;
-replacement local gates; and all three replacement reviews remain **PENDING**.
-No finding is resolved and no replacement track is green merely because this
-remediation contract records the required behavior. Once one exact replacement
-behavior SHA is green across all three tracks, a later documentation-only seal
-or final delivery record needs no additional adversarial review under the
-user's explicit instruction, but exact feature and `main` workflow evidence is
-still required.
+All first-cycle findings are fixed and their required deterministic evidence is
+implemented and locally green at exact precursor `275d263`. That is local
+resolution, not formal review closure: all three replacement reviews, the exact
+behavior SHA with all three tracks green, documentation seal, and delivery
+evidence remain **PENDING**. Once one exact replacement behavior SHA is green
+across all three tracks, a later documentation-only seal or final delivery
+record needs no additional adversarial review under the user's explicit
+instruction, but exact feature and `main` workflow evidence is still required.

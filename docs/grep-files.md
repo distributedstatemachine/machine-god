@@ -1,8 +1,9 @@
 # Native `grep_files` tool
 
-Status: **IN PROGRESS — first formal review cycle NOT GREEN; remediation
-implementation, independent tests, composition, and replacement reviews are
-pending** nineteenth bounded Milestone 03 candidate.
+Status: **IN PROGRESS — remediation and exact replacement local gates are
+green at `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`; all three replacement
+reviews, the behavior-green SHA, seal, and delivery remain pending** nineteenth
+bounded Milestone 03 candidate.
 The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
 The tree-identical integration kickoff is
 `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
@@ -19,11 +20,21 @@ behavior candidate `42e4793b27902da7390dc54ef6bedb169da7e1bc`. Lint fix and
 exact precursor local gates are green at
 `45ad91fa2689250c47c79d2105f5e3c261cea638`. All three first-cycle formal
 reviews are **NOT GREEN** on exact candidate
-`355a11a6055b0053dff80e71011d7633e8a6ce97`. Production, independent-test,
-and documentation fix SHAs, their composed replacement, replacement local
-gates and reviews, documentation seal, feature workflow runs, integrated
-`main` SHA, and `main` workflow runs remain **PENDING** until those artifacts
-actually exist.
+`355a11a6055b0053dff80e71011d7633e8a6ce97`. Isolated production, independent-
+test, documentation, deterministic-evidence, and unsupported-target-test
+remediation commits `012f14d273b15085713fba9092e93486d4e6f0e4`,
+`646286203ab665e9dc9d0a86f7de6d036b7c5c86`,
+`771a3e34816d2d67cd1e08d73abdac7c807313a3`,
+`842d36ae5f7cc8aa5a3011a41bba209e0f35172c`, and
+`325350ce558a7e6f21ef4cf2d4d030e30cc4f740` compose in order through
+`35defb5c7cee021064411535070b9ecd62387e2f`,
+`58550734b77a5a44c4b9452438e34f265013c40b`,
+`3cd282fafb26bb069ac73407fde0fd30c7d1ff82`,
+`630acbb384f2e1b79b6916a10baaac26acafbf41`, and final code/test local-gate
+precursor `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. Its replacement local
+gates are green. All three replacement reviews, the exact behavior SHA with
+all tracks green, documentation seal, feature workflows, integrated `main`,
+and exact `main` workflows remain **PENDING** until those artifacts exist.
 
 This document freezes the behavior that production, independent tests, and
 documentation must compose into one exact behavior candidate before formal

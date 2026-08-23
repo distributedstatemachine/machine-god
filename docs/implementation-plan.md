@@ -615,14 +615,15 @@ composed behavior candidate `42e4793b27902da7390dc54ef6bedb169da7e1bc`.
 Lint fix and exact local gates are green at
 `45ad91fa2689250c47c79d2105f5e3c261cea638`. All three first-cycle formal
 tracks are **NOT GREEN** on exact candidate
-`355a11a6055b0053dff80e71011d7633e8a6ce97`. Production, test, and
-documentation fixes; replacement composition, local gates, and reviews;
-documentation seal; and feature/`main` delivery SHAs or runs remain **PENDING**.
-The maintained
-documentation must compose into the exact behavior SHA reviewed by all three
-adversarial tracks. A later documentation-only seal or delivery record is
-exempt from another adversarial cycle under the user's instruction but still
-requires exact feature and `main` workflows.
+`355a11a6055b0053dff80e71011d7633e8a6ce97`. Remediation and exact replacement
+local gates are green at final code/test precursor
+`275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. All three replacement reviews,
+the behavior-green SHA, documentation seal, and feature/`main` delivery SHAs or
+runs remain **PENDING**. The maintained documentation must compose into the
+exact behavior SHA reviewed by all three adversarial tracks. A later
+documentation-only seal or delivery record is exempt from another adversarial
+cycle under the user's instruction but still requires exact feature and `main`
+workflows.
 
 The candidate adds no regex, Unicode case folding, binary search, alternate
 encoding, symlink-target search, context reread, CLI behavior, benchmark
@@ -722,8 +723,10 @@ gate:
   `bdbb677` makes focused production/test composition green. Documentation
   component `b04151a` produces first fully composed behavior `42e4793`; lint
   fix and exact local gates are green at `45ad91f`. All three first-cycle tracks
-  are **NOT GREEN** on exact `355a11a`; fixes, replacement reviews, seal, feature,
-  integration, and `main` evidence remain **PENDING**. The remaining native tools are incomplete, so
+  are **NOT GREEN** on exact `355a11a`. Remediation and exact replacement local
+  gates are green at final code/test precursor `275d263`; all three replacement
+  reviews, the behavior-green SHA, seal, feature, integration, and `main`
+  evidence remain **PENDING**. The remaining native tools are incomplete, so
   this candidate does not change the combined checkbox.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

@@ -538,11 +538,13 @@ through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
 focused production/test composition green. Documentation component `b04151a`
 produces fully composed behavior `42e4793`; lint fix and exact local gates are
 green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
-`355a11a`; fix components, replacement composition/gates/reviews, seal, and
-delivery evidence are **PENDING**. Maintained behavior must compose into the
-exact SHA reviewed by all three adversarial tracks. A later documentation-only
-seal or delivery record is exempt from another adversarial cycle under the
-user's instruction but still requires exact feature and `main` workflows.
+`355a11a`. Remediation and exact replacement local gates are green at final
+code/test precursor `275d263`; all three replacement reviews, the behavior-
+green SHA, seal, and delivery evidence remain **PENDING**. Maintained behavior
+must compose into the exact SHA reviewed by all three adversarial tracks. A
+later documentation-only seal or delivery record is exempt from another
+adversarial cycle under the user's instruction but still requires exact feature
+and `main` workflows.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the

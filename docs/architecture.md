@@ -204,8 +204,10 @@ through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
 focused production/test composition green. Documentation component `b04151a`
 produces first fully composed behavior candidate `42e4793`; lint fix and exact
 local gates are green at `45ad91f`. All three first-cycle formal tracks are
-**NOT GREEN** on exact candidate `355a11a`; fix components, replacement
-composition/local gates/reviews, seal, and delivery evidence are **PENDING**.
+**NOT GREEN** on exact candidate `355a11a`. Remediation and exact replacement
+local gates are green at final code/test precursor `275d263`; all three
+replacement reviews, the behavior-green SHA, seal, and delivery evidence remain
+**PENDING**.
 Strict effect-free preflight accepts all eight pinned field names and prepares
 their explicit defaults. Allowed execution accepts a selected regular file or
 directory, applies fresh-root liveness and complete descriptor-relative no-
@@ -470,7 +472,9 @@ root-selection, or CLI authority changes. Exact base and kickoff are
 production/test composition are named above; documentation component `b04151a`
 produces fully composed behavior `42e4793`, with lint fix and local gates green
 at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
-`355a11a`; fixes, replacement reviews, seal, and delivery remain **PENDING**.
+`355a11a`. Remediation and exact replacement local gates are green at final
+code/test precursor `275d263`; all three replacement reviews, the behavior-
+green SHA, seal, and delivery remain **PENDING**.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can

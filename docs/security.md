@@ -169,8 +169,9 @@ through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
 focused production/test composition green. Documentation component `b04151a`
 produces fully composed behavior `42e4793`; lint fix and exact local gates are
 green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
-`355a11a`; fixes, replacement composition/gates/reviews, seal, and delivery
-remain **PENDING**. Its strict preflight
+`355a11a`. Remediation and exact replacement local gates are green at final
+code/test precursor `275d263`; all three replacement reviews, the behavior-
+green SHA, seal, and delivery remain **PENDING**. Its strict preflight
 prepares all eight canonical request fields and conservative search authority
 at the selected file or subtree. Execution performs retained descriptor-
 relative no-follow regular-file-only traversal, bounded eligible UTF-8 content

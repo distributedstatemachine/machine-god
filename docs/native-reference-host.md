@@ -12,8 +12,10 @@ initially compose through `9057feb` and `44e33d7`. Reference-host fixture fix
 `bdbb677` makes focused production/test composition green. Documentation
 component `b04151a` produces fully composed behavior `42e4793`; lint fix and
 exact local gates are green at `45ad91f`. All three first-cycle tracks are
-**NOT GREEN** on exact `355a11a`; fixes, replacement reviews, seal, delivery,
-and exact-workflow evidence remain **PENDING**. Eighteenth-slice
+**NOT GREEN** on exact `355a11a`. Remediation and exact replacement local gates
+are green at final code/test precursor `275d263`; all three replacement reviews,
+the behavior-green SHA, seal, delivery, and exact-workflow evidence remain
+**PENDING**. Eighteenth-slice
 production, independent tests, documentation, and
 composition are present. Initial local gates were green at `60070d8`, but the
 first formal review at `1f5de6a` found a high matcher-work bound defect. Its fix,
@@ -143,10 +145,11 @@ normalized selected file or subtree, performs a complete bounded literal
 search through descriptor-relative no-follow regular-file-only traversal, and
 returns exact eligible-text statistics with bounded structured match, file, or
 count results. Its frozen candidate contract is
-[`grep-files.md`](grep-files.md), and its pending evidence requirements are in
-the [`review record`](reviews/m03-grep-files-review-01.md). It changes no
-constructor arguments, provider, transport, permission handler, session,
-runtime, credential, root-selection, or CLI authority.
+[`grep-files.md`](grep-files.md); its green local evidence and remaining formal-
+review and delivery gates are in the
+[`review record`](reviews/m03-grep-files-review-01.md). It changes no constructor
+arguments, provider, transport, permission handler, session, runtime,
+credential, root-selection, or CLI authority.
 
 ## Feature and platform boundary
 
@@ -525,9 +528,10 @@ workflow change and makes no compatibility or product-performance claim. Its
 isolated production and initial independent-test components exist. The fixture
 fix is green at `bdbb677`; documentation component `b04151a` produces first
 fully composed behavior `42e4793`, and lint fix plus exact local gates are green
-at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact `355a11a`;
-fixes, replacement reviews, seal, and feature and `main` workflows remain
-**PENDING**.
+at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact `355a11a`.
+Remediation and exact replacement local gates are green at final code/test
+precursor `275d263`; all three replacement reviews, the behavior-green SHA,
+seal, and feature and `main` workflows remain **PENDING**.
 The combined native-tool checklist stays open.
 
 The frozen reference-host composition checklist item is complete: the
