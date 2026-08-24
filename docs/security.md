@@ -291,9 +291,9 @@ The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, composed release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. The current library candidate composition
-includes the ten bounded workspace tools documented below. `rename_file` is
-delivered; `copy_file` review and delivery remain in progress. The
+or performance claims remain open. The current delivered library composition
+includes the ten bounded workspace tools documented below. `rename_file` and
+`copy_file` are delivered. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -954,7 +954,7 @@ checking prevents false success but cannot undo that move. Fixed diagnostics
 retain no paths, entries, metadata, OS text, or errno. The complete normative
 boundary is [`rename-file.md`](rename-file.md).
 
-The `copy_file` candidate similarly uses typed
+The delivered `copy_file` slice similarly uses typed
 `Capability::FilesystemCopy { source, destination }`, so policy observes both
 canonical endpoints of the proposed copy. Strict effect-free preflight accepts
 only the two required strings, rejects same-canonical-path input, and binds
@@ -976,8 +976,8 @@ reported as fixed nonretryable ambiguity. Documented moved-parent,
 source-replacement, and same-UID stage races remain explicit rather than being
 presented as sandbox guarantees. The full authority, confidentiality,
 durability, diagnostic, and race boundary is
-[`copy-file.md`](copy-file.md). This is not yet a delivery,
-complete fx-equivalence, or performance claim.
+[`copy-file.md`](copy-file.md). Its exact feature and `main` delivery gates are
+green; this is not a complete fx-equivalence or performance claim.
 
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's

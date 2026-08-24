@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-three delivered bounded slices. Native `edit_file` is delivered on
+with twenty-four delivered bounded slices. Native `edit_file` is delivered on
 final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
 Exact feature CI `32651168514` passed all six jobs, and feature benchmark
 workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
@@ -147,7 +147,7 @@ Final rename documentation record
 `32675981622`, feature benchmark `32675981593`, main CI `32676296870`, and main
 benchmark `32676296945`; both benchmark workflows retain exactly two
 nonexpired exact-SHA artifacts. The twenty-fourth bounded slice, native
-`copy_file`, is **LOCAL BEHAVIOR GREEN; REPLACEMENT DELIVERY PENDING** from that exact delivered base. Its
+`copy_file`, is **DELIVERED** from that exact delivered base. Its
 two-endpoint typed authority, 16 MiB binary-safe streaming bound, absent-only
 atomic publication, source-stability and destination-integrity checks,
 destination-parent durability, explicit race limitations, parallel ownership,
@@ -165,7 +165,7 @@ initial-stage cleanup-ownership/residue finding. Performance/concurrency found
 a medium missing postcommit source-parent rewalk and low missing exact
 serialization/allocation evidence. Focused checks passed, but remediation, the
 complete replacement local gate, a fresh three-track same-SHA review cycle, and
-delivery remain pending. Exact remediation
+delivery remained pending at that checkpoint. Exact remediation
 `53f4ee947c82033a08a2ff943f23f52c475189d7`, tree
 `4bdb07a30950584d71260e70e263aafcccfff710`, closes the reported gaps with
 immediate post-create cleanup ownership, uniform precommit cancellation
@@ -181,7 +181,7 @@ all three fresh correctness/API, filesystem/robustness, and performance/
 concurrency tracks. Reviewers independently verified the immutable SHA/tree in
 clean detached worktrees and passed the applicable 25 private, 24 direct, five
 engine, seven host, one core-contract, and focused warnings-denied Clippy
-checks. Exact feature/main delivery remains pending.
+checks. Exact feature/main delivery remained pending at that checkpoint.
 First feature seal `16b92ef1a409fdca78ddb86ce4ae7879b89e65d6`
 passed benchmark workflow `32683596971` with exactly two nonexpired exact-SHA
 artifacts, while CI `32683596986` passed four native matrices and dependency
@@ -196,7 +196,11 @@ green, including Linux warnings-denied Clippy. Tree-identical cycle-3 candidate
 three fresh tracks. Reviewers independently verified the immutable SHA/tree in
 clean detached worktrees and passed the applicable Linux lint, 25 private, 24
 direct, five engine, seven host, one core-contract, and FreeBSD/WASI checks.
-Replacement feature/main delivery remains pending.
+Replacement documentation seal
+`3bdd7cb36c2ef3be0ffcd0ac118adb39706c6be8` passed exact feature CI
+`32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
+benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
+exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1742,7 +1746,7 @@ gate:
   exactly two nonexpired exact-SHA artifacts retained by each benchmark run.
   Native `rename_file` is delivered as slice twenty-three under
   [`rename-file.md`](rename-file.md).
-  The twenty-fourth `copy_file` slice is **LOCAL BEHAVIOR GREEN; REPLACEMENT DELIVERY PENDING** from exact
+  The twenty-fourth `copy_file` slice is **DELIVERED** from exact
   delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. It is frozen as
   one existing confined regular file copied without source mutation to one
   absent confined destination through exact two-endpoint `FilesystemCopy`
@@ -1797,7 +1801,7 @@ gate:
   direct, five engine, seven host, and one core-contract test. Filesystem/
   robustness passed 25 private and 24 direct tests. Performance/concurrency
   passed 25 private, 24 direct, five engine, and focused warnings-denied Clippy.
-  Exact feature/main delivery gates remain pending under
+  Exact feature/main delivery gates remained pending at that checkpoint under
   [`copy-file.md`](copy-file.md). This documentation-only review seal is exempt
   from its own adversarial cycle. First feature seal
   `16b92ef1a409fdca78ddb86ce4ae7879b89e65d6` passed benchmark workflow
@@ -1821,7 +1825,11 @@ gate:
   Performance/concurrency passed 25 private, 24 direct, five engine, and Linux
   lint checks. All independently confirmed the allowances are interface-parity
   metadata only and preserve the complete cycle-2 behavior. Replacement
-  feature/main delivery remains pending.
+  documentation seal `3bdd7cb36c2ef3be0ffcd0ac118adb39706c6be8` is green under
+  exact feature CI `32684856309`, feature benchmark `32684856373`, main CI
+  `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
+  exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
+  delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

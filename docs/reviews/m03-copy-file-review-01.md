@@ -1,6 +1,6 @@
 # Milestone 03 native `copy_file` review 01
 
-Status: **LOCAL BEHAVIOR GREEN; REPLACEMENT DELIVERY PENDING**
+Status: **DELIVERED — final documentation record workflows pending**
 
 ## Base and boundary
 
@@ -273,10 +273,31 @@ branch, allocation, syscall, result, or performance change and reverified the
 bounded 64-KiB buffer/work, cancellation ordering, race outcomes, fresh source
 rewalk, exact-one publication, and independent sync behavior.
 
-Replacement local behavior is sealed. A docs-only replacement seal commit,
-exact replacement feature CI and benchmark workflows, exactly two matching
-nonexpired benchmark artifacts, fast-forward main integration, and exact main
-workflows remain required. No performance or fx-equivalence claim is made.
+Replacement local behavior was sealed at that checkpoint. A docs-only
+replacement seal commit, exact replacement feature CI and benchmark workflows,
+exactly two matching nonexpired benchmark artifacts, fast-forward main
+integration, and exact main workflows remained required.
+
+## Replacement delivery
+
+Replacement documentation seal
+`3bdd7cb36c2ef3be0ffcd0ac118adb39706c6be8` passed exact feature CI
+`32684856309` across all six jobs. Exact feature benchmark workflow
+`32684856373` passed both jobs and retains exactly two nonexpired artifacts
+bound to the seal SHA. `main` was fast-forwarded without force from exact prior
+main `226040780eb14dd72e86d0a002dc4bf61ba2ddfc` to the same seal. Exact main CI
+`32685192453` passed all six jobs; exact main benchmark workflow `32685192394`
+passed both jobs and retains exactly two nonexpired exact-SHA artifacts. This
+completes delivery of native `copy_file` as the twenty-fourth bounded
+Milestone 03 slice.
+
+The remaining Milestone 03 native tools, top-level CLI ownership, and composed
+end-to-end boundary remain pending, so Milestone 03 is not complete. This final
+delivery record is documentation-only and exempt from adversarial review under
+the user's instruction. Its own exact feature CI and benchmark workflows and
+exact main CI and benchmark workflows remain required after push and cannot be
+self-recorded. This record makes no product-performance, fx-equivalence, or
+compatibility-status promotion claim.
 
 ## Required evidence
 

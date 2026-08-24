@@ -1,12 +1,19 @@
 # Native `copy_file` contract
 
-Status: **IMPLEMENTATION IN PROGRESS**
+Status: **DELIVERED — final documentation record workflows pending**
 
 This document freezes the twenty-fourth bounded Milestone 03 slice from exact
 delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. That base is green
 under exact feature CI `32675981622`, feature benchmark workflow `32675981593`,
 main CI `32676296870`, and main benchmark workflow `32676296945`. Both
 benchmark workflows retained exactly two nonexpired exact-SHA artifacts.
+
+Replacement documentation seal
+`3bdd7cb36c2ef3be0ffcd0ac118adb39706c6be8` is green under exact feature CI
+`32684856309`, feature benchmark workflow `32684856373`, main CI `32685192453`,
+and main benchmark workflow `32685192394`. Both benchmark workflows retain
+exactly two nonexpired exact-SHA artifacts. Native `copy_file` is delivered as
+the twenty-fourth bounded Milestone 03 slice.
 
 `copy_file` copies the bounded bytes of one existing confined regular file to
 one absent confined destination without modifying the source. It does not
@@ -238,11 +245,12 @@ remain the delivered generic durable error surface.
 
 ## Host composition and compatibility boundary
 
-The native reference host will register exactly ten alphabetical workspace
-tools: `copy_file`, `delete_file`, `edit_file`, `file_info`, `glob_files`,
-`grep_files`, `list_files`, `read_file`, `rename_file`, and `write_file`.
-Workspace-root composition will consume the original descriptor for one tool
-and make exactly nine identity-preserving clones.
+At slice-twenty-four delivery, the native reference host registers exactly ten
+alphabetical workspace tools: `copy_file`, `delete_file`, `edit_file`,
+`file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
+`rename_file`, and `write_file`.
+Workspace-root composition consumes the original descriptor for one tool and
+makes exactly nine identity-preserving clones.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 and field names and supports the core source-preserving copy scenario. Its
@@ -276,6 +284,11 @@ Destination overwrite, parent creation, directory trees, symlink copies,
 external paths, source files above 16 MiB, source sparse-layout preservation,
 non-Linux/macOS hardened execution, CLI ownership, richer permission modes,
 benchmark workloads, and performance claims remain outside this slice.
-Production, independent evidence, three fresh same-SHA adversarial reviews,
-exact feature workflows, fast-forward integration, and exact main workflows are
-required before delivery.
+Production, independent evidence, and three fresh same-SHA adversarial reviews
+are green. Exact replacement delivery is green on seal `3bdd7cb`: feature CI
+`32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
+benchmark `32685192394`. Each benchmark run retains exactly two nonexpired
+exact-SHA artifacts. This final delivery record is documentation-only and
+exempt from adversarial review under the user's instruction; its own exact
+feature and main workflows remain required after push and cannot be
+self-recorded.

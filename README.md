@@ -7,9 +7,9 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-three delivered bounded slices. The twenty-fourth, library-only
-`copy_file` slice has a frozen contract and a composed implementation candidate;
-its adversarial review and delivery gates remain pending. The
+twenty-four delivered bounded slices. The twenty-fourth, library-only
+`copy_file` slice is green under three fresh same-SHA adversarial reviews and
+exact feature and `main` delivery gates. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -316,9 +316,9 @@ combined native-tool checklist stays open. See the
 [`grep_files` contract](docs/grep-files.md) and
 [review plan](docs/reviews/m03-grep-files-review-01.md).
 
-The delivered twentieth through twenty-third slices add `write_file`,
-`edit_file`, `delete_file`, and `rename_file`. The current twenty-fourth-slice
-candidate extends the library host to exactly ten alphabetical tools by adding
+The delivered twentieth through twenty-fourth slices add `write_file`,
+`edit_file`, `delete_file`, `rename_file`, and `copy_file`. The twenty-fourth
+slice extends the library host to exactly ten alphabetical tools by adding
 `copy_file`, using the original retained workspace descriptor plus nine
 identity-preserving clones. Its typed `FilesystemCopy` capability exposes both
 canonical endpoints to policy. Approved execution confines both paths beneath
@@ -326,9 +326,10 @@ that retained root and streams at most 16 MiB through one 64 KiB buffer into a
 private destination-parent stage before a single no-replace commit, bounded
 postcommit verification, and destination-parent synchronization. It does not
 overwrite, create parents, accept directory or symlink endpoints, allocate the
-whole source, or broaden CLI authority. The implementation remains a candidate:
-this description makes no delivery, complete fx-equivalence, or performance
-claim. See the [`copy_file` contract](docs/copy-file.md).
+whole source, or broaden CLI authority. Seal `3bdd7cb` passed exact feature and
+`main` CI/benchmark delivery gates with two artifacts in each benchmark run.
+This description makes no complete fx-equivalence or performance claim. See
+the [`copy_file` contract](docs/copy-file.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),

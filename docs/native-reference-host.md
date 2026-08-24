@@ -1,7 +1,7 @@
 # Native reference-host composition
 
-Status: the current candidate composition contains exactly ten alphabetical
-workspace tools. Twenty-three bounded Milestone 03 slices are delivered;
+Status: the delivered composition contains exactly ten alphabetical workspace
+tools. Twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -16,12 +16,12 @@ replacement gate. Cycle-4 candidate `1337980`, tree `ab2bdc2`, is green with
 zero findings in all three fresh tracks. Seal `7cb5ef9` passed exact feature
 and main CI/benchmark delivery gates with two artifacts in each benchmark run.
 Native `rename_file` is delivered as slice twenty-three.
-The twenty-fourth, library-only `copy_file` contract is frozen, and its
-production, independent tests, and host-composition changes are present as a
-candidate. The contract commit alone passed exact remote CI and benchmark
-evidence. Adversarial review, exact feature gates for the composed candidate,
-integration, and exact `main` gates remain pending, so `copy_file` is not
-delivered.
+The twenty-fourth, library-only `copy_file` slice is delivered. Cycle-3
+candidate `99ecdb3`, tree `145b3be`, is green with zero findings in all three
+fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
+benchmark `32684856373`, main CI `32685192453`, and main benchmark
+`32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
+artifacts.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -460,15 +460,15 @@ identity check, and parent synchronization documented in
 [`rename-file.md`](rename-file.md); construction itself performs none of those
 effects and starts no background work.
 
-The twenty-fourth candidate adds one more identity-preserving descriptor clone
-and retains it for `copy_file`. Its preparation is effect-free and its
+The delivered twenty-fourth slice adds one more identity-preserving descriptor
+clone and retains it for `copy_file`. Its preparation is effect-free and its
 execution future is inert until first poll. After approval, that poll performs
-the confined, bounded synchronous source validation, binary-safe streaming into
-a private destination-parent stage, one no-replace commit, postcommit
+the confined, bounded synchronous source validation, binary-safe streaming
+into a private destination-parent stage, one no-replace commit, postcommit
 verification, and destination-parent synchronization documented in
 [`copy-file.md`](copy-file.md). Construction performs none of those effects and
-starts no task, thread, I/O, or background work. The candidate changes no CLI
-byte and makes no delivery, complete fx-equivalence, or performance claim.
+starts no task, thread, I/O, or background work. The slice changes no CLI byte
+and makes no complete fx-equivalence or performance claim.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
@@ -678,7 +678,6 @@ final-record feature and `main` workflows are green at integrated SHA
 fifteenth supplies create/resume/replay/reset, and the delivered sixteenth
 slice supplies bounded IDs-only listing. The combined root-and-session-lifecycle
 item is complete: the replacement reviews and exact feature and `main` gates
-are green. Milestone 03 remains in progress because the `copy_file` candidate
-has not completed its adversarial review and delivery gates, and top-level
-CLI/slash-command ownership plus composed release-binary end-to-end evidence
-remain open.
+are green. Milestone 03 remains in progress because remaining native tools,
+top-level CLI/slash-command ownership, and composed release-binary end-to-end
+evidence remain open.
