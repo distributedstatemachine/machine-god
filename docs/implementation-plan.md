@@ -201,6 +201,27 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
+The twenty-fifth bounded slice, native `create_folder`, is **CONTRACT FROZEN;
+IMPLEMENTATION PENDING** from exact delivered base
+`d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
+feature CI `32685885104`, feature benchmark `32685885086`, main CI
+`32686210561`, and main benchmark `32686210659`; both benchmark workflows
+retain exactly two nonexpired exact-SHA artifacts. The frozen contract defines
+one strict canonical confined `path`, existing `FilesystemAccess::Create`
+authority, recursive missing-parent creation, idempotent existing-directory
+success, no-follow descriptor-relative execution, requested mode `0755` with
+host umask/ACL inheritance, a first-successful-or-uncertain-`mkdirat` commit
+boundary, no retry or rollback, fresh postcommit path verification, and bounded
+bottom-up durability. The contract-only checkpoint leaves the delivered host
+at ten tools. Future behavior composition must yield eleven alphabetical tools
+with `create_folder` after `copy_file` and one original retained descriptor
+plus ten clones. The normative boundary and evidence plan are
+[`create-folder.md`](create-folder.md) and
+[`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
+This documentation-only contract checkpoint is exempt from adversarial review,
+but its exact feature workflows are required after push. It makes no
+implementation, delivery, performance, or fx-equivalence claim, and the
+delivered-slice count remains twenty-four.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1830,6 +1851,31 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
+  The twenty-fifth `create_folder` slice is **CONTRACT FROZEN; IMPLEMENTATION
+  PENDING** from exact delivered base
+  `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
+  feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
+  `32686210659` are green; both benchmark workflows retain exactly two
+  nonexpired exact-SHA artifacts. The strict `{path:string}` contract binds
+  policy and execution to one canonical confined path through existing
+  `FilesystemAccess::Create`, recursively creates missing directory components,
+  treats an existing final directory as idempotent success, and rejects every
+  symlink, non-directory ancestor, and external path. At most 256 `mkdirat`
+  calls request mode `0755`; effective permissions and ACLs honor host
+  umask/inheritance without later normalization. No creation call is retried,
+  the first successful or uncertain call commits, cancellation is ignored
+  afterward, and no prefix is rolled back. A fresh public-path rewalk and
+  bottom-up durability use at most 257 sites, 16 calls per site, and 4,112
+  total sync calls. The contract-only host remains ten tools; future behavior
+  composition adds `create_folder` after `copy_file` for eleven tools and one
+  original plus ten clones. Exact behavior, independent evidence, fresh
+  same-SHA review, feature workflows, integration, and main workflows remain
+  pending under [`create-folder.md`](create-folder.md) and
+  [`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
+  This documentation-only checkpoint is adversarial-review exempt but still
+  requires its exact feature workflows after push. It adds no delivery,
+  performance, or fx-equivalence claim, so the combined native-tool checkbox
+  remains open.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

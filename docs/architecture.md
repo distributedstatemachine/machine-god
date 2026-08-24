@@ -42,6 +42,12 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
+The twenty-fifth, library-only native `create_folder` slice is **CONTRACT
+FROZEN; IMPLEMENTATION PENDING** from delivered base `d1a5bc2`. The contract
+freezes strict single-path `FilesystemAccess::Create` authority, recursive
+no-follow directory creation, a first-creation commit boundary, and bounded
+bottom-up durability. This documentation-only checkpoint leaves the delivered
+host at ten tools and makes no behavior or delivery claim.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -592,6 +598,15 @@ give every tool the same opened workspace identity. These later slices do not
 change provider, permission-handler, session-store, credential, transport,
 runtime, root-selection, or CLI authority.
 
+The frozen twenty-fifth-slice contract does not yet change that composition.
+Future `create_folder` behavior composition inserts the tool immediately after
+`copy_file`, producing eleven alphabetical tools from the original retained
+descriptor plus ten identity-preserving clones. Preparation will use the
+existing provider-neutral `Capability::Filesystem { access: Create, path }`
+with the exact canonical path that approved execution receives. The complete
+contract and pending evidence boundary are in
+[`create-folder.md`](create-folder.md).
+
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
 reach session artifacts beneath the workspace after permission is granted.
@@ -618,6 +633,9 @@ twenty-fourth slice extends it to ten tools using the original descriptor
 plus nine clones. Config
 selection is validated by the composing constructor, and production credential
 discovery remains after the already prepared retained roots are accepted.
+The frozen `create_folder` contract does not alter these delivered counts;
+implementation must extend both constructors together to eleven tools and ten
+clones without reopening the root.
 Production and focused tests for this behavior are present. Formal adversarial
 review was green on
 exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
@@ -1167,6 +1185,33 @@ redacted errors, cancellation boundary, and same-UID race limitations are
 normative in [`copy-file.md`](copy-file.md). Exact feature and `main` delivery
 gates are green on seal `3bdd7cb`; this makes no complete fx-equivalence or
 performance claim.
+
+The frozen twenty-fifth slice reuses the single-path provider-neutral
+`Capability::Filesystem { access: Create, path }`. Effect-free strict preflight
+accepts only one required `path`, applies the mutation-path canonicalization and
+exact 4,096-byte/256-component/65,536-byte argument bounds, and gives policy
+and execution the same confined path. Core already owns the stable `Create`
+access variant; native code will own all recursive filesystem semantics.
+
+Approved Linux/macOS execution will walk from the retained root without
+following symlinks, accept an existing final directory as idempotent success,
+and reject every selected symlink, non-directory ancestor, external path, and
+existing final non-directory. It may make at most one `mkdirat` call per
+missing component and 256 total, each requesting mode `0755`. Host umask and
+ACL inheritance are effective policy: no chmod or ACL rewriting follows
+creation. A hostile umask may make a new intermediate unopenable and leave a
+partial prefix under an ambiguous result.
+
+The first successful or uncertain `mkdirat` commits. No `mkdirat` is retried,
+including after `EINTR`; later cancellation is ignored and no created prefix is
+removed. Postcommit work retains the first-created-parent-through-suffix
+descriptor chain, freshly rewalks the public path, and always attempts bottom-
+up synchronization despite earlier verification or sync failure. The public
+bound is 257 sync sites, 16 calls per site, and 4,112 total calls. No effect
+means no sync. Path-only success, fixed redacted ambiguity, concurrent entry and
+moved-parent limitations, and the no-sandbox boundary are normative in
+[`create-folder.md`](create-folder.md). Implementation, review, delivery,
+performance, and fx-equivalence claims remain pending.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

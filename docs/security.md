@@ -293,7 +293,9 @@ modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, composed release-binary end-to-end host evidence, and compatibility
 or performance claims remain open. The current delivered library composition
 includes the ten bounded workspace tools documented below. `rename_file` and
-`copy_file` are delivered. The
+`copy_file` are delivered. The `create_folder` contract is frozen, but its
+implementation and eleven-tool composition remain pending; this checkpoint
+does not change the ten-tool authority surface. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -979,6 +981,27 @@ durability, diagnostic, and race boundary is
 [`copy-file.md`](copy-file.md). Its exact feature and `main` delivery gates are
 green; this is not a complete fx-equivalence or performance claim.
 
+The frozen `create_folder` contract uses the existing single-path
+`Capability::Filesystem { access: Create, path }`. Strict effect-free preflight
+binds policy and execution to the same canonical confined workspace-relative
+path. Approved future Linux/macOS execution rejects every selected symlink and
+non-directory ancestor, uses only retained descriptor-relative authority, and
+makes at most one `mkdirat` attempt per missing component. An existing final
+directory is idempotent success; an existing final non-directory fails.
+
+Each creation requests mode `0755`, but host umask and inherited ACLs
+deliberately determine effective permissions. The tool performs no post-create
+chmod or ACL normalization, avoiding a broader replacement-race mutation
+surface. A hostile umask may make a new intermediate unopenable. The first
+successful or uncertain creation is the irreversible boundary; no creation is
+retried, cancellation is ignored after that point, and no partial prefix is
+removed. Fresh postcommit public-path verification and bottom-up best-effort
+durability are capped at 257 sites, 16 calls per site, and 4,112 total sync
+calls. Failed verification, moved retained parents, uncertain `mkdirat`, or
+durability failure returns fixed nonretryable ambiguity without claiming
+rollback. The full pending behavior and evidence boundary is
+[`create-folder.md`](create-folder.md).
+
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
@@ -993,7 +1016,8 @@ supported-Unix boundary. The normative surfaces are
 [`grep-files.md`](grep-files.md), with mutation contracts in
 [`write-file.md`](write-file.md), [`edit-file.md`](edit-file.md),
 [`delete-file.md`](delete-file.md), [`rename-file.md`](rename-file.md), and
-[`copy-file.md`](copy-file.md).
+[`copy-file.md`](copy-file.md), with the frozen pending contract in
+[`create-folder.md`](create-folder.md).
 
 The injected-transport AI Gateway provider preserves network authority at an
 explicit trusted-host boundary. `AiGatewayProvider` accepts only an owned body,

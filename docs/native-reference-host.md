@@ -22,6 +22,10 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
+The twenty-fifth `create_folder` contract is frozen from exact delivered base
+`d1a5bc24112bcede8c2d12789e763a12cf44bd4a`; implementation and host
+composition remain pending. This documentation-only checkpoint leaves the
+delivered host at exactly ten tools.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -155,6 +159,13 @@ alphabetical order.
 It is a library surface in
 `machine-god-native`. The `machine-god-cli` crate and every existing CLI output
 byte remain unchanged.
+
+The frozen `create_folder` contract does not yet alter this catalog. Its future
+behavior composition must register exactly eleven alphabetical tools by
+inserting `create_folder` immediately after `copy_file`. Both reference-host
+constructors must transfer the same retained workspace identity through one
+original descriptor plus ten identity-preserving clones. No source or host
+behavior is claimed at the contract-only checkpoint.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
@@ -469,6 +480,16 @@ verification, and destination-parent synchronization documented in
 [`copy-file.md`](copy-file.md). Construction performs none of those effects and
 starts no task, thread, I/O, or background work. The slice changes no CLI byte
 and makes no complete fx-equivalence or performance claim.
+
+Future twenty-fifth-slice composition adds one more identity-preserving clone
+and retains it for `create_folder`. Preparation remains effect-free and returns
+the existing single-path `FilesystemAccess::Create` authority. Its inert future
+will perform the bounded synchronous no-follow recursive creation, fresh
+postcommit rewalk, and bottom-up durability described in
+[`create-folder.md`](create-folder.md) on first poll. Construction performs no
+directory creation, lookup, permission normalization, task, thread, I/O, or
+background work. Until that behavior composes, the exact catalog and clone
+counts remain ten and nine.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
