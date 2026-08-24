@@ -291,10 +291,11 @@ The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, composed release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. The current delivered library composition
-includes the ten bounded workspace tools documented below. `rename_file` and
-`copy_file` are delivered. `create_folder` implementation and eleven-tool
-composition are present in candidate source. Cycle-2 candidate `6e1f885`, tree
+or performance claims remain open. At the historical pre-`create_folder`
+checkpoint, the delivered library composition included the ten bounded
+workspace tools documented below. `rename_file` and `copy_file` were delivered,
+while `create_folder` implementation and eleven-tool composition were present
+in candidate source. Cycle-2 candidate `6e1f885`, tree
 `ac57575`, is historically not green: correctness/API and performance/
 concurrency are green with zero findings, while filesystem/robustness reported
 two low evidence/documentation findings and zero production defects. Exact
@@ -318,20 +319,35 @@ candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all three
 fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
 benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
-artifacts. The delivered authority surface now has eleven tools. The
-twenty-sixth `open_file` slice is **CONTRACT FROZEN; IMPLEMENTATION PENDING**.
+artifacts. The delivered authority surface now has eleven tools. The current
+twenty-sixth `open_file` slice is an implemented but unreviewed Rust candidate.
 Its dedicated `Capability::OpenFile { path }` is narrower than arbitrary
 process authority and covers one canonical workspace-confined existing regular
-file. The frozen execution rejects symlinks, retains the approved file
-descriptor, and on Linux supplies only `/usr/bin/xdg-open` with
-`/proc/<parent-pid>/fd/<retained-fd>`. Stdio is null, machine-god does no
-ambient `PATH` lookup, model-selected processes are excluded, and the timeout
-decision is capped at 30 seconds. Unsupported platforms fail before spawn. A
-successful spawn commits an effect that cancellation cannot roll back.
-Postspawn cancellation makes core drop the execution future; cancellation,
-timeout, or explicit drop kills and reaps the helper and joins owned work
-without claiming rollback. No
-implementation or host-wiring claim is made. The
+file. Linux execution rejects symlinks, retains the approved file descriptor,
+and supplies only `/usr/bin/xdg-open` with
+`/proc/<machine-god-parent-pid>/fd/<retained-fd>` as its sole argument. The
+helper runs from `/` with null stdio and the trusted host environment; machine-
+god performs no ambient `PATH` lookup and accepts no model-selected program,
+arguments, environment, or working directory. A trusted injected launcher seam
+provides deterministic tests and is inert until execution is polled. Public
+construction is Linux-only; macOS public construction is unsupported, its
+private retained-root host tool returns unsupported at execution, and all other
+targets are unsupported.
+
+The worker is established before helper spawn. Worker-start failure and
+launcher unavailability are retryable precommit failures. Cancellation observed
+before a successful spawn wins with no launch; successful spawn is the commit
+boundary. Cancellation after that boundary, timeout, or explicit future/drop
+cleanup terminates and reaps the direct helper and joins the owned worker
+without claiming rollback. Postcommit cancellation and nonzero or signalled
+exit, timeout, wait failure, or waiter setup failure return fixed redacted,
+nonretryable result uncertainty when a tool-level result is observed. Exit zero
+means only that the helper accepted the request, not that a desktop application
+consumed or displayed the file. Success is exactly
+`{"path":"canonical/relative/path"}`. Candidate source composes exactly twelve
+alphabetical tools from one retained workspace descriptor plus eleven identity-
+preserving clones. This is not a formal review, workflow, delivery, `main`
+integration, performance, or fx-equivalence claim. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -372,6 +388,12 @@ complete replacement gate. Tree-identical cycle-5 candidate `ff18a9a`, tree
 `f77b198`, is green with zero findings in all three fresh tracks. Seal `e75578b`
 passed exact feature/main CI and benchmark workflows; this is now the integrated
 eleven-tool authority surface.
+
+Current candidate source inserts `open_file` immediately after `list_files` in
+both constructors. Exactly twelve alphabetical tools share the original
+retained workspace descriptor plus eleven identity-preserving clones. This
+twelve-tool composition is implemented but remains unreviewed and undelivered;
+the delivered base remains the eleven-tool `create_folder` composition above.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to
@@ -1055,26 +1077,34 @@ durability failure returns fixed nonretryable ambiguity without claiming
 rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
 
-The frozen `open_file` contract adds no read result and no arbitrary process
-selection. Strict effect-free preflight will bind policy and execution to one
-canonical confined path through dedicated `Capability::OpenFile`. Approved
-execution will no-follow open and retain only an existing regular file before
-the fixed Linux launcher is called. The `/proc/<parent-pid>/fd/<retained-fd>`
-argument keeps the helper bound to the retained identity while the parent owns
-the descriptor; machine-god gives the helper null stdio and uses no PATH-
-selected program.
-Before spawn, cancellation or drop has zero external effect. After spawn, the
-default application may already have received the target, so cancellation and
-30-second timeout cannot claim rollback. Core cancellation invokes the existing
-future-drop path; cancellation, timeout, or explicit drop kills/reaps the
-helper and joins owned work. External paths,
-directories, URLs, a real macOS launcher, CLI changes, benchmark changes,
-performance claims, and fx-equivalence remain deferred. The product is Rust;
-Zig is only the pinned upstream benchmark input. Implementation and adversarial
-evidence remain pending.
+The implemented but unreviewed `open_file` candidate adds no read result and no
+arbitrary process selection. Strict effect-free preflight binds policy and
+execution to one canonical confined path through dedicated
+`Capability::OpenFile`. Linux execution no-follow opens and retains only an
+existing regular file before calling fixed `/usr/bin/xdg-open`; the sole
+`/proc/<machine-god-parent-pid>/fd/<retained-fd>` argument keeps the helper bound
+to the retained identity while the parent owns the descriptor. The helper runs
+from `/` with null stdio and the trusted host environment. A trusted injected
+launcher seam supports deterministic tests without exposing launcher selection
+to the model.
 
-Current execution evidence is native macOS plus Linux/FreeBSD cross-target test
-compilation, Linux library Clippy, and WASI compilation/active unsupported
+The worker exists before helper spawn. Cancellation observed before successful
+spawn has zero launch effect; successful spawn commits the effect. Postcommit
+cancellation, timeout, or explicit future/drop cleanup terminates and reaps the
+direct helper and joins the owned worker without claiming rollback. Postcommit
+cancellation, nonzero or signalled exit, timeout, wait failure, and waiter setup
+failure return fixed redacted, nonretryable result uncertainty when a tool-level
+result is observed. Exit zero reports helper acceptance only, not downstream
+application consumption or display. Success is exactly
+`{"path":"canonical/relative/path"}`. External paths, directories, URLs, a
+real macOS launcher, CLI changes, benchmark changes, performance claims, and
+fx-equivalence remain deferred. The product is Rust; Zig is only the pinned
+upstream benchmark input. Formal review, exact workflows, delivery, and `main`
+integration remain pending.
+
+Delivered `create_folder` execution evidence is native macOS plus
+Linux/FreeBSD cross-target test compilation, Linux library Clippy, and WASI
+compilation/active unsupported
 behavior. It does not establish native Linux execution, which remains pending
 exact feature CI. Deterministic mixed-device identity traversal covers a
 changed-`st_dev` chain without privileged real-mount operations; it is not

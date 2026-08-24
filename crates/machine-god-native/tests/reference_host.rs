@@ -26,9 +26,9 @@ use machine_god_native::{
     CREATE_FOLDER_TOOL_NAME, ConfigOrigin, DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME,
     FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME,
     LoadedNativeConfig, NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
-    NativeReferenceHostBuildErrorKind, PermissionPromptDecision, PermissionPromptError,
-    PermissionPrompter, READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME, WRITE_FILE_TOOL_NAME,
-    load_native_config,
+    NativeReferenceHostBuildErrorKind, OPEN_FILE_TOOL_NAME, PermissionPromptDecision,
+    PermissionPromptError, PermissionPrompter, READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME,
+    WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
 
@@ -348,7 +348,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 11);
+    assert_eq!(tools.len(), 12);
     assert_eq!(
         tools
             .iter()
@@ -363,6 +363,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             GLOB_FILES_TOOL_NAME,
             GREP_FILES_TOOL_NAME,
             LIST_FILES_TOOL_NAME,
+            OPEN_FILE_TOOL_NAME,
             READ_FILE_TOOL_NAME,
             RENAME_FILE_TOOL_NAME,
             WRITE_FILE_TOOL_NAME

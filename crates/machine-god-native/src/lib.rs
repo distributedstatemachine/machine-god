@@ -21,6 +21,7 @@ mod file_info;
 mod glob_files;
 mod grep_files;
 mod list_files;
+mod open_file;
 mod read_file;
 #[cfg(all(
     feature = "ai-gateway-http",
@@ -122,6 +123,16 @@ pub use grep_files::{
 pub use list_files::{
     LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,
     MAX_LIST_FILES_ENTRIES, MAX_LIST_FILES_PATH_BYTES, MAX_LIST_FILES_TOTAL_NAME_BYTES,
+};
+pub use open_file::{
+    MAX_OPEN_FILE_PATH_BYTES, MAX_OPEN_FILE_PATH_COMPONENT_BYTES, MAX_OPEN_FILE_PATH_COMPONENTS,
+    MAX_OPEN_FILE_SERIALIZED_ARGUMENT_BYTES, MAX_OPEN_FILE_SERIALIZED_RESULT_BYTES,
+    OPEN_FILE_LAUNCH_TIMEOUT, OPEN_FILE_TOOL_NAME, OpenFileTool, OpenFileToolOpenError,
+    OpenFileToolOpenErrorKind,
+};
+#[cfg(target_os = "linux")]
+pub use open_file::{
+    OpenFileLaunch, OpenFileLaunchOutcome, OpenFileLaunchRequest, OpenFileLauncher,
 };
 pub use read_file::{
     MAX_READ_FILE_BYTES, MAX_READ_FILE_PATH_BYTES, READ_FILE_TOOL_NAME, ReadFileTool,

@@ -39,23 +39,28 @@ feature CI `32702785549`, feature benchmark `32702785574`, main CI
 `32703303933`, and main benchmark `32703303931`. Both benchmark runs retain
 exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
 as slice twenty-five, and the delivered host has eleven tools. The
-twenty-sixth, library-only native `open_file` slice is **CONTRACT FROZEN;
-IMPLEMENTATION PENDING**. Its dedicated provider-neutral
-`Capability::OpenFile { path }` authorizes one canonical workspace-confined
-existing regular file without following a symlink. The frozen Linux backend
-uses only `/usr/bin/xdg-open` with a
-`/proc/<parent-pid>/fd/<retained-fd>` target, null stdio, an injected launcher
-evidence seam, and a 30-second bounded helper wait; machine-god never searches
-ambient `PATH` or accepts a model-selected process. Other platforms fail before
-spawn.
-No effect occurs before spawn; a successful spawn commits an external effect
-that cancellation cannot roll back. Postspawn cancellation makes core drop the
-execution future; cancellation, timeout, or explicit drop kills and reaps the
-helper and joins owned work without claiming rollback. External paths,
-directories, URLs, a real macOS launcher,
-CLI changes, benchmark changes, performance claims, and fx-equivalence remain
-deferred. No implementation or delivery claim is made. The repository includes
-the provider-neutral streaming engine, its bounded durable
+twenty-sixth, library-only native `open_file` slice is an implemented Rust
+candidate, not a reviewed or delivered slice. Its dedicated provider-neutral
+`Capability::OpenFile { path }` authorizes one strict canonical,
+workspace-confined existing regular file. Linux execution retains the selected
+file descriptor through the launch lifecycle and gives exactly
+`/usr/bin/xdg-open` a `/proc/<parent-pid>/fd/<retained-fd>` target, fixed `/`
+working directory, and null stdio. Machine-god selects neither a shell nor a
+program from ambient `PATH`; the trusted `xdg-open` and desktop-dispatch
+boundary may consult inherited host environment and configuration.
+The exported Linux `OpenFileLauncher` seam accepts the same descriptor-bound
+request. Its contract requires inert future construction, cancellation-aware
+ownership, and no detached helper or worker after drop. A successful helper
+spawn commits an external effect that cannot be rolled back; cancellation,
+timeout, or explicit drop then kills and reaps the direct helper and joins owned
+work. The candidate Linux/macOS reference host registers twelve alphabetical
+tools from one original workspace descriptor plus eleven clones; macOS retains
+the catalog entry but `open_file` execution is unsupported before lookup or
+spawn. The delivered host on `main` remains the eleven-tool `create_folder`
+host. External paths, directories, URLs, a real macOS launcher, CLI changes,
+benchmark changes, performance claims, and fx-equivalence remain deferred. The
+candidate makes no review, CI, delivery, or `main`-integration claim. The
+repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
 policy. It also includes bounded Unix-only `read_file` and one-level
@@ -427,7 +432,7 @@ The project is not yet production-ready. See the exact
 [`rename_file` contract](docs/rename-file.md),
 [`copy_file` contract](docs/copy-file.md),
 [`create_folder` behavior contract](docs/create-folder.md),
-[`open_file` frozen contract](docs/open-file.md), and
+[`open_file` candidate contract](docs/open-file.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the

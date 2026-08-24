@@ -1,6 +1,6 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **CONTRACT FROZEN; IMPLEMENTATION PENDING**
+Status: **IMPLEMENTED CANDIDATE; FORMAL REVIEW PENDING**
 
 ## Base and boundary
 
@@ -13,11 +13,14 @@ Status: **CONTRACT FROZEN; IMPLEMENTATION PENDING**
   two nonexpired exact-SHA artifacts, IDs `9511626648` and `9511745538`.
 
 This documentation-only contract checkpoint is exempt from adversarial review
-under the user's explicit instruction. Its own exact feature CI and benchmark
-workflows are required after push and cannot be self-recorded. It is not
-implementation, behavior, delivery, performance, or fx-equivalence evidence.
+under the user's explicit instruction. Exact contract commit
+`6b763c4f1168963dd42087a1fdf5cf72c4212b40` passed all six jobs of feature CI
+`32707583915`. Feature benchmark workflow `32707583892` passed both jobs and
+retains exactly two nonexpired exact-SHA artifacts, IDs `9512848704` and
+`9512966283`. This is contract evidence only, not implementation, behavior,
+delivery, performance, or fx-equivalence evidence.
 
-## Frozen feature
+## Implemented feature candidate
 
 The twenty-sixth bounded slice asks one fixed Linux desktop helper to open one
 strict canonical, workspace-confined, existing regular file. It freezes the
@@ -51,20 +54,21 @@ file mutation, arbitrary process authority, macOS real launch, CLI behavior,
 benchmark workload, product-performance claim, inventory promotion, or
 complete fx-equivalence claim.
 
-## Contract-only host checkpoint
+## Candidate host composition
 
-The delivered host remains byte-for-byte at eleven alphabetical tools:
+The delivered base host remains at eleven alphabetical tools:
 `copy_file`, `create_folder`, `delete_file`, `edit_file`, `file_info`,
 `glob_files`, `grep_files`, `list_files`, `read_file`, `rename_file`, and
 `write_file`, using one original retained descriptor plus ten clones.
 
-Later behavior composition must insert `open_file` after `list_files` and
-before `read_file`, yield exactly twelve alphabetical tools, and use one
+Current candidate composition inserts `open_file` after `list_files` and
+before `read_file`, yields exactly twelve alphabetical tools, and uses one
 original plus eleven identity-preserving clones. Both path-based and prepared-
-root constructors must compose that same tool catalog and retained workspace
-identity.
+root constructors compose that same tool catalog and retained workspace
+identity. Formal review and delivery remain pending, so `main` remains at the
+eleven-tool base.
 
-## Planned ownership
+## Implemented ownership
 
 - Core/production owns the dedicated `OpenFile` capability and stable serde/
   drop evidence, native implementation and exports, deterministic launcher
@@ -75,9 +79,10 @@ identity.
 - Documentation owns the normative contract, implementation plan, maintained
   architecture/security/API/host pages, and exact-SHA lineage record.
 
-Owners use isolated worktrees or explicitly non-overlapping files. Only the
-composed integration SHA can become a formal behavior candidate. This ledger
-is pre-created for that future review and records no reviewer result yet.
+Production, host, direct/engine/unsupported evidence, and documentation were
+composed from explicitly non-overlapping ownership. Only the final composed SHA
+can become a formal behavior candidate. This ledger records no formal reviewer
+result yet.
 
 ## Required evidence
 
@@ -114,8 +119,9 @@ is pre-created for that future review and records no reviewer result yet.
   terminate/reap/join; no detached owned helper/thread; concurrent-call
   isolation.
 - [ ] Native Linux behavior, macOS/FreeBSD/WASI compilation and active
-  unsupported-target behavior, exact eleven-tool checkpoint and future twelve-
-  tool/eleven-clone host, no-unsafe, dependency, compatibility, documentation,
+  unsupported-target behavior, exact delivered eleven-tool checkpoint and
+  candidate twelve-tool/eleven-clone host, no-unsafe, dependency,
+  compatibility, documentation,
   diff, and fresh release-binary smoke evidence.
 
 ## Exact local gate before formal review
@@ -165,9 +171,11 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**CONTRACT FROZEN; IMPLEMENTATION PENDING.** Exact base main CI and benchmark
-evidence is green and the normative decisions above are closed. No open-file
-core variant, native source, tests, dependency change, twelve-tool host
-composition, behavior candidate, adversarial result, feature workflow,
-integration, main workflow, delivery, product-performance, or fx-equivalence
-claim exists at this checkpoint.
+**IMPLEMENTED CANDIDATE; FORMAL REVIEW PENDING.** Exact base main and frozen-
+contract feature CI and benchmark evidence is green. Candidate source now
+contains the core variant, native tool, trusted launcher seam, direct/private/
+engine/unsupported evidence, and twelve-tool/eleven-clone host composition with
+no dependency, workflow, CLI, benchmark, or compatibility-status change. The
+complete exact-SHA gate, three-track formal review, feature workflows,
+integration, main workflows, delivery, product-performance, and fx-equivalence
+claims remain pending.

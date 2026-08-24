@@ -51,6 +51,10 @@ pub enum Capability {
         source: String,
         destination: String,
     },
+    /// Open one existing regular file in a host-selected desktop application.
+    OpenFile {
+        path: String,
+    },
     Process {
         program: String,
         arguments: Vec<String>,

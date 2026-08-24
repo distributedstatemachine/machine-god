@@ -3,8 +3,8 @@
 Status: **DELIVERED** for `create_folder`.
 The delivered composition contains exactly eleven alphabetical workspace
 tools, and twenty-five bounded Milestone 03 slices are delivered;
-the twenty-sixth `open_file` contract is frozen but its implementation and
-twelve-tool host composition are pending;
+the twenty-sixth `open_file` Rust candidate and twelve-tool host composition are
+implemented but remain formally unreviewed and undelivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -218,18 +218,33 @@ integrated composition at that review checkpoint. Seal `e75578b` subsequently
 passed exact feature/main CI and benchmark workflows, so this is now the
 delivered composition.
 
-The frozen twenty-sixth composition will insert `open_file` immediately after
-`list_files`. It will add one identity-preserving descriptor clone so twelve
-alphabetical tools share the same retained workspace identity. `open_file`
-uses dedicated `Capability::OpenFile { path }`, retains an approved existing
-regular-file descriptor without following a symlink, and delegates Linux
-launch through an injected seam fixed to `/usr/bin/xdg-open` plus
-`/proc/<parent-pid>/fd/<retained-fd>`. Null stdio, no machine-god `PATH` lookup, a
-30-second helper wait, pre-spawn zero-effect cancellation, and post-spawn
-timeout-or-drop kill/reap/join with fixed redacted result uncertainty are
-frozen. Postspawn cancellation invokes the existing core drop path. Existing
-constructors, source, tests, and the delivered eleven-tool count are unchanged
-until implementation composes.
+The implemented but unreviewed twenty-sixth composition inserts `open_file`
+immediately after `list_files`. One additional identity-preserving descriptor
+clone lets exactly twelve alphabetical tools share the same retained workspace
+identity through one original descriptor plus eleven clones. `open_file` uses
+dedicated `Capability::OpenFile { path }`, retains an approved existing regular-
+file descriptor without following symlinks, and on Linux launches fixed
+`/usr/bin/xdg-open` with
+`/proc/<machine-god-parent-pid>/fd/<retained-fd>` as its sole argument. The
+helper runs from `/` with null stdio and the trusted host environment; machine-
+god performs no `PATH` lookup and accepts no model-selected process settings. A
+trusted injected launcher seam is deterministic for tests and inert until
+polled. Public construction is Linux-only; macOS public construction is
+unsupported, its private retained-root host tool returns unsupported at
+execution, and every other target is unsupported.
+
+The worker is established before helper spawn. Worker-start or spawn failure is
+a retryable precommit unavailable result, and cancellation observed before
+successful spawn wins with no launch. Successful spawn commits the effect;
+cancellation after that boundary, timeout, or explicit future/drop cleanup
+terminates and reaps the direct helper and joins the owned worker without
+claiming rollback. Postcommit cancellation, nonzero or signalled exit, timeout,
+wait failure, or waiter setup failure returns fixed redacted, nonretryable result
+uncertainty when a tool-level result is observed. Exit zero establishes helper
+acceptance only, not downstream consumption or display. Success is exactly
+`{"path":"canonical/relative/path"}`. Formal review, exact workflows, delivery,
+and `main` integration remain pending; the delivered base remains the eleven-
+tool `create_folder` composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
@@ -417,7 +432,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the eleven candidate tools;
+   identity for the twelve candidate tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -427,8 +442,8 @@ this order:
 7. wrap the injected prompter in `AskPermissionHandler`; and
 8. build `Engine` with exactly `copy_file`, `create_folder`, `delete_file`,
    `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
-   `read_file`, `rename_file`, and `write_file`, default `EngineLimits`, and
-   the default `NoopEventSink`;
+   `open_file`, `read_file`, `rename_file`, and `write_file`, default
+   `EngineLimits`, and the default `NoopEventSink`;
    core's catalog exposes those names in deterministic alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
@@ -440,8 +455,8 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and ten descriptor clones of the same opened directory object
-feed the others. The candidate engine registers exactly the eleven alphabetical
+with one tool and eleven descriptor clones of the same opened directory object
+feed the others. The candidate engine registers exactly the twelve alphabetical
 tools listed above and discovers or registers no other tool. This shared retained
 identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
@@ -463,7 +478,7 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same eleven candidate
+the same provider and permission adapter, registers the same twelve candidate
 tools, and uses the same default engine limits and no-op sink. It deliberately
 performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
@@ -554,19 +569,23 @@ postcommit rewalk, and bottom-up durability described in
 [`create-folder.md`](create-folder.md) on first poll. Construction performs no
 directory creation, lookup, permission normalization, task, thread, I/O, or
 background work. The candidate catalog and clone counts are eleven and ten;
-the delivered counts remain ten and nine until the remaining gates pass.
+those are now the delivered `create_folder` base counts.
 
-The frozen twenty-sixth slice adds no construction effect. Its planned
-launcher is injected for deterministic evidence; only approved execution may
-spawn the fixed Linux helper. Other targets return unsupported before spawn.
-After successful spawn, cancellation cannot undo a possible application
-dispatch. Core drops the execution future on cancellation; that drop must kill
-and reap the helper and join all owned work. A 30-second timeout decision
-follows the same fixed redacted result-unknown boundary, and its synchronous
-cleanup may extend past the decision.
+The implemented but unreviewed twenty-sixth slice adds one more identity-
+preserving clone and no construction effect. Its launcher has a trusted injected
+test seam; production approved execution alone may spawn fixed
+`/usr/bin/xdg-open` on Linux. Other targets return unsupported without spawn.
+The worker starts before the helper. Cancellation before successful spawn wins
+with zero launch, while successful spawn is the commit boundary. Postcommit
+cancellation, timeout, or explicit future/drop cleanup terminates and reaps the
+direct helper and joins the owned worker without claiming rollback. Postcommit
+cancellation and process or wait failures return fixed redacted, nonretryable
+result uncertainty when a tool-level result is observed. The candidate catalog
+and clone counts are exactly twelve and eleven.
 External paths, directories, URLs, a real macOS backend, CLI composition,
 benchmarks, performance claims, and equivalence remain deferred. This is a
-contract statement, not an implementation claim.
+candidate implementation description, not a review, workflow, delivery, `main`
+integration, performance, or equivalence claim.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio

@@ -305,8 +305,8 @@ findings in all three fresh tracks. Seal `e75578b` passed exact feature CI
 benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
-The twenty-sixth bounded slice, native `open_file`, is **CONTRACT FROZEN;
-IMPLEMENTATION PENDING** from exact delivered base
+The twenty-sixth bounded slice, native `open_file`, is an **IMPLEMENTED
+CANDIDATE; FORMAL REVIEW PENDING** from exact delivered base
 `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
 main CI `32704202572` and final main benchmark workflow `32704202546`; the
 benchmark run retains exactly two nonexpired exact-SHA artifacts
@@ -324,9 +324,15 @@ have consumed the request. Unsupported targets fail before spawn. Drop after
 spawn terminates and reaps the owned helper and joins owned work. External
 paths, directories, URLs, symlinks, real macOS launching, CLI behavior,
 benchmark workloads, product-performance claims, and fx-equivalence promotion
-remain deferred. The normative boundary and pending evidence plan are
+remain deferred. The normative boundary and formal-review plan are
 [`open-file.md`](open-file.md) and
 [`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md).
+Exact frozen-contract commit `6b763c4f1168963dd42087a1fdf5cf72c4212b40`
+passed all six jobs of feature CI `32707583915`. Feature benchmark workflow
+`32707583892` passed both jobs and retains exactly two nonexpired exact-SHA
+artifacts, IDs `9512848704` and `9512966283`. This is contract-checkpoint
+evidence only; those workflows do not validate the current implementation or
+delivery.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -2048,8 +2054,8 @@ gate:
   complete. It adds no product-performance or fx-equivalence claim, so the
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
-  The twenty-sixth native `open_file` slice is **CONTRACT FROZEN;
-  IMPLEMENTATION PENDING** from exact delivered base `e2ee11f2`. Final base
+  The twenty-sixth native `open_file` slice is an **IMPLEMENTED CANDIDATE;
+  FORMAL REVIEW PENDING** from exact delivered base `e2ee11f2`. Final base
   main CI `32704202572` and benchmark `32704202546` are green; the benchmark
   retains exactly two nonexpired exact-SHA artifacts `9511626648` and
   `9511745538`. Its sole strict `{path:string}` names one workspace-confined
@@ -2063,13 +2069,20 @@ gate:
   behavior are normative. Other targets are unsupported before spawn. External
   paths, directories, URLs, symlinks, a concrete macOS launcher, CLI changes,
   benchmark changes, performance claims, and fx-equivalence promotion are
-  deferred. Production, independent evidence, complete exact-SHA local gates,
-  fresh three-track review, feature workflows, fast-forward integration, and
-  exact main workflows remain pending under
+  deferred. Candidate production, independent direct/private/engine/
+  unsupported evidence, and exact twelve-tool/eleven-clone host composition
+  are present without dependency, workflow, CLI, benchmark, or compatibility-
+  status changes. The complete exact-SHA local gate, fresh three-track review,
+  feature workflows, fast-forward integration, and exact main workflows remain
+  pending under
   [`open-file.md`](open-file.md) and
   [`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md). The
   documentation-only contract checkpoint is exempt from its own adversarial
-  cycle under the user's instruction.
+  cycle under the user's instruction. Exact contract commit `6b763c4` passed
+  all six feature CI jobs in `32707583915`; feature benchmark `32707583892`
+  passed both jobs and retains exactly two nonexpired exact-SHA artifacts,
+  `9512848704` and `9512966283`. Those runs establish only the frozen contract
+  checkpoint, not implementation or delivery.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

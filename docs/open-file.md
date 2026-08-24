@@ -1,19 +1,28 @@
 # Native `open_file` contract
 
-Status: **CONTRACT FROZEN; IMPLEMENTATION PENDING**
+Status: **IMPLEMENTED CANDIDATE; FORMAL REVIEW PENDING**
 
-This document freezes the twenty-sixth bounded Milestone 03 slice from exact
+This document defines the twenty-sixth bounded Milestone 03 candidate from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
 under exact main CI `32704202572` and exact main benchmark workflow
 `32704202546`. The benchmark workflow passed both jobs and retains exactly two
 nonexpired exact-SHA artifacts, IDs `9511626648` and `9511745538`.
 
-This checkpoint freezes documentation only. It adds no implementation, core
-capability, host tool, test, dependency, workflow, CLI behavior, benchmark
-workload, product-performance claim, or fx-equivalence claim. The contract
-commit is exempt from adversarial review under the user's instruction, but its
-exact feature CI and benchmark workflows remain required after push and cannot
-be recorded in advance.
+The earlier checkpoint froze documentation only and added no behavior. Its
+contract commit is exempt from adversarial review under the user's instruction,
+but its
+exact feature CI `32707583915` subsequently passed all six jobs. Exact feature
+benchmark workflow `32707583892` passed both jobs and retains exactly two
+nonexpired exact-SHA artifacts, IDs `9512848704` and `9512966283`. These
+workflows validate only that frozen contract checkpoint at
+`6b763c4f1168963dd42087a1fdf5cf72c4212b40`; they are not implementation,
+delivery, performance, or fx-equivalence evidence.
+
+Current candidate source now implements the core capability, native Linux tool,
+trusted launcher seam, unsupported-target behavior, tests, and twelve-tool host
+composition without changing dependencies, workflows, CLI behavior, benchmark
+workloads, or compatibility status. It has not yet completed formal review,
+exact feature workflows, delivery, or `main` integration.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -24,11 +33,16 @@ Rust; Zig remains solely a pinned upstream benchmark build input.
 
 ## Public API and schema
 
-The future `machine-god-core` API adds the dedicated
-`Capability::OpenFile { path: String }` variant. The future
-`machine-god-native` implementation exports `OPEN_FILE_TOOL_NAME`,
+The `machine-god-core` API adds the dedicated
+`Capability::OpenFile { path: String }` variant. `machine-god-native` exports
+`OPEN_FILE_TOOL_NAME`,
 `OpenFileTool`, `OpenFileToolOpenError`, `OpenFileToolOpenErrorKind`, and these
-limits:
+limits. On Linux it additionally exports the trusted deterministic-test seam
+`OpenFileLauncher`, `OpenFileLaunch`, `OpenFileLaunchRequest`, and
+`OpenFileLaunchOutcome`. The production constructor always installs the fixed
+system launcher; only the explicit `open_with_launcher` constructor accepts a
+trusted host implementation, whose effect-free construction, cancellation,
+drop, ownership, and outcome obligations are part of the trait contract.
 
 | Public constant | Exact value |
 | --- | ---: |
@@ -282,18 +296,18 @@ application behavior.
 
 ## Host composition and compatibility boundary
 
-At this contract-only checkpoint the delivered reference host remains exactly
+The delivered base reference host remains exactly
 the eleven alphabetical tools: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
 `read_file`, `rename_file`, and `write_file`, using the original retained
 descriptor plus ten identity-preserving clones.
 
-Future slice-twenty-six behavior composition inserts `open_file` after
+Current candidate composition inserts `open_file` after
 `list_files` and before `read_file`, yielding exactly twelve alphabetical tools
 and using one original retained descriptor plus eleven identity-preserving
-clones. Both path-based and prepared-root reference-host constructors must
-compose the same catalog and retained workspace identity. No host composition
-change is present at this documentation checkpoint.
+clones. Both path-based and prepared-root reference-host constructors compose
+the same catalog and retained workspace identity. This composition is not yet
+reviewed or delivered; `main` remains at eleven tools.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, marks the operation approval-required,
@@ -310,43 +324,47 @@ structured result, and fixed redacted errors. External paths, symlink following,
 directories, macOS launch, PATH lookup, and equivalence promotion remain
 deferred. Zig is benchmark input only.
 
-## Required implementation evidence
+## Candidate evidence and remaining gates
 
-- [ ] Exact core variant/serde/drop contract, native exports, constants,
+- [x] Exact core variant/serde/drop contract, native exports, constants,
   descriptions, strict schema, construction taxonomy, result, errors, and
   redaction.
 - [ ] Exact and one-over 4,096-byte requested/canonical path, 256-component,
   255-byte component, 65,536-byte argument, and 16,384-byte result bounds.
-- [ ] Rejection of empty/root/dot, absolute, tilde, parent, repeated/trailing
+- [x] Rejection of empty/root/dot, absolute, tilde, parent, repeated/trailing
   separator, dot-component, control, line/paragraph-separator, bidirectional,
   and over-bound paths; byte-for-byte canonical policy/execution agreement.
-- [ ] Effect-free preparation, exact
+- [x] Effect-free preparation, exact
   `{"type":"open_file","path":"..."}` authority, denial before lookup,
   direct canonical revalidation, and absence of general process authority.
-- [ ] Retained-root liveness, no-follow ancestor/final traversal, regular-file-
+- [x] Retained-root liveness, no-follow ancestor/final traversal, regular-file-
   only enforcement, every symlink/special/directory rejection, root/prefix/
   final replacement, unlink, rename, mixed-device traversal, and outside
   sentinels.
-- [ ] Exact `/usr/bin/xdg-open` and two-argument proc-fd launch, fixed `/` cwd,
+- [x] Controlled Linux-only source evidence for exact `/usr/bin/xdg-open` and
+  two-element proc-fd argv, fixed `/` cwd,
   inherited host environment, null stdio, no machine-god shell/PATH or model-
   selected launch field, retained target descriptor, trusted downstream host
   dispatch, and exit-zero acceptance semantics.
-- [ ] Missing launcher and spawn failure before commit; nonzero, signal,
+- [x] Missing launcher and spawn failure before commit; nonzero, signal,
   timeout, wait, and waiter-establishment failure after commit; exact fixed
   retryability and `result_unknown` classification.
-- [ ] Inert until poll; cancellation before spawn with zero launch; successful-
+- [x] Inert until poll; cancellation before spawn with zero launch; successful-
   spawn boundary; postspawn cancellation through the engine's existing drop
   path; 30-second timeout decision plus complete cleanup; pre-poll and
   postspawn drop; terminate/reap/join; no detached owned child or worker;
   concurrent-call isolation.
-- [ ] Native Linux behavior, macOS/FreeBSD/WASI compile coverage and active
-  unsupported-target behavior, exact eleven-tool checkpoint and future twelve-
-  tool/eleven-clone composition, no-unsafe, dependency, compatibility,
-  documentation, clean-diff, and fresh release-binary smoke evidence.
+- [x] Candidate macOS active unsupported behavior, Linux cross-target warnings-
+  denied compilation, exact twelve-tool/eleven-clone composition, and no new
+  dependency, workflow, CLI, benchmark, or unsafe-Rust source.
+- [ ] Exact composed-SHA native Linux execution, FreeBSD/WASI and active WASI,
+  dependency, pinned-compatibility, documentation, clean-diff, and freshly
+  built release-binary evidence; then three green formal review tracks and the
+  exact remote delivery workflows.
 
 ## Review and delivery protocol
 
-After production and independently owned evidence compose, run the complete
+After candidate source and independently owned evidence compose, run the complete
 local gate on one exact SHA. Create a tree-identical candidate and start three
 fresh reviewers against that same immutable SHA and tree:
 
@@ -371,5 +389,5 @@ authority; shell execution; model-selected programs, arguments, environment,
 or working directories; PATH lookup; macOS or other non-Linux real launch;
 CLI ownership; new benchmark workloads; product-performance claims; inventory
 promotion; and complete fx equivalence remain outside this slice.
-Implementation and every behavior, test, review, feature-workflow,
-integration, and delivery claim remain pending.
+Formal review, exact feature workflows, integration, and delivery remain
+pending; current implementation and local results are candidate evidence only.

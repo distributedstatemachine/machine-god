@@ -75,22 +75,26 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The delivered host now has eleven tools. No product-performance
 claim is made.
-The twenty-sixth, library-only native `open_file` slice is **CONTRACT FROZEN;
-IMPLEMENTATION PENDING**. It introduces dedicated provider-neutral
-`Capability::OpenFile { path }` for one canonical workspace-confined existing
-regular file, rather than treating default-application launch as filesystem
-read or accepting a model-selected process. The frozen Linux backend uses
-exactly `/usr/bin/xdg-open` and a
-`/proc/<parent-pid>/fd/<retained-fd>` target with null stdio and a 30-second
-bounded wait. Launcher behavior remains behind an injected evidence seam; no
-ambient `PATH` lookup is performed by machine-god. Unsupported platforms fail
-before spawning.
+The twenty-sixth, library-only native `open_file` slice is an implemented Rust
+candidate. It adds dedicated provider-neutral `Capability::OpenFile { path }`
+for one strict canonical, workspace-confined existing regular file rather than
+treating default-application launch as filesystem read or accepting a model-
+selected process. Linux execution opens the path beneath retained directory
+descriptors without following selected symlinks and retains the final regular-
+file descriptor through the launcher lifecycle. The production launcher uses
+exactly `/usr/bin/xdg-open` and the parent-owned
+`/proc/<parent-pid>/fd/<retained-fd>` target, with fixed `/` working directory,
+null stdio, and a 30-second timeout decision. Machine-god performs no shell or
+`PATH` lookup; the trusted helper and desktop dispatch may consult inherited
+host environment and configuration. Linux also exports a trusted injected
+launcher seam whose returned future must be inert until polled and must leave
+no owned helper or worker detached after cancellation or drop.
 Successful spawn is the external-effect commit boundary and cannot be rolled
 back. Postspawn cancellation makes core drop the execution future;
-cancellation, timeout, or explicit drop kills and reaps the helper and joins
-all owned work without claiming the application dispatch had no effect.
-Implementation, tests, host
-wiring, review, and delivery remain pending.
+cancellation, timeout, or explicit drop kills and reaps the direct helper and
+joins owned work without claiming the application dispatch had no effect.
+The candidate host wiring and source exist, but this is not a review, CI,
+benchmark, delivery, performance, `main`-integration, or fx-equivalence record.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -649,16 +653,18 @@ with the exact canonical path that approved execution receives. The complete
 contract and local-gate evidence are in
 [`create-folder.md`](create-folder.md).
 
-The frozen twenty-sixth slice will add `open_file` after `list_files`, producing
-twelve alphabetical tools from the same retained workspace identity. Its
-strict path-only preflight will prepare dedicated
-`Capability::OpenFile { path }`; approved execution will open and retain one
+The implemented twenty-sixth candidate inserts `open_file` after `list_files`,
+producing twelve alphabetical tools from the same retained workspace identity:
+one tool consumes the original retained descriptor and the other eleven receive
+identity-preserving clones. Its strict path-only preflight prepares dedicated
+`Capability::OpenFile { path }`; approved Linux execution opens and retains one
 existing regular-file descriptor without following a model-selected symlink.
-The Linux launcher will receive only `/usr/bin/xdg-open` and the parent-owned
-`/proc/<parent-pid>/fd/<retained-fd>` target, with null stdio, no ambient
-`PATH` lookup by machine-god, and a 30-second helper bound. This paragraph freezes intended
-composition only: source and tests do not yet exist, and the delivered host
-remains at eleven tools.
+The fixed system launcher receives only `/usr/bin/xdg-open` and the parent-owned
+`/proc/<parent-pid>/fd/<retained-fd>` target, with fixed `/` working directory,
+null stdio, and no shell or `PATH` lookup by machine-god. The same twelve-tool
+catalog composes on macOS, where active `open_file` execution returns
+unsupported before filesystem lookup, worker creation, or helper spawn. This is
+candidate composition only; the delivered host remains at eleven tools.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
@@ -706,6 +712,10 @@ exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
 `90d8f96`, all three final tracks are green on exact candidate `72cf64f6`.
 Replacement seal `f08dbd9e`, feature record `6f66b6e5`, and exact `main`
 delivery evidence are green.
+
+The `open_file` candidate extends both constructors together to twelve tools and
+eleven clones without reopening the workspace root. This does not change the
+delivered `create_folder` history or delivered count.
 
 On the production path, both non-secret roots open before the consumed
 credential snapshot is discovered and its token moves into
@@ -1290,19 +1300,21 @@ gate. Tree-identical cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with
 zero findings in all three fresh tracks; delivery, performance, and fx-
 equivalence claims remain pending.
 
-The frozen `open_file` boundary is distinct from content read and arbitrary
-process execution. Core policy will receive exactly
-`Capability::OpenFile { path: "canonical/path" }`; native code will own
-retained-descriptor validation and the Linux default-application launch. Before
-spawn, cancellation and drop have zero external effect. Successful spawn
-commits an effect that cannot be revoked. Postspawn cancellation invokes the
-existing engine drop path. Cancellation, timeout, or explicit drop kills and
-reaps the helper and joins owned work but cannot prove whether the default
-application already received the file. External paths, directories, URLs,
-macOS real launch,
-CLI behavior, benchmark work, performance claims, and fx-equivalence are
-deferred. The product remains Rust; Zig remains solely the pinned upstream
-benchmark build input. Implementation and evidence are pending.
+The implemented-candidate `open_file` boundary is distinct from content read
+and arbitrary process execution. Core policy receives exactly
+`Capability::OpenFile { path: "canonical/path" }`; native Linux code owns
+retained-descriptor validation and the default-application launch. Its exported
+trusted launcher request carries the exact approved path, proc path, and owned
+target descriptor, while the launch trait requires an inert future and complete
+cleanup on drop. Before successful spawn, cancellation and drop cause zero
+launch. Successful spawn commits an effect that cannot be revoked. Postspawn
+cancellation invokes the existing engine drop path. Cancellation, timeout, or
+explicit drop kills and reaps the direct helper and joins owned work but cannot
+prove whether the default application already received the file. External
+paths, directories, URLs, macOS real launch, CLI behavior, benchmark work,
+performance claims, and fx-equivalence are deferred. The product remains Rust;
+Zig remains solely the pinned upstream benchmark build input. This candidate
+makes no review, CI, benchmark, delivery, or `main`-integration claim.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

@@ -1698,6 +1698,7 @@ fn capability_json_value(capability: &Capability) -> Option<&Value> {
         Capability::Filesystem { .. }
         | Capability::FilesystemRename { .. }
         | Capability::FilesystemCopy { .. }
+        | Capability::OpenFile { .. }
         | Capability::Process { .. }
         | Capability::Network { .. } => None,
     }
