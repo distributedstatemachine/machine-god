@@ -5,10 +5,11 @@ network authority. Native capabilities are supplied explicitly by a host. The
 proposed twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code would own DNS, TLS,
-HTTP, runtime, and response effects. It admits only multi-label public targets,
-requires every DNS answer to be public, pins the admitted set to the
-connection, follows no redirect, sends no credential, proxy, cookie, or
-referer, and emits bounded output prefixed as upstream-untrusted. One approved
+HTTP, runtime, and response effects. It admits only multi-label public DNS names
+or strict public IP literals, requires every DNS answer to be public, pins the
+admitted set to the connection, follows no redirect, sends no credential,
+proxy, cookie, or referer, and emits bounded output prefixed as
+upstream-untrusted. One approved
 target cannot authorize a redirected host; all network authority remains
 `Critical` and uses the default `Ask` path. Caching, artifacts, authenticated or
 private targets, compression, and redirect following are deferred. This

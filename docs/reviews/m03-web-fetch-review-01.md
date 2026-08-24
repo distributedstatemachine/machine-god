@@ -21,11 +21,11 @@ progress with twenty-six delivered slices.
 The candidate is a cfg-gated, non-WASM, rootless `WebFetchTool` behind
 `web-fetch-http`; `ai-gateway-http` includes that feature. It accepts only a
 sole `{url:string}`, trims its boundary, bounds the canonical ASCII URL at
-2,000 bytes, upgrades `http` to canonical `https`, rejects credentials and
-fragments, and admits only a public multi-label target. Effect-free preflight
-must produce exact `Capability::Network` policy/execution agreement. Existing
-core policy presents network authority as `Critical` and the default path stays
-`Ask`.
+2,000 bytes, upgrades `http` to canonical `https`, rejects credentials, strips
+fragments, and admits only a public multi-label DNS name or strict public IP
+literal. Effect-free preflight must produce exact `Capability::Network`
+policy/execution agreement. Existing core policy presents network authority as
+`Critical` and the default path stays `Ask`.
 
 Allowed execution performs one fixed-header, no-auth Reqwest HTTP/1 GET with no
 proxy, retry, referer, cookie, automatic redirect, or decompression behavior.

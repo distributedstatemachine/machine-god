@@ -1733,11 +1733,12 @@ claim as part of this slice.
 optional `web-fetch-http` feature; existing `ai-gateway-http` includes it. Its
 strict model input is solely `{url:string}`. Effect-free preflight trims the
 boundary, accepts at most 2,000 bytes of canonical ASCII URL, upgrades `http`
-to `https`, rejects credentials and fragments, admits only a public multi-label
-target, and returns one exact canonical URL paired with
-`Capability::Network`. Policy and execution must agree on the HTTPS scheme,
-host, and effective port. Existing core behavior keeps that network capability
-`Critical`; the default policy path remains `Ask`.
+to `https`, rejects credentials, strips fragments, admits only a public
+multi-label DNS name or strict public IP literal, and returns one exact
+canonical URL paired with `Capability::Network`. Policy and execution must
+agree on the HTTPS scheme, host, and effective port. Existing core behavior
+keeps that network capability `Critical`; the default policy path remains
+`Ask`.
 
 Allowed execution resolves every invocation, accepts at most 32 DNS answers
 only when every answer is public, and pins the admitted set to the connection

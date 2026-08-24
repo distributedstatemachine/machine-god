@@ -45,19 +45,21 @@ runtime, task, thread, environment, filesystem, or credential operation.
 
 Preparation trims leading and trailing ASCII whitespace. The trimmed URL must
 be nonempty ASCII and no more than 2,000 bytes. It must parse as an absolute
-`http` or `https` URL with no user information and no fragment. The `http`
-scheme is upgraded to `https`; `https` remains `https`. Canonicalization
-normalizes the scheme, DNS host, port spelling, and empty path using the URL
-parser. The request path and query remain part of the prepared URL, but no
-model-visible output or diagnostic may reproduce query values. Credentials in
-user information are rejected rather than stripped.
+`http` or `https` URL with no user information. Any fragment is stripped because
+it is not part of an HTTP request target. The `http` scheme is upgraded to
+`https`; `https` remains `https`. Canonicalization normalizes the scheme, host,
+port spelling, and empty path using the URL parser. The request path and query
+remain part of the prepared URL, but no model-visible output or diagnostic may
+reproduce query values. Credentials in user information are rejected rather
+than stripped.
 
-The canonical host must be a syntactically valid multi-label public DNS name.
-Single-label names, IP literals, empty labels, and names that cannot resolve
-exclusively to public addresses are not eligible. URL parsing and lexical host
-checks happen during preparation; DNS admission happens during allowed
-execution. A syntactically eligible name is not a promise that its later DNS
-answers will be accepted.
+The canonical host must be either a syntactically valid multi-label public DNS
+name or a strict public IP literal. Single-label DNS names, empty labels,
+ambiguous numeric forms, and private, reserved, mapped, or otherwise non-public
+IP literals are not eligible. URL parsing and lexical host checks happen during
+preparation; DNS admission for names happens during allowed execution. A
+syntactically eligible name is not a promise that its later DNS answers will be
+accepted.
 
 Preparation returns the canonical URL as the exact execution input and this
 provider-neutral policy capability:
