@@ -10,14 +10,17 @@ Milestones 01 and 02 are complete, and Milestone 03 is in progress with
 twenty-four delivered bounded slices. The twenty-fourth, library-only
 `copy_file` slice is green under three fresh same-SHA adversarial reviews and
 exact feature and `main` delivery gates. The twenty-fifth, library-only
-`create_folder` behavior is composed from that delivered base; exact remediation
-`7bc3fb9`, tree `b39bd9b`, passes the complete replacement Rust 1.94.1 local
-gate and its eleven-tool host wiring is green. Cycle-2 candidate `6e1f885`, tree
-`ac57575`, is not green: correctness/API and performance/concurrency are green,
-while filesystem/robustness reported two low evidence/documentation findings
-and zero production defects. Evidence remediation is composed; the replacement
-full gate, fresh cycle-3 review, delivery, and `main` integration remain
-pending. The delivered count therefore remains twenty-four. The
+`create_folder` behavior is composed from that delivered base. Cycle-2
+candidate `6e1f885`, tree `ac57575`, is historically not green: correctness/API
+and performance/concurrency are green, while filesystem/robustness reported two
+low evidence/documentation findings and zero production defects. Exact
+remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+Rust 1.94.1 local gate with the 17-private-test remediation inventory and
+eleven-tool host wiring. A tree-identical cycle-3 candidate and three fresh
+same-SHA review tracks are pending, followed by delivery and `main` gates. The
+delivered count therefore remains twenty-four. Native Linux execution remains
+pending exact feature CI. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -352,12 +355,14 @@ original retained descriptor plus ten clones. The exact frozen contract commit
 `9fab189c9c1add76a38775d08f4342c6bcc7635b` is green under all six jobs of CI
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
 exactly two nonexpired exact-SHA artifacts. Those runs cover the contract only.
-Exact remediation `7bc3fb9`, tree `b39bd9b`, passes the complete replacement
-local gate. Cycle-2 candidate `6e1f885`, tree `ac57575`, is not green only for
+Cycle-2 candidate `6e1f885`, tree `ac57575`, is historically not green only for
 two low filesystem-evidence/documentation findings; the other two tracks are
-green and all tracks found zero production defects. Evidence remediation is
-composed, with replacement full-gate and cycle-3 review pending, so this is not
-delivery, `main` integration, performance, or fx-equivalence evidence. See the
+green and all tracks found zero production defects. Exact remediation
+`f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+local gate. A tree-identical cycle-3 candidate and three fresh same-SHA tracks
+remain pending, so this is not delivery, `main` integration, performance, or
+fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact

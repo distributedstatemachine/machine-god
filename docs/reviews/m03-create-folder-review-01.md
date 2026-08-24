@@ -1,7 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **CYCLE 2 NOT GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL
-GATE AND CYCLE 3 PENDING**
+Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -17,6 +16,10 @@ GATE AND CYCLE 3 PENDING**
 - Contract CI `32687614476` passed all six jobs.
 - Contract benchmark `32687614442` passed both jobs and retains exactly two
   nonexpired exact-SHA artifacts.
+- Exact replacement-gate remediation:
+  `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`.
+- Exact replacement-gate tree:
+  `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`.
 
 The documentation-only contract commit was exempt from adversarial review
 under the user's explicit instruction. Its green exact workflows are contract
@@ -107,20 +110,20 @@ composed integration SHA can become a formal behavior candidate.
   fresh release smoke evidence.
 - [ ] Native Linux execution under exact feature CI.
 
-Exact Rust 1.94.1 focused evidence is green across 16 private, 20 direct, six
-engine, seven reference-host, and one core-contract test. Production preflight
-API and filesystem audits each reported zero findings, but those audits are not
-any of the required formal correctness/API, filesystem/robustness, or
-performance/concurrency tracks.
+Exact Rust 1.94.1 replacement-gate focused evidence is green across 17 private,
+20 direct, six engine, seven reference-host, and one core-contract test.
+Production preflight API and filesystem audits each reported zero findings, but
+those audits are not any of the required formal correctness/API, filesystem/
+robustness, or performance/concurrency tracks.
 
 Cycle-2 evidence remediation adds a seventeenth private test that injects a
 different `st_dev` for one existing component and verifies that adjacent mixed-
 device identities are independently retained through initial, revalidation,
 and postcommit walks. This is deterministic identity-traversal evidence, not a
-privileged real mount or a sandbox guarantee. The replacement gate has not yet
-qualified the 17-test inventory.
+privileged real mount or a sandbox guarantee. Exact remediation `f527293`, tree
+`40eef14`, qualifies the complete 17-test replacement inventory.
 
-## Exact composed local gate
+## Historical precursor local gate
 
 Exact implementation precursor
 `ea408a1f80417475e9b08513a62e9c87b38c4e75`, tree
@@ -154,9 +157,9 @@ Exact implementation precursor
   exact bare/version/help aliases and inert missing-path human/JSON status
   smokes are green.
 
-Local success is not delivery, product-performance, or fx-equivalence evidence.
-The required immutable same-SHA formal review and remote delivery gates remain
-pending.
+At that checkpoint, local success was not delivery, product-performance, or fx-
+equivalence evidence. The required immutable same-SHA formal review and remote
+delivery gates remained pending.
 
 ## Exact local gate before formal review
 
@@ -294,17 +297,54 @@ counts remain unchanged; the composed remediation inventory is now 17 private,
 
 These changes remediate both low findings without changing production code,
 public API, authority, dependency, CLI, workflow, benchmark workload, or the
-no-sandbox boundary. They do not retroactively make cycle 2 green. A complete
-replacement local gate and three fresh same-SHA cycle-3 tracks remain required.
+no-sandbox boundary. They do not retroactively make cycle 2 green. Exact
+remediation `f527293`, tree `40eef14`, now passes the complete replacement local
+gate; three fresh same-SHA cycle-3 tracks remain required.
+
+## Exact replacement local gate after cycle 2
+
+Exact remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+local gate. Fresh exact evidence is:
+
+- exact Rust 1.94.1 workspace formatting, all-target/all-feature warnings-
+  denied Clippy, full workspace tests, and two workspace doctests;
+- 17 private, 20 direct, six engine, seven reference-host, and one core-
+  contract focused tests;
+- 878 default and 926 all-target/all-feature discovered tests, with zero
+  benchmarks;
+- 130 repo-wide Python tests with eight expected macOS skips;
+- byte-identical compatibility regeneration against clean pinned fx revision
+  `b1774fbf6c7602b503026f96f6e960e946c692ef`;
+- exact `cargo-deny` 0.20.2 policy checks and `cargo-audit` 0.22.2 with zero
+  findings across 175 dependencies and 1,225 advisories;
+- Linux and FreeBSD cross-target checks and Linux warnings-denied library
+  Clippy only; WASI compilation and active Node 22.22.0 unsupported-target
+  evidence 1/1. Native Linux execution remains pending exact feature CI;
+- 70 Markdown files, 502 links, 352 relative file links, and zero missing
+  targets;
+- clean diff, no unsafe additions, and no Cargo manifest, lockfile, CLI,
+  workflow, or benchmark-workload changes; and
+- a fresh 319,152-byte Mach-O arm64 release binary with SHA-256
+  `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`,
+  passing exact bare, version, help, and inert missing-path human/JSON smokes.
+
+The next candidate must be tree-identical to this exact remediation tree. A
+tree-identical cycle-3 candidate and fresh correctness/API, filesystem/
+robustness, and performance/concurrency tracks are pending. This local result
+is not delivery, `main` integration, product-performance, or fx-equivalence
+evidence.
 
 ## Current verdict
 
-**CYCLE 2 NOT GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND
-CYCLE 3 PENDING.** Production implementation, exports, eleven-tool/ten-clone
-host composition, and the 17-private/20-direct/6-engine/7-host/1-core-contract
-evidence inventory are composed. Cycle 2 found zero production defects and the
-two low findings are remediated in current source and documentation, but no
-replacement complete local gate or immutable cycle-3 candidate exists yet.
-Three fresh cycle-3 tracks, feature delivery workflow, fast-forward integration,
-exact `main` workflow, delivery, product-performance, and fx-equivalence claims
-remain pending. The delivered-slice count remains twenty-four.
+**REPLACEMENT LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING.** Production
+implementation, exports, eleven-tool/ten-clone host composition, and the 17-
+private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
+composed. Cycle 2 found zero production defects, its two low findings are
+remediated, and exact remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`,
+tree `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+local gate. A tree-identical cycle-3 candidate and three fresh same-SHA tracks
+are next and remain pending. Native Linux execution remains pending exact
+feature CI. Feature delivery workflow, fast-forward integration, exact `main`
+workflow, delivery, product-performance, and fx-equivalence claims also remain
+pending. The delivered-slice count remains twenty-four.

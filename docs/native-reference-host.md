@@ -1,7 +1,7 @@
 # Native reference-host composition
 
-Status: **CYCLE 2 NOT GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL
-GATE AND CYCLE 3 PENDING** for `create_folder`.
+Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING** for
+`create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -30,20 +30,20 @@ The twenty-fifth `create_folder` behavior is composed from exact delivered base
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
 exactly two nonexpired exact-SHA artifacts. Candidate source composes eleven
 alphabetical tools through the original retained descriptor plus ten clones.
-Seven exact Rust 1.94.1 reference-host tests are green as part of the
-16-private/20-direct/6-engine/7-host/1-core-contract focused evidence. Exact
-remediation `7bc3fb9`, tree `b39bd9b`, passes the complete replacement local
-gate. Cycle-2 candidate `6e1f885`, tree `ac57575`, is not green: correctness/API
+Seven exact Rust 1.94.1 reference-host tests are green as part of the current
+17-private/20-direct/6-engine/7-host/1-core-contract focused evidence. Cycle-2
+candidate `6e1f885`, tree `ac57575`, is historically not green: correctness/API
 and performance/concurrency are green with zero findings, while filesystem/
 robustness reported two low evidence/documentation findings and zero production
-defects. Evidence remediation is composed; the replacement full gate, fresh
-cycle-3 review, delivery, and `main` integration remain pending. The delivered
-host remains exactly ten tools. Current execution evidence is native macOS;
-Linux evidence is cross-target test compilation and library Clippy, while
-native Linux execution remains pending exact feature CI. Mixed-device
-remediation raises the composed private-test inventory from 16 to 17 without
-changing the seven host tests; the replacement full gate has not yet qualified
-that inventory.
+defects. Exact remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+local gate, including the deterministic mixed-device private test and both
+eleven-tool host constructors. A tree-identical cycle-3 candidate and three
+fresh same-SHA tracks remain pending, followed by delivery and `main`
+integration. The delivered host remains exactly ten tools. Current execution
+evidence is native macOS; Linux evidence is cross-target test compilation and
+warnings-denied library Clippy only, while native Linux execution remains
+pending exact feature CI.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -182,11 +182,12 @@ byte remain unchanged.
 The composed `create_folder` behavior registers exactly eleven alphabetical
 tools by inserting `create_folder` immediately after `copy_file`. Both
 reference-host constructors transfer the same retained workspace identity
-through one original descriptor plus ten identity-preserving clones. This
-candidate catalog passed the cycle-2 precursor local gate. Cycle 2 was not green
-on two low evidence/documentation findings; evidence remediation is composed,
-while the replacement full gate and cycle 3 remain pending. It is not the
-delivered or `main`-integrated composition.
+through one original descriptor plus ten identity-preserving clones. Cycle 2
+was not green on two low evidence/documentation findings. Exact remediation
+`f527293`, tree `40eef14`, passes the complete replacement local gate for the
+17-private/20-direct/6-engine/7-host/1-core-contract inventory. A tree-identical
+cycle-3 candidate and all three fresh same-SHA tracks remain pending. It is not
+the delivered or `main`-integrated composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

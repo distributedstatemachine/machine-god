@@ -201,9 +201,8 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **CYCLE 2 NOT GREEN;
-EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND CYCLE 3 PENDING** from
-exact delivered base
+The twenty-fifth bounded slice, native `create_folder`, is **REPLACEMENT LOCAL
+GATE GREEN; CYCLE 3 REVIEW PENDING** from exact delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
 `32686210561`, and main benchmark `32686210659`; both benchmark workflows
@@ -257,10 +256,25 @@ evidence, and maintained documentation overclaimed native Linux execution.
 Evidence remediation composes a deterministic mixed-device identity-chain
 regression without privileged real-mount or sandbox claims and corrects current
 execution evidence to native macOS plus Linux cross-target test compilation/
-library Clippy. The composed focused inventory is now 17 private, 20 direct,
-six engine, seven host, and one core-contract test; its replacement gate remains
-pending. Native Linux execution remains pending exact feature CI. A replacement
-complete local gate and fresh cycle-3 three-track review remain pending.
+library Clippy only. Exact remediation
+`f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+local gate: exact Rust 1.94.1 workspace formatting, all-target/all-feature
+warnings-denied Clippy, full workspace tests, and two doctests; 17 private, 20
+direct, six engine, seven host, and one core-contract focused tests; 878 default
+and 926 all-target/all-feature discovered tests with zero benchmarks; 130
+Python tests with eight expected macOS skips; byte-identical compatibility
+against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef`; `cargo-deny`
+0.20.2 and `cargo-audit` 0.22.2 with zero findings across 175 dependencies and
+1,225 advisories; Linux/FreeBSD cross-target checks and Linux warnings-denied
+library Clippy only; WASI compilation and active Node 22.22.0 evidence 1/1;
+documentation inventory 70/502/352/0; clean diff, no unsafe additions, and no
+Cargo manifest, lockfile, CLI, workflow, or benchmark-workload changes; and a
+fresh 319,152-byte Mach-O arm64 release binary with SHA-256
+`71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
+passing bare, version, help, and inert missing-path human/JSON smokes. Native
+Linux execution remains pending exact feature CI. A tree-identical cycle-3
+candidate and three fresh same-SHA tracks are next and remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1890,9 +1904,8 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **CYCLE 2 NOT GREEN; EVIDENCE
-  REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND CYCLE 3 PENDING** from exact
-  delivered base
+  The twenty-fifth `create_folder` slice is **REPLACEMENT LOCAL GATE GREEN;
+  CYCLE 3 REVIEW PENDING** from exact delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
   `32686210659` are green; both benchmark workflows retain exactly two
@@ -1939,11 +1952,23 @@ gate:
   remediation composes deterministic mixed-device identity traversal without
   privileged real-mount or sandbox claims and corrects current execution
   evidence to native macOS plus Linux cross-target test compilation/library
-  Clippy. The composed focused inventory is now 17 private, 20 direct, six
-  engine, seven host, and one core-contract test; its replacement gate remains
-  pending. Native Linux execution remains pending exact feature CI. A
-  replacement complete local gate and fresh cycle-3 same-SHA review remain
-  pending.
+  Clippy only. Exact remediation
+  `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+  `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+  local gate with exact Rust 1.94.1 full-workspace formatting, warnings-denied
+  all-target/all-feature Clippy, tests, and two doctests; focused totals
+  17/20/6/7/1; discovery totals 878/926/0; Python 130 with eight expected macOS
+  skips; byte-identical pinned-fx compatibility; `cargo-deny` 0.20.2 and
+  `cargo-audit` 0.22.2 with zero findings across 175 dependencies and 1,225
+  advisories; Linux/FreeBSD cross-target checks and Linux warnings-denied
+  library Clippy only; WASI compilation and active Node 22.22.0 evidence 1/1;
+  documentation 70/502/352/0; clean diff/no unsafe/no Cargo manifest/lockfile/
+  CLI/workflow/benchmark-workload changes; and the fresh 319,152-byte Mach-O
+  arm64 release SHA
+  `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
+  with bare/version/help/inert human-and-JSON smokes. Native Linux execution
+  remains pending exact feature CI. A tree-identical cycle-3 candidate and
+  three fresh same-SHA tracks are next and remain pending.
   It adds no delivery, performance, or fx-equivalence claim, so the combined
   native-tool checkbox remains open and the delivered count stays twenty-four.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

@@ -294,14 +294,17 @@ expansion, composed release-binary end-to-end host evidence, and compatibility
 or performance claims remain open. The current delivered library composition
 includes the ten bounded workspace tools documented below. `rename_file` and
 `copy_file` are delivered. `create_folder` implementation and eleven-tool
-composition are present in candidate source. Exact remediation `7bc3fb9`, tree
-`b39bd9b`, passes the cycle-2 precursor local gate. Cycle-2 candidate `6e1f885`,
-tree `ac57575`, is not green: correctness/API and performance/concurrency are
-green with zero findings, while filesystem/robustness reported two low
-evidence/documentation findings and zero production defects. Evidence
-remediation is composed; the replacement full gate, cycle-3 review, delivery,
-and `main` integration remain pending. The last delivered authority surface
-therefore stays at ten tools. The
+composition are present in candidate source. Cycle-2 candidate `6e1f885`, tree
+`ac57575`, is historically not green: correctness/API and performance/
+concurrency are green with zero findings, while filesystem/robustness reported
+two low evidence/documentation findings and zero production defects. Exact
+remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+local gate, including deterministic mixed-device identity-chain evidence. A
+tree-identical cycle-3 candidate, three fresh same-SHA review tracks, delivery,
+and `main` integration remain pending. Native Linux execution remains pending
+exact feature CI. The last delivered authority surface therefore stays at ten
+tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -328,10 +331,10 @@ normal bounded path rules after permission is granted.
 
 Candidate source extends both constructors with `create_folder` immediately
 after `copy_file`, so eleven alphabetical tools share the original retained
-descriptor plus ten identity-preserving clones. Exact remediation `7bc3fb9`,
-tree `b39bd9b`, passes the cycle-2 precursor local gate. Cycle 2 was not green
-on two low evidence/documentation findings; evidence remediation is composed,
-while the replacement full gate and cycle 3 remain pending. This has not
+descriptor plus ten identity-preserving clones. Cycle 2 was not green on two
+low evidence/documentation findings. Exact remediation `f527293`, tree
+`40eef14`, passes the complete replacement local gate; a tree-identical cycle-3
+candidate and all three fresh same-SHA tracks remain pending. This has not
 replaced the integrated ten-tool authority surface.
 
 Production construction opens both non-secret roots before it consumes the

@@ -42,21 +42,23 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
-The twenty-fifth, library-only native `create_folder` slice is **CYCLE 2 NOT
-GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND CYCLE 3
-PENDING** from delivered base `d1a5bc2`. Exact frozen contract commit
+The twenty-fifth, library-only native `create_folder` slice is **REPLACEMENT
+LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING** from delivered base `d1a5bc2`. Exact frozen contract commit
 `9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
 exactly two nonexpired exact-SHA artifacts. Candidate source composes strict
 single-path `FilesystemAccess::Create` authority, recursive no-follow directory
 creation, a first-creation commit boundary, bounded bottom-up durability, and
 eleven-tool host registration. Cycle-2 candidate `6e1f885`, tree `ac57575`, is
-not green: correctness/API and performance/concurrency are green with zero
-findings, while filesystem/robustness reported two low evidence/documentation
-findings and zero production defects. Evidence remediation is composed; the
-replacement complete local gate and fresh cycle-3 three-track review remain
-pending. The last delivered host stays at ten tools and no delivery or
-performance claim is made.
+historically not green: correctness/API and performance/concurrency are green
+with zero findings, while filesystem/robustness reported two low evidence/
+documentation findings and zero production defects. Exact remediation
+`f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
+`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
+local gate. A tree-identical cycle-3 candidate and three fresh same-SHA review
+tracks remain pending. The last delivered host stays at ten tools, native Linux
+execution remains pending exact feature CI, and no delivery or performance
+claim is made.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -645,8 +647,9 @@ discovery remains after the already prepared retained roots are accepted.
 The composed `create_folder` source does not alter these delivered counts; it
 extends both constructors together to eleven tools and ten clones without
 reopening the root. Cycle 2 was not green on two low evidence/documentation
-findings; evidence remediation is composed, while the replacement full gate and
-cycle 3 remain pending.
+findings. Exact remediation `f527293`, tree `40eef14`, passes the complete
+replacement local gate; a tree-identical cycle-3 candidate and all three fresh
+same-SHA tracks remain pending.
 Production and focused tests for this behavior are present. Formal adversarial
 review was green on
 exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
@@ -1224,9 +1227,10 @@ moved-parent limitations, and the no-sandbox boundary are normative in
 [`create-folder.md`](create-folder.md). Current execution evidence is native
 macOS plus Linux/FreeBSD cross-target test compilation, Linux library Clippy,
 and WASI compilation/active unsupported behavior. Native Linux execution
-remains pending exact feature CI. Cycle 2 is not green; the replacement full
-gate, cycle-3 review, delivery, performance, and fx-equivalence claims remain
-pending.
+remains pending exact feature CI. Cycle 2 remains historically not green; exact
+remediation `f527293`, tree `40eef14`, passes the complete replacement local
+gate. A tree-identical cycle-3 candidate, three fresh review tracks, delivery,
+performance, and fx-equivalence claims remain pending.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's
