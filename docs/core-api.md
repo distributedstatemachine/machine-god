@@ -650,8 +650,11 @@ tree-identical cycle-3 candidate `c1e572e` preserve the same non-documentation
 behavior. Cycle 3 is not green only for one low documentation-lineage finding;
 filesystem and performance are green, and all tracks found zero production
 defects. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
-complete replacement gate. Native Linux execution remains pending exact feature
-CI; fresh cycle-4 review, delivery, and `main` integration remain pending.
+complete replacement gate. Gate record `f6f6584` parents tree-identical cycle-4
+candidate `a78b693`, tree `2b913e8`. Cycle 4 found zero production/API defects;
+its sole low stale documentation-seal finding is fixed under the user's seal-
+review exemption. Native Linux execution remains pending exact feature CI;
+delivery and `main` integration remain pending.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

@@ -1,6 +1,7 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **REPLACEMENT GATE GREEN; CYCLE 4 REVIEW PENDING**
+Status: **CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED;
+DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -380,13 +381,48 @@ documentation 70/502/352/0, clean diff/no unsafe/no forbidden changes, and the
 fresh 319,152-byte Mach-O arm64 release SHA
 `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
 passing bare/version/help/inert human-and-JSON smokes. Native Linux execution
-remains pending exact feature CI. A documentation-only gate record may follow;
-the cycle-4 candidate must be tree-identical to that record and retain non-
-documentation behavior identical to `12c11ba` and `f527293`.
+remains pending exact feature CI. Documentation-only gate record
+`f6f65847a47a009b5203044ce18e6f0c4253f17a` is the parent of tree-identical
+cycle-4 candidate `a78b693e5ce45688084fe1215073e2d859f2d438`; both have tree
+`2b913e8d65b1da518f2c148f1b9b1b6b899e1e64` and retain non-documentation
+behavior identical to `12c11ba` and `f527293`.
+
+## Formal review cycle 4 and exempt seal correction
+
+All three entirely fresh formal tracks reviewed exact cycle-4 candidate
+`a78b693e5ce45688084fe1215073e2d859f2d438`, tree
+`2b913e8d65b1da518f2c148f1b9b1b6b899e1e64`, from clean detached worktrees:
+
+- Correctness/API is green with zero BLOCKER, HIGH, MEDIUM, or LOW findings and
+  zero production/API or evidence/documentation defects. It passed 17 private,
+  20 direct, six engine, seven host, one core-contract, formatting, and native/
+  core warnings-denied Clippy evidence and independently checked pinned-fx and
+  candidate/remediation lineage.
+- Performance/concurrency is green with zero findings of every severity and
+  zero production, resource, evidence, or documentation defects. It passed 17
+  private, 20 direct, six engine, seven host, one core-contract, exact ten-clone,
+  256-component, 4,112-sync-bound, and native warnings-denied Clippy evidence.
+- Filesystem/robustness found zero production or filesystem-behavior defects and
+  one LOW documentation/evidence finding at the prior current-verdict sentence:
+  the gate record and cycle-4 candidate were described as pending even though
+  `f6f6584` already directly parents tree-identical `a78b693`. Its 17 private,
+  20 direct, six engine, seven host, one core-contract, native warnings-denied
+  Clippy, Linux/FreeBSD cross-target, Linux warnings-denied library Clippy, WASI
+  compile, and active Node 22.22.0 evidence 1/1 were green.
+
+The low finding is solely a stale documentation-gate self-record introduced
+before the empty candidate existed; every production review scope has zero
+findings. This sentence and the current verdict below correct it by recording
+the exact `f6f6584` parent and `a78b693` candidate relationship. Under the
+user's explicit instruction that documentation seal commits do not need a
+separate adversarial review, this documentation-only seal correction does not
+start a cycle-5 review. It changes no production, tests, API, authority,
+dependencies, CLI behavior, workflows, or benchmark workloads.
 
 ## Current verdict
 
-**REPLACEMENT GATE GREEN; CYCLE 4 REVIEW PENDING.** Production
+**CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED; DELIVERY
+PENDING.** Production
 implementation, exports, eleven-tool/ten-clone host composition, and the 17-
 private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
 composed. Cycle 2 found zero production defects, its two low findings are
@@ -397,9 +433,12 @@ cycle-3 candidate `c1e572e` retain identical non-documentation behavior. Cycle
 3 is not green only for one low documentation-lineage finding; filesystem and
 performance are green, and all three tracks found zero production defects.
 Exact lineage remediation `12c11ba`, tree `b96575b`, passes the complete
-replacement gate. A documentation-only gate record, tree-identical cycle-4
-candidate, and three entirely fresh same-SHA tracks are next and remain pending.
-Native Linux execution remains pending exact feature CI. Feature
-delivery workflow, fast-forward integration, exact `main` workflow, delivery,
-product-performance, and fx-equivalence claims also remain pending. The
-delivered-slice count remains twenty-four.
+replacement gate. Documentation gate record `f6f6584` parents tree-identical
+cycle-4 candidate `a78b693`, tree `2b913e8`. Cycle 4 found zero production
+defects. Correctness/API and performance/concurrency are green with zero
+findings; filesystem/robustness found only the low stale documentation-seal
+sentence corrected here under the user's explicit seal-review exemption. Native
+Linux execution remains pending exact feature CI. Feature delivery workflow,
+fast-forward integration, exact `main` workflow, delivery, product-performance,
+and fx-equivalence claims also remain pending. The delivered-slice count remains
+twenty-four.

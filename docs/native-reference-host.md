@@ -1,6 +1,7 @@
 # Native reference-host composition
 
-Status: **REPLACEMENT GATE GREEN; CYCLE 4 REVIEW PENDING** for `create_folder`.
+Status: **CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED;
+DELIVERY PENDING** for `create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -42,8 +43,11 @@ and tree-identical cycle-3 candidate `c1e572e` preserve that non-documentation
 behavior. Cycle 3 is not green only for one low documentation-lineage finding;
 filesystem and performance are green, and all three tracks found zero
 production defects. Exact lineage remediation `12c11ba`, tree `b96575b`, passes
-the complete replacement gate. Fresh cycle-4 review remains pending, followed
-by delivery and `main` integration. The
+the complete replacement gate. Gate record `f6f6584` parents tree-identical
+cycle-4 candidate `a78b693`, tree `2b913e8`. Correctness and performance are
+green with zero findings; filesystem found zero production defects and one low
+stale seal sentence, corrected under the user's seal-review exemption. Delivery
+and `main` integration remain pending. The
 delivered host remains exactly ten tools. Current execution
 evidence is native macOS; Linux evidence is cross-target test compilation and
 warnings-denied library Clippy only, while native Linux execution remains
@@ -192,8 +196,10 @@ was not green on two low evidence/documentation findings. Exact remediation
 17-private/20-direct/6-engine/7-host/1-core-contract inventory. Cycle-3
 candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low lineage-
 record finding. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
-complete replacement gate; all three fresh cycle-4 tracks remain pending. It is
-not the delivered or `main`-integrated composition.
+complete replacement gate. Cycle-4 candidate `a78b693`, tree `2b913e8`, has
+zero production findings; its sole low stale seal-record finding is corrected
+in the exempt documentation seal. It is not the delivered or `main`-integrated
+composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

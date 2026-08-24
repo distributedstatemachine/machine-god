@@ -201,8 +201,8 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **REPLACEMENT GATE
-GREEN; CYCLE 4 REVIEW PENDING** from exact
+The twenty-fifth bounded slice, native `create_folder`, is **CYCLE 4 PRODUCTION
+REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED; DELIVERY PENDING** from exact
 delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
@@ -283,7 +283,14 @@ performance/concurrency are green with zero findings, while correctness/API
 reported one low documentation-lineage finding and zero production defects.
 Exact lineage remediation `12c11baa0187f530a6c088326b869991f6f627f6`, tree
 `b96575b57c2c805a845294ae16b323dd1ea4ecd2`, passes the complete replacement
-gate. Three fresh cycle-4 same-SHA tracks are next and remain pending.
+gate. Documentation gate record `f6f65847a47a009b5203044ce18e6f0c4253f17a`
+parents tree-identical cycle-4 candidate
+`a78b693e5ce45688084fe1215073e2d859f2d438`, tree
+`2b913e8d65b1da518f2c148f1b9b1b6b899e1e64`. Correctness/API and performance/
+concurrency are green with zero findings. Filesystem/robustness found zero
+production defects and one low stale documentation-seal sentence, corrected
+under the user's explicit seal-review exemption. Feature delivery remains
+pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1913,8 +1920,8 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **REPLACEMENT GATE GREEN; CYCLE 4
-  REVIEW PENDING** from exact
+  The twenty-fifth `create_folder` slice is **CYCLE 4 PRODUCTION REVIEW GREEN;
+  DOCUMENTATION-SEAL FINDING FIXED; DELIVERY PENDING** from exact
   delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
@@ -1983,8 +1990,11 @@ gate:
   performance/concurrency are green with zero findings, while correctness/API
   reported one low documentation-lineage finding and zero production defects.
   Exact lineage remediation `12c11ba`, tree `b96575b`, passes the complete
-  replacement gate. Three fresh cycle-4 same-SHA tracks are next and remain
-  pending.
+  replacement gate. Gate record `f6f6584` parents tree-identical cycle-4
+  candidate `a78b693`, tree `2b913e8`. Correctness/API and performance/
+  concurrency are green with zero findings. Filesystem/robustness found zero
+  production defects and one low stale documentation-seal sentence, corrected
+  under the user's seal-review exemption. Feature delivery remains pending.
   It adds no delivery, performance, or fx-equivalence claim, so the combined
   native-tool checkbox remains open and the delivered count stays twenty-four.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

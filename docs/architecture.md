@@ -42,8 +42,8 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
-The twenty-fifth, library-only native `create_folder` slice is **REPLACEMENT
-GATE GREEN; CYCLE 4 REVIEW PENDING**
+The twenty-fifth, library-only native `create_folder` slice is **CYCLE 4
+PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED; DELIVERY PENDING**
 from delivered base `d1a5bc2`. Exact frozen contract commit
 `9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
@@ -61,8 +61,11 @@ cycle-3 candidate `c1e572e` preserve identical non-documentation behavior.
 Cycle 3 is not green only for one low documentation-lineage finding; filesystem
 and performance are green, and all tracks found zero production defects. Exact
 lineage remediation `12c11ba`, tree `b96575b`, passes the complete replacement
-gate. Three fresh cycle-4 tracks remain pending. The last delivered host stays
-at ten tools, native Linux execution
+gate. Gate record `f6f6584` parents tree-identical cycle-4 candidate `a78b693`,
+tree `2b913e8`. Correctness and performance are green with zero findings;
+filesystem found zero production defects and one low stale documentation-seal
+sentence, corrected under the user's seal-review exemption. The last delivered
+host stays at ten tools, native Linux execution
 remains pending exact feature CI, and no delivery or performance claim is made.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
@@ -655,8 +658,10 @@ reopening the root. Cycle 2 was not green on two low evidence/documentation
 findings. Exact remediation `f527293`, tree `40eef14`, passes the complete
 replacement local gate. Cycle-3 candidate `c1e572e`, tree `b5fb1c2`, is not
 green only for one low documentation-lineage finding. Exact lineage remediation
-`12c11ba`, tree `b96575b`, passes the complete replacement gate; three fresh
-cycle-4 tracks remain pending.
+`12c11ba`, tree `b96575b`, passes the complete replacement gate. Gate record
+`f6f6584` parents tree-identical cycle-4 candidate `a78b693`, tree `2b913e8`;
+cycle 4 found zero production defects and its sole low stale seal-record finding
+is corrected in the exempt documentation seal.
 Production and focused tests for this behavior are present. Formal adversarial
 review was green on
 exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
@@ -1238,8 +1243,10 @@ remains pending exact feature CI. Cycle 2 remains historically not green; exact
 remediation `f527293`, tree `40eef14`, passes the complete replacement local
 gate. Cycle-3 candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low
 documentation-lineage finding. Exact lineage remediation `12c11ba`, tree
-`b96575b`, passes the complete replacement gate. Three fresh cycle-4 tracks,
-delivery, performance, and fx-equivalence claims remain pending.
+`b96575b`, passes the complete replacement gate. Cycle-4 candidate `a78b693`,
+tree `2b913e8`, has zero production findings; its sole low stale seal-record
+finding is fixed in the exempt documentation seal. Delivery, performance, and
+fx-equivalence claims remain pending.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

@@ -23,7 +23,11 @@ behavior. Cycle 3 is not green: filesystem/robustness and performance/
 concurrency are green with zero findings, while correctness/API reported one
 low documentation-lineage finding and zero production defects. Exact lineage
 remediation `12c11ba`, tree `b96575b`, passes the complete replacement gate.
-Three fresh cycle-4 tracks are required before delivery. The delivered count
+Gate record `f6f6584` is the parent of tree-identical cycle-4 candidate
+`a78b693`, tree `2b913e8`. Correctness/API and performance/concurrency are green
+with zero findings; filesystem/robustness found zero production defects and one
+low stale documentation-seal sentence, corrected under the user's explicit
+seal-review exemption. Delivery remains pending, and the delivered count
 therefore remains twenty-four. Native
 Linux execution remains pending exact feature CI. The
 repository includes the provider-neutral streaming engine, its bounded durable
@@ -369,9 +373,11 @@ local gate. Documentation record `9d0bacd`, tree `b5fb1c2`, and tree-identical
 cycle-3 candidate `c1e572e` retain identical non-documentation behavior. Cycle
 3 is not green only for one low lineage-record finding; the other two tracks
 are green and all three found zero production defects. Exact lineage remediation
-`12c11ba`, tree `b96575b`, passes the complete replacement gate. Fresh cycle-4
-review remains pending, so this is not delivery, `main` integration,
-performance, or fx-equivalence evidence. See the
+`12c11ba`, tree `b96575b`, passes the complete replacement gate. Gate record
+`f6f6584` parents tree-identical cycle-4 candidate `a78b693`, tree `2b913e8`.
+Cycle 4 found zero production defects; its sole low stale seal-record finding is
+fixed in the exempt documentation seal. This is not yet delivery, `main`
+integration, performance, or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact

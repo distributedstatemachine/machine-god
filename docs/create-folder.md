@@ -1,6 +1,7 @@
 # Native `create_folder` contract
 
-Status: **REPLACEMENT GATE GREEN; CYCLE 4 REVIEW PENDING**
+Status: **CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED;
+DELIVERY PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -32,8 +33,14 @@ performance/concurrency are green with zero findings, while correctness/API
 reported one low documentation-lineage finding and zero production defects.
 Exact lineage remediation `12c11baa0187f530a6c088326b869991f6f627f6`, tree
 `b96575b57c2c805a845294ae16b323dd1ea4ecd2`, passes the complete replacement
-gate. Three fresh cycle-4 tracks, feature delivery workflows, `main`
-integration, and exact `main` workflows remain pending. No CLI behavior,
+gate. Documentation gate record `f6f65847a47a009b5203044ce18e6f0c4253f17a`
+is the parent of tree-identical cycle-4 candidate
+`a78b693e5ce45688084fe1215073e2d859f2d438`, tree
+`2b913e8d65b1da518f2c148f1b9b1b6b899e1e64`. Correctness/API and performance/
+concurrency are green with zero findings. Filesystem/robustness found zero
+production defects and one low stale documentation-seal sentence, corrected
+under the user's explicit seal-review exemption. Feature delivery workflows,
+`main` integration, and exact `main` workflows remain pending. No CLI behavior,
 benchmark workload, product-performance claim, or fx-equivalence claim is
 added.
 
@@ -272,8 +279,10 @@ workspace identity. Exact remediation `f527293`, tree `40eef14`, passes the
 complete replacement local gate after cycle 2, which was not green. Cycle-3
 candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low documentation-
 lineage finding. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
-complete replacement gate; all three fresh cycle-4 tracks remain pending. It is
-not a delivered or `main`-integrated authority surface.
+complete replacement gate. Cycle-4 candidate `a78b693`, tree `2b913e8`, has
+zero production findings; its sole low stale seal-record finding is corrected
+in the exempt documentation seal. It is not a delivered or `main`-integrated
+authority surface.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, recursively creates missing parents, treats an
@@ -357,9 +366,11 @@ record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e`
 preserve identical non-documentation behavior. Cycle 3 is not green only for
 one low documentation-lineage finding; the other two tracks are green and all
 three found zero production defects. Exact lineage remediation `12c11ba`, tree
-`b96575b`, passes the complete replacement gate. Three fresh cycle-4 same-SHA
-tracks are required. Production preflight API and filesystem audits reported
-zero findings, but they are not formal tracks.
+`b96575b`, passes the complete replacement gate. Gate record `f6f6584` parents
+tree-identical cycle-4 candidate `a78b693`, tree `2b913e8`. Cycle 4 found zero
+production defects; its sole low stale documentation-seal finding is corrected
+under the user's seal-review exemption. Production preflight API and filesystem
+audits reported zero findings, but they are not formal tracks.
 
 ## Review and delivery protocol
 
@@ -388,6 +399,8 @@ workloads, product-performance claims, and complete fx equivalence remain
 outside this slice. The replacement complete local gate is green at
 `f527293`, tree `40eef14`. Cycle-3 candidate `c1e572e`, tree `b5fb1c2`, is not
 green only for one low documentation-lineage finding. Exact lineage remediation
-`12c11ba`, tree `b96575b`, passes the complete replacement gate. Three fresh
-cycle-4 same-SHA review tracks, delivery, and `main` integration remain pending;
-the delivered-slice count stays twenty-four.
+`12c11ba`, tree `b96575b`, passes the complete replacement gate. Cycle-4
+candidate `a78b693`, tree `2b913e8`, has zero production findings; its sole low
+stale seal-record finding is corrected in this exempt documentation seal.
+Delivery and `main` integration remain pending; the delivered-slice count stays
+twenty-four.
