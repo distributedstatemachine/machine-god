@@ -1,6 +1,6 @@
 # Milestone 03 native `copy_file` review 01
 
-Status: **LOCAL BEHAVIOR GREEN; DELIVERY PENDING**
+Status: **PORTABILITY REMEDIATION REVIEW PENDING**
 
 ## Base and boundary
 
@@ -204,6 +204,46 @@ performance, concurrency, or evidence defect.
 Local behavior is sealed. Exact feature CI and benchmark workflows, exactly two
 nonexpired feature-SHA benchmark artifacts, fast-forward integration, and exact
 main workflows remain pending; no performance or fx-equivalence claim is made.
+
+## First feature workflow attempt and lint remediation
+
+Documentation seal `16b92ef1a409fdca78ddb86ce4ae7879b89e65d6`
+passed exact feature benchmark workflow `32683596971`. Both jobs are green and
+exactly two nonexpired artifacts bind that SHA:
+
+- `bootstrap-benchmark-16b92ef1a409fdca78ddb86ce4ae7879b89e65d6`;
+- `upstream-benchmark-16b92ef1a409fdca78ddb86ce4ae7879b89e65d6-ubuntu-24.04-x86_64`.
+
+Exact feature CI `32683596986` passed all four native Linux/macOS matrices and
+the dependency policy/audit job. Its quality job passed formatting but failed
+warnings-denied Clippy before tests because the two Linux no-op ACL shims retain
+the same fallible signatures as their macOS implementations. Linux-only Clippy
+reported `unnecessary_wraps`; no runtime test, product behavior, dependency,
+compatibility, benchmark, or performance assertion failed.
+
+Exact portability remediation
+`bb21c7aa91554b8958c69b15c2b93dba7aed2755`, tree
+`c7fe63b030cc1de468c7694ce7e0c67c86866ab8`, adds only two narrowly scoped,
+reasoned Linux `clippy::unnecessary_wraps` allowances. It changes no signature,
+branch, syscall, result, test, dependency, CLI byte, or `copy_file` behavior.
+
+The complete replacement local gate is green under Rust/Cargo 1.94.1. Linux
+no-default warnings-denied Clippy passes in addition to the full native macOS
+workspace Clippy gate. Formatting, default and all-target/all-feature workspace
+tests, both doctest modes, 25 private, 24 direct, five engine, seven host, and
+one core focused checks pass. Discovery remains 834/882 with zero benchmarks;
+all 130 Python tests pass with eight expected platform skips. Pinned-fx
+compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 175 dependencies,
+Linux/FreeBSD checks, active Node 22.22.0 WASI 1/1, and documentation integrity
+at 68/483/333/0 are green. The diff remains no-unsafe/no-Cargo/no-CLI, and the
+fresh release CLI retains SHA-256
+`1e8c5aefd32ab12f201c1527b38f86ef31463c80be1f75a4901f9e00930f3c24`
+with bare/help/status smoke paths green.
+
+Because the lint remediation touches production source after the cycle-2 seal,
+a tree-identical cycle-3 candidate and three fresh same-SHA reviews remain
+required before another feature push. The failed CI and green benchmark runs
+are evidence for the first seal only and cannot deliver the replacement.
 
 ## Required evidence
 

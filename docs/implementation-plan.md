@@ -147,7 +147,7 @@ Final rename documentation record
 `32675981622`, feature benchmark `32675981593`, main CI `32676296870`, and main
 benchmark `32676296945`; both benchmark workflows retain exactly two
 nonexpired exact-SHA artifacts. The twenty-fourth bounded slice, native
-`copy_file`, is **LOCAL BEHAVIOR GREEN; DELIVERY PENDING** from that exact delivered base. Its
+`copy_file`, is **PORTABILITY REMEDIATION REVIEW PENDING** from that exact delivered base. Its
 two-endpoint typed authority, 16 MiB binary-safe streaming bound, absent-only
 atomic publication, source-stability and destination-integrity checks,
 destination-parent durability, explicit race limitations, parallel ownership,
@@ -182,6 +182,17 @@ concurrency tracks. Reviewers independently verified the immutable SHA/tree in
 clean detached worktrees and passed the applicable 25 private, 24 direct, five
 engine, seven host, one core-contract, and focused warnings-denied Clippy
 checks. Exact feature/main delivery remains pending.
+First feature seal `16b92ef1a409fdca78ddb86ce4ae7879b89e65d6`
+passed benchmark workflow `32683596971` with exactly two nonexpired exact-SHA
+artifacts, while CI `32683596986` passed four native matrices and dependency
+policy/audit but failed its quality-job Clippy step on two Linux-only
+`unnecessary_wraps` diagnostics for the intentionally fallible-parity ACL
+shims. Exact portability remediation `bb21c7aa91554b8958c69b15c2b93dba7aed2755`,
+tree `c7fe63b030cc1de468c7694ce7e0c67c86866ab8`, adds only scoped reasoned lint
+allowances and changes no behavior. Its complete replacement local gate is
+green, including Linux warnings-denied Clippy, but a tree-identical cycle-3
+candidate, three fresh same-SHA reviews, and replacement delivery remain
+pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1727,7 +1738,7 @@ gate:
   exactly two nonexpired exact-SHA artifacts retained by each benchmark run.
   Native `rename_file` is delivered as slice twenty-three under
   [`rename-file.md`](rename-file.md).
-  The twenty-fourth `copy_file` slice is **LOCAL BEHAVIOR GREEN; DELIVERY PENDING** from exact
+  The twenty-fourth `copy_file` slice is **PORTABILITY REMEDIATION REVIEW PENDING** from exact
   delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. It is frozen as
   one existing confined regular file copied without source mutation to one
   absent confined destination through exact two-endpoint `FilesystemCopy`
@@ -1784,7 +1795,21 @@ gate:
   passed 25 private, 24 direct, five engine, and focused warnings-denied Clippy.
   Exact feature/main delivery gates remain pending under
   [`copy-file.md`](copy-file.md). This documentation-only review seal is exempt
-  from its own adversarial cycle.
+  from its own adversarial cycle. First feature seal
+  `16b92ef1a409fdca78ddb86ce4ae7879b89e65d6` passed benchmark workflow
+  `32683596971` with exactly two nonexpired exact-SHA artifacts. CI
+  `32683596986` passed all four native target matrices and dependency policy/
+  audit, but its quality job failed warnings-denied Clippy before tests on two
+  Linux-only `unnecessary_wraps` diagnostics for the no-op ACL shims. Exact
+  portability remediation `bb21c7aa91554b8958c69b15c2b93dba7aed2755`, tree
+  `c7fe63b030cc1de468c7694ce7e0c67c86866ab8`, adds two scoped, reasoned lint
+  allowances to preserve the shared fallible macOS/Linux interface without any
+  behavior, test, dependency, or CLI change. Its complete replacement local
+  gate is green across Linux and macOS warnings-denied Clippy; full workspace,
+  focused, doctest, Python, compatibility, dependency, Linux/FreeBSD/WASI,
+  active Node, documentation, diff, and release-smoke evidence. A tree-
+  identical cycle-3 candidate, three fresh same-SHA reviews, and replacement
+  feature/main delivery remain pending.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
