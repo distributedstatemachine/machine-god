@@ -33,7 +33,9 @@ changing production. Cycle-3 candidate `5cc1523`, tree `99b88ec`, was not green
 because two tracks found an unpinned source-inode reuse race. Remediation
 `4cbd46f`, tree `35f531e`, retains the source descriptor and passes the complete
 replacement gate. Cycle-4 candidate `1337980`, tree `ab2bdc2`, is green with
-zero findings in all three fresh tracks. Replacement delivery remains pending.
+zero findings in all three fresh tracks. Seal `7cb5ef9` passed exact feature
+and main CI/benchmark delivery gates with two artifacts in each benchmark run.
+Native `rename_file` is delivered as slice twenty-three.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate

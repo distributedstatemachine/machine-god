@@ -1,6 +1,6 @@
 # Native `rename_file` contract
 
-Status: **CYCLE 4 GREEN; FEATURE DELIVERY PENDING**
+Status: **DELIVERED — final documentation record workflows pending**
 
 This document freezes the twenty-third bounded Milestone 03 slice from exact
 delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
@@ -45,7 +45,15 @@ descriptor through commit verification and passes the complete replacement
 local gate. Exact tree-identical cycle-4 candidate
 `13379800ee2ee6eb6802db76c516e81dd087c62b`, tree
 `ab2bdc2b719061faa69749360fd1399177748c24`, is green with zero findings in all
-three fresh tracks. Replacement feature and main delivery remain pending.
+three fresh tracks. Replacement documentation seal
+`7cb5ef9fd04338cfe5c06b4d607e708c2bcdc620` is green under exact feature CI
+`32675233513` across all six jobs and benchmark workflow `32675233542` across
+both jobs with exactly two nonexpired exact-SHA artifacts. `main` was
+fast-forwarded without force from exact prior main
+`3d76f2e844312e7f3e809524cb72c1a7957975ff` to that seal. Exact main CI
+`32675562978` passed all six jobs; main benchmark workflow `32675562956` passed
+both jobs and retains exactly two nonexpired exact-SHA artifacts. Native
+`rename_file` is delivered as the twenty-third bounded Milestone 03 slice.
 
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
@@ -292,4 +300,10 @@ unlinked-source evidence, and passes the complete replacement local gate. A
 tree-identical cycle-4 candidate
 `1337980`, tree `ab2bdc2`, is green with zero findings in all three fresh
 same-SHA tracks. Exact replacement feature workflows, fast-forward integration,
-and exact main workflows remain required before delivery.
+and exact main workflows are green on seal `7cb5ef9`: feature CI
+`32675233513`, feature benchmark `32675233542`, main CI `32675562978`, and main
+benchmark `32675562956`. Both benchmark runs retain exactly two nonexpired
+exact-SHA artifacts. This completes delivery. The final delivery record is
+documentation-only and exempt from adversarial review under the user's
+instruction. Its own exact feature and main workflows remain required after
+push and cannot be self-recorded.

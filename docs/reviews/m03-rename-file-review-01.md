@@ -1,6 +1,6 @@
 # Milestone 03 native `rename_file` review 01
 
-Status: **CYCLE 4 GREEN; FEATURE DELIVERY PENDING**
+Status: **DELIVERED — final documentation record workflows pending**
 
 ## Base and boundary
 
@@ -55,7 +55,7 @@ Status: **CYCLE 4 GREEN; FEATURE DELIVERY PENDING**
   are **NOT GREEN** on the same unpinned source-inode reuse finding. Exact
   remediation passes the complete replacement local gate. All three fresh
   cycle-4 tracks are **GREEN** with zero findings. Replacement feature/main
-  delivery has not completed.
+  delivery is green on exact seal `7cb5ef9`.
 
 This documentation-only contract is exempt from adversarial review under the
 user's explicit instruction. Its workflows freeze documentation only; they are
@@ -330,8 +330,30 @@ one RAII descriptor, no descriptor clone, content read, lock, or unbounded
 loop, and cleanup on every return path. Private/direct/engine/core/lifecycle
 suites are green. Source-pin and lifecycle cases each passed 200 sequential and
 64 parallel repetitions; the complete private suite passed ten low-FD and 24
-parallel repetitions. Replacement feature CI/benchmark, two exact-SHA
-artifacts, fast-forward main integration, and exact main workflows remain.
+parallel repetitions. At that checkpoint, replacement feature CI/benchmark,
+two exact-SHA artifacts, fast-forward main integration, and exact main
+workflows remained.
+
+## Replacement delivery
+
+Replacement documentation seal
+`7cb5ef9fd04338cfe5c06b4d607e708c2bcdc620` passed exact feature CI
+`32675233513` across all six jobs. Exact feature benchmark workflow
+`32675233542` passed both jobs and retains exactly two nonexpired artifacts
+bound to the seal SHA. `main` was fast-forwarded without force from exact prior
+main `3d76f2e844312e7f3e809524cb72c1a7957975ff` to the same seal. Exact main CI
+`32675562978` passed all six jobs; exact main benchmark workflow `32675562956`
+passed both jobs and retains exactly two nonexpired exact-SHA artifacts. This
+completes delivery of native `rename_file` as the twenty-third bounded
+Milestone 03 slice.
+
+The remaining Milestone 03 native tools, top-level CLI ownership, and composed
+end-to-end boundary remain pending, so Milestone 03 is not complete. This final
+delivery record is documentation-only and exempt from adversarial review under
+the user's instruction. Its own exact feature CI and benchmark workflows and
+exact main CI and benchmark workflows remain required after push and cannot be
+self-recorded. This record makes no product-performance, fx-equivalence, or
+compatibility-status promotion claim.
 
 ## Formal review protocol
 
