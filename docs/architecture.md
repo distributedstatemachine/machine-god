@@ -42,17 +42,17 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
-The twenty-fifth, library-only native `create_folder` slice is **LOCAL GATE
-GREEN; FORMAL REVIEW PENDING** from delivered base `d1a5bc2`. Exact frozen
+The twenty-fifth, library-only native `create_folder` slice is **REPLACEMENT
+LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING** from delivered base `d1a5bc2`. Exact frozen
 contract commit `9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs
 of CI `32687614476`; benchmark workflow `32687614442` passed both jobs and
 retains exactly two nonexpired exact-SHA artifacts. Candidate source composes
 strict single-path `FilesystemAccess::Create` authority, recursive no-follow
 directory creation, a first-creation commit boundary, bounded bottom-up
-durability, and eleven-tool host registration. Exact precursor `ea408a1`, tree
-`7055e93`, passes the complete local gate; formal three-track review remains
-pending. The last delivered host stays at ten tools and no delivery or
-performance claim is made.
+durability, and eleven-tool host registration. Exact remediation `7bc3fb9`, tree
+`b39bd9b`, passes the complete replacement local gate; fresh cycle-2 three-track
+review remains pending. The last delivered host stays at ten tools and no
+delivery or performance claim is made.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate

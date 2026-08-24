@@ -1,6 +1,7 @@
 # Native reference-host composition
 
-Status: **LOCAL GATE GREEN; FORMAL REVIEW PENDING** for `create_folder`.
+Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING** for
+`create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -31,9 +32,9 @@ exactly two nonexpired exact-SHA artifacts. Candidate source composes eleven
 alphabetical tools through the original retained descriptor plus ten clones.
 Seven exact Rust 1.94.1 reference-host tests are green as part of the
 16-private/20-direct/6-engine/7-host/1-core-contract focused evidence. Exact
-precursor `ea408a1`, tree `7055e93`, passes the complete local gate. Formal
-review, delivery, and `main` integration remain pending; the delivered host
-remains exactly ten tools.
+remediation `7bc3fb9`, tree `b39bd9b`, passes the complete replacement local
+gate. Fresh cycle-2 review, delivery, and `main` integration remain pending; the
+delivered host remains exactly ten tools.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,

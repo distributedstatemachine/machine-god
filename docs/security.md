@@ -294,9 +294,9 @@ expansion, composed release-binary end-to-end host evidence, and compatibility
 or performance claims remain open. The current delivered library composition
 includes the ten bounded workspace tools documented below. `rename_file` and
 `copy_file` are delivered. `create_folder` implementation and eleven-tool
-composition are present in candidate source. Exact precursor `ea408a1`, tree
-`7055e93`, passes the complete local gate; formal review, delivery, and `main`
-integration remain pending. The last delivered authority surface therefore
+composition are present in candidate source. Exact remediation `7bc3fb9`, tree
+`b39bd9b`, passes the complete replacement local gate; fresh cycle-2 review,
+delivery, and `main` integration remain pending. The last delivered authority surface therefore
 stays at ten tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
@@ -324,9 +324,10 @@ normal bounded path rules after permission is granted.
 
 Candidate source extends both constructors with `create_folder` immediately
 after `copy_file`, so eleven alphabetical tools share the original retained
-descriptor plus ten identity-preserving clones. Exact precursor `ea408a1`, tree
-`7055e93`, passes the complete local gate; formal review remains pending. This
-has not replaced the integrated ten-tool authority surface.
+descriptor plus ten identity-preserving clones. Exact remediation `7bc3fb9`,
+tree `b39bd9b`, passes the complete replacement local gate; fresh cycle-2 review
+remains pending. This has not replaced the integrated ten-tool authority
+surface.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to

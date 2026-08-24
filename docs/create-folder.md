@@ -1,6 +1,6 @@
 # Native `create_folder` contract
 
-Status: **LOCAL GATE GREEN; FORMAL REVIEW PENDING**
+Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -16,13 +16,13 @@ validate the contract checkpoint only; they are not implementation, delivery,
 performance, or fx-equivalence evidence.
 
 Production behavior, exports, independently owned evidence, and both reference-
-host constructors are composed and pass the complete local gate on exact
-precursor `ea408a1f80417475e9b08513a62e9c87b38c4e75`, tree
-`7055e930accea4af645b3827b70b5343a8913888`. An immutable behavior-candidate
-SHA, the required fresh three-track same-SHA review, feature delivery workflows,
-`main` integration, and exact `main` workflows remain pending. No CLI behavior,
-benchmark workload, product-performance claim, or fx-equivalence claim is
-added.
+host constructors are composed and pass the complete replacement local gate on
+exact remediation `7bc3fb99359a12320cf1e5aa8f858c1abd0776b2`, tree
+`b39bd9b5ea36e3e4b5733f8cae168770e1a9f99d`. An immutable replacement
+behavior-candidate SHA, the required fresh cycle-2 three-track same-SHA review,
+feature delivery workflows, `main` integration, and exact `main` workflows
+remain pending. No CLI behavior, benchmark workload, product-performance claim,
+or fx-equivalence claim is added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,

@@ -638,9 +638,9 @@ no recursive creation, mode, umask, ACL, traversal, commit, rollback, or
 durability semantics to `Create`; the Linux/macOS native tool owns the no-
 follow recursive protocol and bounds in [`create-folder.md`](create-folder.md).
 The one exact core-contract test and focused native/engine/host evidence are
-green under Rust 1.94.1. Exact precursor `ea408a1`, tree `7055e93`, passes the
-complete local gate. The required fresh three-track review, delivery, and
-`main` integration remain pending.
+green under Rust 1.94.1. Exact remediation `7bc3fb9`, tree `b39bd9b`, passes the
+complete replacement local gate. The required fresh cycle-2 three-track review,
+delivery, and `main` integration remain pending.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

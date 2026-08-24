@@ -10,10 +10,10 @@ Milestones 01 and 02 are complete, and Milestone 03 is in progress with
 twenty-four delivered bounded slices. The twenty-fourth, library-only
 `copy_file` slice is green under three fresh same-SHA adversarial reviews and
 exact feature and `main` delivery gates. The twenty-fifth, library-only
-`create_folder` behavior is composed from that delivered base; exact precursor
-`ea408a1`, tree `7055e93`, passes the complete Rust 1.94.1 local gate and its
-eleven-tool host wiring is green. Formal three-track review, delivery, and
-`main` integration remain pending. The delivered count therefore remains
+`create_folder` behavior is composed from that delivered base; exact remediation
+`7bc3fb9`, tree `b39bd9b`, passes the complete replacement Rust 1.94.1 local
+gate and its eleven-tool host wiring is green. Fresh cycle-2 three-track review,
+delivery, and `main` integration remain pending. The delivered count therefore remains
 twenty-four. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
@@ -349,9 +349,9 @@ original retained descriptor plus ten clones. The exact frozen contract commit
 `9fab189c9c1add76a38775d08f4342c6bcc7635b` is green under all six jobs of CI
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
 exactly two nonexpired exact-SHA artifacts. Those runs cover the contract only.
-Exact precursor `ea408a1`, tree `7055e93`, passes the complete local gate.
-Formal review remains pending, so this is not delivery, `main` integration,
-performance, or fx-equivalence evidence. See the
+Exact remediation `7bc3fb9`, tree `b39bd9b`, passes the complete replacement
+local gate. Fresh cycle-2 review remains pending, so this is not delivery,
+`main` integration, performance, or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact

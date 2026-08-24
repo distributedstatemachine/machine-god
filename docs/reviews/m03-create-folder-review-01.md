@@ -1,6 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **CYCLE 1 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED**
+Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -221,15 +221,41 @@ required Rust, focused, Python, compatibility, dependency, cross-target, active
 WASI, diff, and release-smoke checks. Its documentation shard found that the
 historical precursor link counts above needed explicit lineage after the local-
 gate record added its own review link. This clarification changes no code or
-behavior; a complete exact replacement gate remains required before cycle 2.
+behavior; a complete exact replacement gate therefore remained required before
+cycle 2.
+
+Exact remediation `7bc3fb99359a12320cf1e5aa8f858c1abd0776b2`, tree
+`b39bd9b5ea36e3e4b5733f8cae168770e1a9f99d`, passes the complete replacement
+local gate. Fresh exact evidence includes:
+
+- required Rust 1.94.1 formatting, workspace all-target/all-feature warnings-
+  denied Clippy, workspace tests, and two workspace doctests;
+- 16 private, 20 direct, six engine, seven reference-host, and one core-
+  contract focused tests; 877 default and 925 all-target/all-feature discovered
+  tests with zero benchmarks;
+- 130 Python tests with eight expected platform skips, clean byte-identical
+  pinned-fx regeneration, `cargo-deny` 0.20.2, and `cargo-audit` 0.22.2 with
+  zero findings across 175 dependencies and 1,225 advisories;
+- Linux and FreeBSD test checks and warnings-denied library Clippy, WASI test
+  compilation, and active Node 22.22.0 unsupported-target evidence 1/1;
+- 70 Markdown files, 502 links, 352 repository-relative links, and zero missing
+  targets; clean diff, zero unsafe additions, and no Cargo, lockfile, CLI,
+  workflow, or benchmark-workload change; and
+- a fresh 319,152-byte locked release binary with SHA-256
+  `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
+  passing exact bare/version/help and inert human/JSON status smoke paths.
+
+This local gate is not delivery, product-performance, or fx-equivalence
+evidence. A tree-identical replacement candidate and all three fresh cycle-2
+tracks remain pending.
 
 ## Current verdict
 
-**CYCLE 1 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED.** Production
-implementation, exports, evidence, and eleven-tool/ten-clone host composition
-pass the complete precursor local gate, but cycle 1 reported the low stale-
-documentation finding above. The reported passages are fixed. The complete
-replacement local gate, a replacement immutable candidate, all three fresh
-review tracks, feature delivery workflow, fast-forward integration, exact
-`main` workflow, delivery, product-performance, and fx-equivalence claims
-remain pending. The delivered-slice count remains twenty-four.
+**REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING.** Production
+implementation, exports, evidence, eleven-tool/ten-clone host composition, and
+every cycle-1 documentation remediation pass the complete replacement local
+gate at exact `7bc3fb9`, tree `b39bd9b`. A replacement immutable candidate, all
+three fresh cycle-2 review tracks, feature delivery workflow, fast-forward
+integration, exact `main` workflow, delivery, product-performance, and fx-
+equivalence claims remain pending. The delivered-slice count remains twenty-
+four.
