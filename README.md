@@ -176,6 +176,24 @@ unchanged. The documentation correction and exact cycle-9 candidate SHA/tree,
 complete replacement local gate, and three fresh cycle-9 reviews remain
 pending. This makes no product-performance or fx-equivalence claim.
 
+Exact cycle-9 reviewed candidate
+`964c59408bda1a3793978041432b84b808b474a6`, tree
+`7e5306ad77ece822b4f0080c4d6a24f142635e04`, passes the complete replacement
+local gate. All three fresh correctness/API, filesystem/process-lifecycle, and
+performance/concurrency reviews are **GREEN** with zero blocker, high, medium,
+or low findings. Rust 1.94.1 evidence includes Linux arm64 system 15/15, direct
+12/12, engine 4/4, normal split cases 202/202, noexec failure 100/100,
+warnings-denied Clippy, the full Rust workspace, two doctests, Python 130 with
+eight expected macOS skips, pinned-fx compatibility, dependency policy/audit,
+FreeBSD/WASI plus active Node 1/1, documentation checks, and five release CLI
+smokes. The 319,152-byte release binary retains SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+Production source, public API, manifests, and workflows remain unchanged. The
+subsequent documentation-only green seal names this reviewed candidate and is
+exempt from another adversarial cycle under the user's instruction; its exact
+SHA/tree and feature/main workflows remain pending. These are regression and
+delivery checks, not a product-performance or fx-equivalence claim.
+
 The repository includes the provider-neutral streaming engine, its bounded
 durable tool loop, a deterministic testkit, and read-only native
 configuration/status discovery and loading, plus capability-aware tool
