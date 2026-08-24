@@ -1,6 +1,6 @@
 # Milestone 03 native `copy_file` review 01
 
-Status: **PORTABILITY REMEDIATION REVIEW PENDING**
+Status: **LOCAL BEHAVIOR GREEN; REPLACEMENT DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -244,6 +244,39 @@ Because the lint remediation touches production source after the cycle-2 seal,
 a tree-identical cycle-3 candidate and three fresh same-SHA reviews remain
 required before another feature push. The failed CI and green benchmark runs
 are evidence for the first seal only and cannot deliver the replacement.
+
+## Formal review cycle 3
+
+Exact tree-identical replacement candidate
+`99ecdb3aa9051cd74d997c194c43c8cb496a7277`, tree
+`145b3bee6976e42ade02a681fcd0d047a364cf5c`, is **GREEN** with zero findings in
+all three fresh tracks. Each reviewer independently verified the exact SHA and
+tree in a new detached read-only worktree and left it clean.
+
+Correctness/API confirmed the cycle-2-to-cycle-3 production delta is exactly
+the two private Linux-only reasoned lint allowances, with no signature, body,
+macOS ACL, unsupported-target, public API, schema, capability, error,
+cancellation, cleanup, commit-boundary, or host-composition change. It passed
+25 private, 24 direct, five engine, seven host, and one core-contract test plus
+Linux warnings-denied Clippy and FreeBSD/WASI checks.
+
+Filesystem/robustness passed 25 private and 24 direct tests plus the exact Linux
+warnings-denied Clippy command. It confirmed Linux exposes no ACL operation
+behind the shims, the allowances suppress no failure path, macOS error mapping
+is untouched, and descriptor confinement, identity, cleanup, race,
+publication/`EINTR`, cancellation, verification, and durability behavior remain
+sound.
+
+Performance/concurrency passed 25 private, 24 direct, and five engine tests plus
+the exact Linux lint command. It confirmed the allowances generate no runtime
+branch, allocation, syscall, result, or performance change and reverified the
+bounded 64-KiB buffer/work, cancellation ordering, race outcomes, fresh source
+rewalk, exact-one publication, and independent sync behavior.
+
+Replacement local behavior is sealed. A docs-only replacement seal commit,
+exact replacement feature CI and benchmark workflows, exactly two matching
+nonexpired benchmark artifacts, fast-forward main integration, and exact main
+workflows remain required. No performance or fx-equivalence claim is made.
 
 ## Required evidence
 

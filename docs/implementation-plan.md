@@ -147,7 +147,7 @@ Final rename documentation record
 `32675981622`, feature benchmark `32675981593`, main CI `32676296870`, and main
 benchmark `32676296945`; both benchmark workflows retain exactly two
 nonexpired exact-SHA artifacts. The twenty-fourth bounded slice, native
-`copy_file`, is **PORTABILITY REMEDIATION REVIEW PENDING** from that exact delivered base. Its
+`copy_file`, is **LOCAL BEHAVIOR GREEN; REPLACEMENT DELIVERY PENDING** from that exact delivered base. Its
 two-endpoint typed authority, 16 MiB binary-safe streaming bound, absent-only
 atomic publication, source-stability and destination-integrity checks,
 destination-parent durability, explicit race limitations, parallel ownership,
@@ -190,9 +190,13 @@ policy/audit but failed its quality-job Clippy step on two Linux-only
 shims. Exact portability remediation `bb21c7aa91554b8958c69b15c2b93dba7aed2755`,
 tree `c7fe63b030cc1de468c7694ce7e0c67c86866ab8`, adds only scoped reasoned lint
 allowances and changes no behavior. Its complete replacement local gate is
-green, including Linux warnings-denied Clippy, but a tree-identical cycle-3
-candidate, three fresh same-SHA reviews, and replacement delivery remain
-pending.
+green, including Linux warnings-denied Clippy. Tree-identical cycle-3 candidate
+`99ecdb3aa9051cd74d997c194c43c8cb496a7277`, tree
+`145b3bee6976e42ade02a681fcd0d047a364cf5c`, is green with zero findings in all
+three fresh tracks. Reviewers independently verified the immutable SHA/tree in
+clean detached worktrees and passed the applicable Linux lint, 25 private, 24
+direct, five engine, seven host, one core-contract, and FreeBSD/WASI checks.
+Replacement feature/main delivery remains pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1738,7 +1742,7 @@ gate:
   exactly two nonexpired exact-SHA artifacts retained by each benchmark run.
   Native `rename_file` is delivered as slice twenty-three under
   [`rename-file.md`](rename-file.md).
-  The twenty-fourth `copy_file` slice is **PORTABILITY REMEDIATION REVIEW PENDING** from exact
+  The twenty-fourth `copy_file` slice is **LOCAL BEHAVIOR GREEN; REPLACEMENT DELIVERY PENDING** from exact
   delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. It is frozen as
   one existing confined regular file copied without source mutation to one
   absent confined destination through exact two-endpoint `FilesystemCopy`
@@ -1807,9 +1811,17 @@ gate:
   behavior, test, dependency, or CLI change. Its complete replacement local
   gate is green across Linux and macOS warnings-denied Clippy; full workspace,
   focused, doctest, Python, compatibility, dependency, Linux/FreeBSD/WASI,
-  active Node, documentation, diff, and release-smoke evidence. A tree-
-  identical cycle-3 candidate, three fresh same-SHA reviews, and replacement
-  feature/main delivery remain pending.
+  active Node, documentation, diff, and release-smoke evidence. Exact tree-
+  identical cycle-3 candidate
+  `99ecdb3aa9051cd74d997c194c43c8cb496a7277`, tree
+  `145b3bee6976e42ade02a681fcd0d047a364cf5c`, is green with zero findings in
+  all three fresh tracks. Correctness/API passed 25 private, 24 direct, five
+  engine, seven host, one core-contract, Linux lint, and FreeBSD/WASI checks.
+  Filesystem/robustness passed 25 private, 24 direct, and Linux lint checks.
+  Performance/concurrency passed 25 private, 24 direct, five engine, and Linux
+  lint checks. All independently confirmed the allowances are interface-parity
+  metadata only and preserve the complete cycle-2 behavior. Replacement
+  feature/main delivery remains pending.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
