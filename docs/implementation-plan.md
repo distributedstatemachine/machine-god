@@ -306,7 +306,8 @@ benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
 The twenty-sixth bounded slice, native `open_file`, is an **IMPLEMENTED
-CANDIDATE; FORMAL REVIEW PENDING** from exact delivered base
+CANDIDATE; FORMAL CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS** from the exact
+delivered base
 `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
 main CI `32704202572` and final main benchmark workflow `32704202546`; the
 benchmark run retains exactly two nonexpired exact-SHA artifacts
@@ -317,12 +318,17 @@ target descriptors through launch completion. Linux alone has a concrete
 launcher in this slice: fixed absolute `/usr/bin/xdg-open`, never ambient
 `PATH`, receives `/proc/<parent-pid>/fd/<retained-fd>` with null standard I/O
 and a fixed 30-second wait. Tests use an injected launcher and never open a
-desktop application. Successful spawn is the irreversible commit boundary;
-precommit cancellation causes zero launch, while postcommit failure or timeout
-is fixed redacted nonretryable ambiguity because an application may already
-have consumed the request. Unsupported targets fail before spawn. Drop after
-spawn terminates and reaps the owned helper and joins owned work. External
-paths, directories, URLs, symlinks, real macOS launching, CLI behavior,
+desktop application. The final spawn attempt and cancellation/drop abort
+transition share one serialized state gate: abort-first guarantees zero launch,
+while successful spawn is the irreversible commit boundary. Postcommit failure
+or timeout is fixed redacted nonretryable ambiguity because an application may
+already have consumed the request. Unsupported targets fail before spawn. Drop
+after spawn terminates and reaps the owned helper; normal nonreentrant cleanup
+joins the worker, while inline worker-thread repoll after helper reap/outcome
+publication avoids self-join. Cleanup overlapping an active wake callback drops
+the thread handle to avoid a cross-thread executor-lock cycle; only that
+executor-controlled callback and final state update remain after helper reap.
+External paths, directories, URLs, symlinks, real macOS launching, CLI behavior,
 benchmark workloads, product-performance claims, and fx-equivalence promotion
 remain deferred. The normative boundary and formal-review plan are
 [`open-file.md`](open-file.md) and
@@ -333,6 +339,22 @@ passed all six jobs of feature CI `32707583915`. Feature benchmark workflow
 artifacts, IDs `9512848704` and `9512966283`. This is contract-checkpoint
 evidence only; those workflows do not validate the current implementation or
 delivery.
+Formal cycle 1 rejected exact candidate
+`79e65c19330181955a0c341d62ef39778a18d36d`, tree
+`481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`. Correctness/API found a medium
+missing cancellation-precedence check after failed precommit operations and a
+low wait/waiter evidence mismatch. Filesystem/process-lifecycle found a medium
+unserialized final spawn race and the medium inline-waker self-join defect;
+performance/concurrency independently reported that same self-join defect.
+Candidate remediation applies cancellation ordering uniformly, serializes the
+spawn/abort gate, removes the impossible postspawn waiter-establishment state,
+and avoids joins across an active wake-callback tail. Deterministic candidate
+regressions cover failed-operation cancellation precedence, abort-first zero
+launch at the spawn gate, forced wait failure with helper cleanup, and inline
+reentrant waking without panic or deadlock. A fifth regression proves drop does
+not join a published worker blocked in its arbitrary wake callback. The complete
+replacement local gate and three fresh same-SHA review tracks remain pending;
+the slice is not delivered.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -2055,7 +2077,8 @@ gate:
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
   The twenty-sixth native `open_file` slice is an **IMPLEMENTED CANDIDATE;
-  FORMAL REVIEW PENDING** from exact delivered base `e2ee11f2`. Final base
+  FORMAL CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS** from exact delivered
+  base `e2ee11f2`. Final base
   main CI `32704202572` and benchmark `32704202546` are green; the benchmark
   retains exactly two nonexpired exact-SHA artifacts `9511626648` and
   `9511745538`. Its sole strict `{path:string}` names one workspace-confined
@@ -2065,14 +2088,23 @@ gate:
   the descriptor stays retained; it never resolves the model-selected file
   through ambient `PATH` itself or a mutable workspace pathname. Null standard I/O,
   an injected evidence boundary, a 30-second helper wait, fixed redacted
-  results, spawn-as-commit cancellation ordering, and owned-helper reap/join
-  behavior are normative. Other targets are unsupported before spawn. External
+  results, a serialized spawn/cancellation/drop gate, and owned-helper cleanup
+  behavior are normative. Abort-first guarantees zero launch; successful spawn
+  commits. Postcommit cleanup reaps the helper and normally joins its worker; an
+  inline reentrant worker wake cannot self-join after outcome publication and
+  leaves only its executor-controlled callback and final state-update tail after
+  helper reap. Other targets are
+  unsupported before spawn. External
   paths, directories, URLs, symlinks, a concrete macOS launcher, CLI changes,
   benchmark changes, performance claims, and fx-equivalence promotion are
   deferred. Candidate production, independent direct/private/engine/
   unsupported evidence, and exact twelve-tool/eleven-clone host composition
   are present without dependency, workflow, CLI, benchmark, or compatibility-
-  status changes. The complete exact-SHA local gate, fresh three-track review,
+  status changes. Formal cycle 1 rejected exact candidate `79e65c1`, tree
+  `481fd7c`, for failed-operation cancellation precedence, an unserialized
+  spawn/abort race, inline-waker self-join, and a wait/waiter evidence mismatch.
+  Candidate remediation and five deterministic regressions are present. The
+  complete replacement exact-SHA local gate, fresh three-track review,
   feature workflows, fast-forward integration, and exact main workflows remain
   pending under
   [`open-file.md`](open-file.md) and

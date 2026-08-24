@@ -172,8 +172,10 @@ pub type OpenFileLaunch = BoxFuture<'static, OpenFileLaunchOutcome>;
 ///
 /// Calling [`OpenFileLauncher::launch`] must be effect-free. Implementations
 /// start work only when the returned future is polled, retain the complete
-/// request until their direct helper is reaped, observe `cancellation`, and
-/// leave no owned child or worker detached when the future is dropped.
+/// request until their direct helper is reaped, and observe `cancellation`.
+/// Dropping the future must synchronously stop and reap every owned helper.
+/// Implementations may let an already-complete worker return from the tail of
+/// an inline wake callback when joining that worker would be a self-join.
 #[cfg(target_os = "linux")]
 pub trait OpenFileLauncher: Send + Sync + 'static {
     /// Creates an inert owned launch future for `request`.
@@ -458,79 +460,7 @@ impl OpenFileTool {
         path: String,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
-        check_cancellation(&cancellation)?;
-        let root = rustix::fs::openat(
-            self.root.as_fd(),
-            ".",
-            OFlags::PATH
-                | OFlags::DIRECTORY
-                | OFlags::NOFOLLOW
-                | OFlags::CLOEXEC
-                | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .map_err(|_| unavailable())?;
-        check_cancellation(&cancellation)?;
-        ensure_linked_directory(root.as_fd())?;
-
-        let mut directory = root;
-        let mut components = path.split('/').peekable();
-        let target = loop {
-            check_cancellation(&cancellation)?;
-            let component = components.next().ok_or_else(invalid_arguments)?;
-            if components.peek().is_some() {
-                directory = rustix::fs::openat(
-                    directory.as_fd(),
-                    component,
-                    OFlags::PATH
-                        | OFlags::DIRECTORY
-                        | OFlags::NOFOLLOW
-                        | OFlags::CLOEXEC
-                        | OFlags::NONBLOCK,
-                    Mode::empty(),
-                )
-                .map_err(map_path_open_error)?;
-                check_cancellation(&cancellation)?;
-            } else {
-                break rustix::fs::openat(
-                    directory.as_fd(),
-                    component,
-                    OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-                    Mode::empty(),
-                )
-                .map_err(map_path_open_error)?;
-            }
-        };
-        check_cancellation(&cancellation)?;
-
-        let metadata = rustix::fs::fstat(&target).map_err(|_| unavailable())?;
-        if !FileType::from_raw_mode(metadata.st_mode).is_file() {
-            return Err(not_regular_file());
-        }
-        if metadata.st_nlink == 0 {
-            return Err(unavailable());
-        }
-        check_cancellation(&cancellation)?;
-
-        let proc_path = PathBuf::from(format!(
-            "/proc/{}/fd/{}",
-            std::process::id(),
-            target.as_raw_fd()
-        ));
-        let proc_metadata = rustix::fs::stat(&proc_path).map_err(|_| unavailable())?;
-        if proc_metadata.st_dev != metadata.st_dev
-            || proc_metadata.st_ino != metadata.st_ino
-            || !FileType::from_raw_mode(proc_metadata.st_mode).is_file()
-        {
-            return Err(unavailable());
-        }
-        check_cancellation(&cancellation)?;
-
-        let request = OpenFileLaunchRequest {
-            path: path.clone(),
-            proc_path,
-            target,
-        };
+        let request = self.prepare_launch_request(path.clone(), &cancellation)?;
         match self.launcher.launch(request, cancellation.clone()).await {
             OpenFileLaunchOutcome::Accepted => success(&path),
             OpenFileLaunchOutcome::Cancelled => Err(cancelled()),
@@ -541,6 +471,121 @@ impl OpenFileTool {
             OpenFileLaunchOutcome::ResultUnknown => Err(result_unknown()),
         }
     }
+
+    fn prepare_launch_request(
+        &self,
+        path: String,
+        cancellation: &CancellationToken,
+    ) -> Result<OpenFileLaunchRequest, ToolError> {
+        check_cancellation(cancellation)?;
+        let root = finish_precommit_operation(
+            rustix::fs::openat(
+                self.root.as_fd(),
+                ".",
+                OFlags::PATH
+                    | OFlags::DIRECTORY
+                    | OFlags::NOFOLLOW
+                    | OFlags::CLOEXEC
+                    | OFlags::NONBLOCK,
+                Mode::empty(),
+            ),
+            cancellation,
+            |_| unavailable(),
+        )?;
+        finish_precommit_operation(
+            ensure_linked_directory(root.as_fd()),
+            cancellation,
+            std::convert::identity,
+        )?;
+
+        let mut directory = root;
+        let mut components = path.split('/').peekable();
+        let target = loop {
+            check_cancellation(cancellation)?;
+            let component = components.next().ok_or_else(invalid_arguments)?;
+            if components.peek().is_some() {
+                directory = finish_precommit_operation(
+                    rustix::fs::openat(
+                        directory.as_fd(),
+                        component,
+                        OFlags::PATH
+                            | OFlags::DIRECTORY
+                            | OFlags::NOFOLLOW
+                            | OFlags::CLOEXEC
+                            | OFlags::NONBLOCK,
+                        Mode::empty(),
+                    ),
+                    cancellation,
+                    map_path_open_error,
+                )?;
+            } else {
+                break finish_precommit_operation(
+                    rustix::fs::openat(
+                        directory.as_fd(),
+                        component,
+                        OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+                        Mode::empty(),
+                    ),
+                    cancellation,
+                    map_path_open_error,
+                )?;
+            }
+        };
+
+        let metadata =
+            finish_precommit_operation(rustix::fs::fstat(&target), cancellation, |_| {
+                unavailable()
+            })?;
+        finish_precommit_operation(
+            if !FileType::from_raw_mode(metadata.st_mode).is_file() {
+                Err(not_regular_file())
+            } else if metadata.st_nlink == 0 {
+                Err(unavailable())
+            } else {
+                Ok(())
+            },
+            cancellation,
+            std::convert::identity,
+        )?;
+
+        let proc_path = PathBuf::from(format!(
+            "/proc/{}/fd/{}",
+            std::process::id(),
+            target.as_raw_fd()
+        ));
+        let proc_metadata =
+            finish_precommit_operation(rustix::fs::stat(&proc_path), cancellation, |_| {
+                unavailable()
+            })?;
+        finish_precommit_operation(
+            if proc_metadata.st_dev != metadata.st_dev
+                || proc_metadata.st_ino != metadata.st_ino
+                || !FileType::from_raw_mode(proc_metadata.st_mode).is_file()
+            {
+                Err(unavailable())
+            } else {
+                Ok(())
+            },
+            cancellation,
+            std::convert::identity,
+        )?;
+
+        Ok(OpenFileLaunchRequest {
+            path,
+            proc_path,
+            target,
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn finish_precommit_operation<T, E>(
+    result: Result<T, E>,
+    cancellation: &CancellationToken,
+    map_error: impl FnOnce(E) -> ToolError,
+) -> Result<T, ToolError> {
+    check_cancellation(cancellation)?;
+    result.map_err(map_error)
 }
 
 #[cfg(target_os = "linux")]
@@ -590,6 +635,10 @@ impl Default for SystemOpenFileLauncher {
                 program: PathBuf::from("/usr/bin/xdg-open"),
                 current_dir: PathBuf::from("/"),
                 timeout: OPEN_FILE_LAUNCH_TIMEOUT,
+                #[cfg(test)]
+                before_spawn: None,
+                #[cfg(test)]
+                force_wait_failure: false,
             }),
         }
     }
@@ -601,6 +650,32 @@ struct SystemLaunchConfig {
     program: PathBuf,
     current_dir: PathBuf,
     timeout: Duration,
+    #[cfg(test)]
+    before_spawn: Option<Arc<BeforeSpawnHook>>,
+    #[cfg(test)]
+    force_wait_failure: bool,
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[derive(Debug)]
+struct BeforeSpawnHook {
+    reached: std::sync::Barrier,
+    release: std::sync::Barrier,
+}
+
+#[cfg(all(test, target_os = "linux"))]
+impl BeforeSpawnHook {
+    fn new() -> Self {
+        Self {
+            reached: std::sync::Barrier::new(2),
+            release: std::sync::Barrier::new(2),
+        }
+    }
+
+    fn pause_worker(&self) {
+        self.reached.wait();
+        self.release.wait();
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -733,6 +808,7 @@ struct WorkerHandle {
 struct WorkerState {
     abort: bool,
     outcome: Option<OpenFileLaunchOutcome>,
+    notification_complete: bool,
     waker: Option<Waker>,
 }
 
@@ -781,28 +857,74 @@ impl WorkerHandle {
     }
 
     fn abort_and_join(mut self) -> OpenFileLaunchOutcome {
-        {
+        let (published, notification_complete, suppressed_waker) = {
             let mut state = lock_worker_state(&self.shared);
-            state.abort = true;
+            if let Some(outcome) = state.outcome.take() {
+                (Some(outcome), state.notification_complete, None)
+            } else {
+                state.abort = true;
+                (None, false, state.waker.take())
+            }
+        };
+        drop(suppressed_waker);
+        let outcome = match published {
+            Some(outcome) => self.finish_published_worker(outcome, notification_complete),
+            None => self.join_aborted_worker(),
+        };
+        match outcome {
+            OpenFileLaunchOutcome::Cancelled | OpenFileLaunchOutcome::Unavailable => {
+                OpenFileLaunchOutcome::Cancelled
+            }
+            OpenFileLaunchOutcome::Accepted | OpenFileLaunchOutcome::ResultUnknown => {
+                OpenFileLaunchOutcome::ResultUnknown
+            }
         }
-        self.join_outcome(None)
     }
 
     fn join_finished(mut self, outcome: OpenFileLaunchOutcome) -> OpenFileLaunchOutcome {
-        self.join_outcome(Some(outcome))
+        let notification_complete = lock_worker_state(&self.shared).notification_complete;
+        self.finish_published_worker(outcome, notification_complete)
     }
 
-    fn join_outcome(&mut self, known: Option<OpenFileLaunchOutcome>) -> OpenFileLaunchOutcome {
-        let joined = self
-            .thread
-            .take()
-            .expect("open_file worker thread exists")
-            .join();
+    fn finish_published_worker(
+        &mut self,
+        outcome: OpenFileLaunchOutcome,
+        notification_complete: bool,
+    ) -> OpenFileLaunchOutcome {
+        // Publication happens only after the helper is reaped. The worker may
+        // now be executing an arbitrary Waker callback, which can synchronously
+        // repoll or block on executor state held by this future's owner. Joining
+        // that callback would permit self-join and cross-thread lock cycles.
+        let thread = self.thread.take().expect("open_file worker thread exists");
+        if !notification_complete || thread.thread().id() == thread::current().id() {
+            drop(thread);
+            return outcome;
+        }
+        if thread.join().is_err() {
+            OpenFileLaunchOutcome::ResultUnknown
+        } else {
+            outcome
+        }
+    }
+
+    fn join_aborted_worker(&mut self) -> OpenFileLaunchOutcome {
+        let thread = self.thread.take().expect("open_file worker thread exists");
+        if thread.thread().id() == thread::current().id() {
+            // A current-thread abort can arise only through an adversarial
+            // reentrant callback. Never attempt a self-join.
+            drop(thread);
+            return lock_worker_state(&self.shared)
+                .outcome
+                .take()
+                .unwrap_or(OpenFileLaunchOutcome::ResultUnknown);
+        }
+        let joined = thread.join();
         if joined.is_err() {
             return OpenFileLaunchOutcome::ResultUnknown;
         }
-        known
-            .or_else(|| lock_worker_state(&self.shared).outcome.take())
+        lock_worker_state(&self.shared)
+            .outcome
+            .take()
             .unwrap_or(OpenFileLaunchOutcome::ResultUnknown)
     }
 }
@@ -811,11 +933,21 @@ impl WorkerHandle {
 impl Drop for WorkerHandle {
     fn drop(&mut self) {
         if self.thread.is_some() {
-            {
+            let (published, notification_complete, suppressed_waker) = {
                 let mut state = lock_worker_state(&self.shared);
-                state.abort = true;
+                if state.outcome.is_some() {
+                    (true, state.notification_complete, None)
+                } else {
+                    state.abort = true;
+                    (false, false, state.waker.take())
+                }
+            };
+            drop(suppressed_waker);
+            let thread = self.thread.take().expect("worker thread exists");
+            let current_thread = thread.thread().id() == thread::current().id();
+            if (!published || notification_complete) && !current_thread {
+                let _ = thread.join();
             }
-            let _ = self.thread.take().expect("worker thread exists").join();
         }
     }
 }
@@ -847,11 +979,26 @@ fn launch_worker(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    if cancellation.is_cancelled() || lock_worker_state(shared).abort {
+    #[cfg(test)]
+    if let Some(hook) = &config.before_spawn {
+        hook.pause_worker();
+    }
+
+    let spawn_result = {
+        let state = lock_worker_state(shared);
+        if cancellation.is_cancelled() || state.abort {
+            None
+        } else {
+            // The abort transition uses this same lock, so cancellation/drop
+            // and the spawn attempt have one serialized final gate.
+            Some(command.spawn())
+        }
+    };
+    let Some(spawn_result) = spawn_result else {
         publish_worker_outcome(shared, OpenFileLaunchOutcome::Cancelled);
         return;
-    }
-    let Ok(mut child) = command.spawn() else {
+    };
+    let Ok(mut child) = spawn_result else {
         let outcome = if cancellation.is_cancelled() || lock_worker_state(shared).abort {
             OpenFileLaunchOutcome::Cancelled
         } else {
@@ -864,6 +1011,12 @@ fn launch_worker(
     let deadline = Instant::now() + config.timeout;
     loop {
         if cancellation.is_cancelled() || lock_worker_state(shared).abort {
+            terminate_and_reap(&mut child);
+            publish_worker_outcome(shared, OpenFileLaunchOutcome::ResultUnknown);
+            return;
+        }
+        #[cfg(test)]
+        if config.force_wait_failure {
             terminate_and_reap(&mut child);
             publish_worker_outcome(shared, OpenFileLaunchOutcome::ResultUnknown);
             return;
@@ -912,6 +1065,7 @@ fn publish_worker_outcome(shared: &Mutex<WorkerState>, outcome: OpenFileLaunchOu
     if let Some(waker) = waker {
         waker.wake();
     }
+    lock_worker_state(shared).notification_complete = true;
 }
 
 #[cfg(target_os = "linux")]

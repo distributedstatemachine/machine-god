@@ -681,15 +681,22 @@ descriptor-relative no-follow validation, retained file identity, and the
 fixed `/usr/bin/xdg-open` lifecycle over a parent-owned proc descriptor path.
 The exported trusted `OpenFileLauncher` seam receives the approved path, proc
 path, and owned file descriptor; its returned future must remain inert until
-polled and clean up every owned helper and worker on cancellation or drop. The
-system launcher uses fixed `/` working directory and null stdio, makes its
+polled and clean up every owned helper on cancellation or drop. Spawn and
+cancellation/drop linearize through one serialized gate: abort-first guarantees
+zero launch and successful spawn commits. Normal nonreentrant completion joins
+the worker. Reentrant polling on that worker after helper reap/outcome
+publication must avoid self-join. Cleanup overlapping a still-running wake
+callback must also avoid a cross-thread join cycle; only that executor-controlled
+callback and final state update remain after helper reap.
+The system launcher uses fixed `/` working directory and null stdio, makes its
 timeout decision at 30 seconds, and maps postspawn uncertainty to a fixed
 redacted result. Candidate reference-host composition registers `open_file`
 between `list_files` and `read_file`, producing twelve tools from one original
 retained workspace descriptor plus eleven clones. On macOS the catalog entry is
 present but execution returns unsupported before filesystem lookup or spawn.
-This describes implemented candidate source only; it makes no review, CI,
-benchmark, delivery, performance, `main`-integration, or fx-equivalence claim.
+Formal cycle 1 rejected exact candidate `79e65c1`, tree `481fd7c`. This describes
+remediation-candidate source only; it makes no green-review, CI, benchmark,
+delivery, performance, `main`-integration, or fx-equivalence claim.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

@@ -3,8 +3,8 @@ use std::future::Future;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,10 +13,10 @@ use rustix::fd::AsRawFd;
 use rustix::fs::{Mode, OFlags};
 
 use super::{
-    OPEN_FILE_LAUNCH_TIMEOUT, OpenFileLaunchOutcome, OpenFileLaunchRequest, OpenFileLauncher,
-    SystemLaunchConfig, SystemOpenFileLauncher,
+    BeforeSpawnHook, OPEN_FILE_LAUNCH_TIMEOUT, OpenFileLaunch, OpenFileLaunchOutcome,
+    OpenFileLaunchRequest, OpenFileLauncher, SystemLaunchConfig, SystemOpenFileLauncher,
 };
-use machine_god_core::CancellationToken;
+use machine_god_core::{CancellationToken, ToolErrorKind};
 
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -127,11 +127,22 @@ fn request(directory: &Path) -> OpenFileLaunchRequest {
 }
 
 fn launcher(program: PathBuf, timeout: Duration) -> SystemOpenFileLauncher {
+    launcher_with_test_controls(program, timeout, None, false)
+}
+
+fn launcher_with_test_controls(
+    program: PathBuf,
+    timeout: Duration,
+    before_spawn: Option<Arc<BeforeSpawnHook>>,
+    force_wait_failure: bool,
+) -> SystemOpenFileLauncher {
     SystemOpenFileLauncher {
         config: Arc::new(SystemLaunchConfig {
             program,
             current_dir: PathBuf::from("/"),
             timeout,
+            before_spawn,
+            force_wait_failure,
         }),
     }
 }
@@ -151,6 +162,74 @@ fn assert_process_reaped(pid: u32) {
     );
 }
 
+fn assert_program_not_running(program: &Path) {
+    let display = program.display().to_string();
+    let program = program.as_os_str().as_encoded_bytes();
+    for entry in fs::read_dir("/proc").expect("read proc filesystem") {
+        let entry = entry.expect("read proc entry");
+        if !entry
+            .file_name()
+            .as_encoded_bytes()
+            .iter()
+            .all(u8::is_ascii_digit)
+        {
+            continue;
+        }
+        let Ok(command_line) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        assert!(
+            !command_line
+                .split(|byte| *byte == 0)
+                .any(|argument| argument == program),
+            "controlled helper {display} remains"
+        );
+    }
+}
+
+struct ReentrantWake {
+    future: Arc<Mutex<Option<OpenFileLaunch>>>,
+    outcome: Arc<Mutex<Option<OpenFileLaunchOutcome>>>,
+    waiting_thread: thread::Thread,
+}
+
+impl Wake for ReentrantWake {
+    fn wake(self: Arc<Self>) {
+        let waker = Waker::from(Arc::clone(&self));
+        let mut future = self
+            .future
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let outcome = match poll_once(future.as_mut().expect("launch future exists"), &waker) {
+            Poll::Ready(outcome) => outcome,
+            Poll::Pending => panic!("published worker outcome must complete inline repoll"),
+        };
+        let completed = future.take().expect("completed launch future exists");
+        drop(completed);
+        *self
+            .outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+        self.waiting_thread.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        Arc::clone(self).wake();
+    }
+}
+
+struct BlockingWake(Arc<BeforeSpawnHook>);
+
+impl Wake for BlockingWake {
+    fn wake(self: Arc<Self>) {
+        self.0.pause_worker();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.pause_worker();
+    }
+}
+
 fn process_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
@@ -164,6 +243,25 @@ fn production_configuration_is_the_exact_fixed_launcher_contract() {
     assert_eq!(launcher.config.program, Path::new("/usr/bin/xdg-open"));
     assert_eq!(launcher.config.current_dir, Path::new("/"));
     assert_eq!(launcher.config.timeout, OPEN_FILE_LAUNCH_TIMEOUT);
+    assert!(launcher.config.before_spawn.is_none());
+    assert!(!launcher.config.force_wait_failure);
+}
+
+#[test]
+fn cancelled_failed_precommit_operation_reports_cancellation_without_mapping_failure() {
+    let cancellation = CancellationToken::new();
+    assert!(cancellation.cancel());
+    let mapped = AtomicBool::new(false);
+
+    let error = super::finish_precommit_operation::<(), ()>(Err(()), &cancellation, |()| {
+        mapped.store(true, Ordering::Relaxed);
+        super::unavailable()
+    })
+    .expect_err("cancellation must win over the failed operation");
+
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "open_file_cancelled");
+    assert!(!mapped.load(Ordering::Relaxed));
 }
 
 #[test]
@@ -243,6 +341,38 @@ fn launch_future_is_inert_and_precancellation_never_starts_the_helper() {
 }
 
 #[test]
+fn cancellation_before_the_serialized_spawn_gate_never_starts_the_helper() {
+    let _lock = process_test_lock();
+    let temporary = TemporaryDirectory::new();
+    let marker = temporary.path().join("started");
+    let script = write_script(
+        temporary.path(),
+        &format!("printf started > '{}'", marker.display()),
+    );
+    let hook = Arc::new(BeforeSpawnHook::new());
+    let launcher = launcher_with_test_controls(
+        script,
+        Duration::from_secs(2),
+        Some(Arc::clone(&hook)),
+        false,
+    );
+    let cancellation = CancellationToken::new();
+    let mut future = launcher.launch(request(temporary.path()), cancellation.clone());
+    let waker = waker();
+
+    assert!(poll_once(&mut future, &waker).is_pending());
+    hook.reached.wait();
+    assert!(cancellation.cancel());
+    hook.release.wait();
+
+    assert_eq!(
+        drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
+        OpenFileLaunchOutcome::Cancelled
+    );
+    assert!(!marker.exists());
+}
+
+#[test]
 fn spawn_failure_and_nonzero_exit_preserve_the_commit_boundary() {
     let _lock = process_test_lock();
     let temporary = TemporaryDirectory::new();
@@ -268,6 +398,105 @@ fn spawn_failure_and_nonzero_exit_preserve_the_commit_boundary() {
     assert_eq!(
         drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
         OpenFileLaunchOutcome::ResultUnknown
+    );
+}
+
+#[test]
+fn checked_wait_failure_returns_unknown_and_terminates_and_reaps_the_helper() {
+    let _lock = process_test_lock();
+    let temporary = TemporaryDirectory::new();
+    let pid_record = temporary.path().join("pid");
+    let script = write_script(
+        temporary.path(),
+        &format!(
+            "printf '%s\\n' \"$$\" > '{}'\nwhile :; do :; done",
+            pid_record.display()
+        ),
+    );
+    let mut future =
+        launcher_with_test_controls(script.clone(), Duration::from_secs(2), None, true)
+            .launch(request(temporary.path()), CancellationToken::new());
+
+    assert_eq!(
+        drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
+        OpenFileLaunchOutcome::ResultUnknown
+    );
+    if let Ok(recorded_pid) = fs::read_to_string(&pid_record)
+        && let Ok(recorded_pid) = recorded_pid.trim().parse()
+    {
+        assert_process_reaped(recorded_pid);
+    }
+    assert_program_not_running(&script);
+}
+
+#[test]
+fn inline_reentrant_wake_completes_on_the_worker_without_self_joining() {
+    let _lock = process_test_lock();
+    let temporary = TemporaryDirectory::new();
+    let script = write_script(temporary.path(), "exit 0");
+    let launcher = launcher(script, Duration::from_secs(2));
+    let future = Arc::new(Mutex::new(Some(
+        launcher.launch(request(temporary.path()), CancellationToken::new()),
+    )));
+    let outcome = Arc::new(Mutex::new(None));
+    let waker = Waker::from(Arc::new(ReentrantWake {
+        future: Arc::clone(&future),
+        outcome: Arc::clone(&outcome),
+        waiting_thread: thread::current(),
+    }));
+
+    assert!(
+        poll_once(
+            future
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_mut()
+                .expect("launch future exists"),
+            &waker,
+        )
+        .is_pending()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(completed) = outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            assert_eq!(completed, OpenFileLaunchOutcome::Accepted);
+            break;
+        }
+        assert!(Instant::now() < deadline, "inline wake timed out");
+        thread::park_timeout(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn drop_overlapping_a_blocked_wake_does_not_join_the_notification_tail() {
+    let _lock = process_test_lock();
+    let temporary = TemporaryDirectory::new();
+    let script = write_script(temporary.path(), "exit 0");
+    let launcher = launcher(script, Duration::from_secs(2));
+    let wake_hook = Arc::new(BeforeSpawnHook::new());
+    let waker = Waker::from(Arc::new(BlockingWake(Arc::clone(&wake_hook))));
+    let mut future = launcher.launch(request(temporary.path()), CancellationToken::new());
+
+    assert!(poll_once(&mut future, &waker).is_pending());
+    wake_hook.reached.wait();
+
+    let (dropped, observed_drop) = std::sync::mpsc::channel();
+    let drop_thread = thread::spawn(move || {
+        drop(future);
+        dropped.send(()).expect("report completed future drop");
+    });
+    let drop_result = observed_drop.recv_timeout(Duration::from_millis(250));
+    wake_hook.release.wait();
+    drop_thread.join().expect("future drop thread succeeds");
+
+    assert!(
+        drop_result.is_ok(),
+        "future drop joined a worker blocked in its wake callback"
     );
 }
 

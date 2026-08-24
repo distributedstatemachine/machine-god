@@ -1,6 +1,6 @@
 # Native `open_file` contract
 
-Status: **IMPLEMENTED CANDIDATE; FORMAL REVIEW PENDING**
+Status: **IMPLEMENTED CANDIDATE; REVIEW REMEDIATION IN PROGRESS**
 
 This document defines the twenty-sixth bounded Milestone 03 candidate from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
@@ -21,8 +21,11 @@ delivery, performance, or fx-equivalence evidence.
 Current candidate source now implements the core capability, native Linux tool,
 trusted launcher seam, unsupported-target behavior, tests, and twelve-tool host
 composition without changing dependencies, workflows, CLI behavior, benchmark
-workloads, or compatibility status. It has not yet completed formal review,
-exact feature workflows, delivery, or `main` integration.
+workloads, or compatibility status. Formal review cycle 1 rejected exact
+candidate `79e65c19330181955a0c341d62ef39778a18d36d`, tree
+`481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`; remediation and a fresh
+three-track same-SHA cycle are in progress. Exact feature workflows, delivery,
+and `main` integration remain pending.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -201,10 +204,14 @@ themselves consult inherited `PATH`, configuration, or other host state.
 The launcher boundary is injected for deterministic tests. Constructing the
 tool or execution future does not call that boundary. First poll performs
 preflight execution work, and no worker or helper is started before the final
-pre-spawn cancellation check. A successful spawn begins a monotonic fixed
-30-second wait. Exit status zero means only that the helper accepted the
-request; it does not prove that another application started, retained access to
-the proc path, rendered the file, or remained running.
+pre-spawn cancellation check. The worker's final spawn attempt and the
+cancellation/drop abort transition share one serialized state gate. Whichever
+transition obtains that gate first linearizes: abort recorded first guarantees
+zero launch; a successful spawn while the worker owns the gate commits the
+effect. A successful spawn begins a monotonic fixed 30-second wait. Exit status
+zero means only that the helper accepted the request; it does not prove that
+another application started, retained access to the proc path, rendered the
+file, or remained running.
 
 Success is exactly:
 
@@ -218,17 +225,21 @@ bytes.
 
 ## Commit, cancellation, timeout, and drop
 
-Cancellation observed before a successful helper spawn wins and guarantees
-zero helper launches. Execution checks before root acquisition, before and
-after every retained open or validation operation, immediately before spawn,
-and after a failed spawn. A failed spawn is therefore precommit; cancellation
-observed around that failure takes precedence, otherwise it returns the fixed
-retryable launcher-unavailable error.
+The final helper-spawn attempt and cancellation/drop abort transition share one
+serialized state gate. If cancellation or drop records abort through that gate
+first, it wins and guarantees zero helper launches. If the worker owns the gate
+and successfully spawns first, that spawn wins and commits. Execution checks
+before root acquisition, before and after every retained open or validation
+operation whether that operation succeeds or fails, immediately before entering
+the spawn gate, and after a failed spawn. A failed spawn is therefore precommit;
+cancellation observed around that failure takes precedence, otherwise it
+returns the fixed retryable launcher-unavailable error.
 
 Successful helper spawn is the commit boundary. From that instant, machine-god
 cannot prove that the desktop open request had no effect. Cancellation after
 that boundary causes the execution future's cleanup path to terminate and reap
-the direct helper and join its owned worker. It cannot claim rollback or
+the direct helper. It normally joins its owned worker after notification has
+finished. It cannot claim rollback or
 relabel the committed effect as precommit cancellation. The engine's existing
 turn cancellation remains authoritative and may discard the tool-level result.
 Without cancellation, the tool waits for the helper until exit or the fixed
@@ -236,21 +247,28 @@ Without cancellation, the tool waits for the helper until exit or the fixed
 
 Exit zero within the bound returns success. Nonzero exit, signal termination,
 timeout, or wait failure returns the same fixed redacted, nonretryable
-`open_file_result_unknown` error. On timeout the owned helper is terminated and
-reaped before return. The timeout decision occurs at 30 seconds; synchronous
-termination, reap, and worker join may extend past that deadline. Any failure
-to establish the owned waiter after a successful helper spawn is also
-postcommit: machine-god terminates and reaps the helper and returns
-`open_file_result_unknown`.
+`open_file_result_unknown` error. On timeout or wait failure the owned helper is
+terminated and reaped before return. The timeout decision occurs at 30 seconds;
+synchronous termination, reap, and normal nonreentrant worker join may extend
+past that deadline. Worker creation occurs before spawn, so there is no
+postspawn waiter-establishment state or error.
 
 The execution future is inert until first poll. Dropping it before first poll
-has no filesystem, thread, or process effect. Dropping it after successful
-spawn synchronously signals the owned waiter, terminates and reaps the helper,
-joins the owned worker, closes the retained target descriptor, and returns no
-claim about whether the desktop request took effect. No owned child or worker
-thread is detached on success, failure, cancellation, timeout, or drop. A
-desktop application independently started by `xdg-open` is outside the owned
-helper lifecycle and cannot be rolled back by this tool.
+has no filesystem, thread, or process effect. On the normal nonreentrant path,
+dropping it after successful spawn synchronously records abort through the
+shared gate, terminates and reaps the helper, joins the owned worker, closes the
+retained target descriptor, and returns no claim about whether the desktop
+request took effect. A valid waker may instead poll and consume the ready future
+inline on the worker thread after the helper is reaped and the outcome is
+published. That reentrant path must not self-join: it drops its current thread's
+`JoinHandle`. Cleanup on another thread that overlaps a still-running wake
+callback must also drop the handle rather than create an executor-lock join
+cycle. In both cases the helper is already reaped and the outcome published;
+only the executor-controlled callback and final state update remain. No owned
+helper process is detached, and nonoverlapping nonreentrant completion/drop
+joins the worker. A desktop application
+independently started by `xdg-open` is outside the owned helper lifecycle and
+cannot be rolled back by this tool.
 
 ## Fixed tool errors
 
@@ -347,13 +365,16 @@ deferred. Zig is benchmark input only.
   selected launch field, retained target descriptor, trusted downstream host
   dispatch, and exit-zero acceptance semantics.
 - [x] Missing launcher and spawn failure before commit; nonzero, signal,
-  timeout, wait, and waiter-establishment failure after commit; exact fixed
-  retryability and `result_unknown` classification.
-- [x] Inert until poll; cancellation before spawn with zero launch; successful-
-  spawn boundary; postspawn cancellation through the engine's existing drop
-  path; 30-second timeout decision plus complete cleanup; pre-poll and
-  postspawn drop; terminate/reap/join; no detached owned child or worker;
-  concurrent-call isolation.
+  timeout, and deterministically forced wait failure after commit; exact fixed
+  retryability and `result_unknown` classification; no impossible postspawn
+  waiter-establishment claim.
+- [x] Inert until poll; a deterministic spawn-gate barrier proving cancellation
+  that wins the serialized gate has zero launch; successful-spawn boundary;
+  postspawn cancellation through the engine's existing drop path; 30-second
+  timeout decision plus complete cleanup; pre-poll and postspawn drop;
+  terminate/reap; normal nonreentrant join; inline reentrant-waker completion
+  without self-join panic or deadlock; overlapping blocked-waker drop without a
+  cross-thread join cycle; concurrent-call isolation.
 - [x] Candidate macOS active unsupported behavior, Linux cross-target warnings-
   denied compilation, exact twelve-tool/eleven-clone composition, and no new
   dependency, workflow, CLI, benchmark, or unsafe-Rust source.

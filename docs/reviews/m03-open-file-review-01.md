@@ -1,6 +1,6 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **IMPLEMENTED CANDIDATE; FORMAL REVIEW PENDING**
+Status: **IMPLEMENTED CANDIDATE; CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS**
 
 ## Base and boundary
 
@@ -38,16 +38,24 @@ boundary may consult inherited `PATH`, configuration, or host state. Linux is
 the only concrete launch target. Every other target returns fixed unsupported
 behavior before filesystem lookup, worker creation, or helper spawn.
 
-Cancellation before a successful spawn wins with zero launch. Successful spawn
-is the commit boundary. Cancellation after that boundary makes core drop the
-execution future; its cleanup terminates and reaps the direct helper and joins
-owned work without claiming rollback. Without cancellation, the 30-second
-timeout decision or explicit postspawn future drop terminates and reaps the
-direct helper; cleanup may extend beyond the timeout decision.
-Nonzero exit, signal, timeout, wait failure, or waiter-establishment failure is
-the same fixed redacted nonretryable `open_file_result_unknown`. Exit zero means
-only that the direct helper accepted the request, not that a desktop application
-consumed, displayed, or retained the file.
+The final spawn attempt and cancellation/drop abort transition share one
+serialized state gate. Whichever transition obtains it first linearizes: abort
+recorded first guarantees zero launch, while successful spawn under the gate is
+the commit boundary. Postcommit cancellation makes core drop the execution
+future; cleanup terminates and reaps the direct helper without claiming
+rollback. Normal nonreentrant cleanup joins the worker. A valid inline waker may
+reenter polling on that worker after helper reap and outcome publication; it
+must drop rather than join the current thread handle. Cleanup overlapping any
+still-running wake callback likewise drops the handle to avoid an executor-lock
+cycle. Only that executor-controlled callback and final state update remain;
+the helper is already reaped. Without cancellation, the
+30-second timeout decision or explicit postspawn future drop terminates and
+reaps the direct helper; cleanup may extend beyond the timeout decision.
+Nonzero exit, signal, timeout, or wait failure is the same fixed redacted
+nonretryable `open_file_result_unknown`. Worker creation occurs before spawn,
+so no postspawn waiter-establishment failure exists. Exit zero means only that
+the direct helper accepted the request, not that a desktop application consumed,
+displayed, or retained the file.
 
 The slice adds no external path, directory, URL, selected symlink, content read,
 file mutation, arbitrary process authority, macOS real launch, CLI behavior,
@@ -81,8 +89,48 @@ eleven-tool base.
 
 Production, host, direct/engine/unsupported evidence, and documentation were
 composed from explicitly non-overlapping ownership. Only the final composed SHA
-can become a formal behavior candidate. This ledger records no formal reviewer
-result yet.
+can become a formal behavior candidate.
+
+## Formal review cycle 1: not green
+
+All three tracks reviewed exact candidate
+`79e65c19330181955a0c341d62ef39778a18d36d`, tree
+`481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`. The cycle is **NOT GREEN** and
+that candidate is rejected for delivery.
+
+- Correctness/API reported one medium production defect: failed precommit
+  filesystem operations and validation failures could map their filesystem
+  error without the promised cancellation check afterward. Remediation captures
+  every precommit operation/validation result, checks cancellation whether it
+  succeeded or failed, and only then maps the result; a cancelled-token/error
+  regression exercises the shared ordering helper.
+- Correctness/API also reported one low evidence mismatch: maintained
+  documentation checked wait failure without a deterministic seam and claimed
+  an impossible postspawn waiter-establishment failure even though the worker
+  exists before spawn. Remediation removes the nonexistent state and adds a
+  deterministic forced-wait-failure candidate regression that requires fixed
+  `result_unknown` and no live direct helper afterward.
+- Filesystem/process-lifecycle reported one medium spawn race: the final abort
+  check released its mutex before `Command::spawn`, allowing cancellation/drop
+  to win state while the worker still launched. Remediation serializes the
+  abort transition and spawn attempt under one gate and adds a barrier-based
+  regression proving abort that wins the gate leaves no launch marker.
+- Filesystem/process-lifecycle and performance/concurrency independently
+  reported the same medium reentrant-waker defect: waking on the worker thread
+  could synchronously repoll/drop and self-join that worker. Remediation avoids
+  self-join after helper reap and outcome publication, limits the unjoined work
+  to the wake callback's tail, and adds an inline-waker regression proving ready
+  acceptance without panic or deadlock.
+- Remediation preflight then found the broader cross-thread form: a wake callback
+  blocked on the future could deadlock with another thread dropping that future
+  while joining the worker. The replacement cleanup suppresses notification
+  before joining unpublished work, but never joins a published worker while its
+  arbitrary wake callback remains active. A barrier regression proves overlapping
+  drop returns before the callback is released; the helper is already reaped.
+
+These are remediation-candidate changes, not green formal-review evidence. The
+complete replacement local gate and three completely fresh tracks on one exact
+replacement SHA/tree remain required.
 
 ## Required evidence
 
@@ -111,13 +159,16 @@ result yet.
 - [ ] Missing launcher and every spawn failure as retryable precommit
   unavailable with zero launch; exit-zero helper acceptance without application
   consumption/display claims.
-- [ ] Nonzero, signal, timeout, wait, and waiter-establishment outcomes as fixed
-  redacted nonretryable `result_unknown`; timeout terminates/reaps the helper.
-- [ ] Inert construction/future until poll; cancellation before spawn with zero
-  launch; successful-spawn commit; postspawn engine cancellation through drop;
-  pre-poll drop and postspawn drop; 30-second timeout decision followed by
-  terminate/reap/join; no detached owned helper/thread; concurrent-call
-  isolation.
+- [ ] Nonzero, signal, timeout, and deterministically forced wait failure as
+  fixed redacted nonretryable `result_unknown`; timeout/wait failure
+  terminates and reaps the helper; no nonexistent waiter-establishment state.
+- [ ] Inert construction/future until poll; cancellation/drop and spawn
+  serialized through one linearization gate; abort-first zero launch;
+  successful-spawn commit; postspawn engine cancellation through drop; pre-poll
+  and postspawn drop; 30-second timeout decision followed by terminate/reap;
+  normal nonreentrant worker join; safe overlapping wake-callback tail without
+  self-join or cross-thread join cycles; blocked-waker drop regression;
+  concurrent-call isolation.
 - [ ] Native Linux behavior, macOS/FreeBSD/WASI compilation and active
   unsupported-target behavior, exact delivered eleven-tool checkpoint and
   candidate twelve-tool/eleven-clone host, no-unsafe, dependency,
@@ -171,11 +222,14 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**IMPLEMENTED CANDIDATE; FORMAL REVIEW PENDING.** Exact base main and frozen-
-contract feature CI and benchmark evidence is green. Candidate source now
+**IMPLEMENTED CANDIDATE; CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS.** Exact
+base main and frozen-contract feature CI and benchmark evidence is green.
+Cycle 1 rejected exact candidate `79e65c19330181955a0c341d62ef39778a18d36d`,
+tree `481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`, with the findings and candidate
+remediations above. Candidate source now
 contains the core variant, native tool, trusted launcher seam, direct/private/
 engine/unsupported evidence, and twelve-tool/eleven-clone host composition with
 no dependency, workflow, CLI, benchmark, or compatibility-status change. The
-complete exact-SHA gate, three-track formal review, feature workflows,
-integration, main workflows, delivery, product-performance, and fx-equivalence
-claims remain pending.
+complete replacement exact-SHA gate, three fresh green review tracks, feature
+workflows, integration, main workflows, delivery, product-performance, and fx-
+equivalence claims remain pending.

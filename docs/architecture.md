@@ -87,13 +87,18 @@ exactly `/usr/bin/xdg-open` and the parent-owned
 null stdio, and a 30-second timeout decision. Machine-god performs no shell or
 `PATH` lookup; the trusted helper and desktop dispatch may consult inherited
 host environment and configuration. Linux also exports a trusted injected
-launcher seam whose returned future must be inert until polled and must leave
-no owned helper or worker detached after cancellation or drop.
-Successful spawn is the external-effect commit boundary and cannot be rolled
-back. Postspawn cancellation makes core drop the execution future;
-cancellation, timeout, or explicit drop kills and reaps the direct helper and
-joins owned work without claiming the application dispatch had no effect.
-The candidate host wiring and source exist, but this is not a review, CI,
+launcher seam whose returned future must be inert until polled. The final spawn
+attempt and cancellation/drop abort transition share one serialized gate:
+abort-first guarantees zero launch, while successful spawn commits an effect
+that cannot be rolled back. Postspawn cancellation makes core drop the execution
+future; cancellation, timeout, or explicit drop kills and reaps the direct
+helper. Normal nonreentrant cleanup joins the worker; inline reentrant polling
+after helper reap and outcome publication avoids self-join. Cleanup overlapping
+a still-running wake callback also avoids a cross-thread join cycle; only that
+executor-controlled callback and final state update remain.
+The candidate host wiring and source exist. Formal cycle 1 rejected exact
+candidate `79e65c1`, tree `481fd7c`; remediation and a fresh three-track cycle
+remain pending. This is not a green-review, CI,
 benchmark, delivery, performance, `main`-integration, or fx-equivalence record.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
@@ -1306,15 +1311,22 @@ and arbitrary process execution. Core policy receives exactly
 retained-descriptor validation and the default-application launch. Its exported
 trusted launcher request carries the exact approved path, proc path, and owned
 target descriptor, while the launch trait requires an inert future and complete
-cleanup on drop. Before successful spawn, cancellation and drop cause zero
-launch. Successful spawn commits an effect that cannot be revoked. Postspawn
-cancellation invokes the existing engine drop path. Cancellation, timeout, or
-explicit drop kills and reaps the direct helper and joins owned work but cannot
-prove whether the default application already received the file. External
-paths, directories, URLs, macOS real launch, CLI behavior, benchmark work,
+helper cleanup on drop. The final spawn and cancellation/drop transitions share
+one serialized gate: abort-first guarantees zero launch, while successful spawn
+commits an effect that cannot be revoked. Postspawn cancellation invokes the
+existing engine drop path. Cancellation, timeout, or explicit drop kills and
+reaps the direct helper but cannot prove whether the default application already
+received the file. Normal nonreentrant completion joins the worker. If a valid
+waker repolls inline on that worker after helper reap/outcome publication, the
+worker cannot self-join. Cleanup overlapping any still-running wake callback
+also avoids a cross-thread join cycle; after helper reap and publication, only
+that executor-controlled callback and final state update remain. External paths,
+directories, URLs, macOS real launch, CLI behavior,
+benchmark work,
 performance claims, and fx-equivalence are deferred. The product remains Rust;
-Zig remains solely the pinned upstream benchmark build input. This candidate
-makes no review, CI, benchmark, delivery, or `main`-integration claim.
+Zig remains solely the pinned upstream benchmark build input. Formal cycle 1
+rejected exact candidate `79e65c1`, tree `481fd7c`; this remediation candidate
+makes no green-review, CI, benchmark, delivery, or `main`-integration claim.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

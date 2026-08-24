@@ -4,7 +4,8 @@ Status: **DELIVERED** for `create_folder`.
 The delivered composition contains exactly eleven alphabetical workspace
 tools, and twenty-five bounded Milestone 03 slices are delivered;
 the twenty-sixth `open_file` Rust candidate and twelve-tool host composition are
-implemented but remain formally unreviewed and undelivered;
+implemented but remain under remediation after a rejected first formal review
+cycle and are undelivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -218,10 +219,11 @@ integrated composition at that review checkpoint. Seal `e75578b` subsequently
 passed exact feature/main CI and benchmark workflows, so this is now the
 delivered composition.
 
-The implemented but unreviewed twenty-sixth composition inserts `open_file`
-immediately after `list_files`. One additional identity-preserving descriptor
-clone lets exactly twelve alphabetical tools share the same retained workspace
-identity through one original descriptor plus eleven clones. `open_file` uses
+The implemented twenty-sixth composition under cycle-1 review remediation
+inserts `open_file` immediately after `list_files`. One additional identity-
+preserving descriptor clone lets exactly twelve alphabetical tools share the
+same retained workspace identity through one original descriptor plus eleven
+clones. `open_file` uses
 dedicated `Capability::OpenFile { path }`, retains an approved existing regular-
 file descriptor without following symlinks, and on Linux launches fixed
 `/usr/bin/xdg-open` with
@@ -234,16 +236,22 @@ unsupported, its private retained-root host tool returns unsupported at
 execution, and every other target is unsupported.
 
 The worker is established before helper spawn. Worker-start or spawn failure is
-a retryable precommit unavailable result, and cancellation observed before
-successful spawn wins with no launch. Successful spawn commits the effect;
-cancellation after that boundary, timeout, or explicit future/drop cleanup
-terminates and reaps the direct helper and joins the owned worker without
-claiming rollback. Postcommit cancellation, nonzero or signalled exit, timeout,
-wait failure, or waiter setup failure returns fixed redacted, nonretryable result
-uncertainty when a tool-level result is observed. Exit zero establishes helper
+a retryable precommit unavailable result. The final spawn and cancellation/drop
+abort transitions share one serialized gate: abort-first guarantees no launch,
+while successful spawn commits the effect. Postcommit cancellation, timeout, or
+explicit future/drop cleanup terminates and reaps the direct helper without
+claiming rollback. Normal nonreentrant cleanup joins the worker; inline
+reentrant polling after helper reap/outcome publication avoids self-join.
+Cleanup overlapping any still-running wake callback avoids a cross-thread join
+cycle; only that executor-controlled callback and final state update remain.
+Postcommit cancellation, nonzero or
+signalled exit, timeout, or wait failure returns fixed redacted, nonretryable
+result uncertainty when a tool-level result is observed; there is no postspawn
+waiter-setup state. Exit zero establishes helper
 acceptance only, not downstream consumption or display. Success is exactly
-`{"path":"canonical/relative/path"}`. Formal review, exact workflows, delivery,
-and `main` integration remain pending; the delivered base remains the eleven-
+`{"path":"canonical/relative/path"}`. Formal cycle 1 rejected exact candidate
+`79e65c1`, tree `481fd7c`; remediation, fresh review, exact workflows, delivery,
+and `main` integration remain pending. The delivered base remains the eleven-
 tool `create_folder` composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
@@ -571,21 +579,27 @@ directory creation, lookup, permission normalization, task, thread, I/O, or
 background work. The candidate catalog and clone counts are eleven and ten;
 those are now the delivered `create_folder` base counts.
 
-The implemented but unreviewed twenty-sixth slice adds one more identity-
-preserving clone and no construction effect. Its launcher has a trusted injected
-test seam; production approved execution alone may spawn fixed
+The implemented twenty-sixth slice under cycle-1 review remediation adds one
+more identity-preserving clone and no construction effect. Its launcher has a
+trusted injected test seam; production approved execution alone may spawn fixed
 `/usr/bin/xdg-open` on Linux. Other targets return unsupported without spawn.
-The worker starts before the helper. Cancellation before successful spawn wins
-with zero launch, while successful spawn is the commit boundary. Postcommit
-cancellation, timeout, or explicit future/drop cleanup terminates and reaps the
-direct helper and joins the owned worker without claiming rollback. Postcommit
-cancellation and process or wait failures return fixed redacted, nonretryable
-result uncertainty when a tool-level result is observed. The candidate catalog
+The worker starts before the helper. Spawn and cancellation/drop share one
+serialized gate: abort-first guarantees zero launch, while successful spawn is
+the commit boundary. Postcommit cancellation, timeout, or explicit future/drop
+cleanup terminates and reaps the direct helper without claiming rollback.
+Normal nonreentrant cleanup joins the worker; inline reentrant polling after
+helper reap/outcome publication avoids self-join. Cleanup overlapping a
+still-running wake callback avoids a cross-thread join cycle; only that
+executor-controlled callback and final state update remain. Postcommit
+cancellation and process or wait failures return
+fixed redacted, nonretryable result uncertainty when a tool-level result is
+observed. The candidate catalog
 and clone counts are exactly twelve and eleven.
 External paths, directories, URLs, a real macOS backend, CLI composition,
-benchmarks, performance claims, and equivalence remain deferred. This is a
-candidate implementation description, not a review, workflow, delivery, `main`
-integration, performance, or equivalence claim.
+benchmarks, performance claims, and equivalence remain deferred. Formal cycle 1
+rejected exact candidate `79e65c1`, tree `481fd7c`; this is a remediation-
+candidate implementation description, not a green review, workflow, delivery,
+`main` integration, performance, or equivalence claim.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
