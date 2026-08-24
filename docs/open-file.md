@@ -1,8 +1,8 @@
 # Native `open_file` contract
 
-Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 6 GREEN; DELIVERY PENDING**
+Status: **DELIVERED**
 
-This document defines the twenty-sixth bounded Milestone 03 candidate from exact
+This document records the twenty-sixth bounded Milestone 03 slice from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
 under exact main CI `32704202572` and exact main benchmark workflow
 `32704202546`. The benchmark workflow passed both jobs and retains exactly two
@@ -18,7 +18,7 @@ workflows validate only that frozen contract checkpoint at
 `6b763c4f1168963dd42087a1fdf5cf72c4212b40`; they are not implementation,
 delivery, performance, or fx-equivalence evidence.
 
-Current candidate source implements the core capability, native Linux tool,
+Delivered source implements the core capability, native Linux tool,
 trusted launcher seam, unsupported-target behavior, tests, and twelve-tool host
 composition without changing dependencies, workflows, CLI behavior, benchmark
 workloads, or compatibility status. Formal review cycle 1 rejected exact
@@ -47,7 +47,7 @@ defects. That documentation correction is composed in exact cycle-6 candidate
 `07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
 filesystem/process-lifecycle, and performance/concurrency tracks are **GREEN**
 with zero findings at every severity. Exact feature workflows, delivery, and
-`main` integration remain pending.
+`main` integration are complete on the seal recorded below.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -378,13 +378,14 @@ application behavior.
 
 ## Host composition and compatibility boundary
 
-The delivered base reference host remains exactly
+Before `open_file` delivery, the delivered base reference host contained
+exactly
 the eleven alphabetical tools: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
 `read_file`, `rename_file`, and `write_file`, using the original retained
 descriptor plus ten identity-preserving clones.
 
-Current candidate composition inserts `open_file` after
+The delivered composition inserts `open_file` after
 `list_files` and before `read_file`, yielding exactly twelve alphabetical tools
 and using one original retained descriptor plus eleven identity-preserving
 clones. Both path-based and prepared-root reference-host constructors compose
@@ -398,7 +399,7 @@ Exact cycle-6 candidate
 `b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
 `07243b366f90366135ccbb1f8e146c71f7224f40`, is green with zero findings in all
 three fresh tracks. The twelve-tool composition is therefore review-green but
-not delivered; `main` remains at the eleven-tool base.
+is now delivered on `main`.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, marks the operation approval-required,
@@ -509,13 +510,22 @@ checks, and release smokes are green. The fresh 319,152-byte release binary has
 SHA-256
 `4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
 
-This establishes green review only. Exact feature workflows, fast-forward
-delivery, and exact `main` workflows remain pending. The docs-only seal is
-exempt from another adversarial review under the user's instruction, but its
-exact workflows remain required. No product-performance or fx-equivalence
-claim is made.
+Seal and integrated `main` SHA
+`a02c28a6bc39f2981586f02cb76793c430c83a20`, tree
+`03c751cffacee4808b057079dedb02cfc3f193cc`, passed feature CI `32738160229`
+at 6/6 and feature benchmark `32738160725` at 2/2. That benchmark retains
+upstream artifact `9524219365` and bootstrap artifact `9524052760`. Exact main
+CI `32738798417` passed 6/6, and main benchmark `32738798415` passed 2/2 while
+retaining upstream artifact `9524461989` and bootstrap artifact `9524298408`.
+Feature delivery, non-force fast-forward integration, and exact `main`
+workflows are complete. The current host has exactly twelve alphabetical tools
+using one retained descriptor plus eleven identity-preserving clones. This
+makes no product-performance or fx-equivalence claim. This final docs-only
+record is exempt from adversarial review under the user's instruction; its own
+exact feature and `main` workflows remain required and will be reported at
+handoff.
 
-## Candidate evidence and remaining gates
+## Evidence and delivery gates
 
 - [x] Exact core variant/serde/drop contract, native exports, constants,
   descriptions, strict schema, construction taxonomy, result, errors, and
@@ -568,7 +578,7 @@ claim is made.
   dependency, pinned-compatibility, documentation, clean-diff, and freshly
   built release-binary evidence.
 - [x] Three green formal review tracks on one immutable cycle-6 SHA/tree.
-- [ ] Exact feature workflows, fast-forward delivery, and exact `main`
+- [x] Exact feature workflows, fast-forward delivery, and exact `main`
   workflows.
 
 ## Review and delivery protocol
@@ -587,7 +597,7 @@ all three tracks report zero findings. Then push the feature seal, require its
 exact CI and benchmark workflows, fast-forward `main` without force, and
 require exact `main` CI and benchmark workflows. Documentation-only seal and
 delivery-record commits are exempt from another adversarial cycle, but their
-exact workflows remain required. The pre-created pending ledger is
+exact workflows remain required. The review ledger is
 [`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md).
 
 ## Deferred scope
@@ -599,6 +609,6 @@ or working directories; PATH lookup; macOS or other non-Linux real launch;
 CLI ownership; new benchmark workloads; product-performance claims; inventory
 promotion; and complete fx equivalence remain outside this slice.
 Formal cycle-6 review is green on the exact SHA/tree recorded above. Exact
-feature workflows, integration, and delivery remain pending. Current
-implementation remains candidate evidence only and makes no
-product-performance or fx-equivalence claim.
+feature workflows, integration, and delivery are complete on the seal recorded
+above. Native `open_file` is delivered as bounded slice twenty-six. This makes
+no product-performance or fx-equivalence claim.

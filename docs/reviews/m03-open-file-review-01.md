@@ -1,6 +1,6 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **IMPLEMENTED CANDIDATE; CYCLE 6 GREEN; DELIVERY PENDING**
+Status: **DELIVERED**
 
 ## Base and boundary
 
@@ -20,7 +20,7 @@ retains exactly two nonexpired exact-SHA artifacts, IDs `9512848704` and
 `9512966283`. This is contract evidence only, not implementation, behavior,
 delivery, performance, or fx-equivalence evidence.
 
-## Implemented feature candidate
+## Delivered feature
 
 The twenty-sixth bounded slice asks one fixed Linux desktop helper to open one
 strict canonical, workspace-confined, existing regular file. It freezes the
@@ -82,14 +82,15 @@ file mutation, arbitrary process authority, macOS real launch, CLI behavior,
 benchmark workload, product-performance claim, inventory promotion, or
 complete fx-equivalence claim.
 
-## Candidate host composition
+## Delivered host composition
 
-The delivered base host remains at eleven alphabetical tools:
+Before `open_file` delivery, the delivered base host contained eleven
+alphabetical tools:
 `copy_file`, `create_folder`, `delete_file`, `edit_file`, `file_info`,
 `glob_files`, `grep_files`, `list_files`, `read_file`, `rename_file`, and
 `write_file`, using one original retained descriptor plus ten clones.
 
-Current candidate composition inserts `open_file` after `list_files` and
+The delivered composition inserts `open_file` after `list_files` and
 before `read_file`, yields exactly twelve alphabetical tools, and uses one
 original plus eleven identity-preserving clones. Both path-based and prepared-
 root constructors compose that same tool catalog and retained workspace
@@ -103,7 +104,7 @@ Exact cycle-6 candidate
 `b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
 `07243b366f90366135ccbb1f8e146c71f7224f40`, is green with zero findings in all
 three fresh tracks. The twelve-tool composition is review-green but remains
-undelivered; `main` remains at the eleven-tool base.
+delivered on `main`.
 
 ## Implemented ownership
 
@@ -314,10 +315,19 @@ documentation checks, diff checks, and release smokes are green. The freshly
 built release binary is 319,152 bytes with SHA-256
 `4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
 
-This is green formal-review evidence only. The docs-only seal is exempt from
-another adversarial review under the user's instruction, but exact feature
-workflows, fast-forward integration, and exact `main` workflows remain
-required. No delivery, product-performance, or fx-equivalence claim is made.
+Seal and integrated `main` SHA
+`a02c28a6bc39f2981586f02cb76793c430c83a20`, tree
+`03c751cffacee4808b057079dedb02cfc3f193cc`, passed feature CI `32738160229`
+at 6/6 and feature benchmark `32738160725` at 2/2. That benchmark retains
+upstream artifact `9524219365` and bootstrap artifact `9524052760`. Exact main
+CI `32738798417` passed 6/6, and main benchmark `32738798415` passed 2/2 while
+retaining upstream artifact `9524461989` and bootstrap artifact `9524298408`.
+Feature delivery, non-force fast-forward integration, and exact `main`
+workflows are complete. Native `open_file` is delivered as bounded slice
+twenty-six in the twelve-tool/eleven-clone host. This makes no product-
+performance or fx-equivalence claim. This final docs-only record is exempt from
+adversarial review under the user's instruction; its own exact feature and
+`main` workflows remain required and will be reported at handoff.
 
 ## Required evidence
 
@@ -373,6 +383,8 @@ required. No delivery, product-performance, or fx-equivalence claim is made.
   candidate twelve-tool/eleven-clone host, no-unsafe, dependency,
   compatibility, documentation,
   diff, and fresh release-binary smoke evidence.
+- [x] Exact feature workflows, non-force fast-forward integration, and exact
+  `main` workflows for the twelve-tool delivery seal.
 
 ## Exact local gate before formal review
 
@@ -421,7 +433,7 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**IMPLEMENTED CANDIDATE; CYCLE 6 GREEN; DELIVERY PENDING.** Exact
+**DELIVERED.** Exact
 base main and frozen-contract feature CI and benchmark evidence is green.
 Cycle 1 rejected exact candidate `79e65c19330181955a0c341d62ef39778a18d36d`,
 tree `481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`, with the findings and candidate
@@ -454,11 +466,12 @@ That correction is composed in exact cycle-6 candidate
 filesystem/process-lifecycle, and performance/concurrency tracks are green with
 zero findings at every severity.
 
-Candidate source contains the core variant, native tool, trusted launcher seam,
+Delivered source contains the core variant, native tool, trusted launcher seam,
 direct/private/engine/unsupported evidence, and twelve-tool/eleven-clone host
 composition with no dependency, workflow, CLI, benchmark, or compatibility-
-status change. Exact feature workflows, fast-forward integration, exact `main`
-workflows, and delivery remain pending. The delivered base remains at eleven
-tools. The docs-only seal is exempt from another adversarial review under the
-user's instruction but still requires exact workflows. No product-performance
-or fx-equivalence claim is made.
+status change. The exact seal, feature workflows, non-force fast-forward
+integration, and exact `main` workflows recorded above deliver the twelve-tool
+host using one retained descriptor plus eleven identity-preserving clones.
+This final docs-only record is exempt from adversarial review under the user's
+instruction but still requires its own exact feature and `main` workflows, to
+be reported at handoff. No product-performance or fx-equivalence claim is made.

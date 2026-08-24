@@ -664,9 +664,9 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The behavior is delivered and integrated on `main`.
 
-The implemented twenty-sixth candidate, green under formal cycle 6 with
-delivery pending, adds one dedicated provider-neutral capability rather than
-reusing filesystem read, metadata, or arbitrary process
+The delivered twenty-sixth slice, green under formal cycle 6, adds one
+dedicated provider-neutral capability rather than reusing filesystem read,
+metadata, or arbitrary process
 authority. Its stable policy JSON is:
 
 ```json
@@ -699,7 +699,7 @@ absolute no-worker-detach invariant and is exempt from its own adversarial
 review under the owner's instruction.
 The system launcher uses fixed `/` working directory and null stdio, makes its
 timeout decision at 30 seconds, and maps postspawn uncertainty to a fixed
-redacted result. Candidate reference-host composition registers `open_file`
+redacted result. Delivered reference-host composition registers `open_file`
 between `list_files` and `read_file`, producing twelve tools from one original
 retained workspace descriptor plus eleven clones. On macOS the catalog entry is
 present but execution returns unsupported before filesystem lookup or spawn.
@@ -722,12 +722,19 @@ That correction is composed in exact cycle-6 candidate
 `b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
 `07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
 filesystem/process-lifecycle, and performance/concurrency tracks are green with
-zero findings at every severity. This describes review-green candidate source
-only; the delivered base remains at eleven tools while exact feature workflows,
-delivery, and exact `main` workflows remain pending. The docs-only seal is
-exempt from another adversarial review under the user's instruction but
-requires exact workflows. This makes no delivery, product-performance, or fx-
-equivalence claim.
+zero findings at every severity. This reviewed source is now delivered. Seal
+and integrated `main` SHA
+`a02c28a6bc39f2981586f02cb76793c430c83a20`, tree
+`03c751cffacee4808b057079dedb02cfc3f193cc`, passed feature CI `32738160229`
+at 6/6 and feature benchmark `32738160725` at 2/2, retaining upstream artifact
+`9524219365` and bootstrap artifact `9524052760`. Exact main CI `32738798417`
+passed 6/6, and main benchmark `32738798415` passed 2/2 while retaining
+upstream artifact `9524461989` and bootstrap artifact `9524298408`. The current
+host has exactly twelve alphabetical tools using one retained descriptor plus
+eleven identity-preserving clones. This makes no product-performance or fx-
+equivalence claim. This final docs-only record is exempt from adversarial
+review under the user's instruction; its own exact feature and `main` workflows
+remain required and will be reported at handoff.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

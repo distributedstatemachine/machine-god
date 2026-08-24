@@ -7,7 +7,7 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-five delivered bounded slices. The twenty-fourth, library-only
+twenty-six delivered bounded slices. The twenty-fourth, library-only
 `copy_file` slice is green under three fresh same-SHA adversarial reviews and
 exact feature and `main` delivery gates. The twenty-fifth, library-only
 `create_folder` behavior is composed from that delivered base. Cycle-2
@@ -38,9 +38,9 @@ with zero findings in all three fresh tracks. Seal `e75578b` passed exact
 feature CI `32702785549`, feature benchmark `32702785574`, main CI
 `32703303933`, and main benchmark `32703303931`. Both benchmark runs retain
 exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
-as slice twenty-five, and the delivered host has eleven tools. The
-twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate with a green sixth formal review cycle, but it is not delivered. Its
+as slice twenty-five; at that checkpoint, the delivered host had eleven tools.
+The twenty-sixth, library-only native `open_file` slice is delivered after a
+green sixth formal review cycle. Its
 dedicated provider-neutral
 `Capability::OpenFile { path }` authorizes one strict canonical,
 workspace-confined existing regular file. Linux execution retains the selected
@@ -64,13 +64,12 @@ handle is released after helper/request cleanup and only globally permit-bounded
 callback/final bookkeeping may outlive future drop. This narrow docs-only
 amendment replaces the frozen absolute no-worker-detach clause because legal
 Waker behavior made it contradictory, and is exempt from its own adversarial
-review under the owner's instruction. The candidate
-Linux/macOS reference host registers twelve
+review under the owner's instruction. The delivered Linux/macOS reference host
+registers twelve
 alphabetical tools from one original workspace descriptor plus eleven clones;
 macOS retains
 the catalog entry but `open_file` execution is unsupported before lookup or
-spawn. The delivered host on `main` remains the eleven-tool `create_folder`
-host. External paths, directories, URLs, a real macOS launcher, CLI changes,
+spawn. External paths, directories, URLs, a real macOS launcher, CLI changes,
 benchmark changes, product-performance claims, and fx-equivalence remain
 deferred. The
 first formal review cycle rejected exact candidate `79e65c1`, tree `481fd7c`,
@@ -107,11 +106,19 @@ production findings. That correction is composed in exact cycle-6 candidate
 filesystem/process-lifecycle, and performance/concurrency tracks are **GREEN**
 with zero findings at every severity. Native Linux arm64 Rust 1.94.1 reruns
 passed system 14/14, direct 12/12, engine 4/4, warnings-denied Clippy, and the
-repeated performance matrix 70/70. Exact feature workflows, fast-forward
-delivery, and exact `main` workflows remain pending. This green review makes
-no delivery, product-performance, or fx-equivalence claim. The docs-only seal
-is exempt from another adversarial review under the user's instruction, but
-its exact workflows remain required. The
+repeated performance matrix 70/70. Seal and integrated `main` SHA
+`a02c28a6bc39f2981586f02cb76793c430c83a20`, tree
+`03c751cffacee4808b057079dedb02cfc3f193cc`, passed feature CI `32738160229`
+at 6/6 and feature benchmark `32738160725` at 2/2, retaining upstream artifact
+`9524219365` and bootstrap artifact `9524052760`. It passed main CI
+`32738798417` at 6/6 and main benchmark `32738798415` at 2/2, retaining
+upstream artifact `9524461989` and bootstrap artifact `9524298408`. Native
+`open_file` is delivered as slice twenty-six, and the current host has exactly
+twelve alphabetical tools backed by one retained descriptor plus eleven
+identity-preserving clones. This makes no product-performance or fx-equivalence
+claim. This final docs-only record is exempt from adversarial review under the
+user's instruction; its own exact feature and `main` workflows remain required
+and will be reported at handoff. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -484,7 +491,7 @@ The project is not yet production-ready. See the exact
 [`rename_file` contract](docs/rename-file.md),
 [`copy_file` contract](docs/copy-file.md),
 [`create_folder` behavior contract](docs/create-folder.md),
-[`open_file` candidate contract](docs/open-file.md), and
+[`open_file` contract](docs/open-file.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
