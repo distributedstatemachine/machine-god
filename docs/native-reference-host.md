@@ -282,9 +282,9 @@ passed 6/6, and main benchmark `32738798415` passed 2/2 while retaining
 upstream artifact `9524461989` and bootstrap artifact `9524298408`. The current
 host has exactly twelve alphabetical tools using one retained descriptor plus
 eleven identity-preserving clones. This makes no product-performance or fx-
-equivalence claim. This final docs-only record is exempt from adversarial
-review under the user's instruction; its own exact feature and `main` workflows
-remain required and will be reported at handoff.
+equivalence claim. At that checkpoint, the final docs-only record was exempt
+from adversarial review under the user's instruction; its own exact feature and
+`main` workflows remained required and are reported below.
 
 Final delivery-record SHA
 `762d70df106d40e59b599e18b1ac5c62f678927d`, tree
@@ -301,13 +301,27 @@ test-fixture synchronization defect, not a production behavior finding. Exact
 local test-only remediation
 `62c2a5349bc682079c2458ccebe9f9ea9578a3c1`, tree
 `b38984441b6bb470ecb4b1c69bc9a3a9984f0bb0`, adds the existing
-`before_first_wait` barrier so Waker registration deterministically precedes
-publication; the native Linux arm64 exact test passed 100/100. Production
-source is unchanged. For this remediation, the full local gate, fresh three-
-track adversarial review, seal, and exact feature and `main` workflows remain
-pending. This test-only fix is not eligible for the documentation-only
-exemption. This amendment makes no
-product-performance or fx-equivalence claim.
+`before_first_wait` barrier and passed the normal native Linux arm64 exact test
+100/100. Exact cycle-7 candidate
+`ea59490c28cc5edd339b3d48bffa39df37634f37`, tree
+`f8a681db319f0a89e21f38e7f9f8c474c270452b`, received **GREEN** correctness/API
+and filesystem/process-lifecycle reviews with zero findings. Performance/
+concurrency was **NOT GREEN** with exactly two low findings and zero blocker,
+high, or medium findings: the unconditional `before_first_wait` rendezvous
+could hang when `Command::spawn` failed before the hook, as reproduced on
+native Linux arm64 with `/tmp` mounted `noexec`; and maintained current/
+operative documentation tails ended at the superseded cycle-6/handoff state.
+The candidate is rejected. Exact test-only code remediation
+`274f4e0f705f33ec2ea4bae60f5bd6bbe02e1f0f`, tree
+`865e93423719cdb5655cb7dd22fd20f207717cbb`, changes the fixture to the existing
+`before_spawn` barrier, reached before every spawn outcome, so Waker
+registration deterministically precedes publication. The normal native Linux
+arm64 exact test passed 100/100, and the `/tmp`-noexec spawn-failure case passed
+1/1. Production source, public API, and manifests are unchanged. This docs
+correction composes atop that commit; its SHA is pending. The full replacement
+local gate and all three fresh cycle-8 tracks remain pending. This executable
+test-only fix is not eligible for the documentation-only exemption. This makes
+no product-performance or fx-equivalence claim.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
@@ -678,8 +692,19 @@ exact `main` workflows are complete on seal and integrated `main` SHA
 recorded above. The current host has exactly twelve alphabetical tools using
 one retained descriptor plus eleven identity-preserving clones. This final
 docs-only record is exempt from adversarial review under the user's instruction
-but requires its own exact feature and `main` workflows, to be reported at
-handoff. This makes no product-performance or fx-equivalence claim.
+but required its own exact feature and `main` workflows, which were still to be
+reported at that checkpoint. Subsequent cycle-7 candidate
+`ea59490c28cc5edd339b3d48bffa39df37634f37`, tree
+`f8a681db319f0a89e21f38e7f9f8c474c270452b`, is rejected with correctness/API
+and lifecycle green at zero findings, but performance/concurrency not green
+with the two low fixture-hang and maintained-current-lineage findings recorded
+above. Exact test-only code remediation
+`274f4e0f705f33ec2ea4bae60f5bd6bbe02e1f0f`, tree
+`865e93423719cdb5655cb7dd22fd20f207717cbb`, uses the existing `before_spawn`
+barrier. Its docs correction SHA, full replacement local gate, and all three
+fresh cycle-8 tracks remain pending. Production source, public API, and
+manifests are unchanged. This makes no product-performance or fx-equivalence
+claim.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
