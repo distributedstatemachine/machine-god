@@ -119,6 +119,31 @@ fn filesystem_rename_capability_has_exact_stable_json_contract() {
     );
 }
 
+#[test]
+fn filesystem_copy_capability_has_exact_stable_json_contract() {
+    let capability = Capability::FilesystemCopy {
+        source: "scope/source.bin".to_owned(),
+        destination: "scope/copy.bin".to_owned(),
+    };
+    assert_eq!(
+        serde_json::to_value(&capability).unwrap(),
+        json!({
+            "type": "filesystem_copy",
+            "source": "scope/source.bin",
+            "destination": "scope/copy.bin"
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<Capability>(json!({
+            "type": "filesystem_copy",
+            "source": "scope/source.bin",
+            "destination": "scope/copy.bin"
+        }))
+        .unwrap(),
+        capability
+    );
+}
+
 impl EngineTestSessions for Engine {
     fn create_test_session(&self, id: SessionId) -> Session {
         let incarnation = test_incarnation(&id);

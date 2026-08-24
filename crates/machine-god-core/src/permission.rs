@@ -47,6 +47,10 @@ pub enum Capability {
         old_path: String,
         new_path: String,
     },
+    FilesystemCopy {
+        source: String,
+        destination: String,
+    },
     Process {
         program: String,
         arguments: Vec<String>,

@@ -95,6 +95,7 @@ impl Drop for PreparedToolCall {
             }
             Capability::Filesystem { .. }
             | Capability::FilesystemRename { .. }
+            | Capability::FilesystemCopy { .. }
             | Capability::Process { .. }
             | Capability::Network { .. } => {}
         }
