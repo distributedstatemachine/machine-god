@@ -29,7 +29,13 @@ with zero findings; filesystem/robustness found zero production defects and one
 low stale documentation-seal sentence, corrected under the user's explicit
 seal-review exemption. Delivery remains pending, and the delivered count
 therefore remains twenty-four. Native
-Linux execution remains pending exact feature CI. The
+Linux/macOS native jobs in first feature CI `32699750602` are green, but that
+workflow is not green because Linux Quality exposed a test-only `RawMode`
+Clippy mismatch. Portable evidence remediation is composed and green under
+macOS plus Linux test-target warnings-denied Clippy and FreeBSD compilation;
+the complete replacement gate and fresh three-track review remain pending.
+Feature benchmark `32699750662` is green with exactly two nonexpired exact-SHA
+artifacts. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -376,8 +382,12 @@ are green and all three found zero production defects. Exact lineage remediation
 `12c11ba`, tree `b96575b`, passes the complete replacement gate. Gate record
 `f6f6584` parents tree-identical cycle-4 candidate `a78b693`, tree `2b913e8`.
 Cycle 4 found zero production defects; its sole low stale seal-record finding is
-fixed in the exempt documentation seal. This is not yet delivery, `main`
-integration, performance, or fx-equivalence evidence. See the
+fixed in the exempt documentation seal. First feature benchmark `32699750662`
+is green with exactly two nonexpired exact-SHA artifacts, but feature CI
+`32699750602` is not green because Linux Clippy rejected a test-only
+`u32::from(Mode::bits())`. The trace now stores platform-native `RawMode`; a
+complete replacement gate and fresh review remain pending. This is not yet
+delivery, `main` integration, performance, or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact

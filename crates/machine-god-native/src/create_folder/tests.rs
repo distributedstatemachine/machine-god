@@ -43,7 +43,7 @@ enum Operation {
     Fstat(CreateFolderPhase, CreateFolderFstatSite, usize),
     #[cfg(target_os = "macos")]
     Statat(CreateFolderPhase, CreateFolderStatatSite, usize),
-    Mkdir(usize, usize, String, u32),
+    Mkdir(usize, usize, String, rustix::fs::RawMode),
     Sync(CreateFolderSyncSite, usize),
 }
 
@@ -185,7 +185,7 @@ impl CreateFolderEvidence for TraceEvidence {
             ordinal,
             component_index,
             component.to_string_lossy().into_owned(),
-            u32::from(mode.bits()),
+            mode.bits(),
         ));
         match self
             .mkdir_actions

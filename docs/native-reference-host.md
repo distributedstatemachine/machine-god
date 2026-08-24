@@ -1,7 +1,7 @@
 # Native reference-host composition
 
-Status: **CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED;
-DELIVERY PENDING** for `create_folder`.
+Status: **FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED;
+REPLACEMENT GATE AND FRESH REVIEW PENDING** for `create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -47,11 +47,15 @@ the complete replacement gate. Gate record `f6f6584` parents tree-identical
 cycle-4 candidate `a78b693`, tree `2b913e8`. Correctness and performance are
 green with zero findings; filesystem found zero production defects and one low
 stale seal sentence, corrected under the user's seal-review exemption. Delivery
-and `main` integration remain pending. The
-delivered host remains exactly ten tools. Current execution
-evidence is native macOS; Linux evidence is cross-target test compilation and
-warnings-denied library Clippy only, while native Linux execution remains
-pending exact feature CI.
+and `main` integration remain pending. First feature CI `32699750602` has all
+four native Linux/macOS jobs green but is not green because Linux Quality
+rejected a test-only mode conversion. Platform-native `RawMode` remediation is
+composed; the replacement gate and fresh review remain pending. Feature
+benchmark `32699750662` is green with exactly two nonexpired exact-SHA
+artifacts. The delivered host remains exactly ten tools. Current execution
+evidence includes all four native Linux/macOS jobs from feature CI
+`32699750602`; cross-target Linux/FreeBSD test compilation and warnings-denied
+Linux test-target Clippy are also green.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -198,8 +202,10 @@ candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low lineage-
 record finding. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
 complete replacement gate. Cycle-4 candidate `a78b693`, tree `2b913e8`, has
 zero production findings; its sole low stale seal-record finding is corrected
-in the exempt documentation seal. It is not the delivered or `main`-integrated
-composition.
+in the exempt documentation seal. First feature CI `32699750602` then exposed
+one Linux-only test Clippy failure; platform-native `RawMode` remediation is
+composed and its replacement gate/review remain pending. It is not the delivered
+or `main`-integrated composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

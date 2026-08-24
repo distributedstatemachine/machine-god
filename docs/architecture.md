@@ -42,8 +42,9 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
-The twenty-fifth, library-only native `create_folder` slice is **CYCLE 4
-PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED; DELIVERY PENDING**
+The twenty-fifth, library-only native `create_folder` slice is **FEATURE CI NOT
+GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED; REPLACEMENT GATE AND FRESH
+REVIEW PENDING**
 from delivered base `d1a5bc2`. Exact frozen contract commit
 `9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
@@ -65,8 +66,12 @@ gate. Gate record `f6f6584` parents tree-identical cycle-4 candidate `a78b693`,
 tree `2b913e8`. Correctness and performance are green with zero findings;
 filesystem found zero production defects and one low stale documentation-seal
 sentence, corrected under the user's seal-review exemption. The last delivered
-host stays at ten tools, native Linux execution
-remains pending exact feature CI, and no delivery or performance claim is made.
+host stays at ten tools. First feature CI `32699750602` has all four native
+Linux/macOS jobs green but is not green because Linux Quality rejected a test-
+only `RawMode` conversion. The portable trace fix is composed; a complete
+replacement gate and fresh review remain pending. Feature benchmark
+`32699750662` is green with exactly two nonexpired exact-SHA artifacts. No
+delivery or performance claim is made.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -661,7 +666,9 @@ green only for one low documentation-lineage finding. Exact lineage remediation
 `12c11ba`, tree `b96575b`, passes the complete replacement gate. Gate record
 `f6f6584` parents tree-identical cycle-4 candidate `a78b693`, tree `2b913e8`;
 cycle 4 found zero production defects and its sole low stale seal-record finding
-is corrected in the exempt documentation seal.
+is corrected in the exempt documentation seal. First feature CI `32699750602`
+then exposed one Linux-only test Clippy failure; platform-native `RawMode`
+remediation is composed and its replacement gate/review remain pending.
 Production and focused tests for this behavior are present. Formal adversarial
 review was green on
 exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
@@ -1245,8 +1252,10 @@ gate. Cycle-3 candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low
 documentation-lineage finding. Exact lineage remediation `12c11ba`, tree
 `b96575b`, passes the complete replacement gate. Cycle-4 candidate `a78b693`,
 tree `2b913e8`, has zero production findings; its sole low stale seal-record
-finding is fixed in the exempt documentation seal. Delivery, performance, and
-fx-equivalence claims remain pending.
+finding is fixed in the exempt documentation seal. First feature CI
+`32699750602` then exposed one Linux-only test Clippy failure. Platform-native
+`RawMode` remediation is composed; its complete replacement gate, fresh review,
+delivery, performance, and fx-equivalence claims remain pending.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

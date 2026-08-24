@@ -1,7 +1,7 @@
 # Native `create_folder` contract
 
-Status: **CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED;
-DELIVERY PENDING**
+Status: **FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED;
+REPLACEMENT GATE AND FRESH REVIEW PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -39,10 +39,16 @@ is the parent of tree-identical cycle-4 candidate
 `2b913e8d65b1da518f2c148f1b9b1b6b899e1e64`. Correctness/API and performance/
 concurrency are green with zero findings. Filesystem/robustness found zero
 production defects and one low stale documentation-seal sentence, corrected
-under the user's explicit seal-review exemption. Feature delivery workflows,
-`main` integration, and exact `main` workflows remain pending. No CLI behavior,
-benchmark workload, product-performance claim, or fx-equivalence claim is
-added.
+under the user's explicit seal-review exemption. First feature benchmark
+`32699750662` is green and retains exactly two nonexpired exact-SHA artifacts.
+First feature CI `32699750602` has all four native Linux/macOS jobs and the
+dependency-policy job green, but the overall workflow is not green because
+Linux Quality rejected a test-only redundant conversion from `Mode::bits()`.
+The trace now stores platform-native `rustix::fs::RawMode`; focused macOS,
+Linux warnings-denied test-target Clippy, and FreeBSD compilation checks are
+green. Its complete replacement gate and fresh three-track review remain
+pending. No CLI behavior, benchmark workload, product-performance claim, or
+fx-equivalence claim is added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -324,7 +330,9 @@ behaviors. Zig is benchmark input only.
   target behavior, exact delivered ten-tool checkpoint, composed eleven-tool/
   ten-clone candidate, no-unsafe, dependency, compatibility, documentation,
   clean-diff, and fresh release-binary smoke evidence.
-- [ ] Native Linux execution under exact feature CI.
+- [x] Native Linux and macOS execution in all four exact native jobs of feature
+  CI `32699750602`; the overall workflow remains not green for the separate
+  Linux Quality test-Clippy failure.
 
 The historical cycle-2 precursor local gate recorded in the
 [`create_folder` review](reviews/m03-create-folder-review-01.md) passed 16
@@ -360,8 +368,15 @@ local gate with fresh evidence:
   `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
   passing bare, version, help, and inert missing-path human/JSON smokes.
 
-Native Linux execution remains pending exact feature CI. Local-gate success is
-not delivery, product-performance, or fx-equivalence evidence. Documentation
+First feature CI `32699750602` supplies green native Linux and macOS execution
+in all four native jobs, but the overall workflow is not green because Linux
+Quality rejected the test-only `u32::from(Mode::bits())` trace conversion.
+The trace now stores exact platform-native `RawMode`; focused macOS checks,
+Linux warnings-denied test-target Clippy, and FreeBSD compilation are green.
+A complete replacement gate and fresh same-SHA review remain pending. Feature
+benchmark `32699750662` is green and retains exactly two nonexpired exact-SHA
+artifacts. This is not delivery, product-performance, or fx-equivalence
+evidence. Documentation
 record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e`
 preserve identical non-documentation behavior. Cycle 3 is not green only for
 one low documentation-lineage finding; the other two tracks are green and all

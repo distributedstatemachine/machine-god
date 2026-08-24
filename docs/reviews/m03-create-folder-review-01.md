@@ -1,7 +1,7 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED;
-DELIVERY PENDING**
+Status: **FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED;
+REPLACEMENT GATE AND FRESH REVIEW PENDING**
 
 ## Base and boundary
 
@@ -109,7 +109,9 @@ composed integration SHA can become a formal behavior candidate.
   target, exact delivered ten-tool checkpoint and composed eleven-tool/ten-
   clone host, no-unsafe, dependency, compatibility, documentation, diff, and
   fresh release smoke evidence.
-- [ ] Native Linux execution under exact feature CI.
+- [x] Native Linux and macOS execution in all four exact native jobs of feature
+  CI `32699750602`; the overall workflow remains not green for the separate
+  Linux Quality test-Clippy failure.
 
 Exact Rust 1.94.1 replacement-gate focused evidence is green across 17 private,
 20 direct, six engine, seven reference-host, and one core-contract test.
@@ -419,10 +421,30 @@ separate adversarial review, this documentation-only seal correction does not
 start a cycle-5 review. It changes no production, tests, API, authority,
 dependencies, CLI behavior, workflows, or benchmark workloads.
 
+## First feature seal and Linux evidence remediation
+
+Documentation seal `abe368167656317d9d0d92eebb33f619e3a11cc1` triggered exact
+feature CI `32699750602` and feature benchmark `32699750662`. The benchmark is
+green in both jobs and retains exactly two nonexpired exact-SHA artifacts. The
+CI dependency-policy job and all four native x86_64/aarch64 Linux/macOS jobs
+are green, supplying native execution evidence on both operating systems. The
+overall CI workflow is not green because Linux Quality stopped in warnings-
+denied Clippy at the test-only `u32::from(mode.bits())` trace conversion with
+exit 101; its later test steps were consequently skipped.
+
+This is a test-portability defect, not a production behavior or authority
+defect. The trace `Operation::Mkdir` mode now uses platform-native
+`rustix::fs::RawMode` and stores `mode.bits()` directly. Fresh formatting,
+native all-target/all-feature warnings-denied Clippy, 17 private, 20 direct,
+and six engine tests are green. The exact Linux no-default test target passes
+warnings-denied Clippy, and FreeBSD no-default test compilation is green. A
+complete replacement gate and three fresh same-SHA adversarial tracks remain
+required before the replacement feature seal can be pushed.
+
 ## Current verdict
 
-**CYCLE 4 PRODUCTION REVIEW GREEN; DOCUMENTATION-SEAL FINDING FIXED; DELIVERY
-PENDING.** Production
+**FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED; REPLACEMENT
+GATE AND FRESH REVIEW PENDING.** Production
 implementation, exports, eleven-tool/ten-clone host composition, and the 17-
 private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
 composed. Cycle 2 found zero production defects, its two low findings are
@@ -437,8 +459,13 @@ replacement gate. Documentation gate record `f6f6584` parents tree-identical
 cycle-4 candidate `a78b693`, tree `2b913e8`. Cycle 4 found zero production
 defects. Correctness/API and performance/concurrency are green with zero
 findings; filesystem/robustness found only the low stale documentation-seal
-sentence corrected here under the user's explicit seal-review exemption. Native
-Linux execution remains pending exact feature CI. Feature delivery workflow,
-fast-forward integration, exact `main` workflow, delivery, product-performance,
-and fx-equivalence claims also remain pending. The delivered-slice count remains
-twenty-four.
+sentence corrected here under the user's explicit seal-review exemption. First
+feature benchmark `32699750662` is green with exactly two nonexpired exact-SHA
+artifacts. First feature CI `32699750602` supplies green dependency-policy and
+four native Linux/macOS jobs but is not green because Linux Quality rejected a
+test-only raw-mode conversion. The platform-native `RawMode` remediation is
+composed and passes focused macOS, Linux test-target Clippy, and FreeBSD compile
+checks. Its complete replacement gate and fresh three-track review remain
+pending. Feature delivery workflow, fast-forward integration, exact `main`
+workflow, delivery, product-performance, and fx-equivalence claims also remain
+pending. The delivered-slice count remains twenty-four.
