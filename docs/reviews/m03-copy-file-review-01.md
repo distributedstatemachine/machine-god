@@ -79,6 +79,43 @@ This precursor is local implementation evidence only. A tree-identical review
 candidate, three fresh zero-finding reviews, and exact feature/main remote gates
 remain required; none of this is a performance or fx-equivalence claim.
 
+## Formal review cycle 1
+
+Exact tree-identical behavior candidate
+`38d0d801caf1174d6df951a03d5843d6c217eb1a`, tree
+`f0eadf23e4cdfa6613f866ef5923806a8474cb0e`, is **NOT GREEN**. Reviewer-focused
+checks passed, but checks passing does not resolve the following actionable
+findings:
+
+1. Correctness/API is **NOT GREEN** with one medium late-cleanup-ownership
+   finding. After an exclusive staged open succeeds, cancellation can be
+   observed before the staged descriptor and pathname are placed under the
+   `StagedFile` drop guard. Initial staged metadata rejection has the same late-
+   ownership gap. Either path can return precommit while leaving the tool-owned
+   stage pathname behind.
+2. Filesystem/robustness is **NOT GREEN** with the same medium initial-stage
+   cleanup/residue finding. Remediation must establish cleanup ownership
+   immediately after successful creation and route every later cancellation or
+   validation failure through best-effort held-descriptor mode restoration and
+   identity-checked unlink. Deterministic regressions must cover cancellation
+   from the successful open and rejected initial staged metadata, while proving
+   that a mismatched replacement is preserved.
+3. Performance/concurrency is **NOT GREEN** with one medium postcommit source-
+   parent rewalk finding and one low evidence finding. Postcommit source
+   validation reuses the source-parent descriptor retained before publication,
+   so a moved or replaced source parent can validate the stale directory rather
+   than the source path currently reached from the retained root. Remediation
+   must perform a fresh cancellation-ignoring root/parent rewalk after commit and
+   treat any path/parent/source mismatch as ambiguity. Independent evidence must
+   also exercise exact serialized argument/result bounds and demonstrate that
+   allocation remains bounded independently of source size.
+
+No remediation or behavior-green claim is made here. Production and independent
+evidence remediation, the complete replacement local gate, and a fresh three-
+track same-SHA review cycle remain pending. This documentation-only review
+record is exempt from a separate adversarial cycle under the user's instruction;
+the replacement behavior candidate is not exempt.
+
 ## Required evidence
 
 - [ ] Exact public constants, schema, descriptions, result, construction

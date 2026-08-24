@@ -157,8 +157,15 @@ and fresh same-SHA review protocol are frozen in
 Documentation-only contract commit
 `6021fb0d6b1cf668e1a339a2cd2f60ead8d555dd` passed exact CI `32677160680`
 and benchmark workflow `32677160652`; the latter retains exactly two
-nonexpired exact-SHA artifacts. Production and independently owned evidence are
-being composed. Formal same-SHA review and delivery remain pending.
+nonexpired exact-SHA artifacts. Production and independently owned evidence
+compose through the first formal candidate `38d0d801caf1174d6df951a03d5843d6c217eb1a`,
+tree `f0eadf23e4cdfa6613f866ef5923806a8474cb0e`, which is **NOT GREEN** in all
+three cycle-1 tracks. Correctness/API and filesystem/robustness share a medium
+initial-stage cleanup-ownership/residue finding. Performance/concurrency found
+a medium missing postcommit source-parent rewalk and low missing exact
+serialization/allocation evidence. Focused checks passed, but remediation, the
+complete replacement local gate, a fresh three-track same-SHA review cycle, and
+delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1727,8 +1734,22 @@ gate:
   68/483/333/0; clean diff/no-unsafe/no-Cargo/no-CLI checks; and a fresh release
   CLI with SHA-256
   `1e8c5aefd32ab12f201c1527b38f86ef31463c80be1f75a4901f9e00930f3c24`
-  passing bare/help/status smoke paths. Three fresh same-SHA reviews and exact
-  feature/main delivery gates remain pending under [`copy-file.md`](copy-file.md).
+  passing bare/help/status smoke paths. Exact tree-identical cycle-1 candidate
+  `38d0d801caf1174d6df951a03d5843d6c217eb1a`, tree
+  `f0eadf23e4cdfa6613f866ef5923806a8474cb0e`, is **NOT GREEN** in all three
+  tracks despite passing reviewer-focused checks. Correctness/API and
+  filesystem/robustness share one medium finding: cancellation or initial
+  metadata rejection after successful exclusive stage creation can precede
+  cleanup-guard ownership and leave the tool-owned stage pathname behind.
+  Performance/concurrency found a medium postcommit source-parent rewalk defect:
+  source validation can reuse the prepublication retained parent instead of
+  freshly resolving the requested path from the retained root. That track also
+  found low missing exact serialized-bound and source-size-independent
+  allocation evidence. No fix or green claim is made. Production and evidence
+  remediation, the complete replacement local gate, a fresh three-track same-
+  SHA review cycle, and exact feature/main delivery gates remain pending under
+  [`copy-file.md`](copy-file.md). This documentation-only review record is
+  exempt from its own adversarial cycle; replacement behavior is not.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
