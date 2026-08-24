@@ -3,12 +3,12 @@ use futures_util::{StreamExt, stream};
 use machine_god_core::{
     BoxFuture, BuildError, CancellationToken, Capability, ContentBlock, Engine, EngineBuilder,
     EngineError, EngineEvent, EngineLimits, EventSink, EventSinkError, FilesystemAccess,
-    ModelEvent, ModelEventStream, ModelProvider, ModelRequest, PermissionDecision, PermissionError,
-    PermissionGrantScope, PermissionHandler, PermissionRequest, PreparedToolCall, ProviderError,
-    ProviderErrorKind, Role, Session, SessionId, SessionIncarnationId, SessionRecord,
-    SessionRevision, SessionStore, SessionStoreError, StopReason, TokenUsage, Tool, ToolCall,
-    ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn,
-    TurnEvent, TurnHandle,
+    ModelEvent, ModelEventStream, ModelProvider, ModelRequest, NetworkTarget, PermissionDecision,
+    PermissionError, PermissionGrantScope, PermissionHandler, PermissionRequest, PreparedToolCall,
+    ProviderError, ProviderErrorKind, Role, Session, SessionId, SessionIncarnationId,
+    SessionRecord, SessionRevision, SessionStore, SessionStoreError, StopReason, TokenUsage, Tool,
+    ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+    Turn, TurnEvent, TurnHandle,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
@@ -187,6 +187,50 @@ fn open_file_capability_has_exact_stable_json_contract() {
         }))
         .unwrap(),
         capability
+    );
+}
+
+#[test]
+fn network_capability_has_exact_stable_json_contract() {
+    let capability = Capability::Network {
+        target: NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "example.com".to_owned(),
+            port: Some(8_443),
+        },
+    };
+    let encoded = json!({
+        "type": "network",
+        "target": {
+            "scheme": "https",
+            "host": "example.com",
+            "port": 8_443
+        }
+    });
+
+    assert_eq!(serde_json::to_value(&capability).unwrap(), encoded);
+    assert_eq!(
+        serde_json::from_value::<Capability>(encoded).unwrap(),
+        capability
+    );
+
+    let default_port_target = NetworkTarget {
+        scheme: "https".to_owned(),
+        host: "example.com".to_owned(),
+        port: None,
+    };
+    let encoded_default_port = json!({
+        "scheme": "https",
+        "host": "example.com",
+        "port": null
+    });
+    assert_eq!(
+        serde_json::to_value(&default_port_target).unwrap(),
+        encoded_default_port
+    );
+    assert_eq!(
+        serde_json::from_value::<NetworkTarget>(encoded_default_port).unwrap(),
+        default_port_target
     );
 }
 
