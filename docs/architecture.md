@@ -134,6 +134,29 @@ equivalence claim. This final docs-only record is exempt from adversarial
 review under the user's instruction; its own exact feature and `main` workflows
 remain required and will be reported at handoff.
 
+Final delivery-record SHA
+`762d70df106d40e59b599e18b1ac5c62f678927d`, tree
+`909eb320e05df4d56f5bcecf0e3655e6d761f622`, passed feature CI `32740668405`
+at 6/6 and feature benchmark `32740667465` at 2/2, retaining upstream artifact
+`9525188220` and bootstrap artifact `9525017236`. Main benchmark `32741322179`
+passed 2/2 and retained upstream artifact `9525436660` and bootstrap artifact
+`9525268460`. Main CI `32741322249` was not green: five of six jobs passed,
+and Quality alone failed the exact test named by concatenating
+`blocked_wake_releases_request_before_publication_and_holds_` with
+`permit_until_worker_return` because the immediate `exit 0` fixture could
+legitimately publish before the first poll installed `BlockingWake`. This is a
+test-fixture synchronization defect, not a production behavior finding. Exact
+local test-only remediation
+`62c2a5349bc682079c2458ccebe9f9ea9578a3c1`, tree
+`b38984441b6bb470ecb4b1c69bc9a3a9984f0bb0`, adds the existing
+`before_first_wait` barrier so Waker registration deterministically precedes
+publication; the native Linux arm64 exact test passed 100/100. Production
+source is unchanged. For this remediation, the full local gate, fresh three-
+track adversarial review, seal, and exact feature and `main` workflows remain
+pending. This test-only fix is not eligible for the documentation-only
+exemption. This amendment makes no
+product-performance or fx-equivalence claim.
+
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
