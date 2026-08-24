@@ -532,6 +532,10 @@ fn clear_staged_acl(file: BorrowedFd<'_>) -> Result<(), ToolError> {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "matches the fallible macOS ACL boundary"
+)]
 fn clear_staged_acl(_file: BorrowedFd<'_>) -> Result<(), ToolError> {
     Ok(())
 }
@@ -544,6 +548,10 @@ fn staged_acl_is_empty(file: BorrowedFd<'_>) -> Result<bool, ToolError> {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "matches the fallible macOS ACL boundary"
+)]
 fn staged_acl_is_empty(_file: BorrowedFd<'_>) -> Result<bool, ToolError> {
     Ok(true)
 }
