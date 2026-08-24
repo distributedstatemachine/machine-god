@@ -232,6 +232,14 @@ not the required formal three-track review. An immutable formal candidate,
 fresh three-track review, feature delivery workflows, integration, and exact
 `main` workflows remain pending. This makes no delivery, performance, or fx-
 equivalence claim, and the delivered-slice count remains twenty-four.
+Tree-identical formal cycle-1 candidate
+`8ce899acee73a6dbcc9a80b96722df7e3ba3e9f8`, tree
+`065cd190e6a1d9ef065c4d1105eefeb6e32e7583`, is **NOT GREEN**: filesystem/
+robustness is green with zero findings, while correctness/API and performance/
+concurrency found the same low stale-local-gate documentation inconsistency and
+zero production defects. Every reported maintained passage is remediated. A
+complete replacement local gate, replacement candidate, and three fresh review
+tracks remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1892,6 +1900,11 @@ gate:
   workflows remain pending under
   [`create-folder.md`](create-folder.md) and
   [`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
+  Exact cycle-1 candidate `8ce899a`, tree `065cd19`, is not green because two
+  tracks found the same low stale-local-gate documentation inconsistency;
+  filesystem/robustness is green and all tracks found zero production defects.
+  Every reported passage is fixed. A complete replacement local gate,
+  replacement candidate, and three fresh review tracks remain pending.
   It adds no delivery, performance, or fx-equivalence claim, so the combined
   native-tool checkbox remains open and the delivered count stays twenty-four.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

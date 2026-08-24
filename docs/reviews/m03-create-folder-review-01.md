@@ -1,6 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **LOCAL GATE GREEN; FORMAL REVIEW PENDING**
+Status: **CYCLE 1 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED**
 
 ## Base and boundary
 
@@ -185,12 +185,42 @@ run must retain the expected nonexpired exact-SHA artifacts. Documentation-only
 seal and final delivery-record commits are exempt from another adversarial
 cycle, but their exact workflows remain required.
 
+## Formal review cycle 1
+
+Tree-identical candidate
+`8ce899acee73a6dbcc9a80b96722df7e3ba3e9f8`, tree
+`065cd190e6a1d9ef065c4d1105eefeb6e32e7583`, is **NOT GREEN**. All three fresh
+reviewers independently verified that exact SHA and tree in clean detached
+worktrees.
+
+- Correctness/API found one low maintained-documentation inconsistency: the
+  repository README and the `create_folder` contract, core API, and security
+  pages retained stale complete-local-gate-pending language. It found zero
+  production or public-API defects and passed 16 private, 20 direct, six
+  engine, seven host, one core-contract, formatting, and focused warnings-
+  denied Clippy checks.
+- Filesystem/robustness is green with zero findings. It passed 16 private, 20
+  direct, six engine, native warnings-denied Clippy, Linux and FreeBSD checks,
+  WASI compilation, and the active Node 22.22.0 unsupported-target test 1/1.
+- Performance/concurrency found the same low stale-documentation inconsistency
+  and zero production performance, concurrency, bounded-work, or resource
+  defects. It passed 16 private, 20 direct, six engine, seven host, the exact
+  clone-count test, and native warnings-denied Clippy.
+
+The confirmed finding is remediated across every reported maintained passage:
+they now identify exact precursor `ea408a1`, tree `7055e93`, as complete-local-
+gate green and leave only formal review, delivery, and `main` integration
+pending. Production code, API, dependencies, CLI behavior, workflows, and
+benchmark workloads are unchanged. A complete replacement local gate and all
+three fresh replacement reviewers remain required.
+
 ## Current verdict
 
-**LOCAL GATE GREEN; FORMAL REVIEW PENDING.** Production implementation,
-exports, evidence, and eleven-tool/ten-clone host composition pass the complete
-local gate at the exact precursor above. No immutable behavior-candidate SHA,
-required formal three-track review, feature delivery workflow, fast-forward
-integration, exact `main` workflow, delivery, product-performance, or fx-
-equivalence claim exists at this checkpoint. The delivered-slice count remains
-twenty-four.
+**CYCLE 1 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED.** Production
+implementation, exports, evidence, and eleven-tool/ten-clone host composition
+pass the complete precursor local gate, but cycle 1 reported the low stale-
+documentation finding above. The reported passages are fixed. The complete
+replacement local gate, a replacement immutable candidate, all three fresh
+review tracks, feature delivery workflow, fast-forward integration, exact
+`main` workflow, delivery, product-performance, and fx-equivalence claims
+remain pending. The delivered-slice count remains twenty-four.

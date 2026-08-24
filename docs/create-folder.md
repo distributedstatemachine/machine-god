@@ -255,8 +255,9 @@ The composed slice-twenty-five source registers `create_folder` immediately
 after `copy_file`, yielding exactly eleven alphabetical tools and using one
 original retained descriptor plus ten identity-preserving clones. Both path-
 based and prepared-root constructors compose that same catalog and retained
-workspace identity. This is composed behavior awaiting the complete local and
-formal review gates, not a delivered or `main`-integrated authority surface.
+workspace identity. This composed behavior passes the complete local gate and
+awaits formal review; it is not a delivered or `main`-integrated authority
+surface.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, recursively creates missing parents, treats an

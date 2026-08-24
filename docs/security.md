@@ -294,9 +294,10 @@ expansion, composed release-binary end-to-end host evidence, and compatibility
 or performance claims remain open. The current delivered library composition
 includes the ten bounded workspace tools documented below. `rename_file` and
 `copy_file` are delivered. `create_folder` implementation and eleven-tool
-composition are present in candidate source, but the full local gate, formal
-review, delivery, and `main` integration remain pending; the last delivered
-authority surface therefore stays at ten tools. The
+composition are present in candidate source. Exact precursor `ea408a1`, tree
+`7055e93`, passes the complete local gate; formal review, delivery, and `main`
+integration remain pending. The last delivered authority surface therefore
+stays at ten tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
