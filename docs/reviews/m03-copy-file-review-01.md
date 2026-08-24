@@ -48,6 +48,37 @@ workload, performance claim, or fx-equivalence claim.
 Owners use isolated worktrees or explicitly non-overlapping files. Only the
 composed integration SHA can become a formal behavior candidate.
 
+## Exact local gate before review cycle 1
+
+Production component `9ab8d90` and maintained documentation component
+`622b9d4` compose at exact precursor
+`622b9d4bfd9e3bbbe34165f5dd64c5b2bf7996d4`. The complete local gate is green
+on that tree under Rust and Cargo 1.94.1:
+
+- focused evidence passes 20 private pipeline/race tests, 24 direct tests, five
+  engine tests, seven reference-host tests, and one core capability contract;
+- formatting, workspace all-target/all-feature warnings-denied Clippy, default
+  workspace tests, all-target/all-feature workspace tests, and both doctests
+  pass; discovery lists 829 default and 877 all-feature tests with zero
+  benchmarks;
+- all 130 Python tests pass with eight expected macOS skips, and the generated
+  compatibility inventory matches pinned upstream
+  `b1774fbf6c7602b503026f96f6e960e946c692ef`;
+- cargo-deny 0.20.2 reports advisories, bans, licenses, and sources green, while
+  cargo-audit 0.22.2 scans 175 dependencies with no vulnerability finding;
+- relevant Rust-only Linux and FreeBSD cross-target checks pass. The dedicated
+  WASI unsupported test builds, and Node 22.22.0 actively executes it 1/1;
+- 68 Markdown files contain 483 links, including 333 relative file links, with
+  zero missing targets. The diff is clean, adds no unsafe Rust, and changes no
+  Cargo metadata or CLI source; and
+- the fresh locked release CLI has SHA-256
+  `1e8c5aefd32ab12f201c1527b38f86ef31463c80be1f75a4901f9e00930f3c24`
+  and passes bare, help, and status smoke paths.
+
+This precursor is local implementation evidence only. A tree-identical review
+candidate, three fresh zero-finding reviews, and exact feature/main remote gates
+remain required; none of this is a performance or fx-equivalence claim.
+
 ## Required evidence
 
 - [ ] Exact public constants, schema, descriptions, result, construction

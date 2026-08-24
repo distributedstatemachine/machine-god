@@ -1716,9 +1716,19 @@ gate:
   dependency, benchmark workload, performance claim, or fx-equivalence claim.
   Contract commit `6021fb0` is green under exact CI `32677160680` and
   benchmark workflow `32677160652`, with two exact-SHA artifacts. Production
-  and independent tests are being composed; three fresh same-SHA reviews and
-  exact feature/main delivery gates remain pending under
-  [`copy-file.md`](copy-file.md).
+  component `9ab8d90` and maintained documentation component `622b9d4` compose
+  at exact local-gate precursor `622b9d4bfd9e3bbbe34165f5dd64c5b2bf7996d4`.
+  The Rust 1.94.1 gate is green across 20 private, 24 direct, five engine, seven
+  host, and one core focused tests; 829/877 discovered tests with zero
+  benchmarks; workspace formatting, warnings-denied Clippy, default and all-
+  feature tests, and two doctests; Python 130 with eight expected macOS skips;
+  pinned-fx compatibility; cargo-deny 0.20.2 and cargo-audit 0.22.2 over 175
+  dependencies; Linux/FreeBSD/WASI and active Node 1/1 checks; documentation
+  68/483/333/0; clean diff/no-unsafe/no-Cargo/no-CLI checks; and a fresh release
+  CLI with SHA-256
+  `1e8c5aefd32ab12f201c1527b38f86ef31463c80be1f75a4901f9e00930f3c24`
+  passing bare/help/status smoke paths. Three fresh same-SHA reviews and exact
+  feature/main delivery gates remain pending under [`copy-file.md`](copy-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
