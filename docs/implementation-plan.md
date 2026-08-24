@@ -147,7 +147,7 @@ Final rename documentation record
 `32675981622`, feature benchmark `32675981593`, main CI `32676296870`, and main
 benchmark `32676296945`; both benchmark workflows retain exactly two
 nonexpired exact-SHA artifacts. The twenty-fourth bounded slice, native
-`copy_file`, is **IMPLEMENTATION IN PROGRESS** from that exact delivered base. Its
+`copy_file`, is **LOCAL BEHAVIOR GREEN; DELIVERY PENDING** from that exact delivered base. Its
 two-endpoint typed authority, 16 MiB binary-safe streaming bound, absent-only
 atomic publication, source-stability and destination-integrity checks,
 destination-parent durability, explicit race limitations, parallel ownership,
@@ -175,7 +175,13 @@ is green across 25 private, 24 direct, five engine, seven host, and one core
 focused tests; 834/882 discovered tests with zero benchmarks; full Rust,
 Python, dependency, compatibility, cross-target, active WASI, documentation,
 diff, release-hash, and CLI-smoke checks. A tree-identical cycle-2 candidate,
-three fresh same-SHA zero-finding reviews, and delivery remain pending.
+`ad4af0c2c642cc315724a3515bacd9aa70cbe17f`, tree
+`9e09fd7ba5b486847b8302629193f3e665831d81`, is green with zero findings in
+all three fresh correctness/API, filesystem/robustness, and performance/
+concurrency tracks. Reviewers independently verified the immutable SHA/tree in
+clean detached worktrees and passed the applicable 25 private, 24 direct, five
+engine, seven host, one core-contract, and focused warnings-denied Clippy
+checks. Exact feature/main delivery remains pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1721,7 +1727,7 @@ gate:
   exactly two nonexpired exact-SHA artifacts retained by each benchmark run.
   Native `rename_file` is delivered as slice twenty-three under
   [`rename-file.md`](rename-file.md).
-  The twenty-fourth `copy_file` slice is **IMPLEMENTATION IN PROGRESS** from exact
+  The twenty-fourth `copy_file` slice is **LOCAL BEHAVIOR GREEN; DELIVERY PENDING** from exact
   delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. It is frozen as
   one existing confined regular file copied without source mutation to one
   absent confined destination through exact two-endpoint `FilesystemCopy`
@@ -1766,11 +1772,19 @@ gate:
   gate is green across 25 private, 24 direct, five engine, seven host, and one
   core focused tests; 834/882 discovered tests with zero benchmarks; full Rust
   and Python suites; dependency, compatibility, Linux/FreeBSD/WASI, active Node
-  1/1, documentation, diff, release-hash, and CLI-smoke checks. A tree-identical
-  cycle-2 candidate, fresh three-track same-SHA zero-finding review, and exact
-  feature/main delivery gates remain pending under
-  [`copy-file.md`](copy-file.md). This documentation-only remediation record is
-  exempt from its own adversarial cycle; replacement behavior is not.
+  1/1, documentation, diff, release-hash, and CLI-smoke checks. Exact tree-
+  identical cycle-2 candidate
+  `ad4af0c2c642cc315724a3515bacd9aa70cbe17f`, tree
+  `9e09fd7ba5b486847b8302629193f3e665831d81`, is green with zero findings in
+  all three fresh correctness/API, filesystem/robustness, and performance/
+  concurrency tracks. The reviewers independently verified the immutable SHA
+  and tree in clean detached worktrees. Correctness/API passed 25 private, 24
+  direct, five engine, seven host, and one core-contract test. Filesystem/
+  robustness passed 25 private and 24 direct tests. Performance/concurrency
+  passed 25 private, 24 direct, five engine, and focused warnings-denied Clippy.
+  Exact feature/main delivery gates remain pending under
+  [`copy-file.md`](copy-file.md). This documentation-only review seal is exempt
+  from its own adversarial cycle.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

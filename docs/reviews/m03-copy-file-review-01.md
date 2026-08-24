@@ -1,6 +1,6 @@
 # Milestone 03 native `copy_file` review 01
 
-Status: **IMPLEMENTATION IN PROGRESS**
+Status: **LOCAL BEHAVIOR GREEN; DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -169,30 +169,66 @@ This is local remediation evidence, not a green review or delivery claim. A
 tree-identical cycle-2 candidate and three fresh same-SHA zero-finding reviews
 remain required before exact feature and main delivery gates.
 
+## Formal review cycle 2
+
+Exact tree-identical candidate
+`ad4af0c2c642cc315724a3515bacd9aa70cbe17f`, tree
+`9e09fd7ba5b486847b8302629193f3e665831d81`, is **GREEN** with zero findings in
+all three fresh tracks. Every reviewer independently verified the SHA and tree,
+used a fresh detached read-only worktree, left it clean, and reviewed the same
+immutable behavior.
+
+Correctness/API passed 25 private pipeline/race tests, 24 direct tests, five
+engine tests, seven reference-host tests, and the exact core capability
+contract under Rust/Cargo 1.94.1. It audited strict schema and canonical direct
+arguments, exact two-endpoint authority, public bounds, fixed redacted errors,
+cancellation semantics, cleanup ownership, postcommit ambiguity, unsupported
+targets, and ten-tool host composition.
+
+Filesystem/robustness passed the 25 private and 24 direct suites under the same
+toolchain. It audited descriptor-relative no-follow confinement, retained root,
+parent, source, and stage identities, replacement-safe cleanup, ordinary-mode
+and macOS ACL handling, streaming and retry bounds, exact-one no-replace
+publication and nonretryable `EINTR`, fresh postcommit source rewalking,
+destination integrity, and bounded destination-parent durability.
+
+Performance/concurrency passed the 25 private, 24 direct, and five engine suites
+plus focused warnings-denied native Clippy. It verified one 64-KiB allocation
+reused at all four streaming sites, exact serialized guards, bounded source,
+I/O, hash, entropy, staging, and sync work, precommit cancellation precedence,
+source/destination/stage race outcomes, exact-one publication, independent
+postcommit verification and sync, and the absence of deadlock or unbounded-work
+paths. No reviewer found an actionable correctness, robustness, API,
+performance, concurrency, or evidence defect.
+
+Local behavior is sealed. Exact feature CI and benchmark workflows, exactly two
+nonexpired feature-SHA benchmark artifacts, fast-forward integration, and exact
+main workflows remain pending; no performance or fx-equivalence claim is made.
+
 ## Required evidence
 
-- [ ] Exact public constants, schema, descriptions, result, construction
+- [x] Exact public constants, schema, descriptions, result, construction
   taxonomy, error codes/messages/kinds/retryability, and redaction.
-- [ ] Exact/one-over endpoint, component, argument, result, source-byte, chunk,
+- [x] Exact/one-over endpoint, component, argument, result, source-byte, chunk,
   I/O-call, interruption, entropy, temporary-attempt, and sync bounds.
-- [ ] Effect-free preparation, strict canonical direct execution, exact typed
+- [x] Effect-free preparation, strict canonical direct execution, exact typed
   two-path policy input, denial before lookup, and policy/execution agreement.
-- [ ] Empty, text, binary, executable, exact-limit, same-parent, cross-parent,
+- [x] Empty, text, binary, executable, exact-limit, same-parent, cross-parent,
   and confined cross-mount copies retain source bytes and ordinary mode while
   allocating no complete-content buffer.
-- [ ] Existing destination of every entry type is never replaced; missing
+- [x] Existing destination of every entry type is never replaced; missing
   parents, invalid types, ancestor/final symlinks, and outside sentinels fail
   closed without blocking.
-- [ ] Initial and final root, parent, source, destination, and stage identity;
+- [x] Initial and final root, parent, source, destination, and stage identity;
   source mutation/replacement, destination appearance, stage replacement,
   hostile umask/ACL, moved retained parent, and final source-window behavior.
-- [ ] Exact-one publication, no retry after `EINTR`, definitive precommit
+- [x] Exact-one publication, no retry after `EINTR`, definitive precommit
   failures, postcommit identity/digest, destination-parent sync and 16-call
   bound, identity-safe cleanup, and cleanup dual failure.
-- [ ] Cancellation around every authority and content operation, at final
+- [x] Cancellation around every authority and content operation, at final
   prepublication, and after real publication; inert-until-poll, drop, and core
   same-poll unknown-result recovery.
-- [ ] Native Linux/macOS, FreeBSD/WASI compilation, active unsupported target,
+- [x] Native Linux/macOS, FreeBSD/WASI compilation, active unsupported target,
   ten-tool catalog, nine-clone identity, no-unsafe, dependency, compatibility,
   documentation, and fresh release-binary smoke evidence.
 
