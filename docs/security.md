@@ -293,15 +293,16 @@ modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, composed release-binary end-to-end host evidence, and compatibility
 or performance claims remain open. The current delivered library composition
 includes the ten bounded workspace tools documented below. `rename_file` and
-`copy_file` are delivered. The `create_folder` contract is frozen, but its
-implementation and eleven-tool composition remain pending; this checkpoint
-does not change the ten-tool authority surface. The
+`copy_file` are delivered. `create_folder` implementation and eleven-tool
+composition are present in candidate source, but the full local gate, formal
+review, delivery, and `main` integration remain pending; the last delivered
+authority surface therefore stays at ten tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
 or CLI authority.
 
-The integrated `NativeReferenceHost` first rejects any loaded selection
+The last integrated `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. The thirteenth
 slice also requires configured credential source `environment`. It then
 opens the existing absolute workspace once and clones that retained descriptor
@@ -319,6 +320,12 @@ does not compare opened root identities or reject equality or ancestry. The
 trusted host must select disjoint roots. If the session root equals or sits
 beneath the workspace, workspace tools can reach session artifacts under their
 normal bounded path rules after permission is granted.
+
+Candidate source extends both constructors with `create_folder` immediately
+after `copy_file`, so eleven alphabetical tools share the original retained
+descriptor plus ten identity-preserving clones. The complete local and formal
+review gates remain pending; this has not replaced the integrated ten-tool
+authority surface.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to
@@ -981,10 +988,10 @@ durability, diagnostic, and race boundary is
 [`copy-file.md`](copy-file.md). Its exact feature and `main` delivery gates are
 green; this is not a complete fx-equivalence or performance claim.
 
-The frozen `create_folder` contract uses the existing single-path
+The composed `create_folder` behavior uses the existing single-path
 `Capability::Filesystem { access: Create, path }`. Strict effect-free preflight
 binds policy and execution to the same canonical confined workspace-relative
-path. Approved future Linux/macOS execution rejects every selected symlink and
+path. Approved Linux/macOS execution rejects every selected symlink and
 non-directory ancestor, uses only retained descriptor-relative authority, and
 makes at most one `mkdirat` attempt per missing component. An existing final
 directory is idempotent success; an existing final non-directory fails.
@@ -1016,7 +1023,7 @@ supported-Unix boundary. The normative surfaces are
 [`grep-files.md`](grep-files.md), with mutation contracts in
 [`write-file.md`](write-file.md), [`edit-file.md`](edit-file.md),
 [`delete-file.md`](delete-file.md), [`rename-file.md`](rename-file.md), and
-[`copy-file.md`](copy-file.md), with the frozen pending contract in
+[`copy-file.md`](copy-file.md), with the composed pending-delivery behavior in
 [`create-folder.md`](create-folder.md).
 
 The injected-transport AI Gateway provider preserves network authority at an

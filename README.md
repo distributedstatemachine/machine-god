@@ -10,8 +10,10 @@ Milestones 01 and 02 are complete, and Milestone 03 is in progress with
 twenty-four delivered bounded slices. The twenty-fourth, library-only
 `copy_file` slice is green under three fresh same-SHA adversarial reviews and
 exact feature and `main` delivery gates. The twenty-fifth, library-only
-`create_folder` contract is frozen from that delivered base; implementation,
-evidence, reviews, host composition, and delivery remain pending. The
+`create_folder` behavior is composed from that delivered base; its focused
+exact Rust 1.94.1 evidence and eleven-tool host wiring are green, while the
+complete local gate, formal three-track review, delivery, and `main` integration
+remain pending. The delivered count therefore remains twenty-four. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -333,19 +335,22 @@ whole source, or broaden CLI authority. Seal `3bdd7cb` passed exact feature and
 This description makes no complete fx-equivalence or performance claim. See
 the [`copy_file` contract](docs/copy-file.md).
 
-The frozen twenty-fifth `create_folder` contract accepts one strict canonical
+The composed twenty-fifth `create_folder` behavior accepts one strict canonical
 confined workspace-relative path and recursively creates missing directory
 components. It uses existing provider-neutral `FilesystemAccess::Create`
 authority, requests mode `0755` while honoring host umask and ACL inheritance,
 never follows symlinks or normalizes permissions afterward, never retries a
 `mkdirat`, and never rolls back a created prefix. The first successful or
 uncertain creation is the commit boundary; postcommit verification and
-bottom-up durability are explicitly bounded. At this documentation-only
-checkpoint the delivered host remains ten tools. Future behavior composition
-must add `create_folder` after `copy_file` for eleven alphabetical tools and ten
-descriptor clones. This is no implementation, delivery, performance, or
-fx-equivalence claim. See the
-[`create_folder` contract](docs/create-folder.md).
+bottom-up durability are explicitly bounded. Candidate source adds
+`create_folder` after `copy_file` for eleven alphabetical tools backed by the
+original retained descriptor plus ten clones. The exact frozen contract commit
+`9fab189c9c1add76a38775d08f4342c6bcc7635b` is green under all six jobs of CI
+`32687614476`; benchmark workflow `32687614442` passed both jobs and retains
+exactly two nonexpired exact-SHA artifacts. Those runs cover the contract only.
+The full local gate and formal review remain pending, so this is not delivery,
+`main` integration, performance, or fx-equivalence evidence. See the
+[`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact
 [CLI contract](docs/cli.md),
@@ -359,7 +364,7 @@ The project is not yet production-ready. See the exact
 [`delete_file` contract](docs/delete-file.md),
 [`rename_file` contract](docs/rename-file.md),
 [`copy_file` contract](docs/copy-file.md),
-[`create_folder` contract](docs/create-folder.md), and
+[`create_folder` behavior contract](docs/create-folder.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the

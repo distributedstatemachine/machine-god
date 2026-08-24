@@ -14,6 +14,7 @@ mod ai_gateway_http;
 mod ask_permission;
 mod config;
 mod copy_file;
+mod create_folder;
 mod delete_file;
 mod edit_file;
 mod file_info;
@@ -76,6 +77,12 @@ pub use copy_file::{
     MAX_COPY_FILE_CHUNK_BYTES, MAX_COPY_FILE_IO_CALLS, MAX_COPY_FILE_PATH_BYTES,
     MAX_COPY_FILE_PATH_COMPONENTS, MAX_COPY_FILE_SERIALIZED_ARGUMENT_BYTES,
     MAX_COPY_FILE_SERIALIZED_RESULT_BYTES, MAX_COPY_FILE_SOURCE_BYTES, MAX_COPY_FILE_TEMP_ATTEMPTS,
+};
+pub use create_folder::{
+    CREATE_FOLDER_TOOL_NAME, CreateFolderTool, CreateFolderToolOpenError,
+    CreateFolderToolOpenErrorKind, MAX_CREATE_FOLDER_MKDIR_CALLS, MAX_CREATE_FOLDER_PATH_BYTES,
+    MAX_CREATE_FOLDER_PATH_COMPONENTS, MAX_CREATE_FOLDER_SERIALIZED_ARGUMENT_BYTES,
+    MAX_CREATE_FOLDER_SERIALIZED_RESULT_BYTES, MAX_CREATE_FOLDER_SYNC_CALLS,
 };
 pub use delete_file::{
     DELETE_FILE_TOOL_NAME, DeleteFileTool, DeleteFileToolOpenError, DeleteFileToolOpenErrorKind,

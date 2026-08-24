@@ -1,7 +1,8 @@
 # Native reference-host composition
 
-Status: the delivered composition contains exactly ten alphabetical workspace
-tools. Twenty-four bounded Milestone 03 slices are delivered;
+Status: **BEHAVIOR COMPOSED; FULL LOCAL GATE PENDING** for `create_folder`.
+The last delivered composition contains exactly ten alphabetical workspace
+tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -22,10 +23,16 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
-The twenty-fifth `create_folder` contract is frozen from exact delivered base
-`d1a5bc24112bcede8c2d12789e763a12cf44bd4a`; implementation and host
-composition remain pending. This documentation-only checkpoint leaves the
-delivered host at exactly ten tools.
+The twenty-fifth `create_folder` behavior is composed from exact delivered base
+`d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Exact frozen contract commit
+`9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
+`32687614476`; benchmark workflow `32687614442` passed both jobs and retains
+exactly two nonexpired exact-SHA artifacts. Candidate source composes eleven
+alphabetical tools through the original retained descriptor plus ten clones.
+Seven exact Rust 1.94.1 reference-host tests are green as part of the focused
+16-private/20-direct/6-engine/7-host/1-core-contract composition evidence.
+The full local gate, formal review, delivery, and `main` integration remain
+pending; the delivered host remains exactly ten tools.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -149,23 +156,24 @@ commit is the final delivery record. Milestone 03 remains `IN PROGRESS`. Full
 lineage is recorded in the
 [`native reference-host review`](reviews/m03-native-reference-host-review-01.md).
 
-`NativeReferenceHost` composes the existing validated native configuration,
+The `create_folder` candidate extends `NativeReferenceHost`, which composes the
+existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and exactly ten confined workspace tools into one provider-neutral
-`Engine`. Their exact membership is `copy_file`, `delete_file`, `edit_file`,
-`file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
+adapter, with an eleventh confined workspace tool in one provider-neutral
+`Engine`. Candidate membership is `copy_file`, `create_folder`, `delete_file`,
+`edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
 `rename_file`, and `write_file`; core exposes that catalog in deterministic
-alphabetical order.
+alphabetical order. The last delivered membership omits `create_folder`.
 It is a library surface in
 `machine-god-native`. The `machine-god-cli` crate and every existing CLI output
 byte remain unchanged.
 
-The frozen `create_folder` contract does not yet alter this catalog. Its future
-behavior composition must register exactly eleven alphabetical tools by
-inserting `create_folder` immediately after `copy_file`. Both reference-host
-constructors must transfer the same retained workspace identity through one
-original descriptor plus ten identity-preserving clones. No source or host
-behavior is claimed at the contract-only checkpoint.
+The composed `create_folder` behavior registers exactly eleven alphabetical
+tools by inserting `create_folder` immediately after `copy_file`. Both
+reference-host constructors transfer the same retained workspace identity
+through one original descriptor plus ten identity-preserving clones. This
+candidate catalog awaits the complete local and formal review gates and is not
+the delivered or `main`-integrated composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
@@ -353,7 +361,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the ten tools;
+   identity for the eleven candidate tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -361,10 +369,10 @@ this order:
 6. construct `AiGatewayProvider` with the loaded configuration's projected
    model;
 7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly `copy_file`, `delete_file`, `edit_file`,
-   `file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
-   `rename_file`, and `write_file`, default `EngineLimits`, and the default
-   `NoopEventSink`;
+8. build `Engine` with exactly `copy_file`, `create_folder`, `delete_file`,
+   `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
+   `read_file`, `rename_file`, and `write_file`, default `EngineLimits`, and
+   the default `NoopEventSink`;
    core's catalog exposes those names in deterministic alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
@@ -376,8 +384,8 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and nine descriptor clones of the same opened directory object
-feed the others. The composed engine registers exactly the ten alphabetical
+with one tool and ten descriptor clones of the same opened directory object
+feed the others. The candidate engine registers exactly the eleven alphabetical
 tools listed above and discovers or registers no other tool. This shared retained
 identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
@@ -399,8 +407,9 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same ten tools, and
-uses the same default engine limits and no-op sink. It deliberately performs no
+the same provider and permission adapter, registers the same eleven candidate
+tools, and uses the same default engine limits and no-op sink. It deliberately
+performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
 
 The injected `Arc<dyn AiGatewayTransport>` owns whatever endpoint, network,
@@ -481,15 +490,15 @@ verification, and destination-parent synchronization documented in
 starts no task, thread, I/O, or background work. The slice changes no CLI byte
 and makes no complete fx-equivalence or performance claim.
 
-Future twenty-fifth-slice composition adds one more identity-preserving clone
-and retains it for `create_folder`. Preparation remains effect-free and returns
-the existing single-path `FilesystemAccess::Create` authority. Its inert future
-will perform the bounded synchronous no-follow recursive creation, fresh
+The composed twenty-fifth slice adds one more identity-preserving clone and
+retains it for `create_folder`. Preparation remains effect-free and returns the
+existing single-path `FilesystemAccess::Create` authority. Its inert future
+performs the bounded synchronous no-follow recursive creation, fresh
 postcommit rewalk, and bottom-up durability described in
 [`create-folder.md`](create-folder.md) on first poll. Construction performs no
 directory creation, lookup, permission normalization, task, thread, I/O, or
-background work. Until that behavior composes, the exact catalog and clone
-counts remain ten and nine.
+background work. The candidate catalog and clone counts are eleven and ten;
+the delivered counts remain ten and nine until the remaining gates pass.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio

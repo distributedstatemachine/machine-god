@@ -23,9 +23,9 @@ use machine_god_core::{
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, AiGatewayByteStream, AiGatewayCredentialEnvironment,
     AiGatewayCredentialSource, AiGatewayTransport, AiGatewayTransportRequest, COPY_FILE_TOOL_NAME,
-    ConfigOrigin, DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME,
-    GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig,
-    NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
+    CREATE_FOLDER_TOOL_NAME, ConfigOrigin, DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME,
+    FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME,
+    LoadedNativeConfig, NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
     NativeReferenceHostBuildErrorKind, PermissionPromptDecision, PermissionPromptError,
     PermissionPrompter, READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME, WRITE_FILE_TOOL_NAME,
     load_native_config,
@@ -217,6 +217,7 @@ fn tool_round_responses(final_text: &str) -> [Vec<u8>; 5] {
     .to_vec();
     let third = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"copy-call\",\"toolName\":\"copy_file\",\"input\":{\"source\":\"./nested//renamed.txt\",\"destination\":\"./nested//copied.txt\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"create-call\",\"toolName\":\"create_folder\",\"input\":{\"path\":\"./nested//created\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -347,7 +348,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 10);
+    assert_eq!(tools.len(), 11);
     assert_eq!(
         tools
             .iter()
@@ -355,6 +356,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             .collect::<Vec<_>>(),
         [
             COPY_FILE_TOOL_NAME,
+            CREATE_FOLDER_TOOL_NAME,
             DELETE_FILE_TOOL_NAME,
             EDIT_FILE_TOOL_NAME,
             FILE_INFO_TOOL_NAME,
@@ -371,7 +373,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
 
 fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
     let permission_requests = prompter.requests();
-    assert_eq!(permission_requests.len(), 11);
+    assert_eq!(permission_requests.len(), 12);
     assert_eq!(
         permission_requests[0].capability,
         Capability::Filesystem {
@@ -438,12 +440,19 @@ fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
     assert_eq!(
         permission_requests[9].capability,
         Capability::Filesystem {
+            access: FilesystemAccess::Create,
+            path: "nested/created".to_owned(),
+        }
+    );
+    assert_eq!(
+        permission_requests[10].capability,
+        Capability::Filesystem {
             access: FilesystemAccess::Delete,
             path: "nested/copied.txt".to_owned(),
         }
     );
     assert_eq!(
-        permission_requests[10].capability,
+        permission_requests[11].capability,
         Capability::Filesystem {
             access: FilesystemAccess::Delete,
             path: "nested/renamed.txt".to_owned(),
@@ -456,7 +465,7 @@ fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: Sessio
         .unwrap()
         .expect("the reference host persisted the completed session");
     let record = loaded_session.record();
-    assert_eq!(record.messages.len(), 17);
+    assert_eq!(record.messages.len(), 18);
     assert_eq!(record.messages[0].role, Role::User);
     assert_eq!(record.messages[1].role, Role::Assistant);
     assert_eq!(record.messages[2].role, Role::Tool);
@@ -470,12 +479,13 @@ fn assert_persisted_composed_turn(host: &NativeReferenceHost, session_id: Sessio
     assert_eq!(record.messages[10].role, Role::Tool);
     assert_eq!(record.messages[11].role, Role::Assistant);
     assert_eq!(record.messages[12].role, Role::Tool);
-    assert_eq!(record.messages[13].role, Role::Assistant);
-    assert_eq!(record.messages[14].role, Role::Tool);
+    assert_eq!(record.messages[13].role, Role::Tool);
+    assert_eq!(record.messages[14].role, Role::Assistant);
     assert_eq!(record.messages[15].role, Role::Tool);
-    assert_eq!(record.messages[16].role, Role::Assistant);
+    assert_eq!(record.messages[16].role, Role::Tool);
+    assert_eq!(record.messages[17].role, Role::Assistant);
     assert_eq!(
-        record.messages[16].content,
+        record.messages[17].content,
         [ContentBlock::Text {
             text: "composition complete".to_owned()
         }]
@@ -644,7 +654,7 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
         })
     );
     let fourth = body(&requests[3]);
-    assert_eq!(fourth["prompt"].as_array().unwrap().len(), 13);
+    assert_eq!(fourth["prompt"].as_array().unwrap().len(), 14);
     assert_eq!(
         fourth["prompt"][12]["content"][0]["toolCallId"],
         "copy-call"
@@ -660,25 +670,36 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
             "is_error": false
         })
     );
-    let fifth = body(&requests[4]);
-    assert_eq!(fifth["prompt"].as_array().unwrap().len(), 16);
     assert_eq!(
-        fifth["prompt"][14]["content"][0]["toolCallId"],
+        fourth["prompt"][13]["content"][0]["toolCallId"],
+        "create-call"
+    );
+    assert_eq!(
+        decoded_tool_output(&fourth, 13),
+        json!({
+            "content": {"path": "nested/created"},
+            "is_error": false
+        })
+    );
+    let fifth = body(&requests[4]);
+    assert_eq!(fifth["prompt"].as_array().unwrap().len(), 17);
+    assert_eq!(
+        fifth["prompt"][15]["content"][0]["toolCallId"],
         "delete-copy-call"
     );
     assert_eq!(
-        decoded_tool_output(&fifth, 14),
+        decoded_tool_output(&fifth, 15),
         json!({
             "content": {"path": "nested/copied.txt"},
             "is_error": false
         })
     );
     assert_eq!(
-        fifth["prompt"][15]["content"][0]["toolCallId"],
+        fifth["prompt"][16]["content"][0]["toolCallId"],
         "delete-source-call"
     );
     assert_eq!(
-        decoded_tool_output(&fifth, 15),
+        decoded_tool_output(&fifth, 16),
         json!({
             "content": {"path": "nested/renamed.txt"},
             "is_error": false
@@ -687,6 +708,7 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
     assert!(!nested.join("generated.txt").exists());
     assert!(!nested.join("copied.txt").exists());
     assert!(!nested.join("renamed.txt").exists());
+    assert!(nested.join("created").is_dir());
 
     drop(events);
     assert_persisted_composed_turn(&host, session_id);
@@ -1005,8 +1027,9 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     let edit_output = decoded_tool_output(&final_request, 9);
     let rename_output = decoded_tool_output(&final_request, 10);
     let copy_output = decoded_tool_output(&final_request, 12);
-    let delete_copy_output = decoded_tool_output(&final_request, 14);
-    let delete_source_output = decoded_tool_output(&final_request, 15);
+    let create_output = decoded_tool_output(&final_request, 13);
+    let delete_copy_output = decoded_tool_output(&final_request, 15);
+    let delete_source_output = decoded_tool_output(&final_request, 16);
     assert_eq!(
         list_output["content"]["entries"],
         json!([
@@ -1055,6 +1078,7 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
             "bytes_copied": "generated edited content".len()
         })
     );
+    assert_eq!(create_output["content"], json!({"path": "nested/created"}));
     assert_eq!(
         delete_copy_output["content"],
         json!({"path": "nested/copied.txt"})
@@ -1066,6 +1090,8 @@ fn replacing_original_workspace_path_cannot_redirect_any_registered_tool() {
     assert!(!retained.join("nested/generated.txt").exists());
     assert!(!retained.join("nested/copied.txt").exists());
     assert!(!retained.join("nested/renamed.txt").exists());
+    assert!(retained.join("nested/created").is_dir());
+    assert!(!workspace.join("nested/created").exists());
     assert_eq!(
         fs::read(workspace.join("nested/generated.txt")).unwrap(),
         b"REPLACEMENT_DELETE_DECOY_SENTINEL"

@@ -5,13 +5,14 @@ use rustix::fs::{FileType, Mode, OFlags};
 
 #[cfg(feature = "ai-gateway-http")]
 use crate::{
-    CopyFileTool, DeleteFileTool, EditFileTool, FileInfoTool, GlobFilesTool, GrepFilesTool,
-    ListFilesTool, ReadFileTool, RenameFileTool, WriteFileTool,
+    CopyFileTool, CreateFolderTool, DeleteFileTool, EditFileTool, FileInfoTool, GlobFilesTool,
+    GrepFilesTool, ListFilesTool, ReadFileTool, RenameFileTool, WriteFileTool,
 };
 
 #[cfg(feature = "ai-gateway-http")]
 pub(crate) struct WorkspaceTools {
     pub(crate) copy_file: CopyFileTool,
+    pub(crate) create_folder: CreateFolderTool,
     pub(crate) delete_file: DeleteFileTool,
     pub(crate) edit_file: EditFileTool,
     pub(crate) file_info: FileInfoTool,
@@ -71,6 +72,7 @@ impl WorkspaceRoot {
         CloneDescriptor: FnMut(&OwnedFd) -> Result<OwnedFd, WorkspaceRootError>,
     {
         let copy_file_root = clone_descriptor(&self.descriptor)?;
+        let create_folder_root = clone_descriptor(&self.descriptor)?;
         let delete_file_root = clone_descriptor(&self.descriptor)?;
         let edit_file_root = clone_descriptor(&self.descriptor)?;
         let file_info_root = clone_descriptor(&self.descriptor)?;
@@ -81,6 +83,7 @@ impl WorkspaceRoot {
         let write_file_root = clone_descriptor(&self.descriptor)?;
         Ok(WorkspaceTools {
             copy_file: CopyFileTool::from_root_descriptor(copy_file_root),
+            create_folder: CreateFolderTool::from_root_descriptor(create_folder_root),
             delete_file: DeleteFileTool::from_root_descriptor(delete_file_root),
             edit_file: EditFileTool::from_root_descriptor(edit_file_root),
             file_info: FileInfoTool::from_root_descriptor(file_info_root),

@@ -1254,7 +1254,7 @@ fn immediate_recreation_can_leave_the_path_present_after_reported_success() {
 
 #[cfg(feature = "ai-gateway-http")]
 #[test]
-fn workspace_composition_uses_one_original_descriptor_and_nine_identity_clones() {
+fn workspace_composition_uses_one_original_descriptor_and_ten_identity_clones() {
     use crate::workspace::{WorkspaceRoot, WorkspaceRootError};
 
     let temporary = TempDirectory::new("workspace-clones");
@@ -1286,9 +1286,10 @@ fn workspace_composition_uses_one_original_descriptor_and_nine_identity_clones()
         })
         .unwrap_or_else(|_| panic!("compose workspace tools for clone evidence"));
 
-    assert_eq!(clone_identities, vec![original_identity; 9]);
+    assert_eq!(clone_identities, vec![original_identity; 10]);
     let names = [
         tools.copy_file.spec().name,
+        tools.create_folder.spec().name,
         tools.delete_file.spec().name,
         tools.edit_file.spec().name,
         tools.file_info.spec().name,
@@ -1303,6 +1304,7 @@ fn workspace_composition_uses_one_original_descriptor_and_nine_identity_clones()
         names.map(|name| name.to_string()),
         [
             "copy_file".to_owned(),
+            "create_folder".to_owned(),
             "delete_file".to_owned(),
             "edit_file".to_owned(),
             "file_info".to_owned(),

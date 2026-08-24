@@ -201,8 +201,8 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **CONTRACT FROZEN;
-IMPLEMENTATION PENDING** from exact delivered base
+The twenty-fifth bounded slice, native `create_folder`, is **BEHAVIOR COMPOSED;
+FULL LOCAL GATE PENDING** from exact delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
 `32686210561`, and main benchmark `32686210659`; both benchmark workflows
@@ -212,16 +212,25 @@ authority, recursive missing-parent creation, idempotent existing-directory
 success, no-follow descriptor-relative execution, requested mode `0755` with
 host umask/ACL inheritance, a first-successful-or-uncertain-`mkdirat` commit
 boundary, no retry or rollback, fresh postcommit path verification, and bounded
-bottom-up durability. The contract-only checkpoint leaves the delivered host
-at ten tools. Future behavior composition must yield eleven alphabetical tools
-with `create_folder` after `copy_file` and one original retained descriptor
-plus ten clones. The normative boundary and evidence plan are
+bottom-up durability. Exact frozen contract commit
+`9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
+`32687614476`; benchmark workflow `32687614442` passed both jobs and retains
+exactly two nonexpired exact-SHA artifacts. Candidate source implements and
+exports the tool and composes eleven alphabetical tools with `create_folder`
+after `copy_file`, one original retained descriptor, and ten clones. The
+normative boundary and evidence plan are
 [`create-folder.md`](create-folder.md) and
 [`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
-This documentation-only contract checkpoint is exempt from adversarial review,
-but its exact feature workflows are required after push. It makes no
-implementation, delivery, performance, or fx-equivalence claim, and the
-delivered-slice count remains twenty-four.
+Focused exact Rust 1.94.1 evidence is green across 16 private, 20 direct, six
+engine, seven host, and one core-contract test, plus native warnings-denied
+Clippy, supported macOS/Linux checks, and FreeBSD/WASI check compilation.
+Production preflight API and filesystem audits reported zero findings, but are
+not the required formal three-track review. The complete workspace/Python/
+dependency/compatibility/portability/documentation/diff/release local gate,
+immutable formal candidate, fresh three-track review, feature delivery
+workflows, integration, and exact `main` workflows remain pending. This makes
+no delivery, performance, or fx-equivalence claim, and the delivered-slice
+count remains twenty-four.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1426,7 +1435,7 @@ the delivered-slice count to twenty-two without completing Milestone 03.
 
 ### Milestone 03 completion boundary
 
-The twenty-two delivered slices do not complete Milestone 03.
+The twenty-four delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -1851,8 +1860,8 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **CONTRACT FROZEN; IMPLEMENTATION
-  PENDING** from exact delivered base
+  The twenty-fifth `create_folder` slice is **BEHAVIOR COMPOSED; FULL LOCAL
+  GATE PENDING** from exact delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
   `32686210659` are green; both benchmark workflows retain exactly two
@@ -1866,16 +1875,23 @@ gate:
   the first successful or uncertain call commits, cancellation is ignored
   afterward, and no prefix is rolled back. A fresh public-path rewalk and
   bottom-up durability use at most 257 sites, 16 calls per site, and 4,112
-  total sync calls. The contract-only host remains ten tools; future behavior
-  composition adds `create_folder` after `copy_file` for eleven tools and one
-  original plus ten clones. Exact behavior, independent evidence, fresh
-  same-SHA review, feature workflows, integration, and main workflows remain
-  pending under [`create-folder.md`](create-folder.md) and
+  total sync calls. Exact frozen contract commit
+  `9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
+  `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
+  exactly two nonexpired exact-SHA artifacts. Candidate source composes
+  `create_folder` after `copy_file` for eleven tools and one original plus ten
+  clones. Exact Rust 1.94.1 focused evidence is green across 16 private, 20
+  direct, six engine, seven host, and one core-contract test; native warnings-
+  denied Clippy, supported macOS/Linux checks, and FreeBSD/WASI check
+  compilation are green. Production preflight API and filesystem audits found
+  no issues but are not the required formal three-track review. Full local
+  workspace/Python/dependency/compatibility/portability/documentation/diff/
+  release gates, a frozen candidate SHA, fresh same-SHA review, feature
+  workflows, integration, and main workflows remain pending under
+  [`create-folder.md`](create-folder.md) and
   [`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
-  This documentation-only checkpoint is adversarial-review exempt but still
-  requires its exact feature workflows after push. It adds no delivery,
-  performance, or fx-equivalence claim, so the combined native-tool checkbox
-  remains open.
+  It adds no delivery, performance, or fx-equivalence claim, so the combined
+  native-tool checkbox remains open and the delivered count stays twenty-four.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

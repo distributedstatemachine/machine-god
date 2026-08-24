@@ -401,9 +401,9 @@ The concrete consumers are the native
 [`grep_files` tool](grep-files.md), [`write_file` tool](write-file.md),
 [`edit_file` tool](edit-file.md), [`delete_file` tool](delete-file.md), and the
 delivered twenty-third [`rename_file` tool](rename-file.md), and the delivered
-twenty-fourth [`copy_file` tool](copy-file.md). The frozen, not-yet-implemented
-twenty-fifth [`create_folder` contract](create-folder.md) will be another
-single-path consumer.
+twenty-fourth [`copy_file` tool](copy-file.md). The composed, not-yet-delivered
+twenty-fifth [`create_folder` behavior](create-folder.md) is another single-
+path consumer.
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -623,8 +623,8 @@ continues to apply the ordinary prepared-value and result limits. Three fresh
 same-SHA reviews and exact feature and `main` delivery gates are green; this API
 description makes no equivalence or performance claim.
 
-The frozen twenty-fifth-slice contract requires no new provider-neutral core
-variant. It uses the existing
+The composed twenty-fifth slice requires no new provider-neutral core variant.
+It uses the existing
 `Capability::Filesystem { access: FilesystemAccess::Create, path }`, whose
 stable policy JSON is exactly:
 
@@ -632,14 +632,15 @@ stable policy JSON is exactly:
 {"type":"filesystem","access":"create","path":"canonical/path"}
 ```
 
-Future native `create_folder` preparation must turn its strict sole `path`
-field into that canonical capability and identical prepared execution
-arguments. Core assigns no recursive creation, mode, umask, ACL, traversal,
-commit, rollback, or durability semantics to `Create`; the Linux/macOS native
-tool will own the no-follow recursive protocol and bounds in
-[`create-folder.md`](create-folder.md). Only stable JSON contract evidence is
-required in core. At this documentation-only checkpoint implementation and all
-behavior, review, host, and delivery evidence remain pending.
+Native `create_folder` preparation turns its strict sole `path` field into that
+canonical capability and identical prepared execution arguments. Core assigns
+no recursive creation, mode, umask, ACL, traversal, commit, rollback, or
+durability semantics to `Create`; the Linux/macOS native tool owns the no-
+follow recursive protocol and bounds in [`create-folder.md`](create-folder.md).
+The one exact core-contract test and focused native/engine/host evidence are
+green under Rust 1.94.1. The full local gate, immutable formal candidate,
+required fresh three-track review, delivery, and `main` integration remain
+pending.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

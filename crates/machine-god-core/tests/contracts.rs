@@ -23,6 +23,30 @@ trait EngineTestSessions {
 }
 
 #[test]
+fn create_filesystem_access_has_exact_stable_json_contract() {
+    assert_eq!(
+        serde_json::to_value(FilesystemAccess::Create).unwrap(),
+        json!("create")
+    );
+    assert_eq!(
+        serde_json::from_value::<FilesystemAccess>(json!("create")).unwrap(),
+        FilesystemAccess::Create
+    );
+    assert_eq!(
+        serde_json::to_value(Capability::Filesystem {
+            access: FilesystemAccess::Create,
+            path: "nested/folder".to_owned(),
+        })
+        .unwrap(),
+        json!({
+            "type": "filesystem",
+            "access": "create",
+            "path": "nested/folder"
+        })
+    );
+}
+
+#[test]
 fn search_content_filesystem_access_has_exact_stable_json_contract() {
     assert_eq!(
         serde_json::to_value(FilesystemAccess::SearchContent).unwrap(),

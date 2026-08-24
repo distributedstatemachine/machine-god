@@ -1,18 +1,26 @@
 # Native `create_folder` contract
 
-Status: **CONTRACT FROZEN; IMPLEMENTATION PENDING**
+Status: **BEHAVIOR COMPOSED; FULL LOCAL GATE PENDING**
 
-This document freezes the twenty-fifth bounded Milestone 03 slice from exact
+This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
 under exact feature CI `32685885104`, feature benchmark workflow `32685885086`,
 main CI `32686210561`, and main benchmark workflow `32686210659`. Both
 benchmark workflows retain exactly two nonexpired exact-SHA artifacts.
 
-This checkpoint freezes documentation only. It adds no implementation, host
-tool, test, workflow, CLI behavior, benchmark workload, performance claim, or
-fx-equivalence claim. The contract commit is exempt from adversarial review
-under the user's instruction, but its exact feature CI and benchmark workflows
-remain required after push and cannot be recorded in advance.
+The normative contract was frozen in exact documentation-only commit
+`9fab189c9c1add76a38775d08f4342c6bcc7635b`. Its exact CI `32687614476`
+passed all six jobs, and exact benchmark workflow `32687614442` passed both
+jobs and retains exactly two nonexpired exact-SHA artifacts. Those workflows
+validate the contract checkpoint only; they are not implementation, delivery,
+performance, or fx-equivalence evidence.
+
+Production behavior, exports, independently owned focused evidence, and both
+reference-host constructors are now composed in the candidate source. The
+complete local gate, an immutable behavior-candidate SHA, the required fresh
+three-track same-SHA review, feature delivery workflows, `main` integration,
+and exact `main` workflows remain pending. No CLI behavior, benchmark workload,
+product-performance claim, or fx-equivalence claim is added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -23,7 +31,7 @@ pinned upstream benchmark build input.
 
 ## Public API and schema
 
-The future `machine-god-native` implementation exports
+The composed `machine-god-native` implementation exports
 `CREATE_FOLDER_TOOL_NAME`, `CreateFolderTool`, `CreateFolderToolOpenError`,
 `CreateFolderToolOpenErrorKind`, and these limits:
 
@@ -212,10 +220,11 @@ All failures are fixed and redacted:
 | `create_folder_commit_ambiguous` | `Execution` | no | `requested folder creation status is uncertain` |
 | `create_folder_cancelled` | `Cancelled` | no | `create_folder execution was cancelled` |
 
-`create_folder_target_exists` is reserved for an existing final non-directory.
-Any selected symlink or non-directory ancestor is confinement rejection. Errors
-retain no path, root, component, entry name, mode, ACL, device/inode, OS
-diagnostic, or errno. Engine-facing failures remain the delivered generic
+`create_folder_target_exists` is reserved for an existing final entry that is
+not a no-follow directory, including a final symlink or special entry. A
+symlink or non-directory selected as an ancestor is confinement rejection.
+Errors retain no path, root, component, entry name, mode, ACL, device/inode,
+OS diagnostic, or errno. Engine-facing failures remain the delivered generic
 durable tool-error surface.
 
 ## Races and confinement boundary
@@ -235,16 +244,17 @@ trusted host authority.
 
 ## Host composition and compatibility boundary
 
-At this contract-only checkpoint the delivered reference host remains exactly
-the ten alphabetical tools: `copy_file`, `delete_file`, `edit_file`,
-`file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
-`rename_file`, and `write_file`, using the original retained descriptor plus
-nine identity-preserving clones.
+The last delivered reference host remains exactly the ten alphabetical tools:
+`copy_file`, `delete_file`, `edit_file`, `file_info`, `glob_files`,
+`grep_files`, `list_files`, `read_file`, `rename_file`, and `write_file`, using
+the original retained descriptor plus nine identity-preserving clones.
 
-Future slice-twenty-five behavior composition adds `create_folder` immediately
+The composed slice-twenty-five source registers `create_folder` immediately
 after `copy_file`, yielding exactly eleven alphabetical tools and using one
-original retained descriptor plus ten identity-preserving clones. No host
-composition change is present at this documentation checkpoint.
+original retained descriptor plus ten identity-preserving clones. Both path-
+based and prepared-root constructors compose that same catalog and retained
+workspace identity. This is composed behavior awaiting the complete local and
+formal review gates, not a delivered or `main`-integrated authority surface.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, recursively creates missing parents, treats an
@@ -257,38 +267,48 @@ behaviors. Zig is benchmark input only.
 
 ## Required implementation evidence
 
-- [ ] Exact constants, descriptions, strict schema, construction taxonomy,
+- [x] Exact constants, descriptions, strict schema, construction taxonomy,
   success shape, error codes/messages/kinds/retryability, and redaction.
-- [ ] Exact and one-over requested/canonical path, component, serialized
+- [x] Exact and one-over requested/canonical path, component, serialized
   argument, serialized result, 256-`mkdirat`, 257-site, 16-call-per-site, and
   4,112-total sync bounds.
-- [ ] Effect-free preparation, exact stable `Create` capability JSON, denial
+- [x] Effect-free preparation, exact stable `Create` capability JSON, denial
   before lookup, canonical direct execution, and policy/execution agreement.
-- [ ] Single and 256-component creation, recursive missing-parent creation,
+- [x] Single and 256-component creation, recursive missing-parent creation,
   existing-directory idempotence, existing-final-nondirectory failure, and no
   file/content/enumeration/delete/overwrite authority.
 - [ ] Ancestor and final symlink, file, FIFO, socket, and device rejection;
   concurrent directory and hostile-entry appearance; root and prefix
   replacement; moved retained parents; subordinate mounts; outside sentinels.
-- [ ] Requested `0755`, benign and hostile umasks, inherited ACLs, no
+- [x] Requested `0755`, benign and hostile umasks, inherited ACLs, no
   permission or ACL rewriting, unopenable new intermediate ambiguity, and
   retained safe partial prefixes.
-- [ ] Exact-once `mkdirat`, no retry after any result including `EINTR`, first-
+- [x] Exact-once `mkdirat`, no retry after any result including `EINTR`, first-
   effect commit transition, fresh postcommit no-follow rewalk, bottom-up
   best-effort sync despite earlier verification/sync failure, and no rollback.
-- [ ] Precommit cancellation ordering and precedence, postcommit cancellation
+- [x] Precommit cancellation ordering and precedence, postcommit cancellation
   suppression, inert-until-poll, synchronous one-poll completion, drop, no
   detached work, and same-poll engine unknown-result recovery.
 - [ ] Native Linux/macOS execution, FreeBSD/WASI compilation, active
-  unsupported-target behavior, exact ten-tool contract checkpoint, future
-  eleven-tool/ten-clone composition, no-unsafe, dependency, compatibility,
+  unsupported-target behavior, exact delivered ten-tool checkpoint, composed
+  eleven-tool/ten-clone candidate, no-unsafe, dependency, compatibility,
   documentation, clean-diff, and fresh release-binary smoke evidence.
+
+The checked rows are supported by exact Rust 1.94.1 focused evidence: 16
+private tests, 20 direct tests, six engine tests, seven reference-host tests,
+and one core contract test. Native warnings-denied Clippy, supported macOS and
+Linux checks, and FreeBSD/WASI check compilation are also green. Production
+preflight API and filesystem audits reported zero findings, but they are not
+the required formal three-track review. Full workspace and doctest gates,
+repo-wide Python, dependency policy/audit, compatibility, complete portability,
+documentation, clean-diff/no-unsafe, and fresh release-binary checks remain
+pending, so the complete local gate is not green or claimed.
 
 ## Review and delivery protocol
 
-After production and independently owned evidence compose, run the complete
-local gate on one exact SHA. Create a tree-identical candidate and start three
-fresh reviewers against that same immutable SHA and tree:
+Production and independently owned evidence are composed. Run the complete
+local gate on one exact SHA, then create a tree-identical candidate and start
+three fresh reviewers against that same immutable SHA and tree:
 
 1. correctness/API;
 2. filesystem/robustness;
@@ -308,5 +328,5 @@ File creation, overwrite, removal, rollback, exact effective mode, ACL
 normalization, external paths, symlink traversal, directory enumeration,
 content access, non-Linux/macOS hardened execution, CLI ownership, benchmark
 workloads, product-performance claims, and complete fx equivalence remain
-outside this slice. Implementation and every behavior, test, review, and
-delivery claim remain pending.
+outside this slice. The full local gate, formal same-SHA review, delivery, and
+`main` integration remain pending; the delivered-slice count stays twenty-four.
