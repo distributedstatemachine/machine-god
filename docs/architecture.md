@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-two delivered bounded slices. The twenty-third,
+Milestone 03 has twenty-three delivered bounded slices. The twenty-third,
 library-only native `rename_file`, has composed production and independent
 evidence; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -36,6 +36,11 @@ replacement gate. Cycle-4 candidate `1337980`, tree `ab2bdc2`, is green with
 zero findings in all three fresh tracks. Seal `7cb5ef9` passed exact feature
 and main CI/benchmark delivery gates with two artifacts in each benchmark run.
 Native `rename_file` is delivered as slice twenty-three.
+The twenty-fourth, library-only `copy_file` contract is frozen and its
+production and independent-test components are composed as a candidate. The
+contract commit alone passed exact remote CI and benchmark-evidence workflows;
+the composed implementation still requires adversarial review, exact feature
+gates, integration, and exact `main` gates before delivery.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -574,12 +579,13 @@ This final delivery record is documentation-only and exempt from adversarial
 review; its own exact remote workflows are required after push and cannot be
 self-recorded.
 
-Slices twenty through twenty-three extend the same workspace bundle with
-`write_file`, `edit_file`, `delete_file`, and the in-progress `rename_file`.
-The current composed host registers exactly nine tools in alphabetical order:
-`delete_file`, `edit_file`, `file_info`, `glob_files`, `grep_files`,
-`list_files`, `read_file`, `rename_file`, and `write_file`. One tool consumes
-the originally retained workspace descriptor and the other eight receive
+Slices twenty through twenty-four extend the same workspace bundle with
+`write_file`, `edit_file`, `delete_file`, delivered `rename_file`, and the
+current `copy_file` candidate. The current composed host registers exactly ten
+tools in alphabetical order: `copy_file`, `delete_file`, `edit_file`,
+`file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
+`rename_file`, and `write_file`. One tool consumes the originally retained
+workspace descriptor and the other nine receive
 identity-preserving clones; both path and prepared-root constructors therefore
 give every tool the same opened workspace identity. These later slices do not
 change provider, permission-handler, session-store, credential, transport,
@@ -605,9 +611,10 @@ descriptor-relative parent walking. New
 workspace identity to the registered workspace tools and its state-root identity
 to `FileSessionStore` without reopening either path. The delivered seventeenth
 slice extends that transfer to three tools; the delivered eighteenth slice
-extends it to four; the nineteenth extends it to five; and slices twenty
-through twenty-three extend it to the current nine-tool bundle using the
-original descriptor plus eight clones. Config
+extends it to four; the nineteenth extends it to five; slices twenty through
+twenty-three extend it to the delivered nine-tool bundle; and the current
+twenty-fourth candidate extends it to ten tools using the original descriptor
+plus nine clones. Config
 selection is validated by the composing constructor, and production credential
 discovery remains after the already prepared retained roots are accepted.
 Production and focused tests for this behavior are present. Formal adversarial
@@ -1138,12 +1145,33 @@ postcommit identity checking prevents false success but cannot roll it back.
 The full limits, fixed redacted errors, cancellation points, and race boundary
 are normative in [`rename-file.md`](rename-file.md).
 
+The twenty-fourth candidate adds
+`Capability::FilesystemCopy { source, destination }`, serialized as
+`filesystem_copy`, rather than reducing a two-endpoint operation to one
+`FilesystemAccess` path. Effect-free strict preflight canonicalizes the two
+required paths and gives policy and execution the same pair. Approved
+Linux/macOS execution reacquires the retained root, walks both existing parents
+without following symlinks, accepts only a stable regular-file source and an
+absent destination, and streams at most 16 MiB through one 64 KiB buffer while
+computing SHA-256. It stages a private file in the destination parent, verifies
+the source, stage identity, digest, mode, and ACL boundary, then makes one
+`NOREPLACE` commit. Bounded postcommit destination verification and
+destination-parent synchronization complete success; the source is never
+removed or modified.
+
+The operation creates no parent, overwrites no destination, accepts no
+directory, symlink, special file, or external path, and never allocates the
+whole source. Its 4,096-call I/O budget, interrupted-call bounds, fixed
+redacted errors, cancellation boundary, and same-UID race limitations are
+normative in [`copy-file.md`](copy-file.md). This remains a candidate and makes
+no delivery, complete fx-equivalence, or performance claim.
+
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's
 ancestors and mount points beneath a retained root belong to that trusted host
 boundary. Hardened construction and traversal beyond Linux and macOS remain
 deferred for `list_files`, delivered `file_info`, delivered `glob_files`, and
-candidate `grep_files`;
+delivered `grep_files`;
 `read_file` retains its separately documented supported-Unix boundary.
 
 A preparation error consults no permission handler and starts no tool. It

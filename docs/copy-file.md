@@ -1,6 +1,6 @@
 # Native `copy_file` contract
 
-Status: **CONTRACT IN PROGRESS**
+Status: **IMPLEMENTATION IN PROGRESS**
 
 This document freezes the twenty-fourth bounded Milestone 03 slice from exact
 delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. That base is green

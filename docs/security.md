@@ -291,9 +291,9 @@ The existing status path remains metadata-only and its CLI output is
 byte-stable. Configuration mutation or migration, a concrete prompt UI and
 modes beyond `ask`, token fields in configuration, CLI composition and
 expansion, composed release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. The current library composition includes
-the nine bounded workspace tools documented below; `rename_file` delivery is
-still in progress. The
+or performance claims remain open. The current library candidate composition
+includes the ten bounded workspace tools documented below. `rename_file` is
+delivered; `copy_file` review and delivery remain in progress. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -303,9 +303,10 @@ The integrated `NativeReferenceHost` first rejects any loaded selection
 other than `ask` / `vercel_ai_gateway` / `ai_gateway_http`. The thirteenth
 slice also requires configured credential source `environment`. It then
 opens the existing absolute workspace once and clones that retained descriptor
-so exactly `delete_file`, `edit_file`, `file_info`, `glob_files`, `grep_files`,
-`list_files`, `read_file`, `rename_file`, and `write_file` share one opened
-directory identity. One tool consumes the original and the other eight consume
+so exactly `copy_file`, `delete_file`, `edit_file`, `file_info`, `glob_files`,
+`grep_files`, `list_files`, `read_file`, `rename_file`, and `write_file` share
+one opened directory identity. One tool consumes the original and the other
+nine consume
 identity-preserving clones. This
 prevents path replacement between separate tool-construction opens from giving
 the tools different roots. The same trusted-host ancestor and subordinate-mount
@@ -922,7 +923,7 @@ metadata, OS diagnostic, or errno. Successful paths, excerpts, context, and
 counts are intentionally sensitive model-visible durable data rather than
 redacted diagnostics.
 
-In-progress `rename_file` uses a separate typed
+Delivered `rename_file` uses a separate typed
 `Capability::FilesystemRename { old_path, new_path }` so policy observes both
 canonical endpoints of the proposed move. Strict effect-free preflight accepts
 only the two required strings, rejects broader or same-canonical-path input,
@@ -953,6 +954,31 @@ checking prevents false success but cannot undo that move. Fixed diagnostics
 retain no paths, entries, metadata, OS text, or errno. The complete normative
 boundary is [`rename-file.md`](rename-file.md).
 
+The `copy_file` candidate similarly uses typed
+`Capability::FilesystemCopy { source, destination }`, so policy observes both
+canonical endpoints of the proposed copy. Strict effect-free preflight accepts
+only the two required strings, rejects same-canonical-path input, and binds
+policy and execution to the same pair. Approved Linux/macOS execution confines
+both endpoints to the retained root, rejects directory, symlink, special, and
+external endpoints, requires an absent destination, and leaves the source
+unchanged. It streams no more than 16 MiB through one 64 KiB buffer under a
+4,096-call I/O budget while computing SHA-256; it never allocates the whole
+source.
+
+The destination is first a private mode-`0600` stage in the destination parent.
+The implementation verifies stable source identity and metadata, stage
+identity, digest, ordinary mode, and the documented ACL boundary before a
+single `NOREPLACE` commit. After commit it verifies the destination and
+synchronizes the destination parent within the bounded postcommit budget.
+Cancellation and failure before commit clean up the stage where its identity is
+still proven; interruption or failure at and after the commit boundary can be
+reported as fixed nonretryable ambiguity. Documented moved-parent,
+source-replacement, and same-UID stage races remain explicit rather than being
+presented as sandbox guarantees. The full authority, confidentiality,
+durability, diagnostic, and race boundary is
+[`copy-file.md`](copy-file.md). This is not yet a delivery,
+complete fx-equivalence, or performance claim.
+
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's
 resolution of ancestor components leading to an injected root path and mount
@@ -966,7 +992,8 @@ supported-Unix boundary. The normative surfaces are
 [`file-info.md`](file-info.md), [`glob-files.md`](glob-files.md), and
 [`grep-files.md`](grep-files.md), with mutation contracts in
 [`write-file.md`](write-file.md), [`edit-file.md`](edit-file.md),
-[`delete-file.md`](delete-file.md), and [`rename-file.md`](rename-file.md).
+[`delete-file.md`](delete-file.md), [`rename-file.md`](rename-file.md), and
+[`copy-file.md`](copy-file.md).
 
 The injected-transport AI Gateway provider preserves network authority at an
 explicit trusted-host boundary. `AiGatewayProvider` accepts only an owned body,

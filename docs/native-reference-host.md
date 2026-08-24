@@ -1,7 +1,7 @@
 # Native reference-host composition
 
-Status: the current feature composition contains exactly nine alphabetical
-workspace tools. Twenty-two bounded Milestone 03 slices are delivered;
+Status: the current candidate composition contains exactly ten alphabetical
+workspace tools. Twenty-three bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -16,6 +16,12 @@ replacement gate. Cycle-4 candidate `1337980`, tree `ab2bdc2`, is green with
 zero findings in all three fresh tracks. Seal `7cb5ef9` passed exact feature
 and main CI/benchmark delivery gates with two artifacts in each benchmark run.
 Native `rename_file` is delivered as slice twenty-three.
+The twenty-fourth, library-only `copy_file` contract is frozen, and its
+production, independent tests, and host-composition changes are present as a
+candidate. The contract commit alone passed exact remote CI and benchmark
+evidence. Adversarial review, exact feature gates for the composed candidate,
+integration, and exact `main` gates remain pending, so `copy_file` is not
+delivered.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -141,10 +147,11 @@ lineage is recorded in the
 
 `NativeReferenceHost` composes the existing validated native configuration,
 AI Gateway provider and transport boundary, file session store, ask permission
-adapter, and exactly nine confined workspace tools into one provider-neutral
-`Engine`. Their exact membership is `delete_file`, `edit_file`, `file_info`,
-`glob_files`, `grep_files`, `list_files`, `read_file`, `rename_file`, and
-`write_file`; core exposes that catalog in deterministic alphabetical order.
+adapter, and exactly ten confined workspace tools into one provider-neutral
+`Engine`. Their exact membership is `copy_file`, `delete_file`, `edit_file`,
+`file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
+`rename_file`, and `write_file`; core exposes that catalog in deterministic
+alphabetical order.
 It is a library surface in
 `machine-god-native`. The `machine-god-cli` crate and every existing CLI output
 byte remain unchanged.
@@ -335,7 +342,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the nine tools;
+   identity for the ten tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -343,9 +350,10 @@ this order:
 6. construct `AiGatewayProvider` with the loaded configuration's projected
    model;
 7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly `delete_file`, `edit_file`, `file_info`,
-   `glob_files`, `grep_files`, `list_files`, `read_file`, `rename_file`, and
-   `write_file`, default `EngineLimits`, and the default `NoopEventSink`;
+8. build `Engine` with exactly `copy_file`, `delete_file`, `edit_file`,
+   `file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
+   `rename_file`, and `write_file`, default `EngineLimits`, and the default
+   `NoopEventSink`;
    core's catalog exposes those names in deterministic alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
@@ -357,8 +365,8 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and eight descriptor clones of the same opened directory object
-feed the others. The composed engine registers exactly the nine alphabetical
+with one tool and nine descriptor clones of the same opened directory object
+feed the others. The composed engine registers exactly the ten alphabetical
 tools listed above and discovers or registers no other tool. This shared retained
 identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
@@ -380,7 +388,7 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same nine tools, and
+the same provider and permission adapter, registers the same ten tools, and
 uses the same default engine limits and no-op sink. It deliberately performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
 
@@ -451,6 +459,16 @@ bounded synchronous two-parent validation, one no-replace rename, postcommit
 identity check, and parent synchronization documented in
 [`rename-file.md`](rename-file.md); construction itself performs none of those
 effects and starts no background work.
+
+The twenty-fourth candidate adds one more identity-preserving descriptor clone
+and retains it for `copy_file`. Its preparation is effect-free and its
+execution future is inert until first poll. After approval, that poll performs
+the confined, bounded synchronous source validation, binary-safe streaming into
+a private destination-parent stage, one no-replace commit, postcommit
+verification, and destination-parent synchronization documented in
+[`copy-file.md`](copy-file.md). Construction performs none of those effects and
+starts no task, thread, I/O, or background work. The candidate changes no CLI
+byte and makes no delivery, complete fx-equivalence, or performance claim.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio
@@ -660,6 +678,7 @@ final-record feature and `main` workflows are green at integrated SHA
 fifteenth supplies create/resume/replay/reset, and the delivered sixteenth
 slice supplies bounded IDs-only listing. The combined root-and-session-lifecycle
 item is complete: the replacement reviews and exact feature and `main` gates
-are green. Milestone 03 remains in progress because `rename_file` has not
-completed its local/review/delivery gates and top-level CLI/slash-command
-ownership plus composed release-binary end-to-end evidence remain open.
+are green. Milestone 03 remains in progress because the `copy_file` candidate
+has not completed its adversarial review and delivery gates, and top-level
+CLI/slash-command ownership plus composed release-binary end-to-end evidence
+remain open.

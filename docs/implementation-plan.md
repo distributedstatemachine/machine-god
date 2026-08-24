@@ -147,14 +147,18 @@ Final rename documentation record
 `32675981622`, feature benchmark `32675981593`, main CI `32676296870`, and main
 benchmark `32676296945`; both benchmark workflows retain exactly two
 nonexpired exact-SHA artifacts. The twenty-fourth bounded slice, native
-`copy_file`, is **CONTRACT IN PROGRESS** from that exact delivered base. Its
+`copy_file`, is **IMPLEMENTATION IN PROGRESS** from that exact delivered base. Its
 two-endpoint typed authority, 16 MiB binary-safe streaming bound, absent-only
 atomic publication, source-stability and destination-integrity checks,
 destination-parent durability, explicit race limitations, parallel ownership,
 and fresh same-SHA review protocol are frozen in
 [`copy-file.md`](copy-file.md) and
 [`m03-copy-file-review-01.md`](reviews/m03-copy-file-review-01.md).
-Implementation, independent evidence, review, and delivery remain pending.
+Documentation-only contract commit
+`6021fb0d6b1cf668e1a339a2cd2f60ead8d555dd` passed exact CI `32677160680`
+and benchmark workflow `32677160652`; the latter retains exactly two
+nonexpired exact-SHA artifacts. Production and independently owned evidence are
+being composed. Formal same-SHA review and delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1700,7 +1704,7 @@ gate:
   exactly two nonexpired exact-SHA artifacts retained by each benchmark run.
   Native `rename_file` is delivered as slice twenty-three under
   [`rename-file.md`](rename-file.md).
-  The twenty-fourth `copy_file` slice is **CONTRACT IN PROGRESS** from exact
+  The twenty-fourth `copy_file` slice is **IMPLEMENTATION IN PROGRESS** from exact
   delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. It is frozen as
   one existing confined regular file copied without source mutation to one
   absent confined destination through exact two-endpoint `FilesystemCopy`
@@ -1710,8 +1714,10 @@ gate:
   It deliberately adds no overwrite, parent creation, directory copy, symlink
   following, external path, full-content allocation, CLI behavior, new
   dependency, benchmark workload, performance claim, or fx-equivalence claim.
-  Production, independent tests, three fresh same-SHA reviews, and exact
-  feature/main delivery gates remain pending under
+  Contract commit `6021fb0` is green under exact CI `32677160680` and
+  benchmark workflow `32677160652`, with two exact-SHA artifacts. Production
+  and independent tests are being composed; three fresh same-SHA reviews and
+  exact feature/main delivery gates remain pending under
   [`copy-file.md`](copy-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

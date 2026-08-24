@@ -1,6 +1,6 @@
 # Milestone 03 native `copy_file` review 01
 
-Status: **CONTRACT IN PROGRESS**
+Status: **IMPLEMENTATION IN PROGRESS**
 
 ## Base and boundary
 
@@ -12,9 +12,13 @@ Status: **CONTRACT IN PROGRESS**
 - Base main CI `32676296870` and benchmark `32676296945` are green.
 - Both benchmark workflows retain exactly two nonexpired exact-SHA artifacts.
 
-This documentation-only contract is exempt from adversarial review under the
-user's explicit instruction. Its workflows freeze documentation only; they are
-not implementation, behavior, equivalence, performance, or delivery evidence.
+The documentation-only contract commit
+`6021fb0d6b1cf668e1a339a2cd2f60ead8d555dd` is exempt from adversarial review
+under the user's explicit instruction. Exact contract CI `32677160680` passed
+all six jobs, and benchmark workflow `32677160652` passed both jobs while
+retaining exactly two nonexpired exact-SHA artifacts. These runs freeze
+documentation only; they are not implementation, behavior, equivalence,
+performance, or delivery evidence.
 
 ## Frozen feature
 

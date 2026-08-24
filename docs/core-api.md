@@ -400,7 +400,8 @@ The concrete consumers are the native
 [`file_info` tool](file-info.md), [`glob_files` tool](glob-files.md),
 [`grep_files` tool](grep-files.md), [`write_file` tool](write-file.md),
 [`edit_file` tool](edit-file.md), [`delete_file` tool](delete-file.md), and the
-twenty-third in-progress [`rename_file` tool](rename-file.md).
+delivered twenty-third [`rename_file` tool](rename-file.md). The current
+twenty-fourth candidate is [`copy_file`](copy-file.md).
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -602,6 +603,23 @@ durability semantics to the variant; the Linux/macOS implementation owns the
 confined no-follow, regular-file-only, absent-destination, exactly-once
 `NOREPLACE`, postcommit identity-check, and bounded parent-sync contract in
 [`rename-file.md`](rename-file.md).
+
+The twenty-fourth candidate adds the provider-neutral typed capability
+`Capability::FilesystemCopy { source, destination }`, serialized with the exact
+tag `filesystem_copy`. Both canonical endpoints are therefore visible to policy
+without embedding a JSON value; whole-capability serialized-byte limits apply,
+while JSON depth and node walking remain limited to `Tool` and `Custom` values.
+Native `copy_file` strictly prepares the same canonical pair for policy and
+execution. Core assigns no traversal, streaming, staging, overwrite, metadata,
+or durability semantics to this variant. The candidate Linux/macOS
+implementation owns the confined regular-file-only, absent-destination,
+16 MiB source and 64 KiB chunk bounds, SHA-256 verification, one no-replace
+commit, postcommit verification, and destination-parent synchronization
+contract in [`copy-file.md`](copy-file.md). A successful tool result contains
+exactly canonical `source`, canonical `destination`, and `bytes_copied`; core
+continues to apply the ordinary prepared-value and result limits. Its review and
+delivery remain pending; this API description makes no equivalence or
+performance claim.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
