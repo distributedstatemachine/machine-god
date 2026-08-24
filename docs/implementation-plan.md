@@ -201,8 +201,9 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **REPLACEMENT LOCAL
-GATE GREEN; CYCLE 3 REVIEW PENDING** from exact delivered base
+The twenty-fifth bounded slice, native `create_folder`, is **CYCLE 3 NOT GREEN;
+LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND CYCLE 4 PENDING** from exact
+delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
 `32686210561`, and main benchmark `32686210659`; both benchmark workflows
@@ -273,8 +274,15 @@ Cargo manifest, lockfile, CLI, workflow, or benchmark-workload changes; and a
 fresh 319,152-byte Mach-O arm64 release binary with SHA-256
 `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
 passing bare, version, help, and inert missing-path human/JSON smokes. Native
-Linux execution remains pending exact feature CI. A tree-identical cycle-3
-candidate and three fresh same-SHA tracks are next and remain pending.
+Linux execution remains pending exact feature CI. Documentation record
+`9d0bacd656d09b8ff57edfbfe7cbf701af9fef1e`, tree
+`b5fb1c2b5268e46793d48be1a02611381feca7c3`, and tree-identical cycle-3
+candidate `c1e572eb1ac1ac39a8a53f522e74f57fd1d4f85d` retain identical non-
+documentation behavior. Cycle 3 is not green: filesystem/robustness and
+performance/concurrency are green with zero findings, while correctness/API
+reported one low documentation-lineage finding and zero production defects.
+Lineage remediation, a replacement gate, and three fresh cycle-4 same-SHA
+tracks are next and remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1904,8 +1912,9 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **REPLACEMENT LOCAL GATE GREEN;
-  CYCLE 3 REVIEW PENDING** from exact delivered base
+  The twenty-fifth `create_folder` slice is **CYCLE 3 NOT GREEN; LINEAGE
+  REMEDIATION COMPOSED; REPLACEMENT GATE AND CYCLE 4 PENDING** from exact
+  delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
   `32686210659` are green; both benchmark workflows retain exactly two
@@ -1967,8 +1976,13 @@ gate:
   arm64 release SHA
   `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
   with bare/version/help/inert human-and-JSON smokes. Native Linux execution
-  remains pending exact feature CI. A tree-identical cycle-3 candidate and
-  three fresh same-SHA tracks are next and remain pending.
+  remains pending exact feature CI. Documentation record `9d0bacd`, tree
+  `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e` retain identical
+  non-documentation behavior. Cycle 3 is not green: filesystem/robustness and
+  performance/concurrency are green with zero findings, while correctness/API
+  reported one low documentation-lineage finding and zero production defects.
+  Lineage remediation, a replacement gate, and three fresh cycle-4 same-SHA
+  tracks are next and remain pending.
   It adds no delivery, performance, or fx-equivalence claim, so the combined
   native-tool checkbox remains open and the delivered count stays twenty-four.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

@@ -645,9 +645,13 @@ documentation findings and zero production defects. Exact remediation
 `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
 `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
 local gate across 17 private, 20 direct, six engine, seven host, and one core-
-contract focused tests. Native Linux execution remains pending exact feature
-CI; a tree-identical cycle-3 candidate, all three fresh review tracks, delivery,
-and `main` integration remain pending.
+contract focused tests. Documentation record `9d0bacd`, tree `b5fb1c2`, and
+tree-identical cycle-3 candidate `c1e572e` preserve the same non-documentation
+behavior. Cycle 3 is not green only for one low documentation-lineage finding;
+filesystem and performance are green, and all tracks found zero production
+defects. Native Linux execution remains pending exact feature CI; lineage
+remediation, a replacement gate, fresh cycle-4 review, delivery, and `main`
+integration remain pending.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

@@ -17,10 +17,14 @@ low evidence/documentation findings and zero production defects. Exact
 remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
 `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
 Rust 1.94.1 local gate with the 17-private-test remediation inventory and
-eleven-tool host wiring. A tree-identical cycle-3 candidate and three fresh
-same-SHA review tracks are pending, followed by delivery and `main` gates. The
-delivered count therefore remains twenty-four. Native Linux execution remains
-pending exact feature CI. The
+eleven-tool host wiring. Documentation record `9d0bacd`, tree `b5fb1c2`, and
+tree-identical cycle-3 candidate `c1e572e` retain that non-documentation
+behavior. Cycle 3 is not green: filesystem/robustness and performance/
+concurrency are green with zero findings, while correctness/API reported one
+low documentation-lineage finding and zero production defects. Lineage
+remediation, a replacement gate, and three fresh cycle-4 tracks are required
+before delivery. The delivered count therefore remains twenty-four. Native
+Linux execution remains pending exact feature CI. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -360,9 +364,12 @@ two low filesystem-evidence/documentation findings; the other two tracks are
 green and all tracks found zero production defects. Exact remediation
 `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
 `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
-local gate. A tree-identical cycle-3 candidate and three fresh same-SHA tracks
-remain pending, so this is not delivery, `main` integration, performance, or
-fx-equivalence evidence. See the
+local gate. Documentation record `9d0bacd`, tree `b5fb1c2`, and tree-identical
+cycle-3 candidate `c1e572e` retain identical non-documentation behavior. Cycle
+3 is not green only for one low lineage-record finding; the other two tracks
+are green and all three found zero production defects. Lineage remediation, a
+replacement gate, and fresh cycle-4 review remain pending, so this is not
+delivery, `main` integration, performance, or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact

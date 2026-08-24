@@ -1,7 +1,7 @@
 # Native reference-host composition
 
-Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING** for
-`create_folder`.
+Status: **CYCLE 3 NOT GREEN; LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND
+CYCLE 4 PENDING** for `create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -38,9 +38,13 @@ robustness reported two low evidence/documentation findings and zero production
 defects. Exact remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
 `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
 local gate, including the deterministic mixed-device private test and both
-eleven-tool host constructors. A tree-identical cycle-3 candidate and three
-fresh same-SHA tracks remain pending, followed by delivery and `main`
-integration. The delivered host remains exactly ten tools. Current execution
+eleven-tool host constructors. Documentation record `9d0bacd`, tree `b5fb1c2`,
+and tree-identical cycle-3 candidate `c1e572e` preserve that non-documentation
+behavior. Cycle 3 is not green only for one low documentation-lineage finding;
+filesystem and performance are green, and all three tracks found zero
+production defects. Lineage remediation, a replacement gate, and fresh cycle-4
+review remain pending, followed by delivery and `main` integration. The
+delivered host remains exactly ten tools. Current execution
 evidence is native macOS; Linux evidence is cross-target test compilation and
 warnings-denied library Clippy only, while native Linux execution remains
 pending exact feature CI.
@@ -185,9 +189,11 @@ reference-host constructors transfer the same retained workspace identity
 through one original descriptor plus ten identity-preserving clones. Cycle 2
 was not green on two low evidence/documentation findings. Exact remediation
 `f527293`, tree `40eef14`, passes the complete replacement local gate for the
-17-private/20-direct/6-engine/7-host/1-core-contract inventory. A tree-identical
-cycle-3 candidate and all three fresh same-SHA tracks remain pending. It is not
-the delivered or `main`-integrated composition.
+17-private/20-direct/6-engine/7-host/1-core-contract inventory. Cycle-3
+candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low lineage-
+record finding. Lineage remediation, a replacement gate, and all three fresh
+cycle-4 tracks remain pending. It is not the delivered or `main`-integrated
+composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

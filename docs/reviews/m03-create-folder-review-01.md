@@ -1,6 +1,7 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING**
+Status: **CYCLE 3 NOT GREEN; LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND
+CYCLE 4 PENDING**
 
 ## Base and boundary
 
@@ -329,22 +330,59 @@ local gate. Fresh exact evidence is:
   `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`,
   passing exact bare, version, help, and inert missing-path human/JSON smokes.
 
-The next candidate must be tree-identical to this exact remediation tree. A
-tree-identical cycle-3 candidate and fresh correctness/API, filesystem/
-robustness, and performance/concurrency tracks are pending. This local result
-is not delivery, `main` integration, product-performance, or fx-equivalence
-evidence.
+The next candidate must preserve this exact non-documentation behavior.
+Documentation-only gate record `9d0bacd656d09b8ff57edfbfe7cbf701af9fef1e`,
+tree `b5fb1c2b5268e46793d48be1a02611381feca7c3`, records the result without
+changing non-documentation files. Cycle-3 candidate
+`c1e572eb1ac1ac39a8a53f522e74f57fd1d4f85d` is tree-identical to that
+documentation record and retains non-documentation behavior identical to
+remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`. This local result is not
+delivery, `main` integration, product-performance, or fx-equivalence evidence.
+
+## Formal review cycle 3 and lineage remediation
+
+All three fresh formal tracks reviewed exact cycle-3 candidate
+`c1e572eb1ac1ac39a8a53f522e74f57fd1d4f85d`, tree
+`b5fb1c2b5268e46793d48be1a02611381feca7c3`, from clean detached worktrees:
+
+- Correctness/API is **NOT GREEN** with one LOW documentation/evidence finding
+  and zero production/API defects. The prior paragraph incorrectly required
+  the whole candidate tree to equal pre-record remediation tree `40eef148`,
+  even though documentation-only gate record `9d0bacd`, tree `b5fb1c2`, is the
+  candidate's exact tree-identical parent. The corrected lineage above now
+  distinguishes whole-tree identity from unchanged non-documentation behavior.
+- Filesystem/robustness is green with zero findings and zero production or
+  evidence defects. It passed the 17 private, 20 direct, and six engine tests;
+  native warnings-denied Clippy; Linux/FreeBSD cross-target checks; Linux
+  warnings-denied library Clippy; WASI compilation; and active Node 22.22.0
+  unsupported-target evidence 1/1.
+- Performance/concurrency is green with zero findings and zero production or
+  evidence defects. It passed the 17 private, 20 direct, six engine, seven host,
+  exact ten-clone, 256-component, and 4,112-sync-bound evidence plus native
+  warnings-denied all-target/all-feature Clippy.
+
+Cycle 3 is not green because every track must report zero findings. All three
+tracks found zero production defects. This documentation-only lineage
+remediation does not change production, tests, API, authority, dependencies,
+CLI behavior, workflows, or benchmark workloads. It must pass a replacement
+gate before a tree-identical cycle-4 candidate and three entirely fresh tracks.
 
 ## Current verdict
 
-**REPLACEMENT LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING.** Production
+**CYCLE 3 NOT GREEN; LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND CYCLE 4
+PENDING.** Production
 implementation, exports, eleven-tool/ten-clone host composition, and the 17-
 private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
 composed. Cycle 2 found zero production defects, its two low findings are
 remediated, and exact remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`,
 tree `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
-local gate. A tree-identical cycle-3 candidate and three fresh same-SHA tracks
-are next and remain pending. Native Linux execution remains pending exact
-feature CI. Feature delivery workflow, fast-forward integration, exact `main`
-workflow, delivery, product-performance, and fx-equivalence claims also remain
-pending. The delivered-slice count remains twenty-four.
+local gate. Documentation record `9d0bacd`, tree `b5fb1c2`, and tree-identical
+cycle-3 candidate `c1e572e` retain identical non-documentation behavior. Cycle
+3 is not green only for one low documentation-lineage finding; filesystem and
+performance are green, and all three tracks found zero production defects.
+This lineage remediation, a replacement gate, a tree-identical cycle-4
+candidate, and three entirely fresh same-SHA tracks are next and remain
+pending. Native Linux execution remains pending exact feature CI. Feature
+delivery workflow, fast-forward integration, exact `main` workflow, delivery,
+product-performance, and fx-equivalence claims also remain pending. The
+delivered-slice count remains twenty-four.

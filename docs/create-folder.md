@@ -1,6 +1,7 @@
 # Native `create_folder` contract
 
-Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 3 REVIEW PENDING**
+Status: **CYCLE 3 NOT GREEN; LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND
+CYCLE 4 PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -24,10 +25,16 @@ filesystem/robustness reported two low evidence/documentation findings and zero
 production defects. Exact remediation
 `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
 `40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
-local gate. A tree-identical cycle-3 candidate, three fresh cycle-3 tracks,
-feature delivery workflows, `main` integration, and exact `main` workflows
-remain pending. No CLI behavior, benchmark workload, product-performance
-claim, or fx-equivalence claim is added.
+local gate. Documentation record `9d0bacd656d09b8ff57edfbfe7cbf701af9fef1e`,
+tree `b5fb1c2b5268e46793d48be1a02611381feca7c3`, and tree-identical cycle-3
+candidate `c1e572eb1ac1ac39a8a53f522e74f57fd1d4f85d` retain identical non-
+documentation behavior. Cycle 3 is not green: filesystem/robustness and
+performance/concurrency are green with zero findings, while correctness/API
+reported one low documentation-lineage finding and zero production defects.
+Lineage remediation, a replacement gate, three fresh cycle-4 tracks, feature
+delivery workflows, `main` integration, and exact `main` workflows remain
+pending. No CLI behavior, benchmark workload, product-performance claim, or
+fx-equivalence claim is added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -261,9 +268,11 @@ after `copy_file`, yielding exactly eleven alphabetical tools and using one
 original retained descriptor plus ten identity-preserving clones. Both path-
 based and prepared-root constructors compose that same catalog and retained
 workspace identity. Exact remediation `f527293`, tree `40eef14`, passes the
-complete replacement local gate after cycle 2, which was not green. A tree-
-identical cycle-3 candidate and all three fresh same-SHA tracks remain pending.
-It is not a delivered or `main`-integrated authority surface.
+complete replacement local gate after cycle 2, which was not green. Cycle-3
+candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low documentation-
+lineage finding; lineage remediation, a replacement gate, and all three fresh
+cycle-4 tracks remain pending. It is not a delivered or `main`-integrated
+authority surface.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, recursively creates missing parents, treats an
@@ -342,10 +351,13 @@ local gate with fresh evidence:
   passing bare, version, help, and inert missing-path human/JSON smokes.
 
 Native Linux execution remains pending exact feature CI. Local-gate success is
-not delivery, product-performance, or fx-equivalence evidence. The next step is
-a tree-identical cycle-3 candidate followed by three fresh same-SHA review
-tracks. Production preflight API and filesystem audits reported zero findings,
-but they are not the required formal three-track review.
+not delivery, product-performance, or fx-equivalence evidence. Documentation
+record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e`
+preserve identical non-documentation behavior. Cycle 3 is not green only for
+one low documentation-lineage finding; the other two tracks are green and all
+three found zero production defects. Lineage remediation, a replacement gate,
+and three fresh cycle-4 same-SHA tracks are required. Production preflight API
+and filesystem audits reported zero findings, but they are not formal tracks.
 
 ## Review and delivery protocol
 
@@ -372,6 +384,7 @@ normalization, external paths, symlink traversal, directory enumeration,
 content access, non-Linux/macOS hardened execution, CLI ownership, benchmark
 workloads, product-performance claims, and complete fx equivalence remain
 outside this slice. The replacement complete local gate is green at
-`f527293`, tree `40eef14`. A tree-identical cycle-3 candidate, three fresh same-
-SHA review tracks, delivery, and `main` integration remain pending; the
-delivered-slice count stays twenty-four.
+`f527293`, tree `40eef14`. Cycle-3 candidate `c1e572e`, tree `b5fb1c2`, is not
+green only for one low documentation-lineage finding. Lineage remediation, a
+replacement gate, three fresh cycle-4 same-SHA review tracks, delivery, and
+`main` integration remain pending; the delivered-slice count stays twenty-four.
