@@ -1,6 +1,7 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING**
+Status: **CYCLE 2 NOT GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL
+GATE AND CYCLE 3 PENDING**
 
 ## Base and boundary
 
@@ -86,8 +87,9 @@ composed integration SHA can become a formal behavior candidate.
   idempotence, final non-directory conflict, and rejection of every symlink or
   non-directory ancestor without outside effects.
 - [x] Concurrent directory appearance and hostile-entry appearance, root and
-  prefix replacement, moved retained parents, subordinate mounts, outside
-  sentinels, and explicit no-sandbox boundary.
+  prefix replacement, moved retained parents, deterministic mixed-device
+  identity traversal, outside sentinels, and explicit no-sandbox boundary.
+  This is not privileged real-mount testing or a sandbox guarantee.
 - [x] Requested `0755`, host umask/default-ACL inheritance, no chmod or ACL
   rewriting, hostile owner-bit removal, partial-prefix residue, and fixed
   ambiguity.
@@ -98,16 +100,25 @@ composed integration SHA can become a formal behavior candidate.
   no rollback; precommit cancellation precedence; ignored postcommit
   cancellation; inert first poll, synchronous completion, drop, and no detached
   work.
-- [x] Linux/macOS behavior, FreeBSD/WASI compile coverage, active unsupported
+- [x] Native macOS behavior, Linux/FreeBSD cross-target test compilation,
+  Linux library warnings-denied Clippy, WASI compilation and active unsupported
   target, exact delivered ten-tool checkpoint and composed eleven-tool/ten-
   clone host, no-unsafe, dependency, compatibility, documentation, diff, and
   fresh release smoke evidence.
+- [ ] Native Linux execution under exact feature CI.
 
 Exact Rust 1.94.1 focused evidence is green across 16 private, 20 direct, six
 engine, seven reference-host, and one core-contract test. Production preflight
 API and filesystem audits each reported zero findings, but those audits are not
 any of the required formal correctness/API, filesystem/robustness, or
 performance/concurrency tracks.
+
+Cycle-2 evidence remediation adds a seventeenth private test that injects a
+different `st_dev` for one existing component and verifies that adjacent mixed-
+device identities are independently retained through initial, revalidation,
+and postcommit walks. This is deterministic identity-traversal evidence, not a
+privileged real mount or a sandbox guarantee. The replacement gate has not yet
+qualified the 17-test inventory.
 
 ## Exact composed local gate
 
@@ -128,9 +139,10 @@ Exact implementation precursor
 - exact `cargo-deny` 0.20.2 policy checks pass, with only accepted duplicate-
   version warnings, and `cargo-audit` 0.22.2 checks 175 dependencies against
   1,225 locally retained advisories with zero findings;
-- supported macOS/Linux behavior is green; Linux and FreeBSD no-default test
-  checks and warnings-denied library Clippy pass; WASI compilation passes and
-  the active Node 22.22.0 unsupported-target test passes 1/1;
+- native macOS behavior is green; Linux and FreeBSD no-default cross-target
+  test compilation and Linux warnings-denied library Clippy pass; WASI
+  compilation passes and the active Node 22.22.0 unsupported-target test passes
+  1/1. Native Linux execution remains pending exact feature CI;
 - at exact precursor `ea408a1`, 70 Markdown files contain 501 links, including
   351 relative file links, with zero missing relative targets; this maintained
   local-gate record adds one valid relative link, so its current inventory is
@@ -236,8 +248,9 @@ local gate. Fresh exact evidence includes:
 - 130 Python tests with eight expected platform skips, clean byte-identical
   pinned-fx regeneration, `cargo-deny` 0.20.2, and `cargo-audit` 0.22.2 with
   zero findings across 175 dependencies and 1,225 advisories;
-- Linux and FreeBSD test checks and warnings-denied library Clippy, WASI test
-  compilation, and active Node 22.22.0 unsupported-target evidence 1/1;
+- Linux and FreeBSD cross-target test compilation and Linux warnings-denied
+  library Clippy, WASI test compilation, and active Node 22.22.0 unsupported-
+  target evidence 1/1;
 - 70 Markdown files, 502 links, 352 repository-relative links, and zero missing
   targets; clean diff, zero unsafe additions, and no Cargo, lockfile, CLI,
   workflow, or benchmark-workload change; and
@@ -249,13 +262,49 @@ This local gate is not delivery, product-performance, or fx-equivalence
 evidence. A tree-identical replacement candidate and all three fresh cycle-2
 tracks remain pending.
 
+## Formal review cycle 2 and evidence remediation
+
+Tree-identical candidate
+`6e1f885aa1e167e902b5cda729023fd7c283895e`, tree
+`ac57575c3ee300050f5a92d4cae5f507fe654002`, is **NOT GREEN**.
+
+- Correctness/API is **GREEN** with zero findings.
+- Performance/concurrency is **GREEN** with zero findings.
+- Filesystem/robustness is **NOT GREEN** with two low findings and zero
+  production defects.
+
+The first low finding is an evidence gap: the checked subordinate-mount row had
+no deterministic proof that adjacent traversed components may retain different
+device identities. Evidence remediation adds private test
+`adjacent_mixed_device_identities_are_retained_across_every_walk_phase`, which
+injects a changed `st_dev` for the first existing component, observes that
+component once during each initial, revalidation, and postcommit identity walk,
+and preserves the expected one-create and bottom-up sync sequence. This proves
+mixed-device identity traversal through the deterministic evidence boundary. It
+does not perform a privileged real mount and does not establish a filesystem-
+sandbox guarantee.
+
+The second low finding is maintained-documentation overclaim: the exact local
+evidence ran native macOS behavior, while Linux evidence was cross-target test
+compilation and warnings-denied library Clippy. The maintained contract,
+architecture, API, security, host, plan, README, and this review now state that
+native Linux execution remains pending exact feature CI. Historical exact-gate
+counts remain unchanged; the composed remediation inventory is now 17 private,
+20 direct, six engine, seven reference-host, and one core-contract test.
+
+These changes remediate both low findings without changing production code,
+public API, authority, dependency, CLI, workflow, benchmark workload, or the
+no-sandbox boundary. They do not retroactively make cycle 2 green. A complete
+replacement local gate and three fresh same-SHA cycle-3 tracks remain required.
+
 ## Current verdict
 
-**REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING.** Production
-implementation, exports, evidence, eleven-tool/ten-clone host composition, and
-every cycle-1 documentation remediation pass the complete replacement local
-gate at exact `7bc3fb9`, tree `b39bd9b`. A replacement immutable candidate, all
-three fresh cycle-2 review tracks, feature delivery workflow, fast-forward
-integration, exact `main` workflow, delivery, product-performance, and fx-
-equivalence claims remain pending. The delivered-slice count remains twenty-
-four.
+**CYCLE 2 NOT GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND
+CYCLE 3 PENDING.** Production implementation, exports, eleven-tool/ten-clone
+host composition, and the 17-private/20-direct/6-engine/7-host/1-core-contract
+evidence inventory are composed. Cycle 2 found zero production defects and the
+two low findings are remediated in current source and documentation, but no
+replacement complete local gate or immutable cycle-3 candidate exists yet.
+Three fresh cycle-3 tracks, feature delivery workflow, fast-forward integration,
+exact `main` workflow, delivery, product-performance, and fx-equivalence claims
+remain pending. The delivered-slice count remains twenty-four.

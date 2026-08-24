@@ -1,6 +1,7 @@
 # Native `create_folder` contract
 
-Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING**
+Status: **CYCLE 2 NOT GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL
+GATE AND CYCLE 3 PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -16,13 +17,18 @@ validate the contract checkpoint only; they are not implementation, delivery,
 performance, or fx-equivalence evidence.
 
 Production behavior, exports, independently owned evidence, and both reference-
-host constructors are composed and pass the complete replacement local gate on
+host constructors are composed and passed the complete cycle-2 precursor local gate on
 exact remediation `7bc3fb99359a12320cf1e5aa8f858c1abd0776b2`, tree
-`b39bd9b5ea36e3e4b5733f8cae168770e1a9f99d`. An immutable replacement
-behavior-candidate SHA, the required fresh cycle-2 three-track same-SHA review,
-feature delivery workflows, `main` integration, and exact `main` workflows
-remain pending. No CLI behavior, benchmark workload, product-performance claim,
-or fx-equivalence claim is added.
+`b39bd9b5ea36e3e4b5733f8cae168770e1a9f99d`. Tree-identical cycle-2 candidate
+`6e1f885aa1e167e902b5cda729023fd7c283895e`, tree
+`ac57575c3ee300050f5a92d4cae5f507fe654002`, is not green: correctness/API
+and performance/concurrency are green with zero findings, while filesystem/
+robustness reported two low evidence/documentation findings and zero production
+defects. Evidence remediation is composed; the replacement complete local gate,
+an immutable cycle-3 candidate, three fresh cycle-3 tracks, feature delivery
+workflows, `main` integration, and exact `main` workflows remain pending. No
+CLI behavior, benchmark workload, product-performance claim, or fx-equivalence
+claim is added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -256,8 +262,9 @@ after `copy_file`, yielding exactly eleven alphabetical tools and using one
 original retained descriptor plus ten identity-preserving clones. Both path-
 based and prepared-root constructors compose that same catalog and retained
 workspace identity. This composed behavior passes the complete local gate and
-awaits formal review; it is not a delivered or `main`-integrated authority
-surface.
+has completed cycle 2, which was not green. Evidence remediation is composed;
+the replacement full gate and cycle 3 remain pending. It is not a delivered or
+`main`-integrated authority surface.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, recursively creates missing parents, treats an
@@ -282,7 +289,9 @@ behaviors. Zig is benchmark input only.
   file/content/enumeration/delete/overwrite authority.
 - [x] Ancestor and final symlink, file, FIFO, socket, and device rejection;
   concurrent directory and hostile-entry appearance; root and prefix
-  replacement; moved retained parents; subordinate mounts; outside sentinels.
+  replacement; moved retained parents; deterministic mixed-device identity
+  traversal; outside sentinels. This is not privileged real-mount testing or a
+  sandbox guarantee.
 - [x] Requested `0755`, benign and hostile umasks, inherited ACLs, no
   permission or ACL rewriting, unopenable new intermediate ambiguity, and
   retained safe partial prefixes.
@@ -292,20 +301,26 @@ behaviors. Zig is benchmark input only.
 - [x] Precommit cancellation ordering and precedence, postcommit cancellation
   suppression, inert-until-poll, synchronous one-poll completion, drop, no
   detached work, and same-poll engine unknown-result recovery.
-- [x] Native Linux/macOS execution, FreeBSD/WASI compilation, active
-  unsupported-target behavior, exact delivered ten-tool checkpoint, composed
-  eleven-tool/ten-clone candidate, no-unsafe, dependency, compatibility,
-  documentation, clean-diff, and fresh release-binary smoke evidence.
+- [x] Native macOS execution, Linux and FreeBSD cross-target test compilation,
+  Linux library warnings-denied Clippy, WASI compilation and active unsupported-
+  target behavior, exact delivered ten-tool checkpoint, composed eleven-tool/
+  ten-clone candidate, no-unsafe, dependency, compatibility, documentation,
+  clean-diff, and fresh release-binary smoke evidence.
+- [ ] Native Linux execution under exact feature CI.
 
-The rows are supported by the complete exact Rust 1.94.1 local gate recorded in
-the [`create_folder` review](reviews/m03-create-folder-review-01.md): 16 private,
-20 direct, six engine, seven reference-host, and one core-contract focused
-tests; 877 default and 925 all-feature discovered tests with zero benchmarks;
-workspace formatting, warnings-denied Clippy, tests, and doctests; 130 Python
-tests with eight expected macOS-only skips; compatibility, dependency,
-portability, active WASI, documentation, diff, and release-binary checks.
-Production preflight API and filesystem audits reported zero findings, but they
-are not the required formal three-track review.
+The cycle-2 precursor local gate recorded in the
+[`create_folder` review](reviews/m03-create-folder-review-01.md) passed 16
+private, 20 direct, six engine, seven reference-host, and one core-contract
+focused tests; 877 default and 925 all-feature discovered tests with zero
+benchmarks; workspace formatting, warnings-denied Clippy, tests, and doctests;
+130 Python tests with eight expected macOS-only skips; compatibility,
+dependency, native macOS execution, Linux/FreeBSD cross-target compilation,
+Linux library Clippy, active WASI, documentation, diff, and release-binary
+checks. Cycle-2 evidence remediation adds a seventeenth private deterministic
+mixed-device identity-chain test. The replacement complete local gate has not
+yet qualified that 17-test inventory. Native Linux execution remains pending
+exact feature CI. Production preflight API and filesystem audits reported zero
+findings, but they are not the required formal three-track review.
 
 ## Review and delivery protocol
 
@@ -331,5 +346,6 @@ File creation, overwrite, removal, rollback, exact effective mode, ACL
 normalization, external paths, symlink traversal, directory enumeration,
 content access, non-Linux/macOS hardened execution, CLI ownership, benchmark
 workloads, product-performance claims, and complete fx equivalence remain
-outside this slice. Formal same-SHA review, delivery, and `main` integration
-remain pending; the delivered-slice count stays twenty-four.
+outside this slice. The replacement complete local gate, cycle-3 same-SHA
+review, delivery, and `main` integration remain pending; the delivered-slice
+count stays twenty-four.

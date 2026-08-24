@@ -295,9 +295,13 @@ or performance claims remain open. The current delivered library composition
 includes the ten bounded workspace tools documented below. `rename_file` and
 `copy_file` are delivered. `create_folder` implementation and eleven-tool
 composition are present in candidate source. Exact remediation `7bc3fb9`, tree
-`b39bd9b`, passes the complete replacement local gate; fresh cycle-2 review,
-delivery, and `main` integration remain pending. The last delivered authority surface therefore
-stays at ten tools. The
+`b39bd9b`, passes the cycle-2 precursor local gate. Cycle-2 candidate `6e1f885`,
+tree `ac57575`, is not green: correctness/API and performance/concurrency are
+green with zero findings, while filesystem/robustness reported two low
+evidence/documentation findings and zero production defects. Evidence
+remediation is composed; the replacement full gate, cycle-3 review, delivery,
+and `main` integration remain pending. The last delivered authority surface
+therefore stays at ten tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -325,9 +329,10 @@ normal bounded path rules after permission is granted.
 Candidate source extends both constructors with `create_folder` immediately
 after `copy_file`, so eleven alphabetical tools share the original retained
 descriptor plus ten identity-preserving clones. Exact remediation `7bc3fb9`,
-tree `b39bd9b`, passes the complete replacement local gate; fresh cycle-2 review
-remains pending. This has not replaced the integrated ten-tool authority
-surface.
+tree `b39bd9b`, passes the cycle-2 precursor local gate. Cycle 2 was not green
+on two low evidence/documentation findings; evidence remediation is composed,
+while the replacement full gate and cycle 3 remain pending. This has not
+replaced the integrated ten-tool authority surface.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to
@@ -1010,6 +1015,13 @@ calls. Failed verification, moved retained parents, uncertain `mkdirat`, or
 durability failure returns fixed nonretryable ambiguity without claiming
 rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
+
+Current execution evidence is native macOS plus Linux/FreeBSD cross-target test
+compilation, Linux library Clippy, and WASI compilation/active unsupported
+behavior. It does not establish native Linux execution, which remains pending
+exact feature CI. Deterministic mixed-device identity traversal covers a
+changed-`st_dev` chain without privileged real-mount operations; it is not
+subordinate-mount sandbox proof.
 
 These tools provide descriptor-rooted confinement of model-selected path
 components, not a claim that an untrusted host is sandboxed. The host's

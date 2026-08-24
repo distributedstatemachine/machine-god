@@ -63,6 +63,7 @@ struct TraceEvidence {
     mkdir_actions: Vec<MkdirAction>,
     open_fault: Option<(CreateFolderPhase, CreateFolderOpenSite, rustix::io::Errno)>,
     fstat_fault: Option<(CreateFolderPhase, CreateFolderFstatSite, rustix::io::Errno)>,
+    different_device_component: Option<usize>,
     sync_errors: Vec<(CreateFolderSyncSite, usize, rustix::io::Errno)>,
 }
 
@@ -76,6 +77,7 @@ impl TraceEvidence {
             mkdir_actions: Vec::new(),
             open_fault: None,
             fstat_fault: None,
+            different_device_component: None,
             sync_errors: Vec::new(),
         }
     }
@@ -148,7 +150,13 @@ impl CreateFolderEvidence for TraceEvidence {
         {
             return Err(error);
         }
-        rustix::fs::fstat(descriptor)
+        let mut metadata = rustix::fs::fstat(descriptor)?;
+        if matches!(site, CreateFolderFstatSite::Component(component_index)
+            if self.different_device_component == Some(component_index))
+        {
+            metadata.st_dev ^= 1;
+        }
+        Ok(metadata)
     }
 
     #[cfg(target_os = "macos")]
@@ -397,6 +405,61 @@ fn real_pipeline_uses_one_mkdir_per_component_requested_mode_and_bottom_up_sync(
         );
     }
     assert!(temporary.path().join("existing/parent/final").is_dir());
+}
+
+#[test]
+fn adjacent_mixed_device_identities_are_retained_across_every_walk_phase() {
+    let (temporary, tool) = fixture("mixed-device-chain");
+    fs::create_dir(temporary.path().join("mounted-component")).unwrap();
+    let mut evidence = TraceEvidence::new();
+    evidence.different_device_component = Some(0);
+
+    assert_eq!(
+        execute_with(
+            &tool,
+            "mounted-component/final",
+            &CancellationToken::new(),
+            &mut evidence,
+        )
+        .unwrap(),
+        ToolOutput::success(json!({"path": "mounted-component/final"}))
+    );
+    assert_eq!(
+        evidence.mkdir_operations(),
+        vec![&Operation::Mkdir(0, 1, "final".to_owned(), 0o755)]
+    );
+    assert_eq!(
+        evidence.sync_operations(),
+        vec![
+            (CreateFolderSyncSite::CreatedDirectory(1), 0),
+            (CreateFolderSyncSite::FirstCreatedParent(1), 0),
+        ]
+    );
+    for phase in [
+        CreateFolderPhase::Initial,
+        CreateFolderPhase::Revalidate,
+        CreateFolderPhase::Postcommit,
+    ] {
+        assert_eq!(
+            evidence
+                .operations
+                .iter()
+                .filter(|operation| {
+                    matches!(
+                        operation,
+                        Operation::Fstat(
+                            observed_phase,
+                            CreateFolderFstatSite::Component(0),
+                            _
+                        ) if *observed_phase == phase
+                    )
+                })
+                .count(),
+            1,
+            "mixed-device component must be identified once in {phase:?}"
+        );
+    }
+    assert!(temporary.path().join("mounted-component/final").is_dir());
 }
 
 #[test]

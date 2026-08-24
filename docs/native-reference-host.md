@@ -1,7 +1,7 @@
 # Native reference-host composition
 
-Status: **REPLACEMENT LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING** for
-`create_folder`.
+Status: **CYCLE 2 NOT GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL
+GATE AND CYCLE 3 PENDING** for `create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -33,8 +33,17 @@ alphabetical tools through the original retained descriptor plus ten clones.
 Seven exact Rust 1.94.1 reference-host tests are green as part of the
 16-private/20-direct/6-engine/7-host/1-core-contract focused evidence. Exact
 remediation `7bc3fb9`, tree `b39bd9b`, passes the complete replacement local
-gate. Fresh cycle-2 review, delivery, and `main` integration remain pending; the
-delivered host remains exactly ten tools.
+gate. Cycle-2 candidate `6e1f885`, tree `ac57575`, is not green: correctness/API
+and performance/concurrency are green with zero findings, while filesystem/
+robustness reported two low evidence/documentation findings and zero production
+defects. Evidence remediation is composed; the replacement full gate, fresh
+cycle-3 review, delivery, and `main` integration remain pending. The delivered
+host remains exactly ten tools. Current execution evidence is native macOS;
+Linux evidence is cross-target test compilation and library Clippy, while
+native Linux execution remains pending exact feature CI. Mixed-device
+remediation raises the composed private-test inventory from 16 to 17 without
+changing the seven host tests; the replacement full gate has not yet qualified
+that inventory.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -174,8 +183,10 @@ The composed `create_folder` behavior registers exactly eleven alphabetical
 tools by inserting `create_folder` immediately after `copy_file`. Both
 reference-host constructors transfer the same retained workspace identity
 through one original descriptor plus ten identity-preserving clones. This
-candidate catalog passes the complete local gate, awaits formal review, and is
-not the delivered or `main`-integrated composition.
+candidate catalog passed the cycle-2 precursor local gate. Cycle 2 was not green
+on two low evidence/documentation findings; evidence remediation is composed,
+while the replacement full gate and cycle 3 remain pending. It is not the
+delivered or `main`-integrated composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

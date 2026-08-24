@@ -42,17 +42,21 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
-The twenty-fifth, library-only native `create_folder` slice is **REPLACEMENT
-LOCAL GATE GREEN; CYCLE 2 REVIEW PENDING** from delivered base `d1a5bc2`. Exact frozen
-contract commit `9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs
-of CI `32687614476`; benchmark workflow `32687614442` passed both jobs and
-retains exactly two nonexpired exact-SHA artifacts. Candidate source composes
-strict single-path `FilesystemAccess::Create` authority, recursive no-follow
-directory creation, a first-creation commit boundary, bounded bottom-up
-durability, and eleven-tool host registration. Exact remediation `7bc3fb9`, tree
-`b39bd9b`, passes the complete replacement local gate; fresh cycle-2 three-track
-review remains pending. The last delivered host stays at ten tools and no
-delivery or performance claim is made.
+The twenty-fifth, library-only native `create_folder` slice is **CYCLE 2 NOT
+GREEN; EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND CYCLE 3
+PENDING** from delivered base `d1a5bc2`. Exact frozen contract commit
+`9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
+`32687614476`; benchmark workflow `32687614442` passed both jobs and retains
+exactly two nonexpired exact-SHA artifacts. Candidate source composes strict
+single-path `FilesystemAccess::Create` authority, recursive no-follow directory
+creation, a first-creation commit boundary, bounded bottom-up durability, and
+eleven-tool host registration. Cycle-2 candidate `6e1f885`, tree `ac57575`, is
+not green: correctness/API and performance/concurrency are green with zero
+findings, while filesystem/robustness reported two low evidence/documentation
+findings and zero production defects. Evidence remediation is composed; the
+replacement complete local gate and fresh cycle-3 three-track review remain
+pending. The last delivered host stays at ten tools and no delivery or
+performance claim is made.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -640,7 +644,9 @@ selection is validated by the composing constructor, and production credential
 discovery remains after the already prepared retained roots are accepted.
 The composed `create_folder` source does not alter these delivered counts; it
 extends both constructors together to eleven tools and ten clones without
-reopening the root. The local gate is green and formal review remains pending.
+reopening the root. Cycle 2 was not green on two low evidence/documentation
+findings; evidence remediation is composed, while the replacement full gate and
+cycle 3 remain pending.
 Production and focused tests for this behavior are present. Formal adversarial
 review was green on
 exact behavior SHA `f1dc4751`; after the post-review Linux lint normalization at
@@ -1215,8 +1221,12 @@ up synchronization despite earlier verification or sync failure. The public
 bound is 257 sync sites, 16 calls per site, and 4,112 total calls. No effect
 means no sync. Path-only success, fixed redacted ambiguity, concurrent entry and
 moved-parent limitations, and the no-sandbox boundary are normative in
-[`create-folder.md`](create-folder.md). Formal review, delivery, performance,
-and fx-equivalence claims remain pending.
+[`create-folder.md`](create-folder.md). Current execution evidence is native
+macOS plus Linux/FreeBSD cross-target test compilation, Linux library Clippy,
+and WASI compilation/active unsupported behavior. Native Linux execution
+remains pending exact feature CI. Cycle 2 is not green; the replacement full
+gate, cycle-3 review, delivery, performance, and fx-equivalence claims remain
+pending.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

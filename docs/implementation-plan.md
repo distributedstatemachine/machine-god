@@ -201,8 +201,9 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **REPLACEMENT LOCAL
-GATE GREEN; CYCLE 2 REVIEW PENDING** from exact delivered base
+The twenty-fifth bounded slice, native `create_folder`, is **CYCLE 2 NOT GREEN;
+EVIDENCE REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND CYCLE 3 PENDING** from
+exact delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
 `32686210561`, and main benchmark `32686210659`; both benchmark workflows
@@ -225,12 +226,16 @@ Exact precursor `ea408a1f80417475e9b08513a62e9c87b38c4e75`, tree
 `7055e930accea4af645b3827b70b5343a8913888`, passes the complete local gate:
 16 private, 20 direct, six engine, seven host, and one core-contract focused
 tests; 877 default and 925 all-feature discovered tests with zero benchmarks;
-full Rust and Python suites; dependency, compatibility, Linux/FreeBSD/WASI,
-active Node 1/1, documentation, diff, release-hash, and CLI-smoke checks.
+full Rust and Python suites; dependency and compatibility checks; native macOS
+execution; Linux/FreeBSD cross-target test compilation; Linux library Clippy;
+WASI compilation and active Node 1/1; documentation, diff, release-hash, and
+CLI-smoke checks.
 Production preflight API and filesystem audits reported zero findings, but are
 not the required formal three-track review. An immutable formal candidate,
 fresh three-track review, feature delivery workflows, integration, and exact
-`main` workflows remain pending. This makes no delivery, performance, or fx-
+`main` workflows remained pending at that checkpoint. Local execution evidence
+was native macOS; Linux evidence was cross-target test compilation and library
+Clippy, not native Linux execution. This makes no delivery, performance, or fx-
 equivalence claim, and the delivered-slice count remains twenty-four.
 Tree-identical formal cycle-1 candidate
 `8ce899acee73a6dbcc9a80b96722df7e3ba3e9f8`, tree
@@ -242,8 +247,20 @@ remediation `7bc3fb99359a12320cf1e5aa8f858c1abd0776b2`, tree
 `b39bd9b5ea36e3e4b5733f8cae168770e1a9f99d`, passes the complete replacement
 local gate across all Rust, focused/discovery, Python, compatibility,
 dependency, Linux/FreeBSD/WASI, active Node, documentation, diff, and release-
-smoke checks. A replacement candidate and three fresh cycle-2 review tracks
-remain pending.
+smoke checks. Tree-identical cycle-2 candidate
+`6e1f885aa1e167e902b5cda729023fd7c283895e`, tree
+`ac57575c3ee300050f5a92d4cae5f507fe654002`, is **NOT GREEN**.
+Correctness/API and performance/concurrency are green with zero findings.
+Filesystem/robustness reported two low findings and zero production defects:
+checked subordinate-mount coverage lacked deterministic changed-`st_dev`
+evidence, and maintained documentation overclaimed native Linux execution.
+Evidence remediation composes a deterministic mixed-device identity-chain
+regression without privileged real-mount or sandbox claims and corrects current
+execution evidence to native macOS plus Linux cross-target test compilation/
+library Clippy. The composed focused inventory is now 17 private, 20 direct,
+six engine, seven host, and one core-contract test; its replacement gate remains
+pending. Native Linux execution remains pending exact feature CI. A replacement
+complete local gate and fresh cycle-3 three-track review remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1873,8 +1890,9 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **REPLACEMENT LOCAL GATE GREEN;
-  CYCLE 2 REVIEW PENDING** from exact delivered base
+  The twenty-fifth `create_folder` slice is **CYCLE 2 NOT GREEN; EVIDENCE
+  REMEDIATION COMPOSED; REPLACEMENT FULL GATE AND CYCLE 3 PENDING** from exact
+  delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
   `32686210659` are green; both benchmark workflows retain exactly two
@@ -1896,12 +1914,13 @@ gate:
   clones. Exact precursor `ea408a1`, tree `7055e93`, passes the complete local
   gate across 16 private, 20 direct, six engine, seven host, and one core-
   contract focused tests; 877 default and 925 all-feature discovered tests with
-  zero benchmarks; full Rust and Python suites; dependency, compatibility,
-  Linux/FreeBSD/WASI, active Node 1/1, documentation, diff, release-hash, and
-  CLI-smoke checks. Production preflight API and filesystem audits found no
-  issues but are not the required formal three-track review. A frozen candidate
-  SHA, fresh same-SHA review, feature workflows, integration, and main
-  workflows remain pending under
+  zero benchmarks; full Rust and Python suites; dependency and compatibility;
+  native macOS execution; Linux/FreeBSD cross-target test compilation; Linux
+  library Clippy; WASI compilation and active Node 1/1; documentation, diff,
+  release-hash, and CLI-smoke checks. Production preflight API and filesystem
+  audits found no issues but are not the required formal three-track review. A
+  frozen candidate SHA, fresh same-SHA review, feature workflows, integration,
+  and main workflows remained pending at that checkpoint under
   [`create-folder.md`](create-folder.md) and
   [`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
   Exact cycle-1 candidate `8ce899a`, tree `065cd19`, is not green because two
@@ -1910,8 +1929,21 @@ gate:
   Every reported passage is fixed. Exact remediation `7bc3fb9`, tree `b39bd9b`,
   passes the complete replacement local gate across all Rust, focused/
   discovery, Python, compatibility, dependency, Linux/FreeBSD/WASI, active
-  Node, documentation, diff, and release-smoke checks. A replacement candidate
-  and three fresh cycle-2 review tracks remain pending.
+  Node, documentation, diff, and release-smoke checks. Tree-identical cycle-2
+  candidate `6e1f885aa1e167e902b5cda729023fd7c283895e`, tree
+  `ac57575c3ee300050f5a92d4cae5f507fe654002`, is not green. Correctness/API
+  and performance/concurrency are green with zero findings. Filesystem/
+  robustness reported two low findings and zero production defects: checked
+  subordinate-mount coverage lacked deterministic changed-`st_dev` evidence,
+  and maintained documentation overclaimed native Linux execution. Evidence
+  remediation composes deterministic mixed-device identity traversal without
+  privileged real-mount or sandbox claims and corrects current execution
+  evidence to native macOS plus Linux cross-target test compilation/library
+  Clippy. The composed focused inventory is now 17 private, 20 direct, six
+  engine, seven host, and one core-contract test; its replacement gate remains
+  pending. Native Linux execution remains pending exact feature CI. A
+  replacement complete local gate and fresh cycle-3 same-SHA review remain
+  pending.
   It adds no delivery, performance, or fx-equivalence claim, so the combined
   native-tool checkbox remains open and the delivered count stays twenty-four.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

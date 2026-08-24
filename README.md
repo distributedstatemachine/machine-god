@@ -12,9 +12,12 @@ twenty-four delivered bounded slices. The twenty-fourth, library-only
 exact feature and `main` delivery gates. The twenty-fifth, library-only
 `create_folder` behavior is composed from that delivered base; exact remediation
 `7bc3fb9`, tree `b39bd9b`, passes the complete replacement Rust 1.94.1 local
-gate and its eleven-tool host wiring is green. Fresh cycle-2 three-track review,
-delivery, and `main` integration remain pending. The delivered count therefore remains
-twenty-four. The
+gate and its eleven-tool host wiring is green. Cycle-2 candidate `6e1f885`, tree
+`ac57575`, is not green: correctness/API and performance/concurrency are green,
+while filesystem/robustness reported two low evidence/documentation findings
+and zero production defects. Evidence remediation is composed; the replacement
+full gate, fresh cycle-3 review, delivery, and `main` integration remain
+pending. The delivered count therefore remains twenty-four. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -350,8 +353,11 @@ original retained descriptor plus ten clones. The exact frozen contract commit
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
 exactly two nonexpired exact-SHA artifacts. Those runs cover the contract only.
 Exact remediation `7bc3fb9`, tree `b39bd9b`, passes the complete replacement
-local gate. Fresh cycle-2 review remains pending, so this is not delivery,
-`main` integration, performance, or fx-equivalence evidence. See the
+local gate. Cycle-2 candidate `6e1f885`, tree `ac57575`, is not green only for
+two low filesystem-evidence/documentation findings; the other two tracks are
+green and all tracks found zero production defects. Evidence remediation is
+composed, with replacement full-gate and cycle-3 review pending, so this is not
+delivery, `main` integration, performance, or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact
