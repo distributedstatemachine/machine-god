@@ -131,8 +131,10 @@ Exact implementation precursor
 - supported macOS/Linux behavior is green; Linux and FreeBSD no-default test
   checks and warnings-denied library Clippy pass; WASI compilation passes and
   the active Node 22.22.0 unsupported-target test passes 1/1;
-- 70 Markdown files contain 501 links, including 351 relative file links, with
-  zero missing relative targets;
+- at exact precursor `ea408a1`, 70 Markdown files contain 501 links, including
+  351 relative file links, with zero missing relative targets; this maintained
+  local-gate record adds one valid relative link, so its current inventory is
+  70 files, 502 links, 352 relative file links, and zero missing targets;
 - the feature diff adds no unsafe code, dependency, lockfile, CLI, workflow, or
   benchmark-workload change, and the feature worktree is clean; and
 - a fresh locked release build produces a 319,152-byte binary with SHA-256
@@ -213,6 +215,13 @@ gate green and leave only formal review, delivery, and `main` integration
 pending. Production code, API, dependencies, CLI behavior, workflows, and
 benchmark workloads are unchanged. A complete replacement local gate and all
 three fresh replacement reviewers remain required.
+
+First documentation-remediation commit `f24f98f`, tree `bcd7938`, passed the
+required Rust, focused, Python, compatibility, dependency, cross-target, active
+WASI, diff, and release-smoke checks. Its documentation shard found that the
+historical precursor link counts above needed explicit lineage after the local-
+gate record added its own review link. This clarification changes no code or
+behavior; a complete exact replacement gate remains required before cycle 2.
 
 ## Current verdict
 
