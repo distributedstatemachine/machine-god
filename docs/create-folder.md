@@ -1,6 +1,6 @@
 # Native `create_folder` contract
 
-Status: **LINUX TEST-CLIPPY REMEDIATION GATE GREEN; FRESH REVIEW PENDING**
+Status: **CYCLE 5 REVIEW GREEN; REPLACEMENT DELIVERY PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -47,8 +47,11 @@ The trace now stores platform-native `rustix::fs::RawMode`; focused macOS,
 Linux warnings-denied test-target Clippy, and FreeBSD compilation checks are
 green. Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
 `b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
-gate. Its fresh three-track review remains pending. No CLI behavior, benchmark
-workload, product-performance claim, or fx-equivalence claim is added.
+gate. No CLI behavior, benchmark workload, product-performance claim, or fx-
+equivalence claim is added. Tree-identical cycle-5 candidate
+`ff18a9ae5411c31c51a15b6e30993790595afa80`, tree
+`f77b198d9b834dc39c1d1967c8f1feefb40d2984`, is green with zero findings in
+all three fresh tracks. Replacement delivery remains pending.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -381,7 +384,8 @@ feature Clippy, all-target/all-feature tests, two doctests, focused
 byte-identical pinned-fx compatibility, dependency policy/audit, Linux/
 FreeBSD/WASI and active Node 1/1, documentation 70/502/352/0, clean diff/no
 unsafe/no forbidden changes, and the unchanged release binary/smokes are green.
-Fresh same-SHA review remains pending. Feature benchmark `32699750662` is green
+Tree-identical cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero
+findings in all three fresh tracks. Feature benchmark `32699750662` is green
 and retains exactly two nonexpired exact-SHA artifacts. This is not delivery,
 product-performance, or fx-equivalence evidence. Documentation
 record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e`

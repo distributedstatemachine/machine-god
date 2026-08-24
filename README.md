@@ -33,7 +33,9 @@ Linux/macOS native jobs in first feature CI `32699750602` are green, but that
 workflow is not green because Linux Quality exposed a test-only `RawMode`
 Clippy mismatch. Exact portable evidence remediation `1effcbb`, tree
 `b5eccb1`, passes the complete replacement gate, including Linux test-target
-warnings-denied Clippy. Its fresh three-track review remains pending.
+warnings-denied Clippy. Cycle-5 candidate `ff18a9a`, tree `f77b198`, is green
+with zero findings in all three fresh tracks. Replacement delivery remains
+pending.
 Feature benchmark `32699750662` is green with exactly two nonexpired exact-SHA
 artifacts. The
 repository includes the provider-neutral streaming engine, its bounded durable
@@ -387,7 +389,8 @@ is green with exactly two nonexpired exact-SHA artifacts, but feature CI
 `32699750602` is not green because Linux Clippy rejected a test-only
 `u32::from(Mode::bits())`. The trace now stores platform-native `RawMode`; a
 complete replacement gate is green at `1effcbb`, tree `b5eccb1`, and fresh
-review remains pending. This is not yet delivery, `main` integration,
+cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all
+three tracks. This is not yet delivery, `main` integration,
 performance, or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 

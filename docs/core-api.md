@@ -656,8 +656,9 @@ its sole low stale documentation-seal finding is fixed under the user's seal-
 review exemption. First feature CI `32699750602` has all native Linux/macOS jobs
 green but is not green because Linux Quality rejected a test-only mode
 conversion. Platform-native `RawMode` evidence remediation `1effcbb`, tree
-`b5eccb1`, passes the complete replacement gate; fresh review, delivery, and
-`main` integration remain pending.
+`b5eccb1`, passes the complete replacement gate. Tree-identical cycle-5
+candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all three
+fresh tracks; delivery and `main` integration remain pending.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

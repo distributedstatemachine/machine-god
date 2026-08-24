@@ -1,6 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **LINUX TEST-CLIPPY REMEDIATION GATE GREEN; FRESH REVIEW PENDING**
+Status: **CYCLE 5 REVIEW GREEN; REPLACEMENT DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -465,13 +465,39 @@ gate:
   and passes bare/version/help plus inert human/JSON status smokes.
 
 The formal candidate is the immediate tree-identical child of this gate-record
-commit. Reviewers must verify that parent/tree relationship independently and
-review the same immutable candidate. Three fresh tracks remain required before
-the replacement feature seal can be pushed.
+commit. Reviewers verified that parent/tree relationship independently and
+reviewed the same immutable candidate.
+
+## Formal review cycle 5
+
+All three entirely fresh formal tracks reviewed exact candidate
+`ff18a9ae5411c31c51a15b6e30993790595afa80`, tree
+`f77b198d9b834dc39c1d1967c8f1feefb40d2984`. Its immediate parent is gate record
+`ddf299ea8a144abbcfa02070dafcb3d4d91e9a4e` with the identical tree. Each used
+a clean detached worktree, verified exact delivered-base ancestry, and removed
+its worktree after a clean final check.
+
+- Correctness/API is green with zero BLOCKER, HIGH, MEDIUM, or LOW findings and
+  zero production/API or evidence/documentation defects. It passed focused
+  17/20/6/7/1, formatting, native/core warnings-denied Clippy, Linux warnings-
+  denied test-target Clippy, and WASI compilation.
+- Filesystem/robustness is green with zero findings of every severity and zero
+  production/filesystem, evidence/test, or documentation/lineage defects. It
+  passed focused 17/20/6/7/1, exact clone evidence, native and Linux warnings-
+  denied Clippy, Linux/FreeBSD/WASI compilation, and active Node 22.22.0 1/1.
+- Performance/concurrency is green with zero findings of every severity. It
+  passed focused 17/20/6/7/1, exact ten-clone, 256-component, and 4,112-sync-
+  call evidence, plus native and Linux warnings-denied Clippy. It independently
+  confirmed linear bounded work/retention, RAII, concurrent-call isolation,
+  inert single-poll/drop behavior, and the absence of a performance claim.
+
+All three confirmed that the platform-native `RawMode` change is test-only and
+portable, and that no production, authority, API, dependency, CLI, workflow, or
+benchmark workload changed.
 
 ## Current verdict
 
-**LINUX TEST-CLIPPY REMEDIATION GATE GREEN; FRESH REVIEW PENDING.** Production
+**CYCLE 5 REVIEW GREEN; REPLACEMENT DELIVERY PENDING.** Production
 implementation, exports, eleven-tool/ten-clone host composition, and the 17-
 private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
 composed. Cycle 2 found zero production defects, its two low findings are
@@ -493,7 +519,8 @@ four native Linux/macOS jobs but is not green because Linux Quality rejected a
 test-only raw-mode conversion. The platform-native `RawMode` remediation is
 exact `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
 `b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, and passes the complete replacement
-gate recorded above. Fresh three-track review remains pending. Feature delivery
-workflow, fast-forward integration, exact `main` workflow, delivery, product-
-performance, and fx-equivalence claims also remain pending. The delivered-slice
-count remains twenty-four.
+gate recorded above. Tree-identical cycle-5 candidate `ff18a9a`, tree
+`f77b198`, is green with zero findings in all three fresh tracks. Feature
+delivery workflow, fast-forward integration, exact `main` workflow, delivery,
+product-performance, and fx-equivalence claims remain pending. The delivered-
+slice count remains twenty-four.
