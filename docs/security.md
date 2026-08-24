@@ -311,8 +311,9 @@ Gate record `f6f6584` parents tree-identical cycle-4 candidate `a78b693`, tree
 seal-record finding is fixed in the exempt documentation seal. Delivery and
 `main` integration remain pending. First feature CI `32699750602` has all native
 Linux/macOS jobs green but is not green because Linux Quality rejected a test-
-only mode conversion. Platform-native `RawMode` evidence remediation is
-composed; its replacement gate and fresh review remain pending. The last
+only mode conversion. Platform-native `RawMode` evidence remediation `1effcbb`,
+tree `b5eccb1`, passes the complete replacement gate; fresh review remains
+pending. The last
 delivered authority surface therefore stays at ten tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
@@ -349,9 +350,9 @@ replacement gate. Gate record `f6f6584` parents tree-identical cycle-4 candidate
 `a78b693`, tree `2b913e8`. Cycle 4 found zero production/filesystem defects; its
 sole low stale seal-record finding is fixed in the exempt documentation seal.
 First feature CI `32699750602` then exposed one Linux-only test Clippy failure;
-platform-native `RawMode` remediation is composed and its replacement gate/
-review remain pending. This has not replaced the integrated ten-tool authority
-surface.
+platform-native `RawMode` remediation `1effcbb`, tree `b5eccb1`, passes the
+complete replacement gate and its fresh review remains pending. This has not
+replaced the integrated ten-tool authority surface.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to

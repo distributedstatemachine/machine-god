@@ -1,7 +1,7 @@
 # Native reference-host composition
 
-Status: **FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED;
-REPLACEMENT GATE AND FRESH REVIEW PENDING** for `create_folder`.
+Status: **LINUX TEST-CLIPPY REMEDIATION GATE GREEN; FRESH REVIEW PENDING** for
+`create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -50,7 +50,8 @@ stale seal sentence, corrected under the user's seal-review exemption. Delivery
 and `main` integration remain pending. First feature CI `32699750602` has all
 four native Linux/macOS jobs green but is not green because Linux Quality
 rejected a test-only mode conversion. Platform-native `RawMode` remediation is
-composed; the replacement gate and fresh review remain pending. Feature
+composed at exact `1effcbb`, tree `b5eccb1`, and passes the complete replacement
+gate; fresh review remains pending. Feature
 benchmark `32699750662` is green with exactly two nonexpired exact-SHA
 artifacts. The delivered host remains exactly ten tools. Current execution
 evidence includes all four native Linux/macOS jobs from feature CI
@@ -204,8 +205,9 @@ complete replacement gate. Cycle-4 candidate `a78b693`, tree `2b913e8`, has
 zero production findings; its sole low stale seal-record finding is corrected
 in the exempt documentation seal. First feature CI `32699750602` then exposed
 one Linux-only test Clippy failure; platform-native `RawMode` remediation is
-composed and its replacement gate/review remain pending. It is not the delivered
-or `main`-integrated composition.
+composed at `1effcbb`, tree `b5eccb1`, and passes the complete replacement gate;
+fresh review remains pending. It is not the delivered or `main`-integrated
+composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

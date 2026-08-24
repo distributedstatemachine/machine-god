@@ -1,7 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED;
-REPLACEMENT GATE AND FRESH REVIEW PENDING**
+Status: **LINUX TEST-CLIPPY REMEDIATION GATE GREEN; FRESH REVIEW PENDING**
 
 ## Base and boundary
 
@@ -437,14 +436,42 @@ defect. The trace `Operation::Mkdir` mode now uses platform-native
 `rustix::fs::RawMode` and stores `mode.bits()` directly. Fresh formatting,
 native all-target/all-feature warnings-denied Clippy, 17 private, 20 direct,
 and six engine tests are green. The exact Linux no-default test target passes
-warnings-denied Clippy, and FreeBSD no-default test compilation is green. A
-complete replacement gate and three fresh same-SHA adversarial tracks remain
-required before the replacement feature seal can be pushed.
+warnings-denied Clippy, and FreeBSD no-default test compilation is green.
+
+## Exact replacement gate after first feature seal
+
+Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
+`b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
+gate:
+
+- exact Rust/Cargo 1.94.1 workspace formatting, warnings-denied all-target/all-
+  feature Clippy, all-target/all-feature tests, and two doctests are green;
+- focused evidence is green at 17 private, 20 direct, six engine, seven
+  reference-host, and one core-contract test;
+- default and all-target/all-feature discovery finds 878 and 926 tests,
+  respectively, with zero benchmarks;
+- all 130 Python tests pass with eight expected macOS-only skips;
+- compatibility regeneration is byte-identical against pinned fx
+  `b1774fbf6c7602b503026f96f6e960e946c692ef`;
+- exact `cargo-deny` 0.20.2 is green, and exact `cargo-audit` 0.22.2 reports zero
+  findings across 175 dependencies and 1,225 retained advisories;
+- Linux warnings-denied test-target Clippy, Linux/FreeBSD test compilation,
+  WASI compilation, and active Node 22.22.0 unsupported-target evidence 1/1
+  are green;
+- documentation is exactly 70/502/352/0; diff/no-unsafe/no-forbidden-change
+  checks are green; and
+- the fresh locked release binary remains 319,152 bytes with SHA-256
+  `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
+  and passes bare/version/help plus inert human/JSON status smokes.
+
+The formal candidate is the immediate tree-identical child of this gate-record
+commit. Reviewers must verify that parent/tree relationship independently and
+review the same immutable candidate. Three fresh tracks remain required before
+the replacement feature seal can be pushed.
 
 ## Current verdict
 
-**FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED; REPLACEMENT
-GATE AND FRESH REVIEW PENDING.** Production
+**LINUX TEST-CLIPPY REMEDIATION GATE GREEN; FRESH REVIEW PENDING.** Production
 implementation, exports, eleven-tool/ten-clone host composition, and the 17-
 private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
 composed. Cycle 2 found zero production defects, its two low findings are
@@ -464,8 +491,9 @@ feature benchmark `32699750662` is green with exactly two nonexpired exact-SHA
 artifacts. First feature CI `32699750602` supplies green dependency-policy and
 four native Linux/macOS jobs but is not green because Linux Quality rejected a
 test-only raw-mode conversion. The platform-native `RawMode` remediation is
-composed and passes focused macOS, Linux test-target Clippy, and FreeBSD compile
-checks. Its complete replacement gate and fresh three-track review remain
-pending. Feature delivery workflow, fast-forward integration, exact `main`
-workflow, delivery, product-performance, and fx-equivalence claims also remain
-pending. The delivered-slice count remains twenty-four.
+exact `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
+`b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, and passes the complete replacement
+gate recorded above. Fresh three-track review remains pending. Feature delivery
+workflow, fast-forward integration, exact `main` workflow, delivery, product-
+performance, and fx-equivalence claims also remain pending. The delivered-slice
+count remains twenty-four.

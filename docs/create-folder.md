@@ -1,7 +1,6 @@
 # Native `create_folder` contract
 
-Status: **FEATURE CI NOT GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED;
-REPLACEMENT GATE AND FRESH REVIEW PENDING**
+Status: **LINUX TEST-CLIPPY REMEDIATION GATE GREEN; FRESH REVIEW PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -46,9 +45,10 @@ dependency-policy job green, but the overall workflow is not green because
 Linux Quality rejected a test-only redundant conversion from `Mode::bits()`.
 The trace now stores platform-native `rustix::fs::RawMode`; focused macOS,
 Linux warnings-denied test-target Clippy, and FreeBSD compilation checks are
-green. Its complete replacement gate and fresh three-track review remain
-pending. No CLI behavior, benchmark workload, product-performance claim, or
-fx-equivalence claim is added.
+green. Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
+`b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
+gate. Its fresh three-track review remains pending. No CLI behavior, benchmark
+workload, product-performance claim, or fx-equivalence claim is added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -373,10 +373,17 @@ in all four native jobs, but the overall workflow is not green because Linux
 Quality rejected the test-only `u32::from(Mode::bits())` trace conversion.
 The trace now stores exact platform-native `RawMode`; focused macOS checks,
 Linux warnings-denied test-target Clippy, and FreeBSD compilation are green.
-A complete replacement gate and fresh same-SHA review remain pending. Feature
-benchmark `32699750662` is green and retains exactly two nonexpired exact-SHA
-artifacts. This is not delivery, product-performance, or fx-equivalence
-evidence. Documentation
+Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
+`b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
+gate: exact Rust 1.94.1 workspace formatting, warnings-denied all-target/all-
+feature Clippy, all-target/all-feature tests, two doctests, focused
+17/20/6/7/1, discovery 878/926/0, Python 130 with eight expected skips,
+byte-identical pinned-fx compatibility, dependency policy/audit, Linux/
+FreeBSD/WASI and active Node 1/1, documentation 70/502/352/0, clean diff/no
+unsafe/no forbidden changes, and the unchanged release binary/smokes are green.
+Fresh same-SHA review remains pending. Feature benchmark `32699750662` is green
+and retains exactly two nonexpired exact-SHA artifacts. This is not delivery,
+product-performance, or fx-equivalence evidence. Documentation
 record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e`
 preserve identical non-documentation behavior. Cycle 3 is not green only for
 one low documentation-lineage finding; the other two tracks are green and all

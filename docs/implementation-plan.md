@@ -201,9 +201,8 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **FEATURE CI NOT
-GREEN; LINUX TEST-CLIPPY REMEDIATION COMPOSED; REPLACEMENT GATE AND FRESH
-REVIEW PENDING** from exact
+The twenty-fifth bounded slice, native `create_folder`, is **LINUX TEST-CLIPPY
+REMEDIATION GATE GREEN; FRESH REVIEW PENDING** from exact
 delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
@@ -297,7 +296,11 @@ macOS jobs green, but the overall workflow is not green because Linux Quality
 rejected a redundant test-only conversion from `Mode::bits()`. The evidence
 trace now stores platform-native `rustix::fs::RawMode`; focused macOS, Linux
 warnings-denied test-target Clippy, and FreeBSD compilation checks are green.
-The complete replacement gate and fresh three-track review remain pending.
+Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
+`b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
+gate across full Rust, focused/discovery, Python, pinned-fx compatibility,
+dependency, portability, documentation/diff, and release-smoke evidence. Fresh
+three-track review remains pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1927,9 +1930,8 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **FEATURE CI NOT GREEN; LINUX TEST-
-  CLIPPY REMEDIATION COMPOSED; REPLACEMENT GATE AND FRESH REVIEW PENDING** from
-  exact
+  The twenty-fifth `create_folder` slice is **LINUX TEST-CLIPPY REMEDIATION GATE
+  GREEN; FRESH REVIEW PENDING** from exact
   delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
@@ -2009,8 +2011,12 @@ gate:
   rejected the test-only `u32::from(Mode::bits())` trace conversion. The trace
   now stores platform-native `rustix::fs::RawMode`; focused macOS, Linux
   warnings-denied test-target Clippy, and FreeBSD compilation checks are green.
-  The complete replacement gate, fresh three-track review, feature delivery,
-  and `main` integration remain pending.
+  Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
+  `b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
+  gate across full Rust, focused/discovery, Python, pinned-fx compatibility,
+  dependency, portability, documentation/diff, and release-smoke evidence.
+  Fresh three-track review, feature delivery, and `main` integration remain
+  pending.
   It adds no delivery, performance, or fx-equivalence claim, so the combined
   native-tool checkbox remains open and the delivered count stays twenty-four.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
