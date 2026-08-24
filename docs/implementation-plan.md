@@ -165,7 +165,17 @@ initial-stage cleanup-ownership/residue finding. Performance/concurrency found
 a medium missing postcommit source-parent rewalk and low missing exact
 serialization/allocation evidence. Focused checks passed, but remediation, the
 complete replacement local gate, a fresh three-track same-SHA review cycle, and
-delivery remain pending.
+delivery remain pending. Exact remediation
+`53f4ee947c82033a08a2ff943f23f52c475189d7`, tree
+`4bdb07a30950584d71260e70e263aafcccfff710`, closes the reported gaps with
+immediate post-create cleanup ownership, uniform precommit cancellation
+ordering, a fresh cancellation-ignoring postcommit source-parent rewalk, and
+exact serialized-bound/constant-buffer evidence. Its complete replacement gate
+is green across 25 private, 24 direct, five engine, seven host, and one core
+focused tests; 834/882 discovered tests with zero benchmarks; full Rust,
+Python, dependency, compatibility, cross-target, active WASI, documentation,
+diff, release-hash, and CLI-smoke checks. A tree-identical cycle-2 candidate,
+three fresh same-SHA zero-finding reviews, and delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1745,10 +1755,21 @@ gate:
   source validation can reuse the prepublication retained parent instead of
   freshly resolving the requested path from the retained root. That track also
   found low missing exact serialized-bound and source-size-independent
-  allocation evidence. No fix or green claim is made. Production and evidence
-  remediation, the complete replacement local gate, a fresh three-track same-
-  SHA review cycle, and exact feature/main delivery gates remain pending under
-  [`copy-file.md`](copy-file.md). This documentation-only review record is
+  allocation evidence. Production and evidence remediation composes at exact
+  `53f4ee947c82033a08a2ff943f23f52c475189d7`, tree
+  `4bdb07a30950584d71260e70e263aafcccfff710`. It establishes immediate
+  cleanup-guard ownership after stage creation, check-before/raw-call/check-
+  after cancellation ordering for precommit native operations, a fresh
+  cancellation-ignoring postcommit source-parent rewalk, exact serialized
+  guards, and one reusable 64-KiB buffer observed across every streaming phase
+  for empty, one-byte, and exact-limit inputs. The complete replacement local
+  gate is green across 25 private, 24 direct, five engine, seven host, and one
+  core focused tests; 834/882 discovered tests with zero benchmarks; full Rust
+  and Python suites; dependency, compatibility, Linux/FreeBSD/WASI, active Node
+  1/1, documentation, diff, release-hash, and CLI-smoke checks. A tree-identical
+  cycle-2 candidate, fresh three-track same-SHA zero-finding review, and exact
+  feature/main delivery gates remain pending under
+  [`copy-file.md`](copy-file.md). This documentation-only remediation record is
   exempt from its own adversarial cycle; replacement behavior is not.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

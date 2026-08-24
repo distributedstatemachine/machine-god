@@ -116,6 +116,59 @@ track same-SHA review cycle remain pending. This documentation-only review
 record is exempt from a separate adversarial cycle under the user's instruction;
 the replacement behavior candidate is not exempt.
 
+## Cycle 1 remediation and replacement gate
+
+Exact production and evidence remediation
+`53f4ee947c82033a08a2ff943f23f52c475189d7`, tree
+`4bdb07a30950584d71260e70e263aafcccfff710`, closes every cycle-1 finding:
+
+1. A successful exclusive staged open now transfers immediately into an
+   infallible cleanup guard before cancellation or metadata validation. The
+   guard pins the created inode with its descriptor, accepts an initially
+   unknown recorded identity, and unlinks only when the held descriptor and
+   no-follow pathname still identify the same regular file. Deterministic
+   cancellation and rejected-metadata regressions prove no tool-owned residue,
+   while a replaced pathname is preserved.
+2. Precommit native operations now use check-before/raw-call/check-after
+   cancellation ordering. Publication remains exactly once and is never
+   retried, including after `EINTR`; postcommit verification and durability
+   continue to ignore caller cancellation.
+3. Postcommit source verification freshly rewalks the requested source parent
+   from the retained workspace root and compares the parent and source
+   identities. A moved-and-replaced source parent therefore returns the fixed
+   ambiguous-commit result after publication while destination-parent sync is
+   still attempted independently.
+4. Independent evidence exercises exact and one-over serialized argument and
+   result guards. Empty, one-byte, and exact-16-MiB inputs observe the same one
+   reusable 64-KiB streaming buffer through copy, both staged hashes, and the
+   published hash without allocating a source-sized fixture or content buffer.
+
+The complete replacement local gate is green under Rust and Cargo 1.94.1:
+
+- focused evidence passes 25 private pipeline/race tests, 24 direct tests, five
+  engine tests, seven reference-host tests, and one core capability contract;
+- formatting, workspace all-target/all-feature warnings-denied Clippy, default
+  workspace tests, all-target/all-feature workspace tests, and both doctests
+  pass; discovery lists 834 default and 882 all-feature tests with zero
+  benchmarks;
+- all 130 Python tests pass with eight expected platform skips, and the
+  generated compatibility inventory matches pinned upstream
+  `b1774fbf6c7602b503026f96f6e960e946c692ef`;
+- cargo-deny 0.20.2 reports advisories, bans, licenses, and sources green, while
+  cargo-audit 0.22.2 scans 175 dependencies with no vulnerability finding;
+- relevant Rust-only Linux and FreeBSD cross-target checks pass. The dedicated
+  WASI unsupported test builds, and Node 22.22.0 actively executes it 1/1;
+- 68 Markdown files contain 483 links, including 333 relative file links, with
+  zero missing targets before this record update. The diff is clean, adds no
+  unsafe Rust, and changes no Cargo metadata or CLI source; and
+- the fresh locked release CLI retains SHA-256
+  `1e8c5aefd32ab12f201c1527b38f86ef31463c80be1f75a4901f9e00930f3c24`
+  and passes bare, help, and status smoke paths.
+
+This is local remediation evidence, not a green review or delivery claim. A
+tree-identical cycle-2 candidate and three fresh same-SHA zero-finding reviews
+remain required before exact feature and main delivery gates.
+
 ## Required evidence
 
 - [ ] Exact public constants, schema, descriptions, result, construction
