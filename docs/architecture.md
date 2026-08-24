@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-four delivered bounded slices. The twenty-third,
+Milestone 03 has twenty-five delivered bounded slices. The twenty-third,
 library-only native `rename_file`, has composed production and independent
 evidence; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -42,8 +42,7 @@ fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature
 benchmark `32684856373`, main CI `32685192453`, and main benchmark
 `32685192394`; each benchmark run retains exactly two nonexpired exact-SHA
 artifacts.
-The twenty-fifth, library-only native `create_folder` slice is **CYCLE 5 REVIEW
-GREEN; REPLACEMENT DELIVERY PENDING**
+The twenty-fifth, library-only native `create_folder` slice is **DELIVERED**
 from delivered base `d1a5bc2`. Exact frozen contract commit
 `9fab189c9c1add76a38775d08f4342c6bcc7635b` passed all six jobs of CI
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
@@ -64,15 +63,18 @@ lineage remediation `12c11ba`, tree `b96575b`, passes the complete replacement
 gate. Gate record `f6f6584` parents tree-identical cycle-4 candidate `a78b693`,
 tree `2b913e8`. Correctness and performance are green with zero findings;
 filesystem found zero production defects and one low stale documentation-seal
-sentence, corrected under the user's seal-review exemption. The last delivered
-host stays at ten tools. First feature CI `32699750602` has all four native
-Linux/macOS jobs green but is not green because Linux Quality rejected a test-
-only `RawMode` conversion. Exact portable trace remediation `1effcbb`, tree
+sentence, corrected under the user's seal-review exemption. The delivered host
+stayed at ten tools at that checkpoint. First feature CI `32699750602` has all
+four native Linux/macOS jobs green but is not green because Linux Quality
+rejected a test-only `RawMode` conversion. Exact portable trace remediation
+`1effcbb`, tree
 `b5eccb1`, passes the complete replacement gate. Tree-identical cycle-5
 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all three
-fresh tracks. Feature benchmark
-`32699750662` is green with exactly two nonexpired exact-SHA artifacts. No
-delivery or performance claim is made.
+fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
+benchmark `32702785574`, main CI `32703303933`, and main benchmark
+`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
+artifacts. The delivered host now has eleven tools. No product-performance
+claim is made.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -623,10 +625,9 @@ give every tool the same opened workspace identity. These later slices do not
 change provider, permission-handler, session-store, credential, transport,
 runtime, root-selection, or CLI authority.
 
-The twenty-fifth-slice candidate changes composed behavior, not the delivered
-composition. It inserts `create_folder` immediately after `copy_file`,
-producing eleven alphabetical tools from the original retained descriptor plus
-ten identity-preserving clones. Preparation uses the
+The delivered twenty-fifth slice inserts `create_folder` immediately after
+`copy_file`, producing eleven alphabetical tools from the original retained
+descriptor plus ten identity-preserving clones. Preparation uses the
 existing provider-neutral `Capability::Filesystem { access: Create, path }`
 with the exact canonical path that approved execution receives. The complete
 contract and local-gate evidence are in

@@ -309,13 +309,16 @@ remediation `12c11ba`, tree `b96575b`, passes the complete replacement gate.
 Gate record `f6f6584` parents tree-identical cycle-4 candidate `a78b693`, tree
 `2b913e8`. Cycle 4 found zero production/filesystem defects; its sole low stale
 seal-record finding is fixed in the exempt documentation seal. Delivery and
-`main` integration remain pending. First feature CI `32699750602` has all native
+`main` integration remained pending at that checkpoint. First feature CI
+`32699750602` has all native
 Linux/macOS jobs green but is not green because Linux Quality rejected a test-
 only mode conversion. Platform-native `RawMode` evidence remediation `1effcbb`,
 tree `b5eccb1`, passes the complete replacement gate. Tree-identical cycle-5
 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all three
-fresh tracks. The last
-delivered authority surface therefore stays at ten tools. The
+fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
+benchmark `32702785574`, main CI `32703303933`, and main benchmark
+`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
+artifacts. The delivered authority surface now has eleven tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -353,8 +356,9 @@ sole low stale seal-record finding is fixed in the exempt documentation seal.
 First feature CI `32699750602` then exposed one Linux-only test Clippy failure;
 platform-native `RawMode` remediation `1effcbb`, tree `b5eccb1`, passes the
 complete replacement gate. Tree-identical cycle-5 candidate `ff18a9a`, tree
-`f77b198`, is green with zero findings in all three fresh tracks. This has not
-replaced the integrated ten-tool authority surface.
+`f77b198`, is green with zero findings in all three fresh tracks. Seal `e75578b`
+passed exact feature/main CI and benchmark workflows; this is now the integrated
+eleven-tool authority surface.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to

@@ -1,9 +1,8 @@
 # Native reference-host composition
 
-Status: **CYCLE 5 REVIEW GREEN; REPLACEMENT DELIVERY PENDING** for
-`create_folder`.
-The last delivered composition contains exactly ten alphabetical workspace
-tools, and twenty-four bounded Milestone 03 slices are delivered;
+Status: **DELIVERED** for `create_folder`.
+The delivered composition contains exactly eleven alphabetical workspace
+tools, and twenty-five bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -47,14 +46,18 @@ the complete replacement gate. Gate record `f6f6584` parents tree-identical
 cycle-4 candidate `a78b693`, tree `2b913e8`. Correctness and performance are
 green with zero findings; filesystem found zero production defects and one low
 stale seal sentence, corrected under the user's seal-review exemption. Delivery
-and `main` integration remain pending. First feature CI `32699750602` has all
+and `main` integration remained pending at that checkpoint. First feature CI
+`32699750602` has all
 four native Linux/macOS jobs green but is not green because Linux Quality
 rejected a test-only mode conversion. Platform-native `RawMode` remediation is
 composed at exact `1effcbb`, tree `b5eccb1`, and passes the complete replacement
 gate. Tree-identical cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with
-zero findings in all three fresh tracks. Feature
-benchmark `32699750662` is green with exactly two nonexpired exact-SHA
-artifacts. The delivered host remains exactly ten tools. Current execution
+zero findings in all three fresh tracks. Feature benchmark `32699750662` is
+green with exactly two nonexpired exact-SHA
+artifacts. Seal `e75578b` passed exact feature CI `32702785549`, feature
+benchmark `32702785574`, main CI `32703303933`, and main benchmark
+`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
+artifacts. The delivered host has exactly eleven tools. Current execution
 evidence includes all four native Linux/macOS jobs from feature CI
 `32699750602`; cross-target Linux/FreeBSD test compilation and warnings-denied
 Linux test-target Clippy are also green.
@@ -209,7 +212,9 @@ one Linux-only test Clippy failure; platform-native `RawMode` remediation is
 composed at `1effcbb`, tree `b5eccb1`, and passes the complete replacement gate;
 tree-identical cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero
 findings in all three fresh tracks. It is not the delivered or `main`-
-integrated composition.
+integrated composition at that review checkpoint. Seal `e75578b` subsequently
+passed exact feature/main CI and benchmark workflows, so this is now the
+delivered composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

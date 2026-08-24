@@ -1,6 +1,6 @@
 # Native `create_folder` contract
 
-Status: **CYCLE 5 REVIEW GREEN; REPLACEMENT DELIVERY PENDING**
+Status: **DELIVERED**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -51,7 +51,12 @@ gate. No CLI behavior, benchmark workload, product-performance claim, or fx-
 equivalence claim is added. Tree-identical cycle-5 candidate
 `ff18a9ae5411c31c51a15b6e30993790595afa80`, tree
 `f77b198d9b834dc39c1d1967c8f1feefb40d2984`, is green with zero findings in
-all three fresh tracks. Replacement delivery remains pending.
+all three fresh tracks.
+Delivery seal `e75578b9d9b37238a819e336705ec419f1492d1f` passed exact feature
+CI `32702785549`, feature benchmark `32702785574`, main CI `32703303933`, and
+main benchmark `32703303931`. Both benchmark runs retain exactly two nonexpired
+exact-SHA artifacts. The slice is delivered and integrated on `main`; the
+delivered count is twenty-five and the host has eleven tools.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -428,5 +433,9 @@ green only for one low documentation-lineage finding. Exact lineage remediation
 `12c11ba`, tree `b96575b`, passes the complete replacement gate. Cycle-4
 candidate `a78b693`, tree `2b913e8`, has zero production findings; its sole low
 stale seal-record finding is corrected in this exempt documentation seal.
-Delivery and `main` integration remain pending; the delivered-slice count stays
-twenty-four.
+Cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all
+three fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`,
+feature benchmark `32702785574`, main CI `32703303933`, and main benchmark
+`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
+artifacts. Delivery and `main` integration are complete; the delivered-slice
+count is twenty-five.

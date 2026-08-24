@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-four delivered bounded slices. Native `edit_file` is delivered on
+with twenty-five delivered bounded slices. Native `edit_file` is delivered on
 final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
 Exact feature CI `32651168514` passed all six jobs, and feature benchmark
 workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
@@ -201,9 +201,8 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **CYCLE 5 REVIEW
-GREEN; REPLACEMENT DELIVERY PENDING** from exact
-delivered base
+The twenty-fifth bounded slice, native `create_folder`, is **DELIVERED** from
+exact delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
 `32686210561`, and main benchmark `32686210659`; both benchmark workflows
@@ -301,7 +300,11 @@ Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
 gate across full Rust, focused/discovery, Python, pinned-fx compatibility,
 dependency, portability, documentation/diff, and release-smoke evidence.
 Tree-identical cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero
-findings in all three fresh tracks. Replacement delivery remains pending.
+findings in all three fresh tracks. Seal `e75578b` passed exact feature CI
+`32702785549`, feature benchmark `32702785574`, main CI `32703303933`, and main
+benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
+exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
+and the integrated host has eleven tools.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1506,7 +1509,7 @@ the delivered-slice count to twenty-two without completing Milestone 03.
 
 ### Milestone 03 completion boundary
 
-The twenty-four delivered slices do not complete Milestone 03.
+The twenty-five delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -1931,8 +1934,7 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **CYCLE 5 REVIEW GREEN; REPLACEMENT
-  DELIVERY PENDING** from exact
+  The twenty-fifth `create_folder` slice is **DELIVERED** from exact
   delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
@@ -2017,10 +2019,13 @@ gate:
   gate across full Rust, focused/discovery, Python, pinned-fx compatibility,
   dependency, portability, documentation/diff, and release-smoke evidence.
   Tree-identical cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with
-  zero findings in all three fresh tracks. Feature delivery and `main`
-  integration remain pending.
-  It adds no delivery, performance, or fx-equivalence claim, so the combined
-  native-tool checkbox remains open and the delivered count stays twenty-four.
+  zero findings in all three fresh tracks. Seal `e75578b` passed exact feature
+  CI `32702785549`, feature benchmark `32702785574`, main CI `32703303933`, and
+  main benchmark `32703303931`; both benchmark runs retain exactly two
+  nonexpired exact-SHA artifacts. Feature delivery and `main` integration are
+  complete. It adds no product-performance or fx-equivalence claim, so the
+  combined native-tool checkbox remains open while the delivered count becomes
+  twenty-five.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

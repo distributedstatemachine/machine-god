@@ -7,7 +7,7 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-four delivered bounded slices. The twenty-fourth, library-only
+twenty-five delivered bounded slices. The twenty-fourth, library-only
 `copy_file` slice is green under three fresh same-SHA adversarial reviews and
 exact feature and `main` delivery gates. The twenty-fifth, library-only
 `create_folder` behavior is composed from that delivered base. Cycle-2
@@ -27,17 +27,18 @@ Gate record `f6f6584` is the parent of tree-identical cycle-4 candidate
 `a78b693`, tree `2b913e8`. Correctness/API and performance/concurrency are green
 with zero findings; filesystem/robustness found zero production defects and one
 low stale documentation-seal sentence, corrected under the user's explicit
-seal-review exemption. Delivery remains pending, and the delivered count
-therefore remains twenty-four. Native
-Linux/macOS native jobs in first feature CI `32699750602` are green, but that
+seal-review exemption. Delivery remained pending, and the delivered count
+therefore remains twenty-four at that historical checkpoint. Linux/macOS
+native jobs in first feature CI `32699750602` are green, but that
 workflow is not green because Linux Quality exposed a test-only `RawMode`
 Clippy mismatch. Exact portable evidence remediation `1effcbb`, tree
 `b5eccb1`, passes the complete replacement gate, including Linux test-target
 warnings-denied Clippy. Cycle-5 candidate `ff18a9a`, tree `f77b198`, is green
-with zero findings in all three fresh tracks. Replacement delivery remains
-pending.
-Feature benchmark `32699750662` is green with exactly two nonexpired exact-SHA
-artifacts. The
+with zero findings in all three fresh tracks. Seal `e75578b` passed exact
+feature CI `32702785549`, feature benchmark `32702785574`, main CI
+`32703303933`, and main benchmark `32703303931`. Both benchmark runs retain
+exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
+as slice twenty-five, and the delivered host has eleven tools. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
@@ -390,8 +391,11 @@ is green with exactly two nonexpired exact-SHA artifacts, but feature CI
 `u32::from(Mode::bits())`. The trace now stores platform-native `RawMode`; a
 complete replacement gate is green at `1effcbb`, tree `b5eccb1`, and fresh
 cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all
-three tracks. This is not yet delivery, `main` integration,
-performance, or fx-equivalence evidence. See the
+three tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
+benchmark `32702785574`, main CI `32703303933`, and main benchmark
+`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
+artifacts. This is delivery and `main` integration, but not product-performance
+or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact

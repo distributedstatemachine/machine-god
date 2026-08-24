@@ -1,6 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **CYCLE 5 REVIEW GREEN; REPLACEMENT DELIVERY PENDING**
+Status: **DELIVERED**
 
 ## Base and boundary
 
@@ -49,16 +49,16 @@ symlink following, content access, directory enumeration, chmod/ACL rewriting,
 CLI behavior, dependency, benchmark workload, performance claim, or complete
 fx-equivalence claim.
 
-## Composed host checkpoint
+## Base host checkpoint
 
-The last delivered host remains byte-for-byte at ten alphabetical tools:
+At delivered base `d1a5bc2`, the host is byte-for-byte ten alphabetical tools:
 `copy_file`, `delete_file`, `edit_file`, `file_info`, `glob_files`,
 `grep_files`, `list_files`, `read_file`, `rename_file`, and `write_file`, using
-one original retained descriptor plus nine clones. Candidate source now inserts
+one original retained descriptor plus nine clones. Candidate source inserts
 `create_folder` immediately after `copy_file`, yields exactly eleven tools, and
 uses one original plus ten identity-preserving clones in both reference-host
-construction paths. This composed catalog is not delivered or integrated on
-`main`.
+construction paths. This catalog was not delivered at that checkpoint; the
+delivery section below records its later integration on `main`.
 
 ## Composed ownership
 
@@ -495,9 +495,27 @@ All three confirmed that the platform-native `RawMode` change is test-only and
 portable, and that no production, authority, API, dependency, CLI, workflow, or
 benchmark workload changed.
 
+## Delivery
+
+Documentation seal `e75578b9d9b37238a819e336705ec419f1492d1f` passed every
+required exact-SHA delivery workflow:
+
+- feature CI `32702785549`: all six jobs green, including Quality and tests,
+  dependency policy/audit, and four native Linux/macOS jobs;
+- feature benchmark `32702785574`: both jobs green, with exactly two nonexpired
+  exact-SHA artifacts, IDs `9511126441` and `9511245258`;
+- main CI `32703303933`: all six jobs green after a non-force fast-forward of
+  `main` from delivered base `d1a5bc2`; and
+- main benchmark `32703303931`: both jobs green, with exactly two nonexpired
+  exact-SHA artifacts, IDs `9511305313` and `9511430069`.
+
+This delivers native `create_folder` as bounded Milestone 03 slice twenty-five
+and integrates the eleven-tool/ten-clone reference host on `main`. It does not
+claim product-performance or complete fx equivalence.
+
 ## Current verdict
 
-**CYCLE 5 REVIEW GREEN; REPLACEMENT DELIVERY PENDING.** Production
+**DELIVERED.** Production
 implementation, exports, eleven-tool/ten-clone host composition, and the 17-
 private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
 composed. Cycle 2 found zero production defects, its two low findings are
@@ -520,7 +538,11 @@ test-only raw-mode conversion. The platform-native `RawMode` remediation is
 exact `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
 `b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, and passes the complete replacement
 gate recorded above. Tree-identical cycle-5 candidate `ff18a9a`, tree
-`f77b198`, is green with zero findings in all three fresh tracks. Feature
-delivery workflow, fast-forward integration, exact `main` workflow, delivery,
-product-performance, and fx-equivalence claims remain pending. The delivered-
-slice count remains twenty-four.
+`f77b198`, is green with zero findings in all three fresh tracks. Seal
+`e75578b` passed exact feature CI `32702785549`, feature benchmark `32702785574`,
+main CI `32703303933`, and main benchmark `32703303931`; each CI has all six
+jobs green and each benchmark has both jobs plus exactly two nonexpired exact-
+SHA artifacts. Feature delivery, non-force fast-forward integration, and exact
+`main` workflows are complete. The delivered-slice count is twenty-five and
+the integrated host has eleven tools. Product-performance and fx-equivalence
+claims remain pending.

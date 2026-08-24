@@ -401,9 +401,9 @@ The concrete consumers are the native
 [`grep_files` tool](grep-files.md), [`write_file` tool](write-file.md),
 [`edit_file` tool](edit-file.md), [`delete_file` tool](delete-file.md), and the
 delivered twenty-third [`rename_file` tool](rename-file.md), and the delivered
-twenty-fourth [`copy_file` tool](copy-file.md). The composed, not-yet-delivered
-twenty-fifth [`create_folder` behavior](create-folder.md) is another single-
-path consumer.
+twenty-fourth [`copy_file` tool](copy-file.md), and the delivered twenty-fifth
+[`create_folder` behavior](create-folder.md). `create_folder` is another
+single-path consumer.
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
 `Capability::Filesystem { access: Read, path }` and prepared execution
@@ -658,7 +658,10 @@ green but is not green because Linux Quality rejected a test-only mode
 conversion. Platform-native `RawMode` evidence remediation `1effcbb`, tree
 `b5eccb1`, passes the complete replacement gate. Tree-identical cycle-5
 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all three
-fresh tracks; delivery and `main` integration remain pending.
+fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
+benchmark `32702785574`, main CI `32703303933`, and main benchmark
+`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
+artifacts. The behavior is delivered and integrated on `main`.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
