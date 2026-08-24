@@ -79,7 +79,14 @@ struct PendingLauncher {
     launch_calls: Arc<AtomicUsize>,
     future_polls: Arc<AtomicUsize>,
     future_drops: Arc<AtomicUsize>,
-    retained_proc_path: Arc<Mutex<Option<PathBuf>>>,
+    retained_target: Arc<Mutex<Option<RetainedTarget>>>,
+}
+
+#[derive(Clone, Debug)]
+struct RetainedTarget {
+    proc_path: PathBuf,
+    device: u64,
+    inode: u64,
 }
 
 impl OpenFileLauncher for PendingLauncher {
@@ -88,40 +95,60 @@ impl OpenFileLauncher for PendingLauncher {
         request: OpenFileLaunchRequest,
         _cancellation: machine_god_core::CancellationToken,
     ) -> OpenFileLaunch {
-        self.launch_calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(PendingLaunchFuture {
             request: Some(request),
+            launch_calls: Arc::clone(&self.launch_calls),
             future_polls: Arc::clone(&self.future_polls),
             future_drops: Arc::clone(&self.future_drops),
-            retained_proc_path: Arc::clone(&self.retained_proc_path),
+            retained_target: Arc::clone(&self.retained_target),
+            started: false,
         })
     }
 }
 
 struct PendingLaunchFuture {
     request: Option<OpenFileLaunchRequest>,
+    launch_calls: Arc<AtomicUsize>,
     future_polls: Arc<AtomicUsize>,
     future_drops: Arc<AtomicUsize>,
-    retained_proc_path: Arc<Mutex<Option<PathBuf>>>,
+    retained_target: Arc<Mutex<Option<RetainedTarget>>>,
+    started: bool,
 }
 
 impl Future for PendingLaunchFuture {
     type Output = OpenFileLaunchOutcome;
 
-    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
-        self.future_polls.fetch_add(1, Ordering::SeqCst);
-        let request = self
-            .request
-            .as_ref()
-            .expect("pending launcher retains its request");
-        *self.retained_proc_path.lock().unwrap() = Some(request.proc_path().to_owned());
+    fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.as_mut().get_mut();
+        this.future_polls.fetch_add(1, Ordering::SeqCst);
+        if !this.started {
+            let request = this
+                .request
+                .as_ref()
+                .expect("pending launcher retains its request");
+            let target = rustix::fs::fstat(request.target_fd()).unwrap();
+            let proc_target = rustix::fs::stat(request.proc_path()).unwrap();
+            assert_eq!(
+                (proc_target.st_dev, proc_target.st_ino),
+                (target.st_dev, target.st_ino)
+            );
+            *this.retained_target.lock().unwrap() = Some(RetainedTarget {
+                proc_path: request.proc_path().to_owned(),
+                device: target.st_dev,
+                inode: target.st_ino,
+            });
+            this.launch_calls.fetch_add(1, Ordering::SeqCst);
+            this.started = true;
+        }
         Poll::Pending
     }
 }
 
 impl Drop for PendingLaunchFuture {
     fn drop(&mut self) {
-        self.future_drops.fetch_add(1, Ordering::SeqCst);
+        if self.started {
+            self.future_drops.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -149,10 +176,11 @@ impl OpenFileLauncher for FakeLauncher {
         request: OpenFileLaunchRequest,
         _cancellation: machine_god_core::CancellationToken,
     ) -> OpenFileLaunch {
-        self.launch_calls.fetch_add(1, Ordering::SeqCst);
         let outcome = self.outcome;
+        let launch_calls = Arc::clone(&self.launch_calls);
         let future_polls = Arc::clone(&self.future_polls);
         Box::pin(async move {
+            launch_calls.fetch_add(1, Ordering::SeqCst);
             future_polls.fetch_add(1, Ordering::SeqCst);
             drop(request);
             outcome
@@ -249,6 +277,17 @@ fn assert_turn_pending(turn: &mut machine_god_core::Turn) {
         Pin::new(turn).poll_next(&mut Context::from_waker(&waker)),
         Poll::Pending
     ));
+}
+
+fn assert_original_descriptor_released(target: &RetainedTarget) {
+    match rustix::fs::stat(&target.proc_path) {
+        Err(error) if error == rustix::io::Errno::NOENT => {}
+        Ok(metadata) => assert!(
+            metadata.st_dev != target.device || metadata.st_ino != target.inode,
+            "the proc fd path still resolves to the original target identity"
+        ),
+        Err(error) => panic!("unexpected proc fd inspection failure: {error}"),
+    }
 }
 
 #[test]
@@ -432,13 +471,17 @@ fn engine_cancellation_drops_pending_committed_launcher_and_closes_retained_targ
     assert_eq!(launcher.launch_calls.load(Ordering::SeqCst), 1);
     assert_eq!(launcher.future_polls.load(Ordering::SeqCst), 1);
     assert_eq!(launcher.future_drops.load(Ordering::SeqCst), 0);
-    let proc_path = launcher
-        .retained_proc_path
+    let retained_target = launcher
+        .retained_target
         .lock()
         .unwrap()
         .clone()
         .expect("pending execution recorded its proc target");
-    assert!(proc_path.exists());
+    let retained = rustix::fs::stat(&retained_target.proc_path).unwrap();
+    assert_eq!(
+        (retained.st_dev, retained.st_ino),
+        (retained_target.device, retained_target.inode)
+    );
 
     assert!(turn.handle().cancel());
     assert!(matches!(
@@ -449,5 +492,5 @@ fn engine_cancellation_drops_pending_committed_launcher_and_closes_retained_targ
         }
     ));
     assert_eq!(launcher.future_drops.load(Ordering::SeqCst), 1);
-    assert!(!proc_path.exists());
+    assert_original_descriptor_released(&retained_target);
 }

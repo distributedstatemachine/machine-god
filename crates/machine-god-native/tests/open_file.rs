@@ -20,7 +20,8 @@ use machine_god_core::{
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, TurnId,
 };
 use machine_god_native::{
-    MAX_OPEN_FILE_PATH_BYTES, MAX_OPEN_FILE_PATH_COMPONENT_BYTES, MAX_OPEN_FILE_PATH_COMPONENTS,
+    MAX_CONCURRENT_OPEN_FILE_LAUNCHES, MAX_OPEN_FILE_PATH_BYTES,
+    MAX_OPEN_FILE_PATH_COMPONENT_BYTES, MAX_OPEN_FILE_PATH_COMPONENTS,
     MAX_OPEN_FILE_SERIALIZED_ARGUMENT_BYTES, MAX_OPEN_FILE_SERIALIZED_RESULT_BYTES,
     OPEN_FILE_LAUNCH_TIMEOUT, OPEN_FILE_TOOL_NAME, OpenFileLaunch, OpenFileLaunchOutcome,
     OpenFileLaunchRequest, OpenFileLauncher, OpenFileTool, OpenFileToolOpenErrorKind,
@@ -78,13 +79,15 @@ enum LaunchMode {
 struct LaunchRecord {
     path: String,
     proc_path: PathBuf,
+    device: u64,
+    inode: u64,
     identity_matches: bool,
     request_debug: String,
 }
 
 #[derive(Default)]
 struct LauncherState {
-    constructed: usize,
+    started: usize,
     polled: usize,
     dropped: usize,
     records: Vec<LaunchRecord>,
@@ -115,25 +118,12 @@ impl OpenFileLauncher for FakeLauncher {
         request: OpenFileLaunchRequest,
         cancellation: CancellationToken,
     ) -> OpenFileLaunch {
-        let target = rustix::fs::fstat(request.target_fd()).unwrap();
-        let proc_target = rustix::fs::stat(request.proc_path()).unwrap();
-        let record = LaunchRecord {
-            path: request.path().to_owned(),
-            proc_path: request.proc_path().to_owned(),
-            identity_matches: target.st_dev == proc_target.st_dev
-                && target.st_ino == proc_target.st_ino,
-            request_debug: format!("{request:?}"),
-        };
-        {
-            let mut state = self.state.lock().unwrap();
-            state.constructed += 1;
-            state.records.push(record);
-        }
         Box::pin(FakeLaunchFuture {
             mode: self.mode,
             request: Some(request),
             cancellation,
             state: Arc::clone(&self.state),
+            started: false,
         })
     }
 }
@@ -143,23 +133,46 @@ struct FakeLaunchFuture {
     request: Option<OpenFileLaunchRequest>,
     cancellation: CancellationToken,
     state: Arc<Mutex<LauncherState>>,
+    started: bool,
 }
 
 impl Future for FakeLaunchFuture {
     type Output = OpenFileLaunchOutcome;
 
     fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
-        self.state.lock().unwrap().polled += 1;
-        let outcome = match self.mode {
+        let this = self.as_mut().get_mut();
+        this.state.lock().unwrap().polled += 1;
+        if !this.started {
+            let request = this
+                .request
+                .as_ref()
+                .expect("an unstarted fake launch retains its request");
+            let target = rustix::fs::fstat(request.target_fd()).unwrap();
+            let proc_target = rustix::fs::stat(request.proc_path()).unwrap();
+            let record = LaunchRecord {
+                path: request.path().to_owned(),
+                proc_path: request.proc_path().to_owned(),
+                device: target.st_dev,
+                inode: target.st_ino,
+                identity_matches: target.st_dev == proc_target.st_dev
+                    && target.st_ino == proc_target.st_ino,
+                request_debug: format!("{request:?}"),
+            };
+            let mut state = this.state.lock().unwrap();
+            state.started += 1;
+            state.records.push(record);
+            this.started = true;
+        }
+        let outcome = match this.mode {
             LaunchMode::Ready(outcome) => Some(outcome),
-            LaunchMode::ResultUnknownAfterCancellation if self.cancellation.is_cancelled() => {
+            LaunchMode::ResultUnknownAfterCancellation if this.cancellation.is_cancelled() => {
                 Some(OpenFileLaunchOutcome::ResultUnknown)
             }
             LaunchMode::Pending | LaunchMode::ResultUnknownAfterCancellation => None,
         };
         match outcome {
             Some(outcome) => {
-                drop(self.request.take());
+                drop(this.request.take());
                 Poll::Ready(outcome)
             }
             None => Poll::Pending,
@@ -169,7 +182,46 @@ impl Future for FakeLaunchFuture {
 
 impl Drop for FakeLaunchFuture {
     fn drop(&mut self) {
-        self.state.lock().unwrap().dropped += 1;
+        if self.started {
+            self.state.lock().unwrap().dropped += 1;
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct CaptureLauncher {
+    request: Arc<Mutex<Option<OpenFileLaunchRequest>>>,
+}
+
+impl OpenFileLauncher for CaptureLauncher {
+    fn launch(
+        &self,
+        request: OpenFileLaunchRequest,
+        _cancellation: CancellationToken,
+    ) -> OpenFileLaunch {
+        Box::pin(CaptureLaunchFuture {
+            request: Some(request),
+            captured: Arc::clone(&self.request),
+            started: false,
+        })
+    }
+}
+
+struct CaptureLaunchFuture {
+    request: Option<OpenFileLaunchRequest>,
+    captured: Arc<Mutex<Option<OpenFileLaunchRequest>>>,
+    started: bool,
+}
+
+impl Future for CaptureLaunchFuture {
+    type Output = OpenFileLaunchOutcome;
+
+    fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        if !self.started {
+            *self.captured.lock().unwrap() = self.request.take();
+            self.started = true;
+        }
+        Poll::Pending
     }
 }
 
@@ -271,6 +323,33 @@ fn execute(
     poll_ready(tool.execute(context(), arguments, cancellation))
 }
 
+fn capture_launch_request(root: &Path, path: &str) -> OpenFileLaunchRequest {
+    let launcher = CaptureLauncher::default();
+    let tool = OpenFileTool::open_with_launcher(root, launcher.clone()).unwrap();
+    let mut execution =
+        Box::pin(tool.execute(context(), json!({ "path": path }), CancellationToken::new()));
+    assert!(poll_once(execution.as_mut()).is_pending());
+    let request = launcher
+        .request
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the first launcher-future poll captures its request");
+    drop(execution);
+    request
+}
+
+fn assert_original_descriptor_released(proc_path: &Path, device: u64, inode: u64) {
+    match rustix::fs::stat(proc_path) {
+        Err(error) if error == rustix::io::Errno::NOENT => {}
+        Ok(metadata) => assert!(
+            metadata.st_dev != device || metadata.st_ino != inode,
+            "the proc fd path still resolves to the original target identity"
+        ),
+        Err(error) => panic!("unexpected proc fd inspection failure: {error}"),
+    }
+}
+
 fn assert_tool_error(
     error: ToolError,
     kind: ToolErrorKind,
@@ -327,6 +406,7 @@ fn exported_contract_spec_and_constructor_errors_are_exact_and_redacted() {
     assert_eq!(MAX_OPEN_FILE_PATH_COMPONENTS, 256);
     assert_eq!(MAX_OPEN_FILE_SERIALIZED_ARGUMENT_BYTES, 65_536);
     assert_eq!(MAX_OPEN_FILE_SERIALIZED_RESULT_BYTES, 16_384);
+    assert_eq!(MAX_CONCURRENT_OPEN_FILE_LAUNCHES, 32);
     assert_eq!(OPEN_FILE_LAUNCH_TIMEOUT, Duration::from_secs(30));
 
     let temporary = TemporaryDirectory::new();
@@ -414,7 +494,7 @@ fn prepare_is_effect_free_strict_and_uses_the_exact_open_file_capability() {
         json!({ "type": "open_file", "path": "report.txt" })
     );
     launcher.with_state(|state| {
-        assert_eq!(state.constructed, 0);
+        assert_eq!(state.started, 0);
         assert_eq!(state.polled, 0);
     });
 
@@ -475,7 +555,7 @@ fn canonical_validation_rejects_aliases_controls_and_directional_text() {
             .unwrap();
         assert_eq!(prepared.arguments(), &json!({ "path": path }));
     }
-    assert_eq!(launcher.with_state(|state| state.constructed), 0);
+    assert_eq!(launcher.with_state(|state| state.started), 0);
 }
 
 #[test]
@@ -542,6 +622,30 @@ fn every_path_bound_accepts_its_edge_and_rejects_one_more() {
         tool.prepare(call(OPEN_FILE_TOOL_NAME, json!({ "path": over_path })))
             .unwrap_err(),
     );
+
+    let very_large_path = "a".repeat(1024 * 1024);
+    assert!(
+        serde_json::to_vec(&json!({ "path": &very_large_path }))
+            .unwrap()
+            .len()
+            > MAX_OPEN_FILE_SERIALIZED_ARGUMENT_BYTES
+    );
+    assert_invalid_path(
+        tool.prepare(call(
+            OPEN_FILE_TOOL_NAME,
+            json!({ "path": &very_large_path }),
+        ))
+        .unwrap_err(),
+    );
+    assert_invalid_path(
+        execute(
+            &tool,
+            json!({ "path": very_large_path }),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
+    assert_eq!(launcher.with_state(|state| state.started), 0);
 }
 
 #[test]
@@ -562,7 +666,7 @@ fn accepted_launch_uses_the_exact_descriptor_bound_proc_identity_and_result() {
     assert_eq!(output, ToolOutput::success(json!({ "path": requested })));
     assert!(serde_json::to_vec(&output).unwrap().len() <= MAX_OPEN_FILE_SERIALIZED_RESULT_BYTES);
     launcher.with_state(|state| {
-        assert_eq!(state.constructed, 1);
+        assert_eq!(state.started, 1);
         assert_eq!(state.polled, 1);
         assert_eq!(state.dropped, 1);
         assert_eq!(state.records[0].path, requested);
@@ -630,7 +734,7 @@ fn filesystem_resolution_rejects_missing_symlinks_directories_and_special_files(
         "requested file path is not confined",
         false,
     );
-    assert_eq!(launcher.with_state(|state| state.constructed), 0);
+    assert_eq!(launcher.with_state(|state| state.started), 0);
     assert_eq!(fs::read(&outside_sentinel).unwrap(), b"outside sentinel");
 }
 
@@ -712,7 +816,7 @@ fn retained_root_survives_rename_but_rejects_unlinked_root_replacement() {
         "requested file is unavailable",
         true,
     );
-    assert_eq!(never.with_state(|state| state.constructed), 0);
+    assert_eq!(never.with_state(|state| state.started), 0);
 }
 
 #[test]
@@ -757,7 +861,7 @@ fn launcher_outcomes_map_to_exact_fixed_errors_without_path_disclosure() {
 }
 
 #[test]
-fn execution_future_is_inert_precancellation_skips_launch_and_drop_closes_request() {
+fn execution_and_launcher_constructors_are_inert_and_drop_closes_the_request() {
     let temporary = TemporaryDirectory::new();
     fs::write(temporary.path().join("report.txt"), b"private").unwrap();
     let pending = FakeLauncher::new(LaunchMode::Pending);
@@ -768,9 +872,33 @@ fn execution_future_is_inert_precancellation_skips_launch_and_drop_closes_reques
         json!({ "path": "report.txt" }),
         CancellationToken::new(),
     );
-    assert_eq!(pending.with_state(|state| state.constructed), 0);
+    assert_eq!(pending.with_state(|state| state.started), 0);
     drop(unpolled);
-    assert_eq!(pending.with_state(|state| state.constructed), 0);
+    assert_eq!(pending.with_state(|state| state.started), 0);
+
+    let request = capture_launch_request(temporary.path(), "report.txt");
+    let original = rustix::fs::fstat(request.target_fd()).unwrap();
+    let proc_path = request.proc_path().to_owned();
+    let unpolled_launch = pending.launch(request, CancellationToken::new());
+    pending.with_state(|state| {
+        assert_eq!(state.started, 0);
+        assert_eq!(state.polled, 0);
+        assert_eq!(state.dropped, 0);
+        assert!(state.records.is_empty());
+    });
+    let retained = rustix::fs::stat(&proc_path).unwrap();
+    assert_eq!(
+        (retained.st_dev, retained.st_ino),
+        (original.st_dev, original.st_ino)
+    );
+    drop(unpolled_launch);
+    pending.with_state(|state| {
+        assert_eq!(state.started, 0);
+        assert_eq!(state.polled, 0);
+        assert_eq!(state.dropped, 0);
+        assert!(state.records.is_empty());
+    });
+    assert_original_descriptor_released(&proc_path, original.st_dev, original.st_ino);
 
     let cancellation = CancellationToken::new();
     assert!(cancellation.cancel());
@@ -781,7 +909,7 @@ fn execution_future_is_inert_precancellation_skips_launch_and_drop_closes_reques
         "open_file execution was cancelled",
         false,
     );
-    assert_eq!(pending.with_state(|state| state.constructed), 0);
+    assert_eq!(pending.with_state(|state| state.started), 0);
 
     let mut execution = Box::pin(tool.execute(
         context(),
@@ -789,15 +917,19 @@ fn execution_future_is_inert_precancellation_skips_launch_and_drop_closes_reques
         CancellationToken::new(),
     ));
     assert!(poll_once(execution.as_mut()).is_pending());
-    let proc_path = pending.with_state(|state| {
-        assert_eq!(state.constructed, 1);
+    let record = pending.with_state(|state| {
+        assert_eq!(state.started, 1);
         assert_eq!(state.polled, 1);
         assert_eq!(state.dropped, 0);
-        state.records[0].proc_path.clone()
+        state.records[0].clone()
     });
-    assert!(proc_path.exists());
+    let retained = rustix::fs::stat(&record.proc_path).unwrap();
+    assert_eq!(
+        (retained.st_dev, retained.st_ino),
+        (record.device, record.inode)
+    );
     drop(execution);
-    assert!(!proc_path.exists());
+    assert_original_descriptor_released(&record.proc_path, record.device, record.inode);
     assert_eq!(pending.with_state(|state| state.dropped), 1);
 }
 
@@ -826,7 +958,7 @@ fn cancellation_after_launch_is_reported_as_unknown_by_the_injected_lifecycle() 
         false,
     );
     launcher.with_state(|state| {
-        assert_eq!(state.constructed, 1);
+        assert_eq!(state.started, 1);
         assert_eq!(state.polled, 2);
         assert_eq!(state.dropped, 1);
     });
@@ -877,7 +1009,7 @@ fn concurrent_calls_keep_paths_descriptors_results_and_lifecycles_isolated() {
             .collect::<Vec<_>>()
     );
     launcher.with_state(|state| {
-        assert_eq!(state.constructed, CALL_COUNT);
+        assert_eq!(state.started, CALL_COUNT);
         assert_eq!(state.polled, CALL_COUNT);
         assert_eq!(state.dropped, CALL_COUNT);
         let mut paths = state

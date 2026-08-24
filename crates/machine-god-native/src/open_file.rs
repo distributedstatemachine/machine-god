@@ -26,6 +26,8 @@ use std::pin::Pin;
 #[cfg(target_os = "linux")]
 use std::process::{Child, Command, Stdio};
 #[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "linux")]
 use std::task::{Context, Poll, Waker};
@@ -46,6 +48,8 @@ pub const MAX_OPEN_FILE_SERIALIZED_ARGUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_OPEN_FILE_SERIALIZED_RESULT_BYTES: usize = 16 * 1024;
 /// Maximum wait before the direct desktop helper is terminated.
 pub const OPEN_FILE_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// Maximum process-global system-launch workers, including notification tails.
+pub const MAX_CONCURRENT_OPEN_FILE_LAUNCHES: usize = 32;
 /// Registered name of [`OpenFileTool`].
 pub const OPEN_FILE_TOOL_NAME: &str = "open_file";
 
@@ -341,10 +345,10 @@ fn validate_arguments(arguments: &Value) -> Result<ValidatedArguments, ToolError
     let Some(Value::String(path)) = object.get("path") else {
         return Err(invalid_arguments());
     };
+    validate_canonical_path(path)?;
     if !serialized_value_fits(arguments, MAX_OPEN_FILE_SERIALIZED_ARGUMENT_BYTES) {
         return Err(invalid_arguments());
     }
-    validate_canonical_path(path)?;
     Ok(ValidatedArguments { path: path.clone() })
 }
 
@@ -638,6 +642,10 @@ impl Default for SystemOpenFileLauncher {
                 #[cfg(test)]
                 before_spawn: None,
                 #[cfg(test)]
+                before_first_wait: None,
+                #[cfg(test)]
+                before_forced_wait_failure: None,
+                #[cfg(test)]
                 force_wait_failure: false,
             }),
         }
@@ -652,6 +660,10 @@ struct SystemLaunchConfig {
     timeout: Duration,
     #[cfg(test)]
     before_spawn: Option<Arc<BeforeSpawnHook>>,
+    #[cfg(test)]
+    before_first_wait: Option<Arc<BeforeSpawnHook>>,
+    #[cfg(test)]
+    before_forced_wait_failure: Option<Arc<BeforeSpawnHook>>,
     #[cfg(test)]
     force_wait_failure: bool,
 }
@@ -798,6 +810,36 @@ impl Drop for SystemLaunchFuture {
 }
 
 #[cfg(target_os = "linux")]
+static ACTIVE_SYSTEM_LAUNCHES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "linux")]
+struct SystemLaunchPermit;
+
+#[cfg(target_os = "linux")]
+impl SystemLaunchPermit {
+    fn acquire() -> Option<Self> {
+        ACTIVE_SYSTEM_LAUNCHES
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                if active >= MAX_CONCURRENT_OPEN_FILE_LAUNCHES {
+                    None
+                } else {
+                    active.checked_add(1)
+                }
+            })
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for SystemLaunchPermit {
+    fn drop(&mut self) {
+        let previous = ACTIVE_SYSTEM_LAUNCHES.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "open_file launch permit count underflowed");
+    }
+}
+
+#[cfg(target_os = "linux")]
 struct WorkerHandle {
     shared: Arc<Mutex<WorkerState>>,
     thread: Option<JoinHandle<()>>,
@@ -819,11 +861,12 @@ impl WorkerHandle {
         cancellation: CancellationToken,
         config: Arc<SystemLaunchConfig>,
     ) -> Result<Self, ()> {
+        let permit = SystemLaunchPermit::acquire().ok_or(())?;
         let shared = Arc::new(Mutex::new(WorkerState::default()));
         let worker_shared = Arc::clone(&shared);
         let thread = thread::Builder::new()
             .name("machine-god-open-file".to_owned())
-            .spawn(move || launch_worker(&request, &cancellation, &config, &worker_shared))
+            .spawn(move || launch_worker(request, cancellation, config, worker_shared, permit))
             .map_err(|_| ())?;
         Ok(Self {
             shared,
@@ -961,14 +1004,27 @@ fn lock_worker_state(shared: &Mutex<WorkerState>) -> std::sync::MutexGuard<'_, W
 
 #[cfg(target_os = "linux")]
 fn launch_worker(
+    request: OpenFileLaunchRequest,
+    cancellation: CancellationToken,
+    config: Arc<SystemLaunchConfig>,
+    shared: Arc<Mutex<WorkerState>>,
+    permit: SystemLaunchPermit,
+) {
+    let outcome = launch_worker_outcome(&request, &cancellation, &config, &shared);
+    drop(request);
+    publish_worker_outcome(&shared, outcome);
+    drop((cancellation, config, shared, permit));
+}
+
+#[cfg(target_os = "linux")]
+fn launch_worker_outcome(
     request: &OpenFileLaunchRequest,
     cancellation: &CancellationToken,
     config: &SystemLaunchConfig,
     shared: &Mutex<WorkerState>,
-) {
+) -> OpenFileLaunchOutcome {
     if cancellation.is_cancelled() || lock_worker_state(shared).abort {
-        publish_worker_outcome(shared, OpenFileLaunchOutcome::Cancelled);
-        return;
+        return OpenFileLaunchOutcome::Cancelled;
     }
 
     let mut command = Command::new(&config.program);
@@ -995,58 +1051,74 @@ fn launch_worker(
         }
     };
     let Some(spawn_result) = spawn_result else {
-        publish_worker_outcome(shared, OpenFileLaunchOutcome::Cancelled);
-        return;
+        return OpenFileLaunchOutcome::Cancelled;
     };
     let Ok(mut child) = spawn_result else {
-        let outcome = if cancellation.is_cancelled() || lock_worker_state(shared).abort {
+        return if cancellation.is_cancelled() || lock_worker_state(shared).abort {
             OpenFileLaunchOutcome::Cancelled
         } else {
             OpenFileLaunchOutcome::Unavailable
         };
-        publish_worker_outcome(shared, outcome);
-        return;
     };
 
     let deadline = Instant::now() + config.timeout;
+    #[cfg(test)]
+    let mut before_first_wait = config.before_first_wait.as_ref();
     loop {
         if cancellation.is_cancelled() || lock_worker_state(shared).abort {
             terminate_and_reap(&mut child);
-            publish_worker_outcome(shared, OpenFileLaunchOutcome::ResultUnknown);
-            return;
+            return OpenFileLaunchOutcome::ResultUnknown;
         }
         #[cfg(test)]
-        if config.force_wait_failure {
-            terminate_and_reap(&mut child);
-            publish_worker_outcome(shared, OpenFileLaunchOutcome::ResultUnknown);
-            return;
+        if let Some(hook) = before_first_wait.take() {
+            hook.pause_worker();
         }
-        match child.try_wait() {
+
+        if Instant::now() >= deadline {
+            terminate_and_reap(&mut child);
+            return OpenFileLaunchOutcome::ResultUnknown;
+        }
+
+        let wait_result = checked_wait(&mut child, config);
+        let observed_at = Instant::now();
+        if observed_at >= deadline {
+            terminate_and_reap(&mut child);
+            return OpenFileLaunchOutcome::ResultUnknown;
+        }
+        match wait_result {
             Ok(Some(status)) => {
-                publish_worker_outcome(
-                    shared,
-                    if status.success() {
-                        OpenFileLaunchOutcome::Accepted
-                    } else {
-                        OpenFileLaunchOutcome::ResultUnknown
-                    },
-                );
-                return;
+                return if status.success() {
+                    OpenFileLaunchOutcome::Accepted
+                } else {
+                    OpenFileLaunchOutcome::ResultUnknown
+                };
             }
             Ok(None) => {}
             Err(_) => {
                 terminate_and_reap(&mut child);
-                publish_worker_outcome(shared, OpenFileLaunchOutcome::ResultUnknown);
-                return;
+                return OpenFileLaunchOutcome::ResultUnknown;
             }
         }
-        if Instant::now() >= deadline {
-            terminate_and_reap(&mut child);
-            publish_worker_outcome(shared, OpenFileLaunchOutcome::ResultUnknown);
-            return;
-        }
-        thread::sleep(Duration::from_millis(5));
+        let remaining = deadline.saturating_duration_since(observed_at);
+        thread::sleep(std::cmp::min(Duration::from_millis(5), remaining));
     }
+}
+
+#[cfg(target_os = "linux")]
+fn checked_wait(
+    child: &mut Child,
+    config: &SystemLaunchConfig,
+) -> io::Result<Option<std::process::ExitStatus>> {
+    #[cfg(not(test))]
+    let _ = config;
+    #[cfg(test)]
+    if config.force_wait_failure {
+        if let Some(hook) = &config.before_forced_wait_failure {
+            hook.pause_worker();
+        }
+        return Err(io::Error::other("forced open_file wait failure"));
+    }
+    child.try_wait()
 }
 
 #[cfg(target_os = "linux")]

@@ -13,8 +13,9 @@ use rustix::fd::AsRawFd;
 use rustix::fs::{Mode, OFlags};
 
 use super::{
-    BeforeSpawnHook, OPEN_FILE_LAUNCH_TIMEOUT, OpenFileLaunch, OpenFileLaunchOutcome,
-    OpenFileLaunchRequest, OpenFileLauncher, SystemLaunchConfig, SystemOpenFileLauncher,
+    ACTIVE_SYSTEM_LAUNCHES, BeforeSpawnHook, MAX_CONCURRENT_OPEN_FILE_LAUNCHES,
+    OPEN_FILE_LAUNCH_TIMEOUT, OpenFileLaunch, OpenFileLaunchOutcome, OpenFileLaunchRequest,
+    OpenFileLauncher, SystemLaunchConfig, SystemLaunchPermit, SystemOpenFileLauncher,
 };
 use machine_god_core::{CancellationToken, ToolErrorKind};
 
@@ -127,13 +128,15 @@ fn request(directory: &Path) -> OpenFileLaunchRequest {
 }
 
 fn launcher(program: PathBuf, timeout: Duration) -> SystemOpenFileLauncher {
-    launcher_with_test_controls(program, timeout, None, false)
+    launcher_with_test_controls(program, timeout, None, None, None, false)
 }
 
 fn launcher_with_test_controls(
     program: PathBuf,
     timeout: Duration,
     before_spawn: Option<Arc<BeforeSpawnHook>>,
+    before_first_wait: Option<Arc<BeforeSpawnHook>>,
+    before_forced_wait_failure: Option<Arc<BeforeSpawnHook>>,
     force_wait_failure: bool,
 ) -> SystemOpenFileLauncher {
     SystemOpenFileLauncher {
@@ -142,6 +145,8 @@ fn launcher_with_test_controls(
             current_dir: PathBuf::from("/"),
             timeout,
             before_spawn,
+            before_first_wait,
+            before_forced_wait_failure,
             force_wait_failure,
         }),
     }
@@ -155,35 +160,50 @@ fn read_pid(path: &Path) -> u32 {
         .expect("parse helper pid")
 }
 
-fn assert_process_reaped(pid: u32) {
-    assert!(
-        !Path::new(&format!("/proc/{pid}")).exists(),
-        "direct helper process {pid} remains"
-    );
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProcIdentity {
+    device: u64,
+    inode: u64,
 }
 
-fn assert_program_not_running(program: &Path) {
-    let display = program.display().to_string();
-    let program = program.as_os_str().as_encoded_bytes();
-    for entry in fs::read_dir("/proc").expect("read proc filesystem") {
-        let entry = entry.expect("read proc entry");
-        if !entry
-            .file_name()
-            .as_encoded_bytes()
-            .iter()
-            .all(u8::is_ascii_digit)
-        {
-            continue;
-        }
-        let Ok(command_line) = fs::read(entry.path().join("cmdline")) else {
-            continue;
-        };
+fn proc_identity(path: &Path) -> ProcIdentity {
+    let stat = rustix::fs::stat(path).expect("inspect proc identity");
+    ProcIdentity {
+        device: stat.st_dev,
+        inode: stat.st_ino,
+    }
+}
+
+fn assert_proc_identity_released(path: &Path, original: ProcIdentity) {
+    match rustix::fs::stat(path) {
+        Err(error) if error == rustix::io::Errno::NOENT => {}
+        Ok(stat) => assert_ne!(
+            ProcIdentity {
+                device: stat.st_dev,
+                inode: stat.st_ino,
+            },
+            original,
+            "original proc identity remains at {}",
+            path.display()
+        ),
+        Err(error) => panic!("inspect released proc identity {}: {error}", path.display()),
+    }
+}
+
+fn process_identity(pid: u32) -> (PathBuf, ProcIdentity) {
+    let path = PathBuf::from(format!("/proc/{pid}"));
+    let identity = proc_identity(&path);
+    (path, identity)
+}
+
+fn wait_for_active_launches(expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire) != expected {
         assert!(
-            !command_line
-                .split(|byte| *byte == 0)
-                .any(|argument| argument == program),
-            "controlled helper {display} remains"
+            Instant::now() < deadline,
+            "active system launch count did not become {expected}"
         );
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -240,11 +260,65 @@ fn process_test_lock() -> std::sync::MutexGuard<'static, ()> {
 #[test]
 fn production_configuration_is_the_exact_fixed_launcher_contract() {
     let launcher = SystemOpenFileLauncher::default();
+    assert_eq!(MAX_CONCURRENT_OPEN_FILE_LAUNCHES, 32);
     assert_eq!(launcher.config.program, Path::new("/usr/bin/xdg-open"));
     assert_eq!(launcher.config.current_dir, Path::new("/"));
     assert_eq!(launcher.config.timeout, OPEN_FILE_LAUNCH_TIMEOUT);
     assert!(launcher.config.before_spawn.is_none());
+    assert!(launcher.config.before_first_wait.is_none());
+    assert!(launcher.config.before_forced_wait_failure.is_none());
     assert!(!launcher.config.force_wait_failure);
+}
+
+#[test]
+fn saturated_global_limit_starts_no_extra_worker_or_helper_and_releases_cleanly() {
+    let _lock = process_test_lock();
+    wait_for_active_launches(0);
+    let permits = (0..MAX_CONCURRENT_OPEN_FILE_LAUNCHES)
+        .map(|_| SystemLaunchPermit::acquire().expect("launch permit below fixed limit"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire),
+        MAX_CONCURRENT_OPEN_FILE_LAUNCHES
+    );
+    assert!(SystemLaunchPermit::acquire().is_none());
+
+    let temporary = TemporaryDirectory::new();
+    let marker = temporary.path().join("started");
+    let script = write_script(
+        temporary.path(),
+        &format!("printf started > '{}'", marker.display()),
+    );
+    let launch_request = request(temporary.path());
+    let target_proc_path = launch_request.proc_path.clone();
+    let target_identity = proc_identity(&target_proc_path);
+    let mut saturated = launcher(script.clone(), Duration::from_secs(2))
+        .launch(launch_request, CancellationToken::new());
+
+    assert_eq!(
+        drive_to_completion(&mut saturated, Instant::now() + Duration::from_secs(2)),
+        OpenFileLaunchOutcome::Unavailable
+    );
+    assert!(!marker.exists());
+    assert_proc_identity_released(&target_proc_path, target_identity);
+    assert_eq!(
+        ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire),
+        MAX_CONCURRENT_OPEN_FILE_LAUNCHES
+    );
+
+    drop(permits);
+    wait_for_active_launches(0);
+    let mut admitted = launcher(script, Duration::from_secs(2))
+        .launch(request(temporary.path()), CancellationToken::new());
+    assert_eq!(
+        drive_to_completion(&mut admitted, Instant::now() + Duration::from_secs(2)),
+        OpenFileLaunchOutcome::Accepted
+    );
+    assert_eq!(
+        fs::read_to_string(marker).expect("read launch marker"),
+        "started"
+    );
+    wait_for_active_launches(0);
 }
 
 #[test]
@@ -354,6 +428,8 @@ fn cancellation_before_the_serialized_spawn_gate_never_starts_the_helper() {
         script,
         Duration::from_secs(2),
         Some(Arc::clone(&hook)),
+        None,
+        None,
         false,
     );
     let cancellation = CancellationToken::new();
@@ -402,7 +478,47 @@ fn spawn_failure_and_nonzero_exit_preserve_the_commit_boundary() {
 }
 
 #[test]
-fn checked_wait_failure_returns_unknown_and_terminates_and_reaps_the_helper() {
+fn helper_known_to_exit_after_deadline_is_rejected_before_the_first_wait_decision() {
+    let _lock = process_test_lock();
+    let temporary = TemporaryDirectory::new();
+    let pid_record = temporary.path().join("pid");
+    let exited = temporary.path().join("exited");
+    let script = write_script(
+        temporary.path(),
+        &format!(
+            "printf '%s\\n' \"$$\" > '{}'\nsleep 0.10\nprintf exited > '{}'",
+            pid_record.display(),
+            exited.display()
+        ),
+    );
+    let before_first_wait = Arc::new(BeforeSpawnHook::new());
+    let mut future = launcher_with_test_controls(
+        script,
+        Duration::from_millis(25),
+        None,
+        Some(Arc::clone(&before_first_wait)),
+        None,
+        false,
+    )
+    .launch(request(temporary.path()), CancellationToken::new());
+    let waker = waker();
+
+    assert!(poll_once(&mut future, &waker).is_pending());
+    before_first_wait.reached.wait();
+    wait_for_file(&exited);
+    let pid = read_pid(&pid_record);
+    let (process_path, original_identity) = process_identity(pid);
+    before_first_wait.release.wait();
+
+    assert_eq!(
+        drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
+        OpenFileLaunchOutcome::ResultUnknown
+    );
+    assert_proc_identity_released(&process_path, original_identity);
+}
+
+#[test]
+fn checked_wait_error_returns_unknown_and_terminates_and_reaps_the_helper() {
     let _lock = process_test_lock();
     let temporary = TemporaryDirectory::new();
     let pid_record = temporary.path().join("pid");
@@ -413,20 +529,29 @@ fn checked_wait_failure_returns_unknown_and_terminates_and_reaps_the_helper() {
             pid_record.display()
         ),
     );
-    let mut future =
-        launcher_with_test_controls(script.clone(), Duration::from_secs(2), None, true)
-            .launch(request(temporary.path()), CancellationToken::new());
+    let before_forced_wait_failure = Arc::new(BeforeSpawnHook::new());
+    let mut future = launcher_with_test_controls(
+        script,
+        Duration::from_secs(2),
+        None,
+        None,
+        Some(Arc::clone(&before_forced_wait_failure)),
+        true,
+    )
+    .launch(request(temporary.path()), CancellationToken::new());
+    let waker = waker();
 
+    assert!(poll_once(&mut future, &waker).is_pending());
+    before_forced_wait_failure.reached.wait();
+    wait_for_file(&pid_record);
+    let pid = read_pid(&pid_record);
+    let (process_path, original_identity) = process_identity(pid);
+    before_forced_wait_failure.release.wait();
     assert_eq!(
         drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
         OpenFileLaunchOutcome::ResultUnknown
     );
-    if let Ok(recorded_pid) = fs::read_to_string(&pid_record)
-        && let Ok(recorded_pid) = recorded_pid.trim().parse()
-    {
-        assert_process_reaped(recorded_pid);
-    }
-    assert_program_not_running(&script);
+    assert_proc_identity_released(&process_path, original_identity);
 }
 
 #[test]
@@ -473,17 +598,31 @@ fn inline_reentrant_wake_completes_on_the_worker_without_self_joining() {
 }
 
 #[test]
-fn drop_overlapping_a_blocked_wake_does_not_join_the_notification_tail() {
+fn blocked_wake_releases_request_before_publication_and_holds_permit_until_worker_return() {
     let _lock = process_test_lock();
+    wait_for_active_launches(0);
     let temporary = TemporaryDirectory::new();
     let script = write_script(temporary.path(), "exit 0");
     let launcher = launcher(script, Duration::from_secs(2));
     let wake_hook = Arc::new(BeforeSpawnHook::new());
     let waker = Waker::from(Arc::new(BlockingWake(Arc::clone(&wake_hook))));
-    let mut future = launcher.launch(request(temporary.path()), CancellationToken::new());
+    let launch_request = request(temporary.path());
+    let target_proc_path = launch_request.proc_path.clone();
+    let target_identity = proc_identity(&target_proc_path);
+    let mut future = launcher.launch(launch_request, CancellationToken::new());
 
     assert!(poll_once(&mut future, &waker).is_pending());
     wake_hook.reached.wait();
+    assert_proc_identity_released(&target_proc_path, target_identity);
+    assert_eq!(ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire), 1);
+    let tail_saturation_permits = (1..MAX_CONCURRENT_OPEN_FILE_LAUNCHES)
+        .map(|_| SystemLaunchPermit::acquire().expect("permit below blocked-tail limit"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire),
+        MAX_CONCURRENT_OPEN_FILE_LAUNCHES
+    );
+    assert!(SystemLaunchPermit::acquire().is_none());
 
     let (dropped, observed_drop) = std::sync::mpsc::channel();
     let drop_thread = thread::spawn(move || {
@@ -491,13 +630,21 @@ fn drop_overlapping_a_blocked_wake_does_not_join_the_notification_tail() {
         dropped.send(()).expect("report completed future drop");
     });
     let drop_result = observed_drop.recv_timeout(Duration::from_millis(250));
-    wake_hook.release.wait();
-    drop_thread.join().expect("future drop thread succeeds");
-
     assert!(
         drop_result.is_ok(),
         "future drop joined a worker blocked in its wake callback"
     );
+    assert_eq!(
+        ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire),
+        MAX_CONCURRENT_OPEN_FILE_LAUNCHES,
+        "blocked wake tail released its active launch permit too early"
+    );
+
+    wake_hook.release.wait();
+    drop_thread.join().expect("future drop thread succeeds");
+    wait_for_active_launches(MAX_CONCURRENT_OPEN_FILE_LAUNCHES - 1);
+    drop(tail_saturation_permits);
+    wait_for_active_launches(0);
 }
 
 #[test]
@@ -514,28 +661,33 @@ while :; do :; done",
         ),
     );
 
-    let mut future = launcher(script.clone(), Duration::from_millis(40))
+    let waker = waker();
+    let mut future = launcher(script.clone(), Duration::from_millis(200))
         .launch(request(temporary.path()), CancellationToken::new());
+    assert!(poll_once(&mut future, &waker).is_pending());
+    wait_for_file(&pid_record);
+    let timeout_pid = read_pid(&pid_record);
+    let (timeout_process_path, timeout_identity) = process_identity(timeout_pid);
     assert_eq!(
         drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
         OpenFileLaunchOutcome::ResultUnknown
     );
-    assert_process_reaped(read_pid(&pid_record));
+    assert_proc_identity_released(&timeout_process_path, timeout_identity);
 
     fs::remove_file(&pid_record).expect("remove timeout pid record");
     let cancellation = CancellationToken::new();
     let mut future = launcher(script.clone(), Duration::from_secs(2))
         .launch(request(temporary.path()), cancellation.clone());
-    let waker = waker();
     assert!(poll_once(&mut future, &waker).is_pending());
     wait_for_file(&pid_record);
     let pid = read_pid(&pid_record);
+    let (process_path, original_identity) = process_identity(pid);
     assert!(cancellation.cancel());
     assert_eq!(
         drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
         OpenFileLaunchOutcome::ResultUnknown
     );
-    assert_process_reaped(pid);
+    assert_proc_identity_released(&process_path, original_identity);
 
     fs::remove_file(&pid_record).expect("remove cancellation pid record");
     let mut future = launcher(script, Duration::from_secs(2))
@@ -543,6 +695,7 @@ while :; do :; done",
     assert!(poll_once(&mut future, &waker).is_pending());
     wait_for_file(&pid_record);
     let pid = read_pid(&pid_record);
+    let (process_path, original_identity) = process_identity(pid);
     drop(future);
-    assert_process_reaped(pid);
+    assert_proc_identity_released(&process_path, original_identity);
 }
