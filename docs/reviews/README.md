@@ -36,3 +36,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native `copy_file` delivery review](m03-copy-file-review-01.md)
 - [Milestone 03 native `create_folder` delivery review](m03-create-folder-review-01.md)
 - [Milestone 03 native `open_file` contract review](m03-open-file-review-01.md)
+- [Milestone 03 native `web_fetch` review plan](m03-web-fetch-review-01.md)

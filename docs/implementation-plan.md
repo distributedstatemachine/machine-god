@@ -43,7 +43,16 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-six delivered bounded slices. Native `edit_file` is delivered on
+with twenty-six delivered bounded slices. A proposed twenty-seventh
+`web_fetch` slice is **IN PROGRESS** from exact delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`; its pinned fx observation is
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Production, independent tests,
+the complete local gate, three fresh same-SHA reviews, feature workflows,
+fast-forward integration, exact `main` workflows, and delivery are pending.
+The candidate host will contain thirteen tools, while its descriptor-backed
+workspace set remains twelve tools using one original descriptor plus eleven
+clones because `web_fetch` is rootless. The delivered count remains twenty-six
+and M03 remains in progress. Native `edit_file` is delivered on
 final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
 Exact feature CI `32651168514` passed all six jobs, and feature benchmark
 workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
@@ -1696,6 +1705,84 @@ claim, or fx-equivalence claim. Exact implementation, same-SHA review, feature
 workflows, fast-forward integration, and `main` workflows are green, increasing
 the delivered-slice count to twenty-two without completing Milestone 03.
 
+### Proposed bounded slice 27: native `web_fetch`
+
+The proposed twenty-seventh slice is **IN PROGRESS** from exact delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. The comparison checkout is pinned
+to `vercel-labs/fx` revision
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. The complete normative boundary
+and live review protocol are [`web-fetch.md`](web-fetch.md) and
+[`m03-web-fetch-review-01.md`](reviews/m03-web-fetch-review-01.md). The upstream
+surface is an observation, not a compatibility or equivalence claim.
+
+The implementation work is split across isolated, non-overlapping worktrees:
+
+- production owns cfg/public exports, URL/DNS/HTTP/result behavior, and
+  rootless reference-host registration;
+- independent evidence owns public/direct/private/engine/host tests, hostile
+  network fixtures, cancellation/drop, limits, and redaction; and
+- documentation owns this frozen contract, maintained summaries, and the
+  exact-SHA review ledger.
+
+Those components compose only after their own focused checks. No agent may
+revert another component, edit the generated compatibility inventory, add a CLI
+surface, change workflows or benchmark workloads, or make a product-performance
+claim as part of this slice.
+
+`WebFetchTool` is rootless and available only on non-WASM targets behind the
+optional `web-fetch-http` feature; existing `ai-gateway-http` includes it. Its
+strict model input is solely `{url:string}`. Effect-free preflight trims the
+boundary, accepts at most 2,000 bytes of canonical ASCII URL, upgrades `http`
+to `https`, rejects credentials and fragments, admits only a public multi-label
+target, and returns one exact canonical URL paired with
+`Capability::Network`. Policy and execution must agree on the HTTPS scheme,
+host, and effective port. Existing core behavior keeps that network capability
+`Critical`; the default policy path remains `Ask`.
+
+Allowed execution resolves every invocation, accepts at most 32 DNS answers
+only when every answer is public, and pins the admitted set to the connection
+while retaining the canonical hostname for HTTP/TLS. It performs at most one
+Reqwest HTTP/1 GET with fixed no-auth headers. Proxies, retries, referer,
+cookies, automatic redirect following, and decompression are disabled. Only
+2xx and identity encoding succeed. A 3xx is rejected so any later destination
+requires fresh preflight and permission; the original `NetworkTarget` never
+authorizes another host.
+
+Default concurrency is eight with a hard maximum of 32. Connect time is bounded
+at 10 seconds and the complete operation, beginning before permit acquisition,
+at 60 seconds. The inclusive response-body limit is 24 KiB and the independent
+serialized-result limit is 56 KiB. Cancellation/drop releases the response and
+permit on every path; the tool owns no machine-god worker. Text, JSON, XML, and
+JavaScript are eligible bounded text. HTML remains bounded raw untrusted text.
+Binary is metadata-only with no persistence, missing MIME is sniffed within the
+same bounds, and model-unsafe text is rejected.
+
+Every successful output begins with a fixed upstream-untrusted warning and
+includes query-redacted canonical URL, status, MIME, content kind, and
+`cache_hit: false`. All failures use fixed redacted categories. This slice
+deliberately defers cache behavior, binary artifact storage,
+`read_tool_result`, progress/completion side channels, HTML-to-Markdown,
+compression, every redirect-following policy, private/authenticated targets,
+CLI changes, compatibility promotion, benchmark changes, product-performance
+claims, and fx-equivalence claims. Pinned-upstream same-site/optional-`www`
+redirects and default-safe admission are explicitly not copied because one
+`NetworkTarget`/`Ask` decision cannot authorize a second host; all network
+authority remains `Critical`.
+
+Production, independent tests, the exact Rust 1.94.1 local gate, and release-
+binary regression exercise must compose on one immutable behavior SHA. Three
+fresh adversarial agents then review that same SHA for correctness/API,
+network/HTTP lifecycle and robustness, and performance/concurrency. A finding
+at any severity rejects the candidate. Fixes require a new immutable SHA, the
+complete replacement local gate, and three fresh review tracks; repeat until
+all three report zero findings. Only a review-green exact SHA may run feature
+workflows, fast-forward `main` without force, and run exact `main` workflows.
+The current production, test, local-gate, review, workflow, integration, and
+delivery states are all pending. The candidate would bring the host to thirteen
+alphabetical tools, while the descriptor-backed set remains twelve with one
+original plus eleven clones. Until final seal and exact remote delivery, M03
+remains **IN PROGRESS** with twenty-six delivered slices.
+
 ### Milestone 03 completion boundary
 
 The twenty-six delivered slices do not complete Milestone 03.
@@ -2357,6 +2444,14 @@ gate:
   using one retained descriptor plus eleven identity-preserving clones. This
   makes no product-performance or fx-equivalence claim. The combined native-
   tool checkbox stays open because the remaining named tools are incomplete.
+  The proposed twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact
+  base `a56ff350c2aace1dc22cb14c269aee89d399cd8e` under
+  [`web-fetch.md`](web-fetch.md). It is rootless, so its candidate thirteen-tool
+  host does not change the twelve-tool original-plus-eleven-clone workspace
+  descriptor set. Production, independent tests, complete local gates, three
+  fresh same-SHA review tracks, feature workflows, integration, exact `main`
+  workflows, and delivery all remain pending; the delivered count remains
+  twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

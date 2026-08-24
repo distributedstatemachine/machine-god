@@ -395,6 +395,19 @@ JSON. In particular, native filesystem, process, and network tools must execute
 the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
+The proposed twenty-seventh [`web_fetch` candidate](web-fetch.md) applies this
+existing rule to one rootless network tool. Effect-free preparation must turn
+the sole bounded URL into both one canonical HTTPS execution URL and the exact
+`Capability::Network { target: NetworkTarget { .. } }` presented to policy.
+Allowed execution may contact only that scheme, host, and effective port; DNS
+admission and connection pinning cannot broaden it. Existing core behavior
+continues to classify network authority as `Critical`, so the default path is
+`Ask`. No new capability variant or core ambient network authority is proposed.
+This slice is in progress from exact base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production, evidence, reviews,
+gates, integration, and delivery are pending, and the delivered count remains
+twenty-six.
+
 The concrete consumers are the native
 [`read_file` tool](read-file.md), [`list_files` tool](list-files.md),
 [`file_info` tool](file-info.md), [`glob_files` tool](glob-files.md),

@@ -2,7 +2,22 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-first Milestone 03 native slice only snapshots config/state environment inputs
+proposed twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
+effect-free core-facing preparation supplies one exact canonical HTTPS
+`Capability::Network`, while cfg-gated non-WASM native code would own DNS, TLS,
+HTTP, runtime, and response effects. It admits only multi-label public targets,
+requires every DNS answer to be public, pins the admitted set to the
+connection, follows no redirect, sends no credential, proxy, cookie, or
+referer, and emits bounded output prefixed as upstream-untrusted. One approved
+target cannot authorize a redirected host; all network authority remains
+`Critical` and uses the default `Ask` path. Caching, artifacts, authenticated or
+private targets, compression, and redirect following are deferred. This
+candidate starts from exact base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production, tests, gates, reviews,
+integration, and delivery are pending, so M03 remains in progress with
+twenty-six delivered slices.
+
+The first Milestone 03 native slice only snapshots config/state environment inputs
 and reads final-path metadata for status. A second bounded native authority
 loads configuration synchronously and read-only. A third, provider-neutral
 slice adds capability-aware tool preflight without exercising native authority.

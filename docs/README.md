@@ -18,6 +18,7 @@
 - [Native `copy_file` contract](copy-file.md)
 - [Native `create_folder` delivered contract](create-folder.md)
 - [Native `open_file` implemented candidate contract](open-file.md)
+- [Native `web_fetch` in-progress candidate contract](web-fetch.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
 - [Native AI Gateway credential discovery](ai-gateway-credentials.md)
@@ -51,3 +52,4 @@
 - [Milestone 03 native `copy_file` delivery review](reviews/m03-copy-file-review-01.md)
 - [Milestone 03 native `create_folder` delivery review](reviews/m03-create-folder-review-01.md)
 - [Milestone 03 native `open_file` implementation review plan](reviews/m03-open-file-review-01.md)
+- [Milestone 03 native `web_fetch` review plan](reviews/m03-web-fetch-review-01.md)

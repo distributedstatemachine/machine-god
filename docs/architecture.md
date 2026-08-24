@@ -21,7 +21,18 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-six delivered bounded slices. The twenty-third,
+Milestone 03 has twenty-six delivered bounded slices. The proposed
+twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production, independent tests,
+the complete local gate, three fresh reviews, feature and `main` workflows,
+integration, and delivery are pending. Its non-WASM `web-fetch-http` feature
+would add one rootless `WebFetchTool`; `ai-gateway-http` includes that feature.
+Core retains provider-neutral `Capability::Network` and orchestration, while
+native owns URL/DNS/Reqwest/Tokio effects. The candidate host will have thirteen
+alphabetical tools, but its descriptor-backed workspace set remains twelve
+tools using one original descriptor plus eleven clones. The frozen boundary is
+[`web-fetch.md`](web-fetch.md); it adds no CLI, cache, artifact, compatibility,
+or product-performance claim. The twenty-third,
 library-only native `rename_file`, has composed production and independent
 evidence; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,

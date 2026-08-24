@@ -7,7 +7,18 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-six delivered bounded slices. The twenty-fourth, library-only
+twenty-six delivered bounded slices. A proposed twenty-seventh `web_fetch`
+slice is **IN PROGRESS** from exact base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production, independent tests,
+local gates, three fresh reviews, remote workflows, integration, and delivery
+are pending. The cfg-gated non-WASM candidate is rootless and would add a
+thirteenth host tool without changing the twelve descriptor-backed workspace
+tools or their original-plus-eleven-clone ownership. Its bounded public-HTTPS,
+exact `Capability::Network`, DNS-pinning, no-redirect, untrusted-output, and
+explicit-deferral boundary is frozen in the
+[`web_fetch` candidate contract](docs/web-fetch.md). This changes neither the
+delivered count nor M03 status and makes no product-performance or fx-
+equivalence claim. The twenty-fourth, library-only
 `copy_file` slice is green under three fresh same-SHA adversarial reviews and
 exact feature and `main` delivery gates. The twenty-fifth, library-only
 `create_folder` behavior is composed from that delivered base. Cycle-2
@@ -567,7 +578,8 @@ The project is not yet production-ready. See the exact
 [`rename_file` contract](docs/rename-file.md),
 [`copy_file` contract](docs/copy-file.md),
 [`create_folder` behavior contract](docs/create-folder.md),
-[`open_file` contract](docs/open-file.md), and
+[`open_file` contract](docs/open-file.md),
+[`web_fetch` candidate contract](docs/web-fetch.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
