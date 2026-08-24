@@ -732,15 +732,14 @@ fn inline_reentrant_wake_completes_on_the_worker_without_self_joining() {
     }
 }
 
-#[test]
-fn blocked_wake_releases_request_before_publication_and_holds_permit_until_worker_return() {
-    let _lock = process_test_lock();
-    wait_for_active_launches(0);
-    let temporary = TemporaryDirectory::new();
-    let script = write_script(temporary.path(), "exit 0");
+fn assert_blocked_wake_releases_request_and_holds_permit(
+    program: PathBuf,
+    directory: &Path,
+    assert_published_path: impl FnOnce(),
+) {
     let before_spawn = Arc::new(BeforeSpawnHook::new());
     let launcher = launcher_with_test_controls(
-        script,
+        program,
         Duration::from_secs(2),
         LauncherTestControls {
             before_spawn: Some(Arc::clone(&before_spawn)),
@@ -749,7 +748,7 @@ fn blocked_wake_releases_request_before_publication_and_holds_permit_until_worke
     );
     let wake_hook = Arc::new(BeforeSpawnHook::new());
     let waker = Waker::from(Arc::new(BlockingWake(Arc::clone(&wake_hook))));
-    let launch_request = request(temporary.path());
+    let launch_request = request(directory);
     let target_proc_path = launch_request.proc_path.clone();
     let target_identity = proc_identity(&target_proc_path);
     let mut future = launcher.launch(launch_request, CancellationToken::new());
@@ -758,6 +757,7 @@ fn blocked_wake_releases_request_before_publication_and_holds_permit_until_worke
     before_spawn.reached.wait();
     before_spawn.release.wait();
     wake_hook.reached.wait();
+    assert_published_path();
     assert_proc_identity_released(&target_proc_path, target_identity);
     assert_eq!(ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire), 1);
     let tail_saturation_permits = (1..MAX_CONCURRENT_OPEN_FILE_LAUNCHES)
@@ -790,6 +790,36 @@ fn blocked_wake_releases_request_before_publication_and_holds_permit_until_worke
     wait_for_active_launches(MAX_CONCURRENT_OPEN_FILE_LAUNCHES - 1);
     drop(tail_saturation_permits);
     wait_for_active_launches(0);
+}
+
+#[test]
+fn blocked_wake_success_releases_request_and_holds_permit_until_worker_return() {
+    let _lock = process_test_lock();
+    wait_for_active_launches(0);
+    let temporary = TemporaryDirectory::new();
+    let marker = temporary.path().join("spawned");
+    let script = write_script(
+        temporary.path(),
+        &format!("printf 'spawned\\n' > '{}'", marker.display()),
+    );
+
+    assert_blocked_wake_releases_request_and_holds_permit(script, temporary.path(), || {
+        assert_eq!(
+            fs::read(&marker).expect("successful helper wrote its marker"),
+            b"spawned\n"
+        );
+    });
+}
+
+#[test]
+fn blocked_wake_spawn_failure_reaches_publication_without_hanging() {
+    let _lock = process_test_lock();
+    wait_for_active_launches(0);
+    let temporary = TemporaryDirectory::new();
+    let missing_helper = temporary.path().join("missing-helper");
+    assert!(!missing_helper.exists());
+
+    assert_blocked_wake_releases_request_and_holds_permit(missing_helper, temporary.path(), || {});
 }
 
 #[test]
