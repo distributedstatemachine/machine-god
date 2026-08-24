@@ -738,12 +738,12 @@ fn blocked_wake_releases_request_before_publication_and_holds_permit_until_worke
     wait_for_active_launches(0);
     let temporary = TemporaryDirectory::new();
     let script = write_script(temporary.path(), "exit 0");
-    let before_first_wait = Arc::new(BeforeSpawnHook::new());
+    let before_spawn = Arc::new(BeforeSpawnHook::new());
     let launcher = launcher_with_test_controls(
         script,
         Duration::from_secs(2),
         LauncherTestControls {
-            before_first_wait: Some(Arc::clone(&before_first_wait)),
+            before_spawn: Some(Arc::clone(&before_spawn)),
             ..LauncherTestControls::default()
         },
     );
@@ -755,8 +755,8 @@ fn blocked_wake_releases_request_before_publication_and_holds_permit_until_worke
     let mut future = launcher.launch(launch_request, CancellationToken::new());
 
     assert!(poll_once(&mut future, &waker).is_pending());
-    before_first_wait.reached.wait();
-    before_first_wait.release.wait();
+    before_spawn.reached.wait();
+    before_spawn.release.wait();
     wake_hook.reached.wait();
     assert_proc_identity_released(&target_proc_path, target_identity);
     assert_eq!(ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire), 1);
