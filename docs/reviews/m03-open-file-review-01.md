@@ -1,6 +1,6 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **IMPLEMENTED CANDIDATE; CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS**
+Status: **IMPLEMENTED CANDIDATE; CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED**
 
 ## Base and boundary
 
@@ -231,12 +231,33 @@ that candidate is rejected for delivery.
 
 The cycle has zero blocker, high, or medium findings, zero other findings, and
 no production resource escape. It does not amend or invalidate the authorized
-documentation-only lifecycle amendment. Candidate remediation now atomically
-completes no-Waker publication and supplies both deterministic regressions. Its
-complete replacement exact-SHA local gate and fresh correctness/API,
-filesystem/process-lifecycle, and performance/concurrency cycle-4 tracks on one
-immutable replacement SHA/tree remain pending. No remediation is claimed green
-yet.
+documentation-only lifecycle amendment. Candidate remediation atomically
+completes no-Waker publication and supplies both deterministic regressions.
+
+## Formal review cycle 4: not green
+
+All three fresh tracks reviewed exact candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, after its complete replacement
+local gate passed. The cycle is **NOT GREEN** and the candidate is rejected.
+
+- Filesystem/process-lifecycle is **GREEN** with zero findings after exact Rust
+  1.94.1 Linux system 14/14, direct 12/12, engine 4/4, and warnings-denied
+  Clippy evidence.
+- Performance/concurrency is **GREEN** with zero findings after the same focused
+  suites plus five repeated lifecycle runs, 70/70.
+- Correctness/API found zero production or public-API defects and one low
+  maintained-documentation lineage drift. Four cross-cutting summaries still
+  described cycle-2 remediation, omitted rejected cycle 3, or incorrectly
+  called the twelve-tool composition unreviewed.
+
+Cycle 4 has zero blocker, high, or medium findings and one low documentation
+finding. The maintained summaries now record exact cycle-3 SHA/tree and both
+low findings, exact cycle-4 SHA/tree and its verdict, and reviewed-but-rejected
+composition status. A fresh correctness/API, filesystem/process-lifecycle, and
+performance/concurrency cycle 5 on one immutable replacement SHA/tree remains
+required. No green-review, workflow, delivery, performance, or equivalence
+claim is made.
 
 ## Required evidence
 
@@ -340,7 +361,8 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**IMPLEMENTED CANDIDATE; CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS.** Exact
+**IMPLEMENTED CANDIDATE; CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION
+COMPOSED.** Exact
 base main and frozen-contract feature CI and benchmark evidence is green.
 Cycle 1 rejected exact candidate `79e65c19330181955a0c341d62ef39778a18d36d`,
 tree `481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`, with the findings and candidate
@@ -357,13 +379,17 @@ zero findings. Performance/concurrency reported one low missing authoritative
 post-`try_wait` deadline regression. Filesystem/process-lifecycle reported one
 low no-Waker normal-join gap requiring atomic `notification_complete`
 publication. The cycle has zero blocker, high, or medium findings, zero other
-findings, and no production resource escape. The candidate is rejected; the
-candidate remediation is present, while its replacement gate and all three
-fresh cycle-4 tracks remain pending and no fix is claimed green.
+findings, and no production resource escape. The candidate is rejected. Cycle
+4 then reviewed exact candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`. Lifecycle and performance were
+green with zero findings. Correctness/API found no production defect and one
+low stale maintained-documentation lineage finding. That remediation is now
+composed, while all three fresh cycle-5 tracks remain pending.
 
 Candidate source contains the core variant, native tool, trusted launcher seam,
 direct/private/engine/unsupported evidence, and twelve-tool/eleven-clone host
 composition with no dependency, workflow, CLI, benchmark, or compatibility-
-status change. The complete replacement exact-SHA gate, three fresh green
-review tracks, feature workflows, integration, main workflows, delivery,
+status change. Three fresh green review tracks, feature workflows, integration,
+main workflows, delivery,
 product-performance, and fx-equivalence claims remain pending.

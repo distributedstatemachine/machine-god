@@ -4,7 +4,7 @@ Status: **DELIVERED** for `create_folder`.
 The delivered composition contains exactly eleven alphabetical workspace
 tools, and twenty-five bounded Milestone 03 slices are delivered;
 the twenty-sixth `open_file` Rust candidate and twelve-tool host composition are
-implemented but remain under remediation after a rejected second formal review
+implemented but remain under documentation remediation after a rejected fourth formal review
 cycle and are undelivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
@@ -219,7 +219,7 @@ integrated composition at that review checkpoint. Seal `e75578b` subsequently
 passed exact feature/main CI and benchmark workflows, so this is now the
 delivered composition.
 
-The implemented twenty-sixth composition under cycle-2 review remediation
+The implemented twenty-sixth composition under cycle-4 review remediation
 inserts `open_file` immediately after `list_files`. One additional identity-
 preserving descriptor clone lets exactly twelve alphabetical tools share the
 same retained workspace identity through one original descriptor plus eleven
@@ -255,10 +255,19 @@ signalled exit, timeout, or wait failure returns fixed redacted, nonretryable
 result uncertainty when a tool-level result is observed; there is no postspawn
 waiter-setup state. Exit zero establishes helper
 acceptance only, not downstream consumption or display. Success is exactly
-`{"path":"canonical/relative/path"}`. Formal cycle 2 rejected exact candidate
-`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`; remediation, fresh review, exact
-workflows, delivery, and `main` integration remain pending. The delivered base remains the eleven-
+`{"path":"canonical/relative/path"}`. Formal cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for two low findings: the
+authoritative post-`try_wait` clock branch was not truly tested, and ordinary
+no-Waker publication could detach a permit-bounded worker tail instead of
+joining it. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
+complete replacement local gate. Cycle 4 is rejected because correctness/API
+found one low maintained-documentation lineage drift; filesystem/process-
+lifecycle and performance/concurrency are green with zero findings.
+Documentation remediation is composed; fresh cycle-5 review, exact workflows,
+delivery, and `main` integration remain pending. The delivered base remains the eleven-
 tool `create_folder` composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
@@ -586,7 +595,7 @@ directory creation, lookup, permission normalization, task, thread, I/O, or
 background work. The candidate catalog and clone counts are eleven and ten;
 those are now the delivered `create_folder` base counts.
 
-The implemented twenty-sixth slice under cycle-2 review remediation adds one
+The implemented twenty-sixth slice under cycle-4 review remediation adds one
 more identity-preserving clone and no construction effect. Its launcher has a
 trusted injected test seam; production approved execution alone may spawn fixed
 `/usr/bin/xdg-open` on Linux. Other targets return unsupported without spawn.
@@ -608,11 +617,19 @@ fixed redacted, nonretryable result uncertainty when a tool-level result is
 observed. The candidate catalog
 and clone counts are exactly twelve and eleven.
 External paths, directories, URLs, a real macOS backend, CLI composition,
-benchmarks, performance claims, and equivalence remain deferred. Formal cycle 2
-rejected exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`; this is a remediation-
-candidate implementation description, not a green review, workflow, delivery,
-`main` integration, performance, or equivalence claim.
+benchmarks, performance claims, and equivalence remain deferred. Formal cycle 3
+rejected exact candidate `6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for the two low deadline-test and
+no-Waker ordinary-join gaps. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
+complete replacement local gate, but cycle 4 is rejected because
+correctness/API found one low maintained-documentation lineage drift;
+filesystem/process-lifecycle and performance/concurrency are green with zero
+findings. Documentation remediation is composed and a fresh three-track cycle 5
+on one replacement SHA/tree remains pending; this is not a green review,
+workflow, delivery, `main` integration,
+performance, or equivalence claim.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio

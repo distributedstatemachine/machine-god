@@ -321,7 +321,7 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The delivered authority surface now has eleven tools. The current
 twenty-sixth `open_file` slice is an implemented Rust candidate under
-remediation after a rejected second formal review cycle.
+documentation remediation after a rejected fourth formal review cycle.
 Its dedicated `Capability::OpenFile { path }` is narrower than arbitrary
 process authority and covers one canonical workspace-confined existing regular
 file. Linux execution rejects symlinks, retains the approved file descriptor,
@@ -359,11 +359,20 @@ means only that the helper accepted the request, not that a desktop application
 consumed or displayed the file. Success is exactly
 `{"path":"canonical/relative/path"}`. Candidate source composes exactly twelve
 alphabetical tools from one retained workspace descriptor plus eleven identity-
-preserving clones. Formal cycle 2 rejected exact candidate
-`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`; remediation and a fresh same-SHA
-review cycle remain pending. This is
-not a green-review, workflow, delivery, `main` integration, performance, or
+preserving clones. Formal cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for two low findings: the
+post-`try_wait` authoritative-clock branch was not truly tested, and ordinary
+no-Waker publication could detach a permit-bounded worker tail instead of
+joining it. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
+complete replacement local gate. Cycle 4 is rejected because correctness/API
+found one low maintained-documentation lineage drift; filesystem/process-
+lifecycle and performance/concurrency are green with zero findings.
+Documentation remediation is composed and a fresh three-track cycle 5 on one
+replacement SHA/tree remains pending. This is not a green-review, workflow,
+delivery, `main` integration, performance, or
 fx-equivalence claim. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
@@ -409,7 +418,7 @@ eleven-tool authority surface.
 Current candidate source inserts `open_file` immediately after `list_files` in
 both constructors. Exactly twelve alphabetical tools share the original
 retained workspace descriptor plus eleven identity-preserving clones. This
-twelve-tool composition is implemented but remains unreviewed and undelivered;
+twelve-tool composition is implemented but remains rejected and undelivered;
 the delivered base remains the eleven-tool `create_folder` composition above.
 
 Production construction opens both non-secret roots before it consumes the
@@ -1094,7 +1103,7 @@ durability failure returns fixed nonretryable ambiguity without claiming
 rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
 
-The implemented `open_file` candidate under cycle-2 review remediation adds no
+The implemented `open_file` candidate under cycle-4 review remediation adds no
 read result and no arbitrary process selection. Strict effect-free preflight
 binds policy and execution to one canonical confined path through dedicated
 `Capability::OpenFile`. Linux execution no-follow opens and retains only an
@@ -1127,10 +1136,17 @@ application consumption or display. Success is exactly
 `{"path":"canonical/relative/path"}`. External paths, directories, URLs, a
 real macOS launcher, CLI changes, benchmark changes, performance claims, and
 fx-equivalence remain deferred. The product is Rust; Zig is only the pinned
-upstream benchmark input. Formal cycle 2 rejected exact candidate
-`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`; remediation, fresh three-track
-review, exact workflows, delivery, and `main` integration remain pending.
+upstream benchmark input. Formal cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for the two low deadline-test and
+no-Waker ordinary-join gaps. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
+complete replacement local gate, but cycle 4 is rejected because
+correctness/API found one low maintained-documentation lineage drift;
+filesystem/process-lifecycle and performance/concurrency are green with zero
+findings. Documentation remediation is composed; a fresh three-track cycle 5,
+exact workflows, delivery, and `main` integration remain pending.
 
 Delivered `create_folder` execution evidence is native macOS plus
 Linux/FreeBSD cross-target test compilation, Linux library Clippy, and WASI

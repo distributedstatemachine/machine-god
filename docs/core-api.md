@@ -664,7 +664,7 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The behavior is delivered and integrated on `main`.
 
-The implemented twenty-sixth candidate, rejected by formal cycle 2, adds one dedicated provider-neutral
+The implemented twenty-sixth candidate, rejected by formal cycle 4, adds one dedicated provider-neutral
 capability rather than reusing filesystem read, metadata, or arbitrary process
 authority. Its stable policy JSON is:
 
@@ -702,11 +702,21 @@ redacted result. Candidate reference-host composition registers `open_file`
 between `list_files` and `read_file`, producing twelve tools from one original
 retained workspace descriptor plus eleven clones. On macOS the catalog entry is
 present but execution returns unsupported before filesystem lookup or spawn.
-Formal cycle 2 rejected exact candidate
-`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`. This describes remediation-
-candidate source only; it makes no green-review, CI, benchmark, delivery,
-performance, `main`-integration, or fx-equivalence claim.
+Formal cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for two low findings: the
+authoritative post-`try_wait` clock branch was not truly exercised, and
+ordinary no-Waker publication could detach a bounded worker tail instead of
+joining it. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
+complete replacement local gate. Cycle 4 is rejected because correctness/API
+found one low maintained-documentation lineage drift; filesystem/process-
+lifecycle and performance/concurrency are green with zero findings.
+Documentation remediation is composed and a fresh three-track cycle 5 on one
+replacement SHA/tree remains pending. This describes candidate source only; it
+makes no green-review, CI, benchmark,
+delivery, performance, `main`-integration, or fx-equivalence claim.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

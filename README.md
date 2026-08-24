@@ -88,11 +88,17 @@ no-Waker publication gap could detach a normal tail instead of joining it,
 although the tail remained permit-bounded and the helper, request, and retained
 descriptor were already cleaned. The cycle had zero blocker, high, or medium
 findings, zero other findings, and no production resource escape. Replacement
-remediation now publishes `notification_complete` atomically when no Waker was
+remediation publishes `notification_complete` atomically when no Waker was
 registered and adds deterministic after-wait-probe deadline and no-Waker
-normal-join regressions. Its complete local gate and all three fresh cycle-4
-tracks remain pending; no fix is claimed green.
-This makes no green-review, CI, delivery, or `main`-integration claim. The
+normal-join regressions. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, passed the complete replacement
+local gate. Filesystem/process-lifecycle and performance/concurrency were green
+with zero findings; correctness/API found no production defect and one low
+maintained-documentation lineage drift. Cycle 4 is therefore not green. That
+documentation remediation is composed, while a fresh three-track cycle 5 on
+one replacement SHA/tree remains pending. This makes no green-review, CI,
+delivery, or `main`-integration claim. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission

@@ -306,7 +306,7 @@ benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
 The twenty-sixth bounded slice, native `open_file`, is an **IMPLEMENTED
-CANDIDATE; FORMAL CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS** from the exact
+CANDIDATE; FORMAL CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from the exact
 delivered base
 `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
 main CI `32704202572` and final main benchmark workflow `32704202546`; the
@@ -380,10 +380,15 @@ worker tail, detaching it rather than joining it; the tail remained permit-
 bounded. The helper, request, and retained descriptor were already cleaned,
 and there was no
 production resource escape. Cycle 3 has zero blocker, high, or medium findings
-and zero other findings. Candidate remediation now publishes
+and zero other findings. Candidate remediation publishes
 `notification_complete` atomically when no Waker exists and adds deterministic
-after-wait-probe and no-Waker normal-join regressions. Its complete replacement
-gate and all three fresh cycle-4 tracks remain pending; no fix is claimed green.
+after-wait-probe and no-Waker normal-join regressions. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, passed the complete replacement
+gate. Lifecycle and performance were green with zero findings. Correctness/API
+found no production defect and one low maintained-documentation lineage drift,
+so cycle 4 is not green. The documentation remediation is composed; three fresh
+cycle-5 tracks on one replacement SHA/tree remain pending.
 The slice is rejected and not delivered, and it makes no performance or fx-
 equivalence claim.
 The first
@@ -2108,7 +2113,7 @@ gate:
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
   The twenty-sixth native `open_file` slice is an **IMPLEMENTED CANDIDATE;
-  FORMAL CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS** from exact delivered
+  FORMAL CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from exact delivered
   base `e2ee11f2`. Final base
   main CI `32704202572` and benchmark `32704202546` are green; the benchmark
   retains exactly two nonexpired exact-SHA artifacts `9511626648` and
@@ -2162,9 +2167,13 @@ gate:
   findings, zero other findings, and no production resource escape. Candidate
   remediation atomically publishes `notification_complete` when no Waker exists
   and adds deterministic after-wait-probe deadline and no-Waker normal-join
-  regressions; it is present. The complete replacement exact-SHA local gate and
-  all three fresh cycle-4 tracks remain
-  pending; no fix is claimed green. Feature workflows, fast-forward integration,
+  regressions. Exact cycle-4 candidate
+  `4632162f8d3f323fce65263ec92f0802d9416121`, tree
+  `ab1ecebe1680813614db3682f505e5de0fc31cfc`, passed the complete replacement
+  local gate. Lifecycle and performance were green with zero findings;
+  correctness/API found no production defect and one low stale maintained-
+  documentation lineage finding. That remediation is composed and all three
+  fresh cycle-5 tracks remain pending. Feature workflows, fast-forward integration,
   and exact main workflows remain
   pending under
   [`open-file.md`](open-file.md) and

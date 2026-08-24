@@ -76,7 +76,7 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 artifacts. The delivered host now has eleven tools. No product-performance
 claim is made.
 The twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate rejected by formal cycle 2. It adds dedicated provider-neutral `Capability::OpenFile { path }`
+candidate rejected by formal cycle 4. It adds dedicated provider-neutral `Capability::OpenFile { path }`
 for one strict canonical, workspace-confined existing regular file rather than
 treating default-application launch as filesystem read or accepting a model-
 selected process. Linux execution opens the path beneath retained directory
@@ -102,10 +102,19 @@ join/cross-thread deadlock after all helper/request ownership is gone; only
 permit-bounded callback/final bookkeeping may outlive future drop. This docs-
 only amendment replaces the frozen absolute no-worker-detach invariant because
 it contradicted legal Waker behavior and is exempt from its own adversarial
-review under the owner's instruction. Formal cycle 2 rejected exact candidate
-`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`; remediation and a fresh three-track
-cycle remain pending. This is not a green-review, CI,
+review under the owner's instruction. Formal cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for two low findings: the
+post-`try_wait` authoritative-clock branch was not truly tested, and ordinary
+no-Waker publication could detach a permit-bounded worker tail instead of
+joining it. Exact candidate `4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
+complete replacement local gate. Cycle 4 is nevertheless not green:
+filesystem/process-lifecycle and performance/concurrency are green with zero
+findings, while correctness/API reported one low maintained-documentation
+lineage drift and no production defect. Documentation remediation is composed;
+a fresh three-track cycle 5 on one replacement SHA/tree remains pending. This
+is not a green-review, CI,
 benchmark, delivery, performance, `main`-integration, or fx-equivalence record.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
@@ -1336,10 +1345,19 @@ from its own adversarial review under the owner's instruction. External paths,
 directories, URLs, macOS real launch, CLI behavior,
 benchmark work,
 performance claims, and fx-equivalence are deferred. The product remains Rust;
-Zig remains solely the pinned upstream benchmark build input. Formal cycle 2
-rejected exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`; this remediation candidate makes
-no green-review, CI, benchmark, delivery, or `main`-integration claim.
+Zig remains solely the pinned upstream benchmark build input. Formal cycle 3
+rejected exact candidate `6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for the two low deadline-test and
+no-Waker ordinary-join gaps. Exact cycle-4 candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
+complete replacement local gate, but cycle 4 is rejected because
+correctness/API found one low maintained-documentation lineage drift;
+filesystem/process-lifecycle and performance/concurrency are green with zero
+findings. Documentation remediation is composed and a fresh three-track cycle 5
+on one replacement SHA/tree remains pending, so this candidate makes no green-
+review, CI, benchmark, delivery, or `main`-
+integration claim.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

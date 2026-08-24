@@ -1,6 +1,6 @@
 # Native `open_file` contract
 
-Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS**
+Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED**
 
 This document defines the twenty-sixth bounded Milestone 03 candidate from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
@@ -33,9 +33,14 @@ in the review ledger. Formal review cycle 3 rejected exact candidate
 zero findings, while performance/concurrency and filesystem/process-lifecycle
 each reported one low evidence/lifecycle gap. There were zero blocker, high,
 or medium findings, zero other findings, and no production resource escape.
-Candidate remediation is present; its complete replacement gate and a fresh
-three-track same-SHA cycle 4 remain pending. Exact feature workflows, delivery,
-and `main` integration remain pending.
+Candidate remediation passed the complete replacement gate in exact cycle-4
+candidate `4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`. Filesystem/process-lifecycle and
+performance/concurrency were green with zero findings. Correctness/API found no
+production defect and one low maintained-documentation lineage drift, so cycle
+4 is not green. That documentation remediation is now composed; a fresh three-
+track cycle 5 on one replacement SHA/tree remains pending. Exact feature
+workflows, delivery, and `main` integration remain pending.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -422,9 +427,28 @@ The cycle has zero blocker, high, or medium findings, zero other findings, and
 no production resource escape. These findings do not weaken the authorized
 documentation-only lifecycle amendment, but they reject this implementation
 candidate. Candidate remediation now atomically completes no-Waker publication
-and supplies both deterministic regressions. The complete replacement exact-SHA
-local gate and all three fresh cycle-4 tracks on one immutable replacement
-SHA/tree remain pending; no fix is claimed green yet.
+and supplies both deterministic regressions.
+
+## Formal review cycle 4: not green
+
+All three fresh tracks reviewed exact candidate
+`4632162f8d3f323fce65263ec92f0802d9416121`, tree
+`ab1ecebe1680813614db3682f505e5de0fc31cfc`. The complete replacement local
+gate was green, but the cycle is **NOT GREEN** and that candidate is rejected
+for delivery.
+
+- Filesystem/process-lifecycle is **GREEN** with zero findings.
+- Performance/concurrency is **GREEN** with zero findings.
+- Correctness/API found no production or public-API defect and reported one low
+  maintained-documentation lineage drift: `architecture.md`, `core-api.md`,
+  `native-reference-host.md`, and `security.md` still described cycle-2
+  remediation, omitted rejected cycle 3, or called the composition unreviewed.
+
+Cycle 4 has zero blocker, high, or medium findings and one low documentation
+finding. The four maintained summaries now record the exact cycle-3 lineage,
+its two low findings, the cycle-4 remediation and verdict, and reviewed-but-
+rejected composition status. A fresh three-track cycle 5 on one immutable
+replacement SHA/tree remains required; no green-review claim is made yet.
 
 ## Candidate evidence and remaining gates
 
@@ -478,7 +502,7 @@ SHA/tree remain pending; no fix is claimed green yet.
 - [x] Composed-remediation native Linux execution, FreeBSD/WASI and active WASI,
   dependency, pinned-compatibility, documentation, clean-diff, and freshly
   built release-binary evidence.
-- [ ] Three green formal review tracks on one immutable cycle-4 SHA/tree and the
+- [ ] Three green formal review tracks on one immutable cycle-5 SHA/tree and the
   exact remote delivery workflows.
 
 ## Review and delivery protocol
