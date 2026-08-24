@@ -1,6 +1,6 @@
 # Native reference-host composition
 
-Status: **BEHAVIOR COMPOSED; FULL LOCAL GATE PENDING** for `create_folder`.
+Status: **LOCAL GATE GREEN; FORMAL REVIEW PENDING** for `create_folder`.
 The last delivered composition contains exactly ten alphabetical workspace
 tools, and twenty-four bounded Milestone 03 slices are delivered;
 twenty-third-slice `rename_file` production and independent evidence are
@@ -29,10 +29,11 @@ The twenty-fifth `create_folder` behavior is composed from exact delivered base
 `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
 exactly two nonexpired exact-SHA artifacts. Candidate source composes eleven
 alphabetical tools through the original retained descriptor plus ten clones.
-Seven exact Rust 1.94.1 reference-host tests are green as part of the focused
-16-private/20-direct/6-engine/7-host/1-core-contract composition evidence.
-The full local gate, formal review, delivery, and `main` integration remain
-pending; the delivered host remains exactly ten tools.
+Seven exact Rust 1.94.1 reference-host tests are green as part of the
+16-private/20-direct/6-engine/7-host/1-core-contract focused evidence. Exact
+precursor `ea408a1`, tree `7055e93`, passes the complete local gate. Formal
+review, delivery, and `main` integration remain pending; the delivered host
+remains exactly ten tools.
 
 Historical delivery lineage: integrated contract for the twelfth bounded
 Milestone 03 library slice,
@@ -172,8 +173,8 @@ The composed `create_folder` behavior registers exactly eleven alphabetical
 tools by inserting `create_folder` immediately after `copy_file`. Both
 reference-host constructors transfer the same retained workspace identity
 through one original descriptor plus ten identity-preserving clones. This
-candidate catalog awaits the complete local and formal review gates and is not
-the delivered or `main`-integrated composition.
+candidate catalog passes the complete local gate, awaits formal review, and is
+not the delivered or `main`-integrated composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over

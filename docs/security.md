@@ -323,9 +323,9 @@ normal bounded path rules after permission is granted.
 
 Candidate source extends both constructors with `create_folder` immediately
 after `copy_file`, so eleven alphabetical tools share the original retained
-descriptor plus ten identity-preserving clones. The complete local and formal
-review gates remain pending; this has not replaced the integrated ten-tool
-authority surface.
+descriptor plus ten identity-preserving clones. Exact precursor `ea408a1`, tree
+`7055e93`, passes the complete local gate; formal review remains pending. This
+has not replaced the integrated ten-tool authority surface.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to
@@ -1006,7 +1006,7 @@ removed. Fresh postcommit public-path verification and bottom-up best-effort
 durability are capped at 257 sites, 16 calls per site, and 4,112 total sync
 calls. Failed verification, moved retained parents, uncertain `mkdirat`, or
 durability failure returns fixed nonretryable ambiguity without claiming
-rollback. The full pending behavior and evidence boundary is
+rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
 
 These tools provide descriptor-rooted confinement of model-selected path

@@ -1,6 +1,6 @@
 # Native `create_folder` contract
 
-Status: **BEHAVIOR COMPOSED; FULL LOCAL GATE PENDING**
+Status: **LOCAL GATE GREEN; FORMAL REVIEW PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -15,12 +15,14 @@ jobs and retains exactly two nonexpired exact-SHA artifacts. Those workflows
 validate the contract checkpoint only; they are not implementation, delivery,
 performance, or fx-equivalence evidence.
 
-Production behavior, exports, independently owned focused evidence, and both
-reference-host constructors are now composed in the candidate source. The
-complete local gate, an immutable behavior-candidate SHA, the required fresh
-three-track same-SHA review, feature delivery workflows, `main` integration,
-and exact `main` workflows remain pending. No CLI behavior, benchmark workload,
-product-performance claim, or fx-equivalence claim is added.
+Production behavior, exports, independently owned evidence, and both reference-
+host constructors are composed and pass the complete local gate on exact
+precursor `ea408a1f80417475e9b08513a62e9c87b38c4e75`, tree
+`7055e930accea4af645b3827b70b5343a8913888`. An immutable behavior-candidate
+SHA, the required fresh three-track same-SHA review, feature delivery workflows,
+`main` integration, and exact `main` workflows remain pending. No CLI behavior,
+benchmark workload, product-performance claim, or fx-equivalence claim is
+added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -277,7 +279,7 @@ behaviors. Zig is benchmark input only.
 - [x] Single and 256-component creation, recursive missing-parent creation,
   existing-directory idempotence, existing-final-nondirectory failure, and no
   file/content/enumeration/delete/overwrite authority.
-- [ ] Ancestor and final symlink, file, FIFO, socket, and device rejection;
+- [x] Ancestor and final symlink, file, FIFO, socket, and device rejection;
   concurrent directory and hostile-entry appearance; root and prefix
   replacement; moved retained parents; subordinate mounts; outside sentinels.
 - [x] Requested `0755`, benign and hostile umasks, inherited ACLs, no
@@ -289,20 +291,20 @@ behaviors. Zig is benchmark input only.
 - [x] Precommit cancellation ordering and precedence, postcommit cancellation
   suppression, inert-until-poll, synchronous one-poll completion, drop, no
   detached work, and same-poll engine unknown-result recovery.
-- [ ] Native Linux/macOS execution, FreeBSD/WASI compilation, active
+- [x] Native Linux/macOS execution, FreeBSD/WASI compilation, active
   unsupported-target behavior, exact delivered ten-tool checkpoint, composed
   eleven-tool/ten-clone candidate, no-unsafe, dependency, compatibility,
   documentation, clean-diff, and fresh release-binary smoke evidence.
 
-The checked rows are supported by exact Rust 1.94.1 focused evidence: 16
-private tests, 20 direct tests, six engine tests, seven reference-host tests,
-and one core contract test. Native warnings-denied Clippy, supported macOS and
-Linux checks, and FreeBSD/WASI check compilation are also green. Production
-preflight API and filesystem audits reported zero findings, but they are not
-the required formal three-track review. Full workspace and doctest gates,
-repo-wide Python, dependency policy/audit, compatibility, complete portability,
-documentation, clean-diff/no-unsafe, and fresh release-binary checks remain
-pending, so the complete local gate is not green or claimed.
+The rows are supported by the complete exact Rust 1.94.1 local gate recorded in
+the [`create_folder` review](reviews/m03-create-folder-review-01.md): 16 private,
+20 direct, six engine, seven reference-host, and one core-contract focused
+tests; 877 default and 925 all-feature discovered tests with zero benchmarks;
+workspace formatting, warnings-denied Clippy, tests, and doctests; 130 Python
+tests with eight expected macOS-only skips; compatibility, dependency,
+portability, active WASI, documentation, diff, and release-binary checks.
+Production preflight API and filesystem audits reported zero findings, but they
+are not the required formal three-track review.
 
 ## Review and delivery protocol
 
@@ -328,5 +330,5 @@ File creation, overwrite, removal, rollback, exact effective mode, ACL
 normalization, external paths, symlink traversal, directory enumeration,
 content access, non-Linux/macOS hardened execution, CLI ownership, benchmark
 workloads, product-performance claims, and complete fx equivalence remain
-outside this slice. The full local gate, formal same-SHA review, delivery, and
-`main` integration remain pending; the delivered-slice count stays twenty-four.
+outside this slice. Formal same-SHA review, delivery, and `main` integration
+remain pending; the delivered-slice count stays twenty-four.

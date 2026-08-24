@@ -201,8 +201,8 @@ Replacement documentation seal
 `32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
 benchmark `32685192394`. Both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `copy_file` is delivered as slice twenty-four.
-The twenty-fifth bounded slice, native `create_folder`, is **BEHAVIOR COMPOSED;
-FULL LOCAL GATE PENDING** from exact delivered base
+The twenty-fifth bounded slice, native `create_folder`, is **LOCAL GATE GREEN;
+FORMAL REVIEW PENDING** from exact delivered base
 `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green under exact
 feature CI `32685885104`, feature benchmark `32685885086`, main CI
 `32686210561`, and main benchmark `32686210659`; both benchmark workflows
@@ -221,16 +221,17 @@ after `copy_file`, one original retained descriptor, and ten clones. The
 normative boundary and evidence plan are
 [`create-folder.md`](create-folder.md) and
 [`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
-Focused exact Rust 1.94.1 evidence is green across 16 private, 20 direct, six
-engine, seven host, and one core-contract test, plus native warnings-denied
-Clippy, supported macOS/Linux checks, and FreeBSD/WASI check compilation.
+Exact precursor `ea408a1f80417475e9b08513a62e9c87b38c4e75`, tree
+`7055e930accea4af645b3827b70b5343a8913888`, passes the complete local gate:
+16 private, 20 direct, six engine, seven host, and one core-contract focused
+tests; 877 default and 925 all-feature discovered tests with zero benchmarks;
+full Rust and Python suites; dependency, compatibility, Linux/FreeBSD/WASI,
+active Node 1/1, documentation, diff, release-hash, and CLI-smoke checks.
 Production preflight API and filesystem audits reported zero findings, but are
-not the required formal three-track review. The complete workspace/Python/
-dependency/compatibility/portability/documentation/diff/release local gate,
-immutable formal candidate, fresh three-track review, feature delivery
-workflows, integration, and exact `main` workflows remain pending. This makes
-no delivery, performance, or fx-equivalence claim, and the delivered-slice
-count remains twenty-four.
+not the required formal three-track review. An immutable formal candidate,
+fresh three-track review, feature delivery workflows, integration, and exact
+`main` workflows remain pending. This makes no delivery, performance, or fx-
+equivalence claim, and the delivered-slice count remains twenty-four.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1860,8 +1861,8 @@ gate:
   `32685192453`, and main benchmark `32685192394`, with exactly two nonexpired
   exact-SHA artifacts retained by each benchmark run. Native `copy_file` is
   delivered as slice twenty-four under [`copy-file.md`](copy-file.md).
-  The twenty-fifth `create_folder` slice is **BEHAVIOR COMPOSED; FULL LOCAL
-  GATE PENDING** from exact delivered base
+  The twenty-fifth `create_folder` slice is **LOCAL GATE GREEN; FORMAL REVIEW
+  PENDING** from exact delivered base
   `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. Base feature CI `32685885104`,
   feature benchmark `32685885086`, main CI `32686210561`, and main benchmark
   `32686210659` are green; both benchmark workflows retain exactly two
@@ -1880,14 +1881,15 @@ gate:
   `32687614476`; benchmark workflow `32687614442` passed both jobs and retains
   exactly two nonexpired exact-SHA artifacts. Candidate source composes
   `create_folder` after `copy_file` for eleven tools and one original plus ten
-  clones. Exact Rust 1.94.1 focused evidence is green across 16 private, 20
-  direct, six engine, seven host, and one core-contract test; native warnings-
-  denied Clippy, supported macOS/Linux checks, and FreeBSD/WASI check
-  compilation are green. Production preflight API and filesystem audits found
-  no issues but are not the required formal three-track review. Full local
-  workspace/Python/dependency/compatibility/portability/documentation/diff/
-  release gates, a frozen candidate SHA, fresh same-SHA review, feature
-  workflows, integration, and main workflows remain pending under
+  clones. Exact precursor `ea408a1`, tree `7055e93`, passes the complete local
+  gate across 16 private, 20 direct, six engine, seven host, and one core-
+  contract focused tests; 877 default and 925 all-feature discovered tests with
+  zero benchmarks; full Rust and Python suites; dependency, compatibility,
+  Linux/FreeBSD/WASI, active Node 1/1, documentation, diff, release-hash, and
+  CLI-smoke checks. Production preflight API and filesystem audits found no
+  issues but are not the required formal three-track review. A frozen candidate
+  SHA, fresh same-SHA review, feature workflows, integration, and main
+  workflows remain pending under
   [`create-folder.md`](create-folder.md) and
   [`m03-create-folder-review-01.md`](reviews/m03-create-folder-review-01.md).
   It adds no delivery, performance, or fx-equivalence claim, so the combined

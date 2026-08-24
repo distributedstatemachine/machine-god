@@ -1,6 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **BEHAVIOR COMPOSED; FULL LOCAL GATE PENDING**
+Status: **LOCAL GATE GREEN; FORMAL REVIEW PENDING**
 
 ## Base and boundary
 
@@ -85,7 +85,7 @@ composed integration SHA can become a formal behavior candidate.
 - [x] Shallow and deepest recursive creation, already-existing directory
   idempotence, final non-directory conflict, and rejection of every symlink or
   non-directory ancestor without outside effects.
-- [ ] Concurrent directory appearance and hostile-entry appearance, root and
+- [x] Concurrent directory appearance and hostile-entry appearance, root and
   prefix replacement, moved retained parents, subordinate mounts, outside
   sentinels, and explicit no-sandbox boundary.
 - [x] Requested `0755`, host umask/default-ACL inheritance, no chmod or ACL
@@ -98,22 +98,51 @@ composed integration SHA can become a formal behavior candidate.
   no rollback; precommit cancellation precedence; ignored postcommit
   cancellation; inert first poll, synchronous completion, drop, and no detached
   work.
-- [ ] Linux/macOS behavior, FreeBSD/WASI compile coverage, active unsupported
+- [x] Linux/macOS behavior, FreeBSD/WASI compile coverage, active unsupported
   target, exact delivered ten-tool checkpoint and composed eleven-tool/ten-
   clone host, no-unsafe, dependency, compatibility, documentation, diff, and
   fresh release smoke evidence.
 
 Exact Rust 1.94.1 focused evidence is green across 16 private, 20 direct, six
-engine, seven reference-host, and one core-contract test. Native warnings-
-denied Clippy is green. Supported macOS/Linux checks and FreeBSD/WASI check
-compilation are green. Production preflight API and filesystem audits each
-reported zero findings, but those audits are not any of the required formal
-correctness/API, filesystem/robustness, or performance/concurrency tracks.
+engine, seven reference-host, and one core-contract test. Production preflight
+API and filesystem audits each reported zero findings, but those audits are not
+any of the required formal correctness/API, filesystem/robustness, or
+performance/concurrency tracks.
 
-The complete workspace and doctest gate, repo-wide Python, dependency policy
-and audit, compatibility, remaining portability/unsupported behavior,
-documentation, clean-diff/no-unsafe, and fresh release-binary checks remain
-pending. The unchecked rows require evidence beyond the focused composition.
+## Exact composed local gate
+
+Exact implementation precursor
+`ea408a1f80417475e9b08513a62e9c87b38c4e75`, tree
+`7055e930accea4af645b3827b70b5343a8913888`, passes the complete local gate:
+
+- exact Rust 1.94.1 formatting, workspace all-target/all-feature warnings-
+  denied Clippy, workspace tests, and workspace doctests are green;
+- focused evidence is green across 16 private, 20 direct, six engine, seven
+  reference-host, and one core-contract test;
+- default and all-feature test discovery finds 877 and 925 tests respectively,
+  with zero benchmarks, and the workspace doctest gate runs two doctests;
+- all 130 repo-wide Python tests pass with eight expected macOS-only skips;
+- compatibility regeneration/checking is green against clean pinned upstream
+  `vercel-labs/fx` revision
+  `b1774fbf6c7602b503026f96f6e960e946c692ef`;
+- exact `cargo-deny` 0.20.2 policy checks pass, with only accepted duplicate-
+  version warnings, and `cargo-audit` 0.22.2 checks 175 dependencies against
+  1,225 locally retained advisories with zero findings;
+- supported macOS/Linux behavior is green; Linux and FreeBSD no-default test
+  checks and warnings-denied library Clippy pass; WASI compilation passes and
+  the active Node 22.22.0 unsupported-target test passes 1/1;
+- 70 Markdown files contain 501 links, including 351 relative file links, with
+  zero missing relative targets;
+- the feature diff adds no unsafe code, dependency, lockfile, CLI, workflow, or
+  benchmark-workload change, and the feature worktree is clean; and
+- a fresh locked release build produces a 319,152-byte binary with SHA-256
+  `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`;
+  exact bare/version/help aliases and inert missing-path human/JSON status
+  smokes are green.
+
+Local success is not delivery, product-performance, or fx-equivalence evidence.
+The required immutable same-SHA formal review and remote delivery gates remain
+pending.
 
 ## Exact local gate before formal review
 
@@ -158,9 +187,10 @@ cycle, but their exact workflows remain required.
 
 ## Current verdict
 
-**BEHAVIOR COMPOSED; FULL LOCAL GATE PENDING.** Production implementation,
-exports, focused evidence, and eleven-tool/ten-clone host composition are
-present. No immutable behavior-candidate SHA, required formal three-track
-review, feature delivery workflow, fast-forward integration, exact `main`
-workflow, delivery, product-performance, or fx-equivalence claim exists at
-this checkpoint. The delivered-slice count remains twenty-four.
+**LOCAL GATE GREEN; FORMAL REVIEW PENDING.** Production implementation,
+exports, evidence, and eleven-tool/ten-clone host composition pass the complete
+local gate at the exact precursor above. No immutable behavior-candidate SHA,
+required formal three-track review, feature delivery workflow, fast-forward
+integration, exact `main` workflow, delivery, product-performance, or fx-
+equivalence claim exists at this checkpoint. The delivered-slice count remains
+twenty-four.
