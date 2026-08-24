@@ -21,9 +21,10 @@ eleven-tool host wiring. Documentation record `9d0bacd`, tree `b5fb1c2`, and
 tree-identical cycle-3 candidate `c1e572e` retain that non-documentation
 behavior. Cycle 3 is not green: filesystem/robustness and performance/
 concurrency are green with zero findings, while correctness/API reported one
-low documentation-lineage finding and zero production defects. Lineage
-remediation, a replacement gate, and three fresh cycle-4 tracks are required
-before delivery. The delivered count therefore remains twenty-four. Native
+low documentation-lineage finding and zero production defects. Exact lineage
+remediation `12c11ba`, tree `b96575b`, passes the complete replacement gate.
+Three fresh cycle-4 tracks are required before delivery. The delivered count
+therefore remains twenty-four. Native
 Linux execution remains pending exact feature CI. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
@@ -367,9 +368,10 @@ green and all tracks found zero production defects. Exact remediation
 local gate. Documentation record `9d0bacd`, tree `b5fb1c2`, and tree-identical
 cycle-3 candidate `c1e572e` retain identical non-documentation behavior. Cycle
 3 is not green only for one low lineage-record finding; the other two tracks
-are green and all three found zero production defects. Lineage remediation, a
-replacement gate, and fresh cycle-4 review remain pending, so this is not
-delivery, `main` integration, performance, or fx-equivalence evidence. See the
+are green and all three found zero production defects. Exact lineage remediation
+`12c11ba`, tree `b96575b`, passes the complete replacement gate. Fresh cycle-4
+review remains pending, so this is not delivery, `main` integration,
+performance, or fx-equivalence evidence. See the
 [`create_folder` behavior contract](docs/create-folder.md).
 
 The project is not yet production-ready. See the exact

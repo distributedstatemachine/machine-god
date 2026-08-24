@@ -649,9 +649,9 @@ contract focused tests. Documentation record `9d0bacd`, tree `b5fb1c2`, and
 tree-identical cycle-3 candidate `c1e572e` preserve the same non-documentation
 behavior. Cycle 3 is not green only for one low documentation-lineage finding;
 filesystem and performance are green, and all tracks found zero production
-defects. Native Linux execution remains pending exact feature CI; lineage
-remediation, a replacement gate, fresh cycle-4 review, delivery, and `main`
-integration remain pending.
+defects. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
+complete replacement gate. Native Linux execution remains pending exact feature
+CI; fresh cycle-4 review, delivery, and `main` integration remain pending.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

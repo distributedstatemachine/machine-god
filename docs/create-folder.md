@@ -1,7 +1,6 @@
 # Native `create_folder` contract
 
-Status: **CYCLE 3 NOT GREEN; LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND
-CYCLE 4 PENDING**
+Status: **REPLACEMENT GATE GREEN; CYCLE 4 REVIEW PENDING**
 
 This document records the twenty-fifth bounded Milestone 03 slice from exact
 delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
@@ -31,10 +30,12 @@ candidate `c1e572eb1ac1ac39a8a53f522e74f57fd1d4f85d` retain identical non-
 documentation behavior. Cycle 3 is not green: filesystem/robustness and
 performance/concurrency are green with zero findings, while correctness/API
 reported one low documentation-lineage finding and zero production defects.
-Lineage remediation, a replacement gate, three fresh cycle-4 tracks, feature
-delivery workflows, `main` integration, and exact `main` workflows remain
-pending. No CLI behavior, benchmark workload, product-performance claim, or
-fx-equivalence claim is added.
+Exact lineage remediation `12c11baa0187f530a6c088326b869991f6f627f6`, tree
+`b96575b57c2c805a845294ae16b323dd1ea4ecd2`, passes the complete replacement
+gate. Three fresh cycle-4 tracks, feature delivery workflows, `main`
+integration, and exact `main` workflows remain pending. No CLI behavior,
+benchmark workload, product-performance claim, or fx-equivalence claim is
+added.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -270,9 +271,9 @@ based and prepared-root constructors compose that same catalog and retained
 workspace identity. Exact remediation `f527293`, tree `40eef14`, passes the
 complete replacement local gate after cycle 2, which was not green. Cycle-3
 candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low documentation-
-lineage finding; lineage remediation, a replacement gate, and all three fresh
-cycle-4 tracks remain pending. It is not a delivered or `main`-integrated
-authority surface.
+lineage finding. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
+complete replacement gate; all three fresh cycle-4 tracks remain pending. It is
+not a delivered or `main`-integrated authority surface.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, recursively creates missing parents, treats an
@@ -355,9 +356,10 @@ not delivery, product-performance, or fx-equivalence evidence. Documentation
 record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e`
 preserve identical non-documentation behavior. Cycle 3 is not green only for
 one low documentation-lineage finding; the other two tracks are green and all
-three found zero production defects. Lineage remediation, a replacement gate,
-and three fresh cycle-4 same-SHA tracks are required. Production preflight API
-and filesystem audits reported zero findings, but they are not formal tracks.
+three found zero production defects. Exact lineage remediation `12c11ba`, tree
+`b96575b`, passes the complete replacement gate. Three fresh cycle-4 same-SHA
+tracks are required. Production preflight API and filesystem audits reported
+zero findings, but they are not formal tracks.
 
 ## Review and delivery protocol
 
@@ -385,6 +387,7 @@ content access, non-Linux/macOS hardened execution, CLI ownership, benchmark
 workloads, product-performance claims, and complete fx equivalence remain
 outside this slice. The replacement complete local gate is green at
 `f527293`, tree `40eef14`. Cycle-3 candidate `c1e572e`, tree `b5fb1c2`, is not
-green only for one low documentation-lineage finding. Lineage remediation, a
-replacement gate, three fresh cycle-4 same-SHA review tracks, delivery, and
-`main` integration remain pending; the delivered-slice count stays twenty-four.
+green only for one low documentation-lineage finding. Exact lineage remediation
+`12c11ba`, tree `b96575b`, passes the complete replacement gate. Three fresh
+cycle-4 same-SHA review tracks, delivery, and `main` integration remain pending;
+the delivered-slice count stays twenty-four.

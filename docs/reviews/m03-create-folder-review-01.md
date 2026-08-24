@@ -1,7 +1,6 @@
 # Milestone 03 native `create_folder` review 01
 
-Status: **CYCLE 3 NOT GREEN; LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND
-CYCLE 4 PENDING**
+Status: **REPLACEMENT GATE GREEN; CYCLE 4 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -364,13 +363,30 @@ All three fresh formal tracks reviewed exact cycle-3 candidate
 Cycle 3 is not green because every track must report zero findings. All three
 tracks found zero production defects. This documentation-only lineage
 remediation does not change production, tests, API, authority, dependencies,
-CLI behavior, workflows, or benchmark workloads. It must pass a replacement
-gate before a tree-identical cycle-4 candidate and three entirely fresh tracks.
+CLI behavior, workflows, or benchmark workloads.
+
+## Exact replacement gate after cycle 3
+
+Exact lineage remediation `12c11baa0187f530a6c088326b869991f6f627f6`, tree
+`b96575b57c2c805a845294ae16b323dd1ea4ecd2`, passes the complete replacement
+gate. Fresh exact evidence is unchanged in scope and includes exact Rust 1.94.1
+workspace formatting, warnings-denied all-target/all-feature Clippy, full
+workspace tests, two doctests, focused 17/20/6/7/1, discovery 878/926/0, Python
+130 with eight expected macOS skips, byte-identical pinned-fx compatibility,
+`cargo-deny` 0.20.2, `cargo-audit` 0.22.2 with zero findings across 175
+dependencies and 1,225 advisories, Linux/FreeBSD cross-target checks, Linux
+warnings-denied library Clippy, WASI compilation and active Node 22.22.0 1/1,
+documentation 70/502/352/0, clean diff/no unsafe/no forbidden changes, and the
+fresh 319,152-byte Mach-O arm64 release SHA
+`71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
+passing bare/version/help/inert human-and-JSON smokes. Native Linux execution
+remains pending exact feature CI. A documentation-only gate record may follow;
+the cycle-4 candidate must be tree-identical to that record and retain non-
+documentation behavior identical to `12c11ba` and `f527293`.
 
 ## Current verdict
 
-**CYCLE 3 NOT GREEN; LINEAGE REMEDIATION COMPOSED; REPLACEMENT GATE AND CYCLE 4
-PENDING.** Production
+**REPLACEMENT GATE GREEN; CYCLE 4 REVIEW PENDING.** Production
 implementation, exports, eleven-tool/ten-clone host composition, and the 17-
 private/20-direct/6-engine/7-host/1-core-contract evidence inventory are
 composed. Cycle 2 found zero production defects, its two low findings are
@@ -380,9 +396,10 @@ local gate. Documentation record `9d0bacd`, tree `b5fb1c2`, and tree-identical
 cycle-3 candidate `c1e572e` retain identical non-documentation behavior. Cycle
 3 is not green only for one low documentation-lineage finding; filesystem and
 performance are green, and all three tracks found zero production defects.
-This lineage remediation, a replacement gate, a tree-identical cycle-4
-candidate, and three entirely fresh same-SHA tracks are next and remain
-pending. Native Linux execution remains pending exact feature CI. Feature
+Exact lineage remediation `12c11ba`, tree `b96575b`, passes the complete
+replacement gate. A documentation-only gate record, tree-identical cycle-4
+candidate, and three entirely fresh same-SHA tracks are next and remain pending.
+Native Linux execution remains pending exact feature CI. Feature
 delivery workflow, fast-forward integration, exact `main` workflow, delivery,
 product-performance, and fx-equivalence claims also remain pending. The
 delivered-slice count remains twenty-four.

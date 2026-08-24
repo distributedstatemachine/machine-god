@@ -305,8 +305,8 @@ Documentation record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3
 candidate `c1e572e` preserve identical non-documentation behavior. Cycle 3 is
 not green only for one low documentation-lineage finding; filesystem and
 performance are green, and all tracks found zero production defects. Lineage
-remediation, a replacement gate, fresh cycle-4 review, delivery, and `main`
-integration remain pending. Native Linux execution remains pending exact
+remediation `12c11ba`, tree `b96575b`, passes the complete replacement gate.
+Fresh cycle-4 review, delivery, and `main` integration remain pending. Native Linux execution remains pending exact
 feature CI. The last delivered authority surface therefore stays at ten tools. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
@@ -338,9 +338,9 @@ descriptor plus ten identity-preserving clones. Cycle 2 was not green on two
 low evidence/documentation findings. Exact remediation `f527293`, tree
 `40eef14`, passes the complete replacement local gate. Cycle-3 candidate
 `c1e572e`, tree `b5fb1c2`, is not green only for one low documentation-lineage
-finding. Lineage remediation, a replacement gate, and all three fresh cycle-4
-tracks remain pending. This has not replaced the integrated ten-tool authority
-surface.
+finding. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the complete
+replacement gate; all three fresh cycle-4 tracks remain pending. This has not
+replaced the integrated ten-tool authority surface.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to
