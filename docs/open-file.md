@@ -1,6 +1,7 @@
 # Native `open_file` contract
 
-Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED**
+Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 5 NOT GREEN;
+DOCUMENTATION REMEDIATION COMPOSED**
 
 This document defines the twenty-sixth bounded Milestone 03 candidate from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
@@ -38,9 +39,13 @@ candidate `4632162f8d3f323fce65263ec92f0802d9416121`, tree
 `ab1ecebe1680813614db3682f505e5de0fc31cfc`. Filesystem/process-lifecycle and
 performance/concurrency were green with zero findings. Correctness/API found no
 production defect and one low maintained-documentation lineage drift, so cycle
-4 is not green. That documentation remediation is now composed; a fresh three-
-track cycle 5 on one replacement SHA/tree remains pending. Exact feature
-workflows, delivery, and `main` integration remain pending.
+4 is not green. That documentation remediation was composed into exact cycle-5
+candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks rejected cycle 5
+for the same low stale current-lineage wording and found zero production
+defects. That documentation correction is composed; a fresh three-track cycle
+6 on one replacement SHA/tree remains pending. Exact feature workflows,
+delivery, and `main` integration remain pending.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -381,9 +386,11 @@ Current candidate composition inserts `open_file` after
 `list_files` and before `read_file`, yielding exactly twelve alphabetical tools
 and using one original retained descriptor plus eleven identity-preserving
 clones. Both path-based and prepared-root reference-host constructors compose
-the same catalog and retained workspace identity. Formal cycle 3 rejected the
-current exact candidate, so this composition is not delivered; `main` remains
-at eleven tools.
+the same catalog and retained workspace identity. Formal cycle 5 rejected exact
+candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`, for one low documentation-lineage
+finding, so this composition is reviewed but not delivered; `main` remains at
+eleven tools.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, marks the operation approval-required,
@@ -447,8 +454,29 @@ for delivery.
 Cycle 4 has zero blocker, high, or medium findings and one low documentation
 finding. The four maintained summaries now record the exact cycle-3 lineage,
 its two low findings, the cycle-4 remediation and verdict, and reviewed-but-
-rejected composition status. A fresh three-track cycle 5 on one immutable
-replacement SHA/tree remains required; no green-review claim is made yet.
+rejected composition status.
+
+## Formal review cycle 5: not green
+
+All three fresh tracks reviewed exact candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. The complete replacement gate was
+green, but the cycle is **NOT GREEN** and that candidate is rejected.
+
+- Correctness/API, filesystem/process-lifecycle, and performance/concurrency
+  found zero production, API, lifecycle, performance, concurrency, or resource-
+  bound defects.
+- All three tracks reported the same low maintained-documentation lineage
+  defect: README still called cycle 3 the latest rejection, the host-
+  composition paragraph called the cycle-3 candidate current, and the contract
+  and ledger used generic pending-review wording after four completed cycles.
+- Exact native Linux arm64 Rust 1.94.1 evidence was green at system 14/14,
+  direct 12/12, engine 4/4, warnings-denied Clippy, and five repeated lifecycle
+  runs totaling 70/70.
+
+The stale passages now explicitly record rejected cycle 5 and pending cycle 6.
+A fresh three-track cycle 6 on one immutable replacement SHA/tree remains
+required; no green-review claim is made yet.
 
 ## Candidate evidence and remaining gates
 
@@ -502,7 +530,7 @@ replacement SHA/tree remains required; no green-review claim is made yet.
 - [x] Composed-remediation native Linux execution, FreeBSD/WASI and active WASI,
   dependency, pinned-compatibility, documentation, clean-diff, and freshly
   built release-binary evidence.
-- [ ] Three green formal review tracks on one immutable cycle-5 SHA/tree and the
+- [ ] Three green formal review tracks on one immutable cycle-6 SHA/tree and the
   exact remote delivery workflows.
 
 ## Review and delivery protocol
@@ -532,5 +560,6 @@ authority; shell execution; model-selected programs, arguments, environment,
 or working directories; PATH lookup; macOS or other non-Linux real launch;
 CLI ownership; new benchmark workloads; product-performance claims; inventory
 promotion; and complete fx equivalence remain outside this slice.
-Formal review, exact feature workflows, integration, and delivery remain
-pending; current implementation and local results are candidate evidence only.
+Fresh formal cycle-6 review, exact feature workflows, integration, and delivery
+remain pending; current implementation and local results are candidate evidence
+only.

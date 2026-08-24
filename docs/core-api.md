@@ -664,8 +664,9 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The behavior is delivered and integrated on `main`.
 
-The implemented twenty-sixth candidate, rejected by formal cycle 4, adds one dedicated provider-neutral
-capability rather than reusing filesystem read, metadata, or arbitrary process
+The implemented twenty-sixth candidate, rejected by formal cycle 5, adds one
+dedicated provider-neutral capability rather than reusing filesystem read,
+metadata, or arbitrary process
 authority. Its stable policy JSON is:
 
 ```json
@@ -713,9 +714,12 @@ joining it. Exact cycle-4 candidate
 complete replacement local gate. Cycle 4 is rejected because correctness/API
 found one low maintained-documentation lineage drift; filesystem/process-
 lifecycle and performance/concurrency are green with zero findings.
-Documentation remediation is composed and a fresh three-track cycle 5 on one
-replacement SHA/tree remains pending. This describes candidate source only; it
-makes no green-review, CI, benchmark,
+That remediation was composed into cycle-5 candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
+production defects and the same low remaining current-lineage wording defect.
+That correction is composed and fresh cycle 6 remains pending. This describes
+candidate source only; it makes no green-review, CI, benchmark,
 delivery, performance, `main`-integration, or fx-equivalence claim.
 
 Maintained behavior

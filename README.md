@@ -40,7 +40,7 @@ feature CI `32702785549`, feature benchmark `32702785574`, main CI
 exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
 as slice twenty-five, and the delivered host has eleven tools. The
 twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate with a rejected third formal review cycle, not a delivered slice. Its
+candidate with a rejected fifth formal review cycle, not a delivered slice. Its
 dedicated provider-neutral
 `Capability::OpenFile { path }` authorizes one strict canonical,
 workspace-confined existing regular file. Linux execution retains the selected
@@ -96,8 +96,13 @@ normal-join regressions. Exact cycle-4 candidate
 local gate. Filesystem/process-lifecycle and performance/concurrency were green
 with zero findings; correctness/API found no production defect and one low
 maintained-documentation lineage drift. Cycle 4 is therefore not green. That
-documentation remediation is composed, while a fresh three-track cycle 5 on
-one replacement SHA/tree remains pending. This makes no green-review, CI,
+documentation remediation was composed into exact cycle-5 candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks rejected that
+candidate after reporting the same low current-lineage wording defect and zero
+production findings. That correction is composed, while a fresh three-track
+cycle 6 on one
+replacement SHA/tree remains pending. This makes no green-review, CI,
 delivery, or `main`-integration claim. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status

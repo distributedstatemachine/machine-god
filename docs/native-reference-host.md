@@ -4,8 +4,8 @@ Status: **DELIVERED** for `create_folder`.
 The delivered composition contains exactly eleven alphabetical workspace
 tools, and twenty-five bounded Milestone 03 slices are delivered;
 the twenty-sixth `open_file` Rust candidate and twelve-tool host composition are
-implemented but remain under documentation remediation after a rejected fourth formal review
-cycle and are undelivered;
+implemented but remain under documentation remediation after a rejected fifth
+formal review cycle and are undelivered;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -219,7 +219,7 @@ integrated composition at that review checkpoint. Seal `e75578b` subsequently
 passed exact feature/main CI and benchmark workflows, so this is now the
 delivered composition.
 
-The implemented twenty-sixth composition under cycle-4 review remediation
+The implemented twenty-sixth composition under review remediation after cycle 5
 inserts `open_file` immediately after `list_files`. One additional identity-
 preserving descriptor clone lets exactly twelve alphabetical tools share the
 same retained workspace identity through one original descriptor plus eleven
@@ -266,8 +266,12 @@ joining it. Exact cycle-4 candidate
 complete replacement local gate. Cycle 4 is rejected because correctness/API
 found one low maintained-documentation lineage drift; filesystem/process-
 lifecycle and performance/concurrency are green with zero findings.
-Documentation remediation is composed; fresh cycle-5 review, exact workflows,
-delivery, and `main` integration remain pending. The delivered base remains the eleven-
+That remediation was composed into cycle-5 candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
+production defects and the same low remaining current-lineage wording defect.
+That correction is composed; fresh cycle-6 review, exact workflows, delivery,
+and `main` integration remain pending. The delivered base remains the eleven-
 tool `create_folder` composition.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
@@ -595,10 +599,11 @@ directory creation, lookup, permission normalization, task, thread, I/O, or
 background work. The candidate catalog and clone counts are eleven and ten;
 those are now the delivered `create_folder` base counts.
 
-The implemented twenty-sixth slice under cycle-4 review remediation adds one
-more identity-preserving clone and no construction effect. Its launcher has a
-trusted injected test seam; production approved execution alone may spawn fixed
-`/usr/bin/xdg-open` on Linux. Other targets return unsupported without spawn.
+The implemented twenty-sixth slice under review remediation after cycle 5 adds
+one more identity-preserving clone and no construction effect. Its launcher has
+a trusted injected test seam; production approved execution alone may spawn
+fixed `/usr/bin/xdg-open` on Linux. Other targets return unsupported without
+spawn.
 Exactly 32 global permits bound production system-launch workers, and each is
 held through arbitrary Waker completion and worker return; saturation is
 precommit unavailable with zero new worker/helper. The worker starts before the
@@ -626,9 +631,11 @@ no-Waker ordinary-join gaps. Exact cycle-4 candidate
 complete replacement local gate, but cycle 4 is rejected because
 correctness/API found one low maintained-documentation lineage drift;
 filesystem/process-lifecycle and performance/concurrency are green with zero
-findings. Documentation remediation is composed and a fresh three-track cycle 5
-on one replacement SHA/tree remains pending; this is not a green review,
-workflow, delivery, `main` integration,
+findings. Cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`,
+tree `90750911b26dc4eed9e54e73c17c11a6c5a12423`, was rejected when all three
+tracks found the same low remaining current-lineage wording defect and zero
+production defects. That correction is composed and fresh cycle 6 remains
+pending; this is not a green review, workflow, delivery, `main` integration,
 performance, or equivalence claim.
 
 If the resulting engine later polls the production

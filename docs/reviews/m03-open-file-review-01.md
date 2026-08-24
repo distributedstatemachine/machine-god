@@ -1,6 +1,7 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **IMPLEMENTED CANDIDATE; CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED**
+Status: **IMPLEMENTED CANDIDATE; CYCLE 5 NOT GREEN;
+DOCUMENTATION REMEDIATION COMPOSED**
 
 ## Base and boundary
 
@@ -93,8 +94,11 @@ Current candidate composition inserts `open_file` after `list_files` and
 before `read_file`, yields exactly twelve alphabetical tools, and uses one
 original plus eleven identity-preserving clones. Both path-based and prepared-
 root constructors compose that same tool catalog and retained workspace
-identity. Formal review and delivery remain pending, so `main` remains at the
-eleven-tool base.
+identity. Formal cycle 5 rejected exact candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`, for one low documentation-lineage
+finding. Fresh cycle-6 review and delivery remain pending, so `main` remains at
+the eleven-tool base.
 
 ## Implemented ownership
 
@@ -254,10 +258,30 @@ local gate passed. The cycle is **NOT GREEN** and the candidate is rejected.
 Cycle 4 has zero blocker, high, or medium findings and one low documentation
 finding. The maintained summaries now record exact cycle-3 SHA/tree and both
 low findings, exact cycle-4 SHA/tree and its verdict, and reviewed-but-rejected
-composition status. A fresh correctness/API, filesystem/process-lifecycle, and
-performance/concurrency cycle 5 on one immutable replacement SHA/tree remains
-required. No green-review, workflow, delivery, performance, or equivalence
-claim is made.
+composition status.
+
+## Formal review cycle 5: not green
+
+All three fresh tracks reviewed exact candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. The complete replacement local
+gate passed, but the cycle is **NOT GREEN** and the candidate is rejected.
+
+- All tracks found zero production/API, lifecycle, performance/concurrency, or
+  resource-bound defects.
+- All tracks reported the same low maintained-documentation lineage defect.
+  README still named cycle 3 as the latest rejection; the host-composition
+  paragraph called the cycle-3 candidate current; and the contract and ledger
+  used generic pending-review wording after four completed cycles.
+- Exact native Linux arm64 Rust 1.94.1 evidence was green at system 14/14,
+  direct 12/12, engine 4/4, warnings-denied Clippy, and five repeated lifecycle
+  runs totaling 70/70. An amd64-under-arm64 missing-executable emulation result
+  did not reproduce on native arm64 and is not a product finding.
+
+The four stale passages now explicitly record rejected cycle 5 and pending
+cycle 6. A fresh correctness/API, filesystem/process-lifecycle, and performance/
+concurrency cycle 6 on one immutable replacement SHA/tree remains required. No
+green-review, workflow, delivery, performance, or equivalence claim is made.
 
 ## Required evidence
 
@@ -361,7 +385,7 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**IMPLEMENTED CANDIDATE; CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION
+**IMPLEMENTED CANDIDATE; CYCLE 5 NOT GREEN; DOCUMENTATION REMEDIATION
 COMPOSED.** Exact
 base main and frozen-contract feature CI and benchmark evidence is green.
 Cycle 1 rejected exact candidate `79e65c19330181955a0c341d62ef39778a18d36d`,
@@ -384,8 +408,13 @@ findings, and no production resource escape. The candidate is rejected. Cycle
 `4632162f8d3f323fce65263ec92f0802d9416121`, tree
 `ab1ecebe1680813614db3682f505e5de0fc31cfc`. Lifecycle and performance were
 green with zero findings. Correctness/API found no production defect and one
-low stale maintained-documentation lineage finding. That remediation is now
-composed, while all three fresh cycle-5 tracks remain pending.
+low stale maintained-documentation lineage finding. That remediation was
+composed into cycle-5 candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
+production defects and the same low remaining current-lineage wording defect.
+That correction is composed, while all three fresh cycle-6 tracks remain
+pending.
 
 Candidate source contains the core variant, native tool, trusted launcher seam,
 direct/private/engine/unsupported evidence, and twelve-tool/eleven-clone host

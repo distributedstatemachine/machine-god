@@ -306,8 +306,8 @@ benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
 The twenty-sixth bounded slice, native `open_file`, is an **IMPLEMENTED
-CANDIDATE; FORMAL CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from the exact
-delivered base
+CANDIDATE; FORMAL CYCLE 5 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from
+the exact delivered base
 `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
 main CI `32704202572` and final main benchmark workflow `32704202546`; the
 benchmark run retains exactly two nonexpired exact-SHA artifacts
@@ -387,8 +387,12 @@ after-wait-probe and no-Waker normal-join regressions. Exact cycle-4 candidate
 `ab1ecebe1680813614db3682f505e5de0fc31cfc`, passed the complete replacement
 gate. Lifecycle and performance were green with zero findings. Correctness/API
 found no production defect and one low maintained-documentation lineage drift,
-so cycle 4 is not green. The documentation remediation is composed; three fresh
-cycle-5 tracks on one replacement SHA/tree remain pending.
+so cycle 4 is not green. That remediation was composed into exact cycle-5
+candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
+production defects and the same low remaining current-lineage wording defect,
+so cycle 5 is not green. That correction is composed; three fresh cycle-6 tracks
+on one replacement SHA/tree remain pending.
 The slice is rejected and not delivered, and it makes no performance or fx-
 equivalence claim.
 The first
@@ -2113,8 +2117,8 @@ gate:
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
   The twenty-sixth native `open_file` slice is an **IMPLEMENTED CANDIDATE;
-  FORMAL CYCLE 4 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from exact delivered
-  base `e2ee11f2`. Final base
+  FORMAL CYCLE 5 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from exact
+  delivered base `e2ee11f2`. Final base
   main CI `32704202572` and benchmark `32704202546` are green; the benchmark
   retains exactly two nonexpired exact-SHA artifacts `9511626648` and
   `9511745538`. Its sole strict `{path:string}` names one workspace-confined
@@ -2172,8 +2176,12 @@ gate:
   `ab1ecebe1680813614db3682f505e5de0fc31cfc`, passed the complete replacement
   local gate. Lifecycle and performance were green with zero findings;
   correctness/API found no production defect and one low stale maintained-
-  documentation lineage finding. That remediation is composed and all three
-  fresh cycle-5 tracks remain pending. Feature workflows, fast-forward integration,
+  documentation lineage finding. That remediation was composed into exact
+  cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+  `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
+  production defects and the same low remaining current-lineage wording defect.
+  That correction is composed and all three fresh cycle-6 tracks remain pending.
+  Feature workflows, fast-forward integration,
   and exact main workflows remain
   pending under
   [`open-file.md`](open-file.md) and

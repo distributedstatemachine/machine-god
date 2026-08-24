@@ -76,7 +76,8 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 artifacts. The delivered host now has eleven tools. No product-performance
 claim is made.
 The twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate rejected by formal cycle 4. It adds dedicated provider-neutral `Capability::OpenFile { path }`
+candidate rejected by formal cycle 5. It adds dedicated provider-neutral
+`Capability::OpenFile { path }`
 for one strict canonical, workspace-confined existing regular file rather than
 treating default-application launch as filesystem read or accepting a model-
 selected process. Linux execution opens the path beneath retained directory
@@ -112,10 +113,13 @@ joining it. Exact candidate `4632162f8d3f323fce65263ec92f0802d9416121`, tree
 complete replacement local gate. Cycle 4 is nevertheless not green:
 filesystem/process-lifecycle and performance/concurrency are green with zero
 findings, while correctness/API reported one low maintained-documentation
-lineage drift and no production defect. Documentation remediation is composed;
-a fresh three-track cycle 5 on one replacement SHA/tree remains pending. This
-is not a green-review, CI,
-benchmark, delivery, performance, `main`-integration, or fx-equivalence record.
+lineage drift and no production defect. That remediation was composed into
+cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
+production defects and the same low remaining current-lineage wording defect.
+That correction is composed; fresh cycle 6 remains pending. This is not a
+green-review, CI, benchmark, delivery, performance, `main`-integration, or fx-
+equivalence record.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -1354,8 +1358,11 @@ no-Waker ordinary-join gaps. Exact cycle-4 candidate
 complete replacement local gate, but cycle 4 is rejected because
 correctness/API found one low maintained-documentation lineage drift;
 filesystem/process-lifecycle and performance/concurrency are green with zero
-findings. Documentation remediation is composed and a fresh three-track cycle 5
-on one replacement SHA/tree remains pending, so this candidate makes no green-
+findings. Cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`,
+tree `90750911b26dc4eed9e54e73c17c11a6c5a12423`, was rejected when all three
+tracks found the same low remaining current-lineage wording defect and zero
+production defects. That correction is composed and fresh cycle 6 remains
+pending, so this candidate makes no green-
 review, CI, benchmark, delivery, or `main`-
 integration claim.
 

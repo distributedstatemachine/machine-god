@@ -321,7 +321,7 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The delivered authority surface now has eleven tools. The current
 twenty-sixth `open_file` slice is an implemented Rust candidate under
-documentation remediation after a rejected fourth formal review cycle.
+documentation remediation after a rejected fifth formal review cycle.
 Its dedicated `Capability::OpenFile { path }` is narrower than arbitrary
 process authority and covers one canonical workspace-confined existing regular
 file. Linux execution rejects symlinks, retains the approved file descriptor,
@@ -370,9 +370,12 @@ joining it. Exact cycle-4 candidate
 complete replacement local gate. Cycle 4 is rejected because correctness/API
 found one low maintained-documentation lineage drift; filesystem/process-
 lifecycle and performance/concurrency are green with zero findings.
-Documentation remediation is composed and a fresh three-track cycle 5 on one
-replacement SHA/tree remains pending. This is not a green-review, workflow,
-delivery, `main` integration, performance, or
+That remediation was composed into cycle-5 candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
+production defects and the same low remaining current-lineage wording defect.
+That correction is composed and fresh cycle 6 remains pending. This is not a
+green-review, workflow, delivery, `main` integration, performance, or
 fx-equivalence claim. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
@@ -1103,10 +1106,11 @@ durability failure returns fixed nonretryable ambiguity without claiming
 rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
 
-The implemented `open_file` candidate under cycle-4 review remediation adds no
-read result and no arbitrary process selection. Strict effect-free preflight
-binds policy and execution to one canonical confined path through dedicated
-`Capability::OpenFile`. Linux execution no-follow opens and retains only an
+The implemented `open_file` candidate under review remediation after cycle 5
+adds no read result and no arbitrary process selection. Strict effect-free
+preflight binds policy and execution to one canonical confined path through
+dedicated `Capability::OpenFile`. Linux execution no-follow opens and retains
+only an
 existing regular file before calling fixed `/usr/bin/xdg-open`; the sole
 `/proc/<machine-god-parent-pid>/fd/<retained-fd>` argument keeps the helper bound
 to the retained identity while the parent owns the descriptor. The helper runs
@@ -1145,8 +1149,11 @@ no-Waker ordinary-join gaps. Exact cycle-4 candidate
 complete replacement local gate, but cycle 4 is rejected because
 correctness/API found one low maintained-documentation lineage drift;
 filesystem/process-lifecycle and performance/concurrency are green with zero
-findings. Documentation remediation is composed; a fresh three-track cycle 5,
-exact workflows, delivery, and `main` integration remain pending.
+findings. Cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`,
+tree `90750911b26dc4eed9e54e73c17c11a6c5a12423`, was rejected when all three
+tracks found the same low remaining current-lineage wording defect and zero
+production defects. That correction is composed; fresh cycle 6, exact
+workflows, delivery, and `main` integration remain pending.
 
 Delivered `create_folder` execution evidence is native macOS plus
 Linux/FreeBSD cross-target test compilation, Linux library Clippy, and WASI
