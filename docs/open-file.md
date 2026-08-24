@@ -1,6 +1,6 @@
 # Native `open_file` contract
 
-Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS**
+Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS**
 
 This document defines the twenty-sixth bounded Milestone 03 candidate from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
@@ -27,9 +27,15 @@ candidate `79e65c19330181955a0c341d62ef39778a18d36d`, tree
 exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
 `9002e8f137d5ed2352cd620db6145da2339cdb2c`; its resource-bound, deadline,
 lifecycle, test-fidelity, and frozen-contract findings are recorded below and
-in the review ledger. Remediation and a fresh three-track same-SHA cycle are in
-progress. Exact feature workflows, delivery, and `main` integration remain
-pending.
+in the review ledger. Formal review cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`: correctness/API was green with
+zero findings, while performance/concurrency and filesystem/process-lifecycle
+each reported one low evidence/lifecycle gap. There were zero blocker, high,
+or medium findings, zero other findings, and no production resource escape.
+Candidate remediation is present; its complete replacement gate and a fresh
+three-track same-SHA cycle 4 remain pending. Exact feature workflows, delivery,
+and `main` integration remain pending.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -370,8 +376,9 @@ Current candidate composition inserts `open_file` after
 `list_files` and before `read_file`, yielding exactly twelve alphabetical tools
 and using one original retained descriptor plus eleven identity-preserving
 clones. Both path-based and prepared-root reference-host constructors compose
-the same catalog and retained workspace identity. This composition is not yet
-reviewed or delivered; `main` remains at eleven tools.
+the same catalog and retained workspace identity. Formal cycle 3 rejected the
+current exact candidate, so this composition is not delivered; `main` remains
+at eleven tools.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, marks the operation approval-required,
@@ -388,12 +395,43 @@ structured result, and fixed redacted errors. External paths, symlink following,
 directories, macOS launch, PATH lookup, and equivalence promotion remain
 deferred. Zig is benchmark input only.
 
+## Formal review cycle 3: not green
+
+All three fresh tracks reviewed exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`. The cycle is **NOT GREEN** and
+that candidate is rejected for delivery.
+
+- Correctness/API is **GREEN** with zero findings.
+- Performance/concurrency is **NOT GREEN** with one low evidence finding. The
+  deterministic deadline regression stopped at the pre-probe deadline guard,
+  so it did not exercise the authoritative clock read after `try_wait` returns.
+  Replacement evidence must pause after the wait probe and prove an exit-zero
+  status observed at or after the deadline is rejected as timeout.
+- Filesystem/process-lifecycle is **NOT GREEN** with one low lifecycle/evidence
+  finding. In the no-Waker publication gap, the completion flag was not yet
+  visible when the future observed a ready outcome, so ordinary cleanup could
+  detach the worker tail rather than take the required normal join path.
+  The tail remained globally permit-bounded and the helper, launch request, and
+  retained target descriptor were already cleaned; the reviewers found no
+  production resource escape. Remediation requires atomic
+  `notification_complete` publication and a deterministic no-Waker regression
+  proving ready consumption takes the normal join path.
+
+The cycle has zero blocker, high, or medium findings, zero other findings, and
+no production resource escape. These findings do not weaken the authorized
+documentation-only lifecycle amendment, but they reject this implementation
+candidate. Candidate remediation now atomically completes no-Waker publication
+and supplies both deterministic regressions. The complete replacement exact-SHA
+local gate and all three fresh cycle-4 tracks on one immutable replacement
+SHA/tree remain pending; no fix is claimed green yet.
+
 ## Candidate evidence and remaining gates
 
 - [x] Exact core variant/serde/drop contract, native exports, constants,
   descriptions, strict schema, construction taxonomy, result, errors, and
   redaction.
-- [ ] Exact and one-over 4,096-byte requested/canonical path, 256-component,
+- [x] Exact and one-over 4,096-byte requested/canonical path, 256-component,
   255-byte component, 65,536-byte argument, and 16,384-byte result bounds;
   a much larger hostile path proves rejection occurs before complete-value
   serialization or another path-proportional copy.
@@ -412,20 +450,22 @@ deferred. Zig is benchmark input only.
   inherited host environment, null stdio, no machine-god shell/PATH or model-
   selected launch field, retained target descriptor, trusted downstream host
   dispatch, and exit-zero acceptance semantics.
-- [ ] Identity-aware proc-entry closure evidence tracks the exact descriptor
+- [x] Identity-aware proc-entry closure evidence tracks the exact descriptor
   identity rather than treating reuse of the same numeric fd as continued
   ownership.
-- [ ] Missing launcher and spawn failure before commit; nonzero, signal,
+- [x] Missing launcher and spawn failure before commit; nonzero, signal,
   timeout, and a wait seam that drives the actual shared `try_wait` `Err` arm
   after commit; exact fixed retryability, `result_unknown`, helper reap, and no
   impossible postspawn waiter-establishment claim.
-- [ ] Inert production and fake launcher futures until first poll; a
+- [x] Inert production and fake launcher futures until first poll; a
   deterministic spawn-gate barrier proving cancellation
   that wins the serialized gate has zero launch; successful-spawn boundary;
   postspawn cancellation through the engine's existing drop path; 30-second
   authoritative post-probe deadline decision, remaining-budget sleep, and
-  post-deadline exit-zero rejection; pre-poll and postspawn drop;
-  terminate/reap; normal nonreentrant join; inline reentrant-waker completion
+  post-deadline exit-zero rejection through a deterministic pause after the
+  wait probe; pre-poll and postspawn drop; terminate/reap; atomic
+  `notification_complete` publication and a deterministic no-Waker normal
+  join; inline reentrant-waker completion
   without self-join panic or deadlock; overlapping blocked-waker drop without a
   cross-thread join cycle; exact request/descriptor identity closed before
   publication while that Waker remains blocked; 32 active system launches
@@ -435,9 +475,10 @@ deferred. Zig is benchmark input only.
 - [x] Candidate macOS active unsupported behavior, Linux cross-target warnings-
   denied compilation, exact twelve-tool/eleven-clone composition, and no new
   dependency, workflow, CLI, benchmark, or unsafe-Rust source.
-- [ ] Exact composed-SHA native Linux execution, FreeBSD/WASI and active WASI,
+- [x] Composed-remediation native Linux execution, FreeBSD/WASI and active WASI,
   dependency, pinned-compatibility, documentation, clean-diff, and freshly
-  built release-binary evidence; then three green formal review tracks and the
+  built release-binary evidence.
+- [ ] Three green formal review tracks on one immutable cycle-4 SHA/tree and the
   exact remote delivery workflows.
 
 ## Review and delivery protocol

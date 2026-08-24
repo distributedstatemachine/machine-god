@@ -40,7 +40,7 @@ feature CI `32702785549`, feature benchmark `32702785574`, main CI
 exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
 as slice twenty-five, and the delivered host has eleven tools. The
 twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate with a rejected second formal review cycle, not a delivered slice. Its
+candidate with a rejected third formal review cycle, not a delivered slice. Its
 dedicated provider-neutral
 `Capability::OpenFile { path }` authorizes one strict canonical,
 workspace-confined existing regular file. Linux execution retains the selected
@@ -78,9 +78,21 @@ findings. Cycle 2 rejected exact candidate
 `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
 `9002e8f137d5ed2352cd620db6145da2339cdb2c`, with the complete resource,
 deadline, lifecycle, invariant, proc-test, fake-launcher, and wait-seam finding
-record in the review ledger. Remediation and a completely fresh same-SHA three-
-track cycle remain pending, so this makes no green-review, CI, delivery, or
-`main`-integration claim. The
+record in the review ledger. Cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`. Correctness/API was green with
+zero findings. Performance/concurrency reported one low because its deadline
+test stopped at the pre-probe guard instead of exercising the authoritative
+post-`try_wait` clock. Filesystem/process-lifecycle reported one low because a
+no-Waker publication gap could detach a normal tail instead of joining it,
+although the tail remained permit-bounded and the helper, request, and retained
+descriptor were already cleaned. The cycle had zero blocker, high, or medium
+findings, zero other findings, and no production resource escape. Replacement
+remediation now publishes `notification_complete` atomically when no Waker was
+registered and adds deterministic after-wait-probe deadline and no-Waker
+normal-join regressions. Its complete local gate and all three fresh cycle-4
+tracks remain pending; no fix is claimed green.
+This makes no green-review, CI, delivery, or `main`-integration claim. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission

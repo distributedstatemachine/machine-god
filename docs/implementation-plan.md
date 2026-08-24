@@ -306,7 +306,7 @@ benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
 The twenty-sixth bounded slice, native `open_file`, is an **IMPLEMENTED
-CANDIDATE; FORMAL CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS** from the exact
+CANDIDATE; FORMAL CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS** from the exact
 delivered base
 `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
 main CI `32704202572` and final main benchmark workflow `32704202546`; the
@@ -369,8 +369,23 @@ the real shared `Err` arm. Required replacement evidence adds a very-large path,
 authoritative deadline/remaining sleep, 32-permit saturation and callback-tail
 retention, exact-FD closure while the Waker is blocked, identity-aware proc
 tests, an inert fake launcher, and the actual shared wait-error arm. The complete
-replacement local gate and three fresh same-SHA review tracks remain pending;
-the slice is rejected and not delivered.
+replacement candidate reached formal cycle 3 at exact SHA
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`. Correctness/API is green with
+zero findings. Performance/concurrency is not green with one low because the
+deadline regression stopped at the pre-probe guard and did not exercise the
+authoritative clock after `try_wait`. Filesystem/process-lifecycle is not green
+with one low because the no-Waker publication gap could release an ordinary
+worker tail, detaching it rather than joining it; the tail remained permit-
+bounded. The helper, request, and retained descriptor were already cleaned,
+and there was no
+production resource escape. Cycle 3 has zero blocker, high, or medium findings
+and zero other findings. Candidate remediation now publishes
+`notification_complete` atomically when no Waker exists and adds deterministic
+after-wait-probe and no-Waker normal-join regressions. Its complete replacement
+gate and all three fresh cycle-4 tracks remain pending; no fix is claimed green.
+The slice is rejected and not delivered, and it makes no performance or fx-
+equivalence claim.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -2093,7 +2108,7 @@ gate:
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
   The twenty-sixth native `open_file` slice is an **IMPLEMENTED CANDIDATE;
-  FORMAL CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS** from exact delivered
+  FORMAL CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS** from exact delivered
   base `e2ee11f2`. Final base
   main CI `32704202572` and benchmark `32704202546` are green; the benchmark
   retains exactly two nonexpired exact-SHA artifacts `9511626648` and
@@ -2134,9 +2149,23 @@ gate:
   that bypassed the actual shared `Err` arm. Required evidence now includes a
   very-large path, authoritative deadline/remaining sleep, active 32-permit
   saturation, exact-FD closure under a blocked Waker, identity-aware proc tests,
-  inert fake launch, and the actual shared wait-error arm. The
-  complete replacement exact-SHA local gate, fresh three-track review,
-  feature workflows, fast-forward integration, and exact main workflows remain
+  inert fake launch, and the actual shared wait-error arm. Formal cycle 3
+  rejected exact candidate
+  `6815843ac2c8d7731ca6554e5a84772351def850`, tree
+  `4a479b51ebdba49afb81a6827f1381d01ed75e52`. Correctness/API is green with
+  zero findings. Performance/concurrency reported one low because the deadline
+  regression stopped before exercising the authoritative post-`try_wait`
+  clock. Filesystem/process-lifecycle reported one low because a no-Waker
+  publication gap could detach a normal tail instead of joining it, although
+  the tail remained permit-bounded and the helper, request, and retained
+  descriptor were already cleaned. The cycle has zero blocker, high, or medium
+  findings, zero other findings, and no production resource escape. Candidate
+  remediation atomically publishes `notification_complete` when no Waker exists
+  and adds deterministic after-wait-probe deadline and no-Waker normal-join
+  regressions; it is present. The complete replacement exact-SHA local gate and
+  all three fresh cycle-4 tracks remain
+  pending; no fix is claimed green. Feature workflows, fast-forward integration,
+  and exact main workflows remain
   pending under
   [`open-file.md`](open-file.md) and
   [`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md). The

@@ -644,7 +644,11 @@ impl Default for SystemOpenFileLauncher {
                 #[cfg(test)]
                 before_first_wait: None,
                 #[cfg(test)]
+                after_wait_probe: None,
+                #[cfg(test)]
                 before_forced_wait_failure: None,
+                #[cfg(test)]
+                after_publish: None,
                 #[cfg(test)]
                 force_wait_failure: false,
             }),
@@ -663,7 +667,11 @@ struct SystemLaunchConfig {
     #[cfg(test)]
     before_first_wait: Option<Arc<BeforeSpawnHook>>,
     #[cfg(test)]
+    after_wait_probe: Option<Arc<BeforeSpawnHook>>,
+    #[cfg(test)]
     before_forced_wait_failure: Option<Arc<BeforeSpawnHook>>,
+    #[cfg(test)]
+    after_publish: Option<Arc<BeforeSpawnHook>>,
     #[cfg(test)]
     force_wait_failure: bool,
 }
@@ -1013,6 +1021,10 @@ fn launch_worker(
     let outcome = launch_worker_outcome(&request, &cancellation, &config, &shared);
     drop(request);
     publish_worker_outcome(&shared, outcome);
+    #[cfg(test)]
+    if let Some(hook) = &config.after_publish {
+        hook.pause_worker();
+    }
     drop((cancellation, config, shared, permit));
 }
 
@@ -1064,6 +1076,8 @@ fn launch_worker_outcome(
     let deadline = Instant::now() + config.timeout;
     #[cfg(test)]
     let mut before_first_wait = config.before_first_wait.as_ref();
+    #[cfg(test)]
+    let mut after_wait_probe = config.after_wait_probe.as_ref();
     loop {
         if cancellation.is_cancelled() || lock_worker_state(shared).abort {
             terminate_and_reap(&mut child);
@@ -1080,6 +1094,10 @@ fn launch_worker_outcome(
         }
 
         let wait_result = checked_wait(&mut child, config);
+        #[cfg(test)]
+        if let Some(hook) = after_wait_probe.take() {
+            hook.pause_worker();
+        }
         let observed_at = Instant::now();
         if observed_at >= deadline {
             terminate_and_reap(&mut child);
@@ -1132,7 +1150,15 @@ fn publish_worker_outcome(shared: &Mutex<WorkerState>, outcome: OpenFileLaunchOu
     let waker = {
         let mut state = lock_worker_state(shared);
         state.outcome = Some(outcome);
-        state.waker.take()
+        let waker = state.waker.take();
+        if waker.is_none() {
+            // With no callback to run, publication completes atomically. A
+            // poll that consumes this outcome must therefore join the normal
+            // worker tail rather than treating it as an arbitrary-Waker
+            // overlap.
+            state.notification_complete = true;
+        }
+        waker
     };
     if let Some(waker) = waker {
         waker.wake();

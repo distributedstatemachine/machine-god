@@ -1,6 +1,6 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **IMPLEMENTED CANDIDATE; CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS**
+Status: **IMPLEMENTED CANDIDATE; CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS**
 
 ## Base and boundary
 
@@ -204,6 +204,40 @@ These are rejected-candidate findings, not green remediation evidence. A
 complete replacement exact-SHA local gate and three completely fresh review
 tracks on one immutable replacement SHA/tree remain required.
 
+## Formal review cycle 3: not green
+
+All three fresh tracks reviewed exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`. The cycle is **NOT GREEN** and
+that candidate is rejected for delivery.
+
+- Correctness/API is **GREEN** with zero findings.
+- Performance/concurrency is **NOT GREEN** with one low evidence finding. The
+  deterministic deadline test reached the pre-probe deadline guard and stopped
+  there; it did not drive `try_wait` and then cross the deadline before the
+  authoritative post-probe clock read. Replacement evidence must pause after
+  the wait probe and prove an exit-zero status observed at or after the
+  deadline maps to timeout rather than acceptance.
+- Filesystem/process-lifecycle is **NOT GREEN** with one low lifecycle/evidence
+  finding. In a publication with no registered Waker, the future could observe
+  the ready outcome before notification completion became visible and release
+  the worker handle, detaching the tail instead of taking the required ordinary
+  postpublication join path. This tail was still globally bounded by the
+  retained permit; the helper was reaped and the request and exact retained
+  descriptor were already
+  released. The reviewer found no production resource escape. Remediation
+  requires atomic `notification_complete` publication and a deterministic
+  no-Waker regression proving ready consumption joins the ordinary worker tail.
+
+The cycle has zero blocker, high, or medium findings, zero other findings, and
+no production resource escape. It does not amend or invalidate the authorized
+documentation-only lifecycle amendment. Candidate remediation now atomically
+completes no-Waker publication and supplies both deterministic regressions. Its
+complete replacement exact-SHA local gate and fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency cycle-4 tracks on one
+immutable replacement SHA/tree remain pending. No remediation is claimed green
+yet.
+
 ## Required evidence
 
 - [ ] Exact `Capability::OpenFile` API, serde JSON, exhaustive drop handling,
@@ -242,9 +276,12 @@ tracks on one immutable replacement SHA/tree remain required.
   serialized through one linearization gate; abort-first zero launch;
   successful-spawn commit; postspawn engine cancellation through drop; pre-poll
   and postspawn drop; authoritative post-probe `now < deadline` acceptance,
-  at/after-deadline timeout, remaining-duration sleep, then terminate/reap;
+  at/after-deadline timeout through a deterministic pause after `try_wait`,
+  remaining-duration sleep, then terminate/reap;
   unpublished Waker suppression plus synchronous join; helper reap and exact
-  request/descriptor closure before publication; normal published worker join;
+  request/descriptor closure before publication; atomic
+  `notification_complete` publication and deterministic no-Waker normal
+  published-worker join;
   safe overlapping inline/blocking wake-callback tail without self-join or
   cross-thread join cycles; blocked-waker exact-FD-identity regression; exactly
   32 active system launches with saturation producing precommit unavailable and
@@ -303,7 +340,7 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**IMPLEMENTED CANDIDATE; CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS.** Exact
+**IMPLEMENTED CANDIDATE; CYCLE 3 NOT GREEN; REMEDIATION IN PROGRESS.** Exact
 base main and frozen-contract feature CI and benchmark evidence is green.
 Cycle 1 rejected exact candidate `79e65c19330181955a0c341d62ef39778a18d36d`,
 tree `481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`, with the findings and candidate
@@ -313,6 +350,17 @@ remediations above. Cycle 2 rejected exact candidate
 deadline, concurrency/lifecycle, frozen-contract, and test-fidelity findings
 recorded above. The narrow worker-tail contract amendment is documentation-only
 and exempt from its own adversarial cycle; production remediation is not.
+Cycle 3 rejected exact candidate
+`6815843ac2c8d7731ca6554e5a84772351def850`, tree
+`4a479b51ebdba49afb81a6827f1381d01ed75e52`. Correctness/API is green with
+zero findings. Performance/concurrency reported one low missing authoritative
+post-`try_wait` deadline regression. Filesystem/process-lifecycle reported one
+low no-Waker normal-join gap requiring atomic `notification_complete`
+publication. The cycle has zero blocker, high, or medium findings, zero other
+findings, and no production resource escape. The candidate is rejected; the
+candidate remediation is present, while its replacement gate and all three
+fresh cycle-4 tracks remain pending and no fix is claimed green.
+
 Candidate source contains the core variant, native tool, trusted launcher seam,
 direct/private/engine/unsupported evidence, and twelve-tool/eleven-clone host
 composition with no dependency, workflow, CLI, benchmark, or compatibility-

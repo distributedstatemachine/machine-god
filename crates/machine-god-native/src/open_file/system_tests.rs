@@ -15,7 +15,7 @@ use rustix::fs::{Mode, OFlags};
 use super::{
     ACTIVE_SYSTEM_LAUNCHES, BeforeSpawnHook, MAX_CONCURRENT_OPEN_FILE_LAUNCHES,
     OPEN_FILE_LAUNCH_TIMEOUT, OpenFileLaunch, OpenFileLaunchOutcome, OpenFileLaunchRequest,
-    OpenFileLauncher, SystemLaunchConfig, SystemLaunchPermit, SystemOpenFileLauncher,
+    OpenFileLauncher, SystemLaunchConfig, SystemLaunchPermit, SystemOpenFileLauncher, WorkerHandle,
 };
 use machine_god_core::{CancellationToken, ToolErrorKind};
 
@@ -128,26 +128,35 @@ fn request(directory: &Path) -> OpenFileLaunchRequest {
 }
 
 fn launcher(program: PathBuf, timeout: Duration) -> SystemOpenFileLauncher {
-    launcher_with_test_controls(program, timeout, None, None, None, false)
+    launcher_with_test_controls(program, timeout, LauncherTestControls::default())
+}
+
+#[derive(Default)]
+struct LauncherTestControls {
+    before_spawn: Option<Arc<BeforeSpawnHook>>,
+    before_first_wait: Option<Arc<BeforeSpawnHook>>,
+    after_wait_probe: Option<Arc<BeforeSpawnHook>>,
+    before_forced_wait_failure: Option<Arc<BeforeSpawnHook>>,
+    after_publish: Option<Arc<BeforeSpawnHook>>,
+    force_wait_failure: bool,
 }
 
 fn launcher_with_test_controls(
     program: PathBuf,
     timeout: Duration,
-    before_spawn: Option<Arc<BeforeSpawnHook>>,
-    before_first_wait: Option<Arc<BeforeSpawnHook>>,
-    before_forced_wait_failure: Option<Arc<BeforeSpawnHook>>,
-    force_wait_failure: bool,
+    controls: LauncherTestControls,
 ) -> SystemOpenFileLauncher {
     SystemOpenFileLauncher {
         config: Arc::new(SystemLaunchConfig {
             program,
             current_dir: PathBuf::from("/"),
             timeout,
-            before_spawn,
-            before_first_wait,
-            before_forced_wait_failure,
-            force_wait_failure,
+            before_spawn: controls.before_spawn,
+            before_first_wait: controls.before_first_wait,
+            after_wait_probe: controls.after_wait_probe,
+            before_forced_wait_failure: controls.before_forced_wait_failure,
+            after_publish: controls.after_publish,
+            force_wait_failure: controls.force_wait_failure,
         }),
     }
 }
@@ -194,6 +203,25 @@ fn process_identity(pid: u32) -> (PathBuf, ProcIdentity) {
     let path = PathBuf::from(format!("/proc/{pid}"));
     let identity = proc_identity(&path);
     (path, identity)
+}
+
+fn wait_for_zombie(path: &Path) {
+    let stat_path = path.join("stat");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let stat = fs::read_to_string(&stat_path).expect("read helper process state");
+        let (_, tail) = stat
+            .rsplit_once(") ")
+            .expect("helper process stat has a state field");
+        if tail.starts_with("Z ") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "helper did not become a zombie before the test deadline"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn wait_for_active_launches(expected: usize) {
@@ -266,7 +294,9 @@ fn production_configuration_is_the_exact_fixed_launcher_contract() {
     assert_eq!(launcher.config.timeout, OPEN_FILE_LAUNCH_TIMEOUT);
     assert!(launcher.config.before_spawn.is_none());
     assert!(launcher.config.before_first_wait.is_none());
+    assert!(launcher.config.after_wait_probe.is_none());
     assert!(launcher.config.before_forced_wait_failure.is_none());
+    assert!(launcher.config.after_publish.is_none());
     assert!(!launcher.config.force_wait_failure);
 }
 
@@ -427,10 +457,10 @@ fn cancellation_before_the_serialized_spawn_gate_never_starts_the_helper() {
     let launcher = launcher_with_test_controls(
         script,
         Duration::from_secs(2),
-        Some(Arc::clone(&hook)),
-        None,
-        None,
-        false,
+        LauncherTestControls {
+            before_spawn: Some(Arc::clone(&hook)),
+            ..LauncherTestControls::default()
+        },
     );
     let cancellation = CancellationToken::new();
     let mut future = launcher.launch(request(temporary.path()), cancellation.clone());
@@ -495,10 +525,10 @@ fn helper_known_to_exit_after_deadline_is_rejected_before_the_first_wait_decisio
     let mut future = launcher_with_test_controls(
         script,
         Duration::from_millis(25),
-        None,
-        Some(Arc::clone(&before_first_wait)),
-        None,
-        false,
+        LauncherTestControls {
+            before_first_wait: Some(Arc::clone(&before_first_wait)),
+            ..LauncherTestControls::default()
+        },
     )
     .launch(request(temporary.path()), CancellationToken::new());
     let waker = waker();
@@ -509,6 +539,51 @@ fn helper_known_to_exit_after_deadline_is_rejected_before_the_first_wait_decisio
     let pid = read_pid(&pid_record);
     let (process_path, original_identity) = process_identity(pid);
     before_first_wait.release.wait();
+
+    assert_eq!(
+        drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
+        OpenFileLaunchOutcome::ResultUnknown
+    );
+    assert_proc_identity_released(&process_path, original_identity);
+}
+
+#[test]
+fn successful_wait_probe_crossing_deadline_before_observation_is_rejected_and_reaped() {
+    let _lock = process_test_lock();
+    let temporary = TemporaryDirectory::new();
+    let pid_record = temporary.path().join("pid");
+    let script = write_script(
+        temporary.path(),
+        &format!("printf '%s\\n' \"$$\" > '{}'\nexit 0", pid_record.display()),
+    );
+    let timeout = Duration::from_secs(1);
+    let before_first_wait = Arc::new(BeforeSpawnHook::new());
+    let after_wait_probe = Arc::new(BeforeSpawnHook::new());
+    let mut future = launcher_with_test_controls(
+        script,
+        timeout,
+        LauncherTestControls {
+            before_first_wait: Some(Arc::clone(&before_first_wait)),
+            after_wait_probe: Some(Arc::clone(&after_wait_probe)),
+            ..LauncherTestControls::default()
+        },
+    )
+    .launch(request(temporary.path()), CancellationToken::new());
+    let waker = waker();
+
+    assert!(poll_once(&mut future, &waker).is_pending());
+    before_first_wait.reached.wait();
+    wait_for_file(&pid_record);
+    let pid = read_pid(&pid_record);
+    let (process_path, original_identity) = process_identity(pid);
+    wait_for_zombie(&process_path);
+    before_first_wait.release.wait();
+
+    // Reaching this seam proves that the pre-probe deadline guard passed and
+    // that the real `try_wait` already observed the exit-zero child.
+    after_wait_probe.reached.wait();
+    thread::sleep(timeout + Duration::from_millis(50));
+    after_wait_probe.release.wait();
 
     assert_eq!(
         drive_to_completion(&mut future, Instant::now() + Duration::from_secs(2)),
@@ -533,10 +608,11 @@ fn checked_wait_error_returns_unknown_and_terminates_and_reaps_the_helper() {
     let mut future = launcher_with_test_controls(
         script,
         Duration::from_secs(2),
-        None,
-        None,
-        Some(Arc::clone(&before_forced_wait_failure)),
-        true,
+        LauncherTestControls {
+            before_forced_wait_failure: Some(Arc::clone(&before_forced_wait_failure)),
+            force_wait_failure: true,
+            ..LauncherTestControls::default()
+        },
     )
     .launch(request(temporary.path()), CancellationToken::new());
     let waker = waker();
@@ -552,6 +628,65 @@ fn checked_wait_error_returns_unknown_and_terminates_and_reaps_the_helper() {
         OpenFileLaunchOutcome::ResultUnknown
     );
     assert_proc_identity_released(&process_path, original_identity);
+}
+
+#[test]
+fn no_waker_published_outcome_joins_the_blocked_worker_before_returning() {
+    let _lock = process_test_lock();
+    wait_for_active_launches(0);
+    let temporary = TemporaryDirectory::new();
+    let script = write_script(temporary.path(), "exit 0");
+    let after_publish = Arc::new(BeforeSpawnHook::new());
+    let launcher = launcher_with_test_controls(
+        script,
+        Duration::from_secs(2),
+        LauncherTestControls {
+            after_publish: Some(Arc::clone(&after_publish)),
+            ..LauncherTestControls::default()
+        },
+    );
+    let mut worker = WorkerHandle::spawn(
+        request(temporary.path()),
+        CancellationToken::new(),
+        Arc::clone(&launcher.config),
+    )
+    .expect("worker starts below the fixed launch limit");
+
+    after_publish.reached.wait();
+    assert_eq!(ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire), 1);
+    let waker = waker();
+    let outcome = worker
+        .poll_outcome(&Context::from_waker(&waker))
+        .expect("published worker outcome is ready without registering a waker");
+    assert_eq!(outcome, OpenFileLaunchOutcome::Accepted);
+
+    let (completed, observed_completion) = std::sync::mpsc::channel();
+    let join_thread = thread::spawn(move || {
+        completed
+            .send(worker.join_finished(outcome))
+            .expect("report joined worker outcome");
+    });
+    assert!(
+        observed_completion
+            .recv_timeout(Duration::from_millis(250))
+            .is_err(),
+        "join_finished returned before the published worker completed"
+    );
+    assert_eq!(
+        ACTIVE_SYSTEM_LAUNCHES.load(Ordering::Acquire),
+        1,
+        "published worker released its permit before returning"
+    );
+
+    after_publish.release.wait();
+    assert_eq!(
+        observed_completion
+            .recv_timeout(Duration::from_secs(2))
+            .expect("join_finished returns after the worker is released"),
+        OpenFileLaunchOutcome::Accepted
+    );
+    join_thread.join().expect("join_finished thread succeeds");
+    wait_for_active_launches(0);
 }
 
 #[test]
