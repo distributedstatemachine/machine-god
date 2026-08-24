@@ -321,7 +321,7 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The delivered authority surface now has eleven tools. The current
 twenty-sixth `open_file` slice is an implemented Rust candidate under
-remediation after a rejected first formal review cycle.
+remediation after a rejected second formal review cycle.
 Its dedicated `Capability::OpenFile { path }` is narrower than arbitrary
 process authority and covers one canonical workspace-confined existing regular
 file. Linux execution rejects symlinks, retains the approved file descriptor,
@@ -335,16 +335,22 @@ construction is Linux-only; macOS public construction is unsupported, its
 private retained-root host tool returns unsupported at execution, and all other
 targets are unsupported.
 
-The worker is established before helper spawn. Worker-start failure and
-launcher unavailability are retryable precommit failures. The final spawn and
+At most 32 production system-launch workers are active; saturation is retryable
+precommit unavailable with zero new worker/helper, and each permit remains held
+through arbitrary Waker completion and worker return. The worker is established
+before helper spawn. Worker-start failure and launcher unavailability are
+retryable precommit failures. The final spawn and
 cancellation/drop abort transitions share one serialized gate: abort-first
 guarantees no launch, while successful spawn commits. Cancellation after that
 boundary, timeout, or explicit future/drop cleanup terminates and reaps the
-direct helper without claiming rollback. Normal nonreentrant cleanup joins the
-worker. Inline reentrant polling after helper reap/outcome publication avoids
-self-join. Cleanup overlapping any still-running wake callback also avoids a
-cross-thread join cycle; after helper reap and publication, only the
-executor-controlled callback and final state update remain.
+direct helper without claiming rollback. Before publication, cleanup suppresses
+waking, reaps the helper, drops request/descriptor ownership, and synchronously
+joins. Normal published cleanup joins too. Inline or blocking arbitrary-Waker
+overlap may release the handle to avoid self-join/cross-thread deadlock; only
+permit-bounded callback/final bookkeeping may outlive future drop after helper/
+request cleanup. This narrow docs-only amendment replaces the frozen absolute
+no-worker-detach clause because it contradicted legal Waker behavior and is
+exempt from its own adversarial review under the owner's instruction.
 Postcommit cancellation and nonzero or signalled exit, timeout, or wait failure
 return fixed redacted, nonretryable result uncertainty when a tool-level result
 is observed; worker creation is pre-spawn, so there is no postspawn waiter-setup
@@ -353,8 +359,10 @@ means only that the helper accepted the request, not that a desktop application
 consumed or displayed the file. Success is exactly
 `{"path":"canonical/relative/path"}`. Candidate source composes exactly twelve
 alphabetical tools from one retained workspace descriptor plus eleven identity-
-preserving clones. Formal cycle 1 rejected exact candidate `79e65c1`, tree
-`481fd7c`; remediation and a fresh same-SHA review cycle remain pending. This is
+preserving clones. Formal cycle 2 rejected exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`; remediation and a fresh same-SHA
+review cycle remain pending. This is
 not a green-review, workflow, delivery, `main` integration, performance, or
 fx-equivalence claim. The
 twelfth slice composes the existing library components only after an already
@@ -1086,7 +1094,7 @@ durability failure returns fixed nonretryable ambiguity without claiming
 rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
 
-The implemented `open_file` candidate under cycle-1 review remediation adds no
+The implemented `open_file` candidate under cycle-2 review remediation adds no
 read result and no arbitrary process selection. Strict effect-free preflight
 binds policy and execution to one canonical confined path through dedicated
 `Capability::OpenFile`. Linux execution no-follow opens and retains only an
@@ -1097,14 +1105,20 @@ from `/` with null stdio and the trusted host environment. A trusted injected
 launcher seam supports deterministic tests without exposing launcher selection
 to the model.
 
-The worker exists before helper spawn. Spawn and cancellation/drop share one
+Exactly 32 process-global permits bound production system-launch workers;
+saturation is precommit unavailable with zero new worker/helper, and a permit
+remains held through arbitrary Waker completion and worker return. The worker
+exists before helper spawn. Spawn and cancellation/drop share one
 serialized gate: abort-first has zero launch effect and successful spawn commits
 the effect. Postcommit cancellation, timeout, or explicit future/drop cleanup
-terminates and reaps the direct helper without claiming rollback. Normal
-nonreentrant cleanup joins the worker; inline reentrant polling after helper
-reap/outcome publication avoids self-join. Cleanup overlapping any still-running
-wake callback avoids a cross-thread join cycle; only that executor-controlled
-callback and final state update remain. Postcommit cancellation, nonzero or
+terminates and reaps the direct helper without claiming rollback. Before
+publication, cleanup suppresses waking, reaps the helper, drops request/
+descriptor ownership, and synchronously joins. Normal published cleanup joins.
+Inline or blocking Waker overlap may release the handle to avoid deadlock; only
+permit-bounded callback/final bookkeeping may outlive drop after helper/request
+cleanup. The amended docs-only rule replaces the impossible frozen absolute
+no-worker-detach clause and is exempt from its own review. Postcommit
+cancellation, nonzero or
 signalled exit, timeout,
 and wait failure return fixed redacted, nonretryable result uncertainty when a
 tool-level result is observed. There is no postspawn waiter-setup state. Exit
@@ -1113,9 +1127,10 @@ application consumption or display. Success is exactly
 `{"path":"canonical/relative/path"}`. External paths, directories, URLs, a
 real macOS launcher, CLI changes, benchmark changes, performance claims, and
 fx-equivalence remain deferred. The product is Rust; Zig is only the pinned
-upstream benchmark input. Formal cycle 1 rejected exact candidate `79e65c1`,
-tree `481fd7c`; remediation, fresh three-track review, exact workflows, delivery,
-and `main` integration remain pending.
+upstream benchmark input. Formal cycle 2 rejected exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`; remediation, fresh three-track
+review, exact workflows, delivery, and `main` integration remain pending.
 
 Delivered `create_folder` execution evidence is native macOS plus
 Linux/FreeBSD cross-target test compilation, Linux library Clippy, and WASI

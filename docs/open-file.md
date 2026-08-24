@@ -1,6 +1,6 @@
 # Native `open_file` contract
 
-Status: **IMPLEMENTED CANDIDATE; REVIEW REMEDIATION IN PROGRESS**
+Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS**
 
 This document defines the twenty-sixth bounded Milestone 03 candidate from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
@@ -18,14 +18,18 @@ workflows validate only that frozen contract checkpoint at
 `6b763c4f1168963dd42087a1fdf5cf72c4212b40`; they are not implementation,
 delivery, performance, or fx-equivalence evidence.
 
-Current candidate source now implements the core capability, native Linux tool,
+Current candidate source implements the core capability, native Linux tool,
 trusted launcher seam, unsupported-target behavior, tests, and twelve-tool host
 composition without changing dependencies, workflows, CLI behavior, benchmark
 workloads, or compatibility status. Formal review cycle 1 rejected exact
 candidate `79e65c19330181955a0c341d62ef39778a18d36d`, tree
-`481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`; remediation and a fresh
-three-track same-SHA cycle are in progress. Exact feature workflows, delivery,
-and `main` integration remain pending.
+`481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`. Formal review cycle 2 rejected
+exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`; its resource-bound, deadline,
+lifecycle, test-fidelity, and frozen-contract findings are recorded below and
+in the review ledger. Remediation and a fresh three-track same-SHA cycle are in
+progress. Exact feature workflows, delivery, and `main` integration remain
+pending.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -55,6 +59,7 @@ drop, ownership, and outcome obligations are part of the trait contract.
 | `MAX_OPEN_FILE_PATH_COMPONENT_BYTES` | `255` |
 | `MAX_OPEN_FILE_SERIALIZED_ARGUMENT_BYTES` | `65,536` |
 | `MAX_OPEN_FILE_SERIALIZED_RESULT_BYTES` | `16,384` |
+| `MAX_CONCURRENT_OPEN_FILE_LAUNCHES` | `32` |
 | `OPEN_FILE_LAUNCH_TIMEOUT` | `std::time::Duration::from_secs(30)` |
 
 The exact tool description is
@@ -79,7 +84,11 @@ The exact input schema is:
 ```
 
 `path` is a required string with no default. Unknown fields are invalid. The
-requested and canonical path are each capped at 4,096 UTF-8 bytes. The
+requested and canonical path are each capped at 4,096 UTF-8 bytes. Shape and
+borrowed path length are checked before any complete-value serialization, so a
+hostile over-bound path cannot cause unbounded pre-path serialization inside
+the tool. Only an already path-bounded value may be measured against the
+65,536-byte serialized-argument cap. The
 canonical path contains at most 256 components, and every component contains
 at most 255 UTF-8 bytes. Complete requested and prepared JSON values are each
 capped at 65,536 serialized bytes. Direct execution revalidates the exact
@@ -204,14 +213,27 @@ themselves consult inherited `PATH`, configuration, or other host state.
 The launcher boundary is injected for deterministic tests. Constructing the
 tool or execution future does not call that boundary. First poll performs
 preflight execution work, and no worker or helper is started before the final
-pre-spawn cancellation check. The worker's final spawn attempt and the
+pre-spawn cancellation check. A production system-launch future then acquires
+one process-global launch permit immediately before worker creation. Exactly
+`MAX_CONCURRENT_OPEN_FILE_LAUNCHES = 32` permits exist. Saturation is a
+retryable precommit launcher-unavailable result with zero new worker or helper;
+it does not wait, queue, or consume an unbounded thread. The acquired permit
+moves into the worker and is retained through request/descriptor and helper
+cleanup, outcome publication, the arbitrary Waker callback, final notification
+bookkeeping, and worker return. The worker's final spawn attempt and the
 cancellation/drop abort transition share one serialized state gate. Whichever
 transition obtains that gate first linearizes: abort recorded first guarantees
 zero launch; a successful spawn while the worker owns the gate commits the
-effect. A successful spawn begins a monotonic fixed 30-second wait. Exit status
-zero means only that the helper accepted the request; it does not prove that
-another application started, retained access to the proc path, rendered the
-file, or remained running.
+effect. A successful spawn immediately starts a monotonic fixed 30-second
+deadline. Every wait probe is followed by an authoritative monotonic-clock
+read. Even if that probe reports exit zero, acceptance is permitted only while
+that read is strictly before the deadline; at or after the deadline, timeout
+wins. Each polling sleep is
+`min(5ms, deadline.saturating_duration_since(now))`, so no full polling interval
+is added after the remaining budget. Exit status zero accepted within that
+boundary means only that the helper accepted the request; it does not prove
+that another application started, retained access to the proc path, rendered
+the file, or remained running.
 
 Success is exactly:
 
@@ -245,30 +267,54 @@ turn cancellation remains authoritative and may discard the tool-level result.
 Without cancellation, the tool waits for the helper until exit or the fixed
 30-second timeout decision and retains the target descriptor throughout.
 
-Exit zero within the bound returns success. Nonzero exit, signal termination,
-timeout, or wait failure returns the same fixed redacted, nonretryable
+Exit zero observed by a wait probe and confirmed by its authoritative
+post-probe clock read strictly before the deadline returns success. A status
+observed at or after the deadline, nonzero exit, signal termination, timeout,
+or wait failure returns the same fixed redacted, nonretryable
 `open_file_result_unknown` error. On timeout or wait failure the owned helper is
 terminated and reaped before return. The timeout decision occurs at 30 seconds;
 synchronous termination, reap, and normal nonreentrant worker join may extend
 past that deadline. Worker creation occurs before spawn, so there is no
 postspawn waiter-establishment state or error.
 
-The execution future is inert until first poll. Dropping it before first poll
-has no filesystem, thread, or process effect. On the normal nonreentrant path,
-dropping it after successful spawn synchronously records abort through the
-shared gate, terminates and reaps the helper, joins the owned worker, closes the
-retained target descriptor, and returns no claim about whether the desktop
-request took effect. A valid waker may instead poll and consume the ready future
-inline on the worker thread after the helper is reaped and the outcome is
-published. That reentrant path must not self-join: it drops its current thread's
-`JoinHandle`. Cleanup on another thread that overlaps a still-running wake
-callback must also drop the handle rather than create an executor-lock join
-cycle. In both cases the helper is already reaped and the outcome published;
-only the executor-controlled callback and final state update remain. No owned
-helper process is detached, and nonoverlapping nonreentrant completion/drop
-joins the worker. A desktop application
+The execution future is inert until first poll. Every trusted fake launcher
+used as evidence is inert as well: invoking its launch constructor records no
+request and performs no effect until the returned launch future is first
+polled. Dropping either future before first poll has no filesystem, request-
+recording, thread, or process effect.
+
+Before outcome publication, cancellation or drop suppresses the registered
+Waker, synchronously terminates and reaps any helper, drops the request and its
+retained target descriptor, joins the worker, and releases its permit. Helper
+reap and request/descriptor drop are required before any outcome is published.
+After publication, the normal nonreentrant completion/drop path synchronously
+joins the worker. A valid arbitrary Waker may instead repoll inline on the
+worker, or block while another thread drops the future. Joining in either
+overlap would self-join or form an executor-lock cycle, so that path releases
+the `JoinHandle`; the callback and final notification bookkeeping may outlive
+future drop. At that point the helper is reaped, the request and retained
+descriptor are dropped, and only callback/final bookkeeping remains. The
+system-launch permit is nevertheless retained until that callback completes
+and the worker returns, so these tails are globally bounded to 32. No owned
+helper process is detached. A desktop application
 independently started by `xdg-open` is outside the owned helper lifecycle and
 cannot be rolled back by this tool.
+
+### Cycle-2 lifecycle contract amendment
+
+The preceding rule replaces only the original frozen contract checkpoint
+`6b763c4f1168963dd42087a1fdf5cf72c4212b40` clause that no owned worker could
+ever be detached and that every drop synchronously joined it. Legal executor
+Wakers may repoll inline or block on executor-owned locks, making that absolute
+worker-join invariant contradictory: joining can self-deadlock or create a
+cross-thread lock cycle. The amended invariant keeps synchronous join for all
+unpublished work and the normal published path, permits only the bounded
+postpublication callback/bookkeeping tail above, and requires the fixed permit
+to cover its complete lifetime. No other frozen authority, confinement,
+helper-reap, result, or delivery boundary is reopened. This documentation-only
+contract amendment is exempt from its own adversarial review under the owner's
+instruction; replacement production and evidence remain subject to a complete
+fresh three-track same-SHA cycle.
 
 ## Fixed tool errors
 
@@ -348,7 +394,9 @@ deferred. Zig is benchmark input only.
   descriptions, strict schema, construction taxonomy, result, errors, and
   redaction.
 - [ ] Exact and one-over 4,096-byte requested/canonical path, 256-component,
-  255-byte component, 65,536-byte argument, and 16,384-byte result bounds.
+  255-byte component, 65,536-byte argument, and 16,384-byte result bounds;
+  a much larger hostile path proves rejection occurs before complete-value
+  serialization or another path-proportional copy.
 - [x] Rejection of empty/root/dot, absolute, tilde, parent, repeated/trailing
   separator, dot-component, control, line/paragraph-separator, bidirectional,
   and over-bound paths; byte-for-byte canonical policy/execution agreement.
@@ -364,17 +412,26 @@ deferred. Zig is benchmark input only.
   inherited host environment, null stdio, no machine-god shell/PATH or model-
   selected launch field, retained target descriptor, trusted downstream host
   dispatch, and exit-zero acceptance semantics.
-- [x] Missing launcher and spawn failure before commit; nonzero, signal,
-  timeout, and deterministically forced wait failure after commit; exact fixed
-  retryability and `result_unknown` classification; no impossible postspawn
-  waiter-establishment claim.
-- [x] Inert until poll; a deterministic spawn-gate barrier proving cancellation
+- [ ] Identity-aware proc-entry closure evidence tracks the exact descriptor
+  identity rather than treating reuse of the same numeric fd as continued
+  ownership.
+- [ ] Missing launcher and spawn failure before commit; nonzero, signal,
+  timeout, and a wait seam that drives the actual shared `try_wait` `Err` arm
+  after commit; exact fixed retryability, `result_unknown`, helper reap, and no
+  impossible postspawn waiter-establishment claim.
+- [ ] Inert production and fake launcher futures until first poll; a
+  deterministic spawn-gate barrier proving cancellation
   that wins the serialized gate has zero launch; successful-spawn boundary;
   postspawn cancellation through the engine's existing drop path; 30-second
-  timeout decision plus complete cleanup; pre-poll and postspawn drop;
+  authoritative post-probe deadline decision, remaining-budget sleep, and
+  post-deadline exit-zero rejection; pre-poll and postspawn drop;
   terminate/reap; normal nonreentrant join; inline reentrant-waker completion
   without self-join panic or deadlock; overlapping blocked-waker drop without a
-  cross-thread join cycle; concurrent-call isolation.
+  cross-thread join cycle; exact request/descriptor identity closed before
+  publication while that Waker remains blocked; 32 active system launches
+  saturate with the next call precommit unavailable and zero new worker/helper;
+  permits remain charged through blocked callback completion; concurrent-call
+  isolation.
 - [x] Candidate macOS active unsupported behavior, Linux cross-target warnings-
   denied compilation, exact twelve-tool/eleven-clone composition, and no new
   dependency, workflow, CLI, benchmark, or unsafe-Rust source.

@@ -306,7 +306,7 @@ benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
 The twenty-sixth bounded slice, native `open_file`, is an **IMPLEMENTED
-CANDIDATE; FORMAL CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS** from the exact
+CANDIDATE; FORMAL CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS** from the exact
 delivered base
 `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
 main CI `32704202572` and final main benchmark workflow `32704202546`; the
@@ -324,10 +324,15 @@ while successful spawn is the irreversible commit boundary. Postcommit failure
 or timeout is fixed redacted nonretryable ambiguity because an application may
 already have consumed the request. Unsupported targets fail before spawn. Drop
 after spawn terminates and reaps the owned helper; normal nonreentrant cleanup
-joins the worker, while inline worker-thread repoll after helper reap/outcome
-publication avoids self-join. Cleanup overlapping an active wake callback drops
-the thread handle to avoid a cross-thread executor-lock cycle; only that
-executor-controlled callback and final state update remain after helper reap.
+joins the worker. Before publication, drop/cancel suppresses Waker delivery,
+reaps the helper, drops the request and retained descriptor, and synchronously
+joins. Legal inline or blocking arbitrary Wakers may force the published
+`JoinHandle` to be released to avoid self-join or a cross-thread executor-lock
+cycle; only callback/final bookkeeping may outlive drop, globally bounded by a
+fixed 32-launch permit retained through worker return. This narrowly replaces
+the original frozen no-worker-detach invariant, which contradicted legal Waker
+reentrancy/blocking. The docs-only amendment is exempt from its own adversarial
+review under the owner's instruction; production remediation is not.
 External paths, directories, URLs, symlinks, real macOS launching, CLI behavior,
 benchmark workloads, product-performance claims, and fx-equivalence promotion
 remain deferred. The normative boundary and formal-review plan are
@@ -352,9 +357,20 @@ and avoids joins across an active wake-callback tail. Deterministic candidate
 regressions cover failed-operation cancellation precedence, abort-first zero
 launch at the spawn gate, forced wait failure with helper cleanup, and inline
 reentrant waking without panic or deadlock. A fifth regression proves drop does
-not join a published worker blocked in its arbitrary wake callback. The complete
+not join a published worker blocked in its arbitrary wake callback.
+Formal cycle 2 rejected exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`. Its findings are unbounded
+pre-path serialization, acceptance after the authoritative deadline, no active
+system-worker cap, a detached Waker tail retaining the request/descriptor, the
+frozen no-detach contradiction, numeric-fd-reuse races in proc-closure tests, a
+fake launcher that was not inert, and a forced wait-failure seam that bypassed
+the real shared `Err` arm. Required replacement evidence adds a very-large path,
+authoritative deadline/remaining sleep, 32-permit saturation and callback-tail
+retention, exact-FD closure while the Waker is blocked, identity-aware proc
+tests, an inert fake launcher, and the actual shared wait-error arm. The complete
 replacement local gate and three fresh same-SHA review tracks remain pending;
-the slice is not delivered.
+the slice is rejected and not delivered.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -2077,7 +2093,7 @@ gate:
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
   The twenty-sixth native `open_file` slice is an **IMPLEMENTED CANDIDATE;
-  FORMAL CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS** from exact delivered
+  FORMAL CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS** from exact delivered
   base `e2ee11f2`. Final base
   main CI `32704202572` and benchmark `32704202546` are green; the benchmark
   retains exactly two nonexpired exact-SHA artifacts `9511626648` and
@@ -2090,10 +2106,16 @@ gate:
   an injected evidence boundary, a 30-second helper wait, fixed redacted
   results, a serialized spawn/cancellation/drop gate, and owned-helper cleanup
   behavior are normative. Abort-first guarantees zero launch; successful spawn
-  commits. Postcommit cleanup reaps the helper and normally joins its worker; an
-  inline reentrant worker wake cannot self-join after outcome publication and
-  leaves only its executor-controlled callback and final state-update tail after
-  helper reap. Other targets are
+  commits. Prepublication drop/cancel suppresses waking, reaps the helper, drops
+  the request/descriptor, and synchronously joins; normal postpublication
+  cleanup joins too. An overlapping inline or blocking arbitrary Waker may
+  release the `JoinHandle` to avoid deadlock, leaving only callback/final
+  bookkeeping after helper/request cleanup. A fixed global 32-launch permit is
+  retained through callback completion and worker return, bounding that tail.
+  This documentation-only amendment replaces the frozen absolute no-worker-
+  detach clause because legal Waker reentrancy/blocking made it contradictory;
+  it is exempt from its own adversarial review under the owner's instruction.
+  Other targets are
   unsupported before spawn. External
   paths, directories, URLs, symlinks, a concrete macOS launcher, CLI changes,
   benchmark changes, performance claims, and fx-equivalence promotion are
@@ -2103,7 +2125,16 @@ gate:
   status changes. Formal cycle 1 rejected exact candidate `79e65c1`, tree
   `481fd7c`, for failed-operation cancellation precedence, an unserialized
   spawn/abort race, inline-waker self-join, and a wait/waiter evidence mismatch.
-  Candidate remediation and five deterministic regressions are present. The
+  Candidate remediation and five deterministic regressions were present.
+  Formal cycle 2 rejected exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`,
+  tree `9002e8f137d5ed2352cd620db6145da2339cdb2c`, for unbounded pre-path
+  serialization, post-deadline acceptance, no active worker cap, a detached
+  Waker tail retaining request/FD ownership, the frozen no-detach contradiction,
+  numeric-proc-fd test races, a non-inert fake launcher, and a forced wait seam
+  that bypassed the actual shared `Err` arm. Required evidence now includes a
+  very-large path, authoritative deadline/remaining sleep, active 32-permit
+  saturation, exact-FD closure under a blocked Waker, identity-aware proc tests,
+  inert fake launch, and the actual shared wait-error arm. The
   complete replacement exact-SHA local gate, fresh three-track review,
   feature workflows, fast-forward integration, and exact main workflows remain
   pending under

@@ -76,7 +76,7 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 artifacts. The delivered host now has eleven tools. No product-performance
 claim is made.
 The twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate. It adds dedicated provider-neutral `Capability::OpenFile { path }`
+candidate rejected by formal cycle 2. It adds dedicated provider-neutral `Capability::OpenFile { path }`
 for one strict canonical, workspace-confined existing regular file rather than
 treating default-application launch as filesystem read or accepting a model-
 selected process. Linux execution opens the path beneath retained directory
@@ -87,18 +87,25 @@ exactly `/usr/bin/xdg-open` and the parent-owned
 null stdio, and a 30-second timeout decision. Machine-god performs no shell or
 `PATH` lookup; the trusted helper and desktop dispatch may consult inherited
 host environment and configuration. Linux also exports a trusted injected
-launcher seam whose returned future must be inert until polled. The final spawn
-attempt and cancellation/drop abort transition share one serialized gate:
+launcher seam whose returned future must be inert until polled. At most 32
+production system-launch workers exist; saturation is precommit unavailable
+with zero new worker/helper, and each permit remains owned through arbitrary
+Waker completion and worker return. The final spawn attempt and
+cancellation/drop abort transition share one serialized gate:
 abort-first guarantees zero launch, while successful spawn commits an effect
 that cannot be rolled back. Postspawn cancellation makes core drop the execution
 future; cancellation, timeout, or explicit drop kills and reaps the direct
-helper. Normal nonreentrant cleanup joins the worker; inline reentrant polling
-after helper reap and outcome publication avoids self-join. Cleanup overlapping
-a still-running wake callback also avoids a cross-thread join cycle; only that
-executor-controlled callback and final state update remain.
-The candidate host wiring and source exist. Formal cycle 1 rejected exact
-candidate `79e65c1`, tree `481fd7c`; remediation and a fresh three-track cycle
-remain pending. This is not a green-review, CI,
+helper. Prepublication cleanup suppresses waking, drops request/descriptor
+ownership, and joins; normal postpublication cleanup joins too. Inline or
+blocking arbitrary-Waker overlap may release the `JoinHandle` to avoid self-
+join/cross-thread deadlock after all helper/request ownership is gone; only
+permit-bounded callback/final bookkeeping may outlive future drop. This docs-
+only amendment replaces the frozen absolute no-worker-detach invariant because
+it contradicted legal Waker behavior and is exempt from its own adversarial
+review under the owner's instruction. Formal cycle 2 rejected exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`; remediation and a fresh three-track
+cycle remain pending. This is not a green-review, CI,
 benchmark, delivery, performance, `main`-integration, or fx-equivalence record.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
@@ -1311,22 +1318,28 @@ and arbitrary process execution. Core policy receives exactly
 retained-descriptor validation and the default-application launch. Its exported
 trusted launcher request carries the exact approved path, proc path, and owned
 target descriptor, while the launch trait requires an inert future and complete
-helper cleanup on drop. The final spawn and cancellation/drop transitions share
-one serialized gate: abort-first guarantees zero launch, while successful spawn
+helper cleanup on drop. Exactly 32 global system-launch permits bound worker
+creation and remain held through callback completion and worker return; a
+saturated attempt is precommit unavailable with zero new worker/helper. The
+final spawn and cancellation/drop transitions share one serialized gate:
+abort-first guarantees zero launch, while successful spawn
 commits an effect that cannot be revoked. Postspawn cancellation invokes the
 existing engine drop path. Cancellation, timeout, or explicit drop kills and
 reaps the direct helper but cannot prove whether the default application already
-received the file. Normal nonreentrant completion joins the worker. If a valid
-waker repolls inline on that worker after helper reap/outcome publication, the
-worker cannot self-join. Cleanup overlapping any still-running wake callback
-also avoids a cross-thread join cycle; after helper reap and publication, only
-that executor-controlled callback and final state update remain. External paths,
+received the file. Before publication, cleanup suppresses waking, reaps the
+helper, drops the request/descriptor, and synchronously joins. Normal published
+completion joins too. An inline or blocking arbitrary Waker may force handle
+release to avoid self-join/cross-thread deadlock; only permit-bounded callback/
+final bookkeeping remains after helper/request cleanup. This narrowly amended
+lifecycle replaces the frozen absolute no-worker-detach clause and is exempt
+from its own adversarial review under the owner's instruction. External paths,
 directories, URLs, macOS real launch, CLI behavior,
 benchmark work,
 performance claims, and fx-equivalence are deferred. The product remains Rust;
-Zig remains solely the pinned upstream benchmark build input. Formal cycle 1
-rejected exact candidate `79e65c1`, tree `481fd7c`; this remediation candidate
-makes no green-review, CI, benchmark, delivery, or `main`-integration claim.
+Zig remains solely the pinned upstream benchmark build input. Formal cycle 2
+rejected exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`; this remediation candidate makes
+no green-review, CI, benchmark, delivery, or `main`-integration claim.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

@@ -664,7 +664,7 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The behavior is delivered and integrated on `main`.
 
-The implemented twenty-sixth candidate adds one dedicated provider-neutral
+The implemented twenty-sixth candidate, rejected by formal cycle 2, adds one dedicated provider-neutral
 capability rather than reusing filesystem read, metadata, or arbitrary process
 authority. Its stable policy JSON is:
 
@@ -676,27 +676,37 @@ authority. Its stable policy JSON is:
 workspace-confined existing regular file to the host's default application. It
 does not authorize model-selected programs, arguments, external paths,
 directories, URLs, or content returned to the model. Native preflight prepares
-that exact path for policy and execution. Linux native execution owns
+that exact path for policy and execution. Path length/shape rejection precedes
+complete-value serialization, so hostile over-bound paths cannot create
+unbounded pre-path serialization work. Linux native execution owns
 descriptor-relative no-follow validation, retained file identity, and the
 fixed `/usr/bin/xdg-open` lifecycle over a parent-owned proc descriptor path.
 The exported trusted `OpenFileLauncher` seam receives the approved path, proc
 path, and owned file descriptor; its returned future must remain inert until
-polled and clean up every owned helper on cancellation or drop. Spawn and
+polled and clean up every owned helper on cancellation or drop. Exactly 32
+global system-launch permits bound active workers; saturation is precommit
+unavailable with zero new worker/helper, and each permit remains held through
+arbitrary Waker completion and worker return. Spawn and
 cancellation/drop linearize through one serialized gate: abort-first guarantees
-zero launch and successful spawn commits. Normal nonreentrant completion joins
-the worker. Reentrant polling on that worker after helper reap/outcome
-publication must avoid self-join. Cleanup overlapping a still-running wake
-callback must also avoid a cross-thread join cycle; only that executor-controlled
-callback and final state update remain after helper reap.
+zero launch and successful spawn commits. Before publication, cleanup suppresses
+waking, reaps the helper, drops request/descriptor ownership, and synchronously
+joins. Normal published completion joins. Inline or blocking arbitrary Waker
+overlap may release the handle to avoid self-join/cross-thread deadlock; only
+permit-bounded callback/final bookkeeping may outlive future drop after helper/
+request cleanup. This documentation-only amendment replaces the frozen
+absolute no-worker-detach invariant and is exempt from its own adversarial
+review under the owner's instruction.
 The system launcher uses fixed `/` working directory and null stdio, makes its
 timeout decision at 30 seconds, and maps postspawn uncertainty to a fixed
 redacted result. Candidate reference-host composition registers `open_file`
 between `list_files` and `read_file`, producing twelve tools from one original
 retained workspace descriptor plus eleven clones. On macOS the catalog entry is
 present but execution returns unsupported before filesystem lookup or spawn.
-Formal cycle 1 rejected exact candidate `79e65c1`, tree `481fd7c`. This describes
-remediation-candidate source only; it makes no green-review, CI, benchmark,
-delivery, performance, `main`-integration, or fx-equivalence claim.
+Formal cycle 2 rejected exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`. This describes remediation-
+candidate source only; it makes no green-review, CI, benchmark, delivery,
+performance, `main`-integration, or fx-equivalence claim.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

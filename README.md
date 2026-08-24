@@ -40,7 +40,7 @@ feature CI `32702785549`, feature benchmark `32702785574`, main CI
 exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
 as slice twenty-five, and the delivered host has eleven tools. The
 twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate with a rejected first formal review cycle, not a delivered slice. Its
+candidate with a rejected second formal review cycle, not a delivered slice. Its
 dedicated provider-neutral
 `Capability::OpenFile { path }` authorizes one strict canonical,
 workspace-confined existing regular file. Linux execution retains the selected
@@ -51,13 +51,20 @@ program from ambient `PATH`; the trusted `xdg-open` and desktop-dispatch
 boundary may consult inherited host environment and configuration.
 The exported Linux `OpenFileLauncher` seam accepts the same descriptor-bound
 request. Its contract requires inert future construction and cancellation-aware
-ownership. Spawn and cancellation/drop share one serialized gate: abort-first
+ownership. At most 32 production system launches are active; saturation is
+precommit unavailable with no new worker/helper, and the permit is retained
+through callback completion and worker return. Spawn and cancellation/drop
+share one serialized gate: abort-first
 guarantees zero launch, while a successful spawn commits an external effect
 that cannot be rolled back. Cancellation, timeout, or explicit drop then kills
-and reaps the direct helper; normal nonreentrant cleanup joins the worker. An
-overlapping worker-thread wake callback cannot safely be joined after publishing
-its reaped-helper outcome, so it drops that thread handle and leaves only the
-executor-controlled callback and final state update before return. The candidate
+and reaps the direct helper. Prepublication cleanup suppresses waking, drops the
+request/descriptor, and joins; normal postpublication cleanup also joins. An
+overlapping inline or blocking arbitrary Waker cannot safely be joined, so the
+handle is released after helper/request cleanup and only globally permit-bounded
+callback/final bookkeeping may outlive future drop. This narrow docs-only
+amendment replaces the frozen absolute no-worker-detach clause because legal
+Waker behavior made it contradictory, and is exempt from its own adversarial
+review under the owner's instruction. The candidate
 Linux/macOS reference host registers twelve
 alphabetical tools from one original workspace descriptor plus eleven clones;
 macOS retains
@@ -67,9 +74,13 @@ host. External paths, directories, URLs, a real macOS launcher, CLI changes,
 benchmark changes, performance claims, and fx-equivalence remain deferred. The
 first formal review cycle rejected exact candidate `79e65c1`, tree `481fd7c`,
 for cancellation-ordering, spawn-gate, reentrant-waker, and evidence-contract
-findings. Remediation and a completely fresh same-SHA three-track cycle remain
-pending, so this makes no green-review, CI, delivery, or `main`-integration
-claim. The
+findings. Cycle 2 rejected exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`, with the complete resource,
+deadline, lifecycle, invariant, proc-test, fake-launcher, and wait-seam finding
+record in the review ledger. Remediation and a completely fresh same-SHA three-
+track cycle remain pending, so this makes no green-review, CI, delivery, or
+`main`-integration claim. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission

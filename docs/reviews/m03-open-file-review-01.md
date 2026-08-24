@@ -1,6 +1,6 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **IMPLEMENTED CANDIDATE; CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS**
+Status: **IMPLEMENTED CANDIDATE; CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS**
 
 ## Base and boundary
 
@@ -38,24 +38,44 @@ boundary may consult inherited `PATH`, configuration, or host state. Linux is
 the only concrete launch target. Every other target returns fixed unsupported
 behavior before filesystem lookup, worker creation, or helper spawn.
 
-The final spawn attempt and cancellation/drop abort transition share one
+The production system launcher admits at most
+`MAX_CONCURRENT_OPEN_FILE_LAUNCHES = 32` active launches. Permit acquisition is
+precommit immediately before worker creation; saturation is retryable
+unavailable with no new worker or helper. The permit remains owned through
+request/descriptor and helper cleanup, outcome publication, arbitrary Waker
+execution, final notification state, and worker return. The final spawn attempt
+and cancellation/drop abort transition share one
 serialized state gate. Whichever transition obtains it first linearizes: abort
 recorded first guarantees zero launch, while successful spawn under the gate is
 the commit boundary. Postcommit cancellation makes core drop the execution
 future; cleanup terminates and reaps the direct helper without claiming
-rollback. Normal nonreentrant cleanup joins the worker. A valid inline waker may
-reenter polling on that worker after helper reap and outcome publication; it
-must drop rather than join the current thread handle. Cleanup overlapping any
-still-running wake callback likewise drops the handle to avoid an executor-lock
-cycle. Only that executor-controlled callback and final state update remain;
-the helper is already reaped. Without cancellation, the
-30-second timeout decision or explicit postspawn future drop terminates and
-reaps the direct helper; cleanup may extend beyond the timeout decision.
+rollback. Before publication, cancellation/drop suppresses Waker delivery,
+reaps any helper, drops the request and retained descriptor, and synchronously
+joins the worker. Helper reap and request/descriptor drop precede publication.
+Normal postpublication cleanup joins the worker. A valid arbitrary Waker may
+instead repoll inline on that worker or remain blocked while another thread
+drops the future. Joining in those overlaps would self-join or create an
+executor-lock cycle, so the `JoinHandle` is released; only that callback and
+final notification bookkeeping may outlive drop, and their still-owned permit
+bounds such tails globally to 32. Without cancellation, the 30-second deadline
+starts immediately after successful spawn. A wait probe is accepted only when
+its following authoritative clock read is strictly before the deadline, and
+sleep is capped to the remaining budget. Explicit postspawn future drop
+terminates and reaps the direct helper; cleanup may extend beyond the timeout
+decision.
 Nonzero exit, signal, timeout, or wait failure is the same fixed redacted
 nonretryable `open_file_result_unknown`. Worker creation occurs before spawn,
 so no postspawn waiter-establishment failure exists. Exit zero means only that
 the direct helper accepted the request, not that a desktop application consumed,
 displayed, or retained the file.
+
+This lifecycle wording is a narrow documentation-only amendment to frozen
+contract commit `6b763c4f1168963dd42087a1fdf5cf72c4212b40`. It replaces that
+checkpoint's absolute no-worker-detach/every-drop-joins clause because legal
+inline or blocking executor Wakers make it contradictory with deadlock-free
+cleanup. It does not relax helper reap, request/descriptor closure, authority,
+or confinement. Per the owner's instruction the amendment is exempt from its
+own adversarial review; implementation and evidence are not exempt.
 
 The slice adds no external path, directory, URL, selected symlink, content read,
 file mutation, arbitrary process authority, macOS real launch, CLI behavior,
@@ -132,13 +152,66 @@ These are remediation-candidate changes, not green formal-review evidence. The
 complete replacement local gate and three completely fresh tracks on one exact
 replacement SHA/tree remain required.
 
+## Formal review cycle 2: not green
+
+All three fresh tracks reviewed exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`. The cycle is **NOT GREEN** and
+that candidate is rejected for delivery. Consolidated formal findings are:
+
+- Preflight measured the complete serialized input before enforcing the path
+  byte bound, permitting unbounded path-proportional serialization work.
+  Remediation must inspect shape and borrowed path length first and retain a
+  very-large-path regression proving no complete serialization precedes
+  rejection.
+- The wait loop could accept an exit-zero status found by a probe after the
+  fixed deadline. Remediation makes the post-probe monotonic clock authoritative:
+  acceptance requires `now < deadline`, while `now >= deadline` is timeout, and
+  every sleep is capped to the remaining duration.
+- System launches had no active worker cap, so concurrent calls could create an
+  unbounded number of threads. Remediation adds exactly 32 process-global
+  system-launch permits, returns retryable precommit unavailable on saturation
+  with zero new worker/helper, and holds each permit through arbitrary Waker
+  completion and worker return.
+- A postpublication wake tail could outlive future drop while still retaining
+  the launch request and target descriptor. Remediation requires helper reap
+  and request/descriptor drop before outcome publication. A blocked-waker
+  regression must verify closure by exact descriptor identity while the wake
+  callback is still blocked.
+- The implemented detached wake tail contradicted the original frozen
+  `6b763c4f1168963dd42087a1fdf5cf72c4212b40` absolute no-worker-detach
+  invariant. That invariant is impossible alongside legal executor Wakers that
+  repoll inline or block while another thread drops the future. The narrow
+  amendment above requires synchronous Waker suppression/join before
+  publication, normal join after publication, and permits only a callback/
+  notification tail globally bounded by the retained 32-launch permit. The
+  docs-only amendment is exempt from its own adversarial review under the
+  owner's instruction.
+- Proc-descriptor closure tests watched only the numeric fd path; descriptor
+  number reuse could make a closed descriptor look live. Replacement evidence
+  must compare the exact retained descriptor identity and distinguish numeric
+  reuse from continued ownership.
+- The recording fake launcher performed request-observation work in its launch
+  constructor, contradicting the trusted seam's inert-until-first-poll
+  contract. Replacement fake launchers must remain observationally inert until
+  their returned future is polled.
+- The forced wait-failure test seam branched around the real shared `try_wait`
+  `Err` match arm. Replacement evidence must inject the failure through the
+  same wait-result path used by the system call and prove fixed uncertainty plus
+  helper reap.
+
+These are rejected-candidate findings, not green remediation evidence. A
+complete replacement exact-SHA local gate and three completely fresh review
+tracks on one immutable replacement SHA/tree remain required.
+
 ## Required evidence
 
 - [ ] Exact `Capability::OpenFile` API, serde JSON, exhaustive drop handling,
   native tool/schema/constants/result/open-error and fixed tool-error
   contracts, including strict unknown-field rejection and stable redaction.
 - [ ] Exact and one-over 4,096-byte requested/canonical path, 256-component,
-  255-byte component, 65,536-byte argument, and 16,384-byte result bounds.
+  255-byte component, 65,536-byte argument, and 16,384-byte result bounds;
+  very-large hostile path rejection before complete-value serialization.
 - [ ] Empty/root/dot, absolute, tilde, parent, repeated/trailing separator,
   dot-component, control, line/paragraph-separator, bidirectional, and
   over-bound rejection; no Unicode normalization or case folding.
@@ -151,7 +224,8 @@ replacement SHA/tree remain required.
   rejection, and absence of content reads.
 - [ ] Root, ancestor, and final replacement; rename and unlink after retention;
   mixed-device traversal; proc-entry availability; outside sentinels; and the
-  explicit host-boundary/no-sandbox semantics.
+  explicit host-boundary/no-sandbox semantics. Proc closure evidence must track
+  exact descriptor identity rather than only a reusable numeric fd.
 - [ ] Exact absolute `/usr/bin/xdg-open`, two-element argv, PID/fd decimal proc
   target, fixed `/` cwd, inherited host environment, null stdio, zero shell/PATH
   lookup by machine-god, trusted downstream dispatch, target-descriptor
@@ -159,15 +233,22 @@ replacement SHA/tree remain required.
 - [ ] Missing launcher and every spawn failure as retryable precommit
   unavailable with zero launch; exit-zero helper acceptance without application
   consumption/display claims.
-- [ ] Nonzero, signal, timeout, and deterministically forced wait failure as
-  fixed redacted nonretryable `result_unknown`; timeout/wait failure
-  terminates and reaps the helper; no nonexistent waiter-establishment state.
-- [ ] Inert construction/future until poll; cancellation/drop and spawn
+- [ ] Nonzero, signal, timeout, and a deterministically injected failure through
+  the actual shared `try_wait` `Err` arm as fixed redacted nonretryable
+  `result_unknown`; timeout/wait failure terminates and reaps the helper; no
+  nonexistent waiter-establishment state.
+- [ ] Inert production and fake launcher construction/future until poll;
+  cancellation/drop and spawn
   serialized through one linearization gate; abort-first zero launch;
   successful-spawn commit; postspawn engine cancellation through drop; pre-poll
-  and postspawn drop; 30-second timeout decision followed by terminate/reap;
-  normal nonreentrant worker join; safe overlapping wake-callback tail without
-  self-join or cross-thread join cycles; blocked-waker drop regression;
+  and postspawn drop; authoritative post-probe `now < deadline` acceptance,
+  at/after-deadline timeout, remaining-duration sleep, then terminate/reap;
+  unpublished Waker suppression plus synchronous join; helper reap and exact
+  request/descriptor closure before publication; normal published worker join;
+  safe overlapping inline/blocking wake-callback tail without self-join or
+  cross-thread join cycles; blocked-waker exact-FD-identity regression; exactly
+  32 active system launches with saturation producing precommit unavailable and
+  zero new worker/helper; permit retention through callback completion;
   concurrent-call isolation.
 - [ ] Native Linux behavior, macOS/FreeBSD/WASI compilation and active
   unsupported-target behavior, exact delivered eleven-tool checkpoint and
@@ -222,14 +303,19 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**IMPLEMENTED CANDIDATE; CYCLE 1 NOT GREEN; REMEDIATION IN PROGRESS.** Exact
+**IMPLEMENTED CANDIDATE; CYCLE 2 NOT GREEN; REMEDIATION IN PROGRESS.** Exact
 base main and frozen-contract feature CI and benchmark evidence is green.
 Cycle 1 rejected exact candidate `79e65c19330181955a0c341d62ef39778a18d36d`,
 tree `481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`, with the findings and candidate
-remediations above. Candidate source now
-contains the core variant, native tool, trusted launcher seam, direct/private/
-engine/unsupported evidence, and twelve-tool/eleven-clone host composition with
-no dependency, workflow, CLI, benchmark, or compatibility-status change. The
-complete replacement exact-SHA gate, three fresh green review tracks, feature
-workflows, integration, main workflows, delivery, product-performance, and fx-
-equivalence claims remain pending.
+remediations above. Cycle 2 rejected exact candidate
+`027ba3367eb0853fec828ed0900398c7b7458e71`, tree
+`9002e8f137d5ed2352cd620db6145da2339cdb2c`, for the eight resource-bound,
+deadline, concurrency/lifecycle, frozen-contract, and test-fidelity findings
+recorded above. The narrow worker-tail contract amendment is documentation-only
+and exempt from its own adversarial cycle; production remediation is not.
+Candidate source contains the core variant, native tool, trusted launcher seam,
+direct/private/engine/unsupported evidence, and twelve-tool/eleven-clone host
+composition with no dependency, workflow, CLI, benchmark, or compatibility-
+status change. The complete replacement exact-SHA gate, three fresh green
+review tracks, feature workflows, integration, main workflows, delivery,
+product-performance, and fx-equivalence claims remain pending.
