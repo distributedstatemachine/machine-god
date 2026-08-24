@@ -157,6 +157,25 @@ local gate and all three fresh cycle-8 tracks remain pending. This executable
 test-only fix is not eligible for the documentation-only exemption. This makes
 no product-performance or fx-equivalence claim.
 
+Exact documentation-correction and cycle-8 candidate
+`6cfc17407cb6fa05d7568cd4f074775fc76c0e25`, tree
+`44aa7c2636f341e8d759ef18626d0565a5a7d05e`, passed the complete replacement
+local gate. Cycle-8 correctness/API was **NOT GREEN** with exactly two low
+findings and zero blocker, high, or medium; lifecycle and
+performance/concurrency were green with zero findings. The first low found no
+successful-helper witness in the normal blocked-Waker fixture, whose remaining
+assertions also passed after a noexec spawn failure. The second found that the
+operative documentation did not identify the known cycle-8 candidate. Exact
+test-only remediation `a8415f2ac79bea979d27651174d21065c6c5d5d7`, tree
+`7210b0a0bd719e8373a7bf15bfc7084d7eff0199`, factors the shared lifecycle
+assertions, makes the successful helper write and verify an exact marker, and
+adds a separate deterministic missing-helper spawn-failure case. Normal Linux
+arm64 focused evidence is 202/202; the failure case under `/tmp` noexec is
+100/100. Production source, public API, manifests, and workflows remain
+unchanged. The documentation correction and exact cycle-9 candidate SHA/tree,
+complete replacement local gate, and three fresh cycle-9 reviews remain
+pending. This makes no product-performance or fx-equivalence claim.
+
 The repository includes the provider-neutral streaming engine, its bounded
 durable tool loop, a deterministic testkit, and read-only native
 configuration/status discovery and loading, plus capability-aware tool

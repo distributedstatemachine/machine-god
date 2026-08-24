@@ -457,6 +457,25 @@ local gate and all three fresh cycle-8 tracks remain pending. This executable
 test-only fix is not eligible for the documentation-only exemption. This makes
 no product-performance or fx-equivalence claim.
 
+Exact documentation-correction and cycle-8 candidate
+`6cfc17407cb6fa05d7568cd4f074775fc76c0e25`, tree
+`44aa7c2636f341e8d759ef18626d0565a5a7d05e`, passed the complete replacement
+local gate. Cycle-8 correctness/API was **NOT GREEN** with exactly two low
+findings and zero blocker, high, or medium; lifecycle and
+performance/concurrency were green with zero findings. The first low found no
+successful-helper witness in the normal blocked-Waker fixture, whose remaining
+assertions also passed after a noexec spawn failure. The second found that the
+operative documentation did not identify the known cycle-8 candidate. Exact
+test-only remediation `a8415f2ac79bea979d27651174d21065c6c5d5d7`, tree
+`7210b0a0bd719e8373a7bf15bfc7084d7eff0199`, factors the shared lifecycle
+assertions, makes the successful helper write and verify an exact marker, and
+adds a separate deterministic missing-helper spawn-failure case. Normal Linux
+arm64 focused evidence is 202/202; the failure case under `/tmp` noexec is
+100/100. Production source, public API, manifests, and workflows remain
+unchanged. The documentation correction and exact cycle-9 candidate SHA/tree,
+complete replacement local gate, and three fresh cycle-9 reviews remain
+pending. This makes no product-performance or fx-equivalence claim.
+
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -2288,8 +2307,21 @@ gate:
   are unchanged. The docs correction composes atop that commit with SHA
   pending. The full replacement local gate and all three fresh cycle-8 tracks
   remain pending. The executable test-only fix is not eligible for the docs
-  exemption. This makes no product-performance or fx-equivalence claim. Exact
-  contract commit `6b763c4` passed
+  exemption. This makes no product-performance or fx-equivalence claim.
+  cycle-8 candidate `6cfc17407cb6fa05d7568cd4f074775fc76c0e25`, tree
+  `44aa7c2636f341e8d759ef18626d0565a5a7d05e`, passed the full local gate.
+  Correctness/API rejected it with exactly two low findings and zero blocker,
+  high, or medium: no successful-helper witness in the normal fixture and
+  operative lineage that did not name the known candidate. Lifecycle and
+  performance/concurrency were green at zero findings. Exact remediation
+  `a8415f2ac79bea979d27651174d21065c6c5d5d7`, tree
+  `7210b0a0bd719e8373a7bf15bfc7084d7eff0199`, adds distinct successful-marker
+  and deterministic spawn-failure tests around shared lifecycle assertions.
+  Normal Linux arm64 evidence is 202/202 and the noexec failure case is 100/100.
+  Production source, public API, manifests, and workflows remain unchanged.
+  The documentation correction/cycle-9 candidate, full replacement gate, and
+  three fresh cycle-9 reviews remain pending. This makes no product-performance
+  or fx-equivalence claim. Exact contract commit `6b763c4` passed
   all six feature CI jobs in `32707583915`; feature benchmark `32707583892`
   passed both jobs and retains exactly two nonexpired exact-SHA artifacts,
   `9512848704` and `9512966283`. Those runs establish only the frozen contract
