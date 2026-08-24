@@ -319,6 +319,19 @@ fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
 benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The delivered authority surface now has eleven tools. The
+twenty-sixth `open_file` slice is **CONTRACT FROZEN; IMPLEMENTATION PENDING**.
+Its dedicated `Capability::OpenFile { path }` is narrower than arbitrary
+process authority and covers one canonical workspace-confined existing regular
+file. The frozen execution rejects symlinks, retains the approved file
+descriptor, and on Linux supplies only `/usr/bin/xdg-open` with
+`/proc/<parent-pid>/fd/<retained-fd>`. Stdio is null, machine-god does no
+ambient `PATH` lookup, model-selected processes are excluded, and the timeout
+decision is capped at 30 seconds. Unsupported platforms fail before spawn. A
+successful spawn commits an effect that cancellation cannot roll back.
+Postspawn cancellation makes core drop the execution future; cancellation,
+timeout, or explicit drop kills and reaps the helper and joins owned work
+without claiming rollback. No
+implementation or host-wiring claim is made. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -1041,6 +1054,24 @@ calls. Failed verification, moved retained parents, uncertain `mkdirat`, or
 durability failure returns fixed nonretryable ambiguity without claiming
 rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
+
+The frozen `open_file` contract adds no read result and no arbitrary process
+selection. Strict effect-free preflight will bind policy and execution to one
+canonical confined path through dedicated `Capability::OpenFile`. Approved
+execution will no-follow open and retain only an existing regular file before
+the fixed Linux launcher is called. The `/proc/<parent-pid>/fd/<retained-fd>`
+argument keeps the helper bound to the retained identity while the parent owns
+the descriptor; machine-god gives the helper null stdio and uses no PATH-
+selected program.
+Before spawn, cancellation or drop has zero external effect. After spawn, the
+default application may already have received the target, so cancellation and
+30-second timeout cannot claim rollback. Core cancellation invokes the existing
+future-drop path; cancellation, timeout, or explicit drop kills/reaps the
+helper and joins owned work. External paths,
+directories, URLs, a real macOS launcher, CLI changes, benchmark changes,
+performance claims, and fx-equivalence remain deferred. The product is Rust;
+Zig is only the pinned upstream benchmark input. Implementation and adversarial
+evidence remain pending.
 
 Current execution evidence is native macOS plus Linux/FreeBSD cross-target test
 compilation, Linux library Clippy, and WASI compilation/active unsupported

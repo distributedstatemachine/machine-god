@@ -402,7 +402,8 @@ The concrete consumers are the native
 [`edit_file` tool](edit-file.md), [`delete_file` tool](delete-file.md), and the
 delivered twenty-third [`rename_file` tool](rename-file.md), and the delivered
 twenty-fourth [`copy_file` tool](copy-file.md), and the delivered twenty-fifth
-[`create_folder` behavior](create-folder.md). `create_folder` is another
+[`create_folder` behavior](create-folder.md), plus the frozen but unimplemented
+twenty-sixth [`open_file` contract](open-file.md). `create_folder` is another
 single-path consumer.
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
@@ -662,6 +663,24 @@ fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
 benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The behavior is delivered and integrated on `main`.
+
+The twenty-sixth slice is **CONTRACT FROZEN; IMPLEMENTATION PENDING** and adds
+one dedicated provider-neutral capability rather than reusing filesystem read,
+metadata, or arbitrary process authority. Its stable policy JSON is frozen as:
+
+```json
+{"type":"open_file","path":"canonical/path"}
+```
+
+`Capability::OpenFile { path }` means approval to present exactly one canonical
+workspace-confined existing regular file to the host's default application. It
+does not authorize model-selected programs, arguments, external paths,
+directories, URLs, or content returned to the model. Native preflight will
+prepare that exact path for policy and execution; native code will own
+descriptor-relative no-follow validation, retained file identity, Linux helper
+launch, its 30-second bound, cancellation/drop cleanup, and fixed redacted
+result-unknown taxonomy. No enum implementation, native tool, test evidence,
+host wiring, or delivery is claimed yet.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A

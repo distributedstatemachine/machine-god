@@ -3,6 +3,8 @@
 Status: **DELIVERED** for `create_folder`.
 The delivered composition contains exactly eleven alphabetical workspace
 tools, and twenty-five bounded Milestone 03 slices are delivered;
+the twenty-sixth `open_file` contract is frozen but its implementation and
+twelve-tool host composition are pending;
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -215,6 +217,19 @@ findings in all three fresh tracks. It is not the delivered or `main`-
 integrated composition at that review checkpoint. Seal `e75578b` subsequently
 passed exact feature/main CI and benchmark workflows, so this is now the
 delivered composition.
+
+The frozen twenty-sixth composition will insert `open_file` immediately after
+`list_files`. It will add one identity-preserving descriptor clone so twelve
+alphabetical tools share the same retained workspace identity. `open_file`
+uses dedicated `Capability::OpenFile { path }`, retains an approved existing
+regular-file descriptor without following a symlink, and delegates Linux
+launch through an injected seam fixed to `/usr/bin/xdg-open` plus
+`/proc/<parent-pid>/fd/<retained-fd>`. Null stdio, no machine-god `PATH` lookup, a
+30-second helper wait, pre-spawn zero-effect cancellation, and post-spawn
+timeout-or-drop kill/reap/join with fixed redacted result uncertainty are
+frozen. Postspawn cancellation invokes the existing core drop path. Existing
+constructors, source, tests, and the delivered eleven-tool count are unchanged
+until implementation composes.
 
 The delivered fifteenth slice adds a `NativeSessionLifecycle` owned by
 this wrapper. It supplies durable by-ID create, resume, replay, and reset over
@@ -540,6 +555,18 @@ postcommit rewalk, and bottom-up durability described in
 directory creation, lookup, permission normalization, task, thread, I/O, or
 background work. The candidate catalog and clone counts are eleven and ten;
 the delivered counts remain ten and nine until the remaining gates pass.
+
+The frozen twenty-sixth slice adds no construction effect. Its planned
+launcher is injected for deterministic evidence; only approved execution may
+spawn the fixed Linux helper. Other targets return unsupported before spawn.
+After successful spawn, cancellation cannot undo a possible application
+dispatch. Core drops the execution future on cancellation; that drop must kill
+and reap the helper and join all owned work. A 30-second timeout decision
+follows the same fixed redacted result-unknown boundary, and its synchronous
+cleanup may extend past the decision.
+External paths, directories, URLs, a real macOS backend, CLI composition,
+benchmarks, performance claims, and equivalence remain deferred. This is a
+contract statement, not an implementation claim.
 
 If the resulting engine later polls the production
 `AiGatewayHttpTransport`, that work must run inside a live host-owned Tokio

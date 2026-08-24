@@ -305,6 +305,28 @@ findings in all three fresh tracks. Seal `e75578b` passed exact feature CI
 benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
+The twenty-sixth bounded slice, native `open_file`, is **CONTRACT FROZEN;
+IMPLEMENTATION PENDING** from exact delivered base
+`e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
+main CI `32704202572` and final main benchmark workflow `32704202546`; the
+benchmark run retains exactly two nonexpired exact-SHA artifacts
+`9511626648` and `9511745538`. The frozen library-only contract accepts one
+strict canonical workspace-relative regular-file path, authorizes it through
+dedicated `Capability::OpenFile { path }`, and retains no-follow workspace and
+target descriptors through launch completion. Linux alone has a concrete
+launcher in this slice: fixed absolute `/usr/bin/xdg-open`, never ambient
+`PATH`, receives `/proc/<parent-pid>/fd/<retained-fd>` with null standard I/O
+and a fixed 30-second wait. Tests use an injected launcher and never open a
+desktop application. Successful spawn is the irreversible commit boundary;
+precommit cancellation causes zero launch, while postcommit failure or timeout
+is fixed redacted nonretryable ambiguity because an application may already
+have consumed the request. Unsupported targets fail before spawn. Drop after
+spawn terminates and reaps the owned helper and joins owned work. External
+paths, directories, URLs, symlinks, real macOS launching, CLI behavior,
+benchmark workloads, product-performance claims, and fx-equivalence promotion
+remain deferred. The normative boundary and pending evidence plan are
+[`open-file.md`](open-file.md) and
+[`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md).
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -2026,6 +2048,28 @@ gate:
   complete. It adds no product-performance or fx-equivalence claim, so the
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
+  The twenty-sixth native `open_file` slice is **CONTRACT FROZEN;
+  IMPLEMENTATION PENDING** from exact delivered base `e2ee11f2`. Final base
+  main CI `32704202572` and benchmark `32704202546` are green; the benchmark
+  retains exactly two nonexpired exact-SHA artifacts `9511626648` and
+  `9511745538`. Its sole strict `{path:string}` names one workspace-confined
+  existing regular file and produces dedicated
+  `Capability::OpenFile { path }` authority. Linux launch uses only fixed
+  `/usr/bin/xdg-open` and a `/proc/<parent-pid>/fd/<retained-fd>` target while
+  the descriptor stays retained; it never resolves the model-selected file
+  through ambient `PATH` itself or a mutable workspace pathname. Null standard I/O,
+  an injected evidence boundary, a 30-second helper wait, fixed redacted
+  results, spawn-as-commit cancellation ordering, and owned-helper reap/join
+  behavior are normative. Other targets are unsupported before spawn. External
+  paths, directories, URLs, symlinks, a concrete macOS launcher, CLI changes,
+  benchmark changes, performance claims, and fx-equivalence promotion are
+  deferred. Production, independent evidence, complete exact-SHA local gates,
+  fresh three-track review, feature workflows, fast-forward integration, and
+  exact main workflows remain pending under
+  [`open-file.md`](open-file.md) and
+  [`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md). The
+  documentation-only contract checkpoint is exempt from its own adversarial
+  cycle under the user's instruction.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

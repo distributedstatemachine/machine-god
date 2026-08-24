@@ -39,7 +39,23 @@ feature CI `32702785549`, feature benchmark `32702785574`, main CI
 `32703303933`, and main benchmark `32703303931`. Both benchmark runs retain
 exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
 as slice twenty-five, and the delivered host has eleven tools. The
-repository includes the provider-neutral streaming engine, its bounded durable
+twenty-sixth, library-only native `open_file` slice is **CONTRACT FROZEN;
+IMPLEMENTATION PENDING**. Its dedicated provider-neutral
+`Capability::OpenFile { path }` authorizes one canonical workspace-confined
+existing regular file without following a symlink. The frozen Linux backend
+uses only `/usr/bin/xdg-open` with a
+`/proc/<parent-pid>/fd/<retained-fd>` target, null stdio, an injected launcher
+evidence seam, and a 30-second bounded helper wait; machine-god never searches
+ambient `PATH` or accepts a model-selected process. Other platforms fail before
+spawn.
+No effect occurs before spawn; a successful spawn commits an external effect
+that cancellation cannot roll back. Postspawn cancellation makes core drop the
+execution future; cancellation, timeout, or explicit drop kills and reaps the
+helper and joins owned work without claiming rollback. External paths,
+directories, URLs, a real macOS launcher,
+CLI changes, benchmark changes, performance claims, and fx-equivalence remain
+deferred. No implementation or delivery claim is made. The repository includes
+the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission
 policy. It also includes bounded Unix-only `read_file` and one-level
@@ -410,7 +426,8 @@ The project is not yet production-ready. See the exact
 [`delete_file` contract](docs/delete-file.md),
 [`rename_file` contract](docs/rename-file.md),
 [`copy_file` contract](docs/copy-file.md),
-[`create_folder` behavior contract](docs/create-folder.md), and
+[`create_folder` behavior contract](docs/create-folder.md),
+[`open_file` frozen contract](docs/open-file.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the
