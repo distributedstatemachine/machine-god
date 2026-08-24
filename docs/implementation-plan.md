@@ -306,7 +306,7 @@ benchmark `32703303931`; both benchmark runs retain exactly two nonexpired
 exact-SHA artifacts. Native `create_folder` is delivered as slice twenty-five,
 and the integrated host has eleven tools.
 The twenty-sixth bounded slice, native `open_file`, is an **IMPLEMENTED
-CANDIDATE; FORMAL CYCLE 5 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from
+CANDIDATE; FORMAL CYCLE 6 GREEN; DELIVERY PENDING** from
 the exact delivered base
 `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green under final
 main CI `32704202572` and final main benchmark workflow `32704202546`; the
@@ -391,10 +391,26 @@ so cycle 4 is not green. That remediation was composed into exact cycle-5
 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
 production defects and the same low remaining current-lineage wording defect,
-so cycle 5 is not green. That correction is composed; three fresh cycle-6 tracks
-on one replacement SHA/tree remain pending.
-The slice is rejected and not delivered, and it makes no performance or fx-
-equivalence claim.
+so cycle 5 is not green. That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency tracks are **GREEN**
+with zero findings at every severity. Native Linux arm64 Rust 1.94.1 evidence
+passed system 14/14, direct 12/12, engine 4/4, warnings-denied Clippy, and the
+repeated performance matrix 70/70. Correctness also passed core serde 1/1,
+macOS active unsupported behavior 1/1, and all-feature host composition 1/1.
+The full local gate is green across workspace formatting, Clippy, tests,
+doctests, and no-run compilation; Python 130 with eight expected macOS skips;
+pinned-fx `b1774f` compatibility; `cargo-deny` 0.20.2; `cargo-audit` 0.22.2
+with zero vulnerabilities; FreeBSD; WASI compilation and active Node 1/1;
+documentation; and release smokes. The fresh 319,152-byte release binary has
+SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+The slice is review-green but not delivered. Exact feature workflows, fast-
+forward integration, and exact `main` workflows remain pending. The delivered
+base still has eleven tools. The docs-only seal is exempt from another
+adversarial review under the user's instruction, but its exact workflows remain
+required. This makes no product-performance or fx-equivalence claim.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -2117,7 +2133,7 @@ gate:
   combined native-tool checkbox remains open while the delivered count becomes
   twenty-five.
   The twenty-sixth native `open_file` slice is an **IMPLEMENTED CANDIDATE;
-  FORMAL CYCLE 5 NOT GREEN; DOCUMENTATION REMEDIATION COMPOSED** from exact
+  FORMAL CYCLE 6 GREEN; DELIVERY PENDING** from exact
   delivered base `e2ee11f2`. Final base
   main CI `32704202572` and benchmark `32704202546` are green; the benchmark
   retains exactly two nonexpired exact-SHA artifacts `9511626648` and
@@ -2180,18 +2196,31 @@ gate:
   cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
   `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
   production defects and the same low remaining current-lineage wording defect.
-  That correction is composed and all three fresh cycle-6 tracks remain pending.
-  Feature workflows, fast-forward integration,
-  and exact main workflows remain
-  pending under
+  That correction is composed in exact cycle-6 candidate
+  `b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+  `07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+  filesystem/process-lifecycle, and performance/concurrency tracks are green
+  with zero findings at every severity. Native Linux arm64 Rust 1.94.1 passed
+  system 14/14, direct 12/12, engine 4/4, warnings-denied Clippy, and repeated
+  performance evidence 70/70. Correctness passed core serde 1/1, macOS active
+  unsupported behavior 1/1, and all-feature host composition 1/1. The full
+  local gate, including Python 130 with eight expected macOS skips, pinned-fx
+  `b1774f`, dependency, FreeBSD/WASI, active Node 1/1, documentation, and the
+  319,152-byte release binary with SHA-256
+  `4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`, is
+  green. Feature workflows, fast-forward integration, and exact `main`
+  workflows remain pending under
   [`open-file.md`](open-file.md) and
   [`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md). The
-  documentation-only contract checkpoint is exempt from its own adversarial
-  cycle under the user's instruction. Exact contract commit `6b763c4` passed
+  documentation-only contract checkpoint and this docs-only seal are exempt
+  from their own adversarial cycles under the user's instruction. Exact
+  workflows remain required. Exact contract commit `6b763c4` passed
   all six feature CI jobs in `32707583915`; feature benchmark `32707583892`
   passed both jobs and retains exactly two nonexpired exact-SHA artifacts,
   `9512848704` and `9512966283`. Those runs establish only the frozen contract
-  checkpoint, not implementation or delivery.
+  checkpoint, not implementation or delivery. The reviewed twelve-tool
+  composition is not delivered; the delivered base remains at eleven tools.
+  This makes no product-performance or fx-equivalence claim.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

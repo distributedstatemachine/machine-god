@@ -320,8 +320,8 @@ fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
 benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The delivered authority surface now has eleven tools. The current
-twenty-sixth `open_file` slice is an implemented Rust candidate under
-documentation remediation after a rejected fifth formal review cycle.
+twenty-sixth `open_file` slice is an implemented Rust candidate green under
+formal review cycle 6, with delivery pending.
 Its dedicated `Capability::OpenFile { path }` is narrower than arbitrary
 process authority and covers one canonical workspace-confined existing regular
 file. Linux execution rejects symlinks, retains the approved file descriptor,
@@ -374,9 +374,15 @@ That remediation was composed into cycle-5 candidate
 `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
 production defects and the same low remaining current-lineage wording defect.
-That correction is composed and fresh cycle 6 remains pending. This is not a
-green-review, workflow, delivery, `main` integration, performance, or
-fx-equivalence claim. The
+That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency tracks are green with
+zero findings at every severity. Exact feature workflows, delivery, and exact
+`main` workflows remain pending. The delivered base remains at eleven tools.
+The docs-only seal is exempt from another adversarial review under the user's
+instruction but requires exact workflows. This makes no delivery, product-
+performance, or fx-equivalence claim. The
 twelfth slice composes the existing library components only after an already
 validated config value is supplied; the thirteenth slice adds validation
 that its configured acquisition kind is `Environment` without changing loader
@@ -421,8 +427,9 @@ eleven-tool authority surface.
 Current candidate source inserts `open_file` immediately after `list_files` in
 both constructors. Exactly twelve alphabetical tools share the original
 retained workspace descriptor plus eleven identity-preserving clones. This
-twelve-tool composition is implemented but remains rejected and undelivered;
-the delivered base remains the eleven-tool `create_folder` composition above.
+twelve-tool composition is implemented and review-green but remains
+undelivered; the delivered base remains the eleven-tool `create_folder`
+composition above.
 
 Production construction opens both non-secret roots before it consumes the
 injected credential snapshot, discovers a bearer token, and hands that token to
@@ -1106,7 +1113,7 @@ durability failure returns fixed nonretryable ambiguity without claiming
 rollback. The behavior and local-gate evidence boundary is
 [`create-folder.md`](create-folder.md).
 
-The implemented `open_file` candidate under review remediation after cycle 5
+The implemented, cycle-6-review-green `open_file` candidate
 adds no read result and no arbitrary process selection. Strict effect-free
 preflight binds policy and execution to one canonical confined path through
 dedicated `Capability::OpenFile`. Linux execution no-follow opens and retains
@@ -1152,8 +1159,14 @@ filesystem/process-lifecycle and performance/concurrency are green with zero
 findings. Cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`,
 tree `90750911b26dc4eed9e54e73c17c11a6c5a12423`, was rejected when all three
 tracks found the same low remaining current-lineage wording defect and zero
-production defects. That correction is composed; fresh cycle 6, exact
-workflows, delivery, and `main` integration remain pending.
+production defects. That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh tracks are green
+with zero findings at every severity. Exact feature workflows, delivery, and
+exact `main` workflows remain pending. The delivered base remains at eleven
+tools. The docs-only seal is exempt from another adversarial review under the
+user's instruction but requires exact workflows. This makes no delivery,
+product-performance, or fx-equivalence claim.
 
 Delivered `create_folder` execution evidence is native macOS plus
 Linux/FreeBSD cross-target test compilation, Linux library Clippy, and WASI

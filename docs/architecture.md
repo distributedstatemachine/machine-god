@@ -76,7 +76,8 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 artifacts. The delivered host now has eleven tools. No product-performance
 claim is made.
 The twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate rejected by formal cycle 5. It adds dedicated provider-neutral
+candidate green under formal cycle 6, with delivery pending. It adds dedicated
+provider-neutral
 `Capability::OpenFile { path }`
 for one strict canonical, workspace-confined existing regular file rather than
 treating default-application launch as filesystem read or accepting a model-
@@ -117,9 +118,15 @@ lineage drift and no production defect. That remediation was composed into
 cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
 production defects and the same low remaining current-lineage wording defect.
-That correction is composed; fresh cycle 6 remains pending. This is not a
-green-review, CI, benchmark, delivery, performance, `main`-integration, or fx-
-equivalence record.
+That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency tracks are green with
+zero findings at every severity. Exact feature workflows, delivery, and exact
+`main` workflows remain pending. The delivered host stays at eleven tools.
+This makes no delivery, product-performance, or fx-equivalence claim; the docs-
+only seal is exempt from another adversarial review but requires exact
+workflows.
 The first formal sixteenth candidate is composed through `dec98e0`, whose three
 review tracks were not green. Its source and test fixes are composed in exact
 behavior candidate
@@ -678,7 +685,7 @@ with the exact canonical path that approved execution receives. The complete
 contract and local-gate evidence are in
 [`create-folder.md`](create-folder.md).
 
-The implemented twenty-sixth candidate inserts `open_file` after `list_files`,
+The review-green twenty-sixth candidate inserts `open_file` after `list_files`,
 producing twelve alphabetical tools from the same retained workspace identity:
 one tool consumes the original retained descriptor and the other eleven receive
 identity-preserving clones. Its strict path-only preflight prepares dedicated
@@ -689,7 +696,8 @@ The fixed system launcher receives only `/usr/bin/xdg-open` and the parent-owned
 null stdio, and no shell or `PATH` lookup by machine-god. The same twelve-tool
 catalog composes on macOS, where active `open_file` execution returns
 unsupported before filesystem lookup, worker creation, or helper spawn. This is
-candidate composition only; the delivered host remains at eleven tools.
+review-green candidate composition only; the delivered host remains at eleven
+tools pending exact feature and `main` delivery workflows.
 
 The composition does not compare the two roots for equality or ancestry. The
 trusted host must keep them disjoint; otherwise the bounded workspace tools can
@@ -1361,10 +1369,14 @@ filesystem/process-lifecycle and performance/concurrency are green with zero
 findings. Cycle-5 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`,
 tree `90750911b26dc4eed9e54e73c17c11a6c5a12423`, was rejected when all three
 tracks found the same low remaining current-lineage wording defect and zero
-production defects. That correction is composed and fresh cycle 6 remains
-pending, so this candidate makes no green-
-review, CI, benchmark, delivery, or `main`-
-integration claim.
+production defects. That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh tracks are green
+with zero findings at every severity. Exact feature workflows, delivery, and
+exact `main` workflows remain pending. The docs-only seal is exempt from
+another adversarial review under the user's instruction but requires exact
+workflows. This makes no delivery, product-performance, or fx-equivalence
+claim.
 
 The retained roots confine model-selected components, but they are not sandboxes
 against the hosts that selected a workspace path. Resolution of a root path's

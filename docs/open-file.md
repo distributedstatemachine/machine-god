@@ -1,7 +1,6 @@
 # Native `open_file` contract
 
-Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 5 NOT GREEN;
-DOCUMENTATION REMEDIATION COMPOSED**
+Status: **IMPLEMENTED CANDIDATE; FORMAL CYCLE 6 GREEN; DELIVERY PENDING**
 
 This document defines the twenty-sixth bounded Milestone 03 candidate from exact
 delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
@@ -43,9 +42,12 @@ production defect and one low maintained-documentation lineage drift, so cycle
 candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks rejected cycle 5
 for the same low stale current-lineage wording and found zero production
-defects. That documentation correction is composed; a fresh three-track cycle
-6 on one replacement SHA/tree remains pending. Exact feature workflows,
-delivery, and `main` integration remain pending.
+defects. That documentation correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency tracks are **GREEN**
+with zero findings at every severity. Exact feature workflows, delivery, and
+`main` integration remain pending.
 
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
@@ -392,6 +394,12 @@ candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 finding, so this composition is reviewed but not delivered; `main` remains at
 eleven tools.
 
+Exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`, is green with zero findings in all
+three fresh tracks. The twelve-tool composition is therefore review-green but
+not delivered; `main` remains at the eleven-tool base.
+
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, marks the operation approval-required,
 side-effecting, and reversible, and launches `xdg-open` on Linux or `open` on
@@ -474,9 +482,38 @@ green, but the cycle is **NOT GREEN** and that candidate is rejected.
   direct 12/12, engine 4/4, warnings-denied Clippy, and five repeated lifecycle
   runs totaling 70/70.
 
-The stale passages now explicitly record rejected cycle 5 and pending cycle 6.
-A fresh three-track cycle 6 on one immutable replacement SHA/tree remains
-required; no green-review claim is made yet.
+At the cycle-5 checkpoint, the stale passages were corrected and a fresh
+three-track cycle 6 on one immutable replacement SHA/tree remained required;
+no green-review claim was made at that checkpoint.
+
+## Formal review cycle 6: green
+
+All three fresh tracks reviewed exact candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. Correctness/API,
+filesystem/process-lifecycle, and performance/concurrency are **GREEN** with
+zero findings at every severity.
+
+Native Linux arm64 Rust 1.94.1 evidence passed system 14/14, direct 12/12,
+engine 4/4, and warnings-denied Clippy. Performance/concurrency repeated its
+focused lifecycle matrix for 70/70 passes. Correctness/API additionally passed
+core serde 1/1, macOS active unsupported behavior 1/1, and all-feature host
+composition 1/1.
+
+The exact candidate also passes workspace formatting, warnings-denied Clippy,
+tests, doctests, and no-run compilation; 130 Python tests with eight expected
+macOS skips; byte-identical compatibility against pinned fx `b1774f`; and
+`cargo-deny` 0.20.2 plus `cargo-audit` 0.22.2 with zero findings. FreeBSD
+compilation, WASI compilation and active Node evidence 1/1, documentation
+checks, and release smokes are green. The fresh 319,152-byte release binary has
+SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+
+This establishes green review only. Exact feature workflows, fast-forward
+delivery, and exact `main` workflows remain pending. The docs-only seal is
+exempt from another adversarial review under the user's instruction, but its
+exact workflows remain required. No product-performance or fx-equivalence
+claim is made.
 
 ## Candidate evidence and remaining gates
 
@@ -530,8 +567,9 @@ required; no green-review claim is made yet.
 - [x] Composed-remediation native Linux execution, FreeBSD/WASI and active WASI,
   dependency, pinned-compatibility, documentation, clean-diff, and freshly
   built release-binary evidence.
-- [ ] Three green formal review tracks on one immutable cycle-6 SHA/tree and the
-  exact remote delivery workflows.
+- [x] Three green formal review tracks on one immutable cycle-6 SHA/tree.
+- [ ] Exact feature workflows, fast-forward delivery, and exact `main`
+  workflows.
 
 ## Review and delivery protocol
 
@@ -560,6 +598,7 @@ authority; shell execution; model-selected programs, arguments, environment,
 or working directories; PATH lookup; macOS or other non-Linux real launch;
 CLI ownership; new benchmark workloads; product-performance claims; inventory
 promotion; and complete fx equivalence remain outside this slice.
-Fresh formal cycle-6 review, exact feature workflows, integration, and delivery
-remain pending; current implementation and local results are candidate evidence
-only.
+Formal cycle-6 review is green on the exact SHA/tree recorded above. Exact
+feature workflows, integration, and delivery remain pending. Current
+implementation remains candidate evidence only and makes no
+product-performance or fx-equivalence claim.

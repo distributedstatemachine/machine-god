@@ -1,7 +1,6 @@
 # Milestone 03 native `open_file` review 01
 
-Status: **IMPLEMENTED CANDIDATE; CYCLE 5 NOT GREEN;
-DOCUMENTATION REMEDIATION COMPOSED**
+Status: **IMPLEMENTED CANDIDATE; CYCLE 6 GREEN; DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -97,8 +96,14 @@ root constructors compose that same tool catalog and retained workspace
 identity. Formal cycle 5 rejected exact candidate
 `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`, for one low documentation-lineage
-finding. Fresh cycle-6 review and delivery remain pending, so `main` remains at
-the eleven-tool base.
+finding. At that checkpoint, cycle-6 review and delivery remained pending and
+`main` remained at the eleven-tool base.
+
+Exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`, is green with zero findings in all
+three fresh tracks. The twelve-tool composition is review-green but remains
+undelivered; `main` remains at the eleven-tool base.
 
 ## Implemented ownership
 
@@ -278,45 +283,76 @@ gate passed, but the cycle is **NOT GREEN** and the candidate is rejected.
   runs totaling 70/70. An amd64-under-arm64 missing-executable emulation result
   did not reproduce on native arm64 and is not a product finding.
 
-The four stale passages now explicitly record rejected cycle 5 and pending
-cycle 6. A fresh correctness/API, filesystem/process-lifecycle, and performance/
-concurrency cycle 6 on one immutable replacement SHA/tree remains required. No
-green-review, workflow, delivery, performance, or equivalence claim is made.
+At the cycle-5 checkpoint, the four stale passages were corrected and a fresh
+correctness/API, filesystem/process-lifecycle, and performance/concurrency
+cycle 6 on one immutable replacement SHA/tree remained required. No green-
+review, workflow, delivery, performance, or equivalence claim was made at that
+checkpoint.
+
+## Formal review cycle 6: green
+
+All three fresh reviewers independently verified exact candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`, in clean detached worktrees.
+Correctness/API, filesystem/process-lifecycle, and performance/concurrency are
+all **GREEN** with zero blocker, high, medium, low, or informational findings.
+
+- Filesystem/process-lifecycle passed native Linux arm64 Rust 1.94.1 system
+  14/14, direct 12/12, engine 4/4, and warnings-denied Clippy.
+- Performance/concurrency passed the same focused Linux matrix and five
+  repeated lifecycle runs totaling 70/70.
+- Correctness/API passed core serde 1/1, macOS active unsupported behavior 1/1,
+  and all-feature host composition 1/1 in addition to its focused checks.
+
+The complete exact-candidate local gate is green: workspace formatting,
+all-target/all-feature warnings-denied Clippy, workspace tests, workspace
+doctests, and no-run compilation; 130 Python tests with eight expected macOS
+skips; byte-identical compatibility against pinned fx `b1774f`; `cargo-deny`
+0.20.2; and `cargo-audit` 0.22.2 with zero vulnerabilities. FreeBSD
+compilation, WASI compilation and active Node unsupported behavior 1/1,
+documentation checks, diff checks, and release smokes are green. The freshly
+built release binary is 319,152 bytes with SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+
+This is green formal-review evidence only. The docs-only seal is exempt from
+another adversarial review under the user's instruction, but exact feature
+workflows, fast-forward integration, and exact `main` workflows remain
+required. No delivery, product-performance, or fx-equivalence claim is made.
 
 ## Required evidence
 
-- [ ] Exact `Capability::OpenFile` API, serde JSON, exhaustive drop handling,
+- [x] Exact `Capability::OpenFile` API, serde JSON, exhaustive drop handling,
   native tool/schema/constants/result/open-error and fixed tool-error
   contracts, including strict unknown-field rejection and stable redaction.
-- [ ] Exact and one-over 4,096-byte requested/canonical path, 256-component,
+- [x] Exact and one-over 4,096-byte requested/canonical path, 256-component,
   255-byte component, 65,536-byte argument, and 16,384-byte result bounds;
   very-large hostile path rejection before complete-value serialization.
-- [ ] Empty/root/dot, absolute, tilde, parent, repeated/trailing separator,
+- [x] Empty/root/dot, absolute, tilde, parent, repeated/trailing separator,
   dot-component, control, line/paragraph-separator, bidirectional, and
   over-bound rejection; no Unicode normalization or case folding.
-- [ ] Effect-free preparation, exact
+- [x] Effect-free preparation, exact
   `{"type":"open_file","path":"..."}` evidence, denial before lookup,
   canonical direct execution, exact policy/execution agreement, and no general
   filesystem-read or process authority.
-- [ ] Fresh retained-root validation, descriptor-relative no-follow traversal,
+- [x] Fresh retained-root validation, descriptor-relative no-follow traversal,
   final linked regular-file requirement, directory/symlink/FIFO/socket/device
   rejection, and absence of content reads.
-- [ ] Root, ancestor, and final replacement; rename and unlink after retention;
+- [x] Root, ancestor, and final replacement; rename and unlink after retention;
   mixed-device traversal; proc-entry availability; outside sentinels; and the
   explicit host-boundary/no-sandbox semantics. Proc closure evidence must track
   exact descriptor identity rather than only a reusable numeric fd.
-- [ ] Exact absolute `/usr/bin/xdg-open`, two-element argv, PID/fd decimal proc
+- [x] Exact absolute `/usr/bin/xdg-open`, two-element argv, PID/fd decimal proc
   target, fixed `/` cwd, inherited host environment, null stdio, zero shell/PATH
   lookup by machine-god, trusted downstream dispatch, target-descriptor
   lifetime, and no model-controlled launch fields.
-- [ ] Missing launcher and every spawn failure as retryable precommit
+- [x] Missing launcher and every spawn failure as retryable precommit
   unavailable with zero launch; exit-zero helper acceptance without application
   consumption/display claims.
-- [ ] Nonzero, signal, timeout, and a deterministically injected failure through
+- [x] Nonzero, signal, timeout, and a deterministically injected failure through
   the actual shared `try_wait` `Err` arm as fixed redacted nonretryable
   `result_unknown`; timeout/wait failure terminates and reaps the helper; no
   nonexistent waiter-establishment state.
-- [ ] Inert production and fake launcher construction/future until poll;
+- [x] Inert production and fake launcher construction/future until poll;
   cancellation/drop and spawn
   serialized through one linearization gate; abort-first zero launch;
   successful-spawn commit; postspawn engine cancellation through drop; pre-poll
@@ -332,7 +368,7 @@ green-review, workflow, delivery, performance, or equivalence claim is made.
   32 active system launches with saturation producing precommit unavailable and
   zero new worker/helper; permit retention through callback completion;
   concurrent-call isolation.
-- [ ] Native Linux behavior, macOS/FreeBSD/WASI compilation and active
+- [x] Native Linux behavior, macOS/FreeBSD/WASI compilation and active
   unsupported-target behavior, exact delivered eleven-tool checkpoint and
   candidate twelve-tool/eleven-clone host, no-unsafe, dependency,
   compatibility, documentation,
@@ -385,8 +421,7 @@ publication is authorized by this review.
 
 ## Current verdict
 
-**IMPLEMENTED CANDIDATE; CYCLE 5 NOT GREEN; DOCUMENTATION REMEDIATION
-COMPOSED.** Exact
+**IMPLEMENTED CANDIDATE; CYCLE 6 GREEN; DELIVERY PENDING.** Exact
 base main and frozen-contract feature CI and benchmark evidence is green.
 Cycle 1 rejected exact candidate `79e65c19330181955a0c341d62ef39778a18d36d`,
 tree `481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`, with the findings and candidate
@@ -413,12 +448,17 @@ composed into cycle-5 candidate
 `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
 production defects and the same low remaining current-lineage wording defect.
-That correction is composed, while all three fresh cycle-6 tracks remain
-pending.
+That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency tracks are green with
+zero findings at every severity.
 
 Candidate source contains the core variant, native tool, trusted launcher seam,
 direct/private/engine/unsupported evidence, and twelve-tool/eleven-clone host
 composition with no dependency, workflow, CLI, benchmark, or compatibility-
-status change. Three fresh green review tracks, feature workflows, integration,
-main workflows, delivery,
-product-performance, and fx-equivalence claims remain pending.
+status change. Exact feature workflows, fast-forward integration, exact `main`
+workflows, and delivery remain pending. The delivered base remains at eleven
+tools. The docs-only seal is exempt from another adversarial review under the
+user's instruction but still requires exact workflows. No product-performance
+or fx-equivalence claim is made.

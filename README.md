@@ -40,7 +40,7 @@ feature CI `32702785549`, feature benchmark `32702785574`, main CI
 exactly two nonexpired exact-SHA artifacts. Native `create_folder` is delivered
 as slice twenty-five, and the delivered host has eleven tools. The
 twenty-sixth, library-only native `open_file` slice is an implemented Rust
-candidate with a rejected fifth formal review cycle, not a delivered slice. Its
+candidate with a green sixth formal review cycle, but it is not delivered. Its
 dedicated provider-neutral
 `Capability::OpenFile { path }` authorizes one strict canonical,
 workspace-confined existing regular file. Linux execution retains the selected
@@ -71,7 +71,8 @@ macOS retains
 the catalog entry but `open_file` execution is unsupported before lookup or
 spawn. The delivered host on `main` remains the eleven-tool `create_folder`
 host. External paths, directories, URLs, a real macOS launcher, CLI changes,
-benchmark changes, performance claims, and fx-equivalence remain deferred. The
+benchmark changes, product-performance claims, and fx-equivalence remain
+deferred. The
 first formal review cycle rejected exact candidate `79e65c1`, tree `481fd7c`,
 for cancellation-ordering, spawn-gate, reentrant-waker, and evidence-contract
 findings. Cycle 2 rejected exact candidate
@@ -100,10 +101,17 @@ documentation remediation was composed into exact cycle-5 candidate
 `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks rejected that
 candidate after reporting the same low current-lineage wording defect and zero
-production findings. That correction is composed, while a fresh three-track
-cycle 6 on one
-replacement SHA/tree remains pending. This makes no green-review, CI,
-delivery, or `main`-integration claim. The
+production findings. That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency tracks are **GREEN**
+with zero findings at every severity. Native Linux arm64 Rust 1.94.1 reruns
+passed system 14/14, direct 12/12, engine 4/4, warnings-denied Clippy, and the
+repeated performance matrix 70/70. Exact feature workflows, fast-forward
+delivery, and exact `main` workflows remain pending. This green review makes
+no delivery, product-performance, or fx-equivalence claim. The docs-only seal
+is exempt from another adversarial review under the user's instruction, but
+its exact workflows remain required. The
 repository includes the provider-neutral streaming engine, its bounded durable
 tool loop, a deterministic testkit, read-only native configuration/status
 discovery and loading, and capability-aware tool preflight before permission

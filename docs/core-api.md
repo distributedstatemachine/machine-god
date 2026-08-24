@@ -664,9 +664,9 @@ benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
 artifacts. The behavior is delivered and integrated on `main`.
 
-The implemented twenty-sixth candidate, rejected by formal cycle 5, adds one
-dedicated provider-neutral capability rather than reusing filesystem read,
-metadata, or arbitrary process
+The implemented twenty-sixth candidate, green under formal cycle 6 with
+delivery pending, adds one dedicated provider-neutral capability rather than
+reusing filesystem read, metadata, or arbitrary process
 authority. Its stable policy JSON is:
 
 ```json
@@ -718,9 +718,16 @@ That remediation was composed into cycle-5 candidate
 `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
 production defects and the same low remaining current-lineage wording defect.
-That correction is composed and fresh cycle 6 remains pending. This describes
-candidate source only; it makes no green-review, CI, benchmark,
-delivery, performance, `main`-integration, or fx-equivalence claim.
+That correction is composed in exact cycle-6 candidate
+`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
+`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
+filesystem/process-lifecycle, and performance/concurrency tracks are green with
+zero findings at every severity. This describes review-green candidate source
+only; the delivered base remains at eleven tools while exact feature workflows,
+delivery, and exact `main` workflows remain pending. The docs-only seal is
+exempt from another adversarial review under the user's instruction but
+requires exact workflows. This makes no delivery, product-performance, or fx-
+equivalence claim.
 
 Maintained behavior
 must compose into the exact SHA reviewed by all three adversarial tracks. A
