@@ -193,8 +193,19 @@ enum CopySyncSite {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CopyBufferSite {
+    Copy,
+    InitialStageHash,
+    FinalStageHash,
+    PublishedHash,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 trait CopyFileEvidence {
     fn checkpoint(&mut self, _checkpoint: CopyCheckpoint, _cancellation: &CancellationToken) {}
+
+    fn observe_buffer(&mut self, _site: CopyBufferSite, _buffer: &[u8]) {}
 
     fn next_temp_name(
         &mut self,
@@ -220,6 +231,13 @@ trait CopyFileEvidence {
                 | OFlags::NONBLOCK,
             Mode::from_raw_mode(0o600),
         )
+    }
+
+    fn initial_stage_metadata(
+        &mut self,
+        file: BorrowedFd<'_>,
+    ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        rustix::fs::fstat(file)
     }
 
     fn publish(
@@ -301,13 +319,26 @@ fn precommit_checkpoint<Evidence: CopyFileEvidence>(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn precommit_call<ResultValue>(
+    cancellation: &CancellationToken,
+    call: impl FnOnce() -> ResultValue,
+) -> Result<ResultValue, ToolError> {
+    check_cancellation(cancellation)?;
+    let result = call();
+    check_cancellation(cancellation)?;
+    Ok(result)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn retain_source(
     parent: BorrowedFd<'_>,
     basename: &str,
     cancellation: &CancellationToken,
 ) -> Result<RetainedSource, ToolError> {
-    check_cancellation(cancellation)?;
-    let path_metadata = match rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW) {
+    let path_result = precommit_call(cancellation, || {
+        rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW)
+    })?;
+    let path_metadata = match path_result {
         Ok(metadata) => metadata,
         Err(error) if error == rustix::io::Errno::NOENT => return Err(not_found()),
         Err(error) if is_permission_error(error) => return Err(permission_denied()),
@@ -319,16 +350,17 @@ fn retain_source(
     }
     let path_fingerprint = SourceFingerprint::from_stat(&path_metadata)?;
 
-    check_cancellation(cancellation)?;
-    let file = rustix::fs::openat(
-        parent,
-        basename,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
+    let file = precommit_call(cancellation, || {
+        rustix::fs::openat(
+            parent,
+            basename,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+    })?
     .map_err(map_source_open_error)?;
-    check_cancellation(cancellation)?;
-    let descriptor_metadata = rustix::fs::fstat(&file).map_err(|_| unavailable())?;
+    let descriptor_metadata =
+        precommit_call(cancellation, || rustix::fs::fstat(&file))?.map_err(|_| unavailable())?;
     let descriptor_fingerprint = SourceFingerprint::from_stat(&descriptor_metadata)?;
     if descriptor_fingerprint != path_fingerprint {
         return Err(target_changed());
@@ -347,11 +379,12 @@ fn revalidate_source_path(
     cancellation: Option<&CancellationToken>,
 ) -> Result<(), ToolError> {
     check_optional_cancellation(cancellation)?;
-    let descriptor = rustix::fs::fstat(&source.file).map_err(|_| target_changed())?;
+    let descriptor_result = rustix::fs::fstat(&source.file);
     check_optional_cancellation(cancellation)?;
-    let path = rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|_| target_changed())?;
+    let descriptor = descriptor_result.map_err(|_| target_changed())?;
+    let path_result = rustix::fs::statat(parent, basename, AtFlags::SYMLINK_NOFOLLOW);
     check_optional_cancellation(cancellation)?;
+    let path = path_result.map_err(|_| target_changed())?;
     if source.fingerprint.matches_stat(&descriptor) && source.fingerprint.matches_stat(&path) {
         Ok(())
     } else {
@@ -384,26 +417,43 @@ fn require_destination_absent(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn create_staged_file<Evidence: CopyFileEvidence>(
-    parent: BorrowedFd<'_>,
+fn create_staged_file<
+    'parent,
+    Evidence: CopyFileEvidence,
+    CleanupEvidence: CopyFileCleanupEvidence,
+>(
+    parent: BorrowedFd<'parent>,
     basename: &str,
     cancellation: &CancellationToken,
     evidence: &mut Evidence,
-) -> Result<(String, OwnedFd), ToolError> {
+    cleanup_evidence: &'parent CleanupEvidence,
+) -> Result<StagedFile<'parent, CleanupEvidence>, ToolError> {
     for attempt in 0..MAX_COPY_FILE_TEMP_ATTEMPTS {
-        check_cancellation(cancellation)?;
-        let name = evidence.next_temp_name(attempt, cancellation)?;
-        check_cancellation(cancellation)?;
+        let name = precommit_call(cancellation, || {
+            evidence.next_temp_name(attempt, cancellation)
+        })??;
         if name == basename {
             continue;
         }
-        let result = evidence.open_stage(parent, &name);
         check_cancellation(cancellation)?;
+        let result = evidence.open_stage(parent, &name);
         match result {
-            Ok(file) => return Ok((name, file)),
-            Err(error) if error == rustix::io::Errno::EXIST => {}
-            Err(error) if is_permission_error(error) => return Err(permission_denied()),
-            Err(_) => return Err(unavailable()),
+            Ok(file) => {
+                let mut staged = StagedFile::new(parent, cleanup_evidence, file, name);
+                check_cancellation(cancellation)?;
+                staged.initialize(cancellation, evidence)?;
+                return Ok(staged);
+            }
+            Err(error) => {
+                check_cancellation(cancellation)?;
+                if error == rustix::io::Errno::EXIST {
+                    continue;
+                }
+                if is_permission_error(error) {
+                    return Err(permission_denied());
+                }
+                return Err(unavailable());
+            }
         }
     }
     Err(unavailable())
@@ -506,11 +556,14 @@ fn stream_source_to_stage(
     cancellation: &CancellationToken,
     buffer: &mut [u8],
 ) -> Result<[u8; 32], ToolError> {
-    check_cancellation(cancellation)?;
-    rustix::fs::seek(source, SeekFrom::Start(0)).map_err(map_precommit_io_error)?;
-    check_cancellation(cancellation)?;
-    rustix::fs::seek(staged, SeekFrom::Start(0)).map_err(map_precommit_io_error)?;
-    check_cancellation(cancellation)?;
+    precommit_call(cancellation, || {
+        rustix::fs::seek(source, SeekFrom::Start(0))
+    })?
+    .map_err(map_precommit_io_error)?;
+    precommit_call(cancellation, || {
+        rustix::fs::seek(staged, SeekFrom::Start(0))
+    })?
+    .map_err(map_precommit_io_error)?;
     stream_source_to_stage_with(
         expected_size,
         cancellation,
@@ -627,8 +680,9 @@ fn hash_file(
     buffer: &mut [u8],
 ) -> Result<[u8; 32], ToolError> {
     check_optional_cancellation(cancellation)?;
-    rustix::fs::seek(file, SeekFrom::Start(0)).map_err(map_precommit_io_error)?;
+    let seek = rustix::fs::seek(file, SeekFrom::Start(0));
     check_optional_cancellation(cancellation)?;
+    seek.map_err(map_precommit_io_error)?;
     hash_file_with(expected_size, cancellation, buffer, |chunk| {
         rustix::io::read(file, chunk)
     })
@@ -706,23 +760,25 @@ fn verify_staged<CleanupEvidence: CopyFileCleanupEvidence>(
     cancellation: &CancellationToken,
     buffer: &mut [u8],
 ) -> Result<(), ToolError> {
-    check_cancellation(cancellation)?;
-    let metadata = rustix::fs::fstat(&staged.file).map_err(|_| copy_failed())?;
+    let metadata = precommit_call(cancellation, || rustix::fs::fstat(&staged.file))?
+        .map_err(|_| copy_failed())?;
+    let acl_is_empty = precommit_call(cancellation, || staged_acl_is_empty(staged.file.as_fd()))??;
     if !FileType::from_raw_mode(metadata.st_mode).is_file()
-        || FileIdentity::from_stat(&metadata) != staged.identity
+        || FileIdentity::from_stat(&metadata) != staged.identity()
         || usize::try_from(metadata.st_size).ok() != Some(expected_size)
         || expected_mode.is_some_and(|mode| metadata.st_mode & 0o777 != mode.as_raw_mode())
-        || !staged_acl_is_empty(staged.file.as_fd())?
+        || !acl_is_empty
     {
         return Err(copy_failed());
     }
-    if hash_file(
+    let digest = hash_file(
         staged.file.as_fd(),
         expected_size,
         Some(cancellation),
         buffer,
-    )? != expected_digest
-    {
+    )?;
+    check_cancellation(cancellation)?;
+    if digest != expected_digest {
         return Err(copy_failed());
     }
     Ok(())
@@ -736,16 +792,16 @@ fn revalidate_staged_path<CleanupEvidence: CopyFileCleanupEvidence>(
     expected_mode: Mode,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
-    check_cancellation(cancellation)?;
-    let path = rustix::fs::statat(parent, &staged.name, AtFlags::SYMLINK_NOFOLLOW)
+    let path = precommit_call(cancellation, || {
+        rustix::fs::statat(parent, &staged.name, AtFlags::SYMLINK_NOFOLLOW)
+    })?
+    .map_err(|_| target_changed())?;
+    let descriptor = precommit_call(cancellation, || rustix::fs::fstat(&staged.file))?
         .map_err(|_| target_changed())?;
-    check_cancellation(cancellation)?;
-    let descriptor = rustix::fs::fstat(&staged.file).map_err(|_| target_changed())?;
-    check_cancellation(cancellation)?;
     if FileType::from_raw_mode(path.st_mode).is_file()
         && FileType::from_raw_mode(descriptor.st_mode).is_file()
-        && FileIdentity::from_stat(&path) == staged.identity
-        && FileIdentity::from_stat(&descriptor) == staged.identity
+        && FileIdentity::from_stat(&path) == staged.identity()
+        && FileIdentity::from_stat(&descriptor) == staged.identity()
         && usize::try_from(path.st_size).ok() == Some(expected_size)
         && usize::try_from(descriptor.st_size).ok() == Some(expected_size)
         && path.st_mode & 0o777 == expected_mode.as_raw_mode()
@@ -772,8 +828,8 @@ fn verify_published<CleanupEvidence: CopyFileCleanupEvidence>(
     let descriptor = rustix::fs::fstat(&staged.file).map_err(|_| commit_ambiguous())?;
     if !FileType::from_raw_mode(path.st_mode).is_file()
         || !FileType::from_raw_mode(descriptor.st_mode).is_file()
-        || FileIdentity::from_stat(&path) != staged.identity
-        || FileIdentity::from_stat(&descriptor) != staged.identity
+        || FileIdentity::from_stat(&path) != staged.identity()
+        || FileIdentity::from_stat(&descriptor) != staged.identity()
         || usize::try_from(path.st_size).ok() != Some(expected_size)
         || usize::try_from(descriptor.st_size).ok() != Some(expected_size)
         || path.st_mode & 0o777 != expected_mode.as_raw_mode()
@@ -808,14 +864,11 @@ fn sync_precommit_with(
 ) -> Result<(), ToolError> {
     for attempt in 0..MAX_INTERRUPTED_SYSCALL_ATTEMPTS {
         check_cancellation(cancellation)?;
-        match sync(attempt) {
-            Ok(()) => {
-                check_cancellation(cancellation)?;
-                return Ok(());
-            }
-            Err(error) if error == rustix::io::Errno::INTR => {
-                check_cancellation(cancellation)?;
-            }
+        let result = sync(attempt);
+        check_cancellation(cancellation)?;
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) if error == rustix::io::Errno::INTR => {}
             Err(error) => return Err(map_precommit_io_error(error)),
         }
     }
@@ -850,10 +903,14 @@ fn directory_open_flags() -> OFlags {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn ensure_root_is_linked(root: BorrowedFd<'_>, phase: WalkPhase) -> Result<(), ToolError> {
+fn ensure_root_is_linked(
+    root: BorrowedFd<'_>,
+    phase: WalkPhase,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
     #[cfg(target_os = "linux")]
     {
-        if rustix::fs::fstat(root)
+        if precommit_call(cancellation, || rustix::fs::fstat(root))?
             .map_err(|_| map_parent_revalidation_failure(phase))?
             .st_nlink
             == 0
@@ -862,16 +919,20 @@ fn ensure_root_is_linked(root: BorrowedFd<'_>, phase: WalkPhase) -> Result<(), T
         }
     }
     #[cfg(target_os = "macos")]
-    ensure_macos_root_is_linked(root, phase)?;
+    ensure_macos_root_is_linked(root, phase, cancellation)?;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn ensure_macos_root_is_linked(root: BorrowedFd<'_>, phase: WalkPhase) -> Result<(), ToolError> {
-    let root_metadata =
-        rustix::fs::fstat(root).map_err(|_| map_parent_revalidation_failure(phase))?;
-    let root_path =
-        rustix::fs::getpath(root).map_err(|_| map_parent_revalidation_failure(phase))?;
+fn ensure_macos_root_is_linked(
+    root: BorrowedFd<'_>,
+    phase: WalkPhase,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    let root_metadata = precommit_call(cancellation, || rustix::fs::fstat(root))?
+        .map_err(|_| map_parent_revalidation_failure(phase))?;
+    let root_path = precommit_call(cancellation, || rustix::fs::getpath(root))?
+        .map_err(|_| map_parent_revalidation_failure(phase))?;
     let root_path = root_path.as_bytes();
     if root_path == b"/" {
         return Ok(());
@@ -882,10 +943,14 @@ fn ensure_macos_root_is_linked(root: BorrowedFd<'_>, phase: WalkPhase) -> Result
         .filter(|name| !name.is_empty())
         .ok_or_else(|| map_parent_revalidation_failure(phase))?;
     let name = std::ffi::CString::new(name).map_err(|_| map_parent_revalidation_failure(phase))?;
-    let parent = rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
-        .map_err(|_| map_parent_revalidation_failure(phase))?;
-    let linked = rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|_| map_parent_revalidation_failure(phase))?;
+    let parent = precommit_call(cancellation, || {
+        rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
+    })?
+    .map_err(|_| map_parent_revalidation_failure(phase))?;
+    let linked = precommit_call(cancellation, || {
+        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
+    })?
+    .map_err(|_| map_parent_revalidation_failure(phase))?;
     if FileType::from_raw_mode(linked.st_mode).is_dir()
         && FileIdentity::from_stat(&root_metadata) == FileIdentity::from_stat(&linked)
     {
@@ -1442,7 +1507,7 @@ struct StagedFile<'parent, CleanupEvidence: CopyFileCleanupEvidence> {
     cleanup_evidence: &'parent CleanupEvidence,
     file: OwnedFd,
     name: String,
-    identity: FileIdentity,
+    identity: Option<FileIdentity>,
     published: bool,
 }
 
@@ -1453,21 +1518,38 @@ impl<'parent, CleanupEvidence: CopyFileCleanupEvidence> StagedFile<'parent, Clea
         cleanup_evidence: &'parent CleanupEvidence,
         file: OwnedFd,
         name: String,
-    ) -> Result<Self, ToolError> {
-        let metadata = rustix::fs::fstat(&file).map_err(|_| copy_failed())?;
+    ) -> Self {
+        Self {
+            cleanup_parent,
+            cleanup_evidence,
+            file,
+            name,
+            identity: None,
+            published: false,
+        }
+    }
+
+    fn initialize<Evidence: CopyFileEvidence>(
+        &mut self,
+        cancellation: &CancellationToken,
+        evidence: &mut Evidence,
+    ) -> Result<(), ToolError> {
+        let metadata = precommit_call(cancellation, || {
+            evidence.initial_stage_metadata(self.file.as_fd())
+        })?
+        .map_err(|_| copy_failed())?;
         if !FileType::from_raw_mode(metadata.st_mode).is_file()
             || usize::try_from(metadata.st_size).ok() != Some(0)
         {
             return Err(copy_failed());
         }
-        Ok(Self {
-            cleanup_parent,
-            cleanup_evidence,
-            file,
-            name,
-            identity: FileIdentity::from_stat(&metadata),
-            published: false,
-        })
+        self.identity = Some(FileIdentity::from_stat(&metadata));
+        Ok(())
+    }
+
+    fn identity(&self) -> FileIdentity {
+        self.identity
+            .expect("staged file identity is initialized before use")
     }
 
     fn mark_published(&mut self) {
@@ -1496,7 +1578,7 @@ fn cleanup_unpublished_stage<CleanupEvidence: CopyFileCleanupEvidence>(
     parent: BorrowedFd<'_>,
     file: BorrowedFd<'_>,
     name: &str,
-    identity: FileIdentity,
+    identity: Option<FileIdentity>,
     evidence: &CleanupEvidence,
 ) {
     let _ = evidence.set_mode(file, Mode::from_raw_mode(0o600));
@@ -1506,10 +1588,11 @@ fn cleanup_unpublished_stage<CleanupEvidence: CopyFileCleanupEvidence>(
     let Ok(path) = evidence.statat(parent, name) else {
         return;
     };
+    let descriptor_identity = FileIdentity::from_stat(&descriptor);
     if FileType::from_raw_mode(descriptor.st_mode).is_file()
         && FileType::from_raw_mode(path.st_mode).is_file()
-        && FileIdentity::from_stat(&descriptor) == identity
-        && FileIdentity::from_stat(&path) == identity
+        && FileIdentity::from_stat(&path) == descriptor_identity
+        && identity.is_none_or(|expected| descriptor_identity == expected)
     {
         let _ = evidence.unlink(parent, name);
     }
@@ -1583,29 +1666,24 @@ impl CopyFileTool {
             cancellation,
         )?;
 
-        let (staged_name, staged_descriptor) = create_staged_file(
+        let mut staged = create_staged_file(
             initial_destination_parent.parent.as_fd(),
             initial_destination_parent.basename,
             cancellation,
             evidence,
-        )?;
-        let mut staged = StagedFile::new(
-            initial_destination_parent.parent.as_fd(),
             cleanup_evidence,
-            staged_descriptor,
-            staged_name,
         )?;
         precommit_checkpoint(evidence, CopyCheckpoint::AfterStageCreated, cancellation)?;
-        rustix::fs::fchmod(&staged.file, Mode::from_raw_mode(0o600))
-            .map_err(map_precommit_io_error)?;
-        check_cancellation(cancellation)?;
-        clear_staged_acl(staged.file.as_fd())?;
-        check_cancellation(cancellation)?;
-        if !staged_acl_is_empty(staged.file.as_fd())? {
+        precommit_call(cancellation, || {
+            rustix::fs::fchmod(&staged.file, Mode::from_raw_mode(0o600))
+        })?
+        .map_err(map_precommit_io_error)?;
+        precommit_call(cancellation, || clear_staged_acl(staged.file.as_fd()))??;
+        if !precommit_call(cancellation, || staged_acl_is_empty(staged.file.as_fd()))?? {
             return Err(copy_failed());
         }
-        check_cancellation(cancellation)?;
 
+        evidence.observe_buffer(CopyBufferSite::Copy, &buffer);
         let source_digest = stream_source_to_stage(
             source.file.as_fd(),
             staged.file.as_fd(),
@@ -1614,11 +1692,12 @@ impl CopyFileTool {
             &mut buffer,
         )?;
         precommit_checkpoint(evidence, CopyCheckpoint::AfterCopy, cancellation)?;
-        let source_after_copy = rustix::fs::fstat(&source.file).map_err(|_| target_changed())?;
-        check_cancellation(cancellation)?;
+        let source_after_copy = precommit_call(cancellation, || rustix::fs::fstat(&source.file))?
+            .map_err(|_| target_changed())?;
         if !source.fingerprint.matches_stat(&source_after_copy) {
             return Err(target_changed());
         }
+        evidence.observe_buffer(CopyBufferSite::InitialStageHash, &buffer);
         verify_staged(
             &staged,
             source.fingerprint.size,
@@ -1634,9 +1713,12 @@ impl CopyFileTool {
         )?;
 
         let final_mode = source.fingerprint.mode;
-        rustix::fs::fchmod(&staged.file, final_mode).map_err(map_precommit_io_error)?;
-        check_cancellation(cancellation)?;
+        precommit_call(cancellation, || {
+            rustix::fs::fchmod(&staged.file, final_mode)
+        })?
+        .map_err(map_precommit_io_error)?;
         sync_precommit(staged.file.as_fd(), cancellation, evidence)?;
+        evidence.observe_buffer(CopyBufferSite::FinalStageHash, &buffer);
         verify_staged(
             &staged,
             source.fingerprint.size,
@@ -1718,6 +1800,7 @@ impl CopyFileTool {
         match publish {
             Ok(()) => {
                 staged.mark_published();
+                evidence.observe_buffer(CopyBufferSite::PublishedHash, &buffer);
                 let published = verify_published(
                     final_destination_parent.parent.as_fd(),
                     final_destination_parent.basename,
@@ -1727,12 +1810,20 @@ impl CopyFileTool {
                     source_digest,
                     &mut buffer,
                 );
-                let source_stable = revalidate_source_path(
-                    final_source_parent.parent.as_fd(),
-                    final_source_parent.basename,
-                    &source,
-                    None,
-                );
+                let postcommit_cancellation = CancellationToken::new();
+                let source_stable = self
+                    .walk_parent(source_path, WalkPhase::Revalidate, &postcommit_cancellation)
+                    .and_then(|postcommit_source_parent| {
+                        if postcommit_source_parent.identity != initial_source_parent.identity {
+                            return Err(target_changed());
+                        }
+                        revalidate_source_path(
+                            postcommit_source_parent.parent.as_fd(),
+                            postcommit_source_parent.basename,
+                            &source,
+                            None,
+                        )
+                    });
                 let synced = sync_postcommit(final_destination_parent.parent.as_fd(), evidence);
                 if published.is_err() || source_stable.is_err() || synced.is_err() {
                     return Err(commit_ambiguous());
@@ -1757,25 +1848,24 @@ impl CopyFileTool {
         phase: WalkPhase,
         cancellation: &CancellationToken,
     ) -> Result<ParentWalk<'path>, ToolError> {
-        check_cancellation(cancellation)?;
-        let mut parent = rustix::fs::openat(
-            self.root.as_fd(),
-            ".",
-            directory_open_flags(),
-            Mode::empty(),
-        )
+        let mut parent = precommit_call(cancellation, || {
+            rustix::fs::openat(
+                self.root.as_fd(),
+                ".",
+                directory_open_flags(),
+                Mode::empty(),
+            )
+        })?
         .map_err(|error| map_parent_open_error(error, phase))?;
-        check_cancellation(cancellation)?;
-        ensure_root_is_linked(parent.as_fd(), phase)?;
+        ensure_root_is_linked(parent.as_fd(), phase, cancellation)?;
 
         let mut components = path.split('/').peekable();
         loop {
             check_cancellation(cancellation)?;
             let component = components.next().ok_or_else(invalid_arguments)?;
             if components.peek().is_none() {
-                let metadata = rustix::fs::fstat(&parent)
+                let metadata = precommit_call(cancellation, || rustix::fs::fstat(&parent))?
                     .map_err(|_| map_parent_revalidation_failure(phase))?;
-                check_cancellation(cancellation)?;
                 if !FileType::from_raw_mode(metadata.st_mode).is_dir() {
                     return Err(map_parent_rejected(phase));
                 }
@@ -1785,17 +1875,17 @@ impl CopyFileTool {
                     basename: component,
                 });
             }
-            parent = rustix::fs::openat(
-                parent.as_fd(),
-                component,
-                directory_open_flags(),
-                Mode::empty(),
-            )
+            parent = precommit_call(cancellation, || {
+                rustix::fs::openat(
+                    parent.as_fd(),
+                    component,
+                    directory_open_flags(),
+                    Mode::empty(),
+                )
+            })?
             .map_err(|error| map_parent_open_error(error, phase))?;
-            check_cancellation(cancellation)?;
-            let metadata =
-                rustix::fs::fstat(&parent).map_err(|_| map_parent_revalidation_failure(phase))?;
-            check_cancellation(cancellation)?;
+            let metadata = precommit_call(cancellation, || rustix::fs::fstat(&parent))?
+                .map_err(|_| map_parent_revalidation_failure(phase))?;
             if !FileType::from_raw_mode(metadata.st_mode).is_dir() {
                 return Err(map_parent_rejected(phase));
             }

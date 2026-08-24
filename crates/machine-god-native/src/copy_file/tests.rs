@@ -64,6 +64,7 @@ enum CheckpointMutation {
     StageNameReplacement,
     DestinationAppearance,
     MoveDestinationParent,
+    MoveSourceParent,
 }
 
 struct ScriptedEvidence {
@@ -78,6 +79,10 @@ struct ScriptedEvidence {
     publish_calls: usize,
     stage_open_calls: usize,
     collide_all_stages: bool,
+    cancel_during_stage_open: bool,
+    initial_stage_metadata_error: Option<rustix::io::Errno>,
+    replace_stage_before_initial_metadata: bool,
+    buffer_observations: Vec<(CopyBufferSite, usize, usize)>,
     staged_sync_script: Vec<Result<(), rustix::io::Errno>>,
     parent_sync_script: Vec<Result<(), rustix::io::Errno>>,
     staged_sync_calls: usize,
@@ -98,6 +103,10 @@ impl ScriptedEvidence {
             publish_calls: 0,
             stage_open_calls: 0,
             collide_all_stages: false,
+            cancel_during_stage_open: false,
+            initial_stage_metadata_error: None,
+            replace_stage_before_initial_metadata: false,
+            buffer_observations: Vec::new(),
             staged_sync_script: Vec::new(),
             parent_sync_script: Vec::new(),
             staged_sync_calls: 0,
@@ -118,6 +127,11 @@ impl ScriptedEvidence {
 }
 
 impl CopyFileEvidence for ScriptedEvidence {
+    fn observe_buffer(&mut self, site: CopyBufferSite, buffer: &[u8]) {
+        self.buffer_observations
+            .push((site, buffer.as_ptr() as usize, buffer.len()));
+    }
+
     fn checkpoint(&mut self, checkpoint: CopyCheckpoint, _cancellation: &CancellationToken) {
         self.checkpoints.push(checkpoint);
         if self.mutate_at == Some(checkpoint) {
@@ -144,6 +158,15 @@ impl CopyFileEvidence for ScriptedEvidence {
                     )
                     .unwrap();
                     fs::create_dir(self.workspace.join("destination-parent")).unwrap();
+                }
+                CheckpointMutation::MoveSourceParent => {
+                    fs::rename(
+                        self.workspace.join("source-parent"),
+                        self.workspace.join("moved-source-parent"),
+                    )
+                    .unwrap();
+                    fs::create_dir(self.workspace.join("source-parent")).unwrap();
+                    fs::write(self.workspace.join("source-parent/source"), b"replacement").unwrap();
                 }
             }
         }
@@ -173,7 +196,7 @@ impl CopyFileEvidence for ScriptedEvidence {
         if self.collide_all_stages {
             return Err(rustix::io::Errno::EXIST);
         }
-        rustix::fs::openat(
+        let result = rustix::fs::openat(
             parent,
             name,
             OFlags::RDWR
@@ -183,7 +206,31 @@ impl CopyFileEvidence for ScriptedEvidence {
                 | OFlags::CLOEXEC
                 | OFlags::NONBLOCK,
             Mode::from_raw_mode(0o600),
-        )
+        );
+        if result.is_ok() && self.cancel_during_stage_open {
+            let _ = self
+                .cancellation
+                .as_ref()
+                .expect("stage-open cancellation token")
+                .cancel();
+        }
+        result
+    }
+
+    fn initial_stage_metadata(
+        &mut self,
+        file: BorrowedFd<'_>,
+    ) -> Result<rustix::fs::Stat, rustix::io::Errno> {
+        if self.replace_stage_before_initial_metadata {
+            let staged = self.workspace.join(format!("{TEMP_NAME_PREFIX}{:032x}", 0));
+            fs::rename(&staged, self.workspace.join("moved-initial-stage")).unwrap();
+            fs::write(staged, b"intruder").unwrap();
+        }
+        if let Some(error) = self.initial_stage_metadata_error {
+            Err(error)
+        } else {
+            rustix::fs::fstat(file)
+        }
     }
 
     fn publish(
@@ -466,6 +513,29 @@ fn precommit_and_postcommit_sync_have_exact_sixteen_call_caps() {
 }
 
 #[test]
+fn same_call_cancellation_wins_success_failure_and_definitive_sync_results() {
+    for result in [Ok(()), Err(rustix::io::Errno::IO)] {
+        let cancellation = CancellationToken::new();
+        let token = cancellation.clone();
+        let error = precommit_call(&cancellation, || {
+            let _ = token.cancel();
+            result
+        })
+        .unwrap_err();
+        assert_error(error, "copy_file_cancelled", false);
+    }
+
+    let cancellation = CancellationToken::new();
+    let token = cancellation.clone();
+    let error = sync_precommit_with(&cancellation, |_| {
+        let _ = token.cancel();
+        Err(rustix::io::Errno::IO)
+    })
+    .unwrap_err();
+    assert_error(error, "copy_file_cancelled", false);
+}
+
+#[test]
 fn full_execution_publishes_exactly_once_and_reuses_one_stage_name() {
     let (temporary, tool) = fixture("success");
     let mut evidence = ScriptedEvidence::new(temporary.path());
@@ -475,6 +545,26 @@ fn full_execution_publishes_exactly_once_and_reuses_one_stage_name() {
     assert_eq!(evidence.stage_open_calls, 1);
     assert_eq!(evidence.staged_sync_calls, 1);
     assert_eq!(evidence.parent_sync_calls, 1);
+    assert_eq!(
+        evidence
+            .buffer_observations
+            .iter()
+            .map(|(site, _, length)| (*site, *length))
+            .collect::<Vec<_>>(),
+        [
+            (CopyBufferSite::Copy, MAX_COPY_FILE_CHUNK_BYTES),
+            (CopyBufferSite::InitialStageHash, MAX_COPY_FILE_CHUNK_BYTES),
+            (CopyBufferSite::FinalStageHash, MAX_COPY_FILE_CHUNK_BYTES),
+            (CopyBufferSite::PublishedHash, MAX_COPY_FILE_CHUNK_BYTES),
+        ]
+    );
+    let buffer_address = evidence.buffer_observations[0].1;
+    assert!(
+        evidence
+            .buffer_observations
+            .iter()
+            .all(|(_, address, _)| *address == buffer_address)
+    );
     assert_eq!(
         fs::read(temporary.path().join("source")).unwrap(),
         b"original"
@@ -487,6 +577,101 @@ fn full_execution_publishes_exactly_once_and_reuses_one_stage_name() {
         output.content,
         json!({"source":"source","destination":"destination","bytes_copied":8})
     );
+}
+
+#[test]
+fn serialized_guards_accept_exactly_their_limits_and_reject_one_more_byte() {
+    for limit in [
+        MAX_COPY_FILE_SERIALIZED_ARGUMENT_BYTES,
+        MAX_COPY_FILE_SERIALIZED_RESULT_BYTES,
+    ] {
+        let exact = "a".repeat(limit - 2);
+        let one_over = "a".repeat(limit - 1);
+        assert!(serialized_value_fits(&exact, limit));
+        assert!(!serialized_value_fits(&one_over, limit));
+    }
+}
+
+#[test]
+fn one_streaming_buffer_remains_constant_at_empty_small_and_maximum_source_sizes() {
+    for size in [0_u64, 1, MAX_COPY_FILE_SOURCE_BYTES as u64] {
+        let (temporary, tool) = fixture("buffer-sizes");
+        fs::File::options()
+            .write(true)
+            .open(temporary.path().join("source"))
+            .unwrap()
+            .set_len(size)
+            .unwrap();
+        let mut evidence = ScriptedEvidence::new(temporary.path());
+
+        execute_with(&tool, &CancellationToken::new(), &mut evidence).unwrap();
+
+        assert_eq!(evidence.buffer_observations.len(), 4);
+        let buffer_address = evidence.buffer_observations[0].1;
+        assert!(
+            evidence
+                .buffer_observations
+                .iter()
+                .all(|(_, address, length)| {
+                    *address == buffer_address && *length == MAX_COPY_FILE_CHUNK_BYTES
+                })
+        );
+    }
+}
+
+#[test]
+fn successful_stage_open_is_cleanup_owned_before_cancellation_and_validation() {
+    for failure in ["cancel", "metadata", "replacement"] {
+        let (temporary, tool) = fixture("initial-stage-cleanup");
+        let cancellation = CancellationToken::new();
+        let mut evidence = ScriptedEvidence::new(temporary.path());
+        if failure == "cancel" {
+            evidence.cancel_during_stage_open = true;
+            evidence.cancellation = Some(cancellation.clone());
+        } else if failure == "metadata" {
+            evidence.initial_stage_metadata_error = Some(rustix::io::Errno::IO);
+        } else {
+            evidence.replace_stage_before_initial_metadata = true;
+            evidence.initial_stage_metadata_error = Some(rustix::io::Errno::IO);
+        }
+
+        let error = execute_with(&tool, &cancellation, &mut evidence).unwrap_err();
+        assert_error(
+            error,
+            if failure == "cancel" {
+                "copy_file_cancelled"
+            } else {
+                "copy_file_copy_failed"
+            },
+            failure != "cancel",
+        );
+        assert_eq!(evidence.stage_open_calls, 1);
+        let stages = fs::read_dir(temporary.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(TEMP_NAME_PREFIX)
+            })
+            .count();
+        if failure == "replacement" {
+            assert_eq!(stages, 1);
+            assert_eq!(
+                fs::read(
+                    temporary
+                        .path()
+                        .join(format!("{TEMP_NAME_PREFIX}{:032x}", 0))
+                )
+                .unwrap(),
+                b"intruder"
+            );
+            assert!(temporary.path().join("moved-initial-stage").exists());
+        } else {
+            assert_eq!(stages, 0);
+        }
+    }
 }
 
 #[test]
@@ -655,6 +840,42 @@ fn destination_parent_moved_after_final_rewalk_receives_the_copy() {
 }
 
 #[test]
+fn source_parent_replaced_after_final_rewalk_makes_commit_ambiguous() {
+    let temporary = TempDirectory::new("replaced-source-parent");
+    fs::create_dir(temporary.path().join("source-parent")).unwrap();
+    fs::write(temporary.path().join("source-parent/source"), b"original").unwrap();
+    let tool = CopyFileTool::open(temporary.path()).unwrap();
+    let mut evidence = ScriptedEvidence::new(temporary.path());
+    evidence.mutate_at = Some(CopyCheckpoint::AfterFinalStageValidation);
+    evidence.checkpoint_mutation = CheckpointMutation::MoveSourceParent;
+
+    let error = execute_paths_with(
+        &tool,
+        "source-parent/source",
+        "destination",
+        &CancellationToken::new(),
+        &mut evidence,
+    )
+    .unwrap_err();
+
+    assert_error(error, "copy_file_commit_ambiguous", false);
+    assert_eq!(evidence.publish_calls, 1);
+    assert_eq!(evidence.parent_sync_calls, 1);
+    assert_eq!(
+        fs::read(temporary.path().join("destination")).unwrap(),
+        b"original"
+    );
+    assert_eq!(
+        fs::read(temporary.path().join("source-parent/source")).unwrap(),
+        b"replacement"
+    );
+    assert_eq!(
+        fs::read(temporary.path().join("moved-source-parent/source")).unwrap(),
+        b"original"
+    );
+}
+
+#[test]
 fn staged_and_parent_sync_exhaustion_stay_on_the_correct_commit_side() {
     let interrupted = vec![Err(rustix::io::Errno::INTR); MAX_INTERRUPTED_SYSCALL_ATTEMPTS];
 
@@ -791,7 +1012,7 @@ fn cleanup_dual_failure_is_bounded_and_leaves_unowned_state_untouched() {
         parent.as_fd(),
         file.as_fd(),
         "stage",
-        FileIdentity::from_stat(&metadata),
+        Some(FileIdentity::from_stat(&metadata)),
         &evidence,
     );
 
@@ -822,7 +1043,7 @@ fn cleanup_identity_check_does_not_delete_a_replacement() {
         parent.as_fd(),
         held.as_fd(),
         "stage",
-        identity,
+        Some(identity),
         &NativeCopyFileCleanupEvidence,
     );
 
