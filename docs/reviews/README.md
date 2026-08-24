@@ -33,3 +33,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native `edit_file` delivery review](m03-edit-file-review-01.md)
 - [Milestone 03 native `delete_file` delivery review](m03-delete-file-review-01.md)
 - [Milestone 03 native `rename_file` implementation review](m03-rename-file-review-01.md)
+- [Milestone 03 native `copy_file` candidate review](m03-copy-file-review-01.md)

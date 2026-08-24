@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-two delivered bounded slices. Native `edit_file` is delivered on
+with twenty-three delivered bounded slices. Native `edit_file` is delivered on
 final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
 Exact feature CI `32651168514` passed all six jobs, and feature benchmark
 workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
@@ -142,6 +142,19 @@ benchmark `32675233542`, main CI `32675562978`, and main benchmark
 artifacts. Native `rename_file` is delivered as slice twenty-three. The
 remaining native tools, CLI ownership, and Milestone 03 completion boundary
 remain pending.
+Final rename documentation record
+`226040780eb14dd72e86d0a002dc4bf61ba2ddfc` is green under exact feature CI
+`32675981622`, feature benchmark `32675981593`, main CI `32676296870`, and main
+benchmark `32676296945`; both benchmark workflows retain exactly two
+nonexpired exact-SHA artifacts. The twenty-fourth bounded slice, native
+`copy_file`, is **CONTRACT IN PROGRESS** from that exact delivered base. Its
+two-endpoint typed authority, 16 MiB binary-safe streaming bound, absent-only
+atomic publication, source-stability and destination-integrity checks,
+destination-parent durability, explicit race limitations, parallel ownership,
+and fresh same-SHA review protocol are frozen in
+[`copy-file.md`](copy-file.md) and
+[`m03-copy-file-review-01.md`](reviews/m03-copy-file-review-01.md).
+Implementation, independent evidence, review, and delivery remain pending.
 The first
 formal sixteenth-slice
 candidate is composed through `dec98e0`, whose three review tracks were not
@@ -1687,6 +1700,19 @@ gate:
   exactly two nonexpired exact-SHA artifacts retained by each benchmark run.
   Native `rename_file` is delivered as slice twenty-three under
   [`rename-file.md`](rename-file.md).
+  The twenty-fourth `copy_file` slice is **CONTRACT IN PROGRESS** from exact
+  delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. It is frozen as
+  one existing confined regular file copied without source mutation to one
+  absent confined destination through exact two-endpoint `FilesystemCopy`
+  policy input, bounded binary streaming into a private destination-local
+  stage, source and staged-content verification, one `NOREPLACE` publication,
+  postcommit destination verification, and bounded destination-parent sync.
+  It deliberately adds no overwrite, parent creation, directory copy, symlink
+  following, external path, full-content allocation, CLI behavior, new
+  dependency, benchmark workload, performance claim, or fx-equivalence claim.
+  Production, independent tests, three fresh same-SHA reviews, and exact
+  feature/main delivery gates remain pending under
+  [`copy-file.md`](copy-file.md).
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
