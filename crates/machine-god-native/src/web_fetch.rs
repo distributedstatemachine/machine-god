@@ -1682,27 +1682,37 @@ where
     MakeEffect: FnOnce() -> Effect,
     Effect: Future,
 {
+    request.execution_boundary(cancellation)?;
+    let connect_deadline = Instant::now() + connect_timeout;
     await_native_connect_with_waiter(
         request,
         cancellation,
         make_effect,
-        tokio::time::sleep(connect_timeout),
+        connect_deadline,
+        tokio::time::sleep_until(connect_deadline),
+        Instant::now,
     )
     .await
 }
 
-async fn await_native_connect_with_waiter<MakeEffect, Effect, Timeout>(
+async fn await_native_connect_with_waiter<MakeEffect, Effect, Timeout, Now>(
     request: &WebFetchRequest,
     cancellation: &CancellationToken,
     make_effect: MakeEffect,
+    connect_deadline: Instant,
     timeout: Timeout,
+    mut now: Now,
 ) -> Result<Effect::Output, WebFetchTransportError>
 where
     MakeEffect: FnOnce() -> Effect,
     Effect: Future,
     Timeout: Future<Output = ()>,
+    Now: FnMut() -> Instant,
 {
     request.execution_boundary(cancellation)?;
+    if connect_deadline <= now() {
+        return Err(transport_error(WebFetchTransportErrorKind::Timeout));
+    }
     let mut effect = std::pin::pin!(make_effect());
     let mut timeout = std::pin::pin!(timeout);
     poll_fn(|context| {
@@ -1715,9 +1725,18 @@ where
                 Err(error) => Err(error),
             });
         }
+        if connect_deadline <= now() {
+            return Poll::Ready(Err(transport_error(WebFetchTransportErrorKind::Timeout)));
+        }
         match effect.as_mut().poll(context) {
             Poll::Ready(output) => {
-                Poll::Ready(request.execution_boundary(cancellation).map(|()| output))
+                if let Err(error) = request.execution_boundary(cancellation) {
+                    return Poll::Ready(Err(error));
+                }
+                if connect_deadline <= now() {
+                    return Poll::Ready(Err(transport_error(WebFetchTransportErrorKind::Timeout)));
+                }
+                Poll::Ready(Ok(output))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -2108,6 +2127,32 @@ mod tests {
     }
 
     impl Drop for PendingNativeEffect {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    struct ReadyNativeEffect {
+        output: Option<Result<(), &'static str>>,
+        polls: Arc<AtomicU32>,
+        drops: Arc<AtomicU32>,
+        connect_deadline_due: Arc<AtomicBool>,
+    }
+
+    impl Future for ReadyNativeEffect {
+        type Output = Result<(), &'static str>;
+
+        fn poll(
+            mut self: Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+        ) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            self.connect_deadline_due.store(true, Ordering::Release);
+            Poll::Ready(self.output.take().unwrap())
+        }
+    }
+
+    impl Drop for ReadyNativeEffect {
         fn drop(&mut self) {
             self.drops.fetch_add(1, Ordering::AcqRel);
         }
@@ -2779,6 +2824,7 @@ mod tests {
         let effect_polls = Arc::new(AtomicU32::new(0));
         let effect_drops = Arc::new(AtomicU32::new(0));
         let timeout_polls = Arc::new(AtomicU32::new(0));
+        let connect_deadline = Instant::now() + Duration::from_secs(60);
 
         let result = runtime.block_on(await_native_connect_with_waiter(
             &canonical,
@@ -2788,6 +2834,7 @@ mod tests {
                 let drops = Arc::clone(&effect_drops);
                 move || PendingNativeEffect { polls, drops }
             },
+            connect_deadline,
             poll_fn({
                 let polls = Arc::clone(&timeout_polls);
                 move |context| {
@@ -2799,6 +2846,7 @@ mod tests {
                     }
                 }
             }),
+            Instant::now,
         ));
 
         assert_eq!(
@@ -2811,6 +2859,66 @@ mod tests {
     }
 
     #[test]
+    fn native_connect_deadline_rejects_ready_success_and_error_from_same_poll() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let canonical = request("https://example.com/", "example.com", None);
+        let cancellation = CancellationToken::new();
+
+        for output in [Ok(()), Err("connect failed")] {
+            let effect_polls = Arc::new(AtomicU32::new(0));
+            let effect_drops = Arc::new(AtomicU32::new(0));
+            let timeout_polls = Arc::new(AtomicU32::new(0));
+            let connect_deadline_due = Arc::new(AtomicBool::new(false));
+            let before_connect_deadline = Instant::now();
+            let connect_deadline = before_connect_deadline + Duration::from_secs(60);
+
+            let result = runtime.block_on(await_native_connect_with_waiter(
+                &canonical,
+                &cancellation,
+                {
+                    let polls = Arc::clone(&effect_polls);
+                    let drops = Arc::clone(&effect_drops);
+                    let connect_deadline_due = Arc::clone(&connect_deadline_due);
+                    move || ReadyNativeEffect {
+                        output: Some(output),
+                        polls,
+                        drops,
+                        connect_deadline_due,
+                    }
+                },
+                connect_deadline,
+                poll_fn({
+                    let polls = Arc::clone(&timeout_polls);
+                    move |_context| {
+                        polls.fetch_add(1, Ordering::AcqRel);
+                        Poll::Pending
+                    }
+                }),
+                {
+                    let connect_deadline_due = Arc::clone(&connect_deadline_due);
+                    move || {
+                        if connect_deadline_due.load(Ordering::Acquire) {
+                            connect_deadline
+                        } else {
+                            before_connect_deadline
+                        }
+                    }
+                },
+            ));
+
+            assert_eq!(
+                result.unwrap_err().kind(),
+                WebFetchTransportErrorKind::Timeout
+            );
+            assert_eq!(timeout_polls.load(Ordering::Acquire), 1);
+            assert_eq!(effect_polls.load(Ordering::Acquire), 1);
+            assert_eq!(effect_drops.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
     fn native_connect_limit_preserves_cancellation_and_carried_deadline_authority() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -2818,6 +2926,7 @@ mod tests {
         let canonical = request("https://example.com/", "example.com", None);
         let cancellation = CancellationToken::new();
         let constructions = Arc::new(AtomicU32::new(0));
+        let connect_deadline = Instant::now() + Duration::from_secs(60);
         let cancelled = runtime.block_on(await_native_connect_with_waiter(
             &canonical,
             &cancellation,
@@ -2828,12 +2937,14 @@ mod tests {
                     std::future::ready(())
                 }
             },
+            connect_deadline,
             {
                 let cancellation = cancellation.clone();
                 async move {
                     cancellation.cancel();
                 }
             },
+            Instant::now,
         ));
         assert_eq!(
             cancelled.unwrap_err().kind(),
@@ -2841,9 +2952,47 @@ mod tests {
         );
         assert_eq!(constructions.load(Ordering::Acquire), 1);
 
+        let cancellation = CancellationToken::new();
+        let connect_deadline_due = Arc::new(AtomicBool::new(false));
+        let before_connect_deadline = Instant::now();
+        let connect_deadline = before_connect_deadline + Duration::from_secs(60);
+        let cancelled = runtime.block_on(await_native_connect_with_waiter(
+            &canonical,
+            &cancellation,
+            {
+                let cancellation = cancellation.clone();
+                let connect_deadline_due = Arc::clone(&connect_deadline_due);
+                move || {
+                    poll_fn(move |_context| {
+                        connect_deadline_due.store(true, Ordering::Release);
+                        cancellation.cancel();
+                        Poll::Ready(Err::<(), &'static str>("connect failed"))
+                    })
+                }
+            },
+            connect_deadline,
+            std::future::pending(),
+            {
+                let connect_deadline_due = Arc::clone(&connect_deadline_due);
+                move || {
+                    if connect_deadline_due.load(Ordering::Acquire) {
+                        connect_deadline
+                    } else {
+                        before_connect_deadline
+                    }
+                }
+            },
+        ));
+        assert_eq!(
+            cancelled.unwrap_err().kind(),
+            WebFetchTransportErrorKind::Cancelled
+        );
+        assert!(connect_deadline_due.load(Ordering::Acquire));
+
         let mut request = request("https://example.com/", "example.com", None);
         request.install_execution_deadline(Instant::now());
         let constructions = Arc::new(AtomicU32::new(0));
+        let connect_deadline = Instant::now() + Duration::from_secs(60);
         let timed_out = runtime.block_on(await_native_connect_with_waiter(
             &request,
             &CancellationToken::new(),
@@ -2854,7 +3003,9 @@ mod tests {
                     std::future::ready(())
                 }
             },
+            connect_deadline,
             std::future::pending(),
+            Instant::now,
         ));
         assert_eq!(
             timed_out.unwrap_err().kind(),
