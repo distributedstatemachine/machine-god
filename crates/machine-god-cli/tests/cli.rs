@@ -24,11 +24,13 @@ const HELP: &str = concat!(
     "Usage:\n",
     "  machine-god\n",
     "  machine-god help\n",
+    "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
     "  machine-god status [--json]\n",
     "\n",
     "Commands:\n",
     "  help         Show this help\n",
+    "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
     "  status       Show configuration and runtime information\n",
     "\n",
@@ -38,7 +40,7 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | permissions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | models [--json] | permissions [--json] | status [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -106,6 +108,18 @@ fn run_without_roots(arguments: &[&str]) -> Output {
         .unwrap()
 }
 
+fn run_models_with_invalid_credential(arguments: &[&str], config: &OsStr, state: &OsStr) -> Output {
+    machine_god()
+        .args(arguments)
+        .env_remove("HOME")
+        .env("XDG_CONFIG_HOME", config)
+        .env("XDG_STATE_HOME", state)
+        .env("VERCEL_OIDC_TOKEN", "CLI MODELS INVALID CREDENTIAL SECRET")
+        .env_remove("AI_GATEWAY_API_KEY")
+        .output()
+        .unwrap()
+}
+
 fn config_path(config_root: &Path) -> PathBuf {
     config_root.join("machine-god/config.json")
 }
@@ -129,6 +143,27 @@ fn assert_config_failure(output: &Output) {
     assert_eq!(output.stderr, CONFIG_FAILURE.as_bytes());
 }
 
+fn assert_models_unavailable(output: &Output, json: bool) {
+    assert_eq!(output.status.code(), Some(1));
+    if json {
+        assert_eq!(
+            output.stdout,
+            concat!(
+                "{\"kind\":\"models\",\"error\":",
+                "\"could not list models: Unavailable\",\"code\":\"Unavailable\"}\n",
+            )
+            .as_bytes()
+        );
+        assert!(output.stderr.is_empty());
+    } else {
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            output.stderr,
+            b"machine-god models: could not list models: Unavailable\n"
+        );
+    }
+}
+
 #[test]
 fn identity_and_version_aliases_are_byte_stable() {
     for arguments in [&[][..], &["--version"][..], &["-V"][..]] {
@@ -149,7 +184,12 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["unknown"][..],
         &["help", "extra"][..],
         &["--json", "status"][..],
+        &["--json", "models"][..],
         &["--json", "permissions"][..],
+        &["models", "--json=true"][..],
+        &["models", "extra"][..],
+        &["models", "--json", "extra"][..],
+        &["models", "--json", "--json"][..],
         &["permissions", "--json=true"][..],
         &["permissions", "extra"][..],
         &["permissions", "--json", "extra"][..],
@@ -162,6 +202,108 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
         assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+}
+
+#[test]
+fn invalid_models_arguments_precede_invalid_configuration() {
+    let temporary = TestDirectory::new("models-argument-precedence");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("state");
+    let contents = b"CLI_MODELS_ARGUMENT_PRECEDENCE_SECRET:not-json";
+    let path = write_config(&config_root, contents);
+
+    for arguments in [&["models", "extra"][..], &["models", "--json", "extra"][..]] {
+        let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+
+    assert_eq!(fs::read(path).unwrap(), contents);
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn models_invalid_config_is_a_fixed_redacted_failure_without_writes() {
+    let temporary = TestDirectory::new("models-invalid-config");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("state");
+    let contents = b"CLI_MODELS_INVALID_CONFIG_SECRET:not-json";
+    let path = write_config(&config_root, contents);
+
+    for (arguments, json) in [(&["models"][..], false), (&["models", "--json"][..], true)] {
+        let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+        assert_models_unavailable(&output, json);
+    }
+
+    assert_eq!(fs::read(path).unwrap(), contents);
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn models_invalid_credential_fails_before_network_without_creating_roots() {
+    let temporary = TestDirectory::new("models-invalid-credential");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+
+    let human = run_models_with_invalid_credential(
+        &["models"],
+        config_root.as_os_str(),
+        state_root.as_os_str(),
+    );
+    assert_models_unavailable(&human, false);
+
+    let json = run_models_with_invalid_credential(
+        &["models", "--json"],
+        config_root.as_os_str(),
+        state_root.as_os_str(),
+    );
+    assert_models_unavailable(&json, true);
+
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn models_reads_v1_v2_and_v3_without_rewrite_or_state_access() {
+    let schemas: [(&str, &[u8]); 3] = [
+        (
+            "v1",
+            br#"{"schema_version":1,"permission_mode":"ask"}"#,
+        ),
+        (
+            "v2",
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_MODELS_V2_MARKER"}"#,
+        ),
+        (
+            "v3",
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_MODELS_V3_MARKER","credential_source":"environment"}"#,
+        ),
+    ];
+
+    for (schema, contents) in schemas {
+        let temporary = TestDirectory::new(&format!("models-schema-{schema}"));
+        let config_root = temporary.path().join("config");
+        let state_root = temporary.path().join("missing-state");
+        let path = write_config(&config_root, contents);
+
+        for (arguments, json) in [(&["models"][..], false), (&["models", "--json"][..], true)] {
+            let output = run_models_with_invalid_credential(
+                arguments,
+                config_root.as_os_str(),
+                state_root.as_os_str(),
+            );
+            assert_models_unavailable(&output, json);
+            assert_eq!(fs::read(&path).unwrap(), contents);
+            assert!(!state_root.exists());
+        }
+        let entries = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].file_name(), "config.json");
     }
 }
 
