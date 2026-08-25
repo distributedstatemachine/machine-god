@@ -1522,6 +1522,52 @@ This remediation record makes no replacement-gate, formal-review outcome,
 candidate, workflow, integration, delivery, performance, or fx-equivalence
 claim.
 
+## Cycle-10 remediation replacement gate
+
+Exact remediation commit `4d5fa4f1e3a7b2c53b5fad360cf3c85a83a021aa`,
+tree `ce79fce278903196858ed47de5c22b6535beb08b`, passed the complete local
+replacement gate under exact `rustc 1.94.1 (e408947bf 2026-03-25)` and
+`cargo 1.94.1 (29ea6fb6a 2026-03-24)` without fallback.
+
+Focused evidence is green:
+
+- the parsed native-manifest regression passes 2/2;
+- the host default native package checks without features and Cargo metadata
+  resolves successfully;
+- direct depth-one dependency trees prove Linux/macOS `sha2` presence for both
+  default and `web-fetch-http`, FreeBSD/Windows absence by default and presence
+  with `web-fetch-http`, and WASI Preview 1 absence in both modes; and
+- `git diff --check` accepts the exact five-file remediation delta while
+  `Cargo.lock` remains unchanged.
+
+The repository-required commands all pass on the exact remediation:
+
+```sh
+cargo +1.94.1 fmt --all -- --check
+cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings
+cargo +1.94.1 test --workspace
+cargo +1.94.1 test --doc --workspace
+```
+
+The locked release build and help smoke pass. The resulting arm64 Mach-O
+`target/release/machine-god` is 319,152 bytes with SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`; its
+version remains `machine-god 0.1.0 (engine API 1)`. The unchanged digest from
+the preceding source gate is expected because the remediation changes only
+feature resolution on targets where the default CLI does not consume `sha2`.
+
+An initial universal-optional interpretation was rejected by the focused host
+default compile because Linux/macOS `copy_file` and session-store hashing also
+consume `sha2`. The integrated disjoint-target remediation and the green matrix
+above are the replacement evidence. A display-only manual tree loop also
+stopped at the first expected no-match under `set -e`; explicit present/absent
+assertions then passed every matrix cell. Neither harness correction was treated
+as product success evidence.
+
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim. Three fresh agents
+must review one later exact cycle-11 marker SHA and tree.
+
 The local gate must include the repository-required commands:
 
 ```sh

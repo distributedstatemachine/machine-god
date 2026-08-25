@@ -294,6 +294,18 @@ other non-WASM targets through `web-fetch-http`, and omitting it on WASM.
 Parsed-manifest and resolved direct-tree evidence proves that matrix. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, delivery, performance, or fx-equivalence claim.
+Exact cycle-10 remediation
+`4d5fa4f1e3a7b2c53b5fad360cf3c85a83a021aa`, tree
+`ce79fce278903196858ed47de5c22b6535beb08b`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. The parsed-
+manifest 2/2 regression, host default check, metadata, exact direct-tree target
+matrix, required formatting, all-target/all-feature warnings-denied Clippy,
+workspace tests, doctests, diff check, and locked-release help smoke are green.
+The 319,152-byte release binary has SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim; reviewer reports
+identify the exact candidate they reviewed.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2490,6 +2502,17 @@ default and feature presence, FreeBSD/Windows default absence and feature
 presence, and WASM absence. This remediation record makes no replacement-gate,
 formal-review outcome, candidate, workflow, integration, delivery,
 performance, or fx-equivalence claim.
+Exact cycle-10 remediation
+`4d5fa4f1e3a7b2c53b5fad360cf3c85a83a021aa`, tree
+`ce79fce278903196858ed47de5c22b6535beb08b`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. Focused manifest,
+host-default, metadata, and target-tree checks plus every required workspace
+command, diff check, and a locked-release help smoke are green. The release
+binary is 319,152 bytes with SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim; reviewer reports
+identify the exact candidate they reviewed.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3412,6 +3435,13 @@ gate:
   regressions. This remediation record makes no replacement-gate, formal-
   review outcome, candidate, workflow, integration, delivery, performance, or
   fx-equivalence claim.
+  Exact cycle-10 remediation
+  `4d5fa4f1e3a7b2c53b5fad360cf3c85a83a021aa`, tree
+  `ce79fce278903196858ed47de5c22b6535beb08b`, passed the complete exact-1.94.1
+  replacement gate without fallback: focused manifest/default/metadata/tree
+  checks, all required workspace commands, diff check, and locked-release help
+  smoke are green. This gate record makes no formal-review outcome, candidate,
+  workflow, integration, delivery, performance, or fx-equivalence claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
