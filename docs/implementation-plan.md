@@ -128,10 +128,10 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
-The twenty-ninth bounded slice is contract-frozen and locally implemented, but
-not yet a gated or reviewed candidate, integrated to `main`, or delivered. Its
+The twenty-ninth bounded slice is contract-frozen, locally implemented, and
+cycle-1 rejected; it is not integrated to `main` or delivered. Its
 exact top-level `models [--json]` boundary is
-[`models-cli.md`](models-cli.md), and its pending review protocol is
+[`models-cli.md`](models-cli.md), and its review ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). It starts
 from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442` and the pinned fx observation
@@ -144,12 +144,13 @@ provider-neutral available-model/access/result/error values and an object-safe
 catalog trait. Native owns process credentials plus Gateway access/fallback,
 deadline, parsing, bounds, ordering, and one fixed GET implementation. The CLI
 remains a thin current-thread Tokio host and owns rendering/output bounds.
-Checked-deadline/terminal-precedence remediation is present at
-`52e9b7d74f3979f7f7f55387243e96bd78773fe3`; 35 focused independent native
-tests are present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. A complete
-exact-toolchain candidate gate, three fresh adversarial reviews, feature/main
-integration, and delivery remain pending. No candidate is green, and no
-product-performance, compatibility-promotion, or fx-equivalence claim is made.
+Exact cycle-1 candidate `6277aa3`, tree `b5e2445`, passed its complete local
+gate but was rejected with two medium and six low findings. Local remediation
+at `02c9f86`, `d2890c3`, and `06c9408` raises focused native evidence to 36 and
+CLI unit evidence to 18. A complete exact-toolchain replacement gate, three
+fresh cycle-2 reviews, feature/main integration, and delivery remain pending.
+No candidate is green, and no product-performance, compatibility-promotion, or
+fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2830,11 +2831,11 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Locally implemented bounded slice 29: top-level `models`
+### Cycle-1-rejected bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
-boundary is [`models-cli.md`](models-cli.md); its pending adversarial protocol is
+boundary is [`models-cli.md`](models-cli.md); its adversarial record is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). The
 contract is frozen and local core/native/CLI implementation exists in exact
 components `a6c6ff333176689b0c53bcf35070e9d59afd1b28`,
@@ -2842,18 +2843,27 @@ components `a6c6ff333176689b0c53bcf35070e9d59afd1b28`,
 `e84ed2a46b1ac5fe7428414375609af562c65105`. Checked-deadline and terminal-
 precedence remediation is `52e9b7d74f3979f7f7f55387243e96bd78773fe3`.
 Independent native evidence `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`
-contains 35 focused tests (14 provider/parser, 15 loopback HTTP, and 6
+initially contained 35 focused tests (14 provider/parser, 15 loopback HTTP, and 6
 credential), sourced independently from `219f6a71a766e9b833a98f236cfbc3aaff292cd5`.
 The local feature-topology refinement adds the dedicated non-WASM
 `ai-gateway-model-catalog-http` gate and makes the CLI select it without
-activating `web-fetch-http`, Hickory DNS, or Moka. The existing
-`ai-gateway-http` feature still includes catalog HTTP plus `web-fetch-http`, so
-its delivered generation/reference-host behavior is preserved. This local
-refinement remains pending the complete candidate gate, fresh adversarial
+activating direct generation `bytes`, `web-fetch-http`, Hickory DNS, Moka, or
+Tokio's signal backend. Only the CLI dependency requests signal handling. The
+existing `ai-gateway-http` feature still adds direct `bytes` and includes
+catalog HTTP plus `web-fetch-http`, so
+its delivered generation/reference-host behavior is preserved. Exact cycle-1
+candidate `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
+`b5e2445ed90df000255b51c2c989d71965db1d77`, passed the complete local gate and
+was rejected by three fresh tracks with a deduplicated union of two medium and
+six low findings. Provider deadline/response-lifetime remediation
+`02c9f86619fbdc202f5065c41090415a179316cf`, signal/config/WASI remediation
+`d2890c34bc628dd9ad425f5921e3816bbe1f5eef`, and dependency-topology remediation
+`06c94087e91ec298877fbe981695d2638fa1db1e` are composed locally. Focused native
+evidence is now 36 tests (15 provider/parser, 15 loopback HTTP, 6 credential),
+and CLI unit evidence is 18 tests. The complete replacement gate, fresh cycle-2
 review, exact feature workflows, fast-forward integration, and exact `main`
-workflows; it makes no product-performance claim.
-The complete local candidate gate, adversarial results, workflow, integration,
-and delivery remain pending; no candidate is green.
+workflows remain pending; no candidate is green and this makes no product-
+performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -2882,9 +2892,10 @@ authorization.
 
 The total catalog budget is a checked 30 seconds including capacity wait, with
 active attempts defaulting to 8 and hard-limited to 32. The same absolute deadline is
-passed unchanged to both possible transport calls; each HTTP call creates its
-own attempt-local cancellation waiter and timer against that deadline rather
-than sharing one outer sleep. Independent inclusive caps are
+passed unchanged to both possible transport calls. The provider independently
+polls the transport's required deadline authority, and each HTTP call creates
+its own attempt-local cancellation waiter and timer against that deadline
+rather than sharing one outer sleep. Independent inclusive caps are
 256 KiB retained response body, JSON depth 32, JSON nodes
 16,384, 1,024 raw `data` entries, 512 valid language entries, 1–128 visible-
 ASCII bytes per model ID, 24 KiB aggregate accepted ID bytes, and 64 KiB
@@ -3861,8 +3872,8 @@ gate:
   `workspace`. Observable compatibility is scenario-based; command names may
   remain intentional differences when documented. `models [--json]` has its
   bounded slice-29 contract and local implementation, but this combined item
-  remains unchecked until the complete local candidate gate, fresh review,
-  feature workflows, fast-forward, and exact-
+  remains unchecked after rejected cycle 1 until the complete replacement
+  local gate, fresh cycle-2 review, feature workflows, fast-forward, and exact-
   `main` gates are complete.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a

@@ -2,7 +2,7 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-locally composed, not-yet-reviewed twenty-ninth [`models` CLI
+locally composed, cycle-1-rejected twenty-ninth [`models` CLI
 implementation](models-cli.md) keeps only validated available-model,
 access, result, error, and catalog-trait values provider-neutral in core. It
 confines Gateway parsing, ordering, fallback, deadline, credentials, TLS, HTTP,
@@ -17,22 +17,25 @@ one fully stripped anonymous fallback. The 30-second operation, default-8/hard-
 32 capacity, 256 KiB retained body, JSON depth/node, entry/ID, and 64 KiB
 output bounds are normative. All external failures use a closed redacted map.
 One checked, unchanged absolute provider deadline covers both possible
-attempts; each HTTP call creates and drops its own attempt-local cancellation waiter and timer
-against that deadline. Terminal-precedence remediation is present at
-`52e9b7d74f3979f7f7f55387243e96bd78773fe3`, with 35 focused independent
-native tests at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. The complete local
-candidate gate, adversarial review, integration, and delivery remain pending;
-no candidate is green. The ledger is
+attempts; the provider polls a separate deadline authority and each HTTP call
+creates and drops its own attempt-local cancellation waiter and timer against
+that deadline. Exact cycle-1 candidate `6277aa3`, tree `b5e2445`, was rejected
+with two medium and six low findings. Remediation is composed at `02c9f86`,
+`d2890c3`, and `06c9408`, with 36 focused native tests. The complete replacement
+gate, three fresh cycle-2 reviews, integration, and delivery remain pending; no
+candidate is green. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 Catalog HTTP now has a dedicated non-WASM
 `ai-gateway-model-catalog-http` feature. The CLI enables only this narrower
-surface, so listing models does not activate `web-fetch-http`, Hickory DNS, or
-Moka authority. Shared bearer validation, credential discovery, pinned TLS
-roots, and catalog GET exports are available under either native HTTP feature;
-the generation transport and reference host remain `ai-gateway-http`-only.
-The existing broader feature includes both catalog HTTP and web fetch, so its
-delivered behavior and public generation surface remain available.
+surface, so listing models does not activate `web-fetch-http`, Hickory DNS,
+Moka authority, direct generation `bytes`, or Tokio's signal backend. Signal
+handling is activated only by the CLI dependency. Shared bearer validation,
+credential discovery, pinned TLS roots, and catalog GET exports are available
+under either native HTTP feature; the generation transport and reference host
+remain `ai-gateway-http`-only. The existing broader feature includes direct
+`bytes`, catalog HTTP, and web fetch, so its delivered behavior and public
+generation surface remain available.
 
 The delivered twenty-eighth [`permissions` CLI slice](permissions-cli.md)
 preserves that split: after strict argument parsing, the thin host invokes only

@@ -49,9 +49,11 @@ catalog path accepts the built-in or missing-file safe schema-v3 defaults and
 strict v1/v2/v3 files, but rejects any config-load failure before credential
 discovery. It does not add an endpoint, team, token, cache, or catalog field to
 schema v3. Focused independent native evidence is present at
-`12263afa458e48f2963ae3d0e3db5cf219f8bdf6`; the complete candidate gate,
-adversarial review, integration, and delivery remain pending. The historical
-configuration green status above does not make this new composition green.
+`12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. Exact cycle-1 candidate `6277aa3`,
+tree `b5e2445`, was rejected; config-once/order remediation is composed at
+`d2890c3`. The complete replacement gate, fresh cycle-2 review, integration,
+and delivery remain pending. The historical configuration green status above
+does not make this new composition green.
 
 This configuration slice advances the built-in and current file
 schema to v3 while retaining strict read compatibility for the exact legacy v1

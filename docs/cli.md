@@ -64,8 +64,12 @@ write effect. Core/native/CLI components are present through local feature
 commit `e84ed2a46b1ac5fe7428414375609af562c65105`; native terminal-precedence
 remediation is `52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and 35 focused independent
 native tests are present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`.
-The complete local candidate gate, fresh adversarial review, feature/main
-integration, and delivery remain pending. No candidate is green.
+Exact cycle-1 candidate `6277aa3`, tree `b5e2445`, passed its local gate but was
+rejected with two medium and six low findings. Remediation is composed at
+`02c9f86`, `d2890c3`, and `06c9408`; focused native evidence now totals 36 and
+CLI unit evidence 18. The complete replacement gate, three fresh cycle-2
+reviews, feature/main integration, and delivery remain pending. No candidate
+is green.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also

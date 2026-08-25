@@ -1,9 +1,13 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: pending-review ledger for bounded slice 29. Local implementation and
-35 focused independent native tests exist, but the complete local candidate
-gate remains pending. No exact candidate has been submitted to adversarial
-review, and no review track is green. The frozen behavior contract is
+Status: cycle-1-rejected ledger for bounded slice 29. Exact candidate
+`6277aa3dc26f9c485707c667f63525a2138f316b`, tree
+`b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
+was rejected by three fresh product-review tracks with a deduplicated union of
+two medium and six low findings. Local remediation is composed, including 36
+focused independent native tests and 18 CLI unit tests, but its complete
+replacement gate and fresh cycle-2 reviews remain pending. No review track and
+no candidate is green. The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -17,31 +21,38 @@ The locally composed lineage is:
 | CLI parser, current-thread host, rendering, and CLI tests | `e84ed2a46b1ac5fe7428414375609af562c65105` / `78e107e6e75e91667e1669681b48f8f7fa61ce61` | implemented locally |
 | native checked-deadline and terminal-precedence remediation | `52e9b7d74f3979f7f7f55387243e96bd78773fe3` / `56358767fcbf1ab216db0f1b8b8f4a550eb6c864` | implemented locally |
 | independent native evidence, sourced from `219f6a71a766e9b833a98f236cfbc3aaff292cd5` | `12263afa458e48f2963ae3d0e3db5cf219f8bdf6` / `9b6241cb023aa0f42b808b32dbee3afecefc3d01` | 35 focused tests green: 14 provider/parser, 15 loopback HTTP, 6 credential |
+| provider-owned deadline wakeup and pre-fallback response drop | `02c9f86619fbdc202f5065c41090415a179316cf` / `0a1ea2a1fde5d66096426caddb5260cbd6b6b13c` | cycle-1 remediation; focused provider/parser 15/15 and loopback HTTP 15/15 green |
+| parent-owned signal arbitration, config-order evidence, and WASI cfg repair | `d2890c34bc628dd9ad425f5921e3816bbe1f5eef` / `ec3ef14c4ba8514d8c33185a00e7293d215b8ef9` | cycle-1 remediation; CLI unit 18/18 and integration 23/23 green |
+| direct-dependency and Tokio-signal topology repair | `06c94087e91ec298877fbe981695d2638fa1db1e` / `7c3a4c4d1d29db04589a101bf5b8fd7b6ecd22ce` | cycle-1 remediation; parsed manifest/resolved tree 4/4 green |
 
-These component commits are not a gated review candidate. The focused evidence
-does not substitute for the complete workspace/candidate gate. This ledger
-does not claim that complete gate, an adversarial result, feature CI, benchmark,
-integration, delivery, performance, compatibility promotion, or fx equivalence.
+The first five component commits composed rejected cycle-1 candidate `6277aa3`.
+The three remediation commits and this maintained record are not yet a gated
+replacement candidate. Their focused evidence does not substitute for the
+complete replacement workspace/candidate gate. This ledger does not claim a
+green adversarial result, feature CI, benchmark, integration, delivery,
+performance, compatibility promotion, or fx equivalence.
 
-A local feature-topology refinement is also present but is not yet a gated
-candidate. It adds native `ai-gateway-model-catalog-http`, makes the CLI enable
-only that feature, and retains `ai-gateway-http` as the compatibility umbrella
-for catalog HTTP plus `web-fetch-http`. Parsed-manifest and resolved-tree
-evidence must prove the narrow feature's required direct dependencies and the
-absence of `web-fetch-http`, Hickory DNS, and Moka before review. Generation
-transport/reference-host exports remain broader-feature-only, while shared
-credential/bearer/TLS and catalog HTTP exports are available under either
-native HTTP feature.
+A local feature-topology refinement adds native
+`ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
+retains `ai-gateway-http` as the compatibility umbrella for catalog HTTP plus
+direct `bytes` and `web-fetch-http`. Cycle-1 remediation removes direct `bytes`
+and Tokio signal handling from native catalog HTTP; only the CLI requests the
+signal feature. Parsed-manifest and resolved-tree evidence proves the narrow
+feature's required direct dependencies and the absence of `web-fetch-http`,
+Hickory DNS, Moka, and the signal backend. Generation transport/reference-host
+exports remain broader-feature-only, while shared credential/bearer/TLS and
+catalog HTTP exports are available under either native HTTP feature.
 
 Refinement-focused local evidence under exact Rust and Cargo 1.94.1 is green:
-the parsed-manifest/resolved-tree suite passes 3/3; native default, catalog-
+the remediated parsed-manifest/resolved-tree suite passes 4/4; native default, catalog-
 only, compatibility-umbrella, and all-feature checks compile; the catalog-only
-provider/parser, credential, and loopback HTTP suites pass 14/14, 6/6, and
+provider/parser, credential, and loopback HTTP suites pass 15/15, 6/6, and
 15/15; and the existing compatibility-umbrella library plus generation HTTP
 and credential suites pass 286/286, 20/20, 8/8, 2/2, and 3/3. Workspace all-
-target/all-feature warnings-denied Clippy is green. Default and catalog-only
-WASI Preview 1 checks both compile with the same established `read_file`
-dead-code warning, so the narrower feature adds no WASM diagnostic.
+target/all-feature warnings-denied Clippy was green on rejected cycle 1. The
+remediated native and CLI WASI Preview 1 checks compile with only the established
+`read_file` dead-code warning and no CLI warning; this focused result remains
+subject to the complete replacement gate.
 
 The resolved CLI package-name inventory drops from 137 on exact precursor
 `6431abf43d0407098672307b0a4c028bd0845e3c` to 104 in this refinement and
@@ -52,8 +63,8 @@ separately built exact precursor is 3,635,520 bytes with SHA-256
 `21e8a922b3aa5280a12859ec22ff01db289092cad290f54a73fd60f835b4f7a9`.
 These package, size, and hash values are regression/topology evidence only,
 not a speed, memory, binary-size improvement, product-performance, or delivery
-claim. The complete slice gate, three fresh adversarial reviews, feature CI,
-integration, and exact `main` CI remain pending.
+claim. The complete replacement gate, three fresh cycle-2 adversarial reviews,
+feature CI, integration, and exact `main` CI remain pending.
 
 ## Bounded ownership
 
@@ -201,12 +212,56 @@ a documentation-only statement.
 
 | Cycle | Exact candidate/tree | Correctness/API | Network/security | Performance/concurrency | Union | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | pending after complete local gate | pending | pending | pending | pending | **NOT REVIEWED** |
+| 1 | `6277aa3dc26f9c485707c667f63525a2138f316b` / `b5e2445ed90df000255b51c2c989d71965db1d77` | 0 blocker, 0 high, 0 medium, 4 low | 0 blocker, 0 high, 2 medium, 1 low | 0 blocker, 0 high, 2 medium, 3 low | 0 blocker, 0 high, 2 medium, 6 low after deduplication | **REJECTED** |
+| 2 | pending after complete replacement gate | pending | pending | pending | pending | **NOT REVIEWED** |
 
-No findings or rejected rationales exist yet. Add every finding verbatim enough
-to identify its evidence, severity, affected invariant, resolution commit, and
-replacement proof. Preserve rejected candidates as history rather than
-rewriting them as green.
+### Cycle 1 rejected findings and remediation
+
+1. **Medium — signal readiness was not authoritative.** The current-thread CLI
+   spawned signal tasks without proving their first poll, then aborted them as
+   soon as the provider returned. A signal or registration failure ready during
+   the provider's terminal synchronous work could lose to success. Remediation
+   `d2890c34bc628dd9ad425f5921e3816bbe1f5eef` creates and primes parent-owned
+   listener futures before provider-future creation, checks signals before and
+   after a ready provider poll, cancels before drop, and adds deterministic
+   same-poll/registration/drop evidence without real signals or sleeps.
+2. **Medium — a pending injected transport could defeat the total deadline.**
+   The provider raced only cancellation and `get`; its wall-clock deadline was
+   rechecked only when another future woke. Remediation
+   `02c9f86619fbdc202f5065c41090415a179316cf` adds the transport's required
+   independently polled `wait_until(deadline)` authority, cancellation-first
+   precedence, and a deterministic permanently-pending request wake/drop
+   regression.
+3. **Low — the rejected authenticated response remained owned across public
+   fallback.** Remediation `02c9f86619fbdc202f5065c41090415a179316cf`
+   explicitly drops that response before the cancellation/deadline checks and
+   second call; the first production permit was already request-future-owned.
+4. **Low — closed SIGTERM waiting was silently ignored.** Remediation
+   `d2890c34bc628dd9ad425f5921e3816bbe1f5eef` maps `recv() == None` to the same
+   fixed signal-wait failure as registration failure and proves it through the
+   injected signal source.
+5. **Low — config-once and exact downstream ordering lacked direct evidence.**
+   Remediation `d2890c34bc628dd9ad425f5921e3816bbe1f5eef` routes production through one
+   config, credential, transport/list sequence and adds a deterministic trace
+   proving one call each plus config- and credential-terminal short-circuiting.
+6. **Low — the recorded WASI result omitted two CLI warnings.** Remediation
+   `d2890c34bc628dd9ad425f5921e3816bbe1f5eef` cfg-scopes native-only failure
+   variants and the provider classifier. Exact focused WASI CLI checks now emit
+   only the established native `read_file` warning.
+7. **Low — Tokio signal and direct `bytes` dependencies were mis-scoped.**
+   Remediation `06c94087e91ec298877fbe981695d2638fa1db1e` moves Tokio signal activation
+   from the workspace dependency to the CLI and direct `bytes` activation from
+   catalog HTTP to the broader generation feature. Parsed-manifest and resolved-
+   tree evidence rejects regression.
+8. **Low — maintained candidate/gate provenance was stale.** This cycle-1
+   record preserves the exact rejected SHA/tree, all three raw track counts,
+   their deduplicated union, and the remediation lineage. The complete
+   replacement gate and cycle-2 candidate remain explicitly pending.
+
+Every cycle-1 finding is locally remediated, but focused checks do not make the
+replacement green. The complete replacement gate must run before a new exact
+candidate is frozen, and three fresh reviewers must return a zero union on that
+candidate. Cycle 1 remains rejected history.
 
 ## Remote and integration boundary
 

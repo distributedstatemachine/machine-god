@@ -1,15 +1,23 @@
 # Top-level `models` CLI contract
 
-Status: locally implemented, not yet a reviewed or delivered twenty-ninth
-bounded Milestone 03 slice. The provider-neutral core contract is component
+Status: cycle-1 rejected and locally remediated, not yet a green or delivered
+twenty-ninth bounded Milestone 03 slice. Exact candidate
+`6277aa3dc26f9c485707c667f63525a2138f316b`, tree
+`b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate but
+three fresh review tracks rejected it with a deduplicated union of two medium
+and six low findings. The provider-neutral core contract is component
 `a6c6ff333176689b0c53bcf35070e9d59afd1b28`, the bounded native catalog is
 component `7c966b23d75a880a23d49e1e6ba9780e512e84b8`, and the thin CLI composition
 is present in local feature commit
 `e84ed2a46b1ac5fe7428414375609af562c65105`. Checked-deadline and terminal-
 precedence remediation is component
 `52e9b7d74f3979f7f7f55387243e96bd78773fe3`. Independent native evidence is
-present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`: 35 focused tests split
-across 14 provider/parser, 15 loopback HTTP, and 6 credential cases. The
+present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`; deadline remediation
+`02c9f86619fbdc202f5065c41090415a179316cf` raises the current focused native
+total to 36 tests split across 15 provider/parser, 15 loopback HTTP, and 6
+credential cases. Signal/config/WASI remediation is
+`d2890c34bc628dd9ad425f5921e3816bbe1f5eef`, and dependency-topology remediation
+is `06c94087e91ec298877fbe981695d2638fa1db1e`. The
 local feature-topology refinement gives catalog HTTP its own optional non-WASM
 `ai-gateway-model-catalog-http` gate. The CLI enables only that gate; it does
 not activate generation-only direct `bytes`, `web-fetch-http`, Hickory DNS, or
@@ -17,11 +25,9 @@ Moka, and native catalog HTTP does not request Tokio's signal backend. The CLI
 dependency alone requests signal handling. The existing `ai-gateway-http`
 feature still adds direct `bytes` and includes both catalog HTTP and
 `web-fetch-http` for backward-compatible generation/reference-host builds.
-This refinement is
-still pending the complete exact-toolchain candidate gate, fresh review, and
-remote CI together with the rest of the slice. The
-complete local candidate gate, three fresh adversarial reviews, feature/main
-integration, and delivery all remain pending; no candidate is green. The
+This remediated refinement is still pending the complete exact-toolchain
+replacement gate, three fresh cycle-2 reviews, and remote CI together with the
+rest of the slice; no candidate is green. The
 pinned comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.

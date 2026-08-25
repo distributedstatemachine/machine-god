@@ -34,11 +34,12 @@ loads config once, drives the native provider on a host-owned current-thread
 Tokio runtime, and owns rendering/output bounds. The same architecture adds no
 catalog authority to the engine generation provider and no ambient, clock, retry,
 Gateway-metadata, sorting, or output authority to core. Exact ownership and
-bounds are in [`models-cli.md`](models-cli.md). Checked-deadline/terminal-
-precedence remediation is `52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and
-35 focused independent native tests are present at
-`12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. The complete local candidate gate
-and review remain pending in
+bounds are in [`models-cli.md`](models-cli.md). Exact cycle-1 candidate
+`6277aa3`, tree `b5e2445`, passed its complete local gate but was rejected with
+two medium and six low findings. Deadline/response, signal/config/WASI, and
+dependency-topology remediations are composed at `02c9f86`, `d2890c3`, and
+`06c9408`; focused native evidence now totals 36. The complete replacement gate
+and three fresh cycle-2 reviews remain pending in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 ```text

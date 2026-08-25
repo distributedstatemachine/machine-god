@@ -13,10 +13,14 @@ twenty-eight delivered bounded slices. A twenty-ninth top-level
 and exact behavior are documented in the
 [`models` CLI contract](docs/models-cli.md). Checked-deadline/terminal-
 precedence remediation is present at `52e9b7d74f3979f7f7f55387243e96bd78773fe3`,
-and 35 focused independent native tests are present at
-`12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. The complete local candidate gate,
-adversarial review, feature/main integration, and delivery remain pending, so
-this is not a green or delivered slice. The CLI now selects a dedicated
+and initial focused independent native tests are present at
+`12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. Exact cycle-1 candidate `6277aa3`,
+tree `b5e2445`, passed its complete local gate but was rejected by three fresh
+tracks with two medium and six low findings. Local deadline,
+signal/config/WASI, and dependency-topology remediations are composed at
+`02c9f86`, `d2890c3`, and `06c9408`, raising the focused native total to 36;
+the complete replacement gate and three fresh cycle-2 reviews remain pending.
+This is not a green or delivered slice. The CLI now selects a dedicated
 `ai-gateway-model-catalog-http` feature that omits `web-fetch-http`, Hickory
 DNS, Moka, generation-only direct `bytes`, and Tokio's signal backend. Signal
 handling is requested only by the CLI dependency; the existing

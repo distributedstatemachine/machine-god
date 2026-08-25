@@ -56,4 +56,4 @@
 - [Milestone 03 native `open_file` implementation review plan](reviews/m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](reviews/m03-web-fetch-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](reviews/m03-permissions-cli-review-01.md)
-- [Milestone 03 `models` CLI pending-review ledger](reviews/m03-models-cli-review-01.md)
+- [Milestone 03 `models` CLI cycle-1-rejected ledger](reviews/m03-models-cli-review-01.md)

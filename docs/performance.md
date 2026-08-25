@@ -13,11 +13,13 @@ fallback does not reset it. Accepted body, JSON work, entries, IDs, and
 serialized output are independently bounded. The 256 KiB machine-god body
 buffer retains no additional witness byte; the first dependency frame that
 would cross the cap is rejected before append. Its catalog listing is not an
-equivalence-qualified benchmark workload. Thirty-five focused independent
-native tests are present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`; the
-complete local candidate gate, fresh adversarial review, exact-SHA workflow
-artifacts, and a later claim-eligible M07 comparison remain required before any
-speed, latency, memory, or fx-equivalence statement.
+equivalence-qualified benchmark workload. Cycle-1 candidate `6277aa3`, tree
+`b5e2445`, passed its local gate but was rejected with two medium and six low
+findings. Deadline, signal/config/WASI, and topology remediations are composed
+at `02c9f86`, `d2890c3`, and `06c9408`; the current focused native total is 36
+tests. The complete replacement gate, three fresh cycle-2 reviews, exact-SHA
+workflow artifacts, and a later claim-eligible M07 comparison remain required
+before any speed, latency, memory, or fx-equivalence statement.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence
