@@ -274,6 +274,7 @@ fn exported_contract_limits_and_spec_are_exact() {
     assert!(WebFetchLimits::new(Duration::from_secs(2), Duration::from_secs(1), 1).is_err());
     assert!(WebFetchLimits::new(Duration::from_secs(1), Duration::from_secs(2), 0).is_err());
     assert!(WebFetchLimits::new(Duration::from_secs(1), Duration::from_secs(2), 33).is_err());
+    assert!(WebFetchLimits::new(Duration::MAX, Duration::MAX, 1).is_err());
 
     let transport = FakeTransport::text(Some("text/plain"), b"body".to_vec());
     let spec = WebFetchTool::with_transport(Arc::new(transport)).spec();
@@ -415,6 +416,7 @@ fn prepare_rejects_non_public_hosts_and_accepts_strict_public_ip_literals() {
         "https://localhost/",
         "https://printer/",
         "https://host.local/",
+        "https://host.alt/",
         "https://0.0.0.0/",
         "https://10.0.0.1/",
         "https://100.64.0.1/",
@@ -436,6 +438,7 @@ fn prepare_rejects_non_public_hosts_and_accepts_strict_public_ip_literals() {
         "https://[ff02::1]/",
         "https://[::ffff:93.184.216.34]/",
         "https://[::ffff:127.0.0.1]/",
+        "https://93.184.216.34./",
     ] {
         assert_destination_rejected(
             &tool
@@ -582,6 +585,32 @@ fn text_and_html_results_are_bounded_untrusted_and_query_redacted() {
         assert_eq!(requests[0].port, None);
         assert_eq!(requests[0].debug, "WebFetchRequest { .. }");
     }
+}
+
+#[test]
+fn worst_case_text_and_metadata_remain_within_the_serialized_result_bound() {
+    let prefix = "https://example.com/";
+    let url = format!(
+        "{prefix}{}",
+        "a".repeat(MAX_WEB_FETCH_URL_BYTES - prefix.len())
+    );
+    assert_eq!(url.len(), MAX_WEB_FETCH_URL_BYTES);
+    let mime_type = format!(
+        "text/{}",
+        "y".repeat(MAX_WEB_FETCH_MIME_TYPE_BYTES - "text/".len())
+    );
+    assert_eq!(mime_type.len(), MAX_WEB_FETCH_MIME_TYPE_BYTES);
+    let transport = FakeTransport::text(Some(&mime_type), vec![b'\n'; MAX_WEB_FETCH_BODY_BYTES]);
+    let output = execute(
+        &WebFetchTool::with_transport(Arc::new(transport)),
+        json!({ "url": url }),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    let serialized = serde_json::to_vec(&output).unwrap();
+
+    assert!(serialized.len() > 50 * 1_024);
+    assert!(serialized.len() <= MAX_WEB_FETCH_SERIALIZED_RESULT_BYTES);
 }
 
 #[test]
