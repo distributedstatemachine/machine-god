@@ -307,9 +307,12 @@ that would cross the cap is rejected before any bytes from that frame are
 appended. Reqwest/Hyper may transiently materialize that frame outside the
 machine-god buffer. Automatic
 decompression is disabled, so the cap applies to received representation
-bytes. Invalid UTF-8 is invalid JSON. The JSON decoder enforces depth and node
-budgets during decoding rather than building an unbounded value first. It
-rejects trailing non-whitespace bytes.
+bytes. Invalid UTF-8 is invalid JSON. One linear structural pass over the
+already bounded body enforces depth and node budgets before semantic field
+decoding and without converting JSON numbers to a machine numeric type. Each
+standards-valid number is exactly one node regardless of integer or exponent
+magnitude. Semantic decoding borrows bounded raw values rather than allocating
+arbitrary-precision numbers. Trailing non-whitespace bytes are rejected.
 
 ## Gateway response and entry validation
 
@@ -332,8 +335,11 @@ still counts toward the global JSON budgets.
 
 Language classification follows the pinned catalog shape described above.
 Release metadata that is absent or not an integer fitting signed 64-bit maps to
-`0`. Tags that are absent or not an array provide no capability; a string tag
-equal to `tool-use`
+`0`; this includes standards-valid integers and exponents outside the signed
+64-bit range. Such numbers remain valid ignored/defaulted values in `tags`,
+unknown top-level or entry fields, and non-object raw `data` entries rather
+than making the response malformed. Tags that are absent or not an array
+provide no capability; a string tag equal to `tool-use`
 under ASCII case folding sets the tool-use bit. Other tag values are ignored.
 Tier and provider ranks derive only from the already validated ID; there are no
 separate provider or tier wire fields.

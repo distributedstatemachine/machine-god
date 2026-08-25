@@ -575,6 +575,28 @@ fn parser_accepts_empty_and_skips_only_the_frozen_entry_classes() {
 }
 
 #[test]
+fn standards_valid_out_of_range_numbers_default_or_ignore_without_losing_entries() {
+    let oversized_integer = "9".repeat(310);
+    for number in [oversized_integer.as_str(), "1e400"] {
+        let catalog = public_catalog(
+            format!(
+                r#"{{"unknown_top":{number},"data":[{number},{{"id":"other/z","type":{number},"released":{number},"tags":[{number},"tool-use"],"unknown_entry":{number}}},{{"id":"other/a","released":1,"tags":["tool-use"]}}]}}"#
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog
+                .models()
+                .iter()
+                .map(AvailableModel::id)
+                .collect::<Vec<_>>(),
+            ["other/a", "other/z"]
+        );
+    }
+}
+
+#[test]
 fn unsafe_ids_duplicate_fields_and_duplicate_ids_are_terminal_and_redacted() {
     for invalid in [
         String::new(),
@@ -731,6 +753,46 @@ fn json_depth_and_node_limits_include_ignored_fields() {
     let excess = format!(
         r#"{{"ignored":[{}],"data":[]}}"#,
         std::iter::repeat_n("null", exact_ignored + 1)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    assert_eq!(
+        public_catalog(excess.into_bytes()).unwrap_err().code,
+        "ResourceLimit"
+    );
+}
+
+#[test]
+fn out_of_range_numbers_are_one_node_and_obey_the_exact_container_depth() {
+    let oversized_integer = "9".repeat(310);
+    for number in [oversized_integer.as_str(), "1e400"] {
+        let mut nested = number.to_owned();
+        for _ in 0..31 {
+            nested = format!("[{nested}]");
+        }
+        public_catalog(format!(r#"{{"ignored":{nested},"data":[]}}"#).into_bytes()).unwrap();
+        nested = format!("[{nested}]");
+        assert_eq!(
+            public_catalog(format!(r#"{{"ignored":{nested},"data":[]}}"#).into_bytes())
+                .unwrap_err()
+                .code,
+            "ResourceLimit"
+        );
+    }
+
+    // Root, ignored array, each exponent, and data array are all exactly one node.
+    let exact_ignored = AI_GATEWAY_MODEL_CATALOG_MAX_JSON_NODES - 3;
+    let exact = format!(
+        r#"{{"ignored":[{}],"data":[]}}"#,
+        std::iter::repeat_n("1e400", exact_ignored)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    assert!(exact.len() < AI_GATEWAY_MODEL_CATALOG_MAX_BODY_BYTES);
+    public_catalog(exact.into_bytes()).unwrap();
+    let excess = format!(
+        r#"{{"ignored":[{}],"data":[]}}"#,
+        std::iter::repeat_n("1e400", exact_ignored + 1)
             .collect::<Vec<_>>()
             .join(",")
     );

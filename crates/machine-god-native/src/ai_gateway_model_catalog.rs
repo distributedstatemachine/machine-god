@@ -4,8 +4,9 @@ use machine_god_core::{
     AvailableModel, BoxFuture, CancellationToken, ModelCatalog, ModelCatalogAccess,
     ModelCatalogProvider, ProviderError, ProviderErrorKind, PublicCatalogReason,
 };
+use serde::Deserialize;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use serde_json::Value;
+use serde_json::value::RawValue;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -393,7 +394,6 @@ impl<'de> DeserializeSeed<'de> for CatalogSeed<'_> {
     where
         D: serde::Deserializer<'de>,
     {
-        self.context.consume_node()?;
         deserializer.deserialize_map(CatalogVisitor {
             context: self.context,
         })
@@ -425,13 +425,9 @@ impl<'de> Visitor<'de> for CatalogVisitor<'_> {
                 }
                 data = Some(entries.next_value_seed(DataSeed {
                     context: self.context,
-                    depth: 1,
                 })?);
             } else {
-                entries.next_value_seed(IgnoredSeed {
-                    context: self.context,
-                    depth: 1,
-                })?;
+                let _: &RawValue = entries.next_value()?;
             }
         }
         data.ok_or_else(|| {
@@ -444,7 +440,6 @@ impl<'de> Visitor<'de> for CatalogVisitor<'_> {
 #[derive(Clone, Copy)]
 struct DataSeed<'a> {
     context: &'a ParseContext<'a>,
-    depth: usize,
 }
 
 impl<'de> DeserializeSeed<'de> for DataSeed<'_> {
@@ -454,18 +449,14 @@ impl<'de> DeserializeSeed<'de> for DataSeed<'_> {
     where
         D: serde::Deserializer<'de>,
     {
-        self.context.consume_node()?;
-        self.context.check_depth(self.depth)?;
         deserializer.deserialize_seq(DataVisitor {
             context: self.context,
-            depth: self.depth,
         })
     }
 }
 
 struct DataVisitor<'a> {
     context: &'a ParseContext<'a>,
-    depth: usize,
 }
 
 impl<'de> Visitor<'de> for DataVisitor<'_> {
@@ -485,7 +476,6 @@ impl<'de> Visitor<'de> for DataVisitor<'_> {
         let mut ids = BTreeSet::new();
         while let Some(candidate) = entries.next_element_seed(EntrySeed {
             context: self.context,
-            depth: self.depth + 1,
         })? {
             raw_entries = raw_entries.checked_add(1).ok_or_else(|| {
                 self.context.fail(
@@ -539,7 +529,6 @@ impl<'de> Visitor<'de> for DataVisitor<'_> {
 #[derive(Clone, Copy)]
 struct EntrySeed<'a> {
     context: &'a ParseContext<'a>,
-    depth: usize,
 }
 
 impl<'de> DeserializeSeed<'de> for EntrySeed<'_> {
@@ -549,329 +538,364 @@ impl<'de> DeserializeSeed<'de> for EntrySeed<'_> {
     where
         D: serde::Deserializer<'de>,
     {
-        self.context.consume_node()?;
-        deserializer.deserialize_any(EntryVisitor {
+        let raw = <&RawValue>::deserialize(deserializer)?;
+        if first_non_whitespace(raw.get().as_bytes()) != Some(b'{') {
+            return Ok(None);
+        }
+
+        let mut entry = serde_json::Deserializer::from_str(raw.get());
+        let candidate = EntryObjectSeed {
             context: self.context,
-            depth: self.depth,
+        }
+        .deserialize(&mut entry)
+        .map_err(|_| {
+            self.context
+                .fail(ParseFailure::Malformed, "malformed catalog entry object")
+        })?;
+        entry.end().map_err(|_| {
+            self.context.fail(
+                ParseFailure::Malformed,
+                "trailing data in catalog entry object",
+            )
+        })?;
+        Ok(candidate)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EntryObjectSeed<'a> {
+    context: &'a ParseContext<'a>,
+}
+
+impl<'de> DeserializeSeed<'de> for EntryObjectSeed<'_> {
+    type Value = Option<Candidate>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(EntryObjectVisitor {
+            context: self.context,
         })
     }
 }
 
-struct EntryVisitor<'a> {
+struct EntryObjectVisitor<'a> {
     context: &'a ParseContext<'a>,
-    depth: usize,
 }
 
-impl<'de> Visitor<'de> for EntryVisitor<'_> {
+impl<'de> Visitor<'de> for EntryObjectVisitor<'_> {
     type Value = Option<Candidate>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("any bounded catalog entry")
+        formatter.write_str("a bounded catalog entry object")
     }
 
     fn visit_map<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
     where
         A: MapAccess<'de>,
     {
-        self.context.check_depth(self.depth)?;
-        let mut id: Option<Value> = None;
-        let mut model_type: Option<Value> = None;
-        let mut released: Option<Value> = None;
-        let mut tags: Option<Value> = None;
+        let mut id: Option<&RawValue> = None;
+        let mut model_type: Option<&RawValue> = None;
+        let mut released: Option<&RawValue> = None;
+        let mut tags: Option<&RawValue> = None;
         while let Some(key) = entries.next_key::<String>()? {
-            let target = match key.as_str() {
-                "id" => Some(&mut id),
-                "type" => Some(&mut model_type),
-                "released" => Some(&mut released),
-                "tags" => Some(&mut tags),
-                _ => None,
-            };
-            if let Some(target) = target {
-                if target.is_some() {
-                    return Err(self.context.fail(
-                        ParseFailure::Malformed,
-                        "duplicate recognized catalog entry field",
-                    ));
+            match key.as_str() {
+                "id" => {
+                    if id.is_some() {
+                        return Err(self.context.fail(
+                            ParseFailure::Malformed,
+                            "duplicate recognized catalog entry field",
+                        ));
+                    }
+                    id = Some(entries.next_value()?);
                 }
-                *target = Some(entries.next_value_seed(ValueSeed {
-                    context: self.context,
-                    depth: self.depth + 1,
-                })?);
-            } else {
-                entries.next_value_seed(IgnoredSeed {
-                    context: self.context,
-                    depth: self.depth + 1,
-                })?;
+                "type" => {
+                    if model_type.is_some() {
+                        return Err(self.context.fail(
+                            ParseFailure::Malformed,
+                            "duplicate recognized catalog entry field",
+                        ));
+                    }
+                    model_type = Some(entries.next_value()?);
+                }
+                "released" => {
+                    if released.is_some() {
+                        return Err(self.context.fail(
+                            ParseFailure::Malformed,
+                            "duplicate recognized catalog entry field",
+                        ));
+                    }
+                    released = Some(entries.next_value()?);
+                }
+                "tags" => {
+                    if tags.is_some() {
+                        return Err(self.context.fail(
+                            ParseFailure::Malformed,
+                            "duplicate recognized catalog entry field",
+                        ));
+                    }
+                    tags = Some(entries.next_value()?);
+                }
+                _ => {
+                    let _: &RawValue = entries.next_value()?;
+                }
             }
         }
 
-        let is_language = match model_type.as_ref() {
-            Some(Value::String(value)) => value.eq_ignore_ascii_case("language"),
-            Some(_) | None => true,
+        let is_language = match raw_json_string(model_type)? {
+            Some(value) => value.eq_ignore_ascii_case("language"),
+            None => true,
         };
         if !is_language {
             return Ok(None);
         }
-        let Some(Value::String(id)) = id else {
+        let Some(id) = raw_json_string(id)? else {
             return Ok(None);
         };
-        let released = released.as_ref().and_then(Value::as_i64).unwrap_or(0);
-        let has_tool_use = tags.as_ref().and_then(Value::as_array).is_some_and(|tags| {
-            tags.iter().any(|tag| {
-                tag.as_str()
-                    .is_some_and(|tag| tag.eq_ignore_ascii_case("tool-use"))
-            })
-        });
+        let released = released
+            .and_then(|value| serde_json::from_str::<i64>(value.get()).ok())
+            .unwrap_or(0);
+        let has_tool_use = raw_tags_have_tool_use(tags)?;
         Ok(Some(Candidate {
             id,
             released,
             has_tool_use,
         }))
     }
+}
 
-    fn visit_seq<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        self.context.check_depth(self.depth)?;
-        while entries
-            .next_element_seed(IgnoredSeed {
-                context: self.context,
-                depth: self.depth + 1,
-            })?
-            .is_some()
-        {}
-        Ok(None)
+fn raw_json_string<E: serde::de::Error>(raw: Option<&RawValue>) -> Result<Option<String>, E> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    if first_non_whitespace(raw.get().as_bytes()) != Some(b'"') {
+        return Ok(None);
     }
+    serde_json::from_str(raw.get())
+        .map(Some)
+        .map_err(|_| E::custom("malformed string in catalog entry"))
+}
 
-    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
-        Ok(None)
+fn raw_tags_have_tool_use<E: serde::de::Error>(raw: Option<&RawValue>) -> Result<bool, E> {
+    let Some(raw) = raw else {
+        return Ok(false);
+    };
+    if first_non_whitespace(raw.get().as_bytes()) != Some(b'[') {
+        return Ok(false);
     }
-
-    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
-        Ok(None)
-    }
-
-    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
-        Ok(None)
-    }
-
-    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
-        Ok(None)
-    }
-
-    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
-        Ok(None)
-    }
-
-    fn visit_string<E>(self, _: String) -> Result<Self::Value, E> {
-        Ok(None)
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(None)
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(None)
-    }
+    let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+    let has_tool_use = TagsSeed
+        .deserialize(&mut deserializer)
+        .map_err(|_| E::custom("malformed tags in catalog entry"))?;
+    deserializer
+        .end()
+        .map_err(|_| E::custom("trailing data in catalog tags"))?;
+    Ok(has_tool_use)
 }
 
 #[derive(Clone, Copy)]
-struct ValueSeed<'a> {
-    context: &'a ParseContext<'a>,
-    depth: usize,
-}
+struct TagsSeed;
 
-impl<'de> DeserializeSeed<'de> for ValueSeed<'_> {
-    type Value = Value;
+impl<'de> DeserializeSeed<'de> for TagsSeed {
+    type Value = bool;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        self.context.consume_node()?;
-        deserializer.deserialize_any(ValueVisitor {
-            context: self.context,
-            depth: self.depth,
-        })
+        deserializer.deserialize_seq(TagsVisitor)
     }
 }
 
-struct ValueVisitor<'a> {
-    context: &'a ParseContext<'a>,
-    depth: usize,
-}
+struct TagsVisitor;
 
-impl<'de> Visitor<'de> for ValueVisitor<'_> {
-    type Value = Value;
+impl<'de> Visitor<'de> for TagsVisitor {
+    type Value = bool;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a bounded JSON value")
-    }
-
-    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(Value::Bool(value))
-    }
-
-    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
-        Ok(Value::Number(value.into()))
-    }
-
-    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
-        Ok(Value::Number(value.into()))
-    }
-
-    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        serde_json::Number::from_f64(value)
-            .map(Value::Number)
-            .ok_or_else(|| E::custom("non-finite JSON number"))
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
-        Ok(Value::String(value.to_owned()))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(Value::String(value))
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(Value::Null)
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(Value::Null)
+        formatter.write_str("a catalog tags array")
     }
 
     fn visit_seq<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
     where
         A: SeqAccess<'de>,
     {
-        self.context.check_depth(self.depth)?;
-        let mut values = Vec::new();
-        while let Some(value) = entries.next_element_seed(ValueSeed {
-            context: self.context,
-            depth: self.depth + 1,
-        })? {
-            values.push(value);
+        let mut has_tool_use = false;
+        while let Some(raw) = entries.next_element::<&RawValue>()? {
+            if !has_tool_use && first_non_whitespace(raw.get().as_bytes()) == Some(b'"') {
+                let tag: String = serde_json::from_str(raw.get())
+                    .map_err(|_| <A::Error as serde::de::Error>::custom("malformed catalog tag"))?;
+                has_tool_use = tag.eq_ignore_ascii_case("tool-use");
+            }
         }
-        Ok(Value::Array(values))
-    }
-
-    fn visit_map<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        self.context.check_depth(self.depth)?;
-        let mut values = serde_json::Map::new();
-        while let Some(key) = entries.next_key::<String>()? {
-            let value = entries.next_value_seed(ValueSeed {
-                context: self.context,
-                depth: self.depth + 1,
-            })?;
-            values.insert(key, value);
-        }
-        Ok(Value::Object(values))
+        Ok(has_tool_use)
     }
 }
 
-#[derive(Clone, Copy)]
-struct IgnoredSeed<'a> {
-    context: &'a ParseContext<'a>,
+fn scan_raw_value<E: serde::de::Error>(
+    raw: &str,
     depth: usize,
+    context: &ParseContext<'_>,
+) -> Result<(), E> {
+    let mut scanner = RawJsonScanner {
+        bytes: raw.as_bytes(),
+        cursor: 0,
+        context,
+    };
+    scanner.scan_value(depth)?;
+    scanner.skip_whitespace();
+    if scanner.cursor != scanner.bytes.len() {
+        return Err(context.fail(
+            ParseFailure::Malformed,
+            "trailing data in raw catalog value",
+        ));
+    }
+    Ok(())
 }
 
-impl<'de> DeserializeSeed<'de> for IgnoredSeed<'_> {
-    type Value = ();
+struct RawJsonScanner<'raw, 'context, 'cancel> {
+    bytes: &'raw [u8],
+    cursor: usize,
+    context: &'context ParseContext<'cancel>,
+}
 
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
+impl RawJsonScanner<'_, '_, '_> {
+    fn scan_value<E: serde::de::Error>(&mut self, depth: usize) -> Result<(), E> {
         self.context.consume_node()?;
-        deserializer.deserialize_any(IgnoredVisitor {
-            context: self.context,
-            depth: self.depth,
-        })
-    }
-}
-
-struct IgnoredVisitor<'a> {
-    context: &'a ParseContext<'a>,
-    depth: usize,
-}
-
-impl<'de> Visitor<'de> for IgnoredVisitor<'_> {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("any bounded JSON value")
-    }
-
-    fn visit_seq<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        self.context.check_depth(self.depth)?;
-        while entries
-            .next_element_seed(IgnoredSeed {
-                context: self.context,
-                depth: self.depth + 1,
-            })?
-            .is_some()
-        {}
-        Ok(())
-    }
-
-    fn visit_map<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        self.context.check_depth(self.depth)?;
-        while entries.next_key::<String>()?.is_some() {
-            entries.next_value_seed(IgnoredSeed {
-                context: self.context,
-                depth: self.depth + 1,
-            })?;
+        self.skip_whitespace();
+        match self.bytes.get(self.cursor).copied() {
+            Some(b'{') => self.scan_object(depth),
+            Some(b'[') => self.scan_array(depth),
+            Some(b'"') => self.skip_string(),
+            Some(_) => self.skip_primitive(),
+            None => Err(self
+                .context
+                .fail(ParseFailure::Malformed, "empty raw catalog value")),
         }
-        Ok(())
     }
 
-    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
-        Ok(())
+    fn scan_object<E: serde::de::Error>(&mut self, depth: usize) -> Result<(), E> {
+        self.context.check_depth(depth)?;
+        self.cursor += 1;
+        self.skip_whitespace();
+        if self.consume_byte(b'}') {
+            return Ok(());
+        }
+        loop {
+            if self.bytes.get(self.cursor) != Some(&b'"') {
+                return Err(self.context.fail(
+                    ParseFailure::Malformed,
+                    "catalog object key is not a string",
+                ));
+            }
+            self.skip_string()?;
+            self.skip_whitespace();
+            if !self.consume_byte(b':') {
+                return Err(self
+                    .context
+                    .fail(ParseFailure::Malformed, "catalog object is missing a colon"));
+            }
+            self.scan_value(depth + 1)?;
+            self.skip_whitespace();
+            if self.consume_byte(b'}') {
+                return Ok(());
+            }
+            if !self.consume_byte(b',') {
+                return Err(self.context.fail(
+                    ParseFailure::Malformed,
+                    "catalog object is missing a separator",
+                ));
+            }
+            self.skip_whitespace();
+        }
     }
 
-    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
-        Ok(())
+    fn scan_array<E: serde::de::Error>(&mut self, depth: usize) -> Result<(), E> {
+        self.context.check_depth(depth)?;
+        self.cursor += 1;
+        self.skip_whitespace();
+        if self.consume_byte(b']') {
+            return Ok(());
+        }
+        loop {
+            self.scan_value(depth + 1)?;
+            self.skip_whitespace();
+            if self.consume_byte(b']') {
+                return Ok(());
+            }
+            if !self.consume_byte(b',') {
+                return Err(self.context.fail(
+                    ParseFailure::Malformed,
+                    "catalog array is missing a separator",
+                ));
+            }
+            self.skip_whitespace();
+        }
     }
 
-    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
-        Ok(())
+    fn skip_string<E: serde::de::Error>(&mut self) -> Result<(), E> {
+        self.cursor += 1;
+        while let Some(byte) = self.bytes.get(self.cursor).copied() {
+            self.cursor += 1;
+            match byte {
+                b'"' => return Ok(()),
+                b'\\' => {
+                    if self.cursor >= self.bytes.len() {
+                        break;
+                    }
+                    self.cursor += 1;
+                }
+                _ => {}
+            }
+        }
+        Err(self
+            .context
+            .fail(ParseFailure::Malformed, "unterminated catalog string"))
     }
 
-    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
-        Ok(())
+    fn skip_primitive<E: serde::de::Error>(&mut self) -> Result<(), E> {
+        let start = self.cursor;
+        while let Some(byte) = self.bytes.get(self.cursor).copied() {
+            if matches!(byte, b' ' | b'\n' | b'\r' | b'\t' | b',' | b']' | b'}') {
+                break;
+            }
+            self.cursor += 1;
+        }
+        if self.cursor == start {
+            Err(self
+                .context
+                .fail(ParseFailure::Malformed, "empty catalog primitive"))
+        } else {
+            Ok(())
+        }
     }
 
-    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
-        Ok(())
+    fn skip_whitespace(&mut self) {
+        while self
+            .bytes
+            .get(self.cursor)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\n' | b'\r' | b'\t'))
+        {
+            self.cursor += 1;
+        }
     }
 
-    fn visit_string<E>(self, _: String) -> Result<Self::Value, E> {
-        Ok(())
+    fn consume_byte(&mut self, expected: u8) -> bool {
+        if self.bytes.get(self.cursor) == Some(&expected) {
+            self.cursor += 1;
+            true
+        } else {
+            false
+        }
     }
+}
 
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(())
-    }
+fn first_non_whitespace(bytes: &[u8]) -> Option<u8> {
+    bytes
+        .iter()
+        .copied()
+        .find(|byte| !matches!(byte, b' ' | b'\n' | b'\r' | b'\t'))
 }
 
 fn parse_catalog(
@@ -888,6 +912,11 @@ fn parse_catalog(
         cancellation,
         deadline,
     };
+    check_cancelled(cancellation)?;
+    check_deadline(deadline)?;
+    let raw = std::str::from_utf8(body).map_err(|_| parse_terminal_error(&context))?;
+    scan_raw_value::<serde_json::Error>(raw, 0, &context)
+        .map_err(|_| parse_terminal_error(&context))?;
     let mut deserializer = serde_json::Deserializer::from_slice(body);
     let mut candidates = CatalogSeed { context: &context }
         .deserialize(&mut deserializer)
