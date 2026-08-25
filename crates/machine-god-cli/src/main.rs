@@ -1,18 +1,22 @@
 use std::env;
 use std::ffi::OsString;
 use std::fmt::Write as _;
+#[cfg(not(target_family = "wasm"))]
+use std::future::poll_fn;
 use std::io;
 use std::path::Path;
 use std::process::ExitCode;
+#[cfg(not(target_family = "wasm"))]
+use std::task::Poll;
 
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
-#[cfg(not(target_family = "wasm"))]
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(target_family = "wasm"))]
-use machine_god_core::{CancellationToken, ModelCatalogProvider, ProviderErrorKind};
-use machine_god_core::{ModelCatalog, ModelCatalogAccess, ProviderError, PublicCatalogReason};
+use machine_god_core::{
+    BoxFuture, CancellationToken, ModelCatalogProvider, ProviderError, ProviderErrorKind,
+};
+use machine_god_core::{ModelCatalog, ModelCatalogAccess, PublicCatalogReason};
 #[cfg(not(target_family = "wasm"))]
 use machine_god_native::{
     AiGatewayModelCatalogAccessMode, AiGatewayModelCatalogHttpTransport,
@@ -73,8 +77,11 @@ enum Command {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ModelsOperationalFailure {
+    #[cfg(not(target_family = "wasm"))]
     AuthenticationRejected,
+    #[cfg(not(target_family = "wasm"))]
     Cancelled,
+    #[cfg(not(target_family = "wasm"))]
     MalformedResponse,
     ResourceLimit,
     Unavailable,
@@ -83,8 +90,11 @@ enum ModelsOperationalFailure {
 impl ModelsOperationalFailure {
     const fn detail(self) -> &'static str {
         match self {
+            #[cfg(not(target_family = "wasm"))]
             Self::AuthenticationRejected => "AuthenticationRejected",
+            #[cfg(not(target_family = "wasm"))]
             Self::Cancelled => "the request was cancelled",
+            #[cfg(not(target_family = "wasm"))]
             Self::MalformedResponse => "MalformedResponse",
             Self::ResourceLimit => "ResourceLimit",
             Self::Unavailable => "Unavailable",
@@ -93,8 +103,11 @@ impl ModelsOperationalFailure {
 
     const fn code(self) -> &'static str {
         match self {
+            #[cfg(not(target_family = "wasm"))]
             Self::AuthenticationRejected => "AuthenticationRejected",
+            #[cfg(not(target_family = "wasm"))]
             Self::Cancelled => "Cancelled",
+            #[cfg(not(target_family = "wasm"))]
             Self::MalformedResponse => "MalformedResponse",
             Self::ResourceLimit => "ResourceLimit",
             Self::Unavailable => "Unavailable",
@@ -109,8 +122,29 @@ trait ModelsCommandHost {
 #[derive(Clone, Copy, Debug, Default)]
 struct ProductionModelsCommandHost;
 
-impl ModelsCommandHost for ProductionModelsCommandHost {
-    fn list_models(&self) -> Result<ModelCatalog, ModelsOperationalFailure> {
+#[cfg(not(target_family = "wasm"))]
+trait ModelsCompositionEffects {
+    type Credential;
+
+    fn load_and_validate_config(&self) -> Result<(), ModelsOperationalFailure>;
+
+    fn discover_credential(&self) -> Result<Self::Credential, ModelsOperationalFailure>;
+
+    fn create_transport_and_list(
+        &self,
+        credential: Self::Credential,
+    ) -> Result<ModelCatalog, ModelsOperationalFailure>;
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, Copy, Debug, Default)]
+struct ProcessModelsCompositionEffects;
+
+#[cfg(not(target_family = "wasm"))]
+impl ModelsCompositionEffects for ProcessModelsCompositionEffects {
+    type Credential = DiscoveredAiGatewayCatalogCredential;
+
+    fn load_and_validate_config(&self) -> Result<(), ModelsOperationalFailure> {
         let loaded = load_process_config().map_err(|_| ModelsOperationalFailure::Unavailable)?;
         let config = loaded.config();
         if config.provider() != NativeProviderKind::VercelAiGateway
@@ -119,36 +153,128 @@ impl ModelsCommandHost for ProductionModelsCommandHost {
         {
             return Err(ModelsOperationalFailure::Unavailable);
         }
+        Ok(())
+    }
 
+    fn discover_credential(&self) -> Result<Self::Credential, ModelsOperationalFailure> {
+        discover_process_ai_gateway_catalog_credential()
+            .map_err(|_| ModelsOperationalFailure::Unavailable)
+    }
+
+    fn create_transport_and_list(
+        &self,
+        credential: Self::Credential,
+    ) -> Result<ModelCatalog, ModelsOperationalFailure> {
+        let (access_mode, bearer_token) = match credential {
+            DiscoveredAiGatewayCatalogCredential::PublicOnly => {
+                (AiGatewayModelCatalogAccessMode::PublicOnly, None)
+            }
+            DiscoveredAiGatewayCatalogCredential::Authenticated(credential) => (
+                AiGatewayModelCatalogAccessMode::Authenticated,
+                Some(credential.into_bearer_token()),
+            ),
+        };
+        let transport = AiGatewayModelCatalogHttpTransport::new(bearer_token)
+            .map_err(|_| ModelsOperationalFailure::Unavailable)?;
+        let transport: Arc<dyn AiGatewayModelCatalogTransport> = Arc::new(transport);
+        let provider = AiGatewayModelCatalogProvider::new(access_mode, transport);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(|_| ModelsOperationalFailure::Unavailable)?;
+        runtime
+            .block_on(list_models_with_signals(&provider))
+            .map_err(|error| classify_provider_error(&error))
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn list_models_with_effects(
+    effects: &impl ModelsCompositionEffects,
+) -> Result<ModelCatalog, ModelsOperationalFailure> {
+    effects.load_and_validate_config()?;
+    let credential = effects.discover_credential()?;
+    effects.create_transport_and_list(credential)
+}
+
+impl ModelsCommandHost for ProductionModelsCommandHost {
+    fn list_models(&self) -> Result<ModelCatalog, ModelsOperationalFailure> {
         #[cfg(not(target_family = "wasm"))]
         {
-            let credential = discover_process_ai_gateway_catalog_credential()
-                .map_err(|_| ModelsOperationalFailure::Unavailable)?;
-            let (access_mode, bearer_token) = match credential {
-                DiscoveredAiGatewayCatalogCredential::PublicOnly => {
-                    (AiGatewayModelCatalogAccessMode::PublicOnly, None)
-                }
-                DiscoveredAiGatewayCatalogCredential::Authenticated(credential) => (
-                    AiGatewayModelCatalogAccessMode::Authenticated,
-                    Some(credential.into_bearer_token()),
-                ),
-            };
-            let transport = AiGatewayModelCatalogHttpTransport::new(bearer_token)
-                .map_err(|_| ModelsOperationalFailure::Unavailable)?;
-            let transport: Arc<dyn AiGatewayModelCatalogTransport> = Arc::new(transport);
-            let provider = AiGatewayModelCatalogProvider::new(access_mode, transport);
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .map_err(|_| ModelsOperationalFailure::Unavailable)?;
-            runtime
-                .block_on(list_models_with_signals(&provider))
-                .map_err(|error| classify_provider_error(&error))
+            list_models_with_effects(&ProcessModelsCompositionEffects)
         }
 
         #[cfg(target_family = "wasm")]
-        Err(ModelsOperationalFailure::Unavailable)
+        {
+            let loaded =
+                load_process_config().map_err(|_| ModelsOperationalFailure::Unavailable)?;
+            let config = loaded.config();
+            if config.provider() != NativeProviderKind::VercelAiGateway
+                || config.transport() != NativeTransportKind::AiGatewayHttp
+                || config.credential_source() != NativeCredentialSourceKind::Environment
+            {
+                return Err(ModelsOperationalFailure::Unavailable);
+            }
+            Err(ModelsOperationalFailure::Unavailable)
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModelsSignalEvent {
+    Received,
+    WaitFailed,
+}
+
+#[cfg(not(target_family = "wasm"))]
+trait ModelsSignalSource {
+    fn register_interrupt(
+        &mut self,
+    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError>;
+
+    #[cfg(unix)]
+    fn register_terminate(
+        &mut self,
+    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError>;
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, Copy, Debug, Default)]
+struct TokioModelsSignalSource;
+
+#[cfg(not(target_family = "wasm"))]
+impl ModelsSignalSource for TokioModelsSignalSource {
+    fn register_interrupt(
+        &mut self,
+    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
+        Ok(Box::pin(async {
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => ModelsSignalEvent::Received,
+                Err(_) => ModelsSignalEvent::WaitFailed,
+            }
+        }))
+    }
+
+    #[cfg(unix)]
+    fn register_terminate(
+        &mut self,
+    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .map_err(|_| signal_unavailable_error())?;
+        Ok(Box::pin(async move {
+            terminate_signal_event(terminate.recv().await)
+        }))
+    }
+}
+
+#[cfg(all(not(target_family = "wasm"), unix))]
+const fn terminate_signal_event(received: Option<()>) -> ModelsSignalEvent {
+    match received {
+        Some(()) => ModelsSignalEvent::Received,
+        None => ModelsSignalEvent::WaitFailed,
     }
 }
 
@@ -156,51 +282,74 @@ impl ModelsCommandHost for ProductionModelsCommandHost {
 async fn list_models_with_signals(
     provider: &dyn ModelCatalogProvider,
 ) -> Result<ModelCatalog, ProviderError> {
+    list_models_with_signal_source(provider, &mut TokioModelsSignalSource).await
+}
+
+#[cfg(not(target_family = "wasm"))]
+async fn list_models_with_signal_source(
+    provider: &dyn ModelCatalogProvider,
+    signals: &mut impl ModelsSignalSource,
+) -> Result<ModelCatalog, ProviderError> {
     let cancellation = CancellationToken::new();
-    let signal_failure = Arc::new(AtomicBool::new(false));
-    let mut signal_tasks = Vec::with_capacity(2);
-
-    let interrupt_cancellation = cancellation.clone();
-    let interrupt_failure = Arc::clone(&signal_failure);
-    signal_tasks.push(tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_err() {
-            interrupt_failure.store(true, Ordering::Release);
-        }
-        interrupt_cancellation.cancel();
-    }));
-
+    let mut interrupt = signals.register_interrupt()?;
     #[cfg(unix)]
-    {
-        let Ok(mut terminate) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        else {
-            for task in &signal_tasks {
-                task.abort();
-            }
-            for task in signal_tasks {
-                let _ = task.await;
-            }
-            return Err(signal_unavailable_error());
-        };
-        let terminate_cancellation = cancellation.clone();
-        signal_tasks.push(tokio::spawn(async move {
-            if terminate.recv().await.is_some() {
-                terminate_cancellation.cancel();
-            }
-        }));
+    let mut terminate = signals.register_terminate()?;
+
+    let initial_signal = poll_fn(|context| {
+        if let Poll::Ready(event) = interrupt.as_mut().poll(context) {
+            return Poll::Ready(Some(event));
+        }
+        #[cfg(unix)]
+        if let Poll::Ready(event) = terminate.as_mut().poll(context) {
+            return Poll::Ready(Some(event));
+        }
+        Poll::Ready(None)
+    })
+    .await;
+    if let Some(event) = initial_signal {
+        cancellation.cancel();
+        return Err(signal_event_error(event));
     }
 
-    let result = provider.list_models(cancellation).await;
-    for task in &signal_tasks {
-        task.abort();
-    }
-    for task in signal_tasks {
-        let _ = task.await;
-    }
-    if signal_failure.load(Ordering::Acquire) {
-        Err(signal_unavailable_error())
-    } else {
-        result
+    let mut provider_future = provider.list_models(cancellation.clone());
+    poll_fn(|context| {
+        if let Poll::Ready(event) = interrupt.as_mut().poll(context) {
+            cancellation.cancel();
+            return Poll::Ready(Err(signal_event_error(event)));
+        }
+        #[cfg(unix)]
+        if let Poll::Ready(event) = terminate.as_mut().poll(context) {
+            cancellation.cancel();
+            return Poll::Ready(Err(signal_event_error(event)));
+        }
+        let provider_result = match provider_future.as_mut().poll(context) {
+            Poll::Ready(result) => result,
+            Poll::Pending => return Poll::Pending,
+        };
+        if let Poll::Ready(event) = interrupt.as_mut().poll(context) {
+            cancellation.cancel();
+            return Poll::Ready(Err(signal_event_error(event)));
+        }
+        #[cfg(unix)]
+        if let Poll::Ready(event) = terminate.as_mut().poll(context) {
+            cancellation.cancel();
+            return Poll::Ready(Err(signal_event_error(event)));
+        }
+        Poll::Ready(provider_result)
+    })
+    .await
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn signal_event_error(event: ModelsSignalEvent) -> ProviderError {
+    match event {
+        ModelsSignalEvent::Received => ProviderError::new(
+            ProviderErrorKind::Cancelled,
+            "Cancelled",
+            "model catalog request was cancelled",
+            false,
+        ),
+        ModelsSignalEvent::WaitFailed => signal_unavailable_error(),
     }
 }
 
@@ -214,6 +363,7 @@ fn signal_unavailable_error() -> ProviderError {
     )
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn classify_provider_error(error: &ProviderError) -> ModelsOperationalFailure {
     match error.code.as_str() {
         "AuthenticationRejected" => ModelsOperationalFailure::AuthenticationRejected,
@@ -580,16 +730,34 @@ fn write_json_string(output: &mut impl std::fmt::Write, value: &str) -> std::fmt
 mod tests {
     use super::{
         Command, INVALID_ARGUMENTS, ModelsCommandHost, ModelsOperationalFailure, OUTPUT_FAILURE,
-        PermissionMode, classify_provider_error, json_permissions, parse_arguments, permissions,
-        push_json_string, run, run_with_models_host,
+        PermissionMode, json_permissions, parse_arguments, permissions, push_json_string, run,
+        run_with_models_host,
     };
-    use machine_god_core::{
-        AvailableModel, ModelCatalog, ModelCatalogAccess, ProviderError, ProviderErrorKind,
-        PublicCatalogReason,
+    #[cfg(not(target_family = "wasm"))]
+    use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
+    #[cfg(unix)]
+    use super::{
+        ModelsSignalEvent, ModelsSignalSource, list_models_with_signal_source,
+        signal_unavailable_error, terminate_signal_event,
     };
+    use machine_god_core::{AvailableModel, ModelCatalog, ModelCatalogAccess, PublicCatalogReason};
+    #[cfg(unix)]
+    use machine_god_core::{BoxFuture, CancellationToken, ModelCatalogProvider};
+    #[cfg(not(target_family = "wasm"))]
+    use machine_god_core::{ProviderError, ProviderErrorKind};
     use std::cell::Cell;
+    #[cfg(not(target_family = "wasm"))]
+    use std::cell::RefCell;
     use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::future::Future;
     use std::io;
+    #[cfg(unix)]
+    use std::pin::Pin;
+    #[cfg(unix)]
+    use std::sync::{Arc, Mutex};
+    #[cfg(unix)]
+    use std::task::{Context, Poll};
 
     #[derive(Clone, Debug)]
     struct FakeModelsHost {
@@ -613,6 +781,258 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum CompositionEffect {
+        LoadConfig,
+        DiscoverCredential,
+        CreateTransportAndList,
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[derive(Debug)]
+    struct FakeModelsCompositionEffects {
+        trace: RefCell<Vec<CompositionEffect>>,
+        config_result: Result<(), ModelsOperationalFailure>,
+        credential_result: Result<(), ModelsOperationalFailure>,
+        catalog_result: Result<ModelCatalog, ModelsOperationalFailure>,
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    impl ModelsCompositionEffects for FakeModelsCompositionEffects {
+        type Credential = ();
+
+        fn load_and_validate_config(&self) -> Result<(), ModelsOperationalFailure> {
+            self.trace.borrow_mut().push(CompositionEffect::LoadConfig);
+            self.config_result
+        }
+
+        fn discover_credential(&self) -> Result<Self::Credential, ModelsOperationalFailure> {
+            self.trace
+                .borrow_mut()
+                .push(CompositionEffect::DiscoverCredential);
+            self.credential_result
+        }
+
+        fn create_transport_and_list(
+            &self,
+            (): Self::Credential,
+        ) -> Result<ModelCatalog, ModelsOperationalFailure> {
+            self.trace
+                .borrow_mut()
+                .push(CompositionEffect::CreateTransportAndList);
+            self.catalog_result.clone()
+        }
+    }
+
+    #[cfg(unix)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum SignalTrace {
+        RegisterInterrupt,
+        RegisterTerminate,
+        PollInterrupt,
+        PollTerminate,
+        CreateProviderFuture,
+        PollProviderFuture,
+        DropInterrupt,
+        DropTerminate,
+        DropProviderFuture,
+    }
+
+    #[cfg(unix)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum ScriptedSignal {
+        Pending,
+        ReadyOnPoll {
+            poll: usize,
+            event: ModelsSignalEvent,
+        },
+    }
+
+    #[cfg(unix)]
+    struct ScriptedSignalFuture {
+        trace: Arc<Mutex<Vec<SignalTrace>>>,
+        poll_event: SignalTrace,
+        drop_event: SignalTrace,
+        script: ScriptedSignal,
+        polls: usize,
+    }
+
+    #[cfg(unix)]
+    impl Future for ScriptedSignalFuture {
+        type Output = ModelsSignalEvent;
+
+        fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls += 1;
+            self.trace.lock().unwrap().push(self.poll_event);
+            match self.script {
+                ScriptedSignal::ReadyOnPoll { poll, event } if self.polls >= poll => {
+                    Poll::Ready(event)
+                }
+                ScriptedSignal::Pending | ScriptedSignal::ReadyOnPoll { .. } => Poll::Pending,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for ScriptedSignalFuture {
+        fn drop(&mut self) {
+            self.trace.lock().unwrap().push(self.drop_event);
+        }
+    }
+
+    #[cfg(unix)]
+    struct FakeModelsSignalSource {
+        trace: Arc<Mutex<Vec<SignalTrace>>>,
+        interrupt: Option<ScriptedSignal>,
+        #[cfg(unix)]
+        terminate: Option<ScriptedSignal>,
+        fail_interrupt_registration: bool,
+        #[cfg(unix)]
+        fail_terminate_registration: bool,
+    }
+
+    #[cfg(unix)]
+    impl FakeModelsSignalSource {
+        fn new(trace: Arc<Mutex<Vec<SignalTrace>>>, interrupt: ScriptedSignal) -> Self {
+            Self {
+                trace,
+                interrupt: Some(interrupt),
+                #[cfg(unix)]
+                terminate: Some(ScriptedSignal::Pending),
+                fail_interrupt_registration: false,
+                #[cfg(unix)]
+                fail_terminate_registration: false,
+            }
+        }
+
+        fn signal_future(
+            &self,
+            script: ScriptedSignal,
+            poll_event: SignalTrace,
+            drop_event: SignalTrace,
+        ) -> BoxFuture<'static, ModelsSignalEvent> {
+            Box::pin(ScriptedSignalFuture {
+                trace: Arc::clone(&self.trace),
+                poll_event,
+                drop_event,
+                script,
+                polls: 0,
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    impl ModelsSignalSource for FakeModelsSignalSource {
+        fn register_interrupt(
+            &mut self,
+        ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
+            self.trace
+                .lock()
+                .unwrap()
+                .push(SignalTrace::RegisterInterrupt);
+            if self.fail_interrupt_registration {
+                return Err(signal_unavailable_error());
+            }
+            let script = self.interrupt.take().expect("interrupt registered once");
+            Ok(self.signal_future(
+                script,
+                SignalTrace::PollInterrupt,
+                SignalTrace::DropInterrupt,
+            ))
+        }
+
+        #[cfg(unix)]
+        fn register_terminate(
+            &mut self,
+        ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
+            self.trace
+                .lock()
+                .unwrap()
+                .push(SignalTrace::RegisterTerminate);
+            if self.fail_terminate_registration {
+                return Err(signal_unavailable_error());
+            }
+            let script = self.terminate.take().expect("terminate registered once");
+            Ok(self.signal_future(
+                script,
+                SignalTrace::PollTerminate,
+                SignalTrace::DropTerminate,
+            ))
+        }
+    }
+
+    #[cfg(unix)]
+    #[derive(Clone, Debug)]
+    enum FakeProviderResult {
+        Ready(Result<ModelCatalog, ProviderError>),
+    }
+
+    #[cfg(unix)]
+    #[derive(Clone, Debug)]
+    struct FakeSignalProvider {
+        trace: Arc<Mutex<Vec<SignalTrace>>>,
+        result: FakeProviderResult,
+        cancelled_when_dropped: Arc<Mutex<Option<bool>>>,
+    }
+
+    #[cfg(unix)]
+    struct FakeProviderFuture {
+        trace: Arc<Mutex<Vec<SignalTrace>>>,
+        result: FakeProviderResult,
+        cancellation: CancellationToken,
+        cancelled_when_dropped: Arc<Mutex<Option<bool>>>,
+    }
+
+    #[cfg(unix)]
+    impl Future for FakeProviderFuture {
+        type Output = Result<ModelCatalog, ProviderError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.trace
+                .lock()
+                .unwrap()
+                .push(SignalTrace::PollProviderFuture);
+            match &self.result {
+                FakeProviderResult::Ready(result) => Poll::Ready(result.clone()),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for FakeProviderFuture {
+        fn drop(&mut self) {
+            *self.cancelled_when_dropped.lock().unwrap() = Some(self.cancellation.is_cancelled());
+            self.trace
+                .lock()
+                .unwrap()
+                .push(SignalTrace::DropProviderFuture);
+        }
+    }
+
+    #[cfg(unix)]
+    impl ModelCatalogProvider for FakeSignalProvider {
+        fn name(&self) -> &'static str {
+            "fake-signal-provider"
+        }
+
+        fn list_models(
+            &self,
+            cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<ModelCatalog, ProviderError>> {
+            self.trace
+                .lock()
+                .unwrap()
+                .push(SignalTrace::CreateProviderFuture);
+            Box::pin(FakeProviderFuture {
+                trace: Arc::clone(&self.trace),
+                result: self.result.clone(),
+                cancellation,
+                cancelled_when_dropped: Arc::clone(&self.cancelled_when_dropped),
+            })
+        }
+    }
+
     fn catalog(ids: &[&str], access: ModelCatalogAccess) -> ModelCatalog {
         ModelCatalog::new(
             ids.iter()
@@ -620,6 +1040,277 @@ mod tests {
                 .collect(),
             access,
         )
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn composition_effects(
+        config_result: Result<(), ModelsOperationalFailure>,
+        credential_result: Result<(), ModelsOperationalFailure>,
+    ) -> FakeModelsCompositionEffects {
+        FakeModelsCompositionEffects {
+            trace: RefCell::new(Vec::new()),
+            config_result,
+            credential_result,
+            catalog_result: Ok(catalog(
+                &["provider/model"],
+                ModelCatalogAccess::Authenticated,
+            )),
+        }
+    }
+
+    #[cfg(unix)]
+    fn signal_provider(
+        trace: &Arc<Mutex<Vec<SignalTrace>>>,
+        result: FakeProviderResult,
+    ) -> FakeSignalProvider {
+        FakeSignalProvider {
+            trace: Arc::clone(trace),
+            result,
+            cancelled_when_dropped: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    #[cfg(unix)]
+    fn run_signal_coordination(
+        provider: &FakeSignalProvider,
+        signals: &mut FakeModelsSignalSource,
+    ) -> Result<ModelCatalog, ProviderError> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("test runtime")
+            .block_on(list_models_with_signal_source(provider, signals))
+    }
+
+    #[cfg(unix)]
+    fn coordination_trace(trace: &Arc<Mutex<Vec<SignalTrace>>>) -> Vec<SignalTrace> {
+        trace
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .filter(|event| {
+                !matches!(
+                    event,
+                    SignalTrace::DropInterrupt
+                        | SignalTrace::DropTerminate
+                        | SignalTrace::DropProviderFuture
+                )
+            })
+            .collect()
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn models_composition_orders_each_effect_once_and_short_circuits_failures() {
+        let success = composition_effects(Ok(()), Ok(()));
+        assert!(list_models_with_effects(&success).is_ok());
+        assert_eq!(
+            *success.trace.borrow(),
+            [
+                CompositionEffect::LoadConfig,
+                CompositionEffect::DiscoverCredential,
+                CompositionEffect::CreateTransportAndList,
+            ]
+        );
+
+        let config_failure = composition_effects(
+            Err(ModelsOperationalFailure::Unavailable),
+            Err(ModelsOperationalFailure::Unavailable),
+        );
+        assert_eq!(
+            list_models_with_effects(&config_failure),
+            Err(ModelsOperationalFailure::Unavailable)
+        );
+        assert_eq!(
+            *config_failure.trace.borrow(),
+            [CompositionEffect::LoadConfig]
+        );
+
+        let credential_failure =
+            composition_effects(Ok(()), Err(ModelsOperationalFailure::Unavailable));
+        assert_eq!(
+            list_models_with_effects(&credential_failure),
+            Err(ModelsOperationalFailure::Unavailable)
+        );
+        assert_eq!(
+            *credential_failure.trace.borrow(),
+            [
+                CompositionEffect::LoadConfig,
+                CompositionEffect::DiscoverCredential,
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn model_signal_listeners_are_registered_and_polled_before_provider_dispatch() {
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let provider = signal_provider(
+            &trace,
+            FakeProviderResult::Ready(Ok(catalog(
+                &["provider/model"],
+                ModelCatalogAccess::Authenticated,
+            ))),
+        );
+        let mut signals = FakeModelsSignalSource::new(Arc::clone(&trace), ScriptedSignal::Pending);
+
+        assert!(run_signal_coordination(&provider, &mut signals).is_ok());
+        assert_eq!(
+            coordination_trace(&trace),
+            [
+                SignalTrace::RegisterInterrupt,
+                SignalTrace::RegisterTerminate,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+                SignalTrace::CreateProviderFuture,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+                SignalTrace::PollProviderFuture,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+            ]
+        );
+        let trace = trace.lock().unwrap();
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|event| **event == SignalTrace::DropInterrupt)
+                .count(),
+            1
+        );
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|event| **event == SignalTrace::DropTerminate)
+                .count(),
+            1
+        );
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|event| **event == SignalTrace::DropProviderFuture)
+                .count(),
+            1
+        );
+        assert_eq!(
+            *provider.cancelled_when_dropped.lock().unwrap(),
+            Some(false)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ready_signal_wins_same_poll_provider_success_and_drops_cancelled_provider() {
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let provider = signal_provider(
+            &trace,
+            FakeProviderResult::Ready(Ok(catalog(
+                &["provider/model"],
+                ModelCatalogAccess::Authenticated,
+            ))),
+        );
+        let mut signals = FakeModelsSignalSource::new(
+            Arc::clone(&trace),
+            ScriptedSignal::ReadyOnPoll {
+                poll: 3,
+                event: ModelsSignalEvent::Received,
+            },
+        );
+
+        let error = run_signal_coordination(&provider, &mut signals).unwrap_err();
+
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert_eq!(error.code, "Cancelled");
+        assert_eq!(
+            coordination_trace(&trace),
+            [
+                SignalTrace::RegisterInterrupt,
+                SignalTrace::RegisterTerminate,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+                SignalTrace::CreateProviderFuture,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+                SignalTrace::PollProviderFuture,
+                SignalTrace::PollInterrupt,
+            ]
+        );
+        assert_eq!(*provider.cancelled_when_dropped.lock().unwrap(), Some(true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signal_registration_and_wait_failures_are_authoritative() {
+        let registration_trace = Arc::new(Mutex::new(Vec::new()));
+        let registration_provider = signal_provider(
+            &registration_trace,
+            FakeProviderResult::Ready(Ok(catalog(
+                &["provider/model"],
+                ModelCatalogAccess::Authenticated,
+            ))),
+        );
+        let mut registration_signals =
+            FakeModelsSignalSource::new(Arc::clone(&registration_trace), ScriptedSignal::Pending);
+        registration_signals.fail_terminate_registration = true;
+
+        let registration_error =
+            run_signal_coordination(&registration_provider, &mut registration_signals).unwrap_err();
+        assert_eq!(registration_error.kind, ProviderErrorKind::Unavailable);
+        assert_eq!(registration_error.code, "SignalUnavailable");
+        assert_eq!(
+            coordination_trace(&registration_trace),
+            [
+                SignalTrace::RegisterInterrupt,
+                SignalTrace::RegisterTerminate,
+            ]
+        );
+        assert_eq!(
+            *registration_provider.cancelled_when_dropped.lock().unwrap(),
+            None
+        );
+
+        let wait_trace = Arc::new(Mutex::new(Vec::new()));
+        let wait_provider = signal_provider(
+            &wait_trace,
+            FakeProviderResult::Ready(Ok(catalog(
+                &["provider/model"],
+                ModelCatalogAccess::Authenticated,
+            ))),
+        );
+        let mut wait_signals =
+            FakeModelsSignalSource::new(Arc::clone(&wait_trace), ScriptedSignal::Pending);
+        wait_signals.terminate = Some(ScriptedSignal::ReadyOnPoll {
+            poll: 3,
+            event: ModelsSignalEvent::WaitFailed,
+        });
+
+        let wait_error = run_signal_coordination(&wait_provider, &mut wait_signals).unwrap_err();
+        assert_eq!(wait_error.kind, ProviderErrorKind::Unavailable);
+        assert_eq!(wait_error.code, "SignalUnavailable");
+        assert_eq!(
+            coordination_trace(&wait_trace),
+            [
+                SignalTrace::RegisterInterrupt,
+                SignalTrace::RegisterTerminate,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+                SignalTrace::CreateProviderFuture,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+                SignalTrace::PollProviderFuture,
+                SignalTrace::PollInterrupt,
+                SignalTrace::PollTerminate,
+            ]
+        );
+        assert_eq!(
+            *wait_provider.cancelled_when_dropped.lock().unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            terminate_signal_event(Some(())),
+            ModelsSignalEvent::Received
+        );
+        assert_eq!(terminate_signal_event(None), ModelsSignalEvent::WaitFailed);
     }
 
     #[derive(Debug, Default)]
@@ -802,6 +1493,7 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
+    #[cfg(not(target_family = "wasm"))]
     #[test]
     fn models_failures_use_exact_human_and_json_channels() {
         let cases = [
@@ -960,6 +1652,7 @@ mod tests {
         assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
     }
 
+    #[cfg(not(target_family = "wasm"))]
     #[test]
     fn provider_failures_are_mapped_without_reflecting_provider_diagnostics() {
         let cases = [

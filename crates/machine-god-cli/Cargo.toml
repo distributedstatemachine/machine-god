@@ -16,7 +16,7 @@ machine-god-core.workspace = true
 machine-god-native = { workspace = true, features = ["ai-gateway-model-catalog-http"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 
 [lints]
 workspace = true

@@ -463,21 +463,26 @@ that result, and core performs no clock, sorting, or output work.
 Dropping or cancelling an attempt drops its owned Reqwest request/response,
 body buffer, and semaphore permit. Dropping the one trait future between the
 two native attempts prevents anonymous fallback. The native future owns one
-provider cancellation waiter for the currently active transport call, while
-each HTTP call owns its attempt-local cancellation waiter and timer described
-above. All are dropped with that call; fallback creates new attempt-local
-waiters against the unchanged deadline. Machine-god spawns no catalog worker,
-producer, retry/backoff, or detached task. Reqwest/Hyper connection dispatch
-and its bounded connection timers remain owned by the host runtime. The CLI keeps that
-current-thread runtime driven through request completion and teardown.
+provider cancellation waiter and one separately polled deadline authority for
+the currently active transport call, while each HTTP call owns its attempt-
+local cancellation waiter and timer described above. All are dropped with that
+call; fallback creates new per-call waiters against the unchanged deadline.
+Machine-god spawns no catalog worker, producer, retry/backoff, or detached task.
+Reqwest/Hyper connection dispatch and its bounded connection timers remain
+owned by the host runtime. The CLI keeps that current-thread runtime driven
+through request completion and teardown.
 Cancellation/drop cannot recall bytes already sent or prove what the peer
 received.
 
 The CLI registers Ctrl-C cancellation on every supported native target and
 SIGTERM cancellation on Unix. Signal registration or wait failure maps to the
-closed `Unavailable` presentation. After the provider resolves, the CLI aborts
-and joins the still-pending signal tasks before rendering; no signal task is
-detached beyond the command.
+closed `Unavailable` presentation; closure of the SIGTERM stream is a wait
+failure. Both parent-owned listener futures are created and polled once before
+the provider future is created. One parent-owned poll loop checks the listeners
+before the provider and rechecks them after a ready provider poll, so a ready
+signal or wait failure wins that poll. A received signal cancels and drops the
+provider future before the command returns. Listener futures are dropped before
+rendering; no signal task is spawned or detached.
 
 ## Intentional pinned-fx differences and deferred scope
 
