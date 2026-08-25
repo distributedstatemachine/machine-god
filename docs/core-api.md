@@ -415,6 +415,35 @@ surface unchanged. Exact composed cycle-2 remediation precursor
 `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
 local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results. Formal
+cycle 3 is **NOT GREEN** on exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported 0
+blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported 0
+blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
+findings. The deduplicated union is 0 blocker, 0 high, 2 medium, and 1 low:
+blocking per-query entropy, missing native pre-effect cancellation/deadline
+authority, and one duplicated cancellation waiter reported in both non-green
+tracks. The rejected candidate does not alter core's executor-neutral API. The
+native remediation snapshots query-ID entropy during transport construction,
+uses an atomic per-query sequence, reuses one bounded cancellation waiter for
+permit/DNS/HTTP/body waits, and checks cancellation plus the same absolute
+deadline before sequential DNS, HTTP, and body effects. The final synchronous
+boundary checks token/deadline state directly without another waiter. Hostname
+prerequisite failure is fixed until transport reconstruction; literal IP
+execution bypasses it. Exact isolated production
+remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+`web_fetch.rs`; core remains byte-unchanged. It implements the 32-byte key,
+`AtomicU32` plus bounded SHA-256 derivation, carried pre/post-effect deadline
+checks, and single cancellation owner. Exact isolated independent-evidence
+commit `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, changes only native
+`web_fetch_http.rs` atop production. Its 13/13 focused checks prove exactly one
+cancellation wake, a cancelled result, and pending owned-work drop/release for
+bounded and raw seams without sleep or network. This remediation record makes no
+replacement-gate, formal-review, workflow, integration, or delivery claim;
 formal candidates are identified only by exact-SHA review results. The
 delivered count remains twenty-six.
 

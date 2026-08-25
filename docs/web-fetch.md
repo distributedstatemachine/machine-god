@@ -1,8 +1,9 @@
 # Native `web_fetch` candidate contract
 
 Status: **IN PROGRESS**. This page freezes the proposed twenty-seventh bounded
-Milestone 03 slice and records its current local composition. It is not a
-formal-review, complete-gate, delivery, compatibility, or performance claim.
+Milestone 03 slice and records its exact local-gate and formal-review history.
+The status itself is not a replacement-gate, delivery, compatibility, or
+performance claim.
 
 The candidate starts from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its comparison reference is
@@ -44,6 +45,32 @@ engine tests; the full all-target/all-feature workspace run passes 976 tests.
 This gate record makes no formal-review outcome, workflow, integration, or
 delivery claim; formal candidates are identified only by exact-SHA review
 results.
+Formal cycle 3 is **NOT GREEN** on exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported 0
+blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported 0
+blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
+findings at every severity. The deduplicated union is 0 blocker, 0 high,
+2 medium, and 1 low. The exact candidate is rejected for blocking per-query
+entropy inside the total deadline, missing cancellation/deadline authority at
+native pre-effect boundaries between sequential network phases, and one low
+duplicated cancellation waiter reported by both non-green tracks. The
+corrected boundary is normative below. Exact isolated production remediation
+component `9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only
+`crates/machine-god-native/src/web_fetch.rs` and implements it with a
+construction-time 32-byte key, `AtomicU32` counter, bounded SHA-256 query-ID
+derivation, carried before/after native-effect deadline checks, and one
+cancellation owner. Exact isolated independent-evidence commit
+`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only `crates/machine-god-native/tests/web_fetch_http.rs`. Its 13/13 focused
+checks prove exactly one cancellation wake, a cancelled result, and
+pending owned-work drop/release for bounded and raw seams without sleep or
+network.
+This remediation record makes no
+replacement-gate, formal-review, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results.
 Native Linux HTTP compilation remains an exact-CI requirement because the
 macOS cross-host lacks the target C sysroot. Milestone 03 therefore remains in
 progress with twenty-six delivered slices.
@@ -124,19 +151,21 @@ no network effect.
 ## DNS and destination confinement
 
 Native production-transport construction synchronously snapshots the host's
-system resolver configuration outside invocation timing and stores its first
-UDP-configured nameserver. Hostname execution uses that stored entry and does
-not reread configuration per request. A configuration-read failure or missing
-usable entry is retained so later hostname execution returns the same fixed,
-retryable unavailable result without retrying the read until a new transport is
-constructed. A literal IP destination requires neither a
-nameserver nor a DNS query and remains eligible when the snapshot failed.
+system resolver configuration and one random query-ID seed outside invocation
+timing. It stores the first UDP-configured nameserver and a seed-backed atomic
+per-query sequence. Hostname execution does not reread resolver configuration
+or entropy per request. A configuration/seed read failure or missing usable
+nameserver is retained so later hostname execution returns the same fixed,
+retryable unavailable result without retrying either prerequisite until a new
+transport is constructed. A literal IP destination requires no nameserver,
+query ID, or DNS query and remains eligible when either snapshot failed.
 
 For a hostname, the invocation sends one rooted Internet-class A query and then
 one rooted Internet-class AAAA query directly to that nameserver on owned Tokio
-UDP sockets. Each query ID comes from a synchronous platform-entropy call under
-the held permit; entropy failure is fixed unavailable and spawns or detaches no
-work. A truncated UDP answer permits exactly one TCP exchange of the same
+UDP sockets. Each query ID derives from the construction-time random seed and
+one atomic sequence step; invocation execution makes no blocking entropy call,
+and query-ID generation spawns or detaches no work. A truncated UDP answer
+permits exactly one TCP exchange of the same
 query; there is no other DNS retry, search-suffix expansion, cache, libc
 `getaddrinfo`, resolver thread, or spawned resolver task. A 4,097-byte UDP
 receive buffer supplies an explicit overflow witness and rejects any message
@@ -217,9 +246,18 @@ query that proves both drivers are enabled, so polling on a current runtime
 that lacks either driver may panic; the repository's release panic policy can
 turn that host-precondition violation into process termination. This is a
 documented `# Panics` API boundary, not a typed runtime-detection guarantee.
-One cancellation waiter and one Tokio deadline sleep are allocated per
-invocation and reused across bounded permit, DNS, HTTP, and body waits;
-progress never allocates or resets a new deadline timer.
+One cancellation waiter and one Tokio deadline sleep are allocated per bounded
+invocation and reused across permit, DNS, HTTP, and body waits; progress never
+allocates or resets a new deadline timer. After bounded transport work, the
+final synchronous boundary checks cancellation/deadline state directly without
+allocating a second waiter.
+The native transport receives that invocation's absolute deadline and
+cancellation token without creating a second waiter. It checks both at every
+pre-effect transition before A, AAAA, a truncated-answer TCP replay, HTTP
+dispatch, and each response-body read. These checks are authoritative even
+when the preceding phase completed immediately without yielding. A fired
+boundary returns the fixed cancellation or timeout result before starting the
+next effect.
 
 `WebFetchTool::new` and `with_limits` apply this complete production envelope.
 The trusted `with_bounded_transport` seam applies the same active-request,
@@ -348,3 +386,32 @@ Exact composed cycle-2 remediation precursor
 local gate. This gate record makes no formal-review outcome, workflow,
 integration, or delivery claim; formal candidates are identified only by
 exact-SHA review results.
+Formal cycle 3 rejected exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
+findings. After deduplication the cycle has 0 blocker, 0 high, 2 medium, and
+1 low finding. Blocking per-query entropy ran within the total deadline;
+native transitions between A, AAAA, TCP, HTTP, and body work lacked explicit
+pre-effect cancellation/deadline authority; and the two non-green tracks
+repeated the low duplicate-cancellation-waiter finding. The corrected contract
+uses one construction-time random seed and atomic per-query sequence, fixed
+hostname-unavailable state with literal-IP bypass, one bounded waiter for
+permit/DNS/HTTP/body waits, and the same absolute deadline at every native
+pre-effect boundary. The final synchronous boundary checks token/deadline state
+directly without another waiter. Exact
+isolated production remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+`web_fetch.rs` and implements the 32-byte key, `AtomicU32` plus bounded SHA-256
+ID derivation, carried pre/post-effect deadline checks, and one cancellation
+owner. Exact isolated independent-evidence commit
+`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only `web_fetch_http.rs`; its 13/13 focused checks prove exactly one
+cancellation wake, a cancelled result, and pending owned-work drop/release for
+bounded and raw seams without sleep or network. This remediation record makes no
+replacement-gate,
+formal-review, workflow, integration, or delivery claim; formal candidates are
+identified only by exact-SHA review results.

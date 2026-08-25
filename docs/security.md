@@ -17,17 +17,23 @@ construction is runtime-independent, but polling requires a current host-owned
 Tokio runtime with I/O and time enabled. No current handle returns a fixed
 redacted error; a current driverless runtime violates the documented `# Panics`
 precondition and may terminate a release process. Native transport construction
-synchronously snapshots the first system-configured UDP resolver outside
-invocation timing. Hostname execution uses that stored nameserver with bounded
-invocation-owned Tokio A/AAAA sockets and at most one TCP truncation fallback
-per query. Literal IP execution needs no nameserver. A snapshot failure makes
-later hostname execution return the same fixed, retryable unavailable result
-and is not retried until reconstruction.
-Synchronous platform entropy supplies query IDs under the held permit. A one-
-byte UDP overflow witness and preallocation TCP length check enforce a 4 KiB
-cap. Raw section counts and their count-implied minimum payload length are
-bounded before either UDP or TCP decoding, and a still-truncated TCP answer is
-rejected. There is no
+synchronously snapshots the first system-configured UDP resolver and one
+random query-ID seed outside invocation timing. Hostname execution uses the
+stored nameserver with bounded invocation-owned Tokio A/AAAA sockets and at
+most one TCP truncation fallback per query; query IDs come from the stored seed
+and an atomic per-query sequence, with no blocking per-query entropy. A failed
+resolver or seed snapshot makes later hostname execution return the same fixed,
+retryable unavailable result until reconstruction. Literal IP execution needs
+neither prerequisite and bypasses those failures. One outer cancellation
+waiter covers bounded permit/DNS/HTTP/body waits. The native transport checks
+cancellation and the same absolute total deadline before each sequential A,
+AAAA, TCP, HTTP, and body effect, including transitions where earlier work
+completed immediately. The final synchronous boundary directly checks the
+token/deadline and creates no second waiter.
+A one-byte UDP overflow witness and preallocation TCP length check enforce a
+4 KiB cap. Raw section counts and their count-implied minimum payload length
+are bounded before either UDP or TCP decoding, and a still-truncated TCP answer
+is rejected. There is no
 libc lookup, resolver thread, cache, retry, or detached resolver task;
 cancellation/drop discards the owned sockets. The admitted public address set
 is pinned into a fresh HTTP/1 client backed by a process-wide cached Rustls
@@ -53,7 +59,29 @@ snapshot corrections. Exact composed cycle-2 remediation precursor
 `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
 local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, workflow, integration, or delivery claim;
-formal candidates are identified only by exact-SHA review results. Native Linux HTTP
+formal candidates are identified only by exact-SHA review results. Formal
+cycle 3 is **NOT GREEN** on exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API and network/HTTP
+lifecycle each reported 0 blocker, 0 high, 1 medium, and 1 low finding;
+performance/concurrency reported zero findings. The deduplicated union is
+0 blocker, 0 high, 2 medium, and 1 low: blocking per-query entropy, missing
+native pre-effect cancellation/deadline authority, and a duplicated
+cancellation waiter reported by both non-green tracks. The exact candidate is
+rejected. Exact isolated production remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+`web_fetch.rs`. It implements the 32-byte construction key, `AtomicU32` counter
+and bounded SHA-256 query-ID derivation, carried before/after native-effect
+deadline checks, and one cancellation owner. Exact isolated
+independent-evidence commit `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only `web_fetch_http.rs`; its 13/13 checks prove exactly one cancellation wake,
+a cancelled result, and pending owned-work drop/release for bounded and raw
+seams without sleep or network. This remediation record makes no
+replacement-gate, formal-review,
+workflow, integration, or delivery claim; formal candidates are identified
+only by exact-SHA review results. Native Linux HTTP
 compilation remains an exact-CI requirement because the macOS cross-host lacks
 the target C sysroot. M03 therefore remains in progress with twenty-six
 delivered slices.

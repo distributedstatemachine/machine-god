@@ -44,6 +44,29 @@ boundary below. Exact composed cycle-2 remediation precursor
 local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, workflow, integration, or delivery claim;
 formal candidates are identified only by exact-SHA review results.
+Formal cycle 3 is **NOT GREEN** on exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
+findings at every severity. The deduplicated union is 0 blocker, 0 high,
+2 medium, and 1 low. It covers blocking per-query entropy within the total
+deadline, missing cancellation/deadline authority at native pre-effect
+boundaries, and one duplicated cancellation-waiter finding repeated across two
+tracks. Candidate `16f5afe` is rejected. Exact isolated production remediation
+component `9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only
+`crates/machine-god-native/src/web_fetch.rs`. It supplies the construction-time
+32-byte key, `AtomicU32` counter and bounded SHA-256 query-ID derivation,
+carried before/after native-effect deadline checks, and one cancellation owner.
+Exact isolated independent-evidence commit
+`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only `web_fetch_http.rs`; its 13/13 focused checks prove exactly one
+cancellation wake, a cancelled result, and pending owned-work drop/release in
+bounded and raw seams without sleep or network. This remediation record makes no
+replacement-gate, formal-review, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results.
 Native Linux HTTP evidence remains an exact-CI requirement
 because the macOS cross-host lacks the target C sysroot. Feature and `main`
 workflows are not claimed by the local gate. Its non-WASM `web-fetch-http`
@@ -55,16 +78,23 @@ polling production requires a current host-owned Tokio runtime with I/O and
 time enabled. No current handle is a typed `RuntimeRequired` failure, while a
 current driverless runtime violates the documented `# Panics` precondition and
 may terminate a release process. One outer bounded wrapper owns the active-call
-permit, cancellation future, and one reused deadline sleep through rendering
-and its final boundary. Native construction synchronously snapshots the first
-system-configured UDP resolver outside invocation timing. Hostname execution
-uses that stored nameserver with only invocation-owned Tokio A/AAAA sockets and
-bounded TCP fallback; it creates no libc lookup, cache, retry, resolver thread,
-or spawned task. Raw DNS header counts and their count-implied minimum payload
-length are bounded before UDP or TCP decoding. Literal IP execution needs no
-nameserver. A snapshot failure makes later hostname execution return the same
-fixed, retryable unavailable result and is not retried until reconstruction. A
-process-wide cached Rustls configuration
+permit through rendering and its final boundary. Its single cancellation
+waiter and deadline sleep cover bounded permit/DNS/HTTP/body waits; the final
+synchronous boundary checks the token/deadline directly and creates no second
+waiter. Native construction synchronously snapshots the first
+system-configured UDP resolver and one random query-ID seed outside invocation
+timing. Hostname execution uses the stored nameserver and derives each A/AAAA
+ID from that seed and an atomic per-query sequence, with only invocation-owned
+Tokio sockets and bounded TCP fallback; it performs no per-query entropy call
+and creates no libc lookup, cache, retry, resolver thread, or spawned task. Raw
+DNS header counts and their count-implied minimum payload length are bounded
+before UDP or TCP decoding. A failed resolver or seed snapshot makes hostname
+execution return a fixed retryable unavailable result until reconstruction;
+literal IP execution needs neither prerequisite and bypasses those failures.
+The native transport checks its token state and the same absolute total
+deadline at every
+pre-effect transition between A, AAAA, TCP replay, HTTP dispatch, and body
+work. A process-wide cached Rustls configuration
 supplies pinned roots and HTTP/1.1 ALPN to each fresh pinned Reqwest client
 without reparsing the roots.
 The candidate host has thirteen alphabetical tools, but its descriptor-backed

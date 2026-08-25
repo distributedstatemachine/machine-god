@@ -46,7 +46,30 @@ remediation precursor `1a78f6437eb17f646bdd11337464c949beea49f0`, tree
 local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, workflow, integration, or delivery claim;
 formal candidates are identified only by exact-SHA review results. The full
-record is in [`web-fetch.md`](web-fetch.md).
+record is in [`web-fetch.md`](web-fetch.md). Formal cycle 3 is **NOT GREEN** on
+exact candidate `16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API and network/HTTP
+lifecycle each reported 0 blocker, 0 high, 1 medium, and 1 low finding;
+performance/concurrency reported zero findings at every severity. The
+deduplicated union is 0 blocker, 0 high, 2 medium, and 1 low: blocking per-query
+entropy inside the total deadline, missing cancellation/deadline authority at
+native pre-effect phase transitions, and a duplicated cancellation waiter
+reported by both non-green tracks. The exact candidate is rejected. The exact
+isolated production remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+`web_fetch.rs`. It implements the construction-time 32-byte key, `AtomicU32`
+and bounded SHA-256 query-ID derivation, carried before/after native-effect
+deadline checks, and one cancellation owner. Exact isolated
+independent-evidence commit `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only `web_fetch_http.rs`; its 13/13 focused checks prove exactly one
+cancellation wake, a cancelled result, and pending owned-work drop/release
+across bounded/raw seams without sleep or network. This remediation record
+makes no
+replacement-gate, formal-review, workflow,
+integration, or delivery claim; formal candidates are identified only by
+exact-SHA review results.
 The delivered count remains twenty-six and this is not a performance or
 fx-equivalence claim.
 
@@ -55,14 +78,21 @@ Later production `web_fetch` polling requires a current host-owned Tokio
 runtime with I/O and time enabled. No current handle produces fixed
 `RuntimeRequired`; a current driverless runtime violates the documented
 `# Panics` precondition and may terminate a release process.
-The host supplies no resolver override. Native transport construction
-synchronously snapshots the host's first UDP-configured system nameserver
-outside invocation timing. Each admitted hostname invocation uses that stored
-nameserver for bounded direct DNS socket work; it does not reread configuration.
-Literal public IPs skip DNS and need no nameserver. A snapshot failure makes
-later hostname execution return the same fixed, retryable unavailable result
-and is not retried until a new transport is constructed. No workspace
-descriptor is used for resolver configuration or network execution.
+The host supplies no resolver or entropy override. Native transport
+construction synchronously snapshots the host's first UDP-configured system
+nameserver and one random query-ID seed outside invocation timing. Each
+admitted hostname invocation uses that nameserver and an atomic per-query
+sequence rooted in the stored seed for bounded direct DNS socket work; it does
+not reread resolver configuration or perform per-query entropy. A failed
+nameserver or seed snapshot makes later hostname execution return the same
+fixed, retryable unavailable result until a new transport is constructed.
+Literal public IPs skip DNS and bypass both prerequisites. One outer
+cancellation waiter is reused for bounded permit, DNS, HTTP, and body waits,
+and the native transport checks cancellation and the same absolute deadline at
+pre-effect boundaries between A, AAAA, TCP replay, HTTP dispatch, and body work.
+The final synchronous boundary checks the token/deadline directly without a
+second waiter. No workspace descriptor is used
+for resolver configuration, entropy, or network execution.
 The twenty-fourth, library-only `copy_file` slice is delivered. Cycle-3
 candidate `99ecdb3`, tree `145b3be`, is green with zero findings in all three
 fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature

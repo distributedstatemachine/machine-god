@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 2 NOT GREEN; REPLACEMENT LOCAL GATE GREEN**
+Status: **IN PROGRESS — FORMAL CYCLE 3 NOT GREEN**
 
 ## Base and boundary
 
@@ -25,6 +25,22 @@ local gate. This gate record establishes no formal-review outcome, workflow,
 integration, delivery, compatibility, or product-performance claim; formal
 candidates are identified only by exact-SHA review results. Milestone 03
 remains in progress with twenty-six delivered slices.
+Formal cycle 3 rejected exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported 0
+blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported 0
+blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
+findings at every severity. The deduplicated union is 0 blocker, 0 high,
+2 medium, and 1 low. Exact isolated production remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only
+`crates/machine-god-native/src/web_fetch.rs`. Exact isolated
+independent-evidence commit `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only `crates/machine-god-native/tests/web_fetch_http.rs`. This remediation
+record makes no replacement-gate, formal-review, workflow, integration,
+delivery, compatibility, or product-performance claim; formal candidates are
+identified only by exact-SHA review results.
 
 ## Frozen candidate boundary
 
@@ -47,23 +63,30 @@ pinned to the connection. Defaults are eight active calls, a 10-second connect
 bound, a 60-second total bound, an inclusive 24 KiB body bound, and a 56 KiB
 serialized-result bound; active calls can never exceed 32. Cancellation and
 drop release the response and permit and own no machine-god worker. One outer
-bounded wrapper owns the permit, cancellation future, and reused deadline sleep
-through transport, rendering, serialized-result validation, and the final
-cancellation/deadline boundary.
+bounded wrapper retains the acquired permit through transport, rendering,
+serialized-result validation, and the final cancellation/deadline boundary.
+Its cancellation future and reused deadline sleep cover only bounded permit,
+DNS, HTTP, and body waits; the final synchronous boundary directly checks the
+token/deadline without another waiter.
 Construction is runtime-independent. Polling production requires a current
 host-owned Tokio runtime with I/O and time enabled; no current handle returns
 `RuntimeRequired`, while a current driverless runtime violates the documented
 `# Panics` precondition and may terminate a release process. One Tokio deadline
-sleep is reused throughout each invocation.
+sleep and one cancellation waiter are reused across bounded permit, DNS, HTTP,
+and body waits. The final synchronous boundary checks the token/deadline directly
+without a second waiter. The native transport checks cancellation and that
+same absolute deadline before each effect transition between A, AAAA, TCP
+replay, HTTP dispatch, and body work.
 
 Native production-transport construction synchronously snapshots the first
-UDP nameserver from host system resolver configuration outside invocation
-timing and without requiring Tokio. It retains either that address or a fixed
-unavailable result until reconstruction. Hostname execution uses the stored
-result, while an admitted public IP literal bypasses a failed snapshot. The
-invocation sends bounded rooted A then AAAA queries on owned Tokio sockets,
-using TCP only once when a UDP response is truncated. Query IDs use synchronous
-platform entropy under the permit. A
+UDP nameserver from host system resolver configuration and one random query-ID
+seed outside invocation timing and without requiring Tokio. It retains those
+prerequisites or fixed unavailable state until reconstruction. Hostname
+execution uses the stored nameserver and derives query IDs from the seed plus
+an atomic per-query sequence, while an admitted public IP literal bypasses
+failed hostname prerequisites. The invocation performs no blocking per-query
+entropy and sends bounded rooted A then AAAA queries on owned Tokio sockets,
+using TCP only once when a UDP response is truncated. A
 one-byte UDP overflow witness enforces the inclusive 4 KiB message cap; TCP
 length outside 12 through 4,096 bytes is rejected before allocation, and a
 still-truncated TCP response is invalid. One raw predecode helper gates both
@@ -449,6 +472,91 @@ This gate record makes no formal-review outcome, workflow, integration, or
 delivery claim; formal candidates are identified only by exact-SHA review
 results.
 
+## Formal cycle 3 — not green
+
+Three fresh agents independently inspected exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 3 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 1 medium, 1 low**.
+
+- **Medium — blocking per-query entropy inside the total deadline:** hostname
+  execution synchronously obtained a fresh random DNS query ID after the
+  invocation's absolute deadline began. The blocking platform call had no
+  await boundary at which the Tokio deadline could interrupt it, so the
+  advertised total bound was not authoritative over all invocation work.
+- **Low — duplicated cancellation waiter:** the outer bounded invocation and
+  native transport each constructed a waiter for the same cancellation token.
+  This contradicted the maintained one-waiter boundary and performed repeated
+  per-invocation cancellation-future setup.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 1 medium, 1 low**.
+
+- **Medium — missing authority at native pre-effect phase boundaries:** the
+  outer race could drop pending native work, but the native sequence did not
+  itself recheck cancellation and the same absolute deadline before advancing
+  from completed A work to AAAA, into truncated-answer TCP replay, into HTTP
+  dispatch, or into later response-body reads. When one phase completed
+  immediately, a cancellation or deadline that became authoritative between
+  effects could lose the next-effect boundary.
+- **Low — duplicated cancellation waiter:** this track independently reported
+  the same second cancellation future created inside native execution.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-3 candidate.
+
+### Consolidated union and disposition
+
+After deduplicating the repeated waiter finding, cycle 3 has **0 blocker,
+0 high, 2 medium, and 1 low** findings. Exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`, is rejected and must never be used
+as delivery evidence.
+
+The corrected boundary snapshots one random query-ID seed synchronously during
+production-transport construction, outside invocation timing. An atomic per-
+query sequence derives each A/AAAA ID without a blocking per-query entropy
+call. A failed seed or resolver snapshot leaves hostname execution at the same
+fixed, retryable unavailable result until reconstruction, while an admitted
+literal IP bypasses those hostname-only prerequisites. The outer bounded
+invocation owns the only waiter and reusable sleep for permit/DNS/HTTP/body
+waits. Native execution receives the same token and absolute deadline and
+checks both before A, AAAA, TCP replay, HTTP dispatch, and response-body effects,
+including immediately completing phase transitions. The final synchronous
+boundary checks both directly and creates no second waiter.
+
+Exact isolated production remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only
+`crates/machine-god-native/src/web_fetch.rs`. Its `QueryIdSequence` holds the
+construction-snapshotted 32-byte key and an `AtomicU32`; each bounded SHA-256
+derivation hashes that key with one counter value and selects the first 16
+digest bits. The private carried deadline is excluded from canonical request
+identity and debug output. The shared native effect helper checks cancellation
+and that deadline immediately before and after every awaited native effect,
+while only the bounded permit/DNS/HTTP/body wait owner holds a cancellation
+future. The final synchronous boundary directly checks state without one.
+
+Exact isolated independent-evidence commit
+`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on a tree-identical
+integration of production component `9abef298` and changes only
+`crates/machine-god-native/tests/web_fetch_http.rs`. Its exact 13/13 focused
+checks require exactly one cancellation wake followed by a cancelled result
+and pending owned-work drop/release through both the bounded and raw transport
+seams. They use neither sleeps nor network operations.
+
+This remediation record makes no replacement-gate, formal-review, workflow,
+integration, delivery, compatibility, or product-performance claim; formal
+candidates are identified only by exact-SHA review results.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -497,12 +605,20 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: formal cycles 1 and 2 are **NOT GREEN** on their exact recorded
-SHA/tree pairs. Exact cycle-2 candidate
-`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
-`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, is rejected. Exact composed
-cycle-2 remediation precursor `1a78f6437eb17f646bdd11337464c949beea49f0`,
-tree `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
-local gate. This gate record makes no formal-review outcome, workflow,
-integration, or delivery claim; formal candidates are identified only by
-exact-SHA review results.
+Current state: formal cycles 1, 2, and 3 are **NOT GREEN** on their exact
+recorded SHA/tree pairs. Exact cycle-2 remediation precursor
+`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passed its complete replacement
+local gate before formal cycle 3. Exact cycle-3 candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`, is rejected with a deduplicated
+union of 0 blocker, 0 high, 2 medium, and 1 low. Exact isolated
+production remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+`web_fetch.rs`. Exact isolated independent-evidence commit
+`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only native `web_fetch_http.rs`. This remediation record makes no
+replacement-gate, formal-review, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results.

@@ -71,8 +71,39 @@ snapshot corrections. Exact composed cycle-2 remediation precursor
 `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
 local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, workflow, integration, or delivery claim;
-formal candidates are identified only by exact-SHA review results. Native
-Linux HTTP compilation remains an
+formal candidates are identified only by exact-SHA review results. Formal
+cycle 3 is **NOT GREEN** on exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
+findings at every severity. The deduplicated union is 0 blocker, 0 high,
+2 medium, and 1 low: blocking per-query entropy inside the total deadline,
+missing cancellation/deadline authority at native pre-effect boundaries
+between sequential network phases, and one duplicated cancellation-waiter
+finding repeated across the two non-green tracks. The exact candidate is
+rejected. The corrected boundary snapshots a random query-ID seed at transport
+construction, derives IDs from an atomic per-query sequence, retains fixed
+hostname-unavailable state when construction prerequisites fail while allowing
+literal-IP bypass, reuses one bounded cancellation waiter across permit, DNS,
+HTTP, and body waits, and checks the same absolute deadline plus cancellation state
+before native A, AAAA, TCP, HTTP, and body effects. The final synchronous
+boundary checks both directly without another waiter. Exact isolated production
+remediation component
+`9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+`web_fetch.rs`. It implements the construction-time 32-byte key, `AtomicU32`
+counter and bounded SHA-256 query-ID derivation, native-effect deadline checks
+before and after each await, and one cancellation owner. Exact isolated
+independent-evidence commit `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only native `web_fetch_http.rs`; exact 13/13 checks prove exactly one
+cancellation wake, a cancelled result, and pending owned-work drop/release
+across bounded and raw seams without sleep or network. This remediation record
+makes no replacement-gate,
+formal-review, workflow, integration, or delivery claim; formal candidates are
+identified only by exact-SHA review results. Native Linux HTTP compilation
+remains an
 exact-CI requirement because the macOS cross-host lacks the target C sysroot.
 Feature workflows are not claimed by the local gate.
 The candidate host will contain thirteen tools, while its descriptor-backed
@@ -1769,14 +1800,15 @@ effective port. Existing core behavior keeps that network capability
 `Critical`; the default policy path remains `Ask`.
 
 Native production-transport construction synchronously snapshots the first UDP
-nameserver from host resolver configuration outside invocation timing and
-without Tokio, retaining either its address or a fixed, retryable unavailable
-result until the tool is reconstructed. Hostname execution uses that stored
-result without rereading configuration; an admitted public IP literal bypasses
-snapshot failure. A hostname receives one rooted
+nameserver from host resolver configuration and one random query-ID seed
+outside invocation timing and without Tokio. Hostname execution retains a
+fixed, retryable unavailable result when either prerequisite failed, without
+rereading configuration or entropy until tool reconstruction; an admitted
+public IP literal bypasses both prerequisites. A hostname receives one rooted
 Internet-class A and then AAAA query through invocation-owned Tokio sockets,
-with one TCP replay only for a truncated UDP answer. Query IDs use synchronous
-platform entropy under the held permit and detach no work. A one-byte UDP
+with one TCP replay only for a truncated UDP answer. Query IDs derive from the
+construction seed and an atomic per-query sequence, so execution performs no
+blocking per-query entropy work and detaches no work. A one-byte UDP
 overflow witness enforces the inclusive 4 KiB message cap. Before Hickory
 decoding on UDP or TCP, the raw header must be at least 12 bytes, have exactly
 one question, no more than 39 answers, no more than 128 authority or additional
@@ -1807,9 +1839,14 @@ construction is runtime-independent. Polling requires a current host-owned
 Tokio runtime with I/O and time enabled: no handle returns fixed
 `RuntimeRequired`, while a current driverless runtime violates the documented
 `# Panics` precondition and may terminate a release process. One deadline sleep
-and one cancellation future are reused across the complete invocation. The
-outer permit survives transport completion, rendering, serialized-result
-validation, and the final cancellation/deadline boundary. Text, JSON, XML, and
+and one cancellation future are reused across bounded permit, DNS, HTTP, and
+body waits. The final synchronous boundary checks token/deadline state directly
+without a second waiter. The
+native transport checks cancellation state and that same absolute deadline at
+pre-effect boundaries between A, AAAA, TCP replay, HTTP dispatch, and body
+work, including immediately completing phase transitions. The outer
+permit survives transport completion, rendering, serialized-result validation,
+and the final cancellation/deadline boundary. Text, JSON, XML, and
 JavaScript are eligible bounded text. HTML remains bounded raw untrusted text.
 Binary is metadata-only with no persistence. Missing MIME is classified from
 the complete bounded body and reported as effective `text/plain` or
@@ -1875,6 +1912,33 @@ compatibility, dependency, portability, documentation, diff, and release-smoke
 checks are green. This gate record makes no formal-review outcome, workflow,
 integration, or delivery claim; formal candidates are identified only by
 exact-SHA review results.
+Formal cycle 3 rejected exact candidate
+`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported
+0/0/1/1; lifecycle/robustness reported 0/0/1/1; performance/concurrency was
+green at 0/0/0/0. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+1 low. Blocking per-query entropy ran inside the total deadline; native
+pre-effect transitions between A, AAAA, TCP replay, HTTP dispatch, and body
+work lacked authoritative cancellation/deadline checks; and correctness plus
+lifecycle repeated the low duplicated-cancellation-waiter finding. The
+corrected boundary uses a construction-snapshotted random query-ID seed with an
+atomic per-query sequence, fixed hostname-unavailable construction state with
+literal-IP bypass, one bounded waiter for permit/DNS/HTTP/body waits, and the
+same absolute deadline at every native pre-effect boundary. The final
+synchronous boundary checks the token/deadline directly without a second
+waiter. Exact isolated production
+remediation component `9abef298352ea3d9517543c384d9703b949cda75`, tree
+`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+`web_fetch.rs` and implements the 32-byte key, `AtomicU32`/bounded SHA-256 ID
+derivation, carried pre/post-effect deadline checks, and one cancellation
+owner. Exact isolated independent-evidence commit
+`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+only `web_fetch_http.rs`; its 13/13 focused checks prove exactly one
+cancellation wake, a cancelled result, and pending owned-work drop/release for
+bounded and raw seams without sleep or network. This remediation record makes no
+replacement-gate, formal-review, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results.
 The candidate host has thirteen alphabetical tools, while the
 descriptor-backed set remains twelve with one original plus eleven clones.
 Until final seal and exact remote delivery, M03 remains **IN PROGRESS** with
@@ -2571,6 +2635,34 @@ gate:
   `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
   local gate under exact Rust and Cargo 1.94.1 without fallback. This gate
   record makes no formal-review outcome, workflow, integration, or delivery
+  claim; formal candidates are identified only by exact-SHA review results.
+  Formal cycle 3 rejected exact candidate
+  `16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
+  `0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API and lifecycle/
+  robustness each reported 0 blocker, 0 high, 1 medium, and 1 low finding;
+  performance/concurrency reported zero findings. The deduplicated union is
+  0 blocker, 0 high, 2 medium, and 1 low: blocking per-query entropy within
+  the total deadline, missing cancellation/deadline authority at native
+  pre-effect phase boundaries, and one duplicated cancellation-waiter finding
+  repeated across two tracks. The corrected boundary snapshots query-ID
+  randomness at construction and derives IDs through an atomic sequence,
+  retains fixed hostname-unavailable state with literal-IP bypass, reuses one
+  bounded waiter for permit/DNS/HTTP/body waits, and checks the same absolute
+  deadline plus cancellation state before A, AAAA, TCP, HTTP, and body effects.
+  The final synchronous boundary checks both directly without a second waiter.
+  Exact isolated production
+  remediation component `9abef298352ea3d9517543c384d9703b949cda75`, tree
+  `b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
+  `web_fetch.rs` and implements that boundary with a 32-byte key, `AtomicU32`
+  counter, bounded SHA-256 derivation, carried pre/post-effect deadline checks,
+  and one cancellation owner. Exact isolated independent-evidence commit
+  `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
+  `f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
+  only `web_fetch_http.rs`; exact 13/13 checks prove exactly one cancellation
+  wake, a cancelled result, and pending owned-work drop/release across bounded
+  and raw seams without sleep or network.
+  This remediation record makes no replacement-gate, formal-review, workflow,
+  integration, or delivery
   claim; formal candidates are identified only by exact-SHA review results.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
