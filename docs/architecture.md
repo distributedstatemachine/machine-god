@@ -39,8 +39,11 @@ bounds are in [`models-cli.md`](models-cli.md). Exact cycle-1 candidate
 two medium and six low findings. Deadline/response, signal/config/WASI, and
 dependency-topology remediations are composed at `02c9f86`, `d2890c3`, and
 `06c9408`; focused native evidence now totals 36. Exact cycle-2 behavior
-candidate `2ea9d94`, tree `3a948b2`, passed the complete replacement gate.
-Three fresh cycle-2 reviews remain pending in
+candidate `2ea9d94`, tree `3a948b2`, passed the complete replacement gate but
+was rejected with one high, one medium, and one low finding. Parser, async DNS/
+runtime, and fail-closed resolver remediation is composed at `9cf8c74`,
+`8187b12`, and `499af85`. The complete cycle-3 replacement gate and three fresh
+cycle-3 reviews remain pending in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 ```text

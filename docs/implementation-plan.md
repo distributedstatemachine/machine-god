@@ -128,9 +128,9 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
-The twenty-ninth bounded slice is contract-frozen, locally implemented,
-cycle-1 rejected, remediated, and replacement-gated; it is not integrated to
-`main` or delivered. Its
+The twenty-ninth bounded slice is contract-frozen, locally implemented, cycle-2
+rejected, and locally remediated; it is not integrated to `main` or delivered.
+Its
 exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). It starts
@@ -151,9 +151,12 @@ at `02c9f86`, `d2890c3`, and `06c9408` raises focused native evidence to 36 and
 CLI unit evidence to 18. Exact cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete exact-toolchain
-replacement gate. Three fresh cycle-2 reviews, feature/main integration, and
-delivery remain pending. No candidate is green, and no product-performance,
-compatibility-promotion, or fx-equivalence claim is made.
+replacement gate but was rejected with a deduplicated union of one high, one
+medium, and one low finding. Arbitrary-number, async DNS/no-runtime, and fail-
+closed resolver remediation is composed at `9cf8c74`, `8187b12`, and `499af85`.
+The complete cycle-3 replacement gate, three fresh cycle-3 reviews, feature/main
+integration, and delivery remain pending. No candidate is green, and no
+product-performance, compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2834,7 +2837,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Replacement-gated bounded slice 29: top-level `models`
+### Cycle-2-rejected bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -2850,8 +2853,10 @@ initially contained 35 focused tests (14 provider/parser, 15 loopback HTTP, and 
 credential), sourced independently from `219f6a71a766e9b833a98f236cfbc3aaff292cd5`.
 The local feature-topology refinement adds the dedicated non-WASM
 `ai-gateway-model-catalog-http` gate and makes the CLI select it without
-activating direct generation `bytes`, `web-fetch-http`, Hickory DNS, Moka, or
-Tokio's signal backend. Only the CLI dependency requests signal handling. The
+activating direct generation `bytes`, `web-fetch-http`, or Tokio's signal
+backend. Cycle-2 remediation adds a narrowly scoped direct async Hickory
+resolver and its protocol/network/cache graph so no non-abortable GAI lookup
+can outlive runtime teardown; only the CLI requests signal handling. The
 existing `ai-gateway-http` feature still adds direct `bytes` and includes
 catalog HTTP plus `web-fetch-http`, so
 its delivered generation/reference-host behavior is preserved. Exact cycle-1
@@ -2866,9 +2871,13 @@ evidence is now 36 tests (15 provider/parser, 15 loopback HTTP, 6 credential),
 and CLI unit evidence is 18 tests. Exact cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
-gate. Fresh cycle-2 review, exact feature workflows, fast-forward integration,
-and exact `main` workflows remain pending; no candidate is green and this makes
-no product-performance claim.
+gate but was rejected with one high, one medium, and one low finding. Parser
+remediation `9cf8c74`, async DNS/no-runtime remediation `8187b12`, and fail-
+closed system-resolver remediation `499af85` are composed locally. Provider/
+parser evidence is now 17 tests, HTTP integration is 16, and private resolver
+lifecycle evidence is 2. The complete cycle-3 gate, fresh cycle-3 review, exact
+feature workflows, fast-forward integration, and exact `main` workflows remain
+pending; no candidate is green and this makes no product-performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads

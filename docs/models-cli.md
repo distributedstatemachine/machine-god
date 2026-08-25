@@ -1,11 +1,11 @@
 # Top-level `models` CLI contract
 
-Status: cycle-1 rejected and remediated; exact cycle-2 behavior candidate
+Status: cycle 2 rejected and locally remediated, not yet a green or delivered
+twenty-ninth bounded Milestone 03 slice. Exact cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
-gate under exact Rust and Cargo 1.94.1 without fallback. It is not yet green or
-delivered: three fresh cycle-2 adversarial reviews, feature/main integration,
-and remote CI remain pending. Rejected cycle-1 candidate
+gate but three fresh tracks rejected it with a deduplicated union of one high,
+one medium, and one low finding. Rejected cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, had a deduplicated union of two
 medium and six low findings. The provider-neutral core contract is component
@@ -20,17 +20,16 @@ present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`; deadline remediation
 total to 36 tests split across 15 provider/parser, 15 loopback HTTP, and 6
 credential cases. Signal/config/WASI remediation is
 `d2890c34bc628dd9ad425f5921e3816bbe1f5eef`, and dependency-topology remediation
-is `06c94087e91ec298877fbe981695d2638fa1db1e`. The
-local feature-topology refinement gives catalog HTTP its own optional non-WASM
-`ai-gateway-model-catalog-http` gate. The CLI enables only that gate; it does
-not activate generation-only direct `bytes`, `web-fetch-http`, Hickory DNS, or
-Moka, and native catalog HTTP does not request Tokio's signal backend. The CLI
-dependency alone requests signal handling. The existing `ai-gateway-http`
-feature still adds direct `bytes` and includes both catalog HTTP and
-`web-fetch-http` for backward-compatible generation/reference-host builds.
-This remediated refinement is replacement-gated but still pending three fresh
-cycle-2 reviews and remote CI together with the rest of the slice; no candidate
-is green. The pinned comparison input remains fx commit
+is `06c94087e91ec298877fbe981695d2638fa1db1e`. Cycle-2 remediation accepts
+arbitrary-size ignored/defaulted JSON number tokens at `9cf8c741`, replaces
+blocking default DNS and repairs no-runtime composition at `8187b12`, and
+fails closed on unavailable system DNS configuration with no public fallback
+at `499af85`. Catalog HTTP directly activates only the async Hickory resolver
+needed for this lifecycle plus its transitive protocol/network/cache graph; it
+still omits generation-only direct `bytes`, `web-fetch-http`, and Tokio's signal
+backend. The complete cycle-3 replacement gate, three fresh cycle-3 reviews,
+and remote CI remain pending; no candidate is green. The pinned comparison
+input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
 

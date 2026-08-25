@@ -2,7 +2,7 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-locally composed, replacement-gated twenty-ninth [`models` CLI
+locally composed, cycle-2-rejected twenty-ninth [`models` CLI
 implementation](models-cli.md) keeps only validated available-model,
 access, result, error, and catalog-trait values provider-neutral in core. It
 confines Gateway parsing, ordering, fallback, deadline, credentials, TLS, HTTP,
@@ -22,21 +22,26 @@ creates and drops its own attempt-local cancellation waiter and timer against
 that deadline. Exact cycle-1 candidate `6277aa3`, tree `b5e2445`, was rejected
 with two medium and six low findings. Remediation is composed at `02c9f86`,
 `d2890c3`, and `06c9408`, with 36 focused native tests. Exact cycle-2 behavior
-candidate `2ea9d94`, tree `3a948b2`, passed the complete replacement gate.
-Three fresh cycle-2 reviews, integration, and delivery remain pending; no
-candidate is green. The ledger is
+candidate `2ea9d94`, tree `3a948b2`, passed the complete replacement gate but
+was rejected with one high, one medium, and one low finding. Arbitrary-number,
+async DNS/no-runtime, and fail-closed system-resolver remediation is composed
+at `9cf8c74`, `8187b12`, and `499af85`. The complete cycle-3 gate, three fresh
+cycle-3 reviews, integration, and delivery remain pending; no candidate is
+green. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 Catalog HTTP now has a dedicated non-WASM
 `ai-gateway-model-catalog-http` feature. The CLI enables only this narrower
-surface, so listing models does not activate `web-fetch-http`, Hickory DNS,
-Moka authority, direct generation `bytes`, or Tokio's signal backend. Signal
-handling is activated only by the CLI dependency. Shared bearer validation,
-credential discovery, pinned TLS roots, and catalog GET exports are available
-under either native HTTP feature; the generation transport and reference host
-remain `ai-gateway-http`-only. The existing broader feature includes direct
-`bytes`, catalog HTTP, and web fetch, so its delivered behavior and public
-generation surface remain available.
+surface, so listing models does not activate `web-fetch-http`, direct generation
+`bytes`, or Tokio's signal backend. It does activate a system-config-only async
+Hickory resolver and its transitive protocol/network/cache graph; unavailable
+system resolver configuration fails closed, with neither public fallback nor
+default blocking GAI. Signal handling is activated only by the CLI dependency.
+Shared bearer validation, credential discovery, pinned TLS roots, and catalog
+GET exports are available under either native HTTP feature; the generation
+transport and reference host remain `ai-gateway-http`-only. The existing broader
+feature includes direct `bytes`, catalog HTTP, and web fetch, so its delivered
+behavior and public generation surface remain available.
 
 The delivered twenty-eighth [`permissions` CLI slice](permissions-cli.md)
 preserves that split: after strict argument parsing, the thin host invokes only

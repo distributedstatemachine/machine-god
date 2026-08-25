@@ -19,14 +19,20 @@ tree `b5e2445`, passed its complete local gate but was rejected by three fresh
 tracks with two medium and six low findings. Local deadline,
 signal/config/WASI, and dependency-topology remediations are composed at
 `02c9f86`, `d2890c3`, and `06c9408`, raising the focused native total to 36;
-the complete replacement gate and three fresh cycle-2 reviews remain pending.
-This is not a green or delivered slice. The CLI now selects a dedicated
-`ai-gateway-model-catalog-http` feature that omits `web-fetch-http`, Hickory
-DNS, Moka, generation-only direct `bytes`, and Tokio's signal backend. Signal
-handling is requested only by the CLI dependency; the existing
-`ai-gateway-http` umbrella continues to include direct `bytes`, catalog HTTP,
-and web fetch. This topology change remains pending the same complete gate and
-review and makes no performance or fx-equivalence claim. The twenty-eighth top-level
+exact cycle-2 candidate `2ea9d94`, tree `3a948b2`, passed its complete
+replacement gate but was rejected with one high, one medium, and one low
+finding. Arbitrary-number, async DNS/no-runtime, and fail-closed system-resolver
+remediation is composed at `9cf8c74`, `8187b12`, and `499af85`; its complete
+cycle-3 gate and three fresh cycle-3 reviews remain pending. This is not a green
+or delivered slice. The CLI selects a dedicated
+`ai-gateway-model-catalog-http` feature that omits `web-fetch-http`,
+generation-only direct `bytes`, and Tokio's signal backend. It now includes a
+system-config-only async Hickory resolver and its protocol/network/cache graph
+so default blocking GAI cannot outlive runtime teardown. Signal handling is
+requested only by the CLI dependency; the existing `ai-gateway-http` umbrella
+continues to include direct `bytes`, catalog HTTP, and web fetch. This topology
+change remains pending the same complete gate and review and makes no
+performance or fx-equivalence claim. The twenty-eighth top-level
 `permissions [--json]` slice is **DELIVERED** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; it is read-only, ask-only, and
 owns no persistent rules or runtime grant state. Exact cycle-5 reviewed

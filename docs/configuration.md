@@ -52,9 +52,12 @@ schema v3. Focused independent native evidence is present at
 `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. Exact cycle-1 candidate `6277aa3`,
 tree `b5e2445`, was rejected; config-once/order remediation is composed at
 `d2890c3`. Exact cycle-2 behavior candidate `2ea9d94`, tree `3a948b2`, passed
-the complete replacement gate. Fresh cycle-2 review, integration, and delivery
-remain pending. The historical configuration green status above does not make
-this new composition green.
+the complete replacement gate but was rejected by its review union. The cycle-2
+findings did not change configuration behavior; parser and HTTP lifecycle
+remediation is composed at `9cf8c74`, `8187b12`, and `499af85`. The complete
+cycle-3 gate, fresh cycle-3 review, integration, and delivery remain pending.
+The historical configuration green status above does not make this new
+composition green.
 
 This configuration slice advances the built-in and current file
 schema to v3 while retaining strict read compatibility for the exact legacy v1

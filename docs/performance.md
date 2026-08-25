@@ -4,7 +4,7 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The locally composed, replacement-gated twenty-ninth top-level
+The locally composed, cycle-2-rejected twenty-ninth top-level
 [`models` implementation](models-cli.md) supplies resource and concurrency
 budgets, not a performance claim: one checked 30-second absolute provider deadline
 covers default-eight capacity waiting and at most two sequential requests.
@@ -18,18 +18,22 @@ equivalence-qualified benchmark workload. Cycle-1 candidate `6277aa3`, tree
 findings. Deadline, signal/config/WASI, and topology remediations are composed
 at `02c9f86`, `d2890c3`, and `06c9408`; the current focused native total is 36
 tests. Exact cycle-2 behavior candidate `2ea9d94`, tree `3a948b2`, passed the
-complete replacement gate. Three fresh cycle-2 reviews, exact-SHA workflow
-artifacts, and a later claim-eligible M07 comparison remain required before any
-speed, latency, memory, or fx-equivalence statement.
+complete replacement gate but was rejected with one high, one medium, and one
+low finding. Parser and HTTP lifecycle remediation is composed at `9cf8c74`,
+`8187b12`, and `499af85`. The complete cycle-3 gate, three fresh cycle-3
+reviews, exact-SHA workflow artifacts, and a later claim-eligible M07 comparison
+remain required before any speed, latency, memory, or fx-equivalence statement.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence
 requires the catalog's direct HTTP/TLS/runtime dependencies while excluding
-generation-only direct `bytes`, `web-fetch-http`, Hickory DNS, Moka, and
-Tokio's signal backend. The broader `ai-gateway-http` feature still adds direct
-`bytes` and web fetch, while the CLI alone requests Tokio signal handling for
-its Ctrl-C/SIGTERM composition. Release size and hash are regression evidence
-only and do not establish a performance improvement.
+generation-only direct `bytes`, `web-fetch-http`, and Tokio's signal backend.
+Cycle-2 remediation adds a direct async Hickory resolver and its transitive
+protocol/network/cache graph so blocking GAI cannot outlive runtime teardown.
+The broader `ai-gateway-http` feature still adds direct `bytes` and web fetch,
+while the CLI alone requests Tokio signal handling for its Ctrl-C/SIGTERM
+composition. Release size and hash are regression evidence only and do not
+establish a performance improvement.
 
 Initial workloads cover startup, help/status/session commands, session replay,
 file indexing, deterministic streaming, parallel read-only tools, cancellation,

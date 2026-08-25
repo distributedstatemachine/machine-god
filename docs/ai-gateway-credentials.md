@@ -8,8 +8,10 @@ implementation now reuses the snapshot and adds a catalog-specific optional-
 auth projection. Its six focused independent credential cases are present in
 native evidence `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. Exact catalog
 behavior candidate `2ea9d94`, tree `3a948b2`, passed its complete replacement
-gate; adversarial review, integration, and delivery remain pending. Review
-details for the delivered generation behavior are in the
+gate but was rejected by cycle-2 review; none of its findings changed credential
+selection. Parser and HTTP lifecycle remediation is locally composed. The
+complete cycle-3 gate, adversarial review, integration, and delivery remain
+pending. Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
 The adapter discovers one Vercel AI Gateway bearer credential from an

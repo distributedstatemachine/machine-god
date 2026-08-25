@@ -112,8 +112,10 @@ components through feature commit
 `52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and 35-test native evidence
 `12263afa458e48f2963ae3d0e3db5cf219f8bdf6` are included in exact cycle-2
 behavior candidate `2ea9d94`, tree `3a948b2`, which passed the complete
-replacement gate. Adversarial review and integration/delivery remain pending. See
-[`models-cli.md`](models-cli.md).
+replacement gate but was rejected by its review union. The findings and local
+native-only remediation at `9cf8c74`, `8187b12`, and `499af85` do not expand
+core authority. The complete cycle-3 gate, adversarial review, and integration/
+delivery remain pending. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 
