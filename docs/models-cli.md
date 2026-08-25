@@ -278,9 +278,13 @@ file mode is `Never`, so this pure bounded construction does not perform a
 second synchronous file read or retain runtime-backed connection handles for a
 later current-thread runtime. Lookup I/O and resolver tasks remain owned by the
 active request/runtime and are dropped on cancellation, deadline, request drop,
-or runtime teardown. There is no default GAI, Reqwest built-in Hickory, Google,
-or other public-resolver fallback. Snapshot failure is exposed only through the
-fixed redacted catalog `Transport` result.
+or runtime teardown. Reqwest's hostname is normalized to one terminal dot
+before lookup, so Hickory treats the production host as an absolute FQDN and
+does not try configured search suffixes. Client construction explicitly
+disables Reqwest's built-in Hickory selection before installing the custom
+resolver, including under dependency feature unification. There is no default
+GAI, Google, or other public-resolver fallback. Snapshot failure is exposed
+only through the fixed redacted catalog `Transport` result.
 
 ## Time, concurrency, body, and JSON bounds
 

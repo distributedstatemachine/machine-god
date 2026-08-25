@@ -287,12 +287,15 @@ bodies are read; non-200 bodies are discarded.
 
 The catalog client explicitly installs a machine-god `reqwest::dns::Resolve`
 adapter over Hickory. It never selects Reqwest's built-in Hickory adapter,
-default GAI resolver, or non-abortable blocking `getaddrinfo` worker. Production
-transport construction synchronously snapshots platform DNS configuration
-exactly once, before any catalog request or deadline exists and without a Tokio
-runtime. Numeric-loopback test construction performs no DNS discovery. The
-adapter retains only the validated snapshot or a fixed unavailable state; it
-has no configuration loader to call while a request is being polled.
+default GAI resolver, or non-abortable blocking `getaddrinfo` worker: client
+construction explicitly disables Reqwest's built-in Hickory selection before
+installing the custom resolver, including if dependency feature unification
+enables that alternative. Production transport construction synchronously
+snapshots platform DNS configuration exactly once, before any catalog request
+or deadline exists and without a Tokio runtime. Numeric-loopback test
+construction performs no DNS discovery. The adapter retains only the validated
+snapshot or a fixed unavailable state; it has no configuration loader to call
+while a request is being polled.
 
 On generic Unix other than Apple and Android, the snapshot loader follows the
 usual `/etc/resolv.conf` symlink but requires the target before and the opened
@@ -310,10 +313,13 @@ aggregate DNS-name bytes, 64 server connections, and bounded resolver options.
 Every lookup constructs a fresh Tokio resolver from that bounded immutable
 snapshot on the currently active runtime. It never rereads DNS configuration,
 never reads a hosts file, uses no cross-runtime resolver cache, and forces the
-response cache to zero entries. This prevents runtime-backed resolver handles
-from being retained across sequential current-thread runtimes. Unavailable or
-invalid platform DNS configuration fails closed as the fixed redacted catalog
-`Transport` failure; there is no Google or other public-resolver fallback.
+response cache to zero entries. The Reqwest hostname is normalized to exactly
+one terminal dot before Hickory sees it, making the production lookup an
+absolute FQDN and preventing configured domain or search suffix queries. This
+prevents runtime-backed resolver handles from being retained across sequential
+current-thread runtimes. Unavailable or invalid platform DNS configuration
+fails closed as the fixed redacted catalog `Transport` failure; there is no
+Google or other public-resolver fallback.
 Dropping or cancelling a pending catalog request drops that request's lookup
 future, resolver-owned asynchronous work, response/request ownership, and
 active-request permit. Numeric-loopback test requests bypass DNS as before.

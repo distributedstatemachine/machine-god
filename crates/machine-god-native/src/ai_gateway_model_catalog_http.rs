@@ -430,7 +430,7 @@ impl SystemHickoryResolver {
 impl Resolve for SystemHickoryResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let snapshot = Arc::clone(&self.snapshot);
-        let name = name.as_str().to_owned();
+        let name = absolute_hickory_lookup_name(&name);
         Box::pin(async move {
             let snapshot = match Arc::as_ref(&snapshot) {
                 Ok(snapshot) => snapshot,
@@ -451,6 +451,14 @@ impl Resolve for SystemHickoryResolver {
             Ok(addrs)
         })
     }
+}
+
+fn absolute_hickory_lookup_name(name: &Name) -> String {
+    let host = name.as_str().trim_end_matches('.');
+    let mut absolute = String::with_capacity(host.len() + 1);
+    absolute.push_str(host);
+    absolute.push('.');
+    absolute
 }
 
 fn build_system_hickory_resolver(
@@ -636,6 +644,7 @@ fn client_builder(
     limits: AiGatewayModelCatalogHttpLimits,
 ) -> reqwest::ClientBuilder {
     Client::builder()
+        .no_hickory_dns()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
@@ -1027,7 +1036,13 @@ mod tests {
         let mut connection = ConnectionConfig::udp();
         connection.port = address.port();
         let nameserver = NameServerConfig::new(address.ip(), true, vec![connection]);
-        system_resolver_snapshot(vec![nameserver])
+        let mut snapshot = system_resolver_snapshot(vec![nameserver]);
+        snapshot.config.add_search(
+            "search.invalid."
+                .parse()
+                .expect("parse local DNS search domain"),
+        );
+        snapshot
     }
 
     async fn answer_two_ip_queries(socket: tokio::net::UdpSocket) {
@@ -1044,6 +1059,7 @@ mod tests {
                 .first()
                 .expect("DNS query contains one question")
                 .clone();
+            assert_eq!(query.name().to_string(), "catalog.");
             let answer = match query.query_type() {
                 RecordType::A => RData::A(Ipv4Addr::LOCALHOST.into()),
                 RecordType::AAAA => RData::AAAA(Ipv6Addr::LOCALHOST.into()),
@@ -1110,6 +1126,26 @@ mod tests {
     }
 
     #[test]
+    fn production_dns_lookup_name_is_one_absolute_fqdn() {
+        let endpoint = Url::parse(AI_GATEWAY_MODEL_CATALOG_HTTP_DEFAULT_ENDPOINT)
+            .expect("parse fixed production endpoint");
+        let name = endpoint
+            .host_str()
+            .expect("production endpoint has a host")
+            .parse::<Name>()
+            .expect("parse production resolver name");
+        assert_eq!(absolute_hickory_lookup_name(&name), "ai-gateway.vercel.sh.");
+
+        let already_absolute = "ai-gateway.vercel.sh."
+            .parse::<Name>()
+            .expect("parse absolute resolver name");
+        assert_eq!(
+            absolute_hickory_lookup_name(&already_absolute),
+            "ai-gateway.vercel.sh."
+        );
+    }
+
+    #[test]
     fn system_dns_snapshot_builds_fresh_resolvers_across_current_thread_runtimes() {
         let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind local DNS fixture");
         socket
@@ -1131,7 +1167,7 @@ mod tests {
                 let runtime_socket =
                     tokio::net::UdpSocket::from_std(runtime_socket).expect("adopt DNS fixture");
                 let responder = tokio::spawn(answer_two_ip_queries(runtime_socket));
-                let name = "catalog.test".parse::<Name>().expect("parse resolver name");
+                let name = "catalog".parse::<Name>().expect("parse resolver name");
                 let addresses = resolver
                     .resolve(name)
                     .await

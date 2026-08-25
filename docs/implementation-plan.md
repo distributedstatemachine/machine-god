@@ -2864,9 +2864,12 @@ Apple, Android, and Windows use their platform snapshot APIs and then apply the
 same structural bounds. Request polling performs no configuration or hosts-
 file read and creates one zero-cache Hickory resolver from that snapshot on the
 active runtime, so runtime-backed connection state is not reused across
-sequential current-thread runtimes. The existing `ai-gateway-http` feature
-still adds direct `bytes` and includes catalog HTTP plus `web-fetch-http`, so its
-delivered generation/reference-host behavior is preserved. Exact cycle-1
+sequential current-thread runtimes. Reqwest's built-in Hickory path is
+explicitly disabled before the custom resolver is installed, and the lookup
+name is made an absolute single-dot FQDN so platform search suffixes are not
+queried. The existing `ai-gateway-http` feature still adds direct `bytes` and
+includes catalog HTTP plus `web-fetch-http`, so its delivered
+generation/reference-host behavior is preserved. Exact cycle-1
 candidate `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed the complete local gate and
 was rejected by three fresh tracks with a deduplicated union of two medium and
