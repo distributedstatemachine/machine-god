@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 10 REJECTED**
+Status: **IN PROGRESS — CYCLE 11 GREEN; REMOTE DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -1567,6 +1567,50 @@ as product success evidence.
 This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim. Three fresh agents
 must review one later exact cycle-11 marker SHA and tree.
+
+## Formal cycle 11 — green
+
+Three fresh agents independently inspected exact candidate
+`298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
+`8f636bd92922d9e4d1610443253e82a3c0c36268`, in isolated clean read-only
+worktrees. Each verified the exact SHA/tree before inspection. Missing cycle-11
+seal or delivery prose was excluded from findings.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track independently
+checked Rust/Cargo cfg behavior, strict DNS parsing and answer admission, URL
+and HTTP semantics, provider-neutral API boundaries, error/redaction behavior,
+tests, and maintained-document agreement. The track is **GREEN**.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track traced cancellation,
+absolute and connect deadlines, UDP/TCP replay, socket and permit ownership,
+address pinning, redirects, encodings, bounded body streaming, and early-return
+cleanup. The track is **GREEN**.
+
+### Performance and portability
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track independently
+reproduced the direct dependency trees: Linux/macOS retain `sha2` in default
+and feature builds; FreeBSD/Windows omit it by default and gain it through
+`web-fetch-http`; WASI Preview 1 omits it in both modes. It also checked bounded
+allocation, timer, connection, parser, and streaming claims. The track is
+**GREEN**.
+
+### Consolidated union and disposition
+
+Cycle 11 has **0 blocker, 0 high, 0 medium, and 0 low** findings. Exact
+candidate `298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
+`8f636bd92922d9e4d1610443253e82a3c0c36268`, is the green reviewed candidate.
+The cycle independently verifies the cycle-9 DNS decoder-exhaustion remediation
+and cycle-10 target-specific dependency isolation.
+
+This documentation-only review seal is exempt from a redundant adversarial
+cycle. It makes no workflow, integration, delivery, compatibility, product-
+performance, or fx-equivalence claim. Exact feature and `main` CI plus
+benchmark-evidence workflows remain required before the slice is delivered.
 
 The local gate must include the repository-required commands:
 

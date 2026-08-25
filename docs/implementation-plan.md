@@ -306,6 +306,16 @@ The 319,152-byte release binary has SHA-256
 This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
+Formal cycle 11 is **GREEN** on exact candidate
+`298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
+`8f636bd92922d9e4d1610443253e82a3c0c36268`. Three fresh isolated read-only
+reviews each reported 0 blocker, 0 high, 0 medium, and 0 low for correctness/
+API, network/HTTP lifecycle, and performance/portability. The deduplicated
+union is zero at every severity. Reviewers independently reproduced strict DNS
+decoder exhaustion and the exact Linux/macOS 1/1, FreeBSD/Windows 0/1, and
+WASM 0/0 default/feature `sha2` matrix. This review seal makes no workflow,
+integration, delivery, performance, compatibility, or fx-equivalence claim;
+the delivered count remains twenty-six until exact remote evidence is retained.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2513,6 +2523,13 @@ binary is 319,152 bytes with SHA-256
 This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
+Formal cycle 11 is **GREEN** on exact candidate
+`298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
+`8f636bd92922d9e4d1610443253e82a3c0c36268`. Correctness/API, network/HTTP
+lifecycle, and performance/portability each reported 0/0/0/0 in three fresh
+isolated read-only reviews, so the deduplicated union is zero. This review seal
+makes no workflow, integration, delivery, performance, compatibility, or fx-
+equivalence claim; exact feature and `main` workflow evidence remains pending.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3442,6 +3459,12 @@ gate:
   checks, all required workspace commands, diff check, and locked-release help
   smoke are green. This gate record makes no formal-review outcome, candidate,
   workflow, integration, delivery, performance, or fx-equivalence claim.
+  Formal cycle 11 is **GREEN** on exact candidate
+  `298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
+  `8f636bd92922d9e4d1610443253e82a3c0c36268`. Three fresh correctness/API,
+  lifecycle, and performance/portability tracks each reported 0/0/0/0. This
+  review seal makes no workflow, integration, delivery, performance,
+  compatibility, or fx-equivalence claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

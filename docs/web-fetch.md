@@ -162,6 +162,18 @@ tree evidence enforces that matrix. This remediation record makes no
 replacement-gate, formal-review outcome, candidate, workflow, integration,
 delivery, performance, or fx-equivalence claim.
 
+Formal cycle 11 is **GREEN** on exact candidate
+`298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
+`8f636bd92922d9e4d1610443253e82a3c0c36268`. Three fresh agents used isolated
+clean read-only worktrees. Correctness/API, network/HTTP lifecycle, and
+performance/portability each reported 0 blocker, 0 high, 0 medium, and 0 low,
+so the deduplicated union is zero at every severity. The reviews independently
+verified strict complete DNS decoder exhaustion, the bounded partial `TC=1`
+UDP replay path, and the Linux/macOS, FreeBSD/Windows, and WASM `sha2` target
+matrix. This review seal makes no workflow, integration, delivery, product-
+performance, compatibility, or fx-equivalence claim. The proposed slice stays
+in progress until exact feature and `main` workflow evidence is retained.
+
 ## Scope and feature boundary
 
 The candidate adds a rootless `WebFetchTool`: it owns no workspace, state root,
