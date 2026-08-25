@@ -2,7 +2,7 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-locally composed, cycle-1-rejected twenty-ninth [`models` CLI
+locally composed, replacement-gated twenty-ninth [`models` CLI
 implementation](models-cli.md) keeps only validated available-model,
 access, result, error, and catalog-trait values provider-neutral in core. It
 confines Gateway parsing, ordering, fallback, deadline, credentials, TLS, HTTP,
@@ -21,8 +21,9 @@ attempts; the provider polls a separate deadline authority and each HTTP call
 creates and drops its own attempt-local cancellation waiter and timer against
 that deadline. Exact cycle-1 candidate `6277aa3`, tree `b5e2445`, was rejected
 with two medium and six low findings. Remediation is composed at `02c9f86`,
-`d2890c3`, and `06c9408`, with 36 focused native tests. The complete replacement
-gate, three fresh cycle-2 reviews, integration, and delivery remain pending; no
+`d2890c3`, and `06c9408`, with 36 focused native tests. Exact cycle-2 behavior
+candidate `2ea9d94`, tree `3a948b2`, passed the complete replacement gate.
+Three fresh cycle-2 reviews, integration, and delivery remain pending; no
 candidate is green. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 

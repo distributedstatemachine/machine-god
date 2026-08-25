@@ -291,7 +291,7 @@ response head, and body. An authenticated 401/403 may therefore create a second
 set of attempt-local waiters, but never a new provider deadline. The body
 buffer retains at most 256 KiB; a frame that would cross the inclusive cap is
 rejected before any of that frame is appended. Drop releases the request/
-response, buffer, and permit. The full parser, fallback, output, and pending-
+response, buffer, and permit. The full parser, fallback, output, and candidate
 review status are in [`models-cli.md`](models-cli.md).
 
 ## Deferred scope

@@ -128,8 +128,9 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
-The twenty-ninth bounded slice is contract-frozen, locally implemented, and
-cycle-1 rejected; it is not integrated to `main` or delivered. Its
+The twenty-ninth bounded slice is contract-frozen, locally implemented,
+cycle-1 rejected, remediated, and replacement-gated; it is not integrated to
+`main` or delivered. Its
 exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). It starts
@@ -147,10 +148,12 @@ remains a thin current-thread Tokio host and owns rendering/output bounds.
 Exact cycle-1 candidate `6277aa3`, tree `b5e2445`, passed its complete local
 gate but was rejected with two medium and six low findings. Local remediation
 at `02c9f86`, `d2890c3`, and `06c9408` raises focused native evidence to 36 and
-CLI unit evidence to 18. A complete exact-toolchain replacement gate, three
-fresh cycle-2 reviews, feature/main integration, and delivery remain pending.
-No candidate is green, and no product-performance, compatibility-promotion, or
-fx-equivalence claim is made.
+CLI unit evidence to 18. Exact cycle-2 behavior candidate
+`2ea9d94374c4dd18f43255af785ee31088126c56`, tree
+`3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete exact-toolchain
+replacement gate. Three fresh cycle-2 reviews, feature/main integration, and
+delivery remain pending. No candidate is green, and no product-performance,
+compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2831,7 +2834,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Cycle-1-rejected bounded slice 29: top-level `models`
+### Replacement-gated bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -2860,10 +2863,12 @@ six low findings. Provider deadline/response-lifetime remediation
 `d2890c34bc628dd9ad425f5921e3816bbe1f5eef`, and dependency-topology remediation
 `06c94087e91ec298877fbe981695d2638fa1db1e` are composed locally. Focused native
 evidence is now 36 tests (15 provider/parser, 15 loopback HTTP, 6 credential),
-and CLI unit evidence is 18 tests. The complete replacement gate, fresh cycle-2
-review, exact feature workflows, fast-forward integration, and exact `main`
-workflows remain pending; no candidate is green and this makes no product-
-performance claim.
+and CLI unit evidence is 18 tests. Exact cycle-2 behavior candidate
+`2ea9d94374c4dd18f43255af785ee31088126c56`, tree
+`3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
+gate. Fresh cycle-2 review, exact feature workflows, fast-forward integration,
+and exact `main` workflows remain pending; no candidate is green and this makes
+no product-performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads

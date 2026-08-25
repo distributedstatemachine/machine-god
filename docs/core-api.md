@@ -110,8 +110,9 @@ orders before constructing the core result; the thin CLI renders it. The local
 components through feature commit
 `e84ed2a46b1ac5fe7428414375609af562c65105`, terminal-precedence remediation
 `52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and 35-test native evidence
-`12263afa458e48f2963ae3d0e3db5cf219f8bdf6` have not yet passed the complete
-candidate gate, adversarial review, or integration/delivery. See
+`12263afa458e48f2963ae3d0e3db5cf219f8bdf6` are included in exact cycle-2
+behavior candidate `2ea9d94`, tree `3a948b2`, which passed the complete
+replacement gate. Adversarial review and integration/delivery remain pending. See
 [`models-cli.md`](models-cli.md).
 
 ## Native ask handler

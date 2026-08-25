@@ -4,7 +4,7 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The locally composed, not-yet-reviewed twenty-ninth top-level
+The locally composed, replacement-gated twenty-ninth top-level
 [`models` implementation](models-cli.md) supplies resource and concurrency
 budgets, not a performance claim: one checked 30-second absolute provider deadline
 covers default-eight capacity waiting and at most two sequential requests.
@@ -17,9 +17,10 @@ equivalence-qualified benchmark workload. Cycle-1 candidate `6277aa3`, tree
 `b5e2445`, passed its local gate but was rejected with two medium and six low
 findings. Deadline, signal/config/WASI, and topology remediations are composed
 at `02c9f86`, `d2890c3`, and `06c9408`; the current focused native total is 36
-tests. The complete replacement gate, three fresh cycle-2 reviews, exact-SHA
-workflow artifacts, and a later claim-eligible M07 comparison remain required
-before any speed, latency, memory, or fx-equivalence statement.
+tests. Exact cycle-2 behavior candidate `2ea9d94`, tree `3a948b2`, passed the
+complete replacement gate. Three fresh cycle-2 reviews, exact-SHA workflow
+artifacts, and a later claim-eligible M07 comparison remain required before any
+speed, latency, memory, or fx-equivalence statement.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence

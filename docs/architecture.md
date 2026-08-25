@@ -38,8 +38,9 @@ bounds are in [`models-cli.md`](models-cli.md). Exact cycle-1 candidate
 `6277aa3`, tree `b5e2445`, passed its complete local gate but was rejected with
 two medium and six low findings. Deadline/response, signal/config/WASI, and
 dependency-topology remediations are composed at `02c9f86`, `d2890c3`, and
-`06c9408`; focused native evidence now totals 36. The complete replacement gate
-and three fresh cycle-2 reviews remain pending in
+`06c9408`; focused native evidence now totals 36. Exact cycle-2 behavior
+candidate `2ea9d94`, tree `3a948b2`, passed the complete replacement gate.
+Three fresh cycle-2 reviews remain pending in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 ```text

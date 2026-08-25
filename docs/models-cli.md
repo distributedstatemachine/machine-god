@@ -1,11 +1,14 @@
 # Top-level `models` CLI contract
 
-Status: cycle-1 rejected and locally remediated, not yet a green or delivered
-twenty-ninth bounded Milestone 03 slice. Exact candidate
+Status: cycle-1 rejected and remediated; exact cycle-2 behavior candidate
+`2ea9d94374c4dd18f43255af785ee31088126c56`, tree
+`3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. It is not yet green or
+delivered: three fresh cycle-2 adversarial reviews, feature/main integration,
+and remote CI remain pending. Rejected cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
-`b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate but
-three fresh review tracks rejected it with a deduplicated union of two medium
-and six low findings. The provider-neutral core contract is component
+`b5e2445ed90df000255b51c2c989d71965db1d77`, had a deduplicated union of two
+medium and six low findings. The provider-neutral core contract is component
 `a6c6ff333176689b0c53bcf35070e9d59afd1b28`, the bounded native catalog is
 component `7c966b23d75a880a23d49e1e6ba9780e512e84b8`, and the thin CLI composition
 is present in local feature commit
@@ -25,10 +28,9 @@ Moka, and native catalog HTTP does not request Tokio's signal backend. The CLI
 dependency alone requests signal handling. The existing `ai-gateway-http`
 feature still adds direct `bytes` and includes both catalog HTTP and
 `web-fetch-http` for backward-compatible generation/reference-host builds.
-This remediated refinement is still pending the complete exact-toolchain
-replacement gate, three fresh cycle-2 reviews, and remote CI together with the
-rest of the slice; no candidate is green. The
-pinned comparison input remains fx commit
+This remediated refinement is replacement-gated but still pending three fresh
+cycle-2 reviews and remote CI together with the rest of the slice; no candidate
+is green. The pinned comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
 

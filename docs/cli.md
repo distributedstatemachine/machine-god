@@ -67,9 +67,9 @@ native tests are present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`.
 Exact cycle-1 candidate `6277aa3`, tree `b5e2445`, passed its local gate but was
 rejected with two medium and six low findings. Remediation is composed at
 `02c9f86`, `d2890c3`, and `06c9408`; focused native evidence now totals 36 and
-CLI unit evidence 18. The complete replacement gate, three fresh cycle-2
-reviews, feature/main integration, and delivery remain pending. No candidate
-is green.
+CLI unit evidence 18. Exact cycle-2 behavior candidate `2ea9d94`, tree
+`3a948b2`, passed the complete replacement gate. Three fresh cycle-2 reviews,
+feature/main integration, and delivery remain pending. No candidate is green.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -255,8 +255,8 @@ final LF and no identity prefix:
 The complete success output is built under an inclusive 64 KiB cap before its
 first stdout write. Exact failure shapes, codes, channels, credential/fallback
 behavior, and resource bounds are normative in
-[`models-cli.md`](models-cli.md). This local implementation is not yet a green
-or delivered slice.
+[`models-cli.md`](models-cli.md). This replacement-gated local implementation
+is not yet a green or delivered slice.
 
 ## Permissions output
 
