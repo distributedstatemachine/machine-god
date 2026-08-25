@@ -22,9 +22,11 @@ speed, latency, memory, or fx-equivalence statement.
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence
 requires the catalog's direct HTTP/TLS/runtime dependencies while excluding
-`web-fetch-http`, Hickory DNS, and Moka; the existing broader feature still
-includes catalog HTTP and web fetch. Release size and hash are regression
-evidence only and do not establish a performance improvement.
+generation-only direct `bytes`, `web-fetch-http`, Hickory DNS, Moka, and
+Tokio's signal backend. The broader `ai-gateway-http` feature still adds direct
+`bytes` and web fetch, while the CLI alone requests Tokio signal handling for
+its Ctrl-C/SIGTERM composition. Release size and hash are regression evidence
+only and do not establish a performance improvement.
 
 Initial workloads cover startup, help/status/session commands, session replay,
 file indexing, deterministic streaming, parallel read-only tools, cancellation,

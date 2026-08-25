@@ -12,9 +12,12 @@ present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`: 35 focused tests split
 across 14 provider/parser, 15 loopback HTTP, and 6 credential cases. The
 local feature-topology refinement gives catalog HTTP its own optional non-WASM
 `ai-gateway-model-catalog-http` gate. The CLI enables only that gate; it does
-not activate `web-fetch-http`, Hickory DNS, or Moka. The existing
-`ai-gateway-http` feature still includes both catalog HTTP and `web-fetch-http`
-for backward-compatible generation/reference-host builds. This refinement is
+not activate generation-only direct `bytes`, `web-fetch-http`, Hickory DNS, or
+Moka, and native catalog HTTP does not request Tokio's signal backend. The CLI
+dependency alone requests signal handling. The existing `ai-gateway-http`
+feature still adds direct `bytes` and includes both catalog HTTP and
+`web-fetch-http` for backward-compatible generation/reference-host builds.
+This refinement is
 still pending the complete exact-toolchain candidate gate, fresh review, and
 remote CI together with the rest of the slice. The
 complete local candidate gate, three fresh adversarial reviews, feature/main

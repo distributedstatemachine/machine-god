@@ -18,10 +18,11 @@ and 35 focused independent native tests are present at
 adversarial review, feature/main integration, and delivery remain pending, so
 this is not a green or delivered slice. The CLI now selects a dedicated
 `ai-gateway-model-catalog-http` feature that omits `web-fetch-http`, Hickory
-DNS, and Moka; the existing `ai-gateway-http` umbrella continues to include
-catalog HTTP and web fetch. This topology change remains pending the same
-complete gate and review and makes no performance or fx-
-equivalence claim. The twenty-eighth top-level
+DNS, Moka, generation-only direct `bytes`, and Tokio's signal backend. Signal
+handling is requested only by the CLI dependency; the existing
+`ai-gateway-http` umbrella continues to include direct `bytes`, catalog HTTP,
+and web fetch. This topology change remains pending the same complete gate and
+review and makes no performance or fx-equivalence claim. The twenty-eighth top-level
 `permissions [--json]` slice is **DELIVERED** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; it is read-only, ask-only, and
 owns no persistent rules or runtime grant state. Exact cycle-5 reviewed

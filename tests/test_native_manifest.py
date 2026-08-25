@@ -5,7 +5,9 @@ import unittest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_MANIFEST = REPOSITORY_ROOT / "Cargo.toml"
 NATIVE_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-native" / "Cargo.toml"
+CLI_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-cli" / "Cargo.toml"
 NON_WASM_CFG = 'cfg(not(target_family = "wasm"))'
 SHA2_DEFAULT_NATIVE_CFG = 'cfg(any(target_os = "linux", target_os = "macos"))'
 SHA2_WEB_FETCH_ONLY_NATIVE_CFG = (
@@ -13,7 +15,6 @@ SHA2_WEB_FETCH_ONLY_NATIVE_CFG = (
     'not(any(target_os = "linux", target_os = "macos"))))'
 )
 MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
-    "bytes",
     "hyper",
     "reqwest",
     "rustls",
@@ -25,8 +26,24 @@ MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
 class NativeManifestTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        with WORKSPACE_MANIFEST.open("rb") as manifest_file:
+            cls.workspace_manifest = tomllib.load(manifest_file)
         with NATIVE_MANIFEST.open("rb") as manifest_file:
             cls.manifest = tomllib.load(manifest_file)
+        with CLI_MANIFEST.open("rb") as manifest_file:
+            cls.cli_manifest = tomllib.load(manifest_file)
+
+    def test_tokio_signal_feature_is_cli_only(self) -> None:
+        workspace_tokio = self.workspace_manifest["workspace"]["dependencies"][
+            "tokio"
+        ]
+        self.assertNotIn("signal", workspace_tokio["features"])
+
+        cli_tokio = self.cli_manifest["target"][NON_WASM_CFG]["dependencies"][
+            "tokio"
+        ]
+        self.assertTrue(cli_tokio["workspace"])
+        self.assertEqual(cli_tokio["features"], ["signal"])
 
     def test_web_fetch_sha2_is_optional_and_feature_gated(self) -> None:
         features = self.manifest["features"]
@@ -152,7 +169,11 @@ class NativeManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             set(features["ai-gateway-http"]),
-            {"ai-gateway-model-catalog-http", "web-fetch-http"},
+            {
+                "ai-gateway-model-catalog-http",
+                "dep:bytes",
+                "web-fetch-http",
+            },
         )
         self.assertNotIn(
             "web-fetch-http", features["ai-gateway-model-catalog-http"]
@@ -211,6 +232,7 @@ class NativeManifestTests(unittest.TestCase):
                 "hickory-proto",
                 "hickory-resolver",
                 "moka",
+                "signal-hook-registry",
             }.isdisjoint(resolved_dependencies)
         )
 

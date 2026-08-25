@@ -11,10 +11,10 @@ publish.workspace = true
 default = []
 ai-gateway-http = [
     "ai-gateway-model-catalog-http",
+    "dep:bytes",
     "web-fetch-http",
 ]
 ai-gateway-model-catalog-http = [
-    "dep:bytes",
     "dep:hyper",
     "dep:reqwest",
     "dep:rustls",

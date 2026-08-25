@@ -265,9 +265,11 @@ environment endpoint input.
 
 The CLI enables only `ai-gateway-model-catalog-http`. Its resolved native
 feature graph contains the shared bearer/TLS and catalog HTTP dependencies but
-does not activate `web-fetch-http`, Hickory DNS, or Moka. Existing consumers of
-`ai-gateway-http` retain both the catalog feature and `web-fetch-http`; this is
-a feature-topology refinement, not a generation-transport behavior change or a
+does not activate generation-only direct `bytes`, `web-fetch-http`, Hickory
+DNS, Moka, or Tokio's signal backend. The CLI dependency, not native catalog
+HTTP, requests Tokio signal handling. Existing consumers of `ai-gateway-http`
+retain direct `bytes`, the catalog feature, and `web-fetch-http`; this is a
+feature-topology refinement, not a generation-transport behavior change or a
 performance claim.
 
 Catalog production sends one bodyless HTTP/1.1 GET to
