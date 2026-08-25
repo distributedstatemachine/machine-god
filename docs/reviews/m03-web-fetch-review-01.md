@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 1 NOT GREEN; REPLACEMENT GATE GREEN**
+Status: **IN PROGRESS — CYCLE 2 NOT GREEN; REMEDIATION RECORD**
 
 ## Base and boundary
 
@@ -15,7 +15,10 @@ This is the live review ledger for the proposed twenty-seventh bounded slice.
 Production, independently owned evidence, host composition, and a complete
 pre-review local gate exist. Formal cycle 1 rejected exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
-`1378b02e92973ab15fbf4623138a643b70057f33`. This record establishes no green
+`1378b02e92973ab15fbf4623138a643b70057f33`. Its remediation passed a complete
+replacement local gate. Formal cycle 2 rejected exact candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. This record establishes no green
 review, workflow, integration, delivery, compatibility, or product-performance
 claim. Milestone 03 remains in progress with twenty-six delivered slices.
 
@@ -49,21 +52,31 @@ host-owned Tokio runtime with I/O and time enabled; no current handle returns
 `# Panics` precondition and may terminate a release process. One Tokio deadline
 sleep is reused throughout each invocation.
 
-After permit acquisition, hostname resolution reads one UDP nameserver from
-host system resolver configuration. The invocation sends bounded rooted A then
-AAAA queries on owned Tokio sockets, using TCP only once when a UDP response is
-truncated. Query IDs use synchronous platform entropy under the permit. A
+Native production-transport construction synchronously snapshots the first
+UDP nameserver from host system resolver configuration outside invocation
+timing and without requiring Tokio. It retains either that address or a fixed
+unavailable result until reconstruction. Hostname execution uses the stored
+result, while an admitted public IP literal bypasses a failed snapshot. The
+invocation sends bounded rooted A then AAAA queries on owned Tokio sockets,
+using TCP only once when a UDP response is truncated. Query IDs use synchronous
+platform entropy under the permit. A
 one-byte UDP overflow witness enforces the inclusive 4 KiB message cap; TCP
-length is rejected before allocation above that cap, and a still-truncated TCP
-response is invalid. Strict query tuple, Internet class, rooted CNAME-chain,
-terminal owner, 32-address, and every-address-public checks apply. There is no
+length outside 12 through 4,096 bytes is rejected before allocation, and a
+still-truncated TCP response is invalid. One raw predecode helper gates both
+UDP and TCP before Hickory: the header is at least 12 bytes, `QDCOUNT == 1`,
+`ANCOUNT <= 39`, `NSCOUNT <= 128`, `ARCOUNT <= 128`, aggregate resource records
+are at most 128, and the actual payload satisfies the checked count-implied
+minimum of `12 + 5 * questions + 11 * resource_records`. Strict query tuple,
+Internet class, rooted CNAME-chain, terminal owner, 32-address, and every-
+address-public checks apply. There is no
 libc lookup, cache, retry, search suffix, resolver thread, or spawned resolver
 task. The admitted set feeds a fresh pinned Reqwest client using a process-wide
 cached Rustls root configuration and fixed HTTP/1.1 ALPN, so roots are not
 reparsed per invocation.
 
 Only 2xx and identity encoding succeed. Text, JSON, XML, JavaScript, bounded
-raw HTML, missing-MIME sniffing, model-unsafe-text rejection, and metadata-only
+raw HTML, complete-bounded-body missing-MIME classification, model-unsafe-text
+rejection, and metadata-only
 binary results follow the normative contract. Every result starts with the
 upstream-untrusted warning and includes query-redacted URL, status, normalized
 effective MIME, content kind, and `cache_hit: false`. An absent declaration is
@@ -249,11 +262,11 @@ driver-enabled Tokio `# Panics` precondition rather than promising typed driver
 detection. The replacement boundary removes libc DNS in favor of bounded owned
 Tokio socket queries, reuses one invocation deadline sleep, retains the permit
 through render/final validation, and reuses one process-wide Rustls root
-configuration. Exact production and independent-evidence components are
-recorded below; documentation composition, the replacement SHA/tree, its
-complete local gate, and three fresh same-SHA review tracks remain pending.
+configuration. At that checkpoint, documentation composition, a replacement
+SHA/tree, the complete local gate, and three fresh same-SHA review tracks
+remained pending. Their later exact results are recorded below.
 
-## Cycle-1 remediation in progress
+## Cycle-1 remediation and replacement gate
 
 Isolated production implementation commit
 `bc4c06806685cdd7cf25015f364500f86d2554e7`, tree
@@ -318,9 +331,73 @@ and `yasna`. Node 22.22.0 actively ran the all-feature unsupported-target test
 warnings-denied library gates. Native Linux HTTP execution remains an exact-CI
 requirement because this macOS cross-host lacks the target C sysroot.
 
-This documentation-complete tree still requires exact-tree checks and an
-immutable cycle-2 candidate marker. No formal replacement review has started;
-three fresh same-SHA tracks remain pending.
+The tree-identical formal cycle-2 candidate and review outcome are recorded
+below. The precursor's green local gate does not override that later rejection.
+
+## Formal cycle 2 — not green
+
+Three fresh agents independently inspected exact candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, in isolated detached worktrees.
+Any finding rejects the candidate, so cycle 2 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 0 medium, 2 low**.
+
+- **Low — stale candidate state:** maintained current-state passages still said
+  that exact-tree checks, an immutable cycle-2 marker, and formal replacement
+  review were pending after this candidate already existed and the reviews had
+  begun.
+- **Low — missing-MIME prefix mismatch:** the normative contract said only a
+  bounded prefix was classified, while implementation applies model-safe UTF-8
+  classification to the complete bounded response body.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-2 candidate.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 2 medium, 1 low**.
+
+- **Medium — DNS header-count capacity amplification:** the 4 KiB DNS wire cap
+  did not prevent untrusted header counts from influencing decoder allocation
+  capacity before a raw-record-count bound was enforced.
+- **Medium — synchronous resolver configuration inside the total deadline:**
+  each hostname invocation performed a blocking system resolver-configuration
+  read after starting its advertised absolute deadline. That synchronous work
+  could neither be interrupted nor made subject to the Tokio deadline.
+- **Low — stale candidate state:** the same maintained current-state passages
+  did not name the exact already-existing cycle-2 candidate and review.
+
+### Consolidated union and disposition
+
+After deduplicating the repeated stale-state finding, cycle 2 has **0 blocker,
+0 high, 2 medium, and 2 low** findings. Exact candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9` is rejected and must never be used
+as delivery evidence.
+
+Exact isolated production remediation component
+`6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, changes only
+`crates/machine-god-native/src/web_fetch.rs`. It snapshots and retains the
+system-configuration result synchronously at production-transport construction,
+outside invocation timing and without Tokio. Hostname execution uses the stored
+first UDP nameserver or the same fixed, retryable unavailable result until
+transport reconstruction; an admitted public IP literal needs no nameserver and
+bypasses snapshot failure. Missing-MIME
+classification covers the complete bounded body. The raw DNS predecode
+contract requires a 12-byte header, exactly one question, at most 39 answers,
+at most 128 authority and additional records individually, at most 128
+aggregate resource records, and the checked count-implied minimum payload
+length before either UDP or TCP decoding. The 39 answers cover 32 admitted
+addresses plus seven CNAME links. A TCP advertised frame must be 12 through
+4,096 bytes before allocation. This remediation record makes no replacement-
+gate or green-review claim. A formal candidate is identified only by its exact-
+SHA review results; this pre-review record deliberately does not predict that
+SHA.
 
 The local gate must include the repository-required commands:
 
@@ -370,10 +447,11 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: formal cycle 1 is **NOT GREEN** on its exact SHA/tree. Exact
-replacement precursor `5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
-`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`, passes the complete replacement
-local gate. This documentation-complete tree and its immutable marker remain to
-be checked before the three fresh cycle-2 review tracks begin. Feature
-workflows, fast-forward integration, exact `main` workflows, and delivery
-remain pending.
+Current state: formal cycles 1 and 2 are **NOT GREEN** on their exact recorded
+SHA/tree pairs. Exact cycle-2 candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, is rejected. This remediation
+record makes no replacement-gate or green-review claim. A formal candidate is
+identified only by its exact-SHA review results; this pre-review record
+deliberately does not predict that SHA. Feature workflows, fast-forward
+integration, exact `main` workflows, and delivery are not claimed here.

@@ -26,10 +26,21 @@ test fixture are composed through exact code-and-test precursor
 replacement Rust 1.94.1, focused, integrity, dependency, baseline portability,
 WASI, active unsupported-target, and release-binary gate. The fixture removes
 the test-only `rcgen` dependency without weakening the real Rustls verifier,
-SNI, hostname, or pinned-address test path. This documentation composition and
-the immutable cycle-2 candidate still require exact-tree checks. Three fresh
-same-SHA reviews, feature workflows, integration, and exact `main` workflows
-remain pending.
+SNI, hostname, or pinned-address test path. Formal cycle 2 is **NOT GREEN** on
+exact candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. Correctness/API reported 0
+blocker, 0 high, 0 medium, and 2 low findings; network/HTTP lifecycle reported
+zero findings at every severity; performance/concurrency reported 0 blocker,
+0 high, 2 medium, and 1 low. The deduplicated union is 0 blocker, 0 high, 2
+medium, and 2 low. This cycle-2 remediation record makes no replacement-gate or
+green-review claim. Exact isolated production remediation component
+`6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, implements the raw DNS predecode and
+resolver-snapshot boundary below. A formal candidate is identified only by its
+exact-SHA review results; this pre-review record deliberately does not predict
+that SHA.
+Feature workflows, integration, and exact `main` workflows are not claimed
+here.
 Native Linux HTTP compilation remains an exact-CI requirement because the
 macOS cross-host lacks the target C sysroot. Milestone 03 therefore remains in
 progress with twenty-six delivered slices.
@@ -109,12 +120,14 @@ no network effect.
 
 ## DNS and destination confinement
 
-After acquiring an active-request permit, allowed execution reads the host's
-system resolver configuration and selects its first UDP-configured nameserver.
-This synchronous native configuration read is part of execution, not
-effect-free preparation; it is repeated per invocation, sends no packet by
-itself, and fails as fixed unavailable when no usable entry exists. A literal
-IP destination requires no DNS query.
+Native production-transport construction synchronously snapshots the host's
+system resolver configuration outside invocation timing and stores its first
+UDP-configured nameserver. Hostname execution uses that stored entry and does
+not reread configuration per request. A configuration-read failure or missing
+usable entry is retained so later hostname execution returns the same fixed,
+retryable unavailable result without retrying the read until a new transport is
+constructed. A literal IP destination requires neither a
+nameserver nor a DNS query and remains eligible when the snapshot failed.
 
 For a hostname, the invocation sends one rooted Internet-class A query and then
 one rooted Internet-class AAAA query directly to that nameserver on owned Tokio
@@ -124,13 +137,19 @@ work. A truncated UDP answer permits exactly one TCP exchange of the same
 query; there is no other DNS retry, search-suffix expansion, cache, libc
 `getaddrinfo`, resolver thread, or spawned resolver task. A 4,097-byte UDP
 receive buffer supplies an explicit overflow witness and rejects any message
-over the 4 KiB inclusive cap. The TCP length prefix is rejected before body
-allocation when it exceeds 4 KiB, and a TCP response that still carries the
-truncated flag is invalid. Response ID, opcode, class, rooted query name,
-requested record type, and response code are validated. A response may contain
-at most one consistent rooted CNAME chain of eight names including the
-original; only requested-type, Internet-class addresses owned by its terminal
-name are admitted.
+over the 4 KiB inclusive cap. Before either UDP or TCP payload enters Hickory,
+one predecode check requires at least the 12-byte header, `QDCOUNT == 1`,
+`ANCOUNT <= 39`, `NSCOUNT <= 128`, `ARCOUNT <= 128`, and an aggregate
+`ANCOUNT + NSCOUNT + ARCOUNT <= 128`. The 39-answer cap covers the 32 admitted
+terminal addresses plus at most seven CNAME links in the eight-name chain. With
+checked arithmetic, the actual payload must also satisfy the count-implied
+minimum `12 + 5 * QDCOUNT + 11 * (ANCOUNT + NSCOUNT + ARCOUNT)`. A TCP length
+prefix outside 12 through 4,096 bytes is rejected before body allocation, and a
+TCP response that still carries the truncated flag is invalid. Response ID,
+opcode, class, rooted query name, requested record type, and response code are
+validated. A response may contain at most one consistent rooted CNAME chain of
+eight names including the original; only requested-type, Internet-class
+addresses owned by its terminal name are admitted.
 
 The combined A/AAAA result accepts at most 32 addresses and fails closed unless
 every returned address is a public unicast destination. A mixed public/private
@@ -239,10 +258,11 @@ render, sanitize, execute, or interpret HTML.
 
 Eligible textual bytes must be valid UTF-8 and model-safe. NUL and disallowed
 control content are rejected with a fixed unsafe-text failure rather than
-substituted or reflected. A missing MIME type is classified from a bounded
-prefix: model-safe UTF-8 is treated as text, while other bytes are treated as
-binary. A declared binary or sniffed-binary response produces metadata only;
-no body bytes are placed in model output and nothing is persisted.
+substituted or reflected. A missing MIME type is classified from the complete
+bounded response body: model-safe UTF-8 is treated as text, while other bytes
+are treated as binary. A declared binary or sniffed-binary response produces
+metadata only; no body bytes are placed in model output and nothing is
+persisted.
 
 ## Model-visible result and errors
 
@@ -313,5 +333,12 @@ the review findings. The remediation and evidence components are composed with
 the static-fixture portability correction through exact precursor
 `5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
 `f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`. Its complete replacement local
-gate is green. This documentation-complete tree must be checked and frozen as
-an immutable cycle-2 candidate before three fresh same-SHA reviews begin.
+gate is green. Formal cycle 2 rejected exact candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with 0 blocker, 0 high, 2 medium,
+and 2 low deduplicated findings. This cycle-2 remediation record makes no
+replacement-gate or green-review claim. Exact isolated production remediation
+component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, implements the corrected boundary.
+A formal candidate is identified only by its exact-SHA review results; this
+pre-review record deliberately does not predict that SHA.

@@ -18,13 +18,21 @@ composed locally. Pre-review gate record
 gate. Formal cycle 1 is **NOT GREEN** on exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
 `1378b02e92973ab15fbf4623138a643b70057f33`; all findings and severities are
-recorded in the review ledger. Isolated production remediation component
-`0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
-`d96c13c853424325a688631dfea25c504bb62250`, and evidence tip
-`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
-`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
-the complete replacement gate, three fresh same-SHA reviews, remote workflows,
-integration, and delivery remain pending.
+recorded in the review ledger. Cycle-1 remediation passed its complete
+replacement local gate, but formal cycle 2 is also **NOT GREEN** on exact
+candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. Correctness/API reported 0
+blocker, 0 high, 0 medium, and 2 low findings; network/HTTP lifecycle reported
+zero findings at every severity; performance/concurrency reported 0 blocker,
+0 high, 2 medium, and 1 low. The deduplicated union is 0 blocker, 0 high, 2
+medium, and 2 low findings. Exact isolated production remediation component
+`6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, implements the DNS allocation and
+resolver-snapshot corrections. The cycle-2 remediation record makes no
+replacement-gate or green-review claim. A formal candidate is identified only
+by its exact-SHA review results; this pre-review record deliberately does not
+predict that SHA. Remote workflows, integration, and delivery are likewise not
+claimed here.
 Standalone HTTP cross-compilation remains deferred to exact
 native Linux CI because the macOS cross-host lacks the required C sysroot. The
 cfg-gated non-WASM candidate adds a thirteenth host tool without changing the

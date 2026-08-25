@@ -33,14 +33,18 @@ gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 Formal cycle 1 is **NOT GREEN** on exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
 `1378b02e92973ab15fbf4623138a643b70057f33`. The rootless thirteen-tool host
-composition itself remains unchanged. Remediation, independent evidence, and
-the static-fixture portability correction are composed through exact precursor
-`5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
-`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`, whose complete replacement local
-gate is green. This documentation-complete tree and immutable cycle-2 marker
-still require exact-tree checks; three fresh same-SHA reviews, remote workflows,
-integration, and delivery remain pending under
-[`web-fetch.md`](web-fetch.md).
+composition itself remains unchanged. Its remediation passed the complete
+replacement local gate. Formal cycle 2 is **NOT GREEN** on exact candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with 0 blocker, 0 high, 2 medium,
+and 2 low deduplicated findings. Exact isolated production remediation
+component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, retains the rootless host shape and
+implements the corrected native boundary below. This cycle-2 remediation
+record makes no replacement-gate or green-review claim. A formal candidate is identified only
+by its exact-SHA review results; this pre-review record deliberately does not
+predict that SHA. Remote workflows, integration, and delivery are not claimed
+under [`web-fetch.md`](web-fetch.md).
 The delivered count remains twenty-six and this is not a performance or
 fx-equivalence claim.
 
@@ -49,10 +53,14 @@ Later production `web_fetch` polling requires a current host-owned Tokio
 runtime with I/O and time enabled. No current handle produces fixed
 `RuntimeRequired`; a current driverless runtime violates the documented
 `# Panics` precondition and may terminate a release process.
-The host supplies no resolver override: each admitted hostname invocation reads
-the host's first UDP-configured system nameserver, then owns its bounded direct
-DNS socket work. Literal public IPs skip DNS. No workspace descriptor is used
-for resolver configuration or network execution.
+The host supplies no resolver override. Native transport construction
+synchronously snapshots the host's first UDP-configured system nameserver
+outside invocation timing. Each admitted hostname invocation uses that stored
+nameserver for bounded direct DNS socket work; it does not reread configuration.
+Literal public IPs skip DNS and need no nameserver. A snapshot failure makes
+later hostname execution return the same fixed, retryable unavailable result
+and is not retried until a new transport is constructed. No workspace
+descriptor is used for resolver configuration or network execution.
 The twenty-fourth, library-only `copy_file` slice is delivered. Cycle-3
 candidate `99ecdb3`, tree `145b3be`, is green with zero findings in all three
 fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature

@@ -404,9 +404,16 @@ admission and connection pinning cannot broaden it. Existing core behavior
 continues to classify network authority as `Critical`, so the default path is
 `Ask`. No new capability variant or core ambient network authority is proposed.
 This slice is in progress from exact base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production, evidence, reviews,
-gates, integration, and delivery are pending, and the delivered count remains
-twenty-six.
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Formal cycle 2 rejected exact
+candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with 0 blocker, 0 high, 2 medium,
+and 2 low deduplicated findings. Exact isolated production remediation
+component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, leaves core's provider-neutral
+surface unchanged. This remediation record makes no replacement-gate, green-
+review, integration, or delivery claim. A formal candidate is
+identified only by its exact-SHA review results; this pre-review record
+deliberately does not predict that SHA. The delivered count remains twenty-six.
 
 The concrete consumers are the native
 [`read_file` tool](read-file.md), [`list_files` tool](list-files.md),

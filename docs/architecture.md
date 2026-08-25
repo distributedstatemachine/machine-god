@@ -31,15 +31,20 @@ composed locally. Pre-review gate record
 1.94.1, integrity, dependency, baseline portability, WASI, and release-binary
 gate. Formal cycle 1 is **NOT GREEN** on exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
-`1378b02e92973ab15fbf4623138a643b70057f33`. Remediation, independent evidence,
-and the static-fixture portability correction are composed through exact
-precursor `5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
-`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`, whose complete replacement local
-gate is green. This documentation-complete tree and immutable cycle-2 marker
-still require exact-tree checks; three fresh same-SHA reviews remain pending.
+`1378b02e92973ab15fbf4623138a643b70057f33`. Its remediation passed the complete
+replacement local gate. Formal cycle 2 is **NOT GREEN** on exact candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with a deduplicated union of 0
+blocker, 0 high, 2 medium, and 2 low findings. Exact isolated production
+remediation component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, implements the corrected native
+boundary below. This cycle-2 remediation record makes no replacement-gate or
+green-review claim. A formal candidate is
+identified only by its exact-SHA review results; this pre-review record
+deliberately does not predict that SHA.
 Native Linux HTTP evidence remains an exact-CI requirement
 because the macOS cross-host lacks the target C sysroot. Feature and `main`
-workflows, integration, and delivery remain pending. Its non-WASM
+workflows, integration, and delivery are not claimed here. Its non-WASM
 `web-fetch-http` feature adds one rootless `WebFetchTool`;
 `ai-gateway-http` includes that feature. Core retains provider-neutral
 `Capability::Network` and orchestration, while native owns
@@ -49,11 +54,17 @@ time enabled. No current handle is a typed `RuntimeRequired` failure, while a
 current driverless runtime violates the documented `# Panics` precondition and
 may terminate a release process. One outer bounded wrapper owns the active-call
 permit, cancellation future, and one reused deadline sleep through rendering
-and its final boundary. Native DNS reads a system-configured UDP resolver after
-admission and uses only invocation-owned Tokio A/AAAA sockets with bounded TCP
-fallback; it creates no libc lookup, cache, retry, resolver thread, or spawned
-task. A process-wide cached Rustls configuration supplies pinned roots and
-HTTP/1.1 ALPN to each fresh pinned Reqwest client without reparsing the roots.
+and its final boundary. Native construction synchronously snapshots the first
+system-configured UDP resolver outside invocation timing. Hostname execution
+uses that stored nameserver with only invocation-owned Tokio A/AAAA sockets and
+bounded TCP fallback; it creates no libc lookup, cache, retry, resolver thread,
+or spawned task. Raw DNS header counts and their count-implied minimum payload
+length are bounded before UDP or TCP decoding. Literal IP execution needs no
+nameserver. A snapshot failure makes later hostname execution return the same
+fixed, retryable unavailable result and is not retried until reconstruction. A
+process-wide cached Rustls configuration
+supplies pinned roots and HTTP/1.1 ALPN to each fresh pinned Reqwest client
+without reparsing the roots.
 The candidate host has thirteen alphabetical tools, but its descriptor-backed
 workspace set remains twelve tools using one original descriptor plus eleven
 clones. The frozen boundary is

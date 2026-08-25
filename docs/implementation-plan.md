@@ -56,16 +56,23 @@ gate. Formal cycle 1 is **NOT GREEN** on exact candidate
 `1378b02e92973ab15fbf4623138a643b70057f33`. Correctness/API reported 0
 blocker, 0 high, 2 medium, and 3 low findings; lifecycle/robustness reported 0
 blocker, 1 high, 3 medium, and 0 low findings; performance/concurrency reported
-0 blocker, 0 high, 3 medium, and 2 low findings. Isolated production
-remediation component `0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
-`d96c13c853424325a688631dfea25c504bb62250`, and evidence tip
-`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
-`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
-the complete replacement local gate, and three fresh same-SHA reviews remain
-pending. Native Linux HTTP compilation remains an
+0 blocker, 0 high, 3 medium, and 2 low findings. Its remediation passed the
+complete replacement local gate. Formal cycle 2 is **NOT GREEN** on exact
+candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. Correctness/API reported 0
+blocker, 0 high, 0 medium, and 2 low findings; lifecycle/robustness reported
+zero findings at every severity; performance/concurrency reported 0 blocker,
+0 high, 2 medium, and 1 low. The deduplicated union is 0 blocker, 0 high, 2
+medium, and 2 low findings. Exact isolated production remediation component
+`6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, implements the raw DNS and resolver-
+snapshot corrections. This cycle-2 remediation record makes no replacement-
+gate or green-review claim. A formal candidate is identified only
+by its exact-SHA review results; this pre-review record deliberately does not
+predict that SHA. Native Linux HTTP compilation remains an
 exact-CI requirement because the macOS cross-host lacks the target C sysroot.
 Feature workflows, fast-forward integration, exact `main` workflows, and
-delivery are pending.
+delivery are not claimed here.
 The candidate host will contain thirteen tools, while its descriptor-backed
 workspace set remains twelve tools using one original descriptor plus eleven
 clones because `web_fetch` is rootless. The delivered count remains twenty-six
@@ -1759,13 +1766,23 @@ retained. Policy and execution must agree on the HTTPS scheme, host, and
 effective port. Existing core behavior keeps that network capability
 `Critical`; the default policy path remains `Ask`.
 
-After permit acquisition, allowed execution reads one UDP nameserver from host
-system resolver configuration. A hostname receives one rooted Internet-class A
-and then AAAA query through invocation-owned Tokio sockets, with one TCP replay
-only for a truncated UDP answer. Query IDs use synchronous platform entropy
-under the held permit and detach no work. A one-byte UDP overflow witness
-enforces the inclusive 4 KiB message cap; TCP length is rejected before
-allocation above that cap, and a still-truncated TCP answer is invalid.
+Native production-transport construction synchronously snapshots the first UDP
+nameserver from host resolver configuration outside invocation timing and
+without Tokio, retaining either its address or a fixed, retryable unavailable
+result until the tool is reconstructed. Hostname execution uses that stored
+result without rereading configuration; an admitted public IP literal bypasses
+snapshot failure. A hostname receives one rooted
+Internet-class A and then AAAA query through invocation-owned Tokio sockets,
+with one TCP replay only for a truncated UDP answer. Query IDs use synchronous
+platform entropy under the held permit and detach no work. A one-byte UDP
+overflow witness enforces the inclusive 4 KiB message cap. Before Hickory
+decoding on UDP or TCP, the raw header must be at least 12 bytes, have exactly
+one question, no more than 39 answers, no more than 128 authority or additional
+records individually, and no more than 128 resource records across those three
+sections. Checked arithmetic also requires the actual body to satisfy the
+count-implied minimum `12 + 5 * questions + 11 * resource_records`. A TCP frame
+length outside 12 through 4,096 bytes is rejected before allocation, and a
+still-truncated TCP answer is invalid.
 Response tuple, rooted CNAME owner chain, and terminal address ownership are
 validated. There is no libc lookup, cache, retry, search suffix, resolver
 thread, or spawned resolver task. The combined result accepts at most 32 DNS
@@ -1792,9 +1809,9 @@ and one cancellation future are reused across the complete invocation. The
 outer permit survives transport completion, rendering, serialized-result
 validation, and the final cancellation/deadline boundary. Text, JSON, XML, and
 JavaScript are eligible bounded text. HTML remains bounded raw untrusted text.
-Binary is metadata-only with no persistence, missing MIME is sniffed within the
-same bounds and reported as effective `text/plain` or
-`application/octet-stream`, and model-unsafe text is rejected.
+Binary is metadata-only with no persistence. Missing MIME is classified from
+the complete bounded body and reported as effective `text/plain` or
+`application/octet-stream`; model-unsafe text is rejected.
 
 Every successful output begins with a fixed upstream-untrusted warning and
 includes query-redacted canonical URL, status, MIME, content kind, and
@@ -1835,8 +1852,21 @@ production remediation is exact component
 `0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
 `d96c13c853424325a688631dfea25c504bb62250`; exact focused-green evidence tip
 is `c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
-`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`. Documentation composition,
-replacement gate/reviews, workflows, integration, and delivery remain pending.
+`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`. Its replacement local gate passed,
+but formal cycle 2 rejected exact candidate
+`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. Correctness/API reported
+0/0/0/2; lifecycle/robustness was green at 0/0/0/0; performance/concurrency
+reported 0/0/2/1. The deduplicated union is 0 blocker, 0 high, 2 medium, and 2
+low findings: raw DNS count capacity, synchronous per-invocation resolver
+configuration, stale candidate-state prose, and missing-MIME prefix wording.
+Exact isolated production remediation component
+`6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+`490f628caa20449c3db96069b34356b0117b7ae4`, implements the corrected boundary.
+This cycle-2 remediation record makes no replacement-gate or green-review
+claim. A formal candidate is identified only by its exact-SHA review results;
+this pre-review record deliberately does not predict that SHA. Workflows,
+integration, and delivery are not claimed here.
 The candidate host has thirteen alphabetical tools, while the
 descriptor-backed set remains twelve with one original plus eleven clones.
 Until final seal and exact remote delivery, M03 remains **IN PROGRESS** with
@@ -2520,10 +2550,19 @@ gate:
   replacement gate is green across required/full/focused Rust tests, Python,
   pinned-fx compatibility, dependency policy/audit, Linux/FreeBSD/WASI plus
   active Node, documentation integrity, diff/unsafe checks, and release-binary
-  smoke. This documentation-complete tree and its immutable cycle-2 marker
-  still require exact-tree checks. Three fresh same-SHA reviews, feature
-  workflows, integration, exact `main` workflows, and delivery remain pending;
-  the delivered count remains twenty-six.
+  smoke. Formal cycle 2 rejected exact candidate
+  `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
+  `6dc095e796b70fa5964e2d9a24163d75667e1c7a`. Correctness/API reported
+  0/0/0/2, lifecycle/robustness was green at 0/0/0/0, and performance/
+  concurrency reported 0/0/2/1; the deduplicated union is 0 blocker, 0 high, 2
+  medium, and 2 low. Exact isolated production remediation component
+  `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
+  `490f628caa20449c3db96069b34356b0117b7ae4`, implements the raw DNS and resolver-
+  snapshot corrections. This cycle-2 remediation record makes no replacement-
+  gate or green-review claim. A formal candidate is identified only by its
+  exact-SHA review results; this pre-review record deliberately does not predict
+  that SHA. Feature workflows, integration, exact `main` workflows, and
+  delivery are not claimed here; the delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
