@@ -138,9 +138,13 @@ timing. Hostname execution uses the stored nameserver and derives each A/AAAA
 ID from that seed and an atomic per-query sequence, with only invocation-owned
 Tokio sockets and bounded TCP fallback; it performs no per-query entropy call
 and creates no libc lookup, cache, retry, resolver thread, or spawned task. Raw
-DNS header counts and their count-implied minimum payload length are bounded
-before UDP or TCP decoding. A failed resolver or seed snapshot makes hostname
-execution return a fixed retryable unavailable result until reconstruction;
+DNS header/count caps are enforced before every UDP or TCP decode. A validated
+truncated UDP response deliberately bypasses full resource-record decoding and
+the count-implied minimum before one TCP replay; non-truncated UDP and every
+TCP response require the count-implied minimum, a full declared-message decode,
+and decoder exhaustion with no undeclared trailing bytes. A failed resolver or
+seed snapshot makes hostname execution return a fixed retryable unavailable
+result until reconstruction;
 literal IP execution needs neither prerequisite and bypasses those failures.
 The native transport checks its token state and the same absolute total
 deadline at every

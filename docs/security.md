@@ -38,9 +38,12 @@ AAAA, TCP, HTTP, and body effect, including transitions where earlier work
 completed immediately. The final synchronous boundary directly checks the
 token/deadline and creates no second waiter.
 A one-byte UDP overflow witness and preallocation TCP length check enforce a
-4 KiB cap. Raw section counts and their count-implied minimum payload length
-are bounded before either UDP or TCP decoding, and a still-truncated TCP answer
-is rejected. There is no
+4 KiB cap. Raw header/count caps precede every UDP or TCP decode. A validated
+truncated UDP reply may bypass the count-implied minimum and full resource-
+record decode only to authorize one bounded TCP replay. Non-truncated UDP and
+every TCP reply require the count-implied minimum, complete declared-message
+decoding with no trailing bytes, and full validation; a still-truncated TCP
+answer is rejected. There is no
 libc lookup, resolver thread, cache, retry, or detached resolver task;
 cancellation/drop discards the owned sockets. The admitted public address set
 is pinned into a fresh HTTP/1 client backed by a process-wide cached Rustls

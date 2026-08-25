@@ -1507,8 +1507,13 @@ fn classify_dns_udp_response(
 
 fn decode_dns_response(response: &[u8]) -> Result<Message, WebFetchTransportError> {
     validate_dns_header_counts(response)?;
-    Message::from_vec(response)
-        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))
+    let mut decoder = BinDecoder::new(response);
+    let message = Message::read(&mut decoder)
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    if !decoder.is_empty() {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    Ok(message)
 }
 
 fn validate_dns_header_counts(response: &[u8]) -> Result<(), WebFetchTransportError> {
@@ -2749,6 +2754,90 @@ mod tests {
                 .kind(),
             WebFetchTransportErrorKind::Unavailable
         );
+    }
+
+    #[test]
+    fn tcp_complete_dns_decoder_accepts_exact_wire_and_rejects_trailing_bytes() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let mut response = dns_response(40, &name, RecordType::A);
+        response.add_answer(Record::from_rdata(
+            name,
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+        ));
+        let exact = response.to_vec().unwrap();
+        // `exchange_dns_tcp` passes its complete advertised frame through this
+        // decoder after the bounded read.
+        assert_eq!(decode_dns_response(&exact).unwrap(), response);
+
+        let mut trailing = exact;
+        trailing.extend_from_slice(b"undeclared");
+        assert_eq!(
+            decode_dns_response(&trailing).unwrap_err().kind(),
+            WebFetchTransportErrorKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn non_truncated_udp_trailing_bytes_reject_without_tcp_replay() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let id = 41;
+        let mut response = dns_response(id, &name, RecordType::A);
+        response.add_answer(Record::from_rdata(
+            name.clone(),
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+        ));
+        let exact = response.to_vec().unwrap();
+        let mut trailing = exact.clone();
+        trailing.extend_from_slice(b"undeclared");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        for (wire, expected) in [
+            (exact, Some(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)))),
+            (trailing, None),
+        ] {
+            let boundary_calls = Arc::new(AtomicU32::new(0));
+            let replay_constructions = Arc::new(AtomicU32::new(0));
+            let replay_polls = Arc::new(AtomicU32::new(0));
+            let result = runtime.block_on(validate_dns_udp_response_with_replay(
+                &wire,
+                id,
+                &name,
+                RecordType::A,
+                {
+                    let boundary_calls = Arc::clone(&boundary_calls);
+                    move || {
+                        boundary_calls.fetch_add(1, Ordering::AcqRel);
+                        Ok(())
+                    }
+                },
+                {
+                    let replay_constructions = Arc::clone(&replay_constructions);
+                    let replay_polls = Arc::clone(&replay_polls);
+                    let name = name.clone();
+                    move || {
+                        replay_constructions.fetch_add(1, Ordering::AcqRel);
+                        poll_fn(move |_context| {
+                            replay_polls.fetch_add(1, Ordering::AcqRel);
+                            Poll::Ready(Ok(dns_response(id, &name, RecordType::A)))
+                        })
+                    }
+                },
+            ));
+            match expected {
+                Some(address) => assert_eq!(result.unwrap(), [address]),
+                None => assert_eq!(
+                    result.unwrap_err().kind(),
+                    WebFetchTransportErrorKind::Unavailable
+                ),
+            }
+            assert_eq!(boundary_calls.load(Ordering::Acquire), 0);
+            assert_eq!(replay_constructions.load(Ordering::Acquire), 0);
+            assert_eq!(replay_polls.load(Ordering::Acquire), 0);
+        }
     }
 
     #[test]

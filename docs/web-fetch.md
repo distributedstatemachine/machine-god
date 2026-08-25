@@ -278,9 +278,10 @@ expansion, cache, libc `getaddrinfo`, resolver thread, or spawned resolver task.
 A non-truncated UDP response and every TCP response retain the strict complete
 path: checked arithmetic requires the count-implied minimum `12 + 5 * QDCOUNT +
 11 * (ANCOUNT + NSCOUNT + ARCOUNT)`, Hickory decodes the full declared message,
-and the complete response is validated. A TCP length prefix outside 12 through
-4,096 bytes is rejected before body allocation, the same raw count caps apply,
-and a TCP response that still carries the truncated flag is invalid. The
+the decoder must be exhausted with no undeclared trailing bytes, and the
+complete response is validated. A TCP length prefix outside 12 through 4,096
+bytes is rejected before body allocation, the same raw count caps apply, and a
+TCP response that still carries the truncated flag is invalid. The
 39-answer cap covers the 32 admitted terminal addresses plus at most seven CNAME
 links in the eight-name chain. A complete response may contain at most one
 consistent rooted CNAME chain of eight names including the original; only

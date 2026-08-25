@@ -248,6 +248,22 @@ release, and five-smoke checks are green. This gate record makes no formal-
 review outcome, candidate, workflow, integration, delivery, performance, or
 fx-equivalence claim; reviewer reports identify the exact candidate they
 reviewed.
+Formal cycle 9 is **NOT GREEN** on exact candidate
+`16c7287888277f14e36ce47712f017d3bb7022da`, tree
+`dfe170664851281bee0324b0ed2acb97575cd49d`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported
+0 blocker, 0 high, 0 medium, and 2 low; performance/concurrency reported zero
+findings at every severity. The overlapping documentation reports deduplicate,
+so the union is 0 blocker, 0 high, 1 medium, and 1 low, and the exact candidate
+is rejected. Strict non-truncated UDP and TCP decoding accepted a valid declared
+DNS message followed by undeclared trailing bytes. Maintained summaries also
+overclaimed that the count-implied minimum preceded every UDP/TCP decode,
+although a validated partial `TC=1` UDP reply intentionally bypasses that full-
+message check before replay. Remediation requires decoder exhaustion on the
+strict complete paths, preserves the bounded partial-truncation path, and adds
+exact-message, trailing-byte, and zero-replay regressions. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -1956,10 +1972,14 @@ overflow witness enforces the inclusive 4 KiB message cap. Before Hickory
 decoding on UDP or TCP, the raw header must be at least 12 bytes, have exactly
 one question, no more than 39 answers, no more than 128 authority or additional
 records individually, and no more than 128 resource records across those three
-sections. Checked arithmetic also requires the actual body to satisfy the
-count-implied minimum `12 + 5 * questions + 11 * resource_records`. A TCP frame
-length outside 12 through 4,096 bytes is rejected before allocation, and a
-still-truncated TCP answer is invalid.
+sections. UDP then minimally decodes and validates the header/question tuple.
+Only a valid `TC=1` reply may bypass the count-implied minimum and complete
+resource-record decode to authorize one bounded replay. Non-truncated UDP and
+every TCP reply must satisfy the checked count-implied minimum `12 + 5 *
+questions + 11 * resource_records`, decode the complete declared message, and
+leave no undeclared trailing bytes. A TCP frame length outside 12 through 4,096
+bytes is rejected before allocation, and a still-truncated TCP answer is
+invalid.
 Response tuple, rooted CNAME owner chain, and terminal address ownership are
 validated. There is no libc lookup, cache, retry, search suffix, resolver
 thread, or spawned resolver task. The combined result accepts at most 32 DNS
@@ -2390,6 +2410,27 @@ and status does not create missing XDG roots. This gate record makes no formal-
 review outcome, candidate, workflow, integration, delivery, performance, or
 fx-equivalence claim; reviewer reports identify the exact candidate they
 reviewed.
+Formal cycle 9 rejected exact candidate
+`16c7287888277f14e36ce47712f017d3bb7022da`, tree
+`dfe170664851281bee0324b0ed2acb97575cd49d`. Correctness/API reported
+0/0/1/1; network/HTTP lifecycle reported 0/0/0/2; performance/concurrency was
+green at 0/0/0/0. The two lifecycle lows overlap the correctness trailing-wire
+and documentation findings; after severity reconciliation the deduplicated
+union is 0 blocker, 0 high, 1 medium, and 1 low. The exact candidate is
+rejected. Non-truncated UDP and TCP used a full-message API that accepted a
+valid declared DNS prefix without proving input exhaustion. Maintained summary
+prose also overclaimed the count-implied minimum as universal, despite the
+intentional validated partial-`TC=1` UDP exception.
+The remediation retains universal raw wire and header/count caps. Only a
+validated truncated UDP reply bypasses the count-implied/full-message path to
+authorize one bounded replay. Non-truncated UDP and every TCP reply require the
+count-implied minimum, `BinDecoder` plus `Message::read`, explicit decoder
+exhaustion, and full response validation. Deterministic evidence accepts exact
+complete messages, rejects a complete TCP-decoded message with undeclared
+trailing bytes, and rejects non-truncated UDP trailing bytes without replay.
+This remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3276,6 +3317,19 @@ gate:
   record makes no formal-review outcome, candidate, workflow, integration,
   delivery, performance, or fx-equivalence claim; reviewer reports identify
   the exact candidate they reviewed.
+  Formal cycle 9 rejected exact candidate
+  `16c7287888277f14e36ce47712f017d3bb7022da`, tree
+  `dfe170664851281bee0324b0ed2acb97575cd49d`. Correctness/API reported
+  0/0/1/1; lifecycle reported 0/0/0/2; performance was green at 0/0/0/0. The
+  deduplicated union is 0 blocker, 0 high, 1 medium, and 1 low. Complete non-
+  truncated UDP and TCP decoding accepted undeclared trailing wire bytes, and
+  maintained summaries overclaimed the count-implied minimum as universal
+  despite the validated partial-truncation exception. Remediation requires
+  decoder exhaustion on complete paths, retains bounded partial `TC=1` replay,
+  and adds exact-message, trailing-byte, and zero-replay regressions. This
+  remediation record makes no replacement-gate, formal-review outcome,
+  candidate, workflow, integration, delivery, performance, or fx-equivalence
+  claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

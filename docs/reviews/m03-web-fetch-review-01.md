@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 8 REJECTED**
+Status: **IN PROGRESS — CYCLE 9 REJECTED**
 
 ## Base and boundary
 
@@ -136,6 +136,23 @@ local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, candidate, workflow, integration, delivery,
 performance, or fx-equivalence claim; reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 9 rejected exact candidate
+`16c7287888277f14e36ce47712f017d3bb7022da`, tree
+`dfe170664851281bee0324b0ed2acb97575cd49d`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported
+0 blocker, 0 high, 0 medium, and 2 low; performance/concurrency reported zero
+findings at every severity. The overlapping documentation reports deduplicate,
+so the union is 0 blocker, 0 high, 1 medium, and 1 low. The exact candidate is
+rejected. Strict non-truncated UDP and TCP decoding accepted an otherwise valid
+declared DNS message followed by undeclared trailing bytes. Maintained summaries
+also incorrectly said the count-implied minimum preceded every UDP/TCP decode,
+although a validated partial `TC=1` UDP reply intentionally bypasses that full-
+message check before replay. Remediation requires strict decoder exhaustion for
+non-truncated UDP and TCP while retaining the bounded partial-truncation path,
+plus deterministic exact-message, trailing-byte, and zero-replay evidence.
+This remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim.
 
 ## Frozen candidate boundary
 
@@ -193,13 +210,17 @@ entropy and sends bounded rooted A then AAAA queries on owned Tokio sockets,
 using TCP only once when a UDP response is truncated. A
 one-byte UDP overflow witness enforces the inclusive 4 KiB message cap; TCP
 length outside 12 through 4,096 bytes is rejected before allocation, and a
-still-truncated TCP response is invalid. One raw predecode helper gates both
-UDP and TCP before Hickory: the header is at least 12 bytes, `QDCOUNT == 1`,
-`ANCOUNT <= 39`, `NSCOUNT <= 128`, `ARCOUNT <= 128`, aggregate resource records
-are at most 128, and the actual payload satisfies the checked count-implied
-minimum of `12 + 5 * questions + 11 * resource_records`. Strict query tuple,
-Internet class, rooted CNAME-chain, terminal owner, 32-address, and every-
-address-public checks apply. There is no
+still-truncated TCP response is invalid. Raw header/count caps gate both UDP and
+TCP before Hickory: the header is at least 12 bytes, `QDCOUNT == 1`, `ANCOUNT <=
+39`, `NSCOUNT <= 128`, `ARCOUNT <= 128`, and aggregate resource records are at
+most 128. UDP then decodes and validates the complete header/question tuple
+before honoring truncation. A validated `TC=1` reply may bypass the count-
+implied minimum and full resource-record decode only to authorize one replay.
+Non-truncated UDP and every TCP reply must satisfy the checked count-implied
+minimum of `12 + 5 * questions + 11 * resource_records`, decode the complete
+declared message with no trailing bytes, and pass strict query tuple, Internet
+class, rooted CNAME-chain, terminal owner, 32-address, and every-address-public
+checks. There is no
 libc lookup, cache, retry, search suffix, resolver thread, or spawned resolver
 task. The admitted set feeds a fresh pinned Reqwest client using a process-wide
 cached Rustls root configuration and fixed HTTP/1.1 ALPN, so roots are not
@@ -526,12 +547,13 @@ transport reconstruction; an admitted public IP literal needs no nameserver and
 bypasses snapshot failure. Missing-MIME
 classification covers the complete bounded body. The raw DNS predecode
 contract requires a 12-byte header, exactly one question, at most 39 answers,
-at most 128 authority and additional records individually, at most 128
-aggregate resource records, and the checked count-implied minimum payload
-length before either UDP or TCP decoding. The 39 answers cover 32 admitted
-addresses plus seven CNAME links. A TCP advertised frame must be 12 through
-4,096 bytes before allocation. The isolated production component alone makes
-no replacement-gate or green-review claim.
+at most 128 authority and additional records individually, and at most 128
+aggregate resource records before either UDP or TCP decoding. Non-truncated
+UDP and every TCP response additionally require the checked count-implied
+minimum payload length and a complete declared-message decode. The 39 answers
+cover 32 admitted addresses plus seven CNAME links. A TCP advertised frame must
+be 12 through 4,096 bytes before allocation. The isolated production component
+alone makes no replacement-gate or green-review claim.
 
 ## Cycle-2 remediation replacement gate
 
@@ -1318,6 +1340,62 @@ missing XDG roots created neither root.
 This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
+
+## Formal cycle 9 — not green
+
+Three fresh agents independently inspected exact candidate
+`16c7287888277f14e36ce47712f017d3bb7022da`, tree
+`dfe170664851281bee0324b0ed2acb97575cd49d`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 9 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 1 medium, 1 low**.
+
+- **Medium — complete DNS decoding accepts undeclared trailing bytes:** the
+  strict non-truncated UDP and TCP paths validated header counts, then used a
+  Hickory decoder that accepted a valid declared message prefix without
+  requiring the input buffer to be exhausted.
+- **Low — maintained DNS ordering summaries overclaim the minimum check:**
+  several summaries said the count-implied minimum preceded every UDP/TCP
+  decode, although a validated partial `TC=1` UDP reply intentionally bypasses
+  that full-message check before bounded replay.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 0 medium, 2 low**.
+
+- **Low — strict complete paths do not prove full wire consumption:** this is
+  the same trailing-byte decode boundary reported as the correctness medium.
+- **Low — maintained DNS ordering summaries overclaim the minimum check:** this
+  duplicates the correctness documentation finding.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-9 candidate.
+
+### Consolidated union and disposition
+
+After severity reconciliation and duplicate removal, cycle 9 has **0 blocker,
+0 high, 1 medium, and 1 low**. Exact candidate
+`16c7287888277f14e36ce47712f017d3bb7022da`, tree
+`dfe170664851281bee0324b0ed2acb97575cd49d`, is rejected and must never be used
+as delivery evidence.
+
+The remediation keeps the universal raw wire and header/count caps. A validated
+partial `TC=1` UDP reply still bypasses the count-implied/full-message path only
+to authorize one bounded replay. Non-truncated UDP and every TCP reply must
+satisfy the count-implied minimum, decode the complete declared message through
+`BinDecoder` and `Message::read`, and leave the decoder exhausted before full
+response validation. Deterministic evidence accepts exact complete messages,
+rejects a complete TCP-decoded message with undeclared trailing bytes, and
+rejects a non-truncated UDP response with trailing bytes without constructing
+or polling replay.
+
+This remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim.
 
 The local gate must include the repository-required commands:
 
