@@ -315,6 +315,10 @@ non-WASM `ai-gateway-model-catalog-http` feature, which omits the unrelated
 `web-fetch-http`, Hickory DNS, and Moka graph. The broader
 `ai-gateway-http` feature still includes both catalog HTTP and web fetch, and
 the generation transport remains exported only through that broader feature.
+The injected catalog transport supplies both its request future and a separate
+absolute-deadline waiter. The native provider polls cancellation, that waiter,
+and the request in precedence order, so a conforming pending request cannot
+silently outlive the shared 30-second operation deadline.
 
 It also adds no compatibility or performance evidence. The pinned fx checkout
 and Zig toolchain remain benchmark-only inputs and are not Rust product runtime

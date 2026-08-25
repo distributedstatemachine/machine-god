@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Instant;
@@ -38,6 +38,7 @@ struct Call {
 struct ScriptedTransport {
     actions: Mutex<VecDeque<Action>>,
     calls: Mutex<Vec<Call>>,
+    deadline: Arc<DeadlineGate>,
 }
 
 impl ScriptedTransport {
@@ -45,6 +46,7 @@ impl ScriptedTransport {
         Arc::new(Self {
             actions: Mutex::new(actions.into_iter().collect()),
             calls: Mutex::new(Vec::new()),
+            deadline: Arc::new(DeadlineGate::default()),
         })
     }
 
@@ -56,9 +58,19 @@ impl ScriptedTransport {
             .map(|call| call.access)
             .collect()
     }
+
+    fn expire_deadline(&self) {
+        self.deadline.expire();
+    }
 }
 
 impl AiGatewayModelCatalogTransport for ScriptedTransport {
+    fn wait_until(&self, _: Instant) -> machine_god_core::BoxFuture<'_, ()> {
+        Box::pin(DeadlineFuture {
+            gate: Arc::clone(&self.deadline),
+        })
+    }
+
     fn get(
         &self,
         access: AiGatewayModelCatalogRequestAccess,
@@ -95,6 +107,41 @@ impl AiGatewayModelCatalogTransport for ScriptedTransport {
                 drops,
                 polled: false,
             }),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DeadlineGate {
+    expired: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+
+impl DeadlineGate {
+    fn expire(&self) {
+        self.expired.store(true, Ordering::Release);
+        if let Some(waker) = self.waker.lock().expect("deadline waker lock").take() {
+            waker.wake();
+        }
+    }
+}
+
+struct DeadlineFuture {
+    gate: Arc<DeadlineGate>,
+}
+
+impl Future for DeadlineFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.gate.expired.load(Ordering::Acquire) {
+            return Poll::Ready(());
+        }
+        *self.gate.waker.lock().expect("deadline waker lock") = Some(context.waker().clone());
+        if self.gate.expired.load(Ordering::Acquire) {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -433,6 +480,37 @@ fn futures_are_inert_drop_owned_and_cancellation_wins_same_poll() {
     )
     .unwrap_err();
     assert_error(&error, ProviderErrorKind::Cancelled, "Cancelled", false);
+}
+
+#[test]
+fn provider_deadline_wakes_pending_transport_and_cancellation_keeps_precedence() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    let transport = ScriptedTransport::new([Action::Pending(Arc::clone(&drops))]);
+    let provider = AiGatewayModelCatalogProvider::new(
+        AiGatewayModelCatalogAccessMode::PublicOnly,
+        Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+    );
+    let mut request = provider.list_models(CancellationToken::new());
+    assert!(poll_once(request.as_mut()).is_pending());
+    transport.expire_deadline();
+    let error = futures_executor::block_on(request).unwrap_err();
+    assert_error(&error, ProviderErrorKind::Protocol, "ResourceLimit", false);
+    assert_eq!(drops.load(Ordering::Acquire), 1);
+
+    let drops = Arc::new(AtomicUsize::new(0));
+    let transport = ScriptedTransport::new([Action::Pending(Arc::clone(&drops))]);
+    let cancellation = CancellationToken::new();
+    let provider = AiGatewayModelCatalogProvider::new(
+        AiGatewayModelCatalogAccessMode::PublicOnly,
+        Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+    );
+    let mut request = provider.list_models(cancellation.clone());
+    assert!(poll_once(request.as_mut()).is_pending());
+    transport.expire_deadline();
+    cancellation.cancel();
+    let error = futures_executor::block_on(request).unwrap_err();
+    assert_error(&error, ProviderErrorKind::Cancelled, "Cancelled", false);
+    assert_eq!(drops.load(Ordering::Acquire), 1);
 }
 
 #[test]

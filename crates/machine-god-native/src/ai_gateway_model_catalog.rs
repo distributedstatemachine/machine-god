@@ -163,6 +163,14 @@ impl std::error::Error for AiGatewayModelCatalogTransportError {}
 
 /// Runtime- and HTTP-client-neutral model-catalog transport.
 pub trait AiGatewayModelCatalogTransport: Send + Sync + 'static {
+    /// Waits until the supplied absolute deadline.
+    ///
+    /// Implementations must arrange a wakeup no later than `deadline` and
+    /// must not resolve this future before that instant. The provider polls
+    /// this authority independently from [`Self::get`], so a request future
+    /// that remains pending cannot defeat the total catalog deadline.
+    fn wait_until(&self, deadline: Instant) -> BoxFuture<'_, ()>;
+
     /// Fetches one complete catalog response at the requested access level.
     fn get(
         &self,
@@ -244,6 +252,7 @@ impl ModelCatalogProvider for AiGatewayModelCatalogProvider {
                     )
                     .await?;
                     if matches!(response.status(), 401 | 403) {
+                        drop(response);
                         check_cancelled(&cancellation)?;
                         check_deadline(deadline)?;
                         let public = request_transport(
@@ -287,11 +296,15 @@ async fn request_transport(
 ) -> Result<AiGatewayModelCatalogTransportResponse, ProviderError> {
     check_cancelled(cancellation)?;
     check_deadline(deadline)?;
+    let mut deadline_reached = transport.wait_until(deadline);
     let mut request = transport.get(access, deadline, cancellation.clone());
     let mut cancelled = Box::pin(cancellation.cancelled());
     poll_fn(|context| {
         if cancelled.as_mut().poll(context).is_ready() {
             return Poll::Ready(Err(cancelled_error()));
+        }
+        if deadline_reached.as_mut().poll(context).is_ready() {
+            return Poll::Ready(Err(resource_limit_error()));
         }
         match request.as_mut().poll(context) {
             Poll::Ready(result) => {

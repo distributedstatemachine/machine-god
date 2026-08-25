@@ -396,6 +396,12 @@ impl fmt::Debug for AiGatewayModelCatalogHttpTransport {
 }
 
 impl AiGatewayModelCatalogTransport for AiGatewayModelCatalogHttpTransport {
+    fn wait_until(&self, deadline: Instant) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+        })
+    }
+
     fn get(
         &self,
         access: AiGatewayModelCatalogRequestAccess,

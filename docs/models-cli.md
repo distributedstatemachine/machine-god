@@ -242,6 +242,10 @@ loopback endpoint and validated limits. The broader `ai-gateway-http` feature
 includes this catalog feature and the separate `web-fetch-http` feature, while
 the CLI selects only the catalog feature. Construction performs no request;
 polling `get` requires a current Tokio runtime with I/O and time enabled.
+The injected transport contract also requires `wait_until(deadline)` to retain
+and wake a deadline future independently from `get`; the provider polls both,
+so a conforming request future cannot remain pending past the shared catalog
+deadline.
 
 ## Time, concurrency, body, and JSON bounds
 
@@ -272,11 +276,12 @@ bounded native result and has its independent 64 KiB output cap; it does not ext
 network deadline or enter core.
 
 The provider passes that same absolute deadline unchanged to both possible
-transport calls. Each HTTP `get` call independently creates an attempt-local
+transport calls. For each call it polls the transport's required
+`wait_until(deadline)` authority independently from `get` and from its own
+cancellation waiter. The concrete HTTP `get` additionally owns an attempt-local
 cancellation waiter and Tokio sleep for the earlier of its configured per-
-attempt timeout and that shared absolute deadline. The provider wrapper also
-creates one cancellation waiter per transport call. Therefore fallback creates
-a fresh set of attempt-local waiters, but it neither recomputes nor extends the
+attempt timeout and that shared absolute deadline. Therefore fallback creates
+a fresh set of per-call waiters, but it neither recomputes nor extends the
 provider deadline. There is no single outer Tokio sleep spanning both calls.
 
 One semaphore permit covers one active HTTP attempt through response drop.
