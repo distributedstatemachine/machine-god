@@ -27,9 +27,11 @@ It owns no workspace descriptor, so the descriptor-backed set remains exactly
 twelve workspace tools using one original descriptor plus eleven clones. The
 candidate is non-WASM and cfg-gated by `web-fetch-http`, which is included by
 `ai-gateway-http`; it adds no CLI state or command. Production and independent
-focused evidence are composed and all seven exact host tests pass. The complete
-local gate, formal reviews, remote workflows, integration, and delivery remain
-pending under [`web-fetch.md`](web-fetch.md). The delivered count remains
+focused evidence are composed and all seven exact host tests pass. Exact gate
+record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local gate.
+Formal reviews, remote workflows, integration, and delivery remain pending
+under [`web-fetch.md`](web-fetch.md). The delivered count remains
 twenty-six and this is not a performance or fx-equivalence claim.
 The twenty-fourth, library-only `copy_file` slice is delivered. Cycle-3
 candidate `99ecdb3`, tree `145b3be`, is green with zero findings in all three

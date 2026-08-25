@@ -11,8 +11,13 @@ twenty-six delivered bounded slices. A proposed twenty-seventh `web_fetch`
 slice is **IN PROGRESS** from exact base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production, independently owned
 direct/engine/transport evidence, and rootless reference-host wiring are now
-composed locally; the complete local gate, three fresh reviews, remote
-workflows, integration, and delivery remain pending. The cfg-gated non-WASM
+composed locally. Exact gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
+tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local
+Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
+binary gate. Standalone HTTP cross-compilation is deferred to exact native
+Linux CI because the macOS cross-host lacks the required C sysroot. Three
+fresh reviews, remote workflows, integration, and delivery remain pending. The
+cfg-gated non-WASM
 candidate adds a thirteenth host tool without changing the twelve descriptor-
 backed workspace tools or their original-plus-eleven-clone ownership. Its
 bounded public-HTTPS,

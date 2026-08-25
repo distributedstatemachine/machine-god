@@ -25,8 +25,12 @@ Milestone 03 has twenty-six delivered bounded slices. The proposed
 twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production and independently owned
 direct, engine, production-boundary, core-contract, and host evidence are now
-composed locally; the complete local gate, three fresh reviews, feature and
-`main` workflows, integration, and delivery remain pending. Its non-WASM
+composed locally. Exact gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
+tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local
+Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
+binary gate. Native Linux HTTP evidence remains an exact-CI requirement because
+the macOS cross-host lacks the target C sysroot. Three fresh reviews, feature
+and `main` workflows, integration, and delivery remain pending. Its non-WASM
 `web-fetch-http` feature adds one rootless `WebFetchTool`;
 `ai-gateway-http` includes that feature. Core retains provider-neutral
 `Capability::Network` and orchestration, while native owns

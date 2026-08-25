@@ -73,7 +73,7 @@ No owner may weaken a frozen bound to make its own tests pass. The coordinator
 must verify the composed diff contains no unauthorized CLI, workflow,
 benchmark, generated compatibility, or inventory change.
 
-## Composed implementation and pending local gate
+## Composed implementation and complete local gate
 
 The non-overlapping components now compose locally:
 
@@ -93,12 +93,41 @@ warnings-denied all-target/all-feature native Clippy. One independent-test
 compile shadow and its warnings-denied reference signature were corrected
 without weakening an assertion.
 
-The following are still pending:
+Exact local-gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
+tree `5742e4084272120a4531e0d59f0199a5873f39d1`, is green. The worktree was
+clean and exact Rust/Cargo 1.94.1 was used without fallback.
 
-- exact Rust 1.94.1 formatting, warnings-denied Clippy, workspace tests, and
-  doctests as one complete immutable-candidate gate;
-- dependency, target, documentation, diff, and release-binary checks; and
-- one immutable, exact-SHA candidate for formal review.
+The four repository-required commands passed. The default workspace lists 881
+tests; the extended all-target/all-feature workspace lists 961 tests and its
+complete run also passed. A fresh locked release CLI is a 319,152-byte arm64
+Mach-O with SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+Its bare, version, help, inert human-status, and inert JSON-status exercises
+passed without changing the CLI surface.
+
+Two consecutive uncontended CI-style Python discovery runs passed 130 tests
+with eight expected macOS skips. An earlier run overlapped a full dependency-
+tool compilation and transiently failed two timing-sensitive POSIX tests; both
+passed focused and in both replacement full runs. Pinned fx checkout
+`b1774fbf6c7602b503026f96f6e960e946c692ef` was clean and compatibility
+regeneration passed. Exact `cargo-deny` 0.20.2 and cached `cargo-audit` 0.22.2
+passed. All 74 Markdown files, 529 inline links, and 377 relative file links
+passed target, fence, whitespace, and final-newline checks. The 19-file diff
+passed whitespace review and changes no CLI source, workflow, benchmark,
+`Cargo.lock`, or generated compatibility inventory.
+
+Linux and FreeBSD baseline libraries plus all 53 integration targets
+type-checked, their baseline libraries passed warnings-denied Clippy, and the
+host-native standalone feature type-checked all three web-fetch targets. The
+WASI all-target/all-feature workspace check, dependency exclusion, API-doc cfg
+audit, and retained Node 22.22.0 active unsupported test all passed. Unsafe Rust
+remains forbidden and absent. Standalone HTTP cross-compilation stopped in
+third-party `aws-lc-sys` before machine-god HTTP Rust compiled because the
+macOS cross-host lacks Linux/FreeBSD C sysroot headers. Exact native Linux CI
+must therefore supply Linux HTTP evidence; fully proving FreeBSD HTTP behavior
+requires a FreeBSD host or suitable sysroot.
+
+One documentation-recorded immutable SHA for formal review remains pending.
 
 The local gate must include the repository-required commands:
 
@@ -148,7 +177,7 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: production, independent evidence, and host composition are
-present and focused-green. The complete local gate, all three formal reviews,
-feature workflows, fast-forward integration, exact `main` workflows, and
-delivery are pending.
+Current state: production, independent evidence, host composition, and the
+complete local gate are green. The immutable candidate SHA, all three formal
+reviews, feature workflows, fast-forward integration, exact `main` workflows,
+and delivery are pending.

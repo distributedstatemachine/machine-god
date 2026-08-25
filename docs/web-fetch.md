@@ -12,9 +12,13 @@ The upstream behavior was inspected to understand its tool surface; the
 deliberate differences and deferrals below are normative. Production source,
 independently owned direct/engine/production-boundary evidence, core network
 serde evidence, and thirteen-tool reference-host composition are present and
-focused-green. The complete Rust 1.94.1 local gate, formal reviews, feature
-workflows, integration, and exact `main` workflows remain pending. Milestone 03
-therefore remains in progress with twenty-six delivered slices.
+focused-green. Exact gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
+tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local
+Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
+binary gate. Native Linux HTTP compilation remains an exact-CI requirement
+because the macOS cross-host lacks the target C sysroot. Formal reviews,
+feature workflows, integration, and exact `main` workflows remain pending.
+Milestone 03 therefore remains in progress with twenty-six delivered slices.
 
 ## Scope and feature boundary
 
@@ -223,3 +227,9 @@ repeat until all report zero findings. Only then may the feature branch run its
 exact-SHA workflows, fast-forward `main` without force, and run exact `main`
 workflows. The live record is
 [`m03-web-fetch-review-01.md`](reviews/m03-web-fetch-review-01.md).
+
+The composed source at exact record
+`0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passes that local gate. The next
+documentation commit freezes the formal-review candidate without changing
+product behavior.

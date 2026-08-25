@@ -46,9 +46,15 @@ Milestone 02 completion evidence is retained in the
 with twenty-six delivered bounded slices. A proposed twenty-seventh
 `web_fetch` slice is **IN PROGRESS** from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`; its pinned fx observation is
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. Production, independent tests,
-the complete local gate, three fresh same-SHA reviews, feature workflows,
-fast-forward integration, exact `main` workflows, and delivery are pending.
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Production and independent tests
+are composed. Exact gate record
+`0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local
+Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
+binary gate. Native Linux HTTP compilation remains an exact-CI requirement
+because the macOS cross-host lacks the target C sysroot. Three fresh same-SHA
+reviews, feature workflows, fast-forward integration, exact `main` workflows,
+and delivery are pending.
 The candidate host will contain thirteen tools, while its descriptor-backed
 workspace set remains twelve tools using one original descriptor plus eleven
 clones because `web_fetch` is rootless. The delivered count remains twenty-six
@@ -1774,17 +1780,20 @@ Production and independently owned focused tests now compose locally: 11
 private, 13 direct, five engine, three production-boundary, seven host, and 65
 core-contract tests are green, together with warnings-denied native
 all-target/all-feature Clippy. The complete exact Rust 1.94.1 local gate and
-release-binary regression exercise must next compose on one immutable behavior
-SHA. Three
-fresh adversarial agents then review that same SHA for correctness/API,
+release-binary regression exercise are green on exact record
+`0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+`5742e4084272120a4531e0d59f0199a5873f39d1`. The full default workspace lists
+881 tests and the all-target/all-feature workspace lists 961. Three fresh
+adversarial agents next review one documentation-recorded candidate SHA for
+correctness/API,
 network/HTTP lifecycle and robustness, and performance/concurrency. A finding
 at any severity rejects the candidate. Fixes require a new immutable SHA, the
 complete replacement local gate, and three fresh review tracks; repeat until
 all three report zero findings. Only a review-green exact SHA may run feature
 workflows, fast-forward `main` without force, and run exact `main` workflows.
-The current production, test, and host-composition states are focused-green;
-the complete local gate, review, workflow, integration, and delivery states
-remain pending. The candidate host has thirteen alphabetical tools, while the
+The current production, test, host-composition, and complete local-gate states
+are green; review, workflow, integration, and delivery states remain pending.
+The candidate host has thirteen alphabetical tools, while the
 descriptor-backed set remains twelve with one original plus eleven clones.
 Until final seal and exact remote delivery, M03 remains **IN PROGRESS** with
 twenty-six delivered slices.
@@ -2454,9 +2463,11 @@ gate:
   base `a56ff350c2aace1dc22cb14c269aee89d399cd8e` under
   [`web-fetch.md`](web-fetch.md). It is rootless, so its candidate thirteen-tool
   host does not change the twelve-tool original-plus-eleven-clone workspace
-  descriptor set. Production, independent tests, complete local gates, three
-  fresh same-SHA review tracks, feature workflows, integration, exact `main`
-  workflows, and delivery all remain pending; the delivered count remains
+  descriptor set. Production and independent tests are composed. Exact gate
+  record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+  `5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local gate.
+  Three fresh same-SHA review tracks, feature workflows, integration, exact
+  `main` workflows, and delivery remain pending; the delivered count remains
   twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

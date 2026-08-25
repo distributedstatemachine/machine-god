@@ -15,9 +15,13 @@ target cannot authorize a redirected host; all network authority remains
 private targets, compression, and redirect following are deferred. This
 candidate starts from exact base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production and independent focused
-evidence are composed locally, while the complete gate, reviews, integration,
-and delivery remain pending. M03 therefore remains in progress with twenty-six
-delivered slices.
+evidence are composed locally. Exact gate record
+`0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local gate,
+including dependency, cfg, WASI, and unsafe-code checks. Native Linux HTTP
+compilation remains an exact-CI requirement because the macOS cross-host lacks
+the target C sysroot. Reviews, integration, and delivery remain pending. M03
+therefore remains in progress with twenty-six delivered slices.
 
 The first Milestone 03 native slice only snapshots config/state environment inputs
 and reads final-path metadata for status. A second bounded native authority
