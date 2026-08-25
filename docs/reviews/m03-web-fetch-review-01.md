@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 4 REJECTED; REMEDIATION COMPOSED**
+Status: **IN PROGRESS — CYCLE 4 REJECTED; REPLACEMENT GATE GREEN**
 
 ## Base and boundary
 
@@ -59,6 +59,13 @@ component `9d793035422cd449c9160c7fccd62221382b5ac5`, tree
 record makes no replacement-gate, formal-review outcome, candidate, workflow,
 integration, delivery, compatibility, or product-performance claim. Formal
 reviewer reports identify the exact candidate they reviewed.
+Exact composed cycle-4 remediation precursor
+`892a52267e7ccf478e9ed567875dc95912be5412`, tree
+`da2d72a2c843e9acadeb529d5127b83cc40ec9b7`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim; reviewer reports identify the exact
+candidate they reviewed.
 
 ## Frozen candidate boundary
 
@@ -702,6 +709,44 @@ candidate, workflow, integration, delivery, compatibility, or product-
 performance claim; formal reviewer reports identify the exact candidate they
 reviewed.
 
+## Cycle-4 remediation replacement gate
+
+Exact composed remediation precursor
+`892a52267e7ccf478e9ed567875dc95912be5412`, tree
+`da2d72a2c843e9acadeb529d5127b83cc40ec9b7`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. The four
+repository-required commands below passed, as did the complete 991-test
+all-target/all-feature workspace run. Focused evidence passed 29 private, 14
+direct, 14 production HTTP, and five engine tests.
+
+The CI-style Python run passed 130 tests with eight expected macOS skips in
+39.386 seconds. Compatibility regeneration with `--check` passed against clean
+pinned fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`. Dependency
+policy passed under exact `cargo-deny` 0.20.2 with the three allowed duplicate
+warnings for `core-foundation`, `cpufeatures`, and `syn`. Exact `cargo-audit`
+0.22.2 `--no-fetch` checked 1,225 cached advisories and 209 locked dependencies
+with zero vulnerabilities.
+
+Linux portability passed with zero warnings. FreeBSD passed with its two
+established cfg-only warnings. Each WASI variant produced 61 executable
+artifacts and only its six established cfg-only warnings. Node 22.22.0 actively
+passed the retained unsupported-target test 1/1. Documentation integrity
+covered 74 Markdown files, 99 fence blocks, 530 inline links, and 378 relative
+targets with zero errors.
+
+The exact whole-feature diff from delivered base covers 21 files with 7,641
+insertions and 32 deletions. The cycle-4 delta covers 10 files with 728
+insertions and 71 deletions. CLI source, workflows, benchmark workloads, and
+generated compatibility data are byte-unchanged, and changed Rust adds no
+unsafe construct. A locked isolated release build produced a 319,152-byte
+binary with SHA-256
+`3ac3557269798c42fefaa39fd44d0f7fd7374fbe64da7c3afe3b029cdc87dcf1`;
+bare, version, help, inert human-status, and inert JSON-status smokes all passed.
+
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim; reviewer reports
+identify the exact candidate they reviewed.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -782,3 +827,10 @@ evidence commit `408e33ec07171988a8f78ee6175adac16532e966`, tree
 replacement-gate, formal-review outcome, candidate, workflow, integration,
 delivery, performance, or fx-equivalence claim; formal reviewer reports
 identify the exact candidate they reviewed.
+Exact composed cycle-4 remediation precursor
+`892a52267e7ccf478e9ed567875dc95912be5412`, tree
+`da2d72a2c843e9acadeb529d5127b83cc40ec9b7`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim; reviewer reports identify the exact
+candidate they reviewed.
