@@ -87,8 +87,9 @@ terminal failure stops it earlier:
    select the built-in Gateway/environment combination;
 3. snapshot and discover only `VERCEL_OIDC_TOKEN` and
    `AI_GATEWAY_API_KEY` through the existing native credential adapter;
-4. create the fixed native catalog client and a host-owned current-thread
-   Tokio runtime with I/O and time enabled;
+4. synchronously snapshot bounded platform DNS configuration into the fixed
+   native catalog client, then create a host-owned current-thread Tokio runtime
+   with I/O and time enabled;
 5. call the native provider through the provider-neutral core catalog trait
    with one cancellation token;
 6. render and serialize the bounded result completely in the CLI; then
@@ -251,11 +252,35 @@ fixed construction error, and the endpoint/time/capacity/chunk constants.
 loopback endpoint and validated limits. The broader `ai-gateway-http` feature
 includes this catalog feature and the separate `web-fetch-http` feature, while
 the CLI selects only the catalog feature. Construction performs no request;
-polling `get` requires a current Tokio runtime with I/O and time enabled.
+production construction eagerly reads platform DNS configuration exactly once,
+before the provider computes its operation deadline. Numeric-loopback test
+construction performs no DNS discovery. Polling `get` requires a current Tokio
+runtime with I/O and time enabled.
 The injected transport contract also requires `wait_until(deadline)` to retain
 and wake a deadline future independently from `get`; the provider polls both,
 so a conforming request future cannot remain pending past the shared catalog
 deadline.
+
+The production resolver retains only an immutable validated configuration
+snapshot or a fixed unavailable state. Request polling cannot rediscover or
+reread system configuration. Generic Unix other than Apple and Android accepts
+the ordinary `/etc/resolv.conf` symlink only when pre-open, opened-descriptor,
+and final metadata are regular and at most 64 KiB; nonblocking close-on-exec
+reading retains at most one additional overflow byte and has finite read and
+interruption bounds. Apple, Windows, and Android use their synchronous platform
+API during construction and then reject a snapshot over 32 nameservers, 32
+search domains, 8 KiB of DNS names, 64 server connections, or the fixed option
+bounds. Those platform APIs may allocate their result before post-validation.
+
+Each Reqwest resolution creates a fresh Hickory Tokio resolver from the bounded
+snapshot on the active runtime. Its response cache is disabled and its hosts-
+file mode is `Never`, so this pure bounded construction does not perform a
+second synchronous file read or retain runtime-backed connection handles for a
+later current-thread runtime. Lookup I/O and resolver tasks remain owned by the
+active request/runtime and are dropped on cancellation, deadline, request drop,
+or runtime teardown. There is no default GAI, Reqwest built-in Hickory, Google,
+or other public-resolver fallback. Snapshot failure is exposed only through the
+fixed redacted catalog `Transport` result.
 
 ## Time, concurrency, body, and JSON bounds
 

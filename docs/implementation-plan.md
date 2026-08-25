@@ -2854,12 +2854,19 @@ credential), sourced independently from `219f6a71a766e9b833a98f236cfbc3aaff292cd
 The local feature-topology refinement adds the dedicated non-WASM
 `ai-gateway-model-catalog-http` gate and makes the CLI select it without
 activating direct generation `bytes`, `web-fetch-http`, or Tokio's signal
-backend. Cycle-2 remediation adds a narrowly scoped direct async Hickory
-resolver and its protocol/network/cache graph so no non-abortable GAI lookup
-can outlive runtime teardown; only the CLI requests signal handling. The
-existing `ai-gateway-http` feature still adds direct `bytes` and includes
-catalog HTTP plus `web-fetch-http`, so
-its delivered generation/reference-host behavior is preserved. Exact cycle-1
+backend. Catalog HTTP has a narrowly scoped direct async Hickory resolver and
+its protocol/network/cache graph so no non-abortable GAI lookup can outlive
+runtime teardown; only the CLI requests signal handling. Production
+construction eagerly retains one bounded validated system-DNS snapshot before
+the provider deadline exists. Generic Unix bounds `/etc/resolv.conf` to 64 KiB
+plus one overflow byte through nonblocking close-on-exec regular-file reads;
+Apple, Android, and Windows use their platform snapshot APIs and then apply the
+same structural bounds. Request polling performs no configuration or hosts-
+file read and creates one zero-cache Hickory resolver from that snapshot on the
+active runtime, so runtime-backed connection state is not reused across
+sequential current-thread runtimes. The existing `ai-gateway-http` feature
+still adds direct `bytes` and includes catalog HTTP plus `web-fetch-http`, so its
+delivered generation/reference-host behavior is preserved. Exact cycle-1
 candidate `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed the complete local gate and
 was rejected by three fresh tracks with a deduplicated union of two medium and

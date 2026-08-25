@@ -286,17 +286,37 @@ automatic decompression, proxies, cookies, and retries are disabled. Only 200
 bodies are read; non-200 bodies are discarded.
 
 The catalog client explicitly installs a machine-god `reqwest::dns::Resolve`
-adapter over Hickory's Tokio resolver. It never selects Reqwest's built-in
-Hickory adapter, default GAI resolver, or non-abortable blocking `getaddrinfo`
-worker. The adapter lazily reads only the platform DNS configuration and
-performs lookup I/O on the host Tokio runtime. Unavailable or invalid platform
-DNS configuration fails closed as the fixed redacted catalog `Transport`
-failure; there is no Google or other public-resolver fallback. Dropping or
-cancelling a pending catalog request drops that request's lookup future,
-response/request ownership, and active-request permit; it cannot leave a GAI
-blocking job that prevents a current-thread runtime from shutting down.
-Resolver-owned asynchronous I/O and connection teardown remain host-runtime
-work. Numeric-loopback test endpoints bypass DNS as before.
+adapter over Hickory. It never selects Reqwest's built-in Hickory adapter,
+default GAI resolver, or non-abortable blocking `getaddrinfo` worker. Production
+transport construction synchronously snapshots platform DNS configuration
+exactly once, before any catalog request or deadline exists and without a Tokio
+runtime. Numeric-loopback test construction performs no DNS discovery. The
+adapter retains only the validated snapshot or a fixed unavailable state; it
+has no configuration loader to call while a request is being polled.
+
+On generic Unix other than Apple and Android, the snapshot loader follows the
+usual `/etc/resolv.conf` symlink but requires the target before and the opened
+descriptor after open to be a regular file no larger than 64 KiB. It opens with
+`O_CLOEXEC | O_NONBLOCK`, retains at most 64 KiB plus one overflow byte, permits
+at most 16 interrupted reads and a finite byte-proportional read-call count,
+and repeats the descriptor type/size check at EOF. Directories, special files,
+growth past the cap, unavailable files, and malformed input fail closed. Apple,
+Windows, and Android use Hickory's synchronous platform configuration API only
+during construction, then post-validate the returned snapshot. Platform APIs
+may allocate their returned values before machine-god can reject them; retained
+state is nevertheless bounded to 32 nameservers, 32 search domains, 8 KiB of
+aggregate DNS-name bytes, 64 server connections, and bounded resolver options.
+
+Every lookup constructs a fresh Tokio resolver from that bounded immutable
+snapshot on the currently active runtime. It never rereads DNS configuration,
+never reads a hosts file, uses no cross-runtime resolver cache, and forces the
+response cache to zero entries. This prevents runtime-backed resolver handles
+from being retained across sequential current-thread runtimes. Unavailable or
+invalid platform DNS configuration fails closed as the fixed redacted catalog
+`Transport` failure; there is no Google or other public-resolver fallback.
+Dropping or cancelling a pending catalog request drops that request's lookup
+future, resolver-owned asynchronous work, response/request ownership, and
+active-request permit. Numeric-loopback test requests bypass DNS as before.
 
 Default catalog limits are 30 seconds for connect, 30 seconds per attempt, and
 8 active requests; explicit concurrency is restricted to 1–32. The provider
@@ -320,10 +340,12 @@ With a live time-enabled runtime, the independent provider waiter constructs
 the same absolute-deadline timer and wakes at that deadline. Deterministic
 tests inject a permanently pending Reqwest resolver and paused Tokio time to
 prove cancellation and deadline completion, lookup-future drop, permit
-restoration, and current-thread runtime teardown without production DNS or
-test sleeps. A separate injected system-configuration failure proves fixed
-redaction, fail-closed completion, and permit release without a resolver or
-network effect.
+restoration, and sequential current-thread runtime teardown without production
+DNS or test sleeps. A local UDP DNS fixture proves the retained snapshot creates
+a fresh resolver successfully on each of two sequential current-thread
+runtimes. Separate eager-once, oversized-snapshot, unavailable-snapshot, and
+generic-Unix bounded-file tests prove that request polling never loads platform
+configuration and that failures remain fixed, redacted, and permit-safe.
 
 ## Deferred scope
 
