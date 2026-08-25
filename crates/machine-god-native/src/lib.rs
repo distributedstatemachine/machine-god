@@ -35,6 +35,8 @@ mod root_selection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_lifecycle;
 mod session_store;
+#[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
+mod web_fetch;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace;
 mod write_file;
@@ -168,6 +170,16 @@ pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
     FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES, MAX_LIST_SESSION_DIRECTORY_ENTRIES,
     MAX_LIST_SESSION_TOTAL_RECORD_BYTES, MAX_LIST_SESSIONS,
+};
+#[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
+pub use web_fetch::{
+    MAX_WEB_FETCH_BODY_BYTES, MAX_WEB_FETCH_DNS_ADDRESSES, MAX_WEB_FETCH_MIME_TYPE_BYTES,
+    MAX_WEB_FETCH_SERIALIZED_RESULT_BYTES, MAX_WEB_FETCH_URL_BYTES,
+    WEB_FETCH_DEFAULT_CONNECT_TIMEOUT, WEB_FETCH_DEFAULT_MAX_ACTIVE_REQUESTS,
+    WEB_FETCH_DEFAULT_REQUEST_TIMEOUT, WEB_FETCH_MAX_ACTIVE_REQUESTS, WEB_FETCH_TOOL_NAME,
+    WebFetchConfigError, WebFetchConfigErrorKind, WebFetchLimits, WebFetchRequest,
+    WebFetchResponse, WebFetchTool, WebFetchTransport, WebFetchTransportError,
+    WebFetchTransportErrorKind,
 };
 pub use write_file::{
     MAX_WRITE_FILE_CHUNK_BYTES, MAX_WRITE_FILE_CONTENT_BYTES, MAX_WRITE_FILE_PATH_BYTES,

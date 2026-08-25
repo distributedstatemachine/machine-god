@@ -16,7 +16,9 @@ ai-gateway-http = [
     "dep:rustls",
     "dep:tokio",
     "dep:webpki-root-certs",
+    "web-fetch-http",
 ]
+web-fetch-http = ["dep:reqwest", "dep:rustls", "dep:tokio", "dep:webpki-root-certs"]
 
 [dependencies]
 futures-core.workspace = true
