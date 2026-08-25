@@ -7,6 +7,7 @@ mod error;
 mod event;
 mod id;
 mod model;
+mod model_catalog;
 mod permission;
 mod session;
 mod tool;
@@ -24,6 +25,10 @@ pub use id::{
 pub use model::{
     ContentBlock, InferenceOptions, Message, ModelEvent, ModelEventStream, ModelProvider,
     ModelRequest, Role, StopReason, TokenUsage,
+};
+pub use model_catalog::{
+    AvailableModel, InvalidModelId, InvalidModelIdReason, ModelCatalog, ModelCatalogAccess,
+    ModelCatalogProvider, PublicCatalogReason,
 };
 pub use permission::{
     Capability, FilesystemAccess, NetworkTarget, PermissionDecision, PermissionGrantScope,
