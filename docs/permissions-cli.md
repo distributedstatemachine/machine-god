@@ -1,6 +1,6 @@
 # Native `permissions` CLI contract
 
-Status: **IN PROGRESS — CYCLE 4 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**.
+Status: **BEHAVIOR GREEN — REMOTE DELIVERY PENDING**.
 
 This is the implemented twenty-eighth bounded Milestone 03 slice. It starts from
 exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
@@ -22,15 +22,18 @@ regression.
 
 Exact cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`,
 tree `90d0b750ea9bb396074211adb07e2b251e30d505`, passed its complete
-replacement local gate under exact Rust and Cargo 1.94.1 without fallback.
-Formal review rejected it with a deduplicated zero blocker, zero high, zero
-medium, and one low finding. Correctness/API and native config/error lifecycle
-were green; performance/CLI portability found ambiguous “remote integration”
-wording in `security.md`. It conflates composed feature-branch source with
-pending exact feature workflows, non-force main integration, exact `main`
-workflows, and delivery. The terminology remediation is composed. Another complete
-replacement local gate and three fresh reviews are required. The slice makes no
-product-performance or fx-equivalence claim.
+replacement local gate but formal review rejected it with a deduplicated
+0/0/0/1 terminology finding. The remediation is composed in exact cycle-5
+reviewed candidate `0b13944d19cfb33b4542d82d74c302669817c1af`, tree
+`2ea72e810f07ed8ca2d4e8647fa713088477d8b5`. It passed the complete
+replacement local gate under exact Rust and Cargo 1.94.1 without fallback, and
+correctness/API, native config/error lifecycle, and performance/CLI portability
+each reported 0 blocker, 0 high, 0 medium, and 0 low findings. The deduplicated
+union is zero and the behavior candidate is **GREEN**. This subsequent
+documentation-only green seal is exempt from redundant adversarial review.
+Exact feature workflows, non-force main integration, exact `main` workflows,
+and delivery remain pending. The slice makes no product-performance or fx-
+equivalence claim.
 
 ## Command grammar
 
@@ -172,11 +175,20 @@ Independent tests must cover:
 - freshly built release-binary human, JSON, invalid-config, no-create, and
   no-rewrite smokes.
 
-The cycle-4 candidate passed the complete repository-required Rust 1.94.1 gate
-but was rejected by its one low delivery-terminology finding. The composed
-security prose remediation must pass another complete gate on one new immutable
-candidate and receive three fresh independent
-ordinary product reviews: correctness/API, native config/error lifecycle, and
-performance/CLI portability. All findings are fixed and reviewed again until
-all three tracks report zero findings. Exact feature workflows, non-force main
-integration, exact `main` workflows, and delivery remain pending.
+Exact cycle-5 candidate `0b13944d19cfb33b4542d82d74c302669817c1af`
+passed the complete repository-required Rust 1.94.1 gate without fallback:
+897 registered non-documentation tests plus 31 intentional child-process
+probes produced 928 executions, two doctests passed, focused native
+configuration passed 25 private and 29 public tests, and focused CLI passed six
+unit and 19 integration tests. Pinned-fx compatibility and all 31 generator
+tests passed. Documentation integrity covered 76 Markdown files, 110 fenced
+blocks, 548 inline links, and 391 repository-relative targets with zero errors.
+There is no dependency or unsafe delta. The fresh 368,944-byte release binary
+has SHA-256
+`8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e` and
+passed the full release matrix. Three fresh independent ordinary product
+reviews—correctness/API, native config/error lifecycle, and performance/CLI
+portability—each reported 0/0/0/0, so the behavior candidate is formally
+green. The documentation-only green seal is exempt from another adversarial
+cycle. Exact feature workflows, non-force main integration, exact `main`
+workflows, and delivery remain pending.

@@ -25,17 +25,20 @@ The implemented twenty-eighth bounded slice adds top-level
 configuration read-only and reports ask-only permission configuration without
 constructing an engine or inventing persistent rule or runtime grant state.
 Its separate production, independent-evidence, and documentation components
-are composed in this feature change. Exact cycle-4 candidate
-`5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
-`90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete replacement
-local gate under exact Rust and Cargo 1.94.1 without fallback but is **NOT
-GREEN** after formal review reported a deduplicated zero blocker, zero high,
-zero medium, and one low finding. Correctness/API and native config/error
-lifecycle were green; performance/CLI portability found ambiguous “remote
-integration” wording in `security.md`. Terminology remediation is composed.
-Another complete replacement gate, three fresh reviews, exact
-feature workflows, non-force main integration, exact `main` workflows, and
-delivery remain pending.
+are composed in this feature change. Exact cycle-5 reviewed candidate
+`0b13944d19cfb33b4542d82d74c302669817c1af`, tree
+`2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. The gate passed 928
+non-documentation executions and two doctests, focused native configuration
+25+29 and CLI 6+19, pinned-fx compatibility and all 31 generator tests,
+documentation integrity 76/110/548/391 with zero errors, no dependency or
+unsafe delta, and the full release matrix. The fresh 368,944-byte binary has
+SHA-256 `8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
+Correctness/API, native config/error lifecycle, and performance/CLI portability
+each reported 0/0/0/0 in three fresh reviews; the union is zero and the
+behavior candidate is **GREEN**. This documentation-only seal is exempt from
+redundant adversarial review. Exact feature workflows, non-force main
+integration, exact `main` workflows, and delivery remain pending.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -239,7 +242,9 @@ replacement reads `XDG_CONFIG_HOME` first and reads `HOME` only when XDG is
 missing or empty; a nonempty valid, invalid-relative, or non-Unicode XDG value
 neither reads nor falls back to `HOME`. The cycle-3 and cycle-4 gates confirmed
 this behavior; cycle 4 was rejected only for separate ambiguous delivery
-terminology in `security.md`. Its correction is composed.
+terminology in `security.md`. Exact cycle-5 candidate `0b13944d` then passed
+the complete replacement gate and three fresh reviews with zero findings at
+every severity.
 
 ## Status output
 

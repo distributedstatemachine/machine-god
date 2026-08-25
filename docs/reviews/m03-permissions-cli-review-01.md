@@ -1,6 +1,6 @@
 # Milestone 03 `permissions` CLI review 01
 
-Status: **IN PROGRESS — CYCLE 4 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
+Status: **BEHAVIOR GREEN — REMOTE DELIVERY PENDING**
 
 ## Base and boundary
 
@@ -375,3 +375,59 @@ with the four explicit pending boundaries above. The resulting immutable
 candidate requires another complete replacement gate and
 three fresh same-SHA reviews. Exact feature workflows, non-force main
 integration, exact `main` workflows, and delivery remain pending.
+
+### Exact cycle-5 replacement gate
+
+Exact candidate `0b13944d19cfb33b4542d82d74c302669817c1af`, tree
+`2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- `cargo +1.94.1 fmt --all -- --check` passed;
+- `cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings`
+  passed;
+- `cargo +1.94.1 test --workspace` passed 897 registered non-documentation
+  tests and 31 intentional child-process probes, for 928 non-documentation
+  executions, along with two doctests;
+- `cargo +1.94.1 test --doc --workspace` reran and passed both doctests;
+- focused native configuration passed 25 private unit tests and 29 public
+  integration tests, while focused CLI passed six unit tests and 19 integration
+  tests;
+- the compatibility generator check against pinned fx
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` and all 31 generator tests
+  passed;
+- documentation integrity covered 76 Markdown files, 110 fenced code blocks,
+  548 inline links, and 391 repository-relative targets with zero errors;
+- the candidate added no dependency and no unsafe Rust; and
+- a fresh 368,944-byte release binary had SHA-256
+  `8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e` and
+  passed the full release-binary matrix.
+
+This replacement gate is candidate-local evidence. It makes no exact feature-
+workflow, non-force main-integration, exact `main`-workflow, delivery,
+product-performance, compatibility-promotion, or fx-equivalence claim.
+
+### Cycle 5 — GREEN
+
+All three fresh tracks reviewed exact candidate
+`0b13944d19cfb33b4542d82d74c302669817c1af`, tree
+`2ea72e810f07ed8ca2d4e8647fa713088477d8b5`:
+
+| Track | Blocker | High | Medium | Low | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Correctness/API | 0 | 0 | 0 | 0 | **GREEN** |
+| Native config/error lifecycle | 0 | 0 | 0 | 0 | **GREEN** |
+| Performance/CLI portability | 0 | 0 | 0 | 0 | **GREEN** |
+| Deduplicated union | 0 | 0 | 0 | 0 | **GREEN** |
+
+The exact behavior candidate is formally green. The reviews confirm the
+command grammar and bytes, ask-only projection, redacted and bounded config
+lifecycle, lazy process-environment access, supported-Unix qualification,
+dependency/unsafe boundary, portability, maintained-document agreement, and
+release behavior with no open finding at any severity.
+
+This subsequent documentation-only green seal names that reviewed candidate
+and is exempt from redundant adversarial review under the user's instruction.
+It changes no production, test, generated, workflow, or benchmark byte. Exact
+feature workflows, non-force main integration, exact `main` workflows, and
+final delivery remain pending. The delivered-slice count therefore remains
+twenty-seven.

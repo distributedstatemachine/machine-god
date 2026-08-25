@@ -16,20 +16,25 @@ and main benchmark-evidence `32875015892` are green; each benchmark run retains
 two nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
 product-performance or fx-equivalence claim. The implemented twenty-eighth
-top-level `permissions [--json]` slice is **IN PROGRESS — CYCLE 4 REMEDIATED;
-REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base `8d8ecc7`; it is
-read-only, ask-only, and owns no persistent rules or runtime grant state. Exact
-cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
-`90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete replacement
-local gate under exact Rust and Cargo 1.94.1 without fallback, including 897
-registered non-documentation tests, 31 intentional child-process probes, and
-two doctests, but was rejected with a deduplicated 0
-blocker, 0 high, 0 medium, and 1 low finding set. Correctness/API and native
-config/error lifecycle were green; performance/CLI portability found ambiguous
-“remote integration” wording in `docs/security.md`. The wording conflates
-composed feature-branch source with pending exact feature workflows, non-force
-main integration, exact `main` workflows, and delivery. The implemented lazy
-config-only
+top-level `permissions [--json]` slice is **BEHAVIOR GREEN — REMOTE DELIVERY
+PENDING** from exact delivered base `8d8ecc7`; it is read-only, ask-only, and
+owns no persistent rules or runtime grant state. Exact cycle-5 reviewed
+candidate `0b13944d19cfb33b4542d82d74c302669817c1af`, tree
+`2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. The required
+workspace gate passed 897 registered non-documentation tests plus 31
+intentional child-process probes, for 928 executions, and two doctests; focused
+native configuration passed 25 private and 29 public tests, while CLI passed
+six unit and 19 integration tests. Pinned-fx compatibility and all 31 generator
+tests passed. Documentation integrity covered 76 Markdown files, 110 fenced
+blocks, 548 inline links, and 391 repository-relative targets with zero errors.
+The candidate adds no dependency or unsafe Rust. Its fresh 368,944-byte release
+binary has SHA-256
+`8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e` and
+passed the full release matrix. Three fresh correctness/API, native config/error
+lifecycle, and performance/CLI portability reviews each reported 0 blocker,
+0 high, 0 medium, and 0 low findings; the deduplicated union is zero and the
+behavior candidate is formally **GREEN**. The implemented lazy config-only
 environment behavior is unchanged: read `XDG_CONFIG_HOME` first, read `HOME`
 only when XDG is missing or empty, never read `XDG_STATE_HOME`, and never read
 or fall back to `HOME` for a nonempty valid, invalid-relative, or non-Unicode
@@ -38,10 +43,12 @@ Unix behavior, with hardened non-Unix opening deferred. Exact security
 terminology component `2b686da95850fa6d7ae5790e1eaac19c585f3eb7`, tree
 `9ceff2e2e0a5f1fd1264cf0fff4e8cf02e05b5d6`, and ledger component
 `178c58002c1dcb37d411129a1547f686e4711570`, tree
-`5d6050f6d1486f26e9134353f34cacf74b90c0c2`, are composed. Another complete
-replacement gate and three fresh reviews, exact feature
-workflows, non-force main integration, exact `main` workflows, and delivery
-remain pending. See the
+`5d6050f6d1486f26e9134353f34cacf74b90c0c2`, are part of the preserved
+pre-cycle-5 lineage. This subsequent documentation-only green seal names the
+reviewed candidate and is exempt from redundant adversarial review under the
+user's instruction. Exact feature workflows, non-force main integration, exact
+`main` workflows, and delivery remain pending, so the delivered count remains
+twenty-seven. See the
 [`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
 review history begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree

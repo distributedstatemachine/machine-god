@@ -17,13 +17,18 @@ environment and filesystem. `machine-god status` remains metadata-only and
 does not invoke the loader. The implemented
 `machine-god permissions [--json]` path invokes it exactly once after complete
 argument validation and observes only permission mode. Exact permissions
-cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
-`90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete exact-1.94.1
-replacement gate without fallback. Formal review rejected it only for one low
-ambiguous “remote integration” phrase in `security.md`; correctness/API and
-native config/error lifecycle were green. The terminology correction is
-composed, and another complete gate and three fresh reviews
-are required. This configuration slice advances the built-in and current file
+cycle-5 reviewed candidate `0b13944d19cfb33b4542d82d74c302669817c1af`,
+tree `2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed its complete exact-
+1.94.1 replacement gate without fallback and all three fresh reviews at
+0/0/0/0. The gate included 928 non-documentation executions, two doctests,
+focused native configuration 25+29 and CLI 6+19, pinned-fx compatibility and
+31 generator tests, documentation integrity 76/110/548/391 with zero errors,
+no dependency or unsafe delta, and the full release matrix. Its 368,944-byte
+binary has SHA-256
+`8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
+The behavior candidate is **GREEN**; this documentation-only seal is exempt
+from another adversarial cycle, while feature/main delivery remains pending.
+This configuration slice advances the built-in and current file
 schema to v3 while retaining strict read compatibility for the exact legacy v1
 and v2 objects.
 
@@ -50,7 +55,9 @@ XDG is missing or empty. A nonempty XDG value decides selection whether it is
 valid, relative, or non-Unicode, so that path neither reads nor falls back to
 `HOME`. Status retains the general three-value snapshot. The cycle-3 and
 cycle-4 gates and review tracks confirmed this behavior; cycle 4 was rejected
-only for the separate ambiguous delivery terminology described above.
+only for the separate ambiguous delivery terminology described above. Exact
+cycle 5 passed its complete replacement gate and all three fresh reviews with
+zero findings.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
 the explicit built-in schema-v3 configuration. A resolved file that is missing
@@ -178,7 +185,8 @@ two lows concerned lazy environment access and target-qualified documentation.
 The complete cycle-3 and cycle-4 gates and all fresh tracks confirmed the
 remediated loader bounds and environment-selection behavior; cycle 4 was
 rejected only for the separate ambiguous delivery terminology in
-`security.md`.
+`security.md`. Exact cycle 5 passed its complete replacement gate and all three
+fresh review tracks at 0/0/0/0.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path with `O_NOFOLLOW` and nonblocking behavior. It performs a

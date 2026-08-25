@@ -53,8 +53,8 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
 performance or fx-equivalence claim. The implemented twenty-eighth top-level
-`permissions [--json]` slice is **IN PROGRESS — CYCLE 4 REMEDIATED;
-REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base
+`permissions [--json]` slice is **BEHAVIOR GREEN — REMOTE DELIVERY PENDING**
+from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`. It is a read-only projection of
 the already delivered ask-only native configuration and owns no rule, grant,
 engine, runtime, session, credential, or network state. Its separate production,
@@ -104,10 +104,22 @@ that conflates composed source with pending delivery boundaries. Exact security
 terminology component `2b686da95850fa6d7ae5790e1eaac19c585f3eb7`, tree
 `9ceff2e2e0a5f1fd1264cf0fff4e8cf02e05b5d6`, and ledger component
 `178c58002c1dcb37d411129a1547f686e4711570`, tree
-`5d6050f6d1486f26e9134353f34cacf74b90c0c2`, are composed. Another complete
-replacement gate, three fresh reviews, exact feature
+`5d6050f6d1486f26e9134353f34cacf74b90c0c2`, are composed. Exact cycle-5
+reviewed candidate `0b13944d19cfb33b4542d82d74c302669817c1af`, tree
+`2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. It passed 897
+registered non-documentation tests plus 31 child probes for 928 executions,
+two doctests, focused native configuration 25+29 and CLI 6+19, pinned-fx
+compatibility and all 31 generator tests, documentation integrity
+76/110/548/391 with zero errors, no dependency or unsafe delta, and the full
+release matrix. Its 368,944-byte release binary has SHA-256
+`8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
+Correctness/API, native config/error lifecycle, and performance/CLI portability
+each reported 0/0/0/0 in three fresh reviews; the deduplicated union is zero
+and the behavior candidate is formally **GREEN**. This documentation-only
+green seal is exempt from redundant adversarial review. Exact feature
 workflows, non-force main integration, exact `main` workflows, and delivery
-remain pending.
+remain pending, so the delivered count stays twenty-seven.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2751,10 +2763,35 @@ integration” wording in two `docs/security.md` permissions-lineage passages.
 It conflates the already composed feature-branch source with exact feature
 workflows, non-force main integration, exact `main` workflows, and delivery,
 all of which remain pending. Terminology remediation is composed from exact
-components named above. The replacement requires
-another complete gate and three fresh same-SHA reviews. The combined top-level
-CLI inventory remains planned, and this slice makes no benchmark-workload,
-product-performance, compatibility-promotion, or fx-equivalence claim.
+components named above.
+
+Exact cycle-5 candidate `0b13944d19cfb33b4542d82d74c302669817c1af`,
+tree `2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. The four required
+commands passed: 897 registered non-documentation tests plus 31 intentional
+child-process probes produced 928 non-documentation executions, and two
+doctests are green. Focused native configuration passed 25 private and 29
+public tests; focused CLI passed six unit and 19 integration tests. The
+generator check against pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef` and all 31 generator tests passed.
+Documentation integrity covered 76 Markdown files, 110 fenced blocks, 548
+inline links, and 391 repository-relative targets with zero errors. The
+candidate adds no dependency or unsafe Rust. Its fresh 368,944-byte release
+binary has SHA-256
+`8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e` and
+passed the full release-binary matrix.
+
+Formal cycle 5 reviewed that exact SHA/tree. Correctness/API, native
+config/error lifecycle, and performance/CLI portability each reported
+0 blocker, 0 high, 0 medium, and 0 low findings and are **GREEN**. The
+deduplicated union is zero at every severity, so the behavior candidate is
+formally green. The subsequent documentation-only green seal is exempt from
+redundant adversarial review under the user's instruction. Exact feature
+workflows, non-force main integration, exact `main` workflows, and delivery
+remain pending, and the delivered count stays twenty-seven. The combined top-
+level CLI inventory remains planned, and this slice makes no benchmark-
+workload, product-performance, compatibility-promotion, or fx-equivalence
+claim.
 
 ### Milestone 03 completion boundary
 

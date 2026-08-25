@@ -7,19 +7,20 @@ preserves that split: after strict argument parsing, the thin host invokes only
 the existing byte-bounded read-only configuration loader, exactly once, and
 reports no persistent rule or live grant state. Invalid configuration fails
 with empty stdout and one fixed diagnostic that reflects no path, content,
-model, or operating-system error. Cycle-3 remediation is composed in exact
-cycle-4 candidate
-`5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
-`90d0b750ea9bb396074211adb07e2b251e30d505`. The candidate passed the complete
-local gate under exact Rust and Cargo 1.94.1. Formal cycle 4 is **NOT GREEN**:
-correctness/API and native config/error lifecycle each reported 0 blocker, 0
-high, 0 medium, and 0 low findings; performance/CLI portability reported 0
-blocker, 0 high, 0 medium, and 1 low terminology finding. The deduplicated
-union is 0/0/0/1, so the exact candidate is rejected. It adds no engine, prompt,
-session, credential, runtime, state-root, write, or network effect. The
-feature-branch behavior, evidence, and maintained documentation are already
-composed through this rejected candidate; its terminology remediation is
-composed. Exact feature workflows, non-force fast-forward
+model, or operating-system error. Exact cycle-5 reviewed candidate
+`0b13944d19cfb33b4542d82d74c302669817c1af`, tree
+`2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. The gate covered 928
+non-documentation executions, two doctests, focused native configuration 25+29
+and CLI 6+19, pinned-fx compatibility and 31 generator tests, documentation
+integrity 76/110/548/391 with zero errors, no dependency or unsafe delta, and
+the full release matrix. Its fresh 368,944-byte binary has SHA-256
+`8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
+Correctness/API, native config/error lifecycle, and performance/CLI portability
+each reported 0/0/0/0; their union is zero and the behavior candidate is
+**GREEN**. It adds no engine, prompt, session, credential, runtime, state-root,
+write, or network effect. This documentation-only green seal is exempt from
+redundant adversarial review. Exact feature workflows, non-force fast-forward
 integration to `main`, exact `main` workflows, and delivery remain pending. The
 delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
@@ -451,9 +452,9 @@ composed in the exact cycle-4 candidate named above, which passed its complete
 replacement gate under exact Rust and Cargo 1.94.1. Correctness/API and native
 config/error lifecycle reported 0/0/0/0; performance/CLI portability reported
 0/0/0/1 for the sole terminology finding, which is also the deduplicated union.
-The candidate is rejected. Its terminology remediation is composed, so another
-complete replacement gate and three fresh reviews remain
-pending.
+The candidate is rejected. Its terminology remediation is composed in the
+cycle-5 candidate named above, whose complete replacement gate and three fresh
+reviews are green with zero findings at every severity.
 
 The model validator is shared with the AI Gateway provider, preventing config
 and provider acceptance from drifting. Config owns the bounded model string and
@@ -486,10 +487,11 @@ passed its complete local gate under exact Rust and Cargo 1.94.1, but is **NOT
 GREEN**: correctness/API and native config/error lifecycle each reported
 0/0/0/0, performance/CLI portability reported 0/0/0/1, and the deduplicated
 union is 0/0/0/1 for the sole terminology finding. The exact candidate is
-rejected, and remediation is composed. The feature-branch work
-to this checkpoint is already composed; exact feature workflows, non-force
-fast-forward integration to `main`, exact `main` workflows, and delivery remain
-pending.
+rejected, and remediation is composed in exact cycle-5 candidate `0b13944d`,
+which passed the complete replacement gate and all three fresh reviews at
+0/0/0/0. The feature-branch behavior is green; exact feature workflows,
+non-force fast-forward integration to `main`, exact `main` workflows, and
+delivery remain pending.
 Configuration mutation or migration, a concrete prompt UI and modes beyond
 `ask`, token fields in configuration, CLI composition beyond that read-only
 projection, and remaining CLI expansion remain open product scope. Product

@@ -33,16 +33,20 @@ product-performance or fx-equivalence claim. Implemented slice twenty-eight
 adds read-only top-level `permissions [--json]` from exact base `8d8ecc7`
 without moving rule, grant, engine, session, runtime, credential, or network
 state into the CLI; see [`permissions-cli.md`](permissions-cli.md). Exact
-cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
-`90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete exact-1.94.1
-replacement gate without fallback, but formal review is **NOT GREEN** with a
-deduplicated 0 blocker, 0 high, 0 medium, and 1 low finding. Correctness/API and
-native config/error lifecycle were green; performance/CLI portability found
-that ambiguous “remote integration” wording in `security.md` conflates composed
-feature-branch source with pending delivery boundaries. Terminology remediation
-is composed. Another complete replacement gate, three fresh
-reviews, exact feature workflows, non-force main integration, exact `main`
-workflows, and delivery remain pending.
+cycle-5 reviewed candidate `0b13944d19cfb33b4542d82d74c302669817c1af`,
+tree `2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete exact-
+1.94.1 replacement gate without fallback: 928 non-documentation executions
+(897 registered tests plus 31 child probes), two doctests, focused native
+configuration 25+29 and CLI 6+19, pinned-fx compatibility and 31 generator
+tests, documentation integrity 76/110/548/391 with zero errors, no dependency
+or unsafe delta, and the full release matrix. The fresh 368,944-byte binary has
+SHA-256 `8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
+All three fresh correctness/API, native config/error lifecycle, and
+performance/CLI portability reviews reported 0/0/0/0; their union is zero and
+the behavior candidate is **GREEN**. This documentation-only green seal is
+exempt from redundant adversarial review. Exact feature workflows, non-force
+main integration, exact `main` workflows, and delivery remain pending, so M03
+still has twenty-seven delivered slices.
 The retained
 `web_fetch` review lineage begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
@@ -730,10 +734,10 @@ serializes paths as JSON strings
 even in human status so path contents do not become terminal controls. Bare
 invocation keeps the bootstrap identity contract. Help, version, status,
 permissions, and argument errors are byte-stable presentation behavior, not an
-engine-owned command model. The permissions slice remains in progress after a
-rejected cycle 4. Its sole low finding is ambiguous “remote integration”
-terminology in `security.md`; correction is composed. Another
-complete replacement local gate, three fresh reviews, exact feature workflows,
+engine-owned command model. Exact cycle-5 behavior candidate
+`0b13944d19cfb33b4542d82d74c302669817c1af` is green after the complete
+replacement gate and three fresh zero-finding reviews. This documentation-only
+seal is exempt from another adversarial cycle; exact feature workflows,
 non-force main integration, exact `main` workflows, and delivery remain
 pending.
 
@@ -784,9 +788,11 @@ counting with a deterministic injected reader. Cycle 2 confirmed those
 boundaries and reported only the lazy-environment and target-qualified-contract
 lows described above. Cycle-2 remediation is composed. The complete cycle-3
 gate and all three fresh tracks confirmed the corrected loader behavior. The
-cycle-4 gate and reviews confirmed it again; cycle 4 was rejected only for the
-separate ambiguous delivery terminology in `security.md`. Its correction is
-composed; its replacement gate and reviews are pending.
+cycle-4 gate confirmed it again but its documentation terminology finding
+rejected that candidate. Exact cycle-5 candidate
+`0b13944d19cfb33b4542d82d74c302669817c1af` passed the complete replacement
+gate and all three fresh reviews at 0/0/0/0, confirming the corrected loader
+behavior and making the behavior candidate green.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 model values, or operating-system error text. Credential bytes remain in no
