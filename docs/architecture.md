@@ -23,14 +23,16 @@ an async executor.
 
 Milestone 03 has twenty-six delivered bounded slices. The proposed
 twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact delivered base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production, independent tests,
-the complete local gate, three fresh reviews, feature and `main` workflows,
-integration, and delivery are pending. Its non-WASM `web-fetch-http` feature
-would add one rootless `WebFetchTool`; `ai-gateway-http` includes that feature.
-Core retains provider-neutral `Capability::Network` and orchestration, while
-native owns URL/DNS/Reqwest/Tokio effects. The candidate host will have thirteen
-alphabetical tools, but its descriptor-backed workspace set remains twelve
-tools using one original descriptor plus eleven clones. The frozen boundary is
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production and independently owned
+direct, engine, production-boundary, core-contract, and host evidence are now
+composed locally; the complete local gate, three fresh reviews, feature and
+`main` workflows, integration, and delivery remain pending. Its non-WASM
+`web-fetch-http` feature adds one rootless `WebFetchTool`;
+`ai-gateway-http` includes that feature. Core retains provider-neutral
+`Capability::Network` and orchestration, while native owns
+URL/DNS/Reqwest/Tokio effects. The candidate host has thirteen alphabetical
+tools, but its descriptor-backed workspace set remains twelve tools using one
+original descriptor plus eleven clones. The frozen boundary is
 [`web-fetch.md`](web-fetch.md); it adds no CLI, cache, artifact, compatibility,
 or product-performance claim. The twenty-third,
 library-only native `rename_file`, has composed production and independent

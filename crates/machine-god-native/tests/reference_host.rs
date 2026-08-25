@@ -28,7 +28,7 @@ use machine_god_native::{
     LoadedNativeConfig, NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
     NativeReferenceHostBuildErrorKind, OPEN_FILE_TOOL_NAME, PermissionPromptDecision,
     PermissionPromptError, PermissionPrompter, READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME,
-    WRITE_FILE_TOOL_NAME, load_native_config,
+    WEB_FETCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
 
@@ -348,7 +348,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 12);
+    assert_eq!(tools.len(), 13);
     assert_eq!(
         tools
             .iter()
@@ -366,6 +366,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             OPEN_FILE_TOOL_NAME,
             READ_FILE_TOOL_NAME,
             RENAME_FILE_TOOL_NAME,
+            WEB_FETCH_TOOL_NAME,
             WRITE_FILE_TOOL_NAME
         ]
     );

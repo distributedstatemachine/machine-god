@@ -10,7 +10,7 @@ use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AskPermissionHandler, FileSessionStore,
     LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
-    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots,
+    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, WebFetchTool,
     discover_ai_gateway_credential,
 };
 
@@ -28,6 +28,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     Credential,
     /// The production AI Gateway HTTP transport could not be constructed.
     HttpTransport,
+    /// The production bounded web-fetch transport could not be constructed.
+    WebFetchTransport,
     /// The selected provider could not be constructed.
     Provider,
     /// The provider-neutral engine could not be constructed.
@@ -78,6 +80,9 @@ impl fmt::Display for NativeReferenceHostBuildError {
             }
             NativeReferenceHostBuildErrorKind::HttpTransport => {
                 "native reference-host HTTP transport construction failed"
+            }
+            NativeReferenceHostBuildErrorKind::WebFetchTransport => {
+                "native reference-host web-fetch transport construction failed"
             }
             NativeReferenceHostBuildErrorKind::Provider => {
                 "native reference-host provider construction failed"
@@ -295,6 +300,9 @@ impl NativeReferenceHost {
             .map_err(|_| {
                 NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
             })?;
+        let web_fetch = WebFetchTool::new().map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebFetchTransport)
+        })?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let session_store = Arc::new(session_store);
         let engine_session_store: Arc<dyn machine_god_core::SessionStore> =
@@ -314,6 +322,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.open_file)
             .tool(workspace_tools.read_file)
             .tool(workspace_tools.rename_file)
+            .tool(web_fetch)
             .tool(workspace_tools.write_file)
             .build()
             .map_err(|_| {

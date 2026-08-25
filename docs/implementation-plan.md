@@ -1770,19 +1770,24 @@ redirects and default-safe admission are explicitly not copied because one
 `NetworkTarget`/`Ask` decision cannot authorize a second host; all network
 authority remains `Critical`.
 
-Production, independent tests, the exact Rust 1.94.1 local gate, and release-
-binary regression exercise must compose on one immutable behavior SHA. Three
+Production and independently owned focused tests now compose locally: 11
+private, 13 direct, five engine, three production-boundary, seven host, and 65
+core-contract tests are green, together with warnings-denied native
+all-target/all-feature Clippy. The complete exact Rust 1.94.1 local gate and
+release-binary regression exercise must next compose on one immutable behavior
+SHA. Three
 fresh adversarial agents then review that same SHA for correctness/API,
 network/HTTP lifecycle and robustness, and performance/concurrency. A finding
 at any severity rejects the candidate. Fixes require a new immutable SHA, the
 complete replacement local gate, and three fresh review tracks; repeat until
 all three report zero findings. Only a review-green exact SHA may run feature
 workflows, fast-forward `main` without force, and run exact `main` workflows.
-The current production, test, local-gate, review, workflow, integration, and
-delivery states are all pending. The candidate would bring the host to thirteen
-alphabetical tools, while the descriptor-backed set remains twelve with one
-original plus eleven clones. Until final seal and exact remote delivery, M03
-remains **IN PROGRESS** with twenty-six delivered slices.
+The current production, test, and host-composition states are focused-green;
+the complete local gate, review, workflow, integration, and delivery states
+remain pending. The candidate host has thirteen alphabetical tools, while the
+descriptor-backed set remains twelve with one original plus eleven clones.
+Until final seal and exact remote delivery, M03 remains **IN PROGRESS** with
+twenty-six delivered slices.
 
 ### Milestone 03 completion boundary
 

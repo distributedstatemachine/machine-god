@@ -197,7 +197,7 @@ fn execute(
 }
 
 fn assert_tool_error(
-    error: ToolError,
+    error: &ToolError,
     kind: ToolErrorKind,
     code: &str,
     message: &str,
@@ -211,7 +211,7 @@ fn assert_tool_error(
     assert_eq!(rendered, format!("{code}: {message}"));
 }
 
-fn assert_invalid_arguments(error: ToolError) {
+fn assert_invalid_arguments(error: &ToolError) {
     assert_tool_error(
         error,
         ToolErrorKind::InvalidInput,
@@ -221,7 +221,7 @@ fn assert_invalid_arguments(error: ToolError) {
     );
 }
 
-fn assert_invalid_url(error: ToolError) {
+fn assert_invalid_url(error: &ToolError) {
     assert_tool_error(
         error,
         ToolErrorKind::InvalidInput,
@@ -231,7 +231,7 @@ fn assert_invalid_url(error: ToolError) {
     );
 }
 
-fn assert_destination_rejected(error: ToolError) {
+fn assert_destination_rejected(error: &ToolError) {
     assert_tool_error(
         error,
         ToolErrorKind::PermissionDenied,
@@ -317,7 +317,7 @@ fn prepare_requires_the_exact_name_and_sole_string_url() {
             json!({ "url": "https://example.com", "extra": true }),
         ),
     ] {
-        assert_invalid_arguments(tool.prepare(invalid).unwrap_err());
+        assert_invalid_arguments(&tool.prepare(invalid).unwrap_err());
     }
 }
 
@@ -325,12 +325,12 @@ fn prepare_requires_the_exact_name_and_sole_string_url() {
 fn prepare_canonicalizes_for_exact_policy_and_execution_without_transport() {
     let transport = FakeTransport::new(TransportMode::Pending);
     let tool = WebFetchTool::with_transport(Arc::new(transport.clone()));
-    let prepared = prepared(
+    let prepared_call = prepared(
         &tool,
         "  HTTP://EXAMPLE.COM.:443/a/../report?q=private#fragment  ",
     );
     assert_eq!(
-        prepared.capability(),
+        prepared_call.capability(),
         &Capability::Network {
             target: NetworkTarget {
                 scheme: "https".to_owned(),
@@ -340,7 +340,7 @@ fn prepare_canonicalizes_for_exact_policy_and_execution_without_transport() {
         }
     );
     assert_eq!(
-        prepared.arguments(),
+        prepared_call.arguments(),
         &json!({ "url": "https://example.com/report?q=private" })
     );
     assert_eq!(transport.calls(), 0);
@@ -381,7 +381,8 @@ fn prepare_enforces_url_bounds_and_rejects_ambiguous_or_credentialed_urls() {
     );
     let too_long = format!("{exact}a");
     assert_invalid_url(
-        tool.prepare(call(WEB_FETCH_TOOL_NAME, json!({ "url": too_long })))
+        &tool
+            .prepare(call(WEB_FETCH_TOOL_NAME, json!({ "url": too_long })))
             .unwrap_err(),
     );
 
@@ -400,7 +401,8 @@ fn prepare_enforces_url_bounds_and_rejects_ambiguous_or_credentialed_urls() {
         "https://example.com/\u{2066}",
     ] {
         assert_invalid_url(
-            tool.prepare(call(WEB_FETCH_TOOL_NAME, json!({ "url": url })))
+            &tool
+                .prepare(call(WEB_FETCH_TOOL_NAME, json!({ "url": url })))
                 .unwrap_err(),
         );
     }
@@ -436,7 +438,8 @@ fn prepare_rejects_non_public_hosts_and_accepts_strict_public_ip_literals() {
         "https://[::ffff:127.0.0.1]/",
     ] {
         assert_destination_rejected(
-            tool.prepare(call(WEB_FETCH_TOOL_NAME, json!({ "url": url })))
+            &tool
+                .prepare(call(WEB_FETCH_TOOL_NAME, json!({ "url": url })))
                 .unwrap_err(),
         );
     }
@@ -494,7 +497,7 @@ fn execution_is_inert_until_polled_and_pre_cancellation_makes_zero_transport_cal
     let cancelled = CancellationToken::new();
     assert!(cancelled.cancel());
     assert_tool_error(
-        execute(&tool, json!({ "url": "https://example.com/" }), cancelled).unwrap_err(),
+        &execute(&tool, json!({ "url": "https://example.com/" }), cancelled).unwrap_err(),
         ToolErrorKind::Cancelled,
         "web_fetch_cancelled",
         "web_fetch execution was cancelled",
@@ -508,7 +511,7 @@ fn cancellation_wins_over_ready_success_and_dropping_pending_execution_drops_tra
     let racing = FakeTransport::new(TransportMode::CancelThenRespond);
     let tool = WebFetchTool::with_transport(Arc::new(racing.clone()));
     assert_tool_error(
-        execute(
+        &execute(
             &tool,
             json!({ "url": "https://example.com/" }),
             CancellationToken::new(),
@@ -642,7 +645,7 @@ fn declared_text_rejects_invalid_utf8_and_unsafe_controls_without_reflection() {
         )
         .unwrap_err();
         assert_tool_error(
-            error,
+            &error,
             ToolErrorKind::Execution,
             "web_fetch_unsafe_text",
             "web_fetch response is not safe UTF-8 text",
@@ -775,7 +778,7 @@ fn every_transport_error_maps_to_a_fixed_redacted_tool_error() {
         .unwrap_err();
         assert!(!error.to_string().contains("SECRET"));
         assert!(!format!("{error:?}").contains("SECRET"));
-        assert_tool_error(error, tool_kind, code, message, retryable);
+        assert_tool_error(&error, tool_kind, code, message, retryable);
 
         let transport_error = WebFetchTransportError::new(transport_kind);
         assert_eq!(transport_error.kind(), transport_kind);

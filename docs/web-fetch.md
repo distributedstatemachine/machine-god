@@ -1,8 +1,8 @@
 # Native `web_fetch` candidate contract
 
 Status: **IN PROGRESS**. This page freezes the proposed twenty-seventh bounded
-Milestone 03 slice. It is not an implementation, review, gate, delivery,
-compatibility, or performance claim.
+Milestone 03 slice and records its current local composition. It is not a
+formal-review, complete-gate, delivery, compatibility, or performance claim.
 
 The candidate starts from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its comparison reference is
@@ -10,9 +10,11 @@ The candidate starts from exact delivered base
 `b1774fbf6c7602b503026f96f6e960e946c692ef`](https://github.com/vercel-labs/fx/commit/b1774fbf6c7602b503026f96f6e960e946c692ef).
 The upstream behavior was inspected to understand its tool surface; the
 deliberate differences and deferrals below are normative. Production source,
-independent tests, the complete Rust 1.94.1 local gate, formal reviews, feature
-workflows, integration, and exact `main` workflows are all pending. Milestone
-03 therefore remains in progress with twenty-six delivered slices.
+independently owned direct/engine/production-boundary evidence, core network
+serde evidence, and thirteen-tool reference-host composition are present and
+focused-green. The complete Rust 1.94.1 local gate, formal reviews, feature
+workflows, integration, and exact `main` workflows remain pending. Milestone 03
+therefore remains in progress with twenty-six delivered slices.
 
 ## Scope and feature boundary
 
@@ -24,7 +26,7 @@ optional `machine-god-native` feature `web-fetch-http`. The existing
 `ai-gateway-http` feature includes `web-fetch-http`; a base/no-feature build and
 every WASM build expose no concrete HTTP web-fetch implementation.
 
-If composed, the reference host will contain thirteen alphabetical tools. Its
+The local candidate reference host contains thirteen alphabetical tools. Its
 twelve workspace tools will still share one original retained workspace
 descriptor plus eleven identity-preserving clones; rootless `web_fetch` adds no
 descriptor and changes neither count. This slice adds no CLI surface.

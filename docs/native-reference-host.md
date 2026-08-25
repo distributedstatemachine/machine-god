@@ -21,14 +21,15 @@ Native `rename_file` is delivered as slice twenty-three.
 
 The proposed twenty-seventh slice starts from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e` and pinned fx reference
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. If composed, rootless
-`WebFetchTool` will be inserted alphabetically to produce thirteen host tools.
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. The local candidate composition
+inserts rootless `WebFetchTool` alphabetically to produce thirteen host tools.
 It owns no workspace descriptor, so the descriptor-backed set remains exactly
 twelve workspace tools using one original descriptor plus eleven clones. The
 candidate is non-WASM and cfg-gated by `web-fetch-http`, which is included by
-`ai-gateway-http`; it adds no CLI state or command. Production, independent
-tests, local gates, formal reviews, remote workflows, integration, and delivery
-are pending under [`web-fetch.md`](web-fetch.md). The delivered count remains
+`ai-gateway-http`; it adds no CLI state or command. Production and independent
+focused evidence are composed and all seven exact host tests pass. The complete
+local gate, formal reviews, remote workflows, integration, and delivery remain
+pending under [`web-fetch.md`](web-fetch.md). The delivered count remains
 twenty-six and this is not a performance or fx-equivalence claim.
 The twenty-fourth, library-only `copy_file` slice is delivered. Cycle-3
 candidate `99ecdb3`, tree `145b3be`, is green with zero findings in all three

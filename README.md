@@ -9,11 +9,13 @@ performance evidence live in [`docs/`](docs/README.md).
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
 twenty-six delivered bounded slices. A proposed twenty-seventh `web_fetch`
 slice is **IN PROGRESS** from exact base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production, independent tests,
-local gates, three fresh reviews, remote workflows, integration, and delivery
-are pending. The cfg-gated non-WASM candidate is rootless and would add a
-thirteenth host tool without changing the twelve descriptor-backed workspace
-tools or their original-plus-eleven-clone ownership. Its bounded public-HTTPS,
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production, independently owned
+direct/engine/transport evidence, and rootless reference-host wiring are now
+composed locally; the complete local gate, three fresh reviews, remote
+workflows, integration, and delivery remain pending. The cfg-gated non-WASM
+candidate adds a thirteenth host tool without changing the twelve descriptor-
+backed workspace tools or their original-plus-eleven-clone ownership. Its
+bounded public-HTTPS,
 exact `Capability::Network`, DNS-pinning, no-redirect, untrusted-output, and
 explicit-deferral boundary is frozen in the
 [`web_fetch` candidate contract](docs/web-fetch.md). This changes neither the

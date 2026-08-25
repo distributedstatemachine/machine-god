@@ -73,15 +73,30 @@ No owner may weaken a frozen bound to make its own tests pass. The coordinator
 must verify the composed diff contains no unauthorized CLI, workflow,
 benchmark, generated compatibility, or inventory change.
 
-## Pending implementation and local gate
+## Composed implementation and pending local gate
 
-All of the following are pending:
+The non-overlapping components now compose locally:
 
-- production implementation and public exports;
-- independently owned focused and integration evidence;
-- thirteen-tool rootless host composition evidence;
+- production commit `8b2a66993989fcdc67ab7d42f9d3e6a6858a9cfe`
+  supplies cfg/public exports and bounded URL/DNS/HTTP/result behavior;
+- independent commit `9825a890cf1a21a8585b29aff537dde611508517`
+  supplies core serde plus direct and engine evidence;
+- independent commit `a09dbc7915a16478ae5a4a70aa177ea718539b49`
+  supplies deterministic production-construction, runtime, cancellation, and
+  redaction evidence; and
+- the integration branch wires the rootless tool into the exact thirteen-tool
+  host while retaining twelve descriptor-backed workspace tools.
+
+Focused exact Rust 1.94.1 evidence is green: 11 private, 13 direct, five
+engine, three production-boundary, seven host, and 65 core-contract tests, plus
+warnings-denied all-target/all-feature native Clippy. One independent-test
+compile shadow and its warnings-denied reference signature were corrected
+without weakening an assertion.
+
+The following are still pending:
+
 - exact Rust 1.94.1 formatting, warnings-denied Clippy, workspace tests, and
-  doctests;
+  doctests as one complete immutable-candidate gate;
 - dependency, target, documentation, diff, and release-binary checks; and
 - one immutable, exact-SHA candidate for formal review.
 
@@ -133,6 +148,7 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: production, tests, local gate, all three formal reviews, feature
-workflows, fast-forward integration, exact `main` workflows, and delivery are
-pending.
+Current state: production, independent evidence, and host composition are
+present and focused-green. The complete local gate, all three formal reviews,
+feature workflows, fast-forward integration, exact `main` workflows, and
+delivery are pending.
