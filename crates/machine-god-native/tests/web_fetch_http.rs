@@ -5,7 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use machine_god_core::{
@@ -164,6 +164,23 @@ fn runtime() -> tokio::runtime::Runtime {
 fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
     let waker = futures_util::task::noop_waker();
     future.poll(&mut Context::from_waker(&waker))
+}
+
+#[derive(Debug, Default)]
+struct WakeCounter(AtomicUsize);
+
+impl Wake for WakeCounter {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn counting_waker(counter: &Arc<WakeCounter>) -> Waker {
+    Waker::from(Arc::clone(counter))
 }
 
 fn execute_bounded(
@@ -329,6 +346,75 @@ fn bounded_transport_cancels_and_drops_queued_calls_without_admission() {
     });
     assert_eq!(state.active.load(Ordering::SeqCst), 0);
     assert_eq!(state.drops.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn bounded_execution_cancellation_wakes_once_and_drops_owned_work() {
+    let limits = WebFetchLimits::new(Duration::from_secs(1), Duration::from_secs(60), 1).unwrap();
+    let state = BoundedState::scripted([BoundedMode::Pending]);
+    let tool = bounded_tool(&state, limits);
+    let cancellation = CancellationToken::new();
+    let mut execution = Box::pin(execute_bounded(&tool, cancellation.clone()));
+    let wake_count = Arc::new(WakeCounter::default());
+    let waker = counting_waker(&wake_count);
+    let mut context = Context::from_waker(&waker);
+    let runtime = runtime();
+
+    {
+        let _runtime_guard = runtime.enter();
+        assert!(execution.as_mut().poll(&mut context).is_pending());
+    }
+    assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.active.load(Ordering::SeqCst), 1);
+    assert_eq!(wake_count.0.load(Ordering::SeqCst), 0);
+
+    assert!(cancellation.cancel());
+    assert_eq!(
+        wake_count.0.load(Ordering::SeqCst),
+        1,
+        "one bounded execution must register only one cancellation wake"
+    );
+
+    let result = {
+        let _runtime_guard = runtime.enter();
+        let Poll::Ready(result) = execution.as_mut().poll(&mut context) else {
+            panic!("bounded cancellation must finish promptly")
+        };
+        result
+    };
+    assert_error_code(result, "web_fetch_cancelled");
+    assert_eq!(wake_count.0.load(Ordering::SeqCst), 1);
+    assert_eq!(state.active.load(Ordering::SeqCst), 0);
+    assert_eq!(state.drops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn raw_execution_cancellation_wakes_once_and_drops_owned_work() {
+    let state = BoundedState::scripted([BoundedMode::Pending]);
+    let tool = WebFetchTool::with_transport(Arc::new(BoundedTransport {
+        state: Arc::clone(&state),
+    }));
+    let cancellation = CancellationToken::new();
+    let mut execution = Box::pin(execute_bounded(&tool, cancellation.clone()));
+    let wake_count = Arc::new(WakeCounter::default());
+    let waker = counting_waker(&wake_count);
+    let mut context = Context::from_waker(&waker);
+
+    assert!(execution.as_mut().poll(&mut context).is_pending());
+    assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.active.load(Ordering::SeqCst), 1);
+    assert_eq!(wake_count.0.load(Ordering::SeqCst), 0);
+
+    assert!(cancellation.cancel());
+    assert_eq!(wake_count.0.load(Ordering::SeqCst), 1);
+
+    let Poll::Ready(result) = execution.as_mut().poll(&mut context) else {
+        panic!("raw cancellation must finish promptly")
+    };
+    assert_error_code(result, "web_fetch_cancelled");
+    assert_eq!(wake_count.0.load(Ordering::SeqCst), 1);
+    assert_eq!(state.active.load(Ordering::SeqCst), 0);
+    assert_eq!(state.drops.load(Ordering::SeqCst), 1);
 }
 
 #[test]
