@@ -48,10 +48,12 @@ exact candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
 blocker, 0 high, 2 medium, and 2 low findings. Exact isolated production
 remediation component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
 `490f628caa20449c3db96069b34356b0117b7ae4`, implements the raw DNS and resolver-
-snapshot corrections. This cycle-2 remediation record makes no replacement-
-gate, green-review, integration, or delivery claim. A
-formal candidate is identified only by its exact-SHA review results; this pre-
-review record deliberately does not predict that SHA. Native Linux HTTP
+snapshot corrections. Exact composed cycle-2 remediation precursor
+`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results. Native Linux HTTP
 compilation remains an exact-CI requirement because the macOS cross-host lacks
 the target C sysroot. M03 therefore remains in progress with twenty-six
 delivered slices.

@@ -38,14 +38,16 @@ replacement local gate. Formal cycle 2 is **NOT GREEN** on exact candidate
 blocker, 0 high, 2 medium, and 2 low findings. Exact isolated production
 remediation component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
 `490f628caa20449c3db96069b34356b0117b7ae4`, implements the corrected native
-boundary below. This cycle-2 remediation record makes no replacement-gate or
-green-review claim. A formal candidate is
-identified only by its exact-SHA review results; this pre-review record
-deliberately does not predict that SHA.
+boundary below. Exact composed cycle-2 remediation precursor
+`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results.
 Native Linux HTTP evidence remains an exact-CI requirement
 because the macOS cross-host lacks the target C sysroot. Feature and `main`
-workflows, integration, and delivery are not claimed here. Its non-WASM
-`web-fetch-http` feature adds one rootless `WebFetchTool`;
+workflows are not claimed by the local gate. Its non-WASM `web-fetch-http`
+feature adds one rootless `WebFetchTool`;
 `ai-gateway-http` includes that feature. Core retains provider-neutral
 `Capability::Network` and orchestration, while native owns
 URL/DNS/Reqwest/Tokio effects. Construction remains runtime-independent;

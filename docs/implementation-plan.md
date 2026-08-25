@@ -66,13 +66,15 @@ zero findings at every severity; performance/concurrency reported 0 blocker,
 medium, and 2 low findings. Exact isolated production remediation component
 `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
 `490f628caa20449c3db96069b34356b0117b7ae4`, implements the raw DNS and resolver-
-snapshot corrections. This cycle-2 remediation record makes no replacement-
-gate or green-review claim. A formal candidate is identified only
-by its exact-SHA review results; this pre-review record deliberately does not
-predict that SHA. Native Linux HTTP compilation remains an
+snapshot corrections. Exact composed cycle-2 remediation precursor
+`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results. Native
+Linux HTTP compilation remains an
 exact-CI requirement because the macOS cross-host lacks the target C sysroot.
-Feature workflows, fast-forward integration, exact `main` workflows, and
-delivery are not claimed here.
+Feature workflows are not claimed by the local gate.
 The candidate host will contain thirteen tools, while its descriptor-backed
 workspace set remains twelve tools using one original descriptor plus eleven
 clones because `web_fetch` is rootless. The delivered count remains twenty-six
@@ -1863,10 +1865,16 @@ configuration, stale candidate-state prose, and missing-MIME prefix wording.
 Exact isolated production remediation component
 `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
 `490f628caa20449c3db96069b34356b0117b7ae4`, implements the corrected boundary.
-This cycle-2 remediation record makes no replacement-gate or green-review
-claim. A formal candidate is identified only by its exact-SHA review results;
-this pre-review record deliberately does not predict that SHA. Workflows,
-integration, and delivery are not claimed here.
+Exact composed cycle-2 remediation precursor
+`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. The four required
+commands, complete 976-test all-target/all-feature workspace run, focused
+21-private/14-direct/11-HTTP/5-engine inventory, Python replacements,
+compatibility, dependency, portability, documentation, diff, and release-smoke
+checks are green. This gate record makes no formal-review outcome, workflow,
+integration, or delivery claim; formal candidates are identified only by
+exact-SHA review results.
 The candidate host has thirteen alphabetical tools, while the
 descriptor-backed set remains twelve with one original plus eleven clones.
 Until final seal and exact remote delivery, M03 remains **IN PROGRESS** with
@@ -2558,11 +2566,13 @@ gate:
   medium, and 2 low. Exact isolated production remediation component
   `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
   `490f628caa20449c3db96069b34356b0117b7ae4`, implements the raw DNS and resolver-
-  snapshot corrections. This cycle-2 remediation record makes no replacement-
-  gate or green-review claim. A formal candidate is identified only by its
-  exact-SHA review results; this pre-review record deliberately does not predict
-  that SHA. Feature workflows, integration, exact `main` workflows, and
-  delivery are not claimed here; the delivered count remains twenty-six.
+  snapshot corrections. Exact composed cycle-2 remediation precursor
+  `1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+  `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+  local gate under exact Rust and Cargo 1.94.1 without fallback. This gate
+  record makes no formal-review outcome, workflow, integration, or delivery
+  claim; formal candidates are identified only by exact-SHA review results.
+  The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

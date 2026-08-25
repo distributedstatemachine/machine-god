@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 2 NOT GREEN; REMEDIATION RECORD**
+Status: **IN PROGRESS — CYCLE 2 NOT GREEN; REPLACEMENT LOCAL GATE GREEN**
 
 ## Base and boundary
 
@@ -18,9 +18,13 @@ pre-review local gate exist. Formal cycle 1 rejected exact candidate
 `1378b02e92973ab15fbf4623138a643b70057f33`. Its remediation passed a complete
 replacement local gate. Formal cycle 2 rejected exact candidate
 `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
-`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. This record establishes no green
-review, workflow, integration, delivery, compatibility, or product-performance
-claim. Milestone 03 remains in progress with twenty-six delivered slices.
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. Exact composed cycle-2 remediation
+precursor `1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+local gate. This gate record establishes no formal-review outcome, workflow,
+integration, delivery, compatibility, or product-performance claim; formal
+candidates are identified only by exact-SHA review results. Milestone 03
+remains in progress with twenty-six delivered slices.
 
 ## Frozen candidate boundary
 
@@ -394,10 +398,56 @@ at most 128 authority and additional records individually, at most 128
 aggregate resource records, and the checked count-implied minimum payload
 length before either UDP or TCP decoding. The 39 answers cover 32 admitted
 addresses plus seven CNAME links. A TCP advertised frame must be 12 through
-4,096 bytes before allocation. This remediation record makes no replacement-
-gate or green-review claim. A formal candidate is identified only by its exact-
-SHA review results; this pre-review record deliberately does not predict that
-SHA.
+4,096 bytes before allocation. The isolated production component alone makes
+no replacement-gate or green-review claim.
+
+## Cycle-2 remediation replacement gate
+
+Exact composed remediation precursor
+`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. The four
+repository-required commands passed, as did the complete 976-test all-target/
+all-feature workspace run. Focused evidence passed 21 private, 14 direct, 11
+production HTTP lifecycle, and five engine tests.
+
+The first CI-style Python discovery run overlapped the root all-feature Cargo
+compilation and completed 130 tests with eight expected macOS skips and two
+failures in 63.198 seconds. Both failures returned the fixed 2.0-second command-
+timeout diagnostic instead of the expected diagnostic:
+`test_schema_one_git_output_overflow_cleans_up_publication` and
+`test_schema_one_repository_head_rejects_git_path_replacement`. After that
+contention ended, two consecutive complete replacement runs passed 130 tests
+with eight expected macOS skips in 60.041 and 39.346 seconds. Exact pinned-fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility regeneration with
+`--check` passed.
+
+Dependency policy passed under `cargo-deny` 0.20.2 with three allowed duplicate
+warnings. Cached `cargo-audit` 0.22.2 `--no-fetch` passed against 1,225
+advisories and all 209 locked packages. The `Cargo.lock` delta from the
+delivered base adds 34 packages and removes none; `rcgen`, `time`, and `yasna`
+are absent. The WASI dependency trees exclude those packages and `aws-lc-sys`.
+
+Linux, FreeBSD, and WASI portability gates passed. Each WASI no-run variant
+produced 61 executable artifacts, and Node 22.22.0 actively passed the retained
+unsupported-target test. The two established FreeBSD cfg-only warnings and six
+established cfg-only warnings per WASI variant remain outside the warnings-
+denied library gates. All 74 Markdown files, 99 fence blocks, 527 inline links,
+and 378 relative targets passed with zero errors.
+
+The exact 21-file diff is clean. CLI source, workflows, benchmark workloads,
+and generated compatibility data are byte-identical to the delivered base.
+Changed Rust adds no unsafe code; the nine existing unsafe constructs remain
+only in an unchanged excluded ADR fixture. The locked release build produced a
+fresh 319,152-byte arm64 Mach-O binary with SHA-256
+`eed6f30ecbf19dc0c7dea498547e2562600745ed6f42561a589076083128e0e4`.
+Bare, version, help, inert human-status, and inert JSON-status exercises all
+exited zero with exact stdout plus LF, empty stderr, and output sizes 33, 33,
+289, 140, and 192 bytes respectively.
+
+This gate record makes no formal-review outcome, workflow, integration, or
+delivery claim; formal candidates are identified only by exact-SHA review
+results.
 
 The local gate must include the repository-required commands:
 
@@ -450,8 +500,9 @@ turning regression or size evidence into a product-performance claim.
 Current state: formal cycles 1 and 2 are **NOT GREEN** on their exact recorded
 SHA/tree pairs. Exact cycle-2 candidate
 `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
-`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, is rejected. This remediation
-record makes no replacement-gate or green-review claim. A formal candidate is
-identified only by its exact-SHA review results; this pre-review record
-deliberately does not predict that SHA. Feature workflows, fast-forward
-integration, exact `main` workflows, and delivery are not claimed here.
+`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, is rejected. Exact composed
+cycle-2 remediation precursor `1a78f6437eb17f646bdd11337464c949beea49f0`,
+tree `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+local gate. This gate record makes no formal-review outcome, workflow,
+integration, or delivery claim; formal candidates are identified only by
+exact-SHA review results.

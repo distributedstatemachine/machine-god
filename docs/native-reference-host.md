@@ -40,11 +40,13 @@ replacement local gate. Formal cycle 2 is **NOT GREEN** on exact candidate
 and 2 low deduplicated findings. Exact isolated production remediation
 component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
 `490f628caa20449c3db96069b34356b0117b7ae4`, retains the rootless host shape and
-implements the corrected native boundary below. This cycle-2 remediation
-record makes no replacement-gate or green-review claim. A formal candidate is identified only
-by its exact-SHA review results; this pre-review record deliberately does not
-predict that SHA. Remote workflows, integration, and delivery are not claimed
-under [`web-fetch.md`](web-fetch.md).
+implements the corrected native boundary below. Exact composed cycle-2
+remediation precursor `1a78f6437eb17f646bdd11337464c949beea49f0`, tree
+`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, workflow, integration, or delivery claim;
+formal candidates are identified only by exact-SHA review results. The full
+record is in [`web-fetch.md`](web-fetch.md).
 The delivered count remains twenty-six and this is not a performance or
 fx-equivalence claim.
 
