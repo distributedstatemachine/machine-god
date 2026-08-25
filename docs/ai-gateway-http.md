@@ -24,10 +24,14 @@ does not construct this transport or its required runtime.
 
 ## Feature and public API
 
-The implementation is opt-in through the `machine-god-native` Cargo feature
-`ai-gateway-http`. The feature and all of its exports are cfg-gated off on
-WebAssembly; there is no WASM HTTP implementation. The base crate and custom
-injected transports do not require Reqwest or Tokio.
+The generation implementation is opt-in through the `machine-god-native`
+Cargo feature `ai-gateway-http`. That compatibility feature includes both the
+narrower `ai-gateway-model-catalog-http` feature and `web-fetch-http`,
+preserving its delivered generation/reference-host behavior. The generation
+transport exports remain `ai-gateway-http`-only. Both HTTP features and all of
+their concrete exports are cfg-gated off on WebAssembly; there is no WASM HTTP
+implementation. The base crate and custom injected transports do not require
+Reqwest or Tokio.
 
 `NativeTransportKind::AiGatewayHttp` and its stable `ai_gateway_http` name are
 not cfg-gated with this optional implementation. They remain valid declarative
@@ -51,11 +55,10 @@ The feature exposes these construction surfaces:
   limits, while `with_endpoint_and_limits` accepts an already validated
   endpoint and limits.
 
-The separate
-[`native credential discovery`](ai-gateway-credentials.md) is gated
-the same way and can supply the explicit `AiGatewayBearerToken`. Discovery is
-not part of the transport and does not run during transport construction or a
-request.
+The separate [`native credential discovery`](ai-gateway-credentials.md) and
+shared bearer/error surface are available under either native HTTP feature.
+They can supply the explicit `AiGatewayBearerToken`. Discovery is not part of
+either transport and does not run during transport construction or a request.
 
 Construction returns fixed `AiGatewayHttpConfigError` categories:
 `InvalidBearerToken`, `InvalidEndpoint`, `InvalidLimits`, or
@@ -249,8 +252,8 @@ abort-on-panic release profile may terminate that host process.
 ## Separate model-catalog HTTP transport
 
 The locally composed `models [--json]` path uses a separate GET transport; it
-does not change the POST generation transport above. Under the same non-WASM
-`ai-gateway-http` gate, native publicly exports
+does not change the POST generation transport above. Under the dedicated non-WASM
+`ai-gateway-model-catalog-http` gate, native publicly exports
 `AiGatewayModelCatalogHttpTransport`, `AiGatewayModelCatalogHttpEndpoint`,
 `AiGatewayModelCatalogHttpLimits`, fixed construction error kinds, and their
 endpoint/time/capacity/chunk constants. `new` takes an optional validated
@@ -259,6 +262,13 @@ endpoint/time/capacity/chunk constants. `new` takes an optional validated
 values. The only alternate endpoint is the same strict class of canonical
 numeric-loopback HTTP test URL; it is not reachable from CLI, config, or
 environment endpoint input.
+
+The CLI enables only `ai-gateway-model-catalog-http`. Its resolved native
+feature graph contains the shared bearer/TLS and catalog HTTP dependencies but
+does not activate `web-fetch-http`, Hickory DNS, or Moka. Existing consumers of
+`ai-gateway-http` retain both the catalog feature and `web-fetch-http`; this is
+a feature-topology refinement, not a generation-transport behavior change or a
+performance claim.
 
 Catalog production sends one bodyless HTTP/1.1 GET to
 `https://ai-gateway.vercel.sh/coding-agent/v1/models`. Its application-selected

@@ -12,6 +12,14 @@ SHA2_WEB_FETCH_ONLY_NATIVE_CFG = (
     'cfg(all(not(target_family = "wasm"), '
     'not(any(target_os = "linux", target_os = "macos"))))'
 )
+MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
+    "bytes",
+    "hyper",
+    "reqwest",
+    "rustls",
+    "tokio",
+    "webpki-root-certs",
+}
 
 
 class NativeManifestTests(unittest.TestCase):
@@ -132,6 +140,79 @@ class NativeManifestTests(unittest.TestCase):
                 "sha2",
                 direct_dependencies("wasm32-wasip1", *feature_arguments),
             )
+
+    def test_model_catalog_http_feature_omits_web_fetch_dependencies(self) -> None:
+        features = self.manifest["features"]
+        self.assertEqual(
+            set(features["ai-gateway-model-catalog-http"]),
+            {
+                f"dep:{dependency}"
+                for dependency in MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES
+            },
+        )
+        self.assertEqual(
+            set(features["ai-gateway-http"]),
+            {"ai-gateway-model-catalog-http", "web-fetch-http"},
+        )
+        self.assertNotIn(
+            "web-fetch-http", features["ai-gateway-model-catalog-http"]
+        )
+
+        cargo_tree_command = [
+            "cargo",
+            "tree",
+            "--locked",
+            "-p",
+            "machine-god-native",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+            "--no-default-features",
+            "--features",
+            "ai-gateway-model-catalog-http",
+        ]
+        completed = subprocess.run(
+            [*cargo_tree_command, "--depth", "1"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        direct_dependencies = {
+            line.split(maxsplit=1)[0]
+            for line in completed.stdout.splitlines()[1:]
+            if line
+        }
+        self.assertLessEqual(
+            MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES, direct_dependencies
+        )
+        self.assertTrue(
+            {"hickory-proto", "hickory-resolver"}.isdisjoint(direct_dependencies)
+        )
+
+        completed = subprocess.run(
+            cargo_tree_command,
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        resolved_dependencies = {
+            line.split(maxsplit=1)[0]
+            for line in completed.stdout.splitlines()[1:]
+            if line
+        }
+        self.assertTrue(
+            {
+                "hickory-net",
+                "hickory-proto",
+                "hickory-resolver",
+                "moka",
+            }.isdisjoint(resolved_dependencies)
+        )
 
 
 if __name__ == "__main__":

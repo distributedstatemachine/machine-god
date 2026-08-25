@@ -7,12 +7,23 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod ai_gateway;
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(
+    any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
+    not(target_family = "wasm")
+))]
 mod ai_gateway_credential;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod ai_gateway_http;
+#[cfg(all(
+    any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
+    not(target_family = "wasm")
+))]
+mod ai_gateway_http_shared;
 mod ai_gateway_model_catalog;
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(
+    any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
+    not(target_family = "wasm")
+))]
 mod ai_gateway_model_catalog_http;
 mod ask_permission;
 mod config;
@@ -50,7 +61,10 @@ pub use ai_gateway::{
     AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind, AiGatewayHeader,
     AiGatewayLimits, AiGatewayProvider, AiGatewayTransport, AiGatewayTransportRequest,
 };
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(
+    any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
+    not(target_family = "wasm")
+))]
 pub use ai_gateway_credential::{
     AI_GATEWAY_API_KEY_ENV, AiGatewayCredentialEnvironment, AiGatewayCredentialError,
     AiGatewayCredentialErrorKind, AiGatewayCredentialSource, DiscoveredAiGatewayCatalogCredential,
@@ -63,11 +77,17 @@ pub use ai_gateway_http::{
     AI_GATEWAY_HTTP_DEFAULT_CONNECT_TIMEOUT, AI_GATEWAY_HTTP_DEFAULT_ENDPOINT,
     AI_GATEWAY_HTTP_DEFAULT_MAX_ACTIVE_REQUESTS, AI_GATEWAY_HTTP_DEFAULT_REQUEST_TIMEOUT,
     AI_GATEWAY_HTTP_DEFAULT_RESPONSE_CHUNK_BYTES, AI_GATEWAY_HTTP_MAX_ACTIVE_REQUESTS,
-    AI_GATEWAY_HTTP_MAX_BEARER_TOKEN_BYTES, AI_GATEWAY_HTTP_MAX_CONNECT_TIMEOUT,
-    AI_GATEWAY_HTTP_MAX_ENDPOINT_BYTES, AI_GATEWAY_HTTP_MAX_REQUEST_TIMEOUT,
-    AI_GATEWAY_HTTP_MAX_RESPONSE_CHUNK_BYTES, AiGatewayBearerToken, AiGatewayHttpConfigError,
-    AiGatewayHttpConfigErrorKind, AiGatewayHttpEndpoint, AiGatewayHttpLimits,
-    AiGatewayHttpTransport,
+    AI_GATEWAY_HTTP_MAX_CONNECT_TIMEOUT, AI_GATEWAY_HTTP_MAX_ENDPOINT_BYTES,
+    AI_GATEWAY_HTTP_MAX_REQUEST_TIMEOUT, AI_GATEWAY_HTTP_MAX_RESPONSE_CHUNK_BYTES,
+    AiGatewayHttpEndpoint, AiGatewayHttpLimits, AiGatewayHttpTransport,
+};
+#[cfg(all(
+    any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
+    not(target_family = "wasm")
+))]
+pub use ai_gateway_http_shared::{
+    AI_GATEWAY_HTTP_MAX_BEARER_TOKEN_BYTES, AiGatewayBearerToken, AiGatewayHttpConfigError,
+    AiGatewayHttpConfigErrorKind,
 };
 pub use ai_gateway_model_catalog::{
     AI_GATEWAY_MODEL_CATALOG_MAX_BODY_BYTES, AI_GATEWAY_MODEL_CATALOG_MAX_JSON_DEPTH,
@@ -79,7 +99,10 @@ pub use ai_gateway_model_catalog::{
     AiGatewayModelCatalogTransportError, AiGatewayModelCatalogTransportErrorKind,
     AiGatewayModelCatalogTransportResponse,
 };
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(
+    any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
+    not(target_family = "wasm")
+))]
 pub use ai_gateway_model_catalog_http::{
     AI_GATEWAY_MODEL_CATALOG_HTTP_DEFAULT_CONNECT_TIMEOUT,
     AI_GATEWAY_MODEL_CATALOG_HTTP_DEFAULT_ENDPOINT,

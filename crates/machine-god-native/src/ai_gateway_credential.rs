@@ -7,7 +7,7 @@ use std::fmt;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
 
-use crate::ai_gateway_http::AiGatewayBearerToken;
+use crate::ai_gateway_http_shared::AiGatewayBearerToken;
 
 /// Environment variable containing Vercel's preferred OIDC credential.
 pub const VERCEL_OIDC_TOKEN_ENV: &str = "VERCEL_OIDC_TOKEN";

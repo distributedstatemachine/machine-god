@@ -310,7 +310,11 @@ The catalog path is an adjacent implementation, not a mode of
 fallback, response parser, bounds, and ordering; core owns only catalog types
 and a trait; the CLI owns runtime composition and output. Catalog credentials
 may be absent for anonymous listing without changing this generation codec's
-required authenticated host composition.
+required authenticated host composition. The CLI selects the dedicated
+non-WASM `ai-gateway-model-catalog-http` feature, which omits the unrelated
+`web-fetch-http`, Hickory DNS, and Moka graph. The broader
+`ai-gateway-http` feature still includes both catalog HTTP and web fetch, and
+the generation transport remains exported only through that broader feature.
 
 It also adds no compatibility or performance evidence. The pinned fx checkout
 and Zig toolchain remain benchmark-only inputs and are not Rust product runtime

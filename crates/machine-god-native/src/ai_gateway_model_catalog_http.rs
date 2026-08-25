@@ -6,7 +6,7 @@
 //! the first frame that would exceed the retained cap is rejected without
 //! appending any of its bytes.
 
-use crate::ai_gateway_http::{authorization_value, root_certificates};
+use crate::ai_gateway_http_shared::{authorization_value, root_certificates};
 use crate::{
     AI_GATEWAY_MODEL_CATALOG_MAX_BODY_BYTES, AiGatewayBearerToken,
     AiGatewayModelCatalogRequestAccess, AiGatewayModelCatalogTransport,

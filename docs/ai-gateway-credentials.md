@@ -21,12 +21,22 @@ snapshot constructor or process convenience function.
 
 ## Feature and public boundary
 
-The API is available only under the same native gate as the existing HTTP
-transport:
+The API is available under either non-WASM native HTTP gate:
 
 ```text
-all(feature = "ai-gateway-http", not(target_family = "wasm"))
+all(
+    any(
+        feature = "ai-gateway-http",
+        feature = "ai-gateway-model-catalog-http"
+    ),
+    not(target_family = "wasm")
+)
 ```
+
+The narrower catalog feature exposes the shared bearer/error and credential
+surface without enabling generation transport exports, `web-fetch-http`,
+Hickory DNS, or Moka. The existing `ai-gateway-http` feature includes the
+catalog and web-fetch features and preserves its prior public behavior.
 
 The public construction and discovery surface is:
 

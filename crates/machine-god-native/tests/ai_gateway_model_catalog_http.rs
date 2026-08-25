@@ -1,4 +1,7 @@
-#![cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#![cfg(all(
+    any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
+    not(target_family = "wasm")
+))]
 
 use std::future::Future;
 use std::io::{self, Read, Write};

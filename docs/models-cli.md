@@ -10,6 +10,13 @@ precedence remediation is component
 `52e9b7d74f3979f7f7f55387243e96bd78773fe3`. Independent native evidence is
 present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`: 35 focused tests split
 across 14 provider/parser, 15 loopback HTTP, and 6 credential cases. The
+local feature-topology refinement gives catalog HTTP its own optional non-WASM
+`ai-gateway-model-catalog-http` gate. The CLI enables only that gate; it does
+not activate `web-fetch-http`, Hickory DNS, or Moka. The existing
+`ai-gateway-http` feature still includes both catalog HTTP and `web-fetch-http`
+for backward-compatible generation/reference-host builds. This refinement is
+still pending the complete exact-toolchain candidate gate, fresh review, and
+remote CI together with the rest of the slice. The
 complete local candidate gate, three fresh adversarial reviews, feature/main
 integration, and delivery all remain pending; no candidate is green. The
 pinned comparison input remains fx commit
@@ -224,13 +231,16 @@ The implemented native catalog module publicly exports the fixed provider
 name, all catalog resource constants, `AiGatewayModelCatalogAccessMode`,
 `AiGatewayModelCatalogRequestAccess`, the injected
 `AiGatewayModelCatalogTransport` trait and its fixed response/error types, and
-`AiGatewayModelCatalogProvider`. The optional non-WASM `ai-gateway-http`
-surface additionally exports `AiGatewayModelCatalogHttpEndpoint`,
+`AiGatewayModelCatalogProvider`. The optional non-WASM
+`ai-gateway-model-catalog-http` surface additionally exports
+`AiGatewayModelCatalogHttpEndpoint`,
 `AiGatewayModelCatalogHttpLimits`, `AiGatewayModelCatalogHttpTransport`, their
 fixed construction error, and the endpoint/time/capacity/chunk constants.
 `AiGatewayModelCatalogHttpTransport::new` selects production/default limits;
 `with_endpoint_and_limits` accepts only a validated production or numeric-
-loopback endpoint and validated limits. Construction performs no request;
+loopback endpoint and validated limits. The broader `ai-gateway-http` feature
+includes this catalog feature and the separate `web-fetch-http` feature, while
+the CLI selects only the catalog feature. Construction performs no request;
 polling `get` requires a current Tokio runtime with I/O and time enabled.
 
 ## Time, concurrency, body, and JSON bounds

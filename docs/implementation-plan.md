@@ -2844,6 +2844,14 @@ precedence remediation is `52e9b7d74f3979f7f7f55387243e96bd78773fe3`.
 Independent native evidence `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`
 contains 35 focused tests (14 provider/parser, 15 loopback HTTP, and 6
 credential), sourced independently from `219f6a71a766e9b833a98f236cfbc3aaff292cd5`.
+The local feature-topology refinement adds the dedicated non-WASM
+`ai-gateway-model-catalog-http` gate and makes the CLI select it without
+activating `web-fetch-http`, Hickory DNS, or Moka. The existing
+`ai-gateway-http` feature still includes catalog HTTP plus `web-fetch-http`, so
+its delivered generation/reference-host behavior is preserved. This local
+refinement remains pending the complete candidate gate, fresh adversarial
+review, exact feature workflows, fast-forward integration, and exact `main`
+workflows; it makes no product-performance claim.
 The complete local candidate gate, adversarial results, workflow, integration,
 and delivery remain pending; no candidate is green.
 

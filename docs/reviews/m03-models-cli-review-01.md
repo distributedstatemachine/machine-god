@@ -23,6 +23,38 @@ does not substitute for the complete workspace/candidate gate. This ledger
 does not claim that complete gate, an adversarial result, feature CI, benchmark,
 integration, delivery, performance, compatibility promotion, or fx equivalence.
 
+A local feature-topology refinement is also present but is not yet a gated
+candidate. It adds native `ai-gateway-model-catalog-http`, makes the CLI enable
+only that feature, and retains `ai-gateway-http` as the compatibility umbrella
+for catalog HTTP plus `web-fetch-http`. Parsed-manifest and resolved-tree
+evidence must prove the narrow feature's required direct dependencies and the
+absence of `web-fetch-http`, Hickory DNS, and Moka before review. Generation
+transport/reference-host exports remain broader-feature-only, while shared
+credential/bearer/TLS and catalog HTTP exports are available under either
+native HTTP feature.
+
+Refinement-focused local evidence under exact Rust and Cargo 1.94.1 is green:
+the parsed-manifest/resolved-tree suite passes 3/3; native default, catalog-
+only, compatibility-umbrella, and all-feature checks compile; the catalog-only
+provider/parser, credential, and loopback HTTP suites pass 14/14, 6/6, and
+15/15; and the existing compatibility-umbrella library plus generation HTTP
+and credential suites pass 286/286, 20/20, 8/8, 2/2, and 3/3. Workspace all-
+target/all-feature warnings-denied Clippy is green. Default and catalog-only
+WASI Preview 1 checks both compile with the same established `read_file`
+dead-code warning, so the narrower feature adds no WASM diagnostic.
+
+The resolved CLI package-name inventory drops from 137 on exact precursor
+`6431abf43d0407098672307b0a4c028bd0845e3c` to 104 in this refinement and
+contains no `hickory-proto`, `hickory-resolver`, `hickory-net`, or `moka`.
+An isolated locked release build is 3,635,536 bytes with SHA-256
+`f1ba8bec91803de9bb79649836c61cc1263c319e72d644d3ee1fdaf8650293d9`; the
+separately built exact precursor is 3,635,520 bytes with SHA-256
+`21e8a922b3aa5280a12859ec22ff01db289092cad290f54a73fd60f835b4f7a9`.
+These package, size, and hash values are regression/topology evidence only,
+not a speed, memory, binary-size improvement, product-performance, or delivery
+claim. The complete slice gate, three fresh adversarial reviews, feature CI,
+integration, and exact `main` CI remain pending.
+
 ## Bounded ownership
 
 The feature must remain split across isolated, non-overlapping components:

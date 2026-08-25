@@ -10,13 +10,16 @@ publish.workspace = true
 [features]
 default = []
 ai-gateway-http = [
+    "ai-gateway-model-catalog-http",
+    "web-fetch-http",
+]
+ai-gateway-model-catalog-http = [
     "dep:bytes",
     "dep:hyper",
     "dep:reqwest",
     "dep:rustls",
     "dep:tokio",
     "dep:webpki-root-certs",
-    "web-fetch-http",
 ]
 web-fetch-http = [
     "dep:hickory-proto",

@@ -25,6 +25,15 @@ candidate gate, adversarial review, integration, and delivery remain pending;
 no candidate is green. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
+Catalog HTTP now has a dedicated non-WASM
+`ai-gateway-model-catalog-http` feature. The CLI enables only this narrower
+surface, so listing models does not activate `web-fetch-http`, Hickory DNS, or
+Moka authority. Shared bearer validation, credential discovery, pinned TLS
+roots, and catalog GET exports are available under either native HTTP feature;
+the generation transport and reference host remain `ai-gateway-http`-only.
+The existing broader feature includes both catalog HTTP and web fetch, so its
+delivered behavior and public generation surface remain available.
+
 The delivered twenty-eighth [`permissions` CLI slice](permissions-cli.md)
 preserves that split: after strict argument parsing, the thin host invokes only
 the existing byte-bounded read-only configuration loader, exactly once, and
