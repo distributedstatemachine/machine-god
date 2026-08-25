@@ -220,6 +220,24 @@ matrix, Node, policy-evidence, documentation/link, diff/unsafe, locked-release,
 and five-smoke checks are green. This gate record makes no formal-review
 outcome, candidate, workflow, integration, delivery, performance, or fx-
 equivalence claim; reviewer reports identify the exact candidate they reviewed.
+Formal cycle 8 is **NOT GREEN** on exact candidate
+`be418af26317da8fa5de77c45c926311475d7ff6`, tree
+`4c0d054ef1a5231d4347524bb99a7bb93eceda67`. Correctness/API and network/HTTP
+lifecycle each reported 0 blocker, 0 high, 1 medium, and 0 low findings;
+performance/concurrency reported zero findings at every severity. The
+deduplicated union is 0 blocker, 0 high, 2 medium, and 0 low, so the exact
+candidate is rejected. A valid truncated UDP reply with a partial resource-
+record tail could fail strict full decoding before TCP replay, while a
+structurally parseable truncated reply with an invalid response tuple could
+construct bounded replay before validation. Exact root remediation
+`9d3a6ece0cb5a997203b9c63174e0212ce411059`, tree
+`fd65684e526b955c4d8c6f922fd6a162e3cfb39a`, validates the capped leading UDP
+header and question before truncation replay while retaining strict full decode
+for non-truncated UDP and TCP. Tree-identical isolated remediation
+`38a36725559fe962e6f649e07cc5de154c940257` records the same correction and
+deterministic evidence. This remediation record makes no replacement-gate,
+formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2288,6 +2306,39 @@ exact smokes pass, and status does not create missing XDG roots. This gate
 record makes no formal-review outcome, candidate, workflow, integration,
 delivery, performance, or fx-equivalence claim; reviewer reports identify the
 exact candidate they reviewed.
+Formal cycle 8 rejected exact candidate
+`be418af26317da8fa5de77c45c926311475d7ff6`, tree
+`4c0d054ef1a5231d4347524bb99a7bb93eceda67`. Correctness/API reported
+0/0/1/0; network/HTTP lifecycle reported 0/0/1/0; performance/concurrency was
+green at 0/0/0/0. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+0 low, so the exact candidate is rejected. The correctness finding is that a
+valid `TC=1` UDP response with a partial resource-record wire tail failed the
+strict full decoder or its section-count-implied minimum-length check before
+the implementation could replay over TCP. The lifecycle finding is that a
+structurally parseable `TC=1` UDP response with the wrong ID, QR bit, opcode,
+RCODE, question name or type, or class could construct bounded TCP replay
+before validation. Candidate-focused evidence passed 31 private, 15 direct,
+14 production HTTP, and six engine tests plus the parsed-manifest test 1/1.
+The exact bounded admission, deadline, cancellation, and stress evidence was
+green in the zero-finding performance track.
+Exact root remediation `9d3a6ece0cb5a997203b9c63174e0212ce411059`, tree
+`fd65684e526b955c4d8c6f922fd6a162e3cfb39a`, and tree-identical isolated
+remediation `38a36725559fe962e6f649e07cc5de154c940257` retain at most 4,096 raw UDP
+bytes and use capped `Header::read` plus `Query::read` parsing to validate the
+expected response tuple and question before honoring truncation. A validated
+partial truncated reply may ignore an incomplete resource-record tail, cross a
+fresh authority boundary, and lazily perform one bounded same-nameserver TCP
+replay. Non-truncated UDP and all TCP replies retain strict full decoding; a
+still-truncated TCP reply is rejected. Deterministic evidence proves exactly
+one replay for a valid partial truncated reply and zero replay for mismatched,
+malformed, cap-breaching, non-truncated, or boundary-rejected replies.
+Source checks passed under exact Rust and Cargo 1.94.1: 34 private, 15 direct,
+14 production HTTP, and six engine tests; formatting; workspace all-target/
+all-feature warnings-denied Clippy; the complete native all-target/all-feature
+run; workspace tests and doctests; a locked release build and help smoke; and
+clean diff checks. This remediation record makes no replacement-gate, formal-
+review outcome, candidate, workflow, integration, delivery, performance, or
+fx-equivalence claim.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3146,6 +3197,23 @@ gate:
   record makes no formal-review outcome, candidate, workflow, integration,
   delivery, performance, or fx-equivalence claim; reviewer reports identify
   the exact candidate they reviewed.
+  Formal cycle 8 rejected exact candidate
+  `be418af26317da8fa5de77c45c926311475d7ff6`, tree
+  `4c0d054ef1a5231d4347524bb99a7bb93eceda67`. Correctness/API and lifecycle
+  each reported 0/0/1/0; performance was green at 0/0/0/0. The deduplicated
+  union is 0 blocker, 0 high, 2 medium, and 0 low. Valid partial truncated UDP
+  replies could fail strict decode before replay, while invalid but parseable
+  truncated replies could construct TCP replay before response validation.
+  Exact root remediation `9d3a6ece0cb5a997203b9c63174e0212ce411059`, tree
+  `fd65684e526b955c4d8c6f922fd6a162e3cfb39a`, and tree-identical isolated
+  remediation `38a36725559fe962e6f649e07cc5de154c940257` add capped leading response-
+  tuple validation before one lazy replay, keep non-truncated UDP and TCP
+  strict, and add deterministic replay-count and boundary evidence.
+  Exact-1.94.1 focused 34/15/14/6, formatting, full workspace Clippy, native
+  all-target/all-feature, workspace tests/doctests, locked release/help, and
+  diff checks are green. This remediation record makes no replacement-gate,
+  formal-review outcome, candidate, workflow, integration, delivery,
+  performance, or fx-equivalence claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

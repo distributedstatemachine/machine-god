@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 7 REJECTED**
+Status: **IN PROGRESS — CYCLE 8 REJECTED**
 
 ## Base and boundary
 
@@ -118,6 +118,17 @@ local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, candidate, workflow, integration, delivery,
 performance, or fx-equivalence claim; reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 8 rejected exact candidate
+`be418af26317da8fa5de77c45c926311475d7ff6`, tree
+`4c0d054ef1a5231d4347524bb99a7bb93eceda67`, with a deduplicated union of
+0 blocker, 0 high, 2 medium, and 0 low. Exact root remediation
+`9d3a6ece0cb5a997203b9c63174e0212ce411059`, tree
+`fd65684e526b955c4d8c6f922fd6a162e3cfb39a`, validates a capped leading DNS
+response tuple before truncated-UDP replay. Tree-identical isolated remediation
+`38a36725559fe962e6f649e07cc5de154c940257` records the same correction and
+deterministic evidence. This remediation record makes no replacement-gate,
+formal-review outcome, candidate, workflow, integration, delivery,
+compatibility, product-performance, or fx-equivalence claim.
 
 ## Frozen candidate boundary
 
@@ -1168,6 +1179,77 @@ This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
 
+## Formal cycle 8 — not green
+
+Three fresh agents independently inspected exact candidate
+`be418af26317da8fa5de77c45c926311475d7ff6`, tree
+`4c0d054ef1a5231d4347524bb99a7bb93eceda67`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 8 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 1 medium, 0 low**.
+
+- **Medium — valid partial truncated UDP replies fail before replay:** a valid
+  `TC=1` reply whose resource-record wire tail was incomplete failed either the
+  strict full-message decoder or its section-count-implied minimum-length check
+  before the implementation reached bounded TCP replay.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 1 medium, 0 low**.
+
+- **Medium — invalid truncated replies can construct replay before
+  validation:** a structurally parseable `TC=1` reply with a wrong ID, QR bit,
+  opcode, RCODE, question name or type, or class could construct bounded TCP
+  replay before those response fields were validated.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-8 candidate; its bounded admission, deadline, cancellation, and
+deterministic stress evidence reported no finding.
+
+Candidate-focused evidence passed 31/31 private, 15/15 direct, 14/14
+production HTTP, and 6/6 engine tests plus the parsed-manifest test 1/1.
+
+### Consolidated union and disposition
+
+Cycle 8 has **0 blocker, 0 high, 2 medium, and 0 low** deduplicated findings.
+Exact candidate `be418af26317da8fa5de77c45c926311475d7ff6`, tree
+`4c0d054ef1a5231d4347524bb99a7bb93eceda67`, is rejected and must never be used
+as delivery evidence.
+
+The replacement must retain the raw bounded UDP message, validate the response
+header and complete expected question before treating truncation as replay
+authority, and accept a validated partial resource-record tail only for the
+truncated-UDP path. Non-truncated UDP and all TCP responses must remain strict
+full decodes, and a truncated TCP response must be rejected.
+
+Exact root remediation `9d3a6ece0cb5a997203b9c63174e0212ce411059`, tree
+`fd65684e526b955c4d8c6f922fd6a162e3cfb39a`, implements that boundary. Exact
+isolated remediation `38a36725559fe962e6f649e07cc5de154c940257` has the same
+tree. UDP receive retains at most 4,096 raw bytes. Capped `Header::read` and
+`Query::read` parsing validates the expected response tuple and question before
+honoring `TC=1`. A validated truncated reply may ignore an incomplete resource-
+record tail, cross a fresh cancellation/deadline authority boundary, and
+lazily perform one bounded same-nameserver TCP replay. Non-truncated UDP and
+all TCP responses still require strict full decoding; a still-truncated TCP
+response is rejected.
+
+Deterministic evidence proves one replay for a valid partial truncated reply
+and zero replay for mismatched, malformed, cap-breaching, non-truncated, and
+authority-boundary-rejected replies. It also proves rejection of a still-
+truncated TCP response. Exact Rust and Cargo 1.94.1 source checks passed 34/34
+private, 15/15 direct, 14/14 production HTTP, and 6/6 engine tests; formatting;
+workspace all-target/all-feature warnings-denied Clippy; the complete native
+all-target/all-feature run; workspace tests and doctests; a locked release
+build and help smoke; and clean diff checks.
+
+This remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -1216,8 +1298,18 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: formal cycles 1, 2, 3, 4, 5, 6, and 7 are **NOT GREEN** on their
-exact recorded SHA/tree pairs. Exact cycle-7 candidate
+Current state: formal cycles 1, 2, 3, 4, 5, 6, 7, and 8 are **NOT GREEN** on
+their exact recorded SHA/tree pairs. Exact cycle-8 candidate
+`be418af26317da8fa5de77c45c926311475d7ff6`, tree
+`4c0d054ef1a5231d4347524bb99a7bb93eceda67`, is rejected with a deduplicated
+union of 0 blocker, 0 high, 2 medium, and 0 low. Exact root remediation
+`9d3a6ece0cb5a997203b9c63174e0212ce411059`, tree
+`fd65684e526b955c4d8c6f922fd6a162e3cfb39a`, and tree-identical isolated
+remediation `38a36725559fe962e6f649e07cc5de154c940257` validate the bounded leading
+UDP response tuple before truncated replay while preserving strict non-
+truncated and TCP decoding. This remediation record makes no replacement-gate,
+formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim. Exact cycle-7 candidate
 `47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
 `cc28286fa9bb8ac25cf05c2606a8cf9682872a52`, is rejected with a deduplicated
 union of 0 blocker, 0 high, 1 medium, and 0 low. Exact root remediation
