@@ -11,14 +11,24 @@ The candidate starts from exact delivered base
 The upstream behavior was inspected to understand its tool surface; the
 deliberate differences and deferrals below are normative. Production source,
 independently owned direct/engine/production-boundary evidence, core network
-serde evidence, and thirteen-tool reference-host composition are present and
-focused-green. Exact gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
-tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local
+serde evidence, and thirteen-tool reference-host composition are present.
+Pre-review gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
+tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local
 Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
-binary gate. Native Linux HTTP compilation remains an exact-CI requirement
-because the macOS cross-host lacks the target C sysroot. Formal reviews,
-feature workflows, integration, and exact `main` workflows remain pending.
-Milestone 03 therefore remains in progress with twenty-six delivered slices.
+binary gate. Formal cycle 1 rejected exact candidate
+`3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
+`1378b02e92973ab15fbf4623138a643b70057f33`. The complete per-track finding
+inventory is in the [`review ledger`](reviews/m03-web-fetch-review-01.md).
+Isolated production remediation component
+`0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
+`d96c13c853424325a688631dfea25c504bb62250`, and evidence tip
+`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
+`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
+the complete replacement gate, three fresh same-SHA reviews, feature workflows,
+integration, and exact `main` workflows remain pending.
+Native Linux HTTP compilation remains an exact-CI requirement because the
+macOS cross-host lacks the target C sysroot. Milestone 03 therefore remains in
+progress with twenty-six delivered slices.
 
 ## Scope and feature boundary
 
@@ -61,11 +71,13 @@ than stripped.
 
 The canonical host must be either a syntactically valid multi-label public DNS
 name or a strict public IP literal. Single-label DNS names, empty labels,
-ambiguous numeric forms, and private, reserved, mapped, or otherwise non-public
-IP literals are not eligible. URL parsing and lexical host checks happen during
-preparation; DNS admission for names happens during allowed execution. A
-syntactically eligible name is not a promise that its later DNS answers will be
-accepted.
+special-use names including `.alt`, ambiguous numeric forms including a
+trailing-dot IPv4 literal, and private, reserved, mapped, or otherwise
+non-public IP literals are not eligible. A trailing root dot on an otherwise
+eligible DNS name is removed, but it never makes a numeric spelling eligible.
+URL parsing and lexical host checks happen during preparation; DNS admission
+for names happens during allowed execution. A syntactically eligible name is
+not a promise that its later DNS answers will be accepted.
 
 Preparation returns the canonical URL as the exact execution input and this
 provider-neutral policy capability:
@@ -81,7 +93,8 @@ provider-neutral policy capability:
 }
 ```
 
-An omitted HTTPS port means 443; an accepted explicit port is preserved in the
+An omitted or explicit default HTTPS port means 443 and is canonicalized to no
+port field. Only an accepted explicit non-default port is preserved in the
 canonical URL and `NetworkTarget`. Core presents that exact
 `Capability::Network` with its existing `Critical` risk. The default policy
 path remains `Ask`: this slice adds no default-safe network admission, grant
@@ -92,19 +105,44 @@ no network effect.
 
 ## DNS and destination confinement
 
-Allowed execution resolves the authorized host for every invocation. Resolution
-accepts at most 32 answers and fails closed unless every returned address is a
-public unicast destination. A mixed public/private answer set is rejected in
-full; filtering out only the private entries is not allowed. Loopback,
-link-local, private, carrier-grade NAT, documentation, benchmark, multicast,
-unspecified, and other non-public address classes are not valid destinations.
+After acquiring an active-request permit, allowed execution reads the host's
+system resolver configuration and selects its first UDP-configured nameserver.
+This synchronous native configuration read is part of execution, not
+effect-free preparation; it is repeated per invocation, sends no packet by
+itself, and fails as fixed unavailable when no usable entry exists. A literal
+IP destination requires no DNS query.
+
+For a hostname, the invocation sends one rooted Internet-class A query and then
+one rooted Internet-class AAAA query directly to that nameserver on owned Tokio
+UDP sockets. Each query ID comes from a synchronous platform-entropy call under
+the held permit; entropy failure is fixed unavailable and spawns or detaches no
+work. A truncated UDP answer permits exactly one TCP exchange of the same
+query; there is no other DNS retry, search-suffix expansion, cache, libc
+`getaddrinfo`, resolver thread, or spawned resolver task. A 4,097-byte UDP
+receive buffer supplies an explicit overflow witness and rejects any message
+over the 4 KiB inclusive cap. The TCP length prefix is rejected before body
+allocation when it exceeds 4 KiB, and a TCP response that still carries the
+truncated flag is invalid. Response ID, opcode, class, rooted query name,
+requested record type, and response code are validated. A response may contain
+at most one consistent rooted CNAME chain of eight names including the
+original; only requested-type, Internet-class addresses owned by its terminal
+name are admitted.
+
+The combined A/AAAA result accepts at most 32 addresses and fails closed unless
+every returned address is a public unicast destination. A mixed public/private
+answer set is rejected in full; filtering out only the private entries is not
+allowed. Loopback, link-local, private, carrier-grade NAT, documentation,
+benchmark, multicast, unspecified, and other non-public address classes are
+not valid destinations.
 
 The accepted answer set is pinned into the HTTP client connection attempt while
 the canonical hostname remains the HTTP `Host` and TLS server name. The request
 must not perform a second ambient resolution that could select an address
 outside the admitted set. DNS failure, more than 32 answers, an empty answer
 set, or any disallowed answer produces a fixed redacted failure before an HTTP
-request is sent.
+request is sent. The invocation's outer cancellation/deadline owner drops its
+UDP or TCP socket future promptly; no non-abortable libc lookup continues after
+that drop.
 
 ## HTTP exchange
 
@@ -115,6 +153,13 @@ no authorization, proxy authorization, cookie, referer, origin, request body,
 or model-selected header. Ambient and explicit proxies, cookie persistence,
 retries, backoff, HTTP/2, automatic redirects, and automatic decompression are
 disabled.
+
+The pinned `webpki-root-certs` dataset is built once process-wide into a Rustls
+client configuration with no client authentication, fixed HTTP/1.1 ALPN,
+ordinary certificate/hostname validation, SNI enabled, and key logging
+disabled. Each invocation clones that prepared configuration into a fresh
+Reqwest client after DNS admission; it does not rebuild or reparse the root
+dataset. The fresh client retains no idle pool after the invocation.
 
 Only a 2xx response is successful. Every 3xx response is rejected without
 following its `Location`; a caller may prepare and authorize a later invocation
@@ -137,6 +182,26 @@ capacity waiting, DNS, connect, request, response-head, and response-body work.
 Each connect attempt also has a 10-second bound. Neither bound resets on
 progress.
 
+Construction is runtime-independent, but polling the production transport has
+the same explicit host precondition as the delivered native AI Gateway HTTP
+transport: a current host-owned Tokio runtime with both I/O and time drivers
+enabled must remain driven through protocol and socket teardown. No current
+runtime handle returns fixed `RuntimeRequired`. Tokio exposes no stable safe
+query that proves both drivers are enabled, so polling on a current runtime
+that lacks either driver may panic; the repository's release panic policy can
+turn that host-precondition violation into process termination. This is a
+documented `# Panics` API boundary, not a typed runtime-detection guarantee.
+One cancellation waiter and one Tokio deadline sleep are allocated per
+invocation and reused across bounded permit, DNS, HTTP, and body waits;
+progress never allocates or resets a new deadline timer.
+
+`WebFetchTool::new` and `with_limits` apply this complete production envelope.
+The trusted `with_bounded_transport` seam applies the same active-request,
+total-deadline, rendering, and final-boundary ownership around an injected
+transport for deterministic evidence. The lower-level `with_transport` seam
+does not promise native time or concurrency bounds; its injected transport
+owns that behavior and may remain executor-neutral.
+
 A response body of exactly 24 KiB (24,576 bytes) is admissible. A declared
 larger body is rejected before reading it, and observing any byte beyond that
 inclusive limit while streaming yields the same fixed body-too-large failure.
@@ -149,13 +214,17 @@ classification, body handling, result construction, and terminal cleanup. It
 is released on every success, error, cancellation, timeout, or drop path. A
 pre-cancelled invocation sends no DNS query and no request. Cancellation wins
 at each pre-effect boundary and while permit, DNS, HTTP, or body work is
-pending.
+pending. Rendering is bounded synchronous work; one final cancellation/deadline
+boundary after serialized-result validation discards an otherwise successful
+output if cancellation or timeout became authoritative during rendering. The
+permit remains owned through that decision.
 
 `WebFetchTool` owns no machine-god worker thread, producer task, retry task, or
 background cleanup task. Dropping or cancelling its future drops the owned
 Reqwest request/response and permit. Reqwest/Hyper connection-dispatch cleanup
 may continue only on the host-owned Tokio runtime; this is not authority to
-keep a machine-god request worker alive or to retry the request.
+keep a machine-god request worker alive or to retry the request. The one
+invocation deadline sleep is owned by the future and is never detached.
 
 ## Content classification
 
@@ -179,7 +248,9 @@ bounded envelope then includes:
 
 - the canonical URL with its query removed or fully redacted;
 - numeric 2xx status;
-- normalized MIME type, or a fixed value indicating that it was absent;
+- normalized effective MIME type: the declared normalized value, inferred
+  `text/plain` for safe UTF-8 without a declaration, or inferred
+  `application/octet-stream` for undeclared binary content;
 - content kind (`text`, `html`, or `binary`); and
 - `cache_hit: false`.
 
@@ -228,8 +299,16 @@ exact-SHA workflows, fast-forward `main` without force, and run exact `main`
 workflows. The live record is
 [`m03-web-fetch-review-01.md`](reviews/m03-web-fetch-review-01.md).
 
-The composed source at exact record
+The composed source at exact pre-review record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
-`5742e4084272120a4531e0d59f0199a5873f39d1`, passes that local gate. The next
-documentation commit freezes the formal-review candidate without changing
-product behavior.
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passed that local gate. Formal
+cycle 1 nevertheless rejected exact candidate
+`3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
+`1378b02e92973ab15fbf4623138a643b70057f33`. This contract correction records
+the review findings. Isolated production remediation is
+`0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
+`d96c13c853424325a688631dfea25c504bb62250`. Evidence tip
+`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
+`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, is focused-green. Documentation
+composition, a complete replacement gate, and three fresh same-SHA reviews are
+pending.

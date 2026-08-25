@@ -12,15 +12,38 @@ proxy, cookie, or referer, and emits bounded output prefixed as
 upstream-untrusted. One approved
 target cannot authorize a redirected host; all network authority remains
 `Critical` and uses the default `Ask` path. Caching, artifacts, authenticated or
-private targets, compression, and redirect following are deferred. This
+private targets, compression, and redirect following are deferred. Production
+construction is runtime-independent, but polling requires a current host-owned
+Tokio runtime with I/O and time enabled. No current handle returns a fixed
+redacted error; a current driverless runtime violates the documented `# Panics`
+precondition and may terminate a release process. After permit acquisition,
+hostname resolution reads one system-configured UDP resolver and uses bounded
+invocation-owned Tokio A/AAAA sockets with at most one TCP truncation fallback
+per query. Synchronous platform entropy supplies query IDs under the held
+permit. A one-byte UDP overflow witness and preallocation TCP length check
+enforce a 4 KiB cap, and a still-truncated TCP answer is rejected. There is no
+libc lookup, resolver thread, cache, retry, or detached resolver task;
+cancellation/drop discards the owned sockets. The admitted public address set
+is pinned into a fresh HTTP/1 client backed by a process-wide cached Rustls
+configuration, so roots are not reparsed per invocation. This
 candidate starts from exact base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production and independent focused
-evidence are composed locally. Exact gate record
+evidence are composed locally. Pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
-`5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local gate,
-including dependency, cfg, WASI, and unsafe-code checks. Native Linux HTTP
-compilation remains an exact-CI requirement because the macOS cross-host lacks
-the target C sysroot. Reviews, integration, and delivery remain pending. M03
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local gate,
+including dependency, cfg, WASI, and unsafe-code checks. Formal cycle 1 is
+**NOT GREEN** on exact candidate
+`3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
+`1378b02e92973ab15fbf4623138a643b70057f33`, after fresh reviews found
+runtime/DNS lifetime defects plus contract and evidence gaps. Isolated
+production remediation component
+`0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
+`d96c13c853424325a688631dfea25c504bb62250`, and evidence tip
+`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
+`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
+the complete replacement gate, three fresh same-SHA reviews, integration, and
+delivery remain pending. Native Linux HTTP compilation remains an exact-CI
+requirement because the macOS cross-host lacks the target C sysroot. M03
 therefore remains in progress with twenty-six delivered slices.
 
 The first Milestone 03 native slice only snapshots config/state environment inputs

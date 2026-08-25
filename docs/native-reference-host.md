@@ -27,12 +27,32 @@ It owns no workspace descriptor, so the descriptor-backed set remains exactly
 twelve workspace tools using one original descriptor plus eleven clones. The
 candidate is non-WASM and cfg-gated by `web-fetch-http`, which is included by
 `ai-gateway-http`; it adds no CLI state or command. Production and independent
-focused evidence are composed and all seven exact host tests pass. Exact gate
-record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
-`5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local gate.
-Formal reviews, remote workflows, integration, and delivery remain pending
-under [`web-fetch.md`](web-fetch.md). The delivered count remains
-twenty-six and this is not a performance or fx-equivalence claim.
+focused evidence are composed and all seven exact host tests pass. Pre-review
+gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local gate.
+Formal cycle 1 is **NOT GREEN** on exact candidate
+`3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
+`1378b02e92973ab15fbf4623138a643b70057f33`. The rootless thirteen-tool host
+composition itself remains unchanged. Isolated production remediation
+component `0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
+`d96c13c853424325a688631dfea25c504bb62250`, and evidence tip
+`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
+`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
+the complete replacement gate, three fresh same-SHA reviews, remote workflows,
+integration, and delivery remain pending under
+[`web-fetch.md`](web-fetch.md).
+The delivered count remains twenty-six and this is not a performance or
+fx-equivalence claim.
+
+Reference-host construction supplies no runtime and performs no web request.
+Later production `web_fetch` polling requires a current host-owned Tokio
+runtime with I/O and time enabled. No current handle produces fixed
+`RuntimeRequired`; a current driverless runtime violates the documented
+`# Panics` precondition and may terminate a release process.
+The host supplies no resolver override: each admitted hostname invocation reads
+the host's first UDP-configured system nameserver, then owns its bounded direct
+DNS socket work. Literal public IPs skip DNS. No workspace descriptor is used
+for resolver configuration or network execution.
 The twenty-fourth, library-only `copy_file` slice is delivered. Cycle-3
 candidate `99ecdb3`, tree `145b3be`, is green with zero findings in all three
 fresh tracks. Seal `3bdd7cb` passed exact feature CI `32684856309`, feature

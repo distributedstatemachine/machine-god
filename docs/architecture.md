@@ -24,19 +24,39 @@ an async executor.
 Milestone 03 has twenty-six delivered bounded slices. The proposed
 twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production and independently owned
-direct, engine, production-boundary, core-contract, and host evidence are now
-composed locally. Exact gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
-tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passes the complete local
-Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
-binary gate. Native Linux HTTP evidence remains an exact-CI requirement because
-the macOS cross-host lacks the target C sysroot. Three fresh reviews, feature
-and `main` workflows, integration, and delivery remain pending. Its non-WASM
+direct, engine, production-boundary, core-contract, and host evidence are
+composed locally. Pre-review gate record
+`0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
+`5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
+1.94.1, integrity, dependency, baseline portability, WASI, and release-binary
+gate. Formal cycle 1 is **NOT GREEN** on exact candidate
+`3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
+`1378b02e92973ab15fbf4623138a643b70057f33`. Isolated production remediation
+component `0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
+`d96c13c853424325a688631dfea25c504bb62250`, and evidence tip
+`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
+`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
+the complete replacement gate, and three fresh same-SHA reviews remain pending.
+Native Linux HTTP evidence remains an exact-CI requirement
+because the macOS cross-host lacks the target C sysroot. Feature and `main`
+workflows, integration, and delivery remain pending. Its non-WASM
 `web-fetch-http` feature adds one rootless `WebFetchTool`;
 `ai-gateway-http` includes that feature. Core retains provider-neutral
 `Capability::Network` and orchestration, while native owns
-URL/DNS/Reqwest/Tokio effects. The candidate host has thirteen alphabetical
-tools, but its descriptor-backed workspace set remains twelve tools using one
-original descriptor plus eleven clones. The frozen boundary is
+URL/DNS/Reqwest/Tokio effects. Construction remains runtime-independent;
+polling production requires a current host-owned Tokio runtime with I/O and
+time enabled. No current handle is a typed `RuntimeRequired` failure, while a
+current driverless runtime violates the documented `# Panics` precondition and
+may terminate a release process. One outer bounded wrapper owns the active-call
+permit, cancellation future, and one reused deadline sleep through rendering
+and its final boundary. Native DNS reads a system-configured UDP resolver after
+admission and uses only invocation-owned Tokio A/AAAA sockets with bounded TCP
+fallback; it creates no libc lookup, cache, retry, resolver thread, or spawned
+task. A process-wide cached Rustls configuration supplies pinned roots and
+HTTP/1.1 ALPN to each fresh pinned Reqwest client without reparsing the roots.
+The candidate host has thirteen alphabetical tools, but its descriptor-backed
+workspace set remains twelve tools using one original descriptor plus eleven
+clones. The frozen boundary is
 [`web-fetch.md`](web-fetch.md); it adds no CLI, cache, artifact, compatibility,
 or product-performance claim. The twenty-third,
 library-only native `rename_file`, has composed production and independent

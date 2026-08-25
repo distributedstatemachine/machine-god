@@ -52,4 +52,4 @@
 - [Milestone 03 native `copy_file` delivery review](reviews/m03-copy-file-review-01.md)
 - [Milestone 03 native `create_folder` delivery review](reviews/m03-create-folder-review-01.md)
 - [Milestone 03 native `open_file` implementation review plan](reviews/m03-open-file-review-01.md)
-- [Milestone 03 native `web_fetch` review plan](reviews/m03-web-fetch-review-01.md)
+- [Milestone 03 native `web_fetch` review ledger](reviews/m03-web-fetch-review-01.md)
