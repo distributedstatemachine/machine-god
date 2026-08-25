@@ -67,6 +67,32 @@ cancellation wake, a cancelled result, and pending owned-work drop/release in
 bounded and raw seams without sleep or network. This remediation record makes no
 replacement-gate, formal-review, workflow, integration, or delivery claim;
 formal candidates are identified only by exact-SHA review results.
+Formal cycle 4 is **NOT GREEN** on exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
+green at 0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1
+medium, and 0 low. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+2 low, and the candidate is rejected. The corrected architecture stably
+deduplicates the admitted A/AAAA addresses in first-seen order before HTTP-
+client construction and places a truncated-DNS TCP replay under the configured
+connect timeout, cancellation, and any earlier overall deadline. Production
+and explicitly injected/custom reference-host composition paths each contain
+thirteen alphabetical tools; exactly twelve workspace-backed tools use the
+retained descriptor as one original plus eleven clones. Exact isolated
+production remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs` and implements the two network corrections. Exact isolated
+independent-evidence commit `408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs` and adds a deterministic same-poll authority regression;
+it makes no native-DNS proof. Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, or delivery claim; formal reviewer reports identify the exact
+candidate they reviewed.
 Native Linux HTTP evidence remains an exact-CI requirement
 because the macOS cross-host lacks the target C sysroot. Feature and `main`
 workflows are not claimed by the local gate. Its non-WASM `web-fetch-http`
@@ -97,9 +123,9 @@ pre-effect transition between A, AAAA, TCP replay, HTTP dispatch, and body
 work. A process-wide cached Rustls configuration
 supplies pinned roots and HTTP/1.1 ALPN to each fresh pinned Reqwest client
 without reparsing the roots.
-The candidate host has thirteen alphabetical tools, but its descriptor-backed
-workspace set remains twelve tools using one original descriptor plus eleven
-clones. The frozen boundary is
+Every production and explicitly injected/custom candidate host has thirteen
+alphabetical tools, but its descriptor-backed workspace set remains twelve
+tools using one original descriptor plus eleven clones. The frozen boundary is
 [`web-fetch.md`](web-fetch.md); it adds no CLI, cache, artifact, compatibility,
 or product-performance claim. The twenty-third,
 library-only native `rename_file`, has composed production and independent
@@ -854,8 +880,8 @@ identity-preserving clones. Its strict path-only preflight prepares dedicated
 existing regular-file descriptor without following a model-selected symlink.
 The fixed system launcher receives only `/usr/bin/xdg-open` and the parent-owned
 `/proc/<parent-pid>/fd/<retained-fd>` target, with fixed `/` working directory,
-null stdio, and no shell or `PATH` lookup by machine-god. The same twelve-tool
-catalog composes on macOS, where active `open_file` execution returns
+null stdio, and no shell or `PATH` lookup by machine-god. That delivered
+twelve-tool catalog composes on macOS, where active `open_file` execution returns
 unsupported before filesystem lookup, worker creation, or helper spawn. This is
 the delivered twelve-tool/eleven-clone host composition.
 

@@ -445,7 +445,32 @@ cancellation wake, a cancelled result, and pending owned-work drop/release for
 bounded and raw seams without sleep or network. This remediation record makes no
 replacement-gate, formal-review, workflow, integration, or delivery claim;
 formal candidates are identified only by exact-SHA review results. The
-delivered count remains twenty-six.
+delivered count remains twenty-six. Formal cycle 4 is **NOT GREEN** on exact
+candidate `af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
+green at 0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1
+medium, and 0 low. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+2 low, so the exact candidate is rejected. The native replacement must
+preserve core's exact network authority while stably deduplicating admitted
+A/AAAA addresses in first-seen order before client construction and bounding
+truncated-DNS TCP connect by the configured connect timeout, cancellation, and
+any earlier overall deadline. Production and explicitly injected/custom
+reference-host composition paths each contain thirteen alphabetical tools;
+exactly twelve workspace-backed tools share the retained descriptor as one
+original plus eleven clones. Exact isolated production remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs`; core remains byte-unchanged. Exact isolated independent-
+evidence commit `408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs` and adds a deterministic same-poll authority regression;
+it makes no native-DNS proof. Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, or delivery claim; formal reviewer reports identify the exact
+candidate they reviewed.
 
 The concrete consumers are the native
 [`read_file` tool](read-file.md), [`list_files` tool](list-files.md),

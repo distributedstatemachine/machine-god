@@ -12,7 +12,8 @@ The candidate starts from exact delivered base
 The upstream behavior was inspected to understand its tool surface; the
 deliberate differences and deferrals below are normative. Production source,
 independently owned direct/engine/production-boundary evidence, core network
-serde evidence, and thirteen-tool reference-host composition are present.
+serde evidence, and shared thirteen-tool production/custom reference-host
+composition are present.
 Pre-review gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
 tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local
 Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
@@ -71,6 +72,31 @@ network.
 This remediation record makes no
 replacement-gate, formal-review, workflow, integration, or delivery claim;
 formal candidates are identified only by exact-SHA review results.
+Formal cycle 4 is **NOT GREEN** on exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
+green with zero findings at every severity; performance/concurrency reported
+0 blocker, 0 high, 1 medium, and 0 low. The deduplicated union is 0 blocker,
+0 high, 2 medium, and 2 low. The exact candidate is rejected for failing to
+stably deduplicate overlapping A/AAAA answers before constructing the pinned
+HTTP client, leaving truncated-DNS TCP connect outside the configured connect
+timeout, describing only the production rather than custom host composition,
+and retaining stale current-candidate prose. The corrected contract is
+normative below. Exact isolated production remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs` and implements the stable deduplication and DNS TCP-connect
+deadline boundary. Exact isolated independent-evidence commit
+`408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs`; its deterministic same-poll authority regression brings
+that suite to 14/14, but it makes no native-DNS proof. Exact composed code/
+evidence precursor `d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, or delivery claim; formal reviewer reports identify the exact
+candidate they reviewed.
 Native Linux HTTP compilation remains an exact-CI requirement because the
 macOS cross-host lacks the target C sysroot. Milestone 03 therefore remains in
 progress with twenty-six delivered slices.
@@ -85,10 +111,11 @@ optional `machine-god-native` feature `web-fetch-http`. The existing
 `ai-gateway-http` feature includes `web-fetch-http`; a base/no-feature build and
 every WASM build expose no concrete HTTP web-fetch implementation.
 
-The local candidate reference host contains thirteen alphabetical tools. Its
-twelve workspace tools will still share one original retained workspace
-descriptor plus eleven identity-preserving clones; rootless `web_fetch` adds no
-descriptor and changes neither count. This slice adds no CLI surface.
+Every production and explicitly injected/custom candidate reference-host
+composition contains thirteen alphabetical tools. Exactly twelve workspace-
+backed tools share one original retained workspace descriptor plus eleven
+identity-preserving clones; rootless `web_fetch` adds no descriptor. This slice
+adds no CLI surface.
 
 ## Model input and effect-free preparation
 
@@ -184,11 +211,14 @@ eight names including the original; only requested-type, Internet-class
 addresses owned by its terminal name are admitted.
 
 The combined A/AAAA result accepts at most 32 addresses and fails closed unless
-every returned address is a public unicast destination. A mixed public/private
-answer set is rejected in full; filtering out only the private entries is not
-allowed. Loopback, link-local, private, carrier-grade NAT, documentation,
-benchmark, multicast, unspecified, and other non-public address classes are
-not valid destinations.
+every returned address is a public unicast destination. Every returned address
+counts toward that cap. After full validation, the transport stably
+deduplicates the addresses in first-seen A-then-AAAA order before HTTP-client
+construction, so an overlapping or repeated answer cannot create repeated
+connection attempts. A mixed public/private answer set is rejected in full;
+filtering out only the private entries is not allowed. Loopback, link-local,
+private, carrier-grade NAT, documentation, benchmark, multicast, unspecified,
+and other non-public address classes are not valid destinations.
 
 The accepted answer set is pinned into the HTTP client connection attempt while
 the canonical hostname remains the HTTP `Host` and TLS server name. The request
@@ -234,8 +264,10 @@ The default active-request limit is eight. A validated host override may select
 from one through the hard maximum of 32; no construction path can exceed 32.
 The 60-second total deadline begins before permit acquisition and includes
 capacity waiting, DNS, connect, request, response-head, and response-body work.
-Each connect attempt also has a 10-second bound. Neither bound resets on
-progress.
+Each HTTP connect attempt and each truncated-DNS TCP replay connect also has a
+10-second bound. DNS TCP connect is governed by cancellation and the earlier
+of its configured connect-timeout deadline or the invocation's overall
+deadline. Neither bound resets on progress.
 
 Construction is runtime-independent, but polling the production transport has
 the same explicit host precondition as the delivered native AI Gateway HTTP
@@ -415,3 +447,36 @@ bounded and raw seams without sleep or network. This remediation record makes no
 replacement-gate,
 formal-review, workflow, integration, or delivery claim; formal candidates are
 identified only by exact-SHA review results.
+Formal cycle 4 rejected exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 2 low; network/HTTP lifecycle was green at
+0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1 medium, and 0
+low. After deduplication, the cycle has 0 blocker, 0 high, 2 medium, and 2 low
+findings: repeated A/AAAA addresses reached pinned client construction without
+stable first-seen deduplication; a truncated-DNS TCP connect was bounded by
+cancellation and the total invocation deadline but not the configured connect
+timeout; the custom-host composition contract was incomplete; and maintained
+current state still said a new exact candidate was pending. The corrected
+contract stably deduplicates fully validated admitted addresses before client
+construction, makes the configured connect timeout govern DNS TCP replay
+subordinate to cancellation and any earlier overall deadline, and states that
+both production and explicitly injected/custom composition paths have thirteen
+alphabetical tools while exactly twelve workspace-backed tools share one
+original retained descriptor plus eleven clones. Exact isolated production
+remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs`. Its exact focused checks passed 29 private, 14 direct, 13 HTTP,
+and five engine tests plus native all-target/all-feature tests, formatting, and
+warnings-denied Clippy. Exact isolated independent-evidence commit
+`408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs`. Its same-poll authority regression brings that suite to
+14/14 with formatting and warnings-denied Clippy green, but makes no native-
+DNS proof. Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, or delivery claim; formal reviewer reports identify the exact
+candidate they reviewed.

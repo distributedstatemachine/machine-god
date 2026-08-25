@@ -22,9 +22,10 @@ Native `rename_file` is delivered as slice twenty-three.
 The proposed twenty-seventh slice starts from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e` and pinned fx reference
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. The local candidate composition
-inserts rootless `WebFetchTool` alphabetically to produce thirteen host tools.
-It owns no workspace descriptor, so the descriptor-backed set remains exactly
-twelve workspace tools using one original descriptor plus eleven clones. The
+inserts rootless `WebFetchTool` alphabetically in both production and explicitly
+injected/custom construction paths to produce thirteen host tools. It owns no
+workspace descriptor, so the descriptor-backed set remains exactly twelve
+workspace tools using one original descriptor plus eleven clones. The
 candidate is non-WASM and cfg-gated by `web-fetch-http`, which is included by
 `ai-gateway-http`; it adds no CLI state or command. Production and independent
 focused evidence are composed and all seven exact host tests pass. Pre-review
@@ -32,8 +33,8 @@ gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local gate.
 Formal cycle 1 is **NOT GREEN** on exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
-`1378b02e92973ab15fbf4623138a643b70057f33`. The rootless thirteen-tool host
-composition itself remains unchanged. Its remediation passed the complete
+`1378b02e92973ab15fbf4623138a643b70057f33`. The shared rootless thirteen-tool
+production/custom composition itself remains unchanged. Its remediation passed the complete
 replacement local gate. Formal cycle 2 is **NOT GREEN** on exact candidate
 `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
 `6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with 0 blocker, 0 high, 2 medium,
@@ -70,6 +71,32 @@ makes no
 replacement-gate, formal-review, workflow,
 integration, or delivery claim; formal candidates are identified only by
 exact-SHA review results.
+Formal cycle 4 is **NOT GREEN** on exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
+green at 0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1
+medium, and 0 low. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+2 low, and the exact candidate is rejected. The replacement contract requires
+stable first-seen address deduplication before HTTP-client construction and a
+configured connect timeout for truncated-DNS TCP replay, subordinate to
+cancellation and any earlier overall deadline. It also corrects the maintained
+custom-host contract: every production and explicitly injected/custom
+composition path contains thirteen alphabetical tools, while exactly twelve
+workspace-backed tools use one original retained descriptor plus eleven
+clones. Exact isolated production remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs` and implements the two network corrections. Exact isolated
+independent-evidence commit `408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs` and adds a deterministic same-poll authority regression;
+it makes no native-DNS proof. Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, or delivery claim; formal reviewer reports identify the exact
+candidate they reviewed.
 The delivered count remains twenty-six and this is not a performance or
 fx-equivalence claim.
 
@@ -622,7 +649,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the twelve candidate tools;
+   identity for the twelve workspace-backed candidate tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -632,9 +659,10 @@ this order:
 7. wrap the injected prompter in `AskPermissionHandler`; and
 8. build `Engine` with exactly `copy_file`, `create_folder`, `delete_file`,
    `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
-   `open_file`, `read_file`, `rename_file`, and `write_file`, default
-   `EngineLimits`, and the default `NoopEventSink`;
-   core's catalog exposes those names in deterministic alphabetical order.
+   `open_file`, `read_file`, `rename_file`, rootless `web_fetch`, and
+   `write_file`, default `EngineLimits`, and the default `NoopEventSink`;
+   core's catalog exposes those thirteen names in deterministic alphabetical
+   order.
 
 The non-secret workspace and session roots are therefore opened before
 credential discovery and bearer-token handoff. A selection, workspace, or
@@ -646,9 +674,10 @@ endpoint and HTTP/TLS/status/cancellation policy.
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
 with one tool and eleven descriptor clones of the same opened directory object
-feed the others. The candidate engine registers exactly the twelve alphabetical
-tools listed above and discovers or registers no other tool. This shared retained
-identity prevents separate path opens from selecting
+feed the other eleven workspace-backed tools. The candidate engine registers
+exactly the thirteen alphabetical tools listed above; rootless `web_fetch`
+receives no workspace descriptor. It discovers or registers no other tool.
+This shared retained identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
 tool construction steps. It does not make the workspace a sandbox against the
 host, change any tool's model-selected path rules, or freeze mounts beneath
@@ -668,8 +697,10 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same twelve candidate
-tools, and uses the same default engine limits and no-op sink. It deliberately
+the same provider and permission adapter, registers the same thirteen candidate
+tools including rootless `web_fetch`, retains one original descriptor plus
+eleven clones for exactly twelve workspace-backed tools, and uses the same
+default engine limits and no-op sink. It deliberately
 performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
 

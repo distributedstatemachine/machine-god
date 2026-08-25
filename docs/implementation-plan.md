@@ -106,10 +106,34 @@ identified only by exact-SHA review results. Native Linux HTTP compilation
 remains an
 exact-CI requirement because the macOS cross-host lacks the target C sysroot.
 Feature workflows are not claimed by the local gate.
-The candidate host will contain thirteen tools, while its descriptor-backed
-workspace set remains twelve tools using one original descriptor plus eleven
-clones because `web_fetch` is rootless. The delivered count remains twenty-six
-and M03 remains in progress. Native `edit_file` is delivered on
+Formal cycle 4 is **NOT GREEN** on exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
+green at 0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1
+medium, and 0 low. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+2 low, so the exact candidate is rejected. The replacement must stably
+deduplicate admitted A/AAAA addresses in first-seen order before HTTP-client
+construction and apply the configured connect timeout to truncated-DNS TCP
+replay, subordinate to cancellation and any earlier overall deadline. Exact
+isolated production remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs`. Exact isolated independent-evidence commit
+`408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs`; its deterministic same-poll authority regression makes no
+native-DNS proof. Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, or delivery claim; formal reviewer reports identify the exact
+candidate they reviewed.
+Every production and explicitly injected/custom candidate host contains
+thirteen alphabetical tools, while its descriptor-backed workspace set remains
+twelve tools using one original descriptor plus eleven clones because
+`web_fetch` is rootless. The delivered count remains twenty-six and M03 remains
+in progress. Native `edit_file` is delivered on
 final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
 Exact feature CI `32651168514` passed all six jobs, and feature benchmark
 workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
@@ -1820,8 +1844,10 @@ still-truncated TCP answer is invalid.
 Response tuple, rooted CNAME owner chain, and terminal address ownership are
 validated. There is no libc lookup, cache, retry, search suffix, resolver
 thread, or spawned resolver task. The combined result accepts at most 32 DNS
-answers only when every answer is public, then pins that set to the connection
-while retaining the canonical hostname for HTTP/TLS. A process-wide cached Rustls configuration
+answers only when every answer is public, then stably deduplicates the set in
+first-seen A-then-AAAA order before pinning it to the connection while retaining
+the canonical hostname for HTTP/TLS. Every returned address counts toward the
+32-answer cap. A process-wide cached Rustls configuration
 contains the pinned roots and fixed HTTP/1.1 ALPN; each invocation clones it
 without reparsing roots into a fresh pinned Reqwest client. The tool performs at
 most one HTTP/1 GET with fixed no-auth headers. Proxies, retries, referer,
@@ -1830,9 +1856,11 @@ cookies, automatic redirect following, and decompression are disabled. Only
 requires fresh preflight and permission; the original `NetworkTarget` never
 authorizes another host.
 
-Default concurrency is eight with a hard maximum of 32. Connect time is bounded
-at 10 seconds and the complete operation, beginning before permit acquisition,
-at 60 seconds. The inclusive response-body limit is 24 KiB and the independent
+Default concurrency is eight with a hard maximum of 32. HTTP connects and
+truncated-DNS TCP replay connects are bounded at 10 seconds, and the complete
+operation, beginning before permit acquisition, is bounded at 60 seconds. A
+DNS TCP connect uses the configured connect timeout subordinate to cancellation
+and any earlier overall deadline. The inclusive response-body limit is 24 KiB and the independent
 serialized-result limit is 56 KiB. Cancellation/drop releases the response and
 permit on every path; the tool owns no machine-god worker. Production
 construction is runtime-independent. Polling requires a current host-owned
@@ -1939,8 +1967,31 @@ cancellation wake, a cancelled result, and pending owned-work drop/release for
 bounded and raw seams without sleep or network. This remediation record makes no
 replacement-gate, formal-review, workflow, integration, or delivery claim;
 formal candidates are identified only by exact-SHA review results.
-The candidate host has thirteen alphabetical tools, while the
-descriptor-backed set remains twelve with one original plus eleven clones.
+Formal cycle 4 rejected exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0/0/1/2; lifecycle/robustness was green at 0/0/0/0; performance/concurrency
+reported 0/0/1/0. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+2 low: DNS TCP replay omitted the configured connect timeout, maintained
+custom-host composition wording was incomplete, current-candidate prose was
+stale, and repeated addresses reached pinned client construction without
+stable first-seen deduplication. The replacement contract corrects all four
+boundaries. Exact isolated production remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs`. Exact isolated independent-evidence commit
+`408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs` and adds one deterministic same-poll authority regression,
+but makes no native-DNS proof. Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, or delivery claim; formal reviewer reports identify the exact
+candidate they reviewed.
+Every production and explicitly injected/custom candidate host has thirteen
+alphabetical tools, while the descriptor-backed set remains twelve with one
+original plus eleven clones.
 Until final seal and exact remote delivery, M03 remains **IN PROGRESS** with
 twenty-six delivered slices.
 
@@ -2607,9 +2658,10 @@ gate:
   tool checkbox stays open because the remaining named tools are incomplete.
   The proposed twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact
   base `a56ff350c2aace1dc22cb14c269aee89d399cd8e` under
-  [`web-fetch.md`](web-fetch.md). It is rootless, so its candidate thirteen-tool
-  host does not change the twelve-tool original-plus-eleven-clone workspace
-  descriptor set. Production and independent tests are composed. Pre-review
+  [`web-fetch.md`](web-fetch.md). It is rootless, so its production and
+  explicitly injected/custom candidate hosts each have thirteen tools without
+  changing the twelve-tool original-plus-eleven-clone workspace descriptor set.
+  Production and independent tests are composed. Pre-review
   gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
   `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local gate.
   Formal cycle 1 rejected exact candidate
@@ -2680,7 +2732,28 @@ gate:
   unchanged. The 319,152-byte release SHA is
   `4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
   This gate makes no formal-review, workflow, integration, delivery,
-  performance, or fx-equivalence claim. A new exact candidate remains pending.
+  performance, or fx-equivalence claim. Formal cycle 4 rejected exact candidate
+  `af043dc860ab88941df1385543a92c3d9880beed`, tree
+  `095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+  0/0/1/2, lifecycle/robustness was green at 0/0/0/0, and performance/
+  concurrency reported 0/0/1/0. The deduplicated union is 0 blocker, 0 high,
+  2 medium, and 2 low: DNS TCP replay omitted the configured connect timeout;
+  custom-host composition wording and current-candidate prose were incomplete
+  or stale; and repeated addresses reached client construction without stable
+  first-seen deduplication. The replacement requires stable address
+  deduplication before client construction and bounds DNS TCP connect by its
+  configured timeout subordinate to cancellation and any earlier overall
+  deadline. Exact isolated production remediation component
+  `9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+  `87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, and isolated independent-
+  evidence commit `408e33ec07171988a8f78ee6175adac16532e966`, tree
+  `6172f1092561fb06316836f1b7f789db038a4a57`, compose through exact precursor
+  `d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+  `56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`. The evidence commit adds a
+  deterministic same-poll authority regression but makes no native-DNS proof.
+  This remediation record makes no replacement-gate, formal-review outcome,
+  candidate, workflow, integration, or delivery claim; formal reviewer reports
+  identify the exact candidate they reviewed.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

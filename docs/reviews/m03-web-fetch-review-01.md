@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 3 REJECTED; REPLACEMENT GATE GREEN**
+Status: **IN PROGRESS — CYCLE 4 REJECTED; REMEDIATION COMPOSED**
 
 ## Base and boundary
 
@@ -41,6 +41,24 @@ only `crates/machine-god-native/tests/web_fetch_http.rs`. This remediation
 record makes no replacement-gate, formal-review, workflow, integration,
 delivery, compatibility, or product-performance claim; formal candidates are
 identified only by exact-SHA review results.
+Formal cycle 4 rejected exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
+green at 0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1
+medium, and 0 low. The deduplicated union is 0 blocker, 0 high, 2 medium, and
+2 low. The exact candidate is rejected. Exact isolated production remediation
+component `9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
+`web_fetch.rs`. Exact isolated independent-evidence commit
+`408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
+`web_fetch_http.rs`. Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
+record makes no replacement-gate, formal-review outcome, candidate, workflow,
+integration, delivery, compatibility, or product-performance claim. Formal
+reviewer reports identify the exact candidate they reviewed.
 
 ## Frozen candidate boundary
 
@@ -58,10 +76,13 @@ policy presents network authority as `Critical` and the default path stays
 
 Allowed execution performs one fixed-header, no-auth Reqwest HTTP/1 GET with no
 proxy, retry, referer, cookie, automatic redirect, or decompression behavior.
-Every one of at most 32 DNS answers must be public and the accepted set must be
-pinned to the connection. Defaults are eight active calls, a 10-second connect
-bound, a 60-second total bound, an inclusive 24 KiB body bound, and a 56 KiB
-serialized-result bound; active calls can never exceed 32. Cancellation and
+Every one of at most 32 DNS answers must be public. After validation, the
+accepted set is stably deduplicated in first-seen A-then-AAAA order and pinned
+to the connection. Defaults are eight active calls, a 10-second connect bound,
+a 60-second total bound, an inclusive 24 KiB body bound, and a 56 KiB
+serialized-result bound; active calls can never exceed 32. The connect bound
+applies to HTTP connects and truncated-DNS TCP replay, with DNS TCP connect
+subordinate to cancellation and any earlier overall deadline. Cancellation and
 drop release the response and permit and own no machine-god worker. One outer
 bounded wrapper retains the acquired permit through transport, rendering,
 serialized-result validation, and the final cancellation/deadline boundary.
@@ -110,9 +131,10 @@ effective MIME, content kind, and `cache_hit: false`. An absent declaration is
 reported as inferred `text/plain` or `application/octet-stream`, not an
 absence marker. Errors are fixed and redacted.
 
-The candidate host will have thirteen alphabetical tools, but only its twelve
-workspace tools use the original retained descriptor plus eleven clones.
-`web_fetch` is rootless. There is no CLI change.
+Every production and explicitly injected/custom candidate host has thirteen
+alphabetical tools, but only its twelve workspace-backed tools use the original
+retained descriptor plus eleven clones. `web_fetch` is rootless. There is no
+CLI change.
 
 ## Explicit deferrals and deviations
 
@@ -153,8 +175,9 @@ The non-overlapping components now compose locally:
 - independent commit `a09dbc7915a16478ae5a4a70aa177ea718539b49`
   supplies deterministic production-construction, runtime, cancellation, and
   redaction evidence; and
-- the integration branch wires the rootless tool into the exact thirteen-tool
-  host while retaining twelve descriptor-backed workspace tools.
+- the integration branch wires the rootless tool into the shared production and
+  explicitly injected/custom composition paths; each has exactly thirteen
+  alphabetical tools while retaining twelve descriptor-backed workspace tools.
 
 Focused exact Rust 1.94.1 evidence is green: 11 private, 13 direct, five
 engine, three production-boundary, seven host, and 65 core-contract tests, plus
@@ -593,7 +616,91 @@ produced a 319,152-byte arm64 Mach-O binary with SHA-256
 bare, version, help, inert human-status, and inert JSON-status smokes passed.
 
 This replacement gate makes no formal-review, workflow, integration, delivery,
-performance, or fx-equivalence claim. A new exact candidate remains pending.
+performance, or fx-equivalence claim. Formal reviewer reports identify the
+exact candidate they reviewed.
+
+## Formal cycle 4 — not green
+
+Three fresh agents independently inspected exact candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 4 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 1 medium, 2 low**.
+
+- **Medium — DNS TCP replay omits the configured connect timeout:** a
+  truncated UDP answer could enter `TcpStream::connect` under cancellation and
+  the 60-second overall deadline, but not the advertised configured 10-second
+  connect bound. A stalled resolver connection could therefore consume the
+  remaining invocation budget instead of the smaller connect budget.
+- **Low — incomplete custom-host contract:** maintained composition wording
+  described the production host as thirteen tools without stating that the
+  explicitly injected/custom transport constructors reach the same shared
+  composition. Every such path has thirteen alphabetical tools; exactly twelve
+  workspace-backed tools use one original retained descriptor plus eleven
+  clones, and rootless `web_fetch` uses none.
+- **Low — stale current-candidate state:** maintained current/operative prose
+  said a new exact candidate remained pending after exact cycle-4 candidate
+  `af043dc860ab88941df1385543a92c3d9880beed` already existed and the reviews
+  were running.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-4 candidate.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 1 medium, 0 low**.
+
+- **Medium — repeated destinations amplify connection attempts:** the combined
+  A/AAAA vector preserved duplicate public addresses before constructing the
+  pinned Reqwest client. Overlapping or repeated DNS answers could therefore
+  create repeated connection attempts instead of one stable first-seen
+  destination sequence.
+
+### Consolidated union and disposition
+
+Cycle 4 has **0 blocker, 0 high, 2 medium, and 2 low** deduplicated findings.
+Exact candidate `af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`, is rejected and must never be used
+as delivery evidence.
+
+The replacement contract stably deduplicates fully validated admitted
+addresses in first-seen A-then-AAAA order before HTTP-client construction. A
+truncated-DNS TCP connect uses the configured connect timeout subordinate to
+cancellation and any earlier overall deadline. Maintained host documentation
+states the shared production and explicitly injected/custom composition shape,
+and time-sensitive pending-candidate wording is removed.
+
+Exact isolated production remediation component
+`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only
+`crates/machine-god-native/src/web_fetch.rs`. Its exact checks passed 29/29
+private, 14/14 direct, 13/13 production HTTP, and 5/5 engine tests, plus native
+all-target/all-feature tests, formatting, and warnings-denied Clippy. It
+implements stable first-seen destination deduplication and makes configured
+connect timeout, cancellation, and any earlier overall deadline authoritative
+over truncated-DNS TCP connect.
+
+Exact isolated independent-evidence commit
+`408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, changes only
+`crates/machine-god-native/tests/web_fetch_http.rs`. Its deterministic
+same-poll authority regression brings the HTTP suite to 14/14 with formatting
+and warnings-denied Clippy green. This injected seam does not establish the
+native DNS-specific corrections; their proof remains in production's private
+tests.
+
+Exact composed code/evidence precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both components. This
+remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, compatibility, or product-
+performance claim; formal reviewer reports identify the exact candidate they
+reviewed.
 
 The local gate must include the repository-required commands:
 
@@ -643,7 +750,7 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: formal cycles 1, 2, and 3 are **NOT GREEN** on their exact
+Current state: formal cycles 1, 2, 3, and 4 are **NOT GREEN** on their exact
 recorded SHA/tree pairs. Exact cycle-2 remediation precursor
 `1a78f6437eb17f646bdd11337464c949beea49f0`, tree
 `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passed its complete replacement
@@ -662,4 +769,16 @@ only native `web_fetch_http.rs`. Exact composed remediation precursor
 `1fc16e8f7792c3001ba5f4b4a0c112778d2cf30c`, passed the complete replacement
 local gate under exact Rust and Cargo 1.94.1 without fallback. This gate makes
 no formal-review, workflow, integration, delivery, performance, or fx-
-equivalence claim. A new exact candidate remains pending.
+equivalence claim. Exact cycle-4 candidate
+`af043dc860ab88941df1385543a92c3d9880beed`, tree
+`095bac47e4db4001b9010b4f66b46202c620dfaa`, is rejected with a deduplicated
+union of 0 blocker, 0 high, 2 medium, and 2 low. Exact isolated production
+remediation component `9d793035422cd449c9160c7fccd62221382b5ac5`, tree
+`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, and isolated independent-
+evidence commit `408e33ec07171988a8f78ee6175adac16532e966`, tree
+`6172f1092561fb06316836f1b7f789db038a4a57`, compose through exact precursor
+`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
+`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`. This remediation record makes no
+replacement-gate, formal-review outcome, candidate, workflow, integration,
+delivery, performance, or fx-equivalence claim; formal reviewer reports
+identify the exact candidate they reviewed.
