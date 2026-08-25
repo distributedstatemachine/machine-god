@@ -72,9 +72,10 @@ CLI unit evidence 18. Exact cycle-2 behavior candidate `2ea9d94`, tree
 one medium, and one low finding. Parser and HTTP lifecycle remediation is
 composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate attempt
 `c011398`, tree `4ac4e5b`, was rejected by its DNS-config lifecycle audit;
-remediation is composed at `d9922ef` and `e5248b1`. The complete cycle-3 gate,
-three fresh cycle-3 reviews, feature/main integration, and delivery remain
-pending. No candidate is green.
+remediation is composed at `d9922ef` and `e5248b1`. Exact cycle-3 candidate
+`2cecc921`, tree `8c0d235`, passed its complete gate. Three fresh cycle-3
+reviews, feature/main integration, and delivery remain pending. No candidate
+is review-green.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -260,7 +261,7 @@ final LF and no identity prefix:
 The complete success output is built under an inclusive 64 KiB cap before its
 first stdout write. Exact failure shapes, codes, channels, credential/fallback
 behavior, and resource bounds are normative in
-[`models-cli.md`](models-cli.md). This pre-review-gate-rejected, locally remediated
+[`models-cli.md`](models-cli.md). This replacement-gated, review-pending
 implementation is not yet a green or delivered slice.
 
 ## Permissions output

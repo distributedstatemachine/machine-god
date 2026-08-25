@@ -1,7 +1,7 @@
 # Top-level `models` CLI contract
 
-Status: cycle 2 rejected and locally remediated, not yet a green or delivered
-twenty-ninth bounded Milestone 03 slice. Exact cycle-2 behavior candidate
+Status: replacement-gated cycle-3 submission, not yet review-green or delivered
+as the twenty-ninth bounded Milestone 03 slice. Exact cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
 gate but three fresh tracks rejected it with a deduplicated union of one high,
@@ -34,8 +34,11 @@ private resolver, CLI unit, CLI integration, and manifest evidence is now
 only the async Hickory resolver needed for this lifecycle plus its transitive
 protocol/network/cache graph; it still omits generation-only direct `bytes`,
 `web-fetch-http`, and Tokio's signal backend. The complete cycle-3 replacement
-gate, three fresh cycle-3 reviews, and remote CI remain pending; no candidate is
-green. The pinned comparison input remains fx commit
+gate passed for exact behavior candidate
+`2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
+`8c0d235355582d92aaed6fcca7c1862982494e20`, under exact Rust and Cargo 1.94.1.
+Three fresh cycle-3 reviews and remote CI remain pending; no candidate is
+review-green. The pinned comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
 

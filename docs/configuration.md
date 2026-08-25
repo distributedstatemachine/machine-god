@@ -57,8 +57,8 @@ findings did not change configuration behavior; parser and HTTP lifecycle
 remediation is composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate
 attempt `c011398` was rejected by request-time DNS configuration discovery;
 bounded eager snapshot remediation is composed at `d9922ef` and `e5248b1`.
-The complete cycle-3 gate, fresh cycle-3 review, integration, and delivery
-remain pending.
+Exact cycle-3 candidate `2cecc921`, tree `8c0d235`, passed its complete gate;
+fresh cycle-3 review, integration, and delivery remain pending.
 The historical configuration green status above does not make this new
 composition green.
 

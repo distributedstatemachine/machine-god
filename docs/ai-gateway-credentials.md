@@ -12,7 +12,8 @@ gate but was rejected by cycle-2 review; none of its findings changed credential
 selection. Parser and HTTP lifecycle remediation is locally composed. The
 pre-review cycle-3 gate attempt was rejected for request-time DNS configuration;
 eager snapshot remediation does not change credential selection. The complete
-cycle-3 gate, adversarial review, integration, and delivery remain pending.
+cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`; adversarial
+review, integration, and delivery remain pending.
 Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 

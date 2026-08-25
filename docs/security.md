@@ -2,7 +2,7 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-locally composed, pre-review-gate-rejected twenty-ninth [`models` CLI
+locally composed, replacement-gated twenty-ninth [`models` CLI
 implementation](models-cli.md) keeps only validated available-model,
 access, result, error, and catalog-trait values provider-neutral in core. It
 confines Gateway parsing, ordering, fallback, deadline, credentials, TLS, HTTP,
@@ -29,8 +29,9 @@ at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate attempt `c011398`, tree
 `4ac4e5b`, was rejected because system-DNS discovery still ran synchronously
 inside request polling. Bounded eager snapshot and per-runtime absolute-name
 resolver remediation is composed at `d9922ef` and `e5248b1`. The complete
-cycle-3 gate, three fresh cycle-3 reviews, integration, and delivery remain
-pending; no candidate is green. The ledger is
+cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`. Three fresh
+cycle-3 reviews, integration, and delivery remain pending; no candidate is
+review-green. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 Catalog HTTP now has a dedicated non-WASM

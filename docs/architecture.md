@@ -45,8 +45,8 @@ runtime, and fail-closed resolver remediation is composed at `9cf8c74`,
 `8187b12`, and `499af85`. Pre-review gate attempt `c011398`, tree `4ac4e5b`,
 was rejected by its DNS-config lifecycle audit. Eager bounded snapshot and
 per-runtime absolute-name resolver remediation is composed at `d9922ef` and
-`e5248b1`. The complete cycle-3 replacement gate and three fresh cycle-3
-reviews remain pending in
+`e5248b1`. Exact cycle-3 candidate `2cecc921`, tree `8c0d235`, passed its
+complete replacement gate. Three fresh cycle-3 reviews remain pending in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 ```text

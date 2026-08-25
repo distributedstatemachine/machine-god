@@ -1,6 +1,6 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: cycle-3-pre-review-gate-remediated ledger for bounded slice 29. Exact
+Status: replacement-gated cycle-3 submission for bounded slice 29. Exact
 cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
@@ -14,8 +14,11 @@ one medium, and one low finding. Cycle-2 remediation is locally composed.
 Pre-review gate attempt `c01139811685ae73031ed6f6cbd771e4ff636714`, tree
 `4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected by a medium DNS-
 configuration lifecycle finding before formal cycle-3 review. That finding is
-locally remediated; its complete replacement gate and three fresh cycle-3
-reviews remain pending. No candidate is green. The frozen behavior contract is
+locally remediated. Exact cycle-3 behavior candidate
+`2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
+`8c0d235355582d92aaed6fcca7c1862982494e20`, passed its complete replacement
+gate under exact Rust and Cargo 1.94.1. Three fresh cycle-3 reviews remain
+pending. No candidate is review-green. The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -37,6 +40,7 @@ The locally composed lineage is:
 | fail-closed system DNS configuration with no public fallback | `499af85d43738b0b138051ba4669ec27efd0ae1b` / `d96525945f34f067f969d34aa8a5712c40551c78` | cycle-2 remediation; source resolver regressions 2/2 and manifest 4/4 green |
 | eager bounded DNS snapshot and fresh resolver per runtime | `d9922ef1b0173c5da6f57aa39a5c7b1c69c55346` / `df03b97d40d9b927022a518eeba5099b33160662` | pre-review gate remediation; generic-Unix bounded input and sequential-runtime evidence green |
 | custom absolute-name resolver pinning | `e5248b103c5df67b733006da8210ada05d366345` / `d194034189082b1d71ae9cc69c38060ae6e8c886` | pre-review gate hardening; private resolver 6/6 and HTTP integration 16/16 green |
+| cycle-3 gate record and maintained status | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | exact replacement-gated cycle-3 behavior candidate; fresh reviews pending |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -44,10 +48,12 @@ cycle-2 behavior candidate `2ea9d94`. Documentation-only submission seal
 `0b5976da573697b8d7cbc2c393b480559d5c3db7` recorded that immutable candidate
 and is exempt from redundant adversarial review under the user's instruction.
 The three cycle-2 remediation commits formed rejected pre-review gate attempt
-`c011398`; the two later remediation commits above are not yet a replacement-
-gated cycle-3 candidate. This ledger does not claim a green adversarial result,
-feature CI, benchmark, integration, delivery, performance, compatibility
-promotion, or fx equivalence.
+`c011398`; the two later remediation commits and gate record compose exact
+replacement-gated cycle-3 behavior candidate `2cecc921`. This prospective
+documentation-only submission seal records that immutable candidate and is
+exempt from redundant adversarial review under the user's instruction. This
+ledger does not claim a green adversarial result, feature CI, benchmark,
+integration, delivery, performance, compatibility promotion, or fx equivalence.
 
 A local feature-topology refinement adds native
 `ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
@@ -70,8 +76,9 @@ Current remediation-focused local evidence under exact Rust and Cargo 1.94.1 is
 green: the parsed-manifest/resolved-tree suite passes 4/4; provider/parser,
 credential, loopback HTTP, and private resolver lifecycle suites pass 17/17,
 6/6, 16/16, and 6/6. Native focused warnings-denied Clippy also passes. These
-focused results do not replace the pending complete cycle-3 gate. The complete
-cycle-2 target matrix had previously confirmed that native default, catalog-
+focused results did not replace the complete cycle-3 gate recorded below. The
+complete cycle-2 target matrix had
+previously confirmed that native default, catalog-
 only, compatibility-umbrella, and all-feature checks compile, and that native
 and CLI WASI Preview 1 checks compile with only the established native
 `read_file` dead-code warning.
@@ -87,8 +94,9 @@ separately built exact precursor is 3,635,520 bytes with SHA-256
 These package, size, and hash values are regression/topology evidence only,
 not a speed, memory, binary-size improvement, product-performance, or delivery
 claim. That cycle-2 replacement gate is green but its reviews rejected the
-candidate. A complete cycle-3 replacement gate, three fresh cycle-3 reviews,
-feature CI, integration, and exact `main` CI remain pending.
+candidate. Exact cycle-3 candidate `2cecc921` passed its replacement gate;
+three fresh cycle-3 reviews, feature CI, integration, and exact `main` CI remain
+pending.
 
 ## Exact cycle-2 replacement gate
 
@@ -174,7 +182,56 @@ without system search suffixes. Deterministic private evidence now passes 6/6,
 including eager-once/no-request-time loading, redacted unavailable/oversized
 configuration, pending lookup teardown, and a local UDP resolver reused across
 two sequential current-thread runtimes. Focused loopback HTTP remains 16/16.
-These focused results do not replace the next complete gate.
+Those focused results did not replace the complete gate recorded below.
+
+## Exact cycle-3 replacement gate
+
+Exact behavior candidate `2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
+`8c0d235355582d92aaed6fcca7c1862982494e20`, passed the complete local gate
+under exact `rustc 1.94.1 (e408947bf 2026-03-25)` and
+`cargo 1.94.1 (29ea6fb6a 2026-03-24)` without fallback:
+
+- formatting, workspace all-target/all-feature warnings-denied Clippy, all 964
+  registered non-documentation tests, and both doctests passed with no warning;
+- focused core 6/6, provider/parser 17/17, credential 6/6, loopback HTTP 16/16,
+  private resolver 6/6, CLI unit 18/18, CLI integration 23/23, and manifest 4/4
+  suites passed;
+- all 134 Python tests passed on the first sequential run with eight expected
+  macOS skips. The exact pinned-fx generator check and two external
+  regenerations were byte-identical to the committed files;
+- documentation integrity covered 78 Markdown files, 127 balanced fence
+  blocks, 561 inline links, and 409 repository-relative targets with zero
+  errors;
+- host native default/catalog/broad/all-feature and CLI checks passed. Native
+  default/catalog and CLI WASI Preview 1 checks passed with only the established
+  native `read_file` warning. Linux and FreeBSD no-feature checks passed;
+- catalog-feature Linux/FreeBSD cross checks reached `aws-lc-sys` but could not
+  compile its C code without target sysroots, before machine-god product Rust.
+  Target-resolved trees and cfg inspection passed; exact remote Linux CI remains
+  authoritative for those HTTP-feature targets;
+- the narrow resolved graph contains direct `hickory-resolver` and transitive
+  Hickory protocol/network/Moka packages while excluding native direct `bytes`,
+  `web-fetch-http`, Tokio signal, `signal-hook-registry`, and Reqwest's
+  `hickory-dns` feature. The CLI alone requests Tokio signal handling;
+- `cargo-deny 0.19.9` passed with only established allowed duplicate warnings.
+  `cargo-audit 0.22.2` loaded 1,226 advisories and scanned 211 dependencies with
+  zero vulnerabilities;
+- the exact delivered-base diff covers 33 files at +8,524/-209, passes
+  `git diff --check`, adds no unsafe Rust, and leaves workflows, benchmark
+  workloads, and generated compatibility files unchanged; and
+- a fresh locked 4,282,880-byte release binary with SHA-256
+  `9d92285755ccdb5fd8711b4e8752802f34d359a0de0f9b18344dbab64dc24fc2`
+  passed six isolated help/argument/config/public-catalog black-box cases with
+  zero configuration or state writes. Its 138-package inventory contains the
+  intended Hickory/Moka graph.
+
+Source-backed lifecycle inspection confirmed that construction eagerly retains
+only the validated snapshot, request polling calls neither system configuration
+nor hosts-file readers, the custom absolute-name resolver replaces every
+Reqwest default path, and each request owns a fresh active-runtime Hickory
+resolver. Deterministic local DNS succeeded across two separately created and
+dropped current-thread runtimes. This gate makes no adversarial-review,
+workflow, integration, delivery, product-performance, or fx-equivalence claim.
 
 ## Bounded ownership
 
@@ -324,7 +381,7 @@ a documentation-only statement.
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `6277aa3dc26f9c485707c667f63525a2138f316b` / `b5e2445ed90df000255b51c2c989d71965db1d77` | 0 blocker, 0 high, 0 medium, 4 low | 0 blocker, 0 high, 2 medium, 1 low | 0 blocker, 0 high, 2 medium, 3 low | 0 blocker, 0 high, 2 medium, 6 low after deduplication | **REJECTED** |
 | 2 | `2ea9d94374c4dd18f43255af785ee31088126c56` / `3a948b2950d870a9cabe479bc6c3889dd5a13a3b` | 0 blocker, 0 high, 0 medium, 1 low | 0 blocker, 1 high, 1 medium, 0 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 1 high, 1 medium, 1 low after deduplication | **REJECTED** |
-| 3 | pending after complete replacement gate | pending | pending | pending | pending | **NOT REVIEWED** |
+| 3 | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | pending | pending | pending | pending | **SUBMITTED** |
 
 ### Cycle 1 rejected findings and remediation
 
@@ -396,10 +453,10 @@ Every cycle-1 finding remains remediated. Cycle 1 remains rejected history.
    deadline limits while defaulting or ignoring non-`i64` metadata. Exact
    arbitrary-number, node, and depth regressions are green.
 
-All cycle-2 findings are locally remediated, but focused checks do not make the
-replacement green. The complete replacement gate must run before a new exact
-cycle-3 candidate is frozen, and three fresh reviewers must return a zero union
-on that candidate. Cycle 2 remains rejected history.
+All cycle-2 findings are locally remediated. Exact cycle-3 candidate `2cecc921`,
+tree `8c0d235`, passed the complete replacement gate, but three fresh reviewers
+must still return a zero union on that candidate. Cycle 2 remains rejected
+history.
 
 ## Remote and integration boundary
 

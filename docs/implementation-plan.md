@@ -158,10 +158,12 @@ Pre-review gate attempt `c01139811685ae73031ed6f6cbd771e4ff636714`, tree
 `4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected because synchronous
 system-DNS discovery remained inside timed request polling. Bounded eager
 snapshot and per-runtime absolute-name resolver remediation is composed at
-`d9922ef` and `e5248b1`; private resolver evidence is now 6/6. The complete
-cycle-3 replacement gate, three fresh cycle-3 reviews, feature/main integration,
-and delivery remain pending. No candidate is green, and no product-performance,
-compatibility-promotion, or fx-equivalence claim is made.
+`d9922ef` and `e5248b1`; private resolver evidence is now 6/6. Exact cycle-3
+behavior candidate `2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
+`8c0d235355582d92aaed6fcca7c1862982494e20`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1. Three fresh cycle-3 reviews, feature/main
+integration, and delivery remain pending. No candidate is review-green, and no
+product-performance, compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2896,9 +2898,12 @@ lifecycle evidence was 2. Pre-review gate attempt
 inspection found synchronous system-DNS discovery inside the timed request
 poll. Bounded eager snapshot remediation `d9922ef` and custom absolute-name/
 per-runtime resolver hardening `e5248b1` raise private resolver evidence to 6.
-The complete cycle-3 gate, fresh cycle-3 review, exact feature workflows, fast-
-forward integration, and exact `main` workflows remain pending; no candidate is
-green and this makes no product-performance claim.
+Exact cycle-3 behavior candidate
+`2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
+`8c0d235355582d92aaed6fcca7c1862982494e20`, passed its complete replacement
+gate. Fresh cycle-3 review, exact feature workflows, fast-forward integration,
+and exact `main` workflows remain pending; no candidate is review-green and
+this makes no product-performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads

@@ -4,7 +4,7 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The locally composed, pre-review-gate-rejected twenty-ninth top-level
+The locally composed, replacement-gated twenty-ninth top-level
 [`models` implementation](models-cli.md) supplies resource and concurrency
 budgets, not a performance claim: one checked 30-second absolute provider deadline
 covers default-eight capacity waiting and at most two sequential requests.
@@ -24,9 +24,9 @@ low finding. Parser and HTTP lifecycle remediation is composed at `9cf8c74`,
 was rejected because synchronous system-DNS snapshot work remained inside the
 timed request poll. Eager bounded snapshot and zero-cache per-runtime resolver
 remediation is composed at `d9922ef` and `e5248b1`. The complete cycle-3 gate,
-three fresh cycle-3 reviews, exact-SHA workflow artifacts, and a later claim-
-eligible M07 comparison remain required before any speed, latency, memory, or
-fx-equivalence statement.
+exact candidate `2cecc921`, tree `8c0d235`, is green. Three fresh cycle-3
+reviews, exact-SHA workflow artifacts, and a later claim-eligible M07 comparison
+remain required before any speed, latency, memory, or fx-equivalence statement.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence

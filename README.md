@@ -26,9 +26,11 @@ remediation is composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate
 attempt `c011398`, tree `4ac4e5b`, was rejected when dependency inspection found
 synchronous system-DNS discovery inside request polling. Bounded eager snapshot,
 per-runtime resolver, and absolute-name remediation is composed at `d9922ef`
-and `e5248b1`; a complete replacement gate and three fresh cycle-3 reviews
-remain pending. This is not a green or delivered slice. The CLI selects a
-dedicated `ai-gateway-model-catalog-http` feature that omits `web-fetch-http`,
+and `e5248b1`. Exact cycle-3 behavior candidate `2cecc921`, tree `8c0d235`,
+passed the complete replacement gate under exact Rust and Cargo 1.94.1; three
+fresh cycle-3 reviews remain pending. This is not a green or delivered slice.
+The CLI selects a dedicated `ai-gateway-model-catalog-http` feature that omits
+`web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a
 system-config-only async Hickory resolver and its protocol/network/cache graph
 so default blocking GAI cannot outlive runtime teardown. Signal handling is
