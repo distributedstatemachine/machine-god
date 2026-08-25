@@ -41,6 +41,18 @@ pub const MAX_WEB_FETCH_URL_BYTES: usize = 2_000;
 pub const MAX_WEB_FETCH_BODY_BYTES: usize = 24 * 1_024;
 /// Maximum DNS answers accepted for one invocation.
 pub const MAX_WEB_FETCH_DNS_ADDRESSES: usize = 32;
+// One accepted response can contain at most seven CNAME links (eight names,
+// including the requested name) followed by the public terminal addresses.
+const MAX_WEB_FETCH_DNS_CNAME_RECORDS: usize = 7;
+const MAX_WEB_FETCH_DNS_ANSWER_RECORDS: usize =
+    MAX_WEB_FETCH_DNS_ADDRESSES + MAX_WEB_FETCH_DNS_CNAME_RECORDS;
+// Authority and additional data are not used for admission. Bound each ignored
+// section, and all resource records together, to four times the terminal-address
+// policy so decoding cannot reserve from an untrusted u16 count while ordinary
+// authority, glue, and OPT records remain representable.
+const MAX_WEB_FETCH_DNS_AUTHORITY_RECORDS: usize = 4 * MAX_WEB_FETCH_DNS_ADDRESSES;
+const MAX_WEB_FETCH_DNS_ADDITIONAL_RECORDS: usize = 4 * MAX_WEB_FETCH_DNS_ADDRESSES;
+const MAX_WEB_FETCH_DNS_RESOURCE_RECORDS: usize = 4 * MAX_WEB_FETCH_DNS_ADDRESSES;
 /// Maximum accepted Content-Type header size.
 pub const MAX_WEB_FETCH_MIME_TYPE_BYTES: usize = 256;
 /// Maximum serialized [`ToolOutput`] size.
@@ -494,6 +506,13 @@ pub struct WebFetchTool {
 impl WebFetchTool {
     /// Constructs the native HTTPS transport with default bounds.
     ///
+    /// The first UDP nameserver in the host resolver configuration is read and
+    /// snapshotted synchronously during construction, without requiring a Tokio
+    /// runtime. A failed snapshot is retained: later hostname execution returns
+    /// a fixed unavailable error, while public IP-literal execution remains
+    /// independent of resolver configuration. Resolver changes take effect only
+    /// after constructing a new tool.
+    ///
     /// # Errors
     ///
     /// Returns a fixed redacted error if the HTTPS backend cannot initialize.
@@ -507,6 +526,13 @@ impl WebFetchTool {
     }
 
     /// Constructs the native HTTPS transport with explicit validated bounds.
+    ///
+    /// The first UDP nameserver in the host resolver configuration is read and
+    /// snapshotted synchronously during construction, without requiring a Tokio
+    /// runtime. A failed snapshot is retained: later hostname execution returns
+    /// a fixed unavailable error, while public IP-literal execution remains
+    /// independent of resolver configuration. Resolver changes take effect only
+    /// after constructing a new tool.
     ///
     /// # Errors
     ///
@@ -532,6 +558,9 @@ impl WebFetchTool {
     ///
     /// The permit remains owned through response rendering, serialized-result
     /// validation, and the final cancellation/deadline boundary.
+    /// The absolute deadline begins at first poll before capacity waiting and
+    /// covers transport execution plus those final stages. Native resolver
+    /// configuration is snapshotted during construction, outside that deadline.
     ///
     /// # Panics
     ///
@@ -1035,14 +1064,37 @@ fn validate_response_status(status: u16) -> Result<(), WebFetchTransportError> {
 struct NativeWebFetchTransport {
     connect_timeout: Duration,
     tls_config: RustlsClientConfig,
+    nameserver: Result<SocketAddr, WebFetchTransportError>,
 }
 
 impl NativeWebFetchTransport {
     fn new(connect_timeout: Duration) -> Result<Self, WebFetchConfigError> {
-        Ok(Self {
+        let nameserver = system_nameserver();
+        let tls_config = root_tls_config()?;
+        Ok(Self::with_nameserver_snapshot(
             connect_timeout,
-            tls_config: root_tls_config()?,
-        })
+            tls_config,
+            nameserver,
+        ))
+    }
+
+    fn with_nameserver_snapshot(
+        connect_timeout: Duration,
+        tls_config: RustlsClientConfig,
+        nameserver: Result<SocketAddr, WebFetchTransportError>,
+    ) -> Self {
+        Self {
+            connect_timeout,
+            tls_config,
+            nameserver,
+        }
+    }
+
+    async fn resolve_public_addresses(
+        &self,
+        request: &WebFetchRequest,
+    ) -> Result<Vec<SocketAddr>, WebFetchTransportError> {
+        resolve_public_addresses(request, self.nameserver).await
     }
 }
 
@@ -1052,6 +1104,7 @@ impl fmt::Debug for NativeWebFetchTransport {
             .debug_struct("NativeWebFetchTransport")
             .field("connect_timeout", &self.connect_timeout)
             .field("tls_config", &"<redacted>")
+            .field("nameserver", &"<snapshotted>")
             .finish()
     }
 }
@@ -1066,7 +1119,7 @@ impl WebFetchTransport for NativeWebFetchTransport {
             if cancellation.is_cancelled() {
                 return Err(transport_error(WebFetchTransportErrorKind::Cancelled));
             }
-            let admitted = resolve_public_addresses(&request, system_nameserver()?).await?;
+            let admitted = self.resolve_public_addresses(&request).await?;
             let client =
                 build_pinned_client(&request, &admitted, &self.tls_config, self.connect_timeout)?;
             let http_request = build_http_request(&request)?;
@@ -1124,12 +1177,13 @@ fn system_nameserver() -> Result<SocketAddr, WebFetchTransportError> {
 
 async fn resolve_public_addresses(
     request: &WebFetchRequest,
-    nameserver: SocketAddr,
+    nameserver: Result<SocketAddr, WebFetchTransportError>,
 ) -> Result<Vec<SocketAddr>, WebFetchTransportError> {
     let effective_port = request.port.unwrap_or(443);
     let addresses = if let Ok(address) = request.host.parse::<IpAddr>() {
         vec![SocketAddr::new(address, effective_port)]
     } else {
+        let nameserver = nameserver?;
         let mut addresses = query_dns_addresses(&request.host, nameserver, RecordType::A).await?;
         addresses.extend(query_dns_addresses(&request.host, nameserver, RecordType::AAAA).await?);
         addresses
@@ -1196,8 +1250,7 @@ async fn exchange_dns_udp(
     if received > 4_096 {
         return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
     }
-    Message::from_vec(&response[..received])
-        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))
+    decode_dns_response(&response[..received])
 }
 
 async fn exchange_dns_tcp(
@@ -1227,16 +1280,57 @@ async fn exchange_dns_tcp(
         .read_exact(&mut response)
         .await
         .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
-    Message::from_vec(&response)
+    decode_dns_response(&response)
+}
+
+fn decode_dns_response(response: &[u8]) -> Result<Message, WebFetchTransportError> {
+    validate_dns_header_counts(response)?;
+    Message::from_vec(response)
         .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))
+}
+
+fn validate_dns_header_counts(response: &[u8]) -> Result<(), WebFetchTransportError> {
+    let header = response
+        .get(..12)
+        .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let questions = usize::from(u16::from_be_bytes([header[4], header[5]]));
+    let answers = usize::from(u16::from_be_bytes([header[6], header[7]]));
+    let authorities = usize::from(u16::from_be_bytes([header[8], header[9]]));
+    let additionals = usize::from(u16::from_be_bytes([header[10], header[11]]));
+    let resource_records = answers
+        .checked_add(authorities)
+        .and_then(|total| total.checked_add(additionals))
+        .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let minimum_wire_len = 12_usize
+        .checked_add(
+            questions
+                .checked_mul(5)
+                .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?,
+        )
+        .and_then(|length| {
+            resource_records
+                .checked_mul(11)
+                .and_then(|records| length.checked_add(records))
+        })
+        .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    if questions != 1
+        || answers > MAX_WEB_FETCH_DNS_ANSWER_RECORDS
+        || authorities > MAX_WEB_FETCH_DNS_AUTHORITY_RECORDS
+        || additionals > MAX_WEB_FETCH_DNS_ADDITIONAL_RECORDS
+        || resource_records > MAX_WEB_FETCH_DNS_RESOURCE_RECORDS
+        || minimum_wire_len > response.len()
+    {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    Ok(())
 }
 
 fn bounded_dns_tcp_response_len(response_len: u16) -> Result<usize, WebFetchTransportError> {
     let response_len = usize::from(response_len);
-    if response_len > 4_096 {
-        Err(transport_error(WebFetchTransportErrorKind::Unavailable))
-    } else {
+    if (12..=4_096).contains(&response_len) {
         Ok(response_len)
+    } else {
+        Err(transport_error(WebFetchTransportErrorKind::Unavailable))
     }
 }
 
@@ -1708,7 +1802,7 @@ mod tests {
     use reqwest::header::{AUTHORIZATION, COOKIE, ORIGIN, PROXY_AUTHORIZATION, REFERER};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, UdpSocket};
     use std::thread;
     use std::time::Duration;
 
@@ -1774,6 +1868,31 @@ mod tests {
         let mut response = Message::response(id, OpCode::Query);
         response.add_query(Query::query(name.clone(), record_type));
         response
+    }
+
+    fn dns_header_count_packet(
+        questions: u16,
+        answers: u16,
+        authorities: u16,
+        additionals: u16,
+        pad_to_implied_minimum: bool,
+    ) -> Vec<u8> {
+        let resource_records =
+            usize::from(answers) + usize::from(authorities) + usize::from(additionals);
+        let implied_minimum = 12 + usize::from(questions) * 5 + resource_records * 11;
+        let mut packet = vec![
+            0_u8;
+            if pad_to_implied_minimum {
+                implied_minimum
+            } else {
+                12
+            }
+        ];
+        packet[4..6].copy_from_slice(&questions.to_be_bytes());
+        packet[6..8].copy_from_slice(&answers.to_be_bytes());
+        packet[8..10].copy_from_slice(&authorities.to_be_bytes());
+        packet[10..12].copy_from_slice(&additionals.to_be_bytes());
+        packet
     }
 
     fn local_https_exchange(
@@ -2016,6 +2135,184 @@ mod tests {
     }
 
     #[test]
+    fn dns_predecode_enforces_per_section_aggregate_and_implied_wire_bounds() {
+        for exact in [
+            dns_header_count_packet(1, 39, 89, 0, true),
+            dns_header_count_packet(1, 0, 128, 0, true),
+            dns_header_count_packet(1, 0, 0, 128, true),
+        ] {
+            validate_dns_header_counts(&exact).unwrap();
+        }
+
+        for rejected in [
+            dns_header_count_packet(0, 0, 0, 0, true),
+            dns_header_count_packet(2, 0, 0, 0, true),
+            dns_header_count_packet(1, 40, 0, 0, true),
+            dns_header_count_packet(1, 0, 129, 0, true),
+            dns_header_count_packet(1, 0, 0, 129, true),
+            dns_header_count_packet(1, 39, 90, 0, true),
+            dns_header_count_packet(1, 1, 0, 0, false),
+            dns_header_count_packet(1, u16::MAX, u16::MAX, u16::MAX, false),
+        ] {
+            assert_eq!(
+                validate_dns_header_counts(&rejected).unwrap_err().kind(),
+                WebFetchTransportErrorKind::Unavailable
+            );
+            assert_eq!(
+                decode_dns_response(&rejected).unwrap_err().kind(),
+                WebFetchTransportErrorKind::Unavailable
+            );
+        }
+        assert_eq!(
+            decode_dns_response(&[0_u8; 11]).unwrap_err().kind(),
+            WebFetchTransportErrorKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn dns_predecode_accepts_exact_policy_answer_cap_and_rejects_one_over() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let mut response = dns_response(21, &name, RecordType::A);
+        let mut owner = name.clone();
+        for index in 0..MAX_WEB_FETCH_DNS_CNAME_RECORDS {
+            let target = DnsName::from_ascii(format!("alias-{index}.example.net.")).unwrap();
+            response.add_answer(Record::from_rdata(
+                owner,
+                60,
+                RData::CNAME(CNAME(target.clone())),
+            ));
+            owner = target;
+        }
+        for index in 0..MAX_WEB_FETCH_DNS_ADDRESSES {
+            response.add_answer(Record::from_rdata(
+                owner.clone(),
+                60,
+                RData::A(A(Ipv4Addr::new(
+                    93,
+                    184,
+                    216,
+                    u8::try_from(index + 1).unwrap(),
+                ))),
+            ));
+        }
+        let exact_wire = response.to_vec().unwrap();
+        let exact = decode_dns_response(&exact_wire).unwrap();
+        assert_eq!(exact.answers.len(), MAX_WEB_FETCH_DNS_ANSWER_RECORDS);
+        assert_eq!(
+            validate_dns_response(&exact, 21, &name, RecordType::A)
+                .unwrap()
+                .len(),
+            MAX_WEB_FETCH_DNS_ADDRESSES
+        );
+
+        response.add_answer(Record::from_rdata(
+            owner,
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 250))),
+        ));
+        assert_eq!(
+            decode_dns_response(&response.to_vec().unwrap())
+                .unwrap_err()
+                .kind(),
+            WebFetchTransportErrorKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn native_resolution_uses_the_injected_construction_snapshot() {
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let nameserver = socket.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let mut wire = [0_u8; 4_096];
+                let (received, peer) = socket.recv_from(&mut wire).unwrap();
+                let query = decode_dns_response(&wire[..received]).unwrap();
+                let question = query.queries[0].clone();
+                let mut response = Message::response(query.metadata.id, OpCode::Query);
+                response.add_query(question.clone());
+                if question.query_type() == RecordType::A {
+                    response.add_answer(Record::from_rdata(
+                        question.name().clone(),
+                        60,
+                        RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+                    ));
+                }
+                let response = response.to_vec().unwrap();
+                socket.send_to(&response, peer).unwrap();
+            }
+        });
+        let transport = NativeWebFetchTransport::with_nameserver_snapshot(
+            Duration::from_secs(2),
+            root_tls_config().unwrap(),
+            Ok(nameserver),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let admitted = runtime
+            .block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(3),
+                    transport.resolve_public_addresses(&request(
+                        "https://example.com/",
+                        "example.com",
+                        None,
+                    )),
+                )
+                .await
+            })
+            .unwrap()
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            admitted,
+            [SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                0
+            )]
+        );
+    }
+
+    #[test]
+    fn failed_nameserver_snapshot_is_stable_but_public_literal_bypasses_it() {
+        let transport = NativeWebFetchTransport::with_nameserver_snapshot(
+            Duration::from_secs(2),
+            root_tls_config().unwrap(),
+            Err(transport_error(WebFetchTransportErrorKind::Unavailable)),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let literal = runtime
+            .block_on(transport.resolve_public_addresses(&request(
+                "https://93.184.216.34/",
+                "93.184.216.34",
+                None,
+            )))
+            .unwrap();
+        assert_eq!(
+            literal,
+            [SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                0
+            )]
+        );
+        let unavailable = runtime
+            .block_on(transport.resolve_public_addresses(&request(
+                "https://example.com/",
+                "example.com",
+                None,
+            )))
+            .unwrap_err();
+        assert_eq!(unavailable.kind(), WebFetchTransportErrorKind::Unavailable);
+        assert!(unavailable.retryable());
+    }
+
+    #[test]
     fn dns_response_validation_accepts_direct_and_bounded_cname_answers() {
         let name = DnsName::from_ascii("example.com.").unwrap();
         let alias = DnsName::from_ascii("edge.example.net.").unwrap();
@@ -2095,7 +2392,9 @@ mod tests {
         ));
         assert!(validate_dns_response(&cycle, 10, &name, RecordType::A).is_err());
 
+        assert_eq!(bounded_dns_tcp_response_len(12).unwrap(), 12);
         assert_eq!(bounded_dns_tcp_response_len(4_096).unwrap(), 4_096);
+        assert!(bounded_dns_tcp_response_len(11).is_err());
         assert!(bounded_dns_tcp_response_len(4_097).is_err());
     }
 
