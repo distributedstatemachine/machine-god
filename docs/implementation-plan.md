@@ -166,6 +166,25 @@ documentation, diff/unsafe, locked-release, and five-smoke checks are green.
 This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
+Formal cycle 6 is **NOT GREEN** on exact candidate
+`5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 0 low findings; network/HTTP lifecycle and
+performance/concurrency each reported zero findings at every severity. The
+deduplicated union is 0 blocker, 0 high, 1 medium, and 0 low, so the exact
+candidate is rejected. The non-WASM `web-fetch-http` surface and unconditional
+native query-ID hashing exceeded the direct `sha2` dependency's Linux/macOS-
+only scope: FreeBSD and Windows lacked the dependency, while Rust 1.94.1's
+`wasm32-wali-linux-musl` target accidentally received it through its Linux
+target OS. Foreign cross-compilation stopped at the `aws-lc-sys` C-sysroot
+boundary before it could expose that Rust manifest defect. Exact source
+remediation `e6eba937423714bc96a7c399b4823c6deda22da7`, tree
+`bc0a0ddddaa43da5027b1041a9353ce1f6b17184`, moves the one direct `sha2` entry
+to the existing `cfg(not(target_family = "wasm"))` dependency table, adds a
+parsed-manifest regression, and updates the behavior documentation. Its exact
+1.94.1 source checks are green. This remediation record makes no replacement-
+gate, formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2102,6 +2121,36 @@ exact smokes pass with empty stderr, and the inert status smokes do not create
 their missing XDG roots. This gate record makes no formal-review outcome,
 candidate, workflow, integration, delivery, performance, or fx-equivalence
 claim; reviewer reports identify the exact candidate they reviewed.
+Formal cycle 6 rejected exact candidate
+`5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`. Correctness/API reported
+0/0/1/0; network/HTTP lifecycle and performance/concurrency were each green at
+0/0/0/0. The deduplicated union is 0 blocker, 0 high, 1 medium, and 0 low; the
+exact candidate is rejected. Correctness reran focused 30-private/14-direct/
+14-HTTP/5-engine evidence and inventoried 992 all-target/all-feature tests. It
+found that exported and documented `web-fetch-http` covers every non-WASM
+target and `web_fetch.rs` uses `sha2` unconditionally for native DNS query-ID
+derivation, while the direct dependency covered only Linux and macOS. FreeBSD
+and Windows therefore lacked the dependency. Conversely,
+`wasm32-wali-linux-musl` accidentally received it because Rust 1.94.1 reports
+Linux as its target OS even though it belongs to the WASM target family. The
+macOS cross-host's `aws-lc-sys` foreign C-sysroot failure occurred before this
+Rust dependency could be compiled, so that cross-target attempt did not prove
+the manifest boundary. The lifecycle and performance tracks each reported
+zero findings at every severity on the exact candidate.
+Exact source remediation `e6eba937423714bc96a7c399b4823c6deda22da7`, tree
+`bc0a0ddddaa43da5027b1041a9353ce1f6b17184`, moves the one direct `sha2`
+dependency into the existing `cfg(not(target_family = "wasm"))` table. The
+stdlib-`tomllib` manifest regression rejects a `sha2` alias, duplicate or
+overlapping placement, optional or versioned specification, and target-scope
+drift; the behavior documentation records the corrected boundary. Source
+checks passed under exact Rust and Cargo 1.94.1: focused 30/14/14/5, formatting,
+full warnings-denied Clippy, workspace tests and doctests, and the 131-test
+Python run with eight expected macOS skips. Direct Linux and FreeBSD dependency-
+tree probes include the native `sha2` and HTTP edges; the WALI tree includes
+neither. Diff checks are clean. This remediation record makes no replacement-
+gate, formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -2907,6 +2956,21 @@ gate:
   review outcome, candidate, workflow, integration, delivery, performance, or
   fx-equivalence claim; reviewer reports identify the exact candidate they
   reviewed.
+  Formal cycle 6 rejected exact candidate
+  `5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+  `a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`. Correctness/API reported
+  0/0/1/0; lifecycle and performance were each green at 0/0/0/0. The union is
+  0 blocker, 0 high, 1 medium, and 0 low, so the exact candidate is rejected.
+  The non-WASM HTTP surface and unconditional query-ID hashing exceeded the
+  Linux/macOS-only direct `sha2` dependency scope, leaving FreeBSD and Windows
+  uncovered while accidentally including WALI. Exact source remediation
+  `e6eba937423714bc96a7c399b4823c6deda22da7`, tree
+  `bc0a0ddddaa43da5027b1041a9353ce1f6b17184`, moves the dependency to the
+  non-WASM table, adds parsed-manifest evidence, and updates behavior docs.
+  Exact-1.94.1 focused, full Rust, 131-test Python, Linux/FreeBSD/WALI tree, and
+  diff checks are green. This remediation record makes no replacement-gate,
+  formal-review outcome, candidate, workflow, integration, delivery,
+  performance, or fx-equivalence claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

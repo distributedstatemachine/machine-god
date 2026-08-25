@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 5 REJECTED**
+Status: **IN PROGRESS — CYCLE 6 REJECTED**
 
 ## Base and boundary
 
@@ -81,6 +81,18 @@ Exact isolated source remediation
 `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, delivery, compatibility, or product-performance claim.
+Exact composed cycle-5 remediation precursor
+`8687898ee19b55fa44864af5f27f7fae8ec3d97e`, tree
+`5d8224eb8afcd297ed53e30909c3d037524f00ba`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. Formal cycle 6
+rejected exact candidate `5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`, with a deduplicated union of
+0 blocker, 0 high, 1 medium, and 0 low. Exact source remediation
+`e6eba937423714bc96a7c399b4823c6deda22da7`, tree
+`bc0a0ddddaa43da5027b1041a9353ce1f6b17184`, corrects the target dependency
+scope and adds parsed-manifest evidence. This remediation record makes no
+replacement-gate, formal-review outcome, candidate, workflow, integration,
+delivery, compatibility, product-performance, or fx-equivalence claim.
 
 ## Frozen candidate boundary
 
@@ -883,6 +895,72 @@ This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
 
+## Formal cycle 6 — not green
+
+Three fresh agents independently inspected exact candidate
+`5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 6 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 1 medium, 0 low**.
+
+- **Medium — direct dependency does not cover the exported target surface:**
+  `web-fetch-http` and `web_fetch.rs` are exported and documented for every
+  non-WASM target, and native DNS query-ID derivation uses `sha2`
+  unconditionally. The direct dependency covered only Linux and macOS, leaving
+  FreeBSD and Windows without it. It also accidentally covered Rust 1.94.1's
+  `wasm32-wali-linux-musl` target because that WASM-family target reports Linux
+  as its target OS. The macOS cross-host's `aws-lc-sys` C-sysroot failure
+  stopped compilation before this missing Rust dependency could be exposed.
+
+Correctness reran the 30-private/14-direct/14-production-HTTP/5-engine focused
+evidence and inventoried 992 all-target/all-feature tests on the exact
+candidate.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-6 candidate.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-6 candidate.
+
+### Consolidated union and disposition
+
+Cycle 6 has **0 blocker, 0 high, 1 medium, and 0 low** deduplicated findings.
+Exact candidate `5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`, is rejected and must never be used
+as delivery evidence.
+
+The replacement must put the one direct `sha2` dependency in the existing
+`cfg(not(target_family = "wasm"))` table shared by the `web-fetch-http`
+dependencies. Manifest evidence must parse the TOML and reject aliases,
+duplicates or overlapping placements, optional/version drift, and target-scope
+drift.
+
+Exact source remediation `e6eba937423714bc96a7c399b4823c6deda22da7`, tree
+`bc0a0ddddaa43da5027b1041a9353ce1f6b17184`, moves the direct `sha2` entry into
+that non-WASM table. The stdlib-`tomllib` regression in
+`tests/test_native_manifest.py` parses the manifest and rejects a `sha2` alias,
+duplicate or overlapping placement, an optional or versioned specification,
+and scope drift. The normative behavior document records the corrected target
+boundary without changing the feature's non-WASM contract.
+
+Exact Rust and Cargo 1.94.1 source checks passed: 30/30 private, 14/14 direct,
+14/14 production HTTP, and 5/5 engine tests; formatting; full warnings-denied
+Clippy; workspace tests and doctests; and 131 Python tests with eight expected
+macOS skips. Direct Linux and FreeBSD dependency-tree probes include native
+`sha2` and HTTP edges, while the WALI tree includes neither. Diff checks are
+clean.
+
+This remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -931,8 +1009,16 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: formal cycles 1, 2, 3, 4, and 5 are **NOT GREEN** on their exact
-recorded SHA/tree pairs. Exact cycle-5 candidate
+Current state: formal cycles 1, 2, 3, 4, 5, and 6 are **NOT GREEN** on their
+exact recorded SHA/tree pairs. Exact cycle-6 candidate
+`5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`, is rejected with a deduplicated
+union of 0 blocker, 0 high, 1 medium, and 0 low. Exact source remediation
+`e6eba937423714bc96a7c399b4823c6deda22da7`, tree
+`bc0a0ddddaa43da5027b1041a9353ce1f6b17184`, corrects the target dependency
+scope and adds parsed-manifest evidence. This remediation record makes no
+replacement-gate, formal-review outcome, candidate, workflow, integration,
+delivery, performance, or fx-equivalence claim. Exact cycle-5 candidate
 `81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
 `f5ede2e70637f5cd8ab373c9dfc893189dd5775c`, is rejected with a deduplicated
 union of 0 blocker, 0 high, 1 medium, and 1 low. Exact isolated source
