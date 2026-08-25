@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — FORMAL CYCLE 3 NOT GREEN**
+Status: **IN PROGRESS — CYCLE 3 REJECTED; REPLACEMENT GATE GREEN**
 
 ## Base and boundary
 
@@ -557,6 +557,44 @@ This remediation record makes no replacement-gate, formal-review, workflow,
 integration, delivery, compatibility, or product-performance claim; formal
 candidates are identified only by exact-SHA review results.
 
+## Cycle-3 remediation replacement gate
+
+Exact composed remediation precursor
+`78e6f4dcb4d49fd8ccf112e64350b745f622ca7f`, tree
+`1fc16e8f7792c3001ba5f4b4a0c112778d2cf30c`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. The four
+repository-required commands and the complete all-target/all-feature workspace
+run passed. Focused evidence passed 26 private, 14 direct, 13 production HTTP
+lifecycle, and five engine tests.
+
+The CI-style Python discovery run passed 130 tests with eight expected macOS
+skips in 40.358 seconds. Compatibility regeneration with `--check` passed
+against clean pinned fx revision
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Dependency policy passed under
+`cargo-deny` 0.20.2 with three allowed duplicate warnings. Cached
+`cargo-audit` 0.22.2 `--no-fetch` checked 1,225 advisories and 209 locked
+dependencies with zero vulnerabilities.
+
+Linux and FreeBSD baseline libraries plus all 53 integration targets
+type-checked. FreeBSD emitted only its two established cfg-only warnings. Each
+WASI no-run variant produced 61 executable artifacts and only its six
+established cfg-only warnings. Node 22.22.0 actively passed the retained WASI
+unsupported-target test 1/1. Documentation integrity covered 74 Markdown
+files, 99 fence blocks, 530 inline links, and 378 relative targets with zero
+errors.
+
+At the code/evidence precursor, the exact whole-feature diff from the delivered
+base covered 21 files with 6,490 insertions and 21 deletions. The cycle-3
+production/test delta was 523 insertions and 102 deletions. CLI source,
+workflows, benchmark workloads, and generated compatibility data were
+unchanged, and changed Rust added no unsafe code. A fresh root release build
+produced a 319,152-byte arm64 Mach-O binary with SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`;
+bare, version, help, inert human-status, and inert JSON-status smokes passed.
+
+This replacement gate makes no formal-review, workflow, integration, delivery,
+performance, or fx-equivalence claim. A new exact candidate remains pending.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -619,6 +657,9 @@ production remediation component
 `web_fetch.rs`. Exact isolated independent-evidence commit
 `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
 `f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
-only native `web_fetch_http.rs`. This remediation record makes no
-replacement-gate, formal-review, workflow, integration, or delivery claim;
-formal candidates are identified only by exact-SHA review results.
+only native `web_fetch_http.rs`. Exact composed remediation precursor
+`78e6f4dcb4d49fd8ccf112e64350b745f622ca7f`, tree
+`1fc16e8f7792c3001ba5f4b4a0c112778d2cf30c`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate makes
+no formal-review, workflow, integration, delivery, performance, or fx-
+equivalence claim. A new exact candidate remains pending.

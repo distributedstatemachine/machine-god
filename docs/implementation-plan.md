@@ -2664,6 +2664,23 @@ gate:
   This remediation record makes no replacement-gate, formal-review, workflow,
   integration, or delivery
   claim; formal candidates are identified only by exact-SHA review results.
+  Exact composed cycle-3 remediation precursor
+  `78e6f4dcb4d49fd8ccf112e64350b745f622ca7f`, tree
+  `1fc16e8f7792c3001ba5f4b4a0c112778d2cf30c`, passes the complete replacement
+  local gate under exact Rust and Cargo 1.94.1 without fallback. The four
+  required commands, complete all-target/all-feature run, focused 26-private/
+  14-direct/13-production-HTTP/5-engine suites, Python 130 with eight expected
+  macOS skips in 40.358 seconds, pinned-fx check, dependency, Linux/FreeBSD/
+  WASI and active Node 1/1, documentation, diff/no-unsafe, fresh release-hash,
+  and five CLI-smoke gates are green. The detailed ledger records 53 native
+  integration targets, two established FreeBSD warnings, 61 artifacts and six
+  established warnings per WASI variant, Markdown 74/99/530/378/0, the 21-file
+  code/evidence diff at +6,490/-21, and the cycle-3 source/test delta at
+  +523/-102. CLI, workflow, benchmark, and generated-compatibility bytes are
+  unchanged. The 319,152-byte release SHA is
+  `4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
+  This gate makes no formal-review, workflow, integration, delivery,
+  performance, or fx-equivalence claim. A new exact candidate remains pending.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
