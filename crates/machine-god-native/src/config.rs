@@ -281,8 +281,9 @@ pub fn load_native_config(
     }
 }
 
-/// Captures only `XDG_CONFIG_HOME` and `HOME` from the process environment, then
-/// synchronously loads native configuration.
+/// Captures `XDG_CONFIG_HOME` from the process environment and captures `HOME`
+/// only when that value is missing or empty, then synchronously loads native
+/// configuration.
 ///
 /// # Errors
 ///
@@ -295,11 +296,12 @@ pub fn load_process_config() -> Result<LoadedNativeConfig, NativeConfigError> {
 fn load_process_config_with(
     mut read_environment: impl FnMut(&'static str) -> Option<OsString>,
 ) -> Result<LoadedNativeConfig, NativeConfigError> {
-    let environment = NativeEnvironment::new(
-        read_environment("XDG_CONFIG_HOME"),
-        None,
-        read_environment("HOME"),
-    );
+    let xdg_config_home = read_environment("XDG_CONFIG_HOME");
+    let home = match xdg_config_home.as_ref() {
+        Some(value) if !value.is_empty() => None,
+        Some(_) | None => read_environment("HOME"),
+    };
+    let environment = NativeEnvironment::new(xdg_config_home, None, home);
     load_native_config(&environment)
 }
 
@@ -666,16 +668,110 @@ mod tests {
     }
 
     #[test]
-    fn process_config_snapshot_requests_only_config_environment_keys() {
+    fn process_config_snapshot_requests_home_after_missing_xdg_config_home() {
         let mut requested = Vec::new();
         let loaded = load_process_config_with(|key| {
             requested.push(key);
-            None
+            match key {
+                "XDG_CONFIG_HOME" | "HOME" => None,
+                _ => panic!("unexpected environment request: {key}"),
+            }
         })
         .unwrap();
 
         assert_eq!(requested, ["XDG_CONFIG_HOME", "HOME"]);
         assert_eq!(loaded.origin(), ConfigOrigin::BuiltInDefaults);
+    }
+
+    #[test]
+    fn process_config_snapshot_requests_home_after_empty_xdg_config_home() {
+        let mut requested = Vec::new();
+        let loaded = load_process_config_with(|key| {
+            requested.push(key);
+            match key {
+                "XDG_CONFIG_HOME" => Some(OsString::new()),
+                "HOME" => None,
+                _ => panic!("unexpected environment request: {key}"),
+            }
+        })
+        .unwrap();
+
+        assert_eq!(requested, ["XDG_CONFIG_HOME", "HOME"]);
+        assert_eq!(loaded.origin(), ConfigOrigin::BuiltInDefaults);
+    }
+
+    #[test]
+    fn process_config_snapshot_does_not_request_home_after_valid_xdg_config_home() {
+        let temporary = TestDirectory::new("process-valid-xdg");
+        let xdg_config_home = temporary.path().as_os_str().to_owned();
+        let mut requested = Vec::new();
+        let loaded = load_process_config_with(|key| {
+            requested.push(key);
+            match key {
+                "XDG_CONFIG_HOME" => Some(xdg_config_home.clone()),
+                _ => panic!("unexpected environment request: {key}"),
+            }
+        })
+        .unwrap();
+
+        assert_eq!(requested, ["XDG_CONFIG_HOME"]);
+        assert_eq!(loaded.origin(), ConfigOrigin::BuiltInDefaults);
+    }
+
+    #[test]
+    fn process_config_snapshot_does_not_request_home_after_relative_xdg_config_home() {
+        let mut requested = Vec::new();
+        let error = load_process_config_with(|key| {
+            requested.push(key);
+            match key {
+                "XDG_CONFIG_HOME" => Some(OsString::from("relative")),
+                _ => panic!("unexpected environment request: {key}"),
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(requested, ["XDG_CONFIG_HOME"]);
+        assert_eq!(error.kind(), NativeConfigErrorKind::InvalidEnvironment);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_config_snapshot_does_not_request_home_after_non_unicode_xdg_config_home() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let non_unicode = OsString::from_vec(vec![b'/', 0xff]);
+        let mut requested = Vec::new();
+        let error = load_process_config_with(|key| {
+            requested.push(key);
+            match key {
+                "XDG_CONFIG_HOME" => Some(non_unicode.clone()),
+                _ => panic!("unexpected environment request: {key}"),
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(requested, ["XDG_CONFIG_HOME"]);
+        assert_eq!(error.kind(), NativeConfigErrorKind::InvalidEnvironment);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_config_snapshot_does_not_request_home_after_non_unicode_xdg_config_home() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let non_unicode = OsString::from_wide(&[0xd800]);
+        let mut requested = Vec::new();
+        let error = load_process_config_with(|key| {
+            requested.push(key);
+            match key {
+                "XDG_CONFIG_HOME" => Some(non_unicode.clone()),
+                _ => panic!("unexpected environment request: {key}"),
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(requested, ["XDG_CONFIG_HOME"]);
+        assert_eq!(error.kind(), NativeConfigErrorKind::InvalidEnvironment);
     }
 
     #[test]

@@ -25,13 +25,13 @@ The implemented twenty-eighth bounded slice adds top-level
 configuration read-only and reports ask-only permission configuration without
 constructing an engine or inventing persistent rule or runtime grant state.
 Its separate production, independent-evidence, and documentation components
-are composed in this feature change. Exact candidate
-`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
-`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed the complete local gate but
-is **NOT GREEN** after formal cycle 1 reported a deduplicated zero blocker, zero
-high, one medium, and two low findings. The remediation is composed; a
-replacement gate, three fresh reviews, integration, and delivery remain
-pending.
+are composed in this feature change. Exact cycle-2 candidate
+`e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
+local gate but is **NOT GREEN** after formal review reported a deduplicated zero
+blocker, zero high, zero medium, and two low findings. Cycle-2 remediation is
+composed but not yet replacement-gated; another replacement gate, three fresh reviews,
+integration, and delivery remain pending.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -221,13 +221,20 @@ grants are honest capability statements, not empty policy databases. The
 command creates no engine, permission prompt, session store, state root, Tokio
 runtime, credential discovery, network transport, rule store, or grant store.
 
-Cycle 1 rejected this exact candidate because configuration reads can retry
-`Interrupted` indefinitely and because the config-only command snapshots an
-unused `XDG_STATE_HOME` value. The composed replacement retries the first 15
-cumulative interrupted reads, maps the 16th to fixed `Unreadable`, requests
-`XDG_CONFIG_HOME` and then `HOME`, and never requests `XDG_STATE_HOME`.
-Deterministic injected-reader evidence is composed; the replacement local gate
-and three fresh reviews remain pending.
+On supported Unix targets, configuration loading opens the selected final path
+with `O_NOFOLLOW` and nonblocking behavior and authoritatively requires a
+regular file. Hardened non-Unix opening remains deferred.
+
+Cycle 1 rejected the original candidate because configuration reads could retry
+`Interrupted` indefinitely and because the config-only command snapshotted an
+unused `XDG_STATE_HOME` value. The cycle-1 replacement bounds the 16th
+cumulative interruption with fixed `Unreadable` and never requests
+`XDG_STATE_HOME`. Cycle 2 found that it still reads and stores `HOME` eagerly
+when nonempty `XDG_CONFIG_HOME` already decides selection. The composed cycle-2
+replacement reads `XDG_CONFIG_HOME` first and reads `HOME` only when XDG is
+missing or empty; a nonempty valid, invalid-relative, or non-Unicode XDG value
+neither reads nor falls back to `HOME`. Its replacement gate and fresh reviews
+remain pending.
 
 ## Status output
 
@@ -290,10 +297,13 @@ nonempty `HOME` must likewise be absolute Unicode. Absent or empty `HOME` makes
 a fallback location `unavailable`.
 
 Status snapshots `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME` because it
-reports both locations. The rejected permissions candidate also snapshots all
-three even though it uses only config resolution. Its composed config-only
-replacement requests `XDG_CONFIG_HOME` and then `HOME` and never requests
-`XDG_STATE_HOME`.
+reports both locations. The rejected cycle-1 permissions candidate also
+snapshotted all three even though it used only config resolution. Its composed
+config-only replacement never requests `XDG_STATE_HOME`, but cycle 2 found its
+`HOME` request eager. The composed replacement reads `XDG_CONFIG_HOME` first,
+reads `HOME` only when XDG is missing or empty, and does not read or fall back
+to `HOME` when a nonempty valid, invalid-relative, or non-Unicode XDG value is
+selected.
 
 Inspection calls `symlink_metadata` on each final path. A final symlink is not
 followed: a config symlink reports `not_file`, and a state-directory symlink

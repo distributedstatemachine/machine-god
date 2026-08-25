@@ -16,16 +16,24 @@ and main benchmark-evidence `32875015892` are green; each benchmark run retains
 two nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
 product-performance or fx-equivalence claim. The implemented twenty-eighth
-top-level `permissions [--json]` slice is **IN PROGRESS — CYCLE 1 REMEDIATED;
+top-level `permissions [--json]` slice is **IN PROGRESS — CYCLE 2 REMEDIATED;
 REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base `8d8ecc7`; it is read-only,
-ask-only, and owns no persistent rules or runtime grant state. Exact candidate
-`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
-`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed its complete local gate but
-was rejected with a deduplicated 0 blocker, 0 high, 1 medium, and 2 low cycle-1
-finding set. The composed remediation allows 15 cumulative interrupted reads,
-bounds the 16th with fixed `Unreadable`, and requests `XDG_CONFIG_HOME` then
-`HOME` without requesting `XDG_STATE_HOME`. Replacement gates, fresh reviews,
-integration, and delivery remain pending. See the
+ask-only, and owns no persistent rules or runtime grant state. Exact cycle-2
+candidate `e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
+local gate but was rejected with a deduplicated 0 blocker, 0 high, 0 medium,
+and 2 low finding set. Composed remediation makes config-only environment access
+lazy: read `XDG_CONFIG_HOME` first, read `HOME` only when XDG is missing or
+empty, never read `XDG_STATE_HOME`, and never read or fall back to `HOME` for a
+nonempty valid, invalid-relative, or non-Unicode XDG value. It also qualifies
+final-path `O_NOFOLLOW` and nonblocking guarantees as supported-Unix behavior;
+hardened non-Unix opening remains deferred. Exact isolated native component
+`fa83c6c6427028c18e1c36ba6603eb44e4102eac`, tree
+`a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
+`1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
+`058aa738487bfce08be2d964f8a577fdc12fea09`, are composed; integration also
+adds the Windows cfg mirror of the non-Unicode regression. The replacement
+gate, fresh reviews, integration, and delivery remain pending. See the
 [`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
 review history begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree

@@ -32,13 +32,17 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 product-performance or fx-equivalence claim. Implemented slice twenty-eight
 adds read-only top-level `permissions [--json]` from exact base `8d8ecc7`
 without moving rule, grant, engine, session, runtime, credential, or network
-state into the CLI; see [`permissions-cli.md`](permissions-cli.md). Its separate
-components are composed in exact candidate
-`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
-`757f5169f03bf4018b4d85830cf37a2b716cd0cb`. Its complete local gate passed,
-but formal cycle 1 is **NOT GREEN** with a deduplicated 0 blocker, 0 high, 1
-medium, and 2 low findings. Remediation is composed; a replacement gate and
-reviews, integration, and delivery remain pending. The retained
+state into the CLI; see [`permissions-cli.md`](permissions-cli.md). Exact
+cycle-2 candidate `e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
+local gate, but formal review is **NOT GREEN** with a deduplicated 0 blocker, 0
+high, 0 medium, and 2 low findings. Exact native component
+`fa83c6c6427028c18e1c36ba6603eb44e4102eac`, tree
+`a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
+`1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
+`058aa738487bfce08be2d964f8a577fdc12fea09`, compose the cycle-2 remediation;
+another replacement gate and reviews, integration, and delivery remain pending.
+The retained
 `web_fetch` review lineage begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
@@ -617,10 +621,12 @@ does not invoke the loader; the implemented `permissions [--json]` path invokes
 it exactly once after complete argument validation and observes only the
 validated permission mode. The rejected cycle-1 permissions candidate uses the
 general three-value snapshot, unnecessarily observing `XDG_STATE_HOME`; its
-composed config-loading and permissions snapshot requests `XDG_CONFIG_HOME` and
-then `HOME` and never requests `XDG_STATE_HOME`. Status retains the three-value
-snapshot. The exact surfaces are
-documented in
+composed config-loading and permissions snapshot never requests
+`XDG_STATE_HOME`. Cycle 2 found that it still reads and stores `HOME` eagerly.
+The composed replacement reads `XDG_CONFIG_HOME` first, reads `HOME` only when
+XDG is missing or empty, and neither reads nor falls back to `HOME` for a
+nonempty valid, invalid-relative, or non-Unicode XDG value. Status retains the
+three-value snapshot. The exact surfaces are documented in
 [`cli.md`](cli.md), [`permissions-cli.md`](permissions-cli.md), and
 [`configuration.md`](configuration.md). The separate
 [`read_file` contract](read-file.md),
@@ -724,8 +730,9 @@ even in human status so path contents do not become terminal controls. Bare
 invocation keeps the bootstrap identity contract. Help, version, status,
 permissions, and argument errors are byte-stable presentation behavior, not an
 engine-owned command model. The permissions slice remains in progress after a
-rejected cycle 1; remediation is composed, while a replacement local gate,
-three fresh reviews, integration, and delivery remain pending.
+rejected cycle 2; remediation is composed, while another
+replacement local gate, three fresh reviews, integration, and delivery remain
+pending.
 
 The synchronous loader resolves only the config location. In the thirteenth
 slice, an unavailable location or missing file yields the explicit built-in
@@ -762,14 +769,17 @@ non-secret name `environment`; it cannot carry a token or arbitrary environment
 name and does not make the loader read process state.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
-final path no-follow and nonblocking. A preliminary path-kind check is followed
-by authoritative opened-descriptor regularity validation. The loader retains at
+final path with `O_NOFOLLOW` and nonblocking behavior. A preliminary path-kind
+check is followed by authoritative opened-descriptor regularity validation.
+The loader retains at
 most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
 Cycle 1 found that this memory bound does not bound work: the rejected
 candidate retries `Interrupted` reads indefinitely. The composed replacement
 retries the first 15 cumulative interrupted results, maps the 16th to the
 existing fixed `Unreadable` result, and proves both boundaries plus cumulative
-counting with a deterministic injected reader. Replacement review is pending.
+counting with a deterministic injected reader. Cycle 2 confirmed those
+boundaries and reported only the lazy-environment and target-qualified-contract
+lows described above. Cycle-2 remediation is composed and replacement review is pending.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 model values, or operating-system error text. Credential bytes remain in no

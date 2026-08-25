@@ -7,14 +7,14 @@ preserves that split: after strict argument parsing, the thin host invokes only
 the existing byte-bounded read-only configuration loader, exactly once, and
 reports no persistent rule or live grant state. Invalid configuration fails
 with empty stdout and one fixed diagnostic that reflects no path, content,
-model, or operating-system error. Exact candidate
-`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
-`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed its local gate but formal
-cycle 1 is **NOT GREEN**: one medium unbounded-`Interrupted` read finding and
-two low excess-environment/evidence findings. It adds no engine, prompt,
-session, credential, runtime, state-root, write, or network effect. Remediation
-is composed; replacement gates, fresh reviews, integration, and delivery remain
-pending. The
+model, or operating-system error. Exact cycle-2 candidate
+`e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
+gate but formal review is **NOT GREEN**: zero blocker, zero high, zero medium,
+and two low lazy-environment/target-contract findings. It adds no engine,
+prompt, session, credential, runtime, state-root, write, or network effect.
+Cycle-2 remediation is composed but awaits another replacement gate; fresh
+reviews, integration, and delivery remain pending. The
 delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code owns DNS, TLS,
@@ -403,19 +403,23 @@ schema-v2 objects map in memory to that acquisition kind while remaining
 observable as versions `1` and `2`. The loader never rewrites or migrates them.
 An invalid selected config-location environment value does not fall back.
 Status legitimately snapshots `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`
-for its two metadata locations. The rejected permissions candidate reuses that
-snapshot and observes unused `XDG_STATE_HOME`; the composed config-only
-replacement requests `XDG_CONFIG_HOME` and then `HOME` and never requests
-`XDG_STATE_HOME`.
+for its two metadata locations. The rejected cycle-1 permissions candidate
+reused that snapshot and observed unused `XDG_STATE_HOME`; the composed config-
+only replacement never requests `XDG_STATE_HOME`. Cycle 2 found that it still
+reads and stores `HOME` eagerly. The composed replacement reads
+`XDG_CONFIG_HOME` first and reads `HOME` only when XDG is missing or empty. A
+nonempty valid, invalid-relative, or non-Unicode XDG value neither reads nor
+falls back to `HOME`. That cycle-2 remediation is composed.
 
 On the supported Unix targets exercised by Milestone 03, a present path is
-opened no-follow and nonblocking. A preliminary path-kind check is followed by
-authoritative opened-descriptor regularity validation before any bytes are
-read. Final symlinks and non-regular entries therefore fail closed without a
-FIFO open becoming an unbounded wait. Hardened open semantics for non-Unix
-targets remain deferred. The loader does not canonicalize, create, or write
-anything; its no-follow guarantee is for the final component and is not a claim
-that the complete ancestor path is frozen.
+opened with `O_NOFOLLOW` and nonblocking behavior. A preliminary path-kind
+check is followed by authoritative opened-descriptor regularity validation
+before any bytes are read. Final symlinks and non-regular entries therefore
+fail closed without a FIFO open becoming an unbounded wait. These final-path
+no-follow and nonblocking guarantees are supported-Unix behavior only;
+hardened non-Unix opening remains deferred. The loader does not canonicalize,
+create, or write anything, and the Unix no-follow guarantee is not a claim that
+the complete ancestor path is frozen.
 
 The raw configuration bound remains 64 KiB, with at most one additional byte
 retained to detect overflow or growth. Accepted bytes must be valid UTF-8 and
@@ -433,8 +437,9 @@ This byte bound does not bound the rejected candidate's total work when a
 reader repeatedly returns `Interrupted`: cycle 1 found that it retries without
 a cumulative limit. The composed replacement retries the first 15 cumulative
 interrupted results, maps the 16th to fixed `Unreadable`, and adds deterministic
-injected-reader evidence for both boundaries and cumulative counting. The
-replacement review remains pending.
+injected-reader evidence for both boundaries and cumulative counting. Cycle 2
+confirmed those bounds and reported only the two low findings above; cycle-2
+remediation is composed and replacement review remains pending.
 
 The model validator is shared with the AI Gateway provider, preventing config
 and provider acceptance from drifting. Config owns the bounded model string and

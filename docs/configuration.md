@@ -17,11 +17,11 @@ environment and filesystem. `machine-god status` remains metadata-only and
 does not invoke the loader. The implemented
 `machine-god permissions [--json]` path invokes it exactly once after complete
 argument validation and observes only permission mode. Formal permissions cycle
-1 rejected exact candidate `fe2475329b50e89bc069eded3eb2f398e8e1a167` for one
-medium unbounded-interruption finding and two low environment/evidence
-findings; its remediation is composed pending a replacement gate and fresh
-review. This configuration slice
-advances the built-in and current file schema to v3 while retaining strict read
+2 rejected exact candidate `e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, with two low performance/
+portability findings after the complete replacement gate passed. Cycle-2
+remediation is composed but awaits its replacement gate and fresh reviews. This
+configuration slice advances the built-in and current file schema to v3 while retaining strict read
 compatibility for the exact legacy v1 and v2 objects.
 
 ## Location and defaults
@@ -37,11 +37,16 @@ snapshot:
   without trying a different environment value.
 
 Native status still snapshots `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`
-because it reports both config and state metadata. The rejected permissions
-candidate unnecessarily uses that general snapshot even though its loader
-consumes only configuration inputs. The composed config-loading and permissions
-snapshot requests `XDG_CONFIG_HOME` and then `HOME` and never requests
-`XDG_STATE_HOME`; status retains the general snapshot.
+because it reports both config and state metadata. The rejected cycle-1
+permissions candidate unnecessarily used that general snapshot even though its
+loader consumed only configuration inputs. The composed config-loading and
+permissions snapshot requests `XDG_CONFIG_HOME` and `HOME` and never requests
+`XDG_STATE_HOME`, but cycle 2 found that `HOME` is read and stored eagerly. The
+composed replacement reads `XDG_CONFIG_HOME` first and reads `HOME` only when
+XDG is missing or empty. A nonempty XDG value decides selection whether it is
+valid, relative, or non-Unicode, so that path neither reads nor falls back to
+`HOME`. Status retains the general three-value snapshot. This cycle-2
+remediation is composed; its replacement gate and reviews are pending.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
 the explicit built-in schema-v3 configuration. A resolved file that is missing
@@ -163,13 +168,15 @@ read loop retries every `Interrupted` result without a cumulative work bound.
 The composed replacement retries the first 15 cumulative interrupted results and
 maps the 16th to the existing fixed `Unreadable` error, with deterministic
 injected-reader evidence for both boundaries. Partial progress does not reset
-the count, and an over-reported read maps to `Unreadable`. Replacement-gate and
-review evidence remain pending.
+the count, and an over-reported read maps to `Unreadable`. The complete cycle-2
+replacement gate and review confirmed these bounds; the rejected candidate's
+two lows concern lazy environment access and target-qualified documentation.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
-final path with no-follow and nonblocking behavior. It performs a preliminary
-path-kind check, then authoritatively validates the opened descriptor as a
-regular file before reading it. It therefore rejects a final symlink,
+final path with `O_NOFOLLOW` and nonblocking behavior. It performs a
+preliminary path-kind check, then authoritatively validates the opened
+descriptor as a regular file before reading it. It therefore rejects a final
+symlink,
 directory, FIFO, socket, device, or other non-regular entry and does not block
 opening a hostile FIFO. Hardened open semantics for non-Unix targets are not
 part of this milestone's supported contract.

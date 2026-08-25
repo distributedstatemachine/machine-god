@@ -53,8 +53,8 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
 performance or fx-equivalence claim. The implemented twenty-eighth top-level
-`permissions [--json]` slice is **IN PROGRESS — CYCLE 1 NOT GREEN;
-REMEDIATION COMPOSED** from exact delivered base
+`permissions [--json]` slice is **IN PROGRESS — CYCLE 2 REMEDIATED;
+REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`. It is a read-only projection of
 the already delivered ask-only native configuration and owns no rule, grant,
 engine, runtime, session, credential, or network state. Its separate production,
@@ -66,8 +66,18 @@ medium, and 2 low findings, so it is rejected. Remediation is composed from
 exact production component `4cf50b6f7e7ddec00e1e251902e5b9983036dd7b`,
 tree `fb4d0dc7c7501ccd3547cdf1fcc83b84623f4a08`, and documentation
 component `278dd45b9e38e8912d803832c37962b84faf9fe5`, tree
-`536ef22cff93d5c478600e7554b65c8442b896ab`; replacement gates, integration,
-and delivery remain pending. The retained
+`536ef22cff93d5c478600e7554b65c8442b896ab`. Exact cycle-2 candidate
+`e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
+gate but formal review reported a deduplicated 0 blocker, 0 high, 0 medium, and
+2 low findings, so it is rejected. Exact isolated native component
+`fa83c6c6427028c18e1c36ba6603eb44e4102eac`, tree
+`a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
+`1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
+`058aa738487bfce08be2d964f8a577fdc12fea09`, compose cycle-2 remediation;
+integration adds the Windows cfg mirror of the non-Unicode regression. Another
+replacement gate, three fresh reviews, integration, and delivery remain pending.
+The retained
 `web_fetch` review lineage begins with pre-review
 gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
@@ -2629,16 +2639,47 @@ Exact production remediation `4cf50b6f7e7ddec00e1e251902e5b9983036dd7b`,
 tree `fb4d0dc7c7501ccd3547cdf1fcc83b84623f4a08`, and documentation
 component `278dd45b9e38e8912d803832c37962b84faf9fe5`, tree
 `536ef22cff93d5c478600e7554b65c8442b896ab`, are composed in this remediation
-change. The replacement retries the first 15 cumulative `Interrupted` results, maps the
-16th to the existing fixed `Unreadable` result, and proves both boundaries with
-a deterministic injected reader. Configuration loading and permissions
-request `XDG_CONFIG_HOME` and then `HOME` and never request `XDG_STATE_HOME`;
-status retains its separate `XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`HOME` snapshot.
-A complete replacement gate, three fresh same-SHA reviews, integration,
-delivery, and exact feature and `main` workflows remain pending. The combined
-top-level CLI inventory remains planned, and this slice makes no benchmark-
-workload, product-performance, compatibility-promotion, or fx-equivalence
-claim.
+change. The replacement retries the first 15 cumulative `Interrupted` results,
+maps the 16th to the existing fixed `Unreadable` result, and proves both
+boundaries with a deterministic injected reader. Configuration loading and
+permissions never request `XDG_STATE_HOME`; status retains its separate
+`XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`HOME` snapshot.
+
+Exact cycle-2 candidate `e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
+gate under Rust and Cargo 1.94.1 without fallback. Formatting, warnings-denied
+workspace all-target/all-feature Clippy, workspace tests, and workspace
+doctests are green. Focused native-configuration and CLI checks, the pinned
+compatibility generator check, and all 31 generator tests are green. A fresh
+368,944-byte release binary has SHA-256
+`9ff974588808823a0419b150bd9b30a016cc377f8bf84f0c5aac2a14035784fe` and
+passes the release-binary smoke matrix. The candidate adds no dependency or
+unsafe Rust. This is candidate-local evidence, not delivery evidence.
+
+Formal cycle 2 reviewed that exact SHA/tree. Correctness/API and native config/
+error lifecycle are each **GREEN** at 0 blocker, 0 high, 0 medium, and 0 low.
+Performance/CLI portability is **NOT GREEN** at 0 blocker, 0 high, 0 medium,
+and 2 low; the deduplicated union is the same. One low is eager `HOME`
+observation and allocation when nonempty `XDG_CONFIG_HOME` already decides
+selection. The other is the permissions contract's unqualified no-follow claim
+despite hardened non-Unix opening remaining deferred. Any finding rejects the
+exact candidate.
+
+Exact isolated native remediation `fa83c6c6427028c18e1c36ba6603eb44e4102eac`,
+tree `a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
+`1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
+`058aa738487bfce08be2d964f8a577fdc12fea09`, are composed. Integration adds the
+Windows cfg mirror of the non-Unicode regression. The replacement reads
+`XDG_CONFIG_HOME` first for config loading and permissions,
+reads `HOME` only when XDG is missing or empty, and never reads
+`XDG_STATE_HOME`. A nonempty valid, invalid-relative, or non-Unicode XDG value
+neither reads nor falls back to `HOME`. Maintained final-path `O_NOFOLLOW`,
+nonblocking, no-follow, and descriptor-regularity guarantees are explicitly
+supported-Unix behavior; hardened non-Unix opening remains deferred. Another
+complete replacement gate, three fresh same-SHA reviews, integration, delivery,
+and exact feature and `main` workflows remain pending. The combined top-level
+CLI inventory remains planned, and this slice makes no benchmark-workload,
+product-performance, compatibility-promotion, or fx-equivalence claim.
 
 ### Milestone 03 completion boundary
 

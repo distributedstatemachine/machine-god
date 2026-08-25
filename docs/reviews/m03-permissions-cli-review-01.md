@@ -1,6 +1,6 @@
 # Milestone 03 `permissions` CLI review 01
 
-Status: **IN PROGRESS — CYCLE 1 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 2 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
 
 ## Base and boundary
 
@@ -148,6 +148,82 @@ They are composed in one remediation change. The replacement:
   `XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`HOME` snapshot; and
 - reconciles the maintained current-candidate and local-gate record.
 
-The composed replacement must pass the complete local gate
-and receive three fresh reviews on one new immutable SHA and tree. Feature and
-`main` workflows, integration, and delivery remain pending.
+The composed replacement therefore required a complete local gate and three
+fresh reviews on one new immutable SHA and tree. Its exact gate and cycle-2
+result follow. Feature and `main` workflows, integration, and delivery remain
+pending.
+
+### Exact cycle-2 replacement gate
+
+Exact candidate `e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
+local gate under Rust and Cargo 1.94.1 without fallback:
+
+- formatting, warnings-denied workspace all-target/all-feature Clippy,
+  workspace tests, and workspace doctests all passed;
+- focused native-configuration and CLI suites passed;
+- the pinned compatibility generator check and all 31 generator tests passed;
+- a fresh 368,944-byte release binary had SHA-256
+  `9ff974588808823a0419b150bd9b30a016cc377f8bf84f0c5aac2a14035784fe` and
+  passed the release-binary smoke matrix; and
+- the candidate added no dependency and no unsafe Rust.
+
+This replacement gate is evidence for the rejected cycle-2 candidate only. It
+makes no cycle-2 remediation, workflow, integration, delivery, compatibility,
+performance, or fx-equivalence claim.
+
+### Cycle 2 — NOT GREEN
+
+All three tracks reviewed exact candidate
+`e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
+`cd8919b1ff86af1b1bfbd0421a8280fc57473444`:
+
+| Track | Blocker | High | Medium | Low | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Correctness/API | 0 | 0 | 0 | 0 | **GREEN** |
+| Native config/error lifecycle | 0 | 0 | 0 | 0 | **GREEN** |
+| Performance/CLI portability | 0 | 0 | 0 | 2 | **NOT GREEN** |
+| Deduplicated union | 0 | 0 | 0 | 2 | **NOT GREEN** |
+
+Any finding rejects a candidate, so exact cycle 2 is rejected. The findings
+are:
+
+1. **LOW — eager `HOME` observation and allocation.** The config-only process
+   snapshot reads and stores `HOME` even when a nonempty `XDG_CONFIG_HOME`
+   already decides selection. A nonempty selected XDG value, whether valid,
+   relative, or non-Unicode, must decide without reading or falling back to
+   `HOME`.
+2. **LOW — overbroad no-follow contract.** The permissions contract describes
+   the selected final configuration path as no-follow without its supported-
+   Unix qualifier, even though hardened non-Unix opening remains explicitly
+   deferred. The production guarantee is final-path `O_NOFOLLOW` and
+   nonblocking open on supported Unix targets only.
+
+### Cycle-2 remediation composed
+
+Exact isolated components are:
+
+- native `fa83c6c6427028c18e1c36ba6603eb44e4102eac`, tree
+  `a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, changing only
+  `crates/machine-god-native/src/config.rs`; and
+- documentation `1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
+  `058aa738487bfce08be2d964f8a577fdc12fea09`, changing only the eight
+  maintained behavior and review documents named by its component scope.
+
+They are composed in one remediation change. Integration additionally adds the
+Windows cfg mirror of the non-Unicode process-snapshot regression. The
+replacement:
+
+- read `XDG_CONFIG_HOME` first for config loading and permissions, read `HOME`
+  only when XDG is missing or empty, and never read `XDG_STATE_HOME`;
+- prove that a nonempty valid, invalid-relative, or non-Unicode selected XDG
+  value neither reads nor falls back to `HOME`, while missing and empty XDG
+  values take the existing `HOME` fallback;
+- qualify final-path `O_NOFOLLOW`, nonblocking, no-follow, and descriptor-
+  regularity guarantees as supported-Unix behavior, retaining hardened non-
+  Unix opening as deferred; and
+- reconcile the maintained current-candidate and gate record.
+
+The composed replacement must pass another complete local gate and receive
+three fresh reviews on one new immutable SHA and tree. Feature
+and `main` workflows, integration, and delivery remain pending.
