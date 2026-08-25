@@ -186,13 +186,33 @@ than stripped.
 
 The canonical host must be either a syntactically valid multi-label public DNS
 name or a strict public IP literal. Single-label DNS names, empty labels,
-special-use names including `.alt`, ambiguous numeric forms including a
-trailing-dot IPv4 literal, and private, reserved, mapped, or otherwise
-non-public IP literals are not eligible. A trailing root dot on an otherwise
-eligible DNS name is removed, but it never makes a numeric spelling eligible.
-URL parsing and lexical host checks happen during preparation; DNS admission
-for names happens during allowed execution. A syntactically eligible name is
-not a promise that its later DNS answers will be accepted.
+ambiguous numeric forms including a trailing-dot IPv4 literal, and private,
+reserved, mapped, or otherwise non-public IP literals are not eligible. The
+exact ASCII-case-insensitive full-label suffix denylist, after removal of one
+trailing root dot, is `.alt`, `.arpa`, `.example`, `.home`, `.internal`,
+`.invalid`, `.lan`, `.local`, `.localhost`, `.onion`, and `.test`. Matching is
+allocation-free. The `.arpa` entry is machine-god public-web product policy for
+the limited-use infrastructure TLD that [IANA designates exclusively for
+Internet-infrastructure purposes](https://www.iana.org/domains/arpa) and
+[RFC 3172 describes as infrastructure rather than general host
+naming](https://www.rfc-editor.org/rfc/rfc3172#section-2). It is broader than
+the individual [IANA special-use registry](https://www.iana.org/assignments/special-use-domain-names/)
+entries and covers all current ARPA entries and their descendants, including
+`ipv4only.arpa`, `resolver.arpa`, reverse names such as `10.in-addr.arpa`, and
+every subdomain below them. The `.alt` entry likewise keeps the non-DNS
+namespace described by [RFC 9476](https://www.rfc-editor.org/rfc/rfc9476#section-2)
+out of public DNS execution.
+
+The exact terminal-label boundary does not reject names such as
+`public.notarpa` or `resolver.arpa.example.com`. Documentation domains
+`example.com`, `example.net`, and `example.org` are intentionally not denied
+lexically, consistent with [RFC 6761's application guidance](https://www.rfc-editor.org/rfc/rfc6761#section-6.5),
+and the maintained `example.com` fixture remains eligible. A trailing root dot
+never bypasses a rejected suffix or makes a numeric spelling eligible. URL
+parsing and these bounded lexical host checks happen during preparation.
+During allowed execution, DNS admission separately requires the complete
+resolved address set to satisfy the public-IP policy; lexical eligibility is
+not a promise that later DNS answers will be accepted.
 
 Preparation returns the canonical URL as the exact execution input and this
 provider-neutral policy capability:

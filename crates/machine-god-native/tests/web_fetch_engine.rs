@@ -307,6 +307,7 @@ fn engine_invalid_preflight_skips_policy_network_and_tool_events() {
     assert_completed(&events);
     assert!(policy.requests().is_empty());
     assert_eq!(transport.state.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.state.polls.load(Ordering::SeqCst), 0);
     assert!(events.iter().all(|event| !matches!(
         event.payload,
         TurnEvent::PermissionRequested { .. }
@@ -320,6 +321,46 @@ fn engine_invalid_preflight_skips_policy_network_and_tool_events() {
         Value::String("tool_error".to_owned())
     );
     assert!(output.is_error);
+    assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn engine_special_use_preflight_skips_policy_transport_and_tool_events() {
+    let provider = provider(
+        "https://Child.ReSoLvEr.ArPa./private?token=PRIVATE",
+        "web-fetch-special-use",
+    );
+    let store = InMemorySessionStore::new();
+    let policy = ScriptedPermissionHandler::new([]);
+    let transport = FakeTransport::new(Mode::Success);
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(WebFetchTool::with_transport(Arc::new(transport.clone())))
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "web-fetch-special-use");
+
+    assert_completed(&events);
+    assert!(policy.requests().is_empty());
+    assert_eq!(transport.state.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.state.polls.load(Ordering::SeqCst), 0);
+    assert!(events.iter().all(|event| !matches!(
+        event.payload,
+        TurnEvent::PermissionRequested { .. }
+            | TurnEvent::PermissionResolved { .. }
+            | TurnEvent::ToolStarted { .. }
+            | TurnEvent::ToolFinished { .. }
+    )));
+    let (message, output) = second_request_tool_output(&provider);
+    assert_eq!(
+        output.content["code"],
+        Value::String("tool_error".to_owned())
+    );
+    assert!(output.is_error);
+    assert!(!output.content.to_string().contains("PRIVATE"));
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
 }
 

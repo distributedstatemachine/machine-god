@@ -900,22 +900,22 @@ fn valid_public_dns_name(host: &str) -> bool {
 }
 
 fn reserved_dns_name(host: &str) -> bool {
-    let host = host.to_ascii_lowercase();
+    let final_label = host.rsplit_once('.').map_or(host, |(_, label)| label);
     [
-        "localhost",
-        "local",
-        "internal",
-        "lan",
-        "home",
-        "home.arpa",
-        "test",
-        "invalid",
-        "example",
-        "onion",
         "alt",
+        "arpa",
+        "example",
+        "home",
+        "internal",
+        "invalid",
+        "lan",
+        "local",
+        "localhost",
+        "onion",
+        "test",
     ]
     .iter()
-    .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
+    .any(|suffix| final_label.eq_ignore_ascii_case(suffix))
 }
 
 fn is_public_ip(address: IpAddr) -> bool {
@@ -2322,6 +2322,14 @@ mod tests {
     fn canonicalization_rejects_reserved_names_ambiguous_ips_and_unsafe_escapes() {
         for url in [
             "https://host.alt/",
+            "https://ipv4only.arpa/",
+            "https://probe.ipv4only.arpa/",
+            "https://resolver.arpa/",
+            "https://status.resolver.arpa/",
+            "https://10.in-addr.arpa/",
+            "https://host.10.in-addr.arpa/",
+            "https://child.IpV4OnLy.ArPa./",
+            "https://child.10.In-AdDr.ArPa./",
             "https://host.internal/",
             "https://host.local/",
             "https://host.test/",
@@ -2336,6 +2344,58 @@ mod tests {
             assert!(
                 canonical_request(url).is_err(),
                 "unexpected admission: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_dns_suffixes_are_ascii_case_insensitive_and_label_bounded() {
+        for rejected in [
+            "arpa",
+            "IPV4ONLY.ARPA",
+            "probe.IpV4OnLy.ArPa",
+            "resolver.arpa",
+            "status.RESOLVER.ARPA",
+            "10.in-addr.arpa",
+            "host.10.In-AdDr.ArPa",
+            "home",
+            "HOME.ARPA",
+        ] {
+            assert!(
+                reserved_dns_name(rejected),
+                "unexpected admission: {rejected}"
+            );
+        }
+
+        for admitted in [
+            "notarpa",
+            "public.notarpa",
+            "resolver.arpa.example.com",
+            "notalt",
+            "public.notalt",
+            "alt.example.com",
+            "example.com",
+            "example.net",
+            "example.org",
+        ] {
+            assert!(
+                !reserved_dns_name(admitted),
+                "unexpected rejection: {admitted}"
+            );
+        }
+
+        assert_eq!(
+            canonical_request("https://resolver.arpa.example.com/")
+                .unwrap()
+                .host(),
+            "resolver.arpa.example.com"
+        );
+        for host in ["example.com", "example.net", "example.org"] {
+            assert_eq!(
+                canonical_request(&format!("https://{host}/"))
+                    .unwrap()
+                    .host(),
+                host
             );
         }
     }

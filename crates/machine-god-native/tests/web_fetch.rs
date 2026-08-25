@@ -416,6 +416,8 @@ fn prepare_rejects_non_public_hosts_and_accepts_strict_public_ip_literals() {
         "https://localhost/",
         "https://printer/",
         "https://host.local/",
+        "https://host.home/",
+        "https://home.arpa/",
         "https://host.alt/",
         "https://0.0.0.0/",
         "https://10.0.0.1/",
@@ -460,6 +462,50 @@ fn prepare_rejects_non_public_hosts_and_accepts_strict_public_ip_literals() {
         };
         assert_eq!(target.host, host);
     }
+}
+
+#[test]
+fn prepare_rejects_arpa_names_at_label_boundaries_without_transport() {
+    let transport = FakeTransport::new(TransportMode::Pending);
+    let tool = WebFetchTool::with_transport(Arc::new(transport.clone()));
+
+    for url in [
+        "https://ipv4only.arpa/",
+        "https://probe.ipv4only.arpa/",
+        "https://resolver.arpa/",
+        "https://status.resolver.arpa/",
+        "https://10.in-addr.arpa/",
+        "https://host.10.in-addr.arpa/",
+        "https://child.IpV4OnLy.ArPa./",
+        "https://child.ReSoLvEr.ArPa./",
+        "https://child.10.In-AdDr.ArPa./",
+    ] {
+        assert_destination_rejected(
+            &tool
+                .prepare(call(WEB_FETCH_TOOL_NAME, json!({ "url": url })))
+                .unwrap_err(),
+        );
+    }
+
+    for (url, host) in [
+        ("https://example.com/", "example.com"),
+        ("https://example.net/", "example.net"),
+        ("https://example.org/", "example.org"),
+        (
+            "https://resolver.arpa.example.com/",
+            "resolver.arpa.example.com",
+        ),
+        ("https://public.notarpa/", "public.notarpa"),
+    ] {
+        let prepared = prepared(&tool, url);
+        let Capability::Network { target } = prepared.capability() else {
+            panic!("web_fetch must request network authority")
+        };
+        assert_eq!(target.host, host);
+    }
+
+    assert_eq!(transport.calls(), 0);
+    assert_eq!(transport.polls(), 0);
 }
 
 #[test]
