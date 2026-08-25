@@ -309,8 +309,10 @@ local gate under exact Rust and Cargo 1.94.1 without fallback:
 - `cargo +1.94.1 fmt --all -- --check` passed;
 - `cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings`
   passed;
-- `cargo +1.94.1 test --workspace` passed all 929 workspace tests;
-- `cargo +1.94.1 test --doc --workspace` passed both doctests;
+- `cargo +1.94.1 test --workspace` passed 897 registered non-documentation
+  tests and 31 intentional child-process probes, for 928 non-documentation
+  executions, along with two doctests;
+- `cargo +1.94.1 test --doc --workspace` reran and passed both doctests;
 - focused native configuration evidence passed 25 private unit tests and 29
   public integration tests, while focused CLI evidence passed six unit tests
   and 19 integration tests;
@@ -323,6 +325,11 @@ local gate under exact Rust and Cargo 1.94.1 without fallback:
 - a fresh 368,944-byte release binary had SHA-256
   `c1ffef35588516903217aeefad173fcf55daa58cec9f6ebcae37a70140e56cc6` and
   passed the full release-binary smoke matrix.
+
+Pre-cycle-5 gate reconciliation corrected an earlier concurrent-output count
+of 929: that parser lost one child-process summary. The stable inventory above
+comes from test listing plus the 31-call child-probe inventory; the exact
+cycle-4 workspace command itself remained green.
 
 This replacement gate is evidence for the rejected cycle-4 candidate only. It
 makes no claim about remediation, exact feature workflows, non-force main

@@ -92,8 +92,9 @@ portability were green with zero findings. Exact security-document components
 `2368c3cd3fd209ba64a8f3a1cc3fcd5014521289`, are composed in exact cycle-4
 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
 `90d0b750ea9bb396074211adb07e2b251e30d505`. It passed the complete replacement
-gate under exact Rust and Cargo 1.94.1 without fallback, including 929 workspace
-tests, two doctests, focused configuration and CLI suites, pinned compatibility
+gate under exact Rust and Cargo 1.94.1 without fallback, including 897 registered
+non-documentation tests, 31 intentional child-process probes, two doctests,
+focused configuration and CLI suites, pinned compatibility
 and 31 generator tests, documentation integrity, dependency/unsafe checks, and
 the full release-binary matrix. Formal review reported a deduplicated 0 blocker,
 0 high, 0 medium, and 1 low finding, so the candidate is rejected.

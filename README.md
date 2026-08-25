@@ -21,8 +21,9 @@ REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base `8d8ecc7`; it is
 read-only, ask-only, and owns no persistent rules or runtime grant state. Exact
 cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
 `90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete replacement
-local gate under exact Rust and Cargo 1.94.1 without fallback, including 929
-workspace tests and two doctests, but was rejected with a deduplicated 0
+local gate under exact Rust and Cargo 1.94.1 without fallback, including 897
+registered non-documentation tests, 31 intentional child-process probes, and
+two doctests, but was rejected with a deduplicated 0
 blocker, 0 high, 0 medium, and 1 low finding set. Correctness/API and native
 config/error lifecycle were green; performance/CLI portability found ambiguous
 “remote integration” wording in `docs/security.md`. The wording conflates
