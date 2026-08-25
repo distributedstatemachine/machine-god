@@ -2172,6 +2172,34 @@ mod tests {
     }
 
     #[test]
+    fn bounded_completion_holds_permit_through_render_and_final_boundary() {
+        let permits = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&permits).try_acquire_owned().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let cancellation = CancellationToken::new();
+        let request = request("https://example.com/resource", "example.com", None);
+        let mut response = WebFetchResponse::new(
+            200,
+            Some("text/plain".to_owned()),
+            vec![b'x'; MAX_WEB_FETCH_BODY_BYTES],
+        )
+        .unwrap();
+        response.attach_completion(BoundedCompletion {
+            deadline,
+            _permit: permit,
+        });
+
+        assert_eq!(permits.available_permits(), 0);
+        assert!(render_response(&request, &response).is_ok());
+        assert_eq!(permits.available_permits(), 0);
+        assert!(response.final_boundary(&cancellation).is_ok());
+        assert_eq!(permits.available_permits(), 0);
+
+        drop(response);
+        assert_eq!(permits.available_permits(), 1);
+    }
+
+    #[test]
     fn encoding_validation_accepts_only_absent_or_one_identity() {
         let mut headers = HeaderMap::new();
         assert!(validate_content_encoding(&headers).is_ok());
