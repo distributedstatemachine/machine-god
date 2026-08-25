@@ -17,6 +17,13 @@ surface. The separate fourteenth composed
 no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
+A proposed twenty-eighth bounded slice freezes top-level
+`permissions [--json]` in [`permissions-cli.md`](permissions-cli.md). It will
+load the existing strict native configuration read-only and report ask-only
+permission configuration without constructing an engine or inventing
+persistent rule or runtime grant state. That command is not implemented by the
+config/status behavior documented on this page yet.
+
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
 library-only. They add no `session`, `sessions`, `resume`, `replay`, workspace,

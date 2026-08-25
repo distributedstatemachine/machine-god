@@ -52,8 +52,13 @@ benchmark-evidence `32875015892` are green; each benchmark run retains two
 nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
-performance or fx-equivalence claim. The retained review lineage begins with
-pre-review gate record
+performance or fx-equivalence claim. A proposed twenty-eighth top-level
+`permissions [--json]` slice is **IN PROGRESS — CONTRACT FROZEN; IMPLEMENTATION
+PENDING** from exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`.
+It is a read-only projection of the already delivered ask-only native
+configuration and owns no rule, grant, engine, runtime, session, credential, or
+network state. The retained `web_fetch` review lineage begins with pre-review
+gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
 1.94.1, integrity, dependency, baseline portability, WASI, and release-binary
@@ -2557,6 +2562,32 @@ alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
 M03 remains **IN PROGRESS** with twenty-seven delivered slices. The delivery
 evidence makes no product-performance or fx-equivalence claim.
+
+### Proposed bounded slice 28: top-level `permissions`
+
+The proposed twenty-eighth slice starts from exact delivered base
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
+`e1508d91edfb524df470cdf7c9b3112c4d145e4a`. Its normative boundary and review
+protocol are [`permissions-cli.md`](permissions-cli.md) and
+[`m03-permissions-cli-review-01.md`](reviews/m03-permissions-cli-review-01.md).
+The only new grammar is `permissions [--json]`.
+
+After complete argument validation, the thin CLI calls the existing bounded,
+read-only `load_process_config()` exactly once and reports only validated
+ask-mode configuration plus explicit unsupported/unavailable persistent-rule
+and runtime-grant state. Missing or unavailable configuration uses built-in
+defaults. Every invalid configuration category fails closed with exit 1, empty
+stdout, and one fixed redacted diagnostic. The slice constructs no engine,
+provider, transport, credential source, prompt, session store, state root, or
+runtime, and performs no write or network effect.
+
+Production owns only `machine-god-cli/src/main.rs`; independent evidence owns
+only `machine-god-cli/tests/cli.rs`; documentation owns the contract and
+maintained summaries. Components compose from isolated worktrees and may not
+add dependencies or hand-edit generated compatibility artifacts. The combined
+top-level CLI inventory remains planned, and this slice makes no benchmark-
+workload, product-performance, compatibility-promotion, or fx-equivalence
+claim.
 
 ### Milestone 03 completion boundary
 

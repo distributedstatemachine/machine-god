@@ -29,8 +29,11 @@ feature benchmark-evidence `32874471812`, main CI `32875016066`, and main
 benchmark-evidence `32875015892` are green; both benchmark runs retain two
 nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
-product-performance or fx-equivalence claim. The retained review lineage begins
-with pre-review gate record
+product-performance or fx-equivalence claim. Proposed slice twenty-eight freezes
+read-only top-level `permissions [--json]` from exact base `8d8ecc7` without
+moving rule, grant, engine, session, runtime, credential, or network state into
+the CLI; see [`permissions-cli.md`](permissions-cli.md). The retained
+`web_fetch` review lineage begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
 1.94.1, integrity, dependency, baseline portability, WASI, and release-binary

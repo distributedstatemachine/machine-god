@@ -5,6 +5,7 @@
 - [Provider-neutral core API](core-api.md)
 - [Deterministic testkit](testkit.md)
 - [Command-line interface](cli.md)
+- [Top-level `permissions` CLI contract](permissions-cli.md)
 - [Native configuration and schema-v3 credential source](configuration.md)
 - [Native `read_file` tool](read-file.md)
 - [Native `list_files` tool](list-files.md)
@@ -53,3 +54,4 @@
 - [Milestone 03 native `create_folder` delivery review](reviews/m03-create-folder-review-01.md)
 - [Milestone 03 native `open_file` implementation review plan](reviews/m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](reviews/m03-web-fetch-review-01.md)
+- [Milestone 03 `permissions` CLI review ledger](reviews/m03-permissions-cli-review-01.md)

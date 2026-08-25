@@ -2,6 +2,11 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
+proposed twenty-eighth [`permissions` CLI slice](permissions-cli.md) preserves
+that split: after strict argument parsing, the thin host may invoke only the
+existing bounded read-only configuration loader and reports no persistent rule
+or live grant state. It adds no engine, prompt, session, credential, runtime,
+state-root, write, or network authority. The
 delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code owns DNS, TLS,
