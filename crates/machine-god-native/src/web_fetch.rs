@@ -1181,7 +1181,14 @@ impl NativeWebFetchTransport {
         request: &WebFetchRequest,
         cancellation: &CancellationToken,
     ) -> Result<Vec<SocketAddr>, WebFetchTransportError> {
-        resolve_public_addresses(request, cancellation, self.nameserver, &self.query_ids).await
+        resolve_public_addresses(
+            request,
+            cancellation,
+            self.nameserver,
+            &self.query_ids,
+            self.connect_timeout,
+        )
+        .await
     }
 }
 
@@ -1277,6 +1284,7 @@ async fn resolve_public_addresses(
     cancellation: &CancellationToken,
     nameserver: Result<SocketAddr, WebFetchTransportError>,
     query_ids: &Result<QueryIdSequence, WebFetchTransportError>,
+    connect_timeout: Duration,
 ) -> Result<Vec<SocketAddr>, WebFetchTransportError> {
     let effective_port = request.port.unwrap_or(443);
     let addresses = if let Ok(address) = request.host.parse::<IpAddr>() {
@@ -1292,6 +1300,7 @@ async fn resolve_public_addresses(
                 nameserver,
                 record_type,
                 query_ids.next(),
+                connect_timeout,
             )
         })
         .await?;
@@ -1340,6 +1349,7 @@ async fn query_dns_addresses(
     nameserver: SocketAddr,
     record_type: RecordType,
     id: u16,
+    connect_timeout: Duration,
 ) -> Result<Vec<IpAddr>, WebFetchTransportError> {
     let name = DnsName::from_ascii(format!("{}.", request.host))
         .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
@@ -1353,7 +1363,7 @@ async fn query_dns_addresses(
     let response = exchange_dns_udp(request, cancellation, nameserver, &wire).await?;
     let response = if response.metadata.truncation {
         request.execution_boundary(cancellation)?;
-        exchange_dns_tcp(request, cancellation, nameserver, &wire).await?
+        exchange_dns_tcp(request, cancellation, nameserver, &wire, connect_timeout).await?
     } else {
         response
     };
@@ -1398,10 +1408,11 @@ async fn exchange_dns_tcp(
     cancellation: &CancellationToken,
     nameserver: SocketAddr,
     wire: &[u8],
+    connect_timeout: Duration,
 ) -> Result<Message, WebFetchTransportError> {
     let wire_len = u16::try_from(wire.len())
         .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
-    let stream = await_native_effect(request, cancellation, || {
+    let stream = await_native_connect(request, cancellation, connect_timeout, || {
         tokio::net::TcpStream::connect(nameserver)
     })
     .await?;
@@ -1571,10 +1582,14 @@ fn admit_resolved_addresses(
             WebFetchTransportErrorKind::DestinationRejected,
         ));
     }
-    Ok(addresses
-        .into_iter()
-        .map(|address| SocketAddr::new(address.ip(), 0))
-        .collect())
+    let mut admitted = Vec::with_capacity(addresses.len());
+    for address in addresses {
+        let normalized = SocketAddr::new(address.ip(), 0);
+        if !admitted.contains(&normalized) {
+            admitted.push(normalized);
+        }
+    }
+    Ok(admitted)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1655,6 +1670,59 @@ where
     let output = make_effect().await;
     request.execution_boundary(cancellation)?;
     Ok(output)
+}
+
+async fn await_native_connect<MakeEffect, Effect>(
+    request: &WebFetchRequest,
+    cancellation: &CancellationToken,
+    connect_timeout: Duration,
+    make_effect: MakeEffect,
+) -> Result<Effect::Output, WebFetchTransportError>
+where
+    MakeEffect: FnOnce() -> Effect,
+    Effect: Future,
+{
+    await_native_connect_with_waiter(
+        request,
+        cancellation,
+        make_effect,
+        tokio::time::sleep(connect_timeout),
+    )
+    .await
+}
+
+async fn await_native_connect_with_waiter<MakeEffect, Effect, Timeout>(
+    request: &WebFetchRequest,
+    cancellation: &CancellationToken,
+    make_effect: MakeEffect,
+    timeout: Timeout,
+) -> Result<Effect::Output, WebFetchTransportError>
+where
+    MakeEffect: FnOnce() -> Effect,
+    Effect: Future,
+    Timeout: Future<Output = ()>,
+{
+    request.execution_boundary(cancellation)?;
+    let mut effect = std::pin::pin!(make_effect());
+    let mut timeout = std::pin::pin!(timeout);
+    poll_fn(|context| {
+        if let Err(error) = request.execution_boundary(cancellation) {
+            return Poll::Ready(Err(error));
+        }
+        if timeout.as_mut().poll(context).is_ready() {
+            return Poll::Ready(match request.execution_boundary(cancellation) {
+                Ok(()) => Err(transport_error(WebFetchTransportErrorKind::Timeout)),
+                Err(error) => Err(error),
+            });
+        }
+        match effect.as_mut().poll(context) {
+            Poll::Ready(output) => {
+                Poll::Ready(request.execution_boundary(cancellation).map(|()| output))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    })
+    .await
 }
 
 async fn read_bounded_response(
@@ -2025,6 +2093,26 @@ mod tests {
         }
     }
 
+    struct PendingNativeEffect {
+        polls: Arc<AtomicU32>,
+        drops: Arc<AtomicU32>,
+    }
+
+    impl Future for PendingNativeEffect {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, _context: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PendingNativeEffect {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
     fn dns_response(id: u16, name: &DnsName, record_type: RecordType) -> Message {
         let mut response = Message::response(id, OpCode::Query);
         response.add_query(Query::query(name.clone(), record_type));
@@ -2307,6 +2395,40 @@ mod tests {
         let admitted = admit_resolved_addresses(exact).unwrap();
         assert_eq!(admitted.len(), MAX_WEB_FETCH_DNS_ADDRESSES);
         assert!(admitted.iter().all(|address| address.port() == 0));
+    }
+
+    #[test]
+    fn dns_admission_stably_deduplicates_normalized_addresses_at_raw_bound() {
+        let ipv6 = IpAddr::V6("2606:4700:4700::1111".parse().unwrap());
+        let ipv4 = IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34));
+        let second_ipv4 = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        let first_seen = [
+            SocketAddr::new(ipv6, 443),
+            SocketAddr::new(ipv4, 443),
+            SocketAddr::new(ipv6, 8_443),
+            SocketAddr::new(second_ipv4, 53),
+            SocketAddr::new(ipv4, 8_443),
+        ];
+        let exact = first_seen
+            .into_iter()
+            .cycle()
+            .take(MAX_WEB_FETCH_DNS_ADDRESSES)
+            .collect();
+
+        assert_eq!(
+            admit_resolved_addresses(exact).unwrap(),
+            [
+                SocketAddr::new(ipv6, 0),
+                SocketAddr::new(ipv4, 0),
+                SocketAddr::new(second_ipv4, 0),
+            ]
+        );
+
+        let one_over = vec![SocketAddr::new(ipv4, 443); MAX_WEB_FETCH_DNS_ADDRESSES + 1];
+        assert_eq!(
+            admit_resolved_addresses(one_over).unwrap_err().kind(),
+            WebFetchTransportErrorKind::DestinationRejected
+        );
     }
 
     #[test]
@@ -2645,6 +2767,100 @@ mod tests {
             cancelled.unwrap_err().kind(),
             WebFetchTransportErrorKind::Cancelled
         );
+    }
+
+    #[test]
+    fn native_connect_limit_stops_and_drops_one_pending_effect() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let canonical = request("https://example.com/", "example.com", None);
+        let cancellation = CancellationToken::new();
+        let effect_polls = Arc::new(AtomicU32::new(0));
+        let effect_drops = Arc::new(AtomicU32::new(0));
+        let timeout_polls = Arc::new(AtomicU32::new(0));
+
+        let result = runtime.block_on(await_native_connect_with_waiter(
+            &canonical,
+            &cancellation,
+            {
+                let polls = Arc::clone(&effect_polls);
+                let drops = Arc::clone(&effect_drops);
+                move || PendingNativeEffect { polls, drops }
+            },
+            poll_fn({
+                let polls = Arc::clone(&timeout_polls);
+                move |context| {
+                    if polls.fetch_add(1, Ordering::AcqRel) == 0 {
+                        context.waker().wake_by_ref();
+                        Poll::Pending
+                    } else {
+                        Poll::Ready(())
+                    }
+                }
+            }),
+        ));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            WebFetchTransportErrorKind::Timeout
+        );
+        assert_eq!(timeout_polls.load(Ordering::Acquire), 2);
+        assert_eq!(effect_polls.load(Ordering::Acquire), 1);
+        assert_eq!(effect_drops.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn native_connect_limit_preserves_cancellation_and_carried_deadline_authority() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let canonical = request("https://example.com/", "example.com", None);
+        let cancellation = CancellationToken::new();
+        let constructions = Arc::new(AtomicU32::new(0));
+        let cancelled = runtime.block_on(await_native_connect_with_waiter(
+            &canonical,
+            &cancellation,
+            {
+                let constructions = Arc::clone(&constructions);
+                move || {
+                    constructions.fetch_add(1, Ordering::AcqRel);
+                    std::future::ready(())
+                }
+            },
+            {
+                let cancellation = cancellation.clone();
+                async move {
+                    cancellation.cancel();
+                }
+            },
+        ));
+        assert_eq!(
+            cancelled.unwrap_err().kind(),
+            WebFetchTransportErrorKind::Cancelled
+        );
+        assert_eq!(constructions.load(Ordering::Acquire), 1);
+
+        let mut request = request("https://example.com/", "example.com", None);
+        request.install_execution_deadline(Instant::now());
+        let constructions = Arc::new(AtomicU32::new(0));
+        let timed_out = runtime.block_on(await_native_connect_with_waiter(
+            &request,
+            &CancellationToken::new(),
+            {
+                let constructions = Arc::clone(&constructions);
+                move || {
+                    constructions.fetch_add(1, Ordering::AcqRel);
+                    std::future::ready(())
+                }
+            },
+            std::future::pending(),
+        ));
+        assert_eq!(
+            timed_out.unwrap_err().kind(),
+            WebFetchTransportErrorKind::Timeout
+        );
+        assert_eq!(constructions.load(Ordering::Acquire), 0);
     }
 
     #[test]
