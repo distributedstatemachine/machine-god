@@ -2730,9 +2730,11 @@ remediation are composed in exact cycle-4 candidate
 `90d0b750ea9bb396074211adb07e2b251e30d505`.
 
 That candidate passed another complete replacement gate under exact Rust and
-Cargo 1.94.1 without fallback. The four required commands passed: 929 workspace
-tests and two doctests are green. Focused native configuration passed 25
-private and 29 public tests, and focused CLI passed six unit and 19 integration
+Cargo 1.94.1 without fallback. The four required commands passed: 897
+registered non-documentation tests and 31 intentional child-process probes
+produced 928 non-documentation executions, and two doctests are green. Focused
+native configuration passed 25 private and 29 public tests, and focused CLI
+passed six unit and 19 integration
 tests. The generator check against pinned fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef` and all 31 generator tests passed.
 Documentation integrity covered 76 Markdown files, 110 fenced code blocks, and
