@@ -1,12 +1,12 @@
 # Milestone 03 `permissions` CLI review 01
 
-Status: **IN PROGRESS — CYCLE 3 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 4 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
 
 ## Base and boundary
 
 - Exact delivered base:
   `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`.
-- Integration branch: `agent/m03-permissions-cli`.
+- Feature branch: `agent/m03-permissions-cli`.
 - Normative contract: [`permissions-cli.md`](../permissions-cli.md).
 - Pinned comparison reference: `vercel-labs/fx` commit
   `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -71,9 +71,10 @@ under Rust and Cargo 1.94.1 without fallback:
   redaction, parse-precedence, help, and no-create smokes passed; and
 - the candidate added no dependency and no unsafe Rust.
 
-This gate is evidence for the rejected candidate only. It makes no formal-
-review, remediation, workflow, integration, delivery, compatibility,
-performance, or fx-equivalence claim.
+This gate is evidence for the rejected candidate only. It makes no claim about
+formal review, remediation, exact feature workflows, non-force main
+integration, exact `main` workflows, delivery, compatibility, performance, or
+fx equivalence.
 
 ## Formal review protocol
 
@@ -150,8 +151,8 @@ They are composed in one remediation change. The replacement:
 
 The composed replacement therefore required a complete local gate and three
 fresh reviews on one new immutable SHA and tree. Its exact gate and cycle-2
-result follow. Feature and `main` workflows, integration, and delivery remain
-pending.
+result follow. Exact feature workflows, non-force main integration, exact
+`main` workflows, and delivery remain pending.
 
 ### Exact cycle-2 replacement gate
 
@@ -169,8 +170,9 @@ local gate under Rust and Cargo 1.94.1 without fallback:
 - the candidate added no dependency and no unsafe Rust.
 
 This replacement gate is evidence for the rejected cycle-2 candidate only. It
-makes no cycle-2 remediation, workflow, integration, delivery, compatibility,
-performance, or fx-equivalence claim.
+makes no claim about cycle-2 remediation, exact feature workflows, non-force
+main integration, exact `main` workflows, delivery, compatibility,
+performance, or fx equivalence.
 
 ### Cycle 2 — NOT GREEN
 
@@ -210,8 +212,8 @@ Exact isolated components are:
   `058aa738487bfce08be2d964f8a577fdc12fea09`, changing only the eight
   maintained behavior and review documents named by its component scope.
 
-They are composed in one remediation change. Integration additionally adds the
-Windows cfg mirror of the non-Unicode process-snapshot regression. The
+They are composed in one remediation change. Feature-branch composition also
+adds the Windows cfg mirror of the non-Unicode process-snapshot regression. The
 replacement:
 
 - read `XDG_CONFIG_HOME` first for config loading and permissions, read `HOME`
@@ -226,7 +228,8 @@ replacement:
 
 The composed replacement must pass another complete local gate and receive
 three fresh reviews on one new immutable SHA and tree. At that checkpoint,
-feature and `main` workflows, main integration, and delivery remained pending.
+exact feature workflows, non-force main integration, exact `main` workflows,
+and delivery remained pending.
 
 ### Exact cycle-3 replacement gate
 
@@ -251,8 +254,9 @@ local gate under exact Rust and Cargo 1.94.1 without fallback:
   passed the release-binary smoke matrix.
 
 This replacement gate is evidence for the rejected cycle-3 candidate only. It
-makes no remediation, workflow, main-integration, delivery, compatibility,
-performance, or fx-equivalence claim.
+makes no claim about remediation, exact feature workflows, non-force main
+integration, exact `main` workflows, delivery, compatibility, performance, or
+fx equivalence.
 
 ### Cycle 3 — NOT GREEN
 
@@ -290,8 +294,77 @@ Exact isolated documentation components are:
   `ef1f619e72193d08ba3729042201543a10f5d838`, tree
   `2368c3cd3fd209ba64a8f3a1cc3fcd5014521289`.
 
-They are composed into one new immutable candidate. That candidate must pass
-the complete replacement local gate and receive three fresh
-correctness/API, native config/error lifecycle, and performance/CLI portability
-reviews. Exact feature workflows, non-force main integration, exact `main`
-workflows, and delivery remain pending.
+They are composed in exact cycle-4 candidate
+`5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
+`90d0b750ea9bb396074211adb07e2b251e30d505`. Its gate and formal review are
+recorded below. Exact feature workflows, non-force main integration, exact
+`main` workflows, and delivery remain pending.
+
+### Exact cycle-4 replacement gate
+
+Exact candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
+`90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- `cargo +1.94.1 fmt --all -- --check` passed;
+- `cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings`
+  passed;
+- `cargo +1.94.1 test --workspace` passed all 929 workspace tests;
+- `cargo +1.94.1 test --doc --workspace` passed both doctests;
+- focused native configuration evidence passed 25 private unit tests and 29
+  public integration tests, while focused CLI evidence passed six unit tests
+  and 19 integration tests;
+- the compatibility generator check against pinned fx
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` and all 31 generator tests
+  passed;
+- documentation integrity covered 76 Markdown files, 110 fenced code blocks,
+  and 391 repository-relative targets with zero errors;
+- the candidate added no dependency and no unsafe Rust; and
+- a fresh 368,944-byte release binary had SHA-256
+  `c1ffef35588516903217aeefad173fcf55daa58cec9f6ebcae37a70140e56cc6` and
+  passed the full release-binary smoke matrix.
+
+This replacement gate is evidence for the rejected cycle-4 candidate only. It
+makes no claim about remediation, exact feature workflows, non-force main
+integration, exact `main` workflows, delivery, compatibility, performance, or
+fx equivalence.
+
+### Cycle 4 — NOT GREEN
+
+All three tracks reviewed exact candidate
+`5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
+`90d0b750ea9bb396074211adb07e2b251e30d505`:
+
+| Track | Blocker | High | Medium | Low | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Correctness/API | 0 | 0 | 0 | 0 | **GREEN** |
+| Native config/error lifecycle | 0 | 0 | 0 | 0 | **GREEN** |
+| Performance/CLI portability | 0 | 0 | 0 | 1 | **NOT GREEN** |
+| Deduplicated union | 0 | 0 | 0 | 1 | **NOT GREEN** |
+
+Any finding rejects a candidate, so exact cycle 4 is rejected. The sole
+finding is:
+
+1. **LOW — ambiguous delivery terminology.** Two permissions-lineage passages
+   in `docs/security.md`, around lines 20 and 479 of the reviewed candidate,
+   say that “remote integration” remains pending. That phrase conflates the
+   already composed feature-branch source with four distinct pending delivery
+   boundaries: exact feature workflows, non-force main integration, exact
+   `main` workflows, and final delivery. Reviewers confirmed the
+   implementation, CLI contract, native config/error lifecycle, bounded work,
+   portability, and other maintained behavior remain correct.
+
+### Cycle-4 remediation composed
+
+Exact isolated documentation components are:
+
+- security terminology `2b686da95850fa6d7ae5790e1eaac19c585f3eb7`, tree
+  `9ceff2e2e0a5f1fd1264cf0fff4e8cf02e05b5d6`; and
+- ledger and maintained summaries `178c58002c1dcb37d411129a1547f686e4711570`,
+  tree `5d6050f6d1486f26e9134353f34cacf74b90c0c2`.
+
+They are composed and preserve behavior while replacing the ambiguous wording
+with the four explicit pending boundaries above. The resulting immutable
+candidate requires another complete replacement gate and
+three fresh same-SHA reviews. Exact feature workflows, non-force main
+integration, exact `main` workflows, and delivery remain pending.

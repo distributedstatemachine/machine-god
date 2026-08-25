@@ -1,6 +1,6 @@
 # Native `permissions` CLI contract
 
-Status: **IN PROGRESS — CYCLE 3 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**.
+Status: **IN PROGRESS — CYCLE 4 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**.
 
 This is the implemented twenty-eighth bounded Milestone 03 slice. It starts from
 exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
@@ -17,19 +17,20 @@ component `fa83c6c6427028c18e1c36ba6603eb44e4102eac`, tree
 `a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
 `1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
 `058aa738487bfce08be2d964f8a577fdc12fea09`, compose cycle-2 remediation.
-Feature-branch integration also adds the Windows cfg mirror of the non-Unicode
+Feature-branch composition also adds the Windows cfg mirror of the non-Unicode
 regression.
 
-Exact cycle-3 candidate `4645a0fa646d2f2bb7138cd55a8ded924d9b8992`,
-tree `d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed its complete
+Exact cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`,
+tree `90d0b750ea9bb396074211adb07e2b251e30d505`, passed its complete
 replacement local gate under exact Rust and Cargo 1.94.1 without fallback.
 Formal review rejected it with a deduplicated zero blocker, zero high, zero
-medium, and one low finding: correctness/API found stale lower permissions
-lineage in `security.md`, while native config/error lifecycle and performance/
-CLI portability were green with zero findings. The security prose and cycle
-ledger remediation are composed. Another complete replacement local gate,
-three fresh reviews, main integration, and exact remote workflows remain
-pending. The slice makes no product-performance or fx-equivalence claim.
+medium, and one low finding. Correctness/API and native config/error lifecycle
+were green; performance/CLI portability found ambiguous “remote integration”
+wording in `security.md`. It conflates composed feature-branch source with
+pending exact feature workflows, non-force main integration, exact `main`
+workflows, and delivery. The terminology remediation is composed. Another complete
+replacement local gate and three fresh reviews are required. The slice makes no
+product-performance or fx-equivalence claim.
 
 ## Command grammar
 
@@ -171,11 +172,11 @@ Independent tests must cover:
 - freshly built release-binary human, JSON, invalid-config, no-create, and
   no-rewrite smokes.
 
-The cycle-3 candidate passed the complete repository-required Rust 1.94.1 gate
-but was rejected by its one low documentation-lineage finding. The composed
+The cycle-4 candidate passed the complete repository-required Rust 1.94.1 gate
+but was rejected by its one low delivery-terminology finding. The composed
 security prose remediation must pass another complete gate on one new immutable
-candidate SHA and tree and receive three fresh independent
+candidate and receive three fresh independent
 ordinary product reviews: correctness/API, native config/error lifecycle, and
 performance/CLI portability. All findings are fixed and reviewed again until
-all three tracks report zero findings. Exact feature and `main` CI plus
-benchmark-evidence workflows remain delivery requirements.
+all three tracks report zero findings. Exact feature workflows, non-force main
+integration, exact `main` workflows, and delivery remain pending.

@@ -16,25 +16,31 @@ and main benchmark-evidence `32875015892` are green; each benchmark run retains
 two nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
 product-performance or fx-equivalence claim. The implemented twenty-eighth
-top-level `permissions [--json]` slice is **IN PROGRESS — CYCLE 3 REMEDIATED;
-REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base `8d8ecc7`; it is read-only,
-ask-only, and owns no persistent rules or runtime grant state. Exact cycle-3
-candidate `4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
-`d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete replacement
-local gate under exact Rust and Cargo 1.94.1 without fallback, but was rejected
-with a deduplicated 0 blocker, 0 high, 0 medium, and 1 low finding set.
-Correctness/API found the stale lower permissions lineage in
-`docs/security.md`; native config/error lifecycle and performance/CLI
-portability were green with zero findings. The implemented lazy config-only
+top-level `permissions [--json]` slice is **IN PROGRESS — CYCLE 4 REMEDIATED;
+REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base `8d8ecc7`; it is
+read-only, ask-only, and owns no persistent rules or runtime grant state. Exact
+cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
+`90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback, including 929
+workspace tests and two doctests, but was rejected with a deduplicated 0
+blocker, 0 high, 0 medium, and 1 low finding set. Correctness/API and native
+config/error lifecycle were green; performance/CLI portability found ambiguous
+“remote integration” wording in `docs/security.md`. The wording conflates
+composed feature-branch source with pending exact feature workflows, non-force
+main integration, exact `main` workflows, and delivery. The implemented lazy
+config-only
 environment behavior is unchanged: read `XDG_CONFIG_HOME` first, read `HOME`
 only when XDG is missing or empty, never read `XDG_STATE_HOME`, and never read
 or fall back to `HOME` for a nonempty valid, invalid-relative, or non-Unicode
 XDG value. Final-path `O_NOFOLLOW` and nonblocking guarantees remain supported-
-Unix behavior, with hardened non-Unix opening deferred. Exact security-document
-components `4ade5d839be699accaa4dac834787eab135244b2` and
-`32236fd8b67cdc44d9deb0ee3ca5b45708560f38`, plus ledger component
-`ef1f619e72193d08ba3729042201543a10f5d838`, are composed. Another complete
-replacement gate and three fresh reviews, main integration, and delivery remain pending. See the
+Unix behavior, with hardened non-Unix opening deferred. Exact security
+terminology component `2b686da95850fa6d7ae5790e1eaac19c585f3eb7`, tree
+`9ceff2e2e0a5f1fd1264cf0fff4e8cf02e05b5d6`, and ledger component
+`178c58002c1dcb37d411129a1547f686e4711570`, tree
+`5d6050f6d1486f26e9134353f34cacf74b90c0c2`, are composed. Another complete
+replacement gate and three fresh reviews, exact feature
+workflows, non-force main integration, exact `main` workflows, and delivery
+remain pending. See the
 [`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
 review history begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree

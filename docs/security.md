@@ -7,18 +7,20 @@ preserves that split: after strict argument parsing, the thin host invokes only
 the existing byte-bounded read-only configuration loader, exactly once, and
 reports no persistent rule or live grant state. Invalid configuration fails
 with empty stdout and one fixed diagnostic that reflects no path, content,
-model, or operating-system error. Cycle-2 remediation is composed in exact
-cycle-3 candidate
-`4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
-`d1eba954a983d77f2d6d11521016dc3c8eae3735`. The candidate passed the complete
-local gate under exact Rust and Cargo 1.94.1, including the required workspace,
-focused native-config/CLI, compatibility, documentation-integrity, and fresh
-release-binary checks. Formal cycle 3 is **NOT GREEN** at zero blocker, zero
-high, zero medium, and one low stale lower-lineage finding, so the exact
-candidate is rejected. It adds no engine, prompt, session, credential, runtime,
-state-root, write, or network effect. The isolated documentation remediation is
-composed; another replacement gate, three fresh reviews,
-remote integration, and delivery remain pending. The
+model, or operating-system error. Cycle-3 remediation is composed in exact
+cycle-4 candidate
+`5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
+`90d0b750ea9bb396074211adb07e2b251e30d505`. The candidate passed the complete
+local gate under exact Rust and Cargo 1.94.1. Formal cycle 4 is **NOT GREEN**:
+correctness/API and native config/error lifecycle each reported 0 blocker, 0
+high, 0 medium, and 0 low findings; performance/CLI portability reported 0
+blocker, 0 high, 0 medium, and 1 low terminology finding. The deduplicated
+union is 0/0/0/1, so the exact candidate is rejected. It adds no engine, prompt,
+session, credential, runtime, state-root, write, or network effect. The
+feature-branch behavior, evidence, and maintained documentation are already
+composed through this rejected candidate; its terminology remediation is
+composed. Exact feature workflows, non-force fast-forward
+integration to `main`, exact `main` workflows, and delivery remain pending. The
 delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code owns DNS, TLS,
@@ -443,11 +445,15 @@ a cumulative limit. The composed replacement retries the first 15 cumulative
 interrupted results, maps the 16th to fixed `Unreadable`, and adds deterministic
 injected-reader evidence for both boundaries and cumulative counting. Cycle 2
 confirmed those bounds and reported only the two low findings above; cycle-2
-remediation is composed. Exact cycle 3 passed the complete replacement gate,
-and all three reviews confirmed the implemented behavior; its sole low stale
-security-lineage finding nevertheless rejects that exact candidate. The
-isolated documentation correction is composed, so its
-next replacement gate and three fresh reviews remain pending.
+remediation is composed. Exact cycle 3 passed its complete replacement gate but
+was rejected for one low stale security-lineage finding. That correction is
+composed in the exact cycle-4 candidate named above, which passed its complete
+replacement gate under exact Rust and Cargo 1.94.1. Correctness/API and native
+config/error lifecycle reported 0/0/0/0; performance/CLI portability reported
+0/0/0/1 for the sole terminology finding, which is also the deduplicated union.
+The candidate is rejected. Its terminology remediation is composed, so another
+complete replacement gate and three fresh reviews remain
+pending.
 
 The model validator is shared with the AI Gateway provider, preventing config
 and provider acceptance from drifting. Config owns the bounded model string and
@@ -473,11 +479,16 @@ byte-stable. The separate implemented permissions path loads configuration once
 and reports only ask-mode plus honest unsupported/unavailable rule and grant
 capability fields. Its exact cycle-1 candidate was rejected; the cycle-1
 remediation subsequently passed a complete replacement gate. Exact cycle 2 was
-rejected for two low findings, and cycle-2 remediation is composed in the exact
-cycle-3 candidate named above. That candidate passed its complete local gate but
-was rejected for the sole low stale lower-lineage finding. The isolated
-documentation correction is composed; another
-replacement gate, three fresh reviews, remote integration, and delivery remain
+rejected for two low findings, and cycle-2 remediation was composed in exact
+cycle 3. Exact cycle 3 was rejected for one low stale lower-lineage finding;
+that correction is composed in the exact cycle-4 candidate named above. Cycle 4
+passed its complete local gate under exact Rust and Cargo 1.94.1, but is **NOT
+GREEN**: correctness/API and native config/error lifecycle each reported
+0/0/0/0, performance/CLI portability reported 0/0/0/1, and the deduplicated
+union is 0/0/0/1 for the sole terminology finding. The exact candidate is
+rejected, and remediation is composed. The feature-branch work
+to this checkpoint is already composed; exact feature workflows, non-force
+fast-forward integration to `main`, exact `main` workflows, and delivery remain
 pending.
 Configuration mutation or migration, a concrete prompt UI and modes beyond
 `ask`, token fields in configuration, CLI composition beyond that read-only

@@ -17,15 +17,15 @@ environment and filesystem. `machine-god status` remains metadata-only and
 does not invoke the loader. The implemented
 `machine-god permissions [--json]` path invokes it exactly once after complete
 argument validation and observes only permission mode. Exact permissions
-cycle-3 candidate `4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
-`d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete exact-1.94.1
+cycle-4 candidate `5a6e7782fab98b57bb939f525b3a100d5d7eee1e`, tree
+`90d0b750ea9bb396074211adb07e2b251e30d505`, passed the complete exact-1.94.1
 replacement gate without fallback. Formal review rejected it only for one low
-stale lower permissions-lineage finding in `security.md`; native config/error
-lifecycle and performance/CLI portability were green with zero findings. The
-security prose remediation is composed, and another
-complete gate and three fresh reviews are required. This
-configuration slice advances the built-in and current file schema to v3 while retaining strict read
-compatibility for the exact legacy v1 and v2 objects.
+ambiguous “remote integration” phrase in `security.md`; correctness/API and
+native config/error lifecycle were green. The terminology correction is
+composed, and another complete gate and three fresh reviews
+are required. This configuration slice advances the built-in and current file
+schema to v3 while retaining strict read compatibility for the exact legacy v1
+and v2 objects.
 
 ## Location and defaults
 
@@ -48,9 +48,9 @@ permissions snapshot requests `XDG_CONFIG_HOME` and `HOME` and never requests
 composed replacement reads `XDG_CONFIG_HOME` first and reads `HOME` only when
 XDG is missing or empty. A nonempty XDG value decides selection whether it is
 valid, relative, or non-Unicode, so that path neither reads nor falls back to
-`HOME`. Status retains the general three-value snapshot. The cycle-3 gate and
-all three review tracks confirmed this behavior; cycle 3 was rejected only for
-the separate stale lower-lineage prose finding described above.
+`HOME`. Status retains the general three-value snapshot. The cycle-3 and
+cycle-4 gates and review tracks confirmed this behavior; cycle 4 was rejected
+only for the separate ambiguous delivery terminology described above.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
 the explicit built-in schema-v3 configuration. A resolved file that is missing
@@ -175,9 +175,10 @@ injected-reader evidence for both boundaries. Partial progress does not reset
 the count, and an over-reported read maps to `Unreadable`. The complete cycle-2
 replacement gate and review confirmed these bounds; that rejected candidate's
 two lows concerned lazy environment access and target-qualified documentation.
-The complete cycle-3 gate and all three fresh tracks confirmed the remediated
-loader bounds and environment-selection behavior; cycle 3 was rejected only
-for the separate stale lower permissions lineage in `security.md`.
+The complete cycle-3 and cycle-4 gates and all fresh tracks confirmed the
+remediated loader bounds and environment-selection behavior; cycle 4 was
+rejected only for the separate ambiguous delivery terminology in
+`security.md`.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path with `O_NOFOLLOW` and nonblocking behavior. It performs a
