@@ -7,11 +7,16 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-six delivered bounded slices. A proposed twenty-seventh `web_fetch`
-slice is **IN PROGRESS** from exact base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production, independently owned
-direct/engine/transport evidence, and rootless reference-host wiring are
-composed locally. Pre-review gate record
+twenty-seven delivered bounded slices. The twenty-seventh `web_fetch` slice is
+delivered on reviewed seal `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, after three fresh cycle-11 review
+tracks reported zero findings at every severity. Exact feature CI
+`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
+and main benchmark-evidence `32875015892` are green; each benchmark run retains
+two nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
+product-performance or fx-equivalence claim. The retained review history begins
+with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
 1.94.1, integrity, dependency, baseline portability, WASI, and release-binary
@@ -128,9 +133,9 @@ custom host composition thirteen tools without changing the twelve descriptor-
 backed workspace tools or their original-plus-eleven-clone ownership. Its
 bounded public-HTTPS, exact `Capability::Network`, DNS-pinning,
 no-redirect, untrusted-output, and explicit-deferral boundary is frozen in the
-[`web_fetch` candidate contract](docs/web-fetch.md). This changes neither the
-delivered count nor M03 status and makes no product-performance or fx-
-equivalence claim. The twenty-fourth, library-only
+[`web_fetch` contract](docs/web-fetch.md). At that historical review checkpoint
+the candidate changed neither the delivered count nor M03 status and made no
+product-performance or fx-equivalence claim. The twenty-fourth, library-only
 `copy_file` slice is green under three fresh same-SHA adversarial reviews and
 exact feature and `main` delivery gates. The twenty-fifth, library-only
 `create_folder` behavior is composed from that delivered base. Cycle-2
@@ -691,7 +696,7 @@ The project is not yet production-ready. See the exact
 [`copy_file` contract](docs/copy-file.md),
 [`create_folder` behavior contract](docs/create-folder.md),
 [`open_file` contract](docs/open-file.md),
-[`web_fetch` candidate contract](docs/web-fetch.md), and
+[`web_fetch` contract](docs/web-fetch.md), and
 [AI Gateway codec](docs/ai-gateway.md) plus
 [native HTTP transport](docs/ai-gateway-http.md) and
 [credential discovery](docs/ai-gateway-credentials.md) contracts, and the

@@ -395,16 +395,21 @@ JSON. In particular, native filesystem, process, and network tools must execute
 the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
-The proposed twenty-seventh [`web_fetch` candidate](web-fetch.md) applies this
+The delivered twenty-seventh [`web_fetch` tool](web-fetch.md) applies this
 existing rule to one rootless network tool. Effect-free preparation must turn
 the sole bounded URL into both one canonical HTTPS execution URL and the exact
 `Capability::Network { target: NetworkTarget { .. } }` presented to policy.
 Allowed execution may contact only that scheme, host, and effective port; DNS
 admission and connection pinning cannot broaden it. Existing core behavior
 continues to classify network authority as `Critical`, so the default path is
-`Ask`. No new capability variant or core ambient network authority is proposed.
-This slice is in progress from exact base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Formal cycle 2 rejected exact
+`Ask`. The slice adds no new capability variant or core ambient network
+authority. It is delivered on reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, after exact feature CI
+`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
+and main benchmark-evidence `32875015892` passed. The retained review history
+starts from exact base `a56ff350c2aace1dc22cb14c269aee89d399cd8e`.
+Formal cycle 2 rejected exact
 candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
 `6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with 0 blocker, 0 high, 2 medium,
 and 2 low deduplicated findings. Exact isolated production remediation

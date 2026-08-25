@@ -43,11 +43,17 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-six delivered bounded slices. A proposed twenty-seventh
-`web_fetch` slice is **IN PROGRESS** from exact delivered base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`; its pinned fx observation is
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. Production and independent tests
-are composed. Pre-review gate record
+with twenty-seven delivered bounded slices. The twenty-seventh `web_fetch`
+slice is delivered on reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`. Exact feature CI `32874471757`,
+feature benchmark-evidence `32874471812`, main CI `32875016066`, and main
+benchmark-evidence `32875015892` are green; each benchmark run retains two
+nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
+`b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
+performance or fx-equivalence claim. The retained review lineage begins with
+pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
 1.94.1, integrity, dependency, baseline portability, WASI, and release-binary
@@ -313,14 +319,18 @@ reviews each reported 0 blocker, 0 high, 0 medium, and 0 low for correctness/
 API, network/HTTP lifecycle, and performance/portability. The deduplicated
 union is zero at every severity. Reviewers independently reproduced strict DNS
 decoder exhaustion and the exact Linux/macOS 1/1, FreeBSD/Windows 0/1, and
-WASM 0/0 default/feature `sha2` matrix. This review seal makes no workflow,
-integration, delivery, performance, compatibility, or fx-equivalence claim;
-the delivered count remains twenty-six until exact remote evidence is retained.
-Every production and explicitly injected/custom candidate host contains
+WASM 0/0 default/feature `sha2` matrix. This review seal by itself makes no
+workflow, integration, delivery, performance, compatibility, or fx-equivalence
+claim. Later delivery seal `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
+`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
+and main benchmark-evidence `32875015892`; both benchmark runs retain two
+nonexpired exact-SHA artifacts. Every production and explicitly injected/custom
+host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
-`web_fetch` is rootless. The delivered count remains twenty-six and M03 remains
-in progress. Native `edit_file` is delivered on
+`web_fetch` is rootless. The delivered count is twenty-seven and M03 remains in
+progress. Native `edit_file` is delivered on
 final documentation record `719a9bded86fd7ce394d482798b9064c736f43ab`.
 Exact feature CI `32651168514` passed all six jobs, and feature benchmark
 workflow `32651168515` passed both jobs with two nonexpired exact-SHA artifacts.
@@ -1973,15 +1983,21 @@ claim, or fx-equivalence claim. Exact implementation, same-SHA review, feature
 workflows, fast-forward integration, and `main` workflows are green, increasing
 the delivered-slice count to twenty-two without completing Milestone 03.
 
-### Proposed bounded slice 27: native `web_fetch`
+### Delivered bounded slice 27: native `web_fetch`
 
-The proposed twenty-seventh slice is **IN PROGRESS** from exact delivered base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. The comparison checkout is pinned
-to `vercel-labs/fx` revision
+The twenty-seventh slice is **DELIVERED** on reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, from exact delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Exact feature CI `32874471757`,
+feature benchmark-evidence `32874471812`, main CI `32875016066`, and main
+benchmark-evidence `32875015892` are green; both benchmark runs retain two
+nonexpired exact-SHA artifacts. The comparison checkout is pinned to
+`vercel-labs/fx` revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. The complete normative boundary
 and live review protocol are [`web-fetch.md`](web-fetch.md) and
 [`m03-web-fetch-review-01.md`](reviews/m03-web-fetch-review-01.md). The upstream
-surface is an observation, not a compatibility or equivalence claim.
+surface is an observation, not a compatibility, product-performance, or
+equivalence claim.
 
 The implementation work is split across isolated, non-overlapping worktrees:
 
@@ -2528,17 +2544,23 @@ Formal cycle 11 is **GREEN** on exact candidate
 `8f636bd92922d9e4d1610443253e82a3c0c36268`. Correctness/API, network/HTTP
 lifecycle, and performance/portability each reported 0/0/0/0 in three fresh
 isolated read-only reviews, so the deduplicated union is zero. This review seal
-makes no workflow, integration, delivery, performance, compatibility, or fx-
-equivalence claim; exact feature and `main` workflow evidence remains pending.
+by itself makes no workflow, integration, delivery, performance, compatibility,
+or fx-equivalence claim. Later reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
+`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
+and main benchmark-evidence `32875015892`; both benchmark runs retain two
+nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
-Until final seal and exact remote delivery, M03 remains **IN PROGRESS** with
-twenty-six delivered slices.
+M03 remains **IN PROGRESS** with twenty-seven delivered slices. The delivery
+evidence makes no product-performance or fx-equivalence claim.
 
 ### Milestone 03 completion boundary
 
-The twenty-six delivered slices do not complete Milestone 03.
+The twenty-seven delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -3197,8 +3219,8 @@ gate:
   using one retained descriptor plus eleven identity-preserving clones. This
   makes no product-performance or fx-equivalence claim. The combined native-
   tool checkbox stays open because the remaining named tools are incomplete.
-  The proposed twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact
-  base `a56ff350c2aace1dc22cb14c269aee89d399cd8e` under
+  The delivered twenty-seventh `web_fetch` slice started from exact base
+  `a56ff350c2aace1dc22cb14c269aee89d399cd8e` under
   [`web-fetch.md`](web-fetch.md). It is rootless, so its production and
   explicitly injected/custom candidate hosts each have thirteen tools without
   changing the twelve-tool original-plus-eleven-clone workspace descriptor set.
@@ -3463,9 +3485,15 @@ gate:
   `298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
   `8f636bd92922d9e4d1610443253e82a3c0c36268`. Three fresh correctness/API,
   lifecycle, and performance/portability tracks each reported 0/0/0/0. This
-  review seal makes no workflow, integration, delivery, performance,
-  compatibility, or fx-equivalence claim.
-  The delivered count remains twenty-six.
+  review seal by itself makes no workflow, integration, delivery, performance,
+  compatibility, or fx-equivalence claim. Reviewed delivery seal
+  `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+  `633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
+  `32874471757`, feature benchmark-evidence `32874471812`, main CI
+  `32875016066`, and main benchmark-evidence `32875015892`; both benchmark runs
+  retain two nonexpired exact-SHA artifacts. `main` was fast-forwarded without
+  force from `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. The delivered count is
+  twenty-seven. This makes no product-performance or fx-equivalence claim.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned

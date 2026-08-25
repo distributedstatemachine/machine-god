@@ -18,7 +18,7 @@
 - [Native `copy_file` contract](copy-file.md)
 - [Native `create_folder` delivered contract](create-folder.md)
 - [Native `open_file` implemented candidate contract](open-file.md)
-- [Native `web_fetch` in-progress candidate contract](web-fetch.md)
+- [Native `web_fetch` delivered contract](web-fetch.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
 - [Native AI Gateway credential discovery](ai-gateway-credentials.md)

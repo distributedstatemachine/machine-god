@@ -1,9 +1,14 @@
-# Native `web_fetch` candidate contract
+# Native `web_fetch` contract
 
-Status: **IN PROGRESS**. This page freezes the proposed twenty-seventh bounded
-Milestone 03 slice and records its exact local-gate and formal-review history.
-The status itself is not a replacement-gate, delivery, compatibility, or
-performance claim.
+Status: **DELIVERED**. This page freezes the twenty-seventh bounded Milestone 03
+slice and records its exact local-gate, formal-review, and delivery history.
+Reviewed seal `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
+`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
+and main benchmark-evidence `32875015892`. Both benchmark runs retain exactly two
+nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
+compatibility, product-performance, or fx-equivalence claim.
 
 The candidate starts from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its comparison reference is
@@ -170,9 +175,9 @@ performance/portability each reported 0 blocker, 0 high, 0 medium, and 0 low,
 so the deduplicated union is zero at every severity. The reviews independently
 verified strict complete DNS decoder exhaustion, the bounded partial `TC=1`
 UDP replay path, and the Linux/macOS, FreeBSD/Windows, and WASM `sha2` target
-matrix. This review seal makes no workflow, integration, delivery, product-
-performance, compatibility, or fx-equivalence claim. The proposed slice stays
-in progress until exact feature and `main` workflow evidence is retained.
+matrix. This review seal by itself makes no workflow, integration, delivery,
+product-performance, compatibility, or fx-equivalence claim. The later exact
+feature and `main` workflow evidence recorded above delivers the slice.
 
 ## Scope and feature boundary
 

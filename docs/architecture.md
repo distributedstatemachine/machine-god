@@ -21,11 +21,16 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-six delivered bounded slices. The proposed
-twenty-seventh `web_fetch` slice is **IN PROGRESS** from exact delivered base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Production and independently owned
-direct, engine, production-boundary, core-contract, and host evidence are
-composed locally. Pre-review gate record
+Milestone 03 has twenty-seven delivered bounded slices. The twenty-seventh
+`web_fetch` slice is delivered on reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`. Exact feature CI `32874471757`,
+feature benchmark-evidence `32874471812`, main CI `32875016066`, and main
+benchmark-evidence `32875015892` are green; both benchmark runs retain two
+nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
+product-performance or fx-equivalence claim. The retained review lineage begins
+with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
 1.94.1, integrity, dependency, baseline portability, WASI, and release-binary

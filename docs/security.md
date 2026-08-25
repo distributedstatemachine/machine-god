@@ -2,7 +2,7 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-proposed twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
+delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code owns DNS, TLS,
 HTTP, runtime, and response effects. It admits only multi-label public DNS names
@@ -47,8 +47,8 @@ answer is rejected. There is no
 libc lookup, resolver thread, cache, retry, or detached resolver task;
 cancellation/drop discards the owned sockets. The admitted public address set
 is pinned into a fresh HTTP/1 client backed by a process-wide cached Rustls
-configuration, so roots are not reparsed per invocation. This
-candidate starts from exact base
+configuration, so roots are not reparsed per invocation. This delivered slice
+started from exact base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`; production and independent focused
 evidence are composed locally. Pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
@@ -137,9 +137,13 @@ Exact isolated source remediation
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, or delivery claim.
 Native Linux HTTP compilation remains an exact-CI requirement because the
-macOS cross-host lacks the target C sysroot. M03 therefore remains in progress
-with twenty-six
-delivered slices.
+macOS cross-host lacks the target C sysroot. Reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
+`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
+and main benchmark-evidence `32875015892`. M03 therefore remains in progress
+with twenty-seven delivered slices. This is delivery evidence, not a product-
+performance or fx-equivalence claim.
 
 The first Milestone 03 native slice only snapshots config/state environment inputs
 and reads final-path metadata for status. A second bounded native authority

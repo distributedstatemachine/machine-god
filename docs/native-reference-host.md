@@ -1,9 +1,17 @@
 # Native reference-host composition
 
-Status: **IN PROGRESS** for the proposed `web_fetch` candidate; `open_file`
-remains delivered.
-The delivered composition contains exactly twelve alphabetical workspace tools,
-and twenty-six bounded Milestone 03 slices are delivered;
+Status: **DELIVERED** for `web_fetch`; Milestone 03 remains **IN PROGRESS**.
+The delivered composition contains thirteen alphabetical tools: exactly twelve
+workspace-backed tools share one original retained descriptor plus eleven
+identity-preserving clones, and rootless `web_fetch` owns no descriptor.
+Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
+`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
+and main benchmark-evidence `32875015892`; both benchmark runs retain two
+nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. The retained earlier lineage records
+that
 twenty-third-slice `rename_file` production and independent evidence are
 composed; exact cycle-1 remediation `a3491cf`, tree `0b195bd`, passes the
 complete replacement local gate. Tree-identical cycle-2 candidate `4f224a5`,
@@ -19,14 +27,14 @@ zero findings in all three fresh tracks. Seal `7cb5ef9` passed exact feature
 and main CI/benchmark delivery gates with two artifacts in each benchmark run.
 Native `rename_file` is delivered as slice twenty-three.
 
-The proposed twenty-seventh slice starts from exact delivered base
+The delivered twenty-seventh slice started from exact delivered base
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e` and pinned fx reference
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. The local candidate composition
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Its composition
 inserts rootless `WebFetchTool` alphabetically in both production and explicitly
 injected/custom construction paths to produce thirteen host tools. It owns no
 workspace descriptor, so the descriptor-backed set remains exactly twelve
 workspace tools using one original descriptor plus eleven clones. The
-candidate is non-WASM and cfg-gated by `web-fetch-http`, which is included by
+tool is non-WASM and cfg-gated by `web-fetch-http`, which is included by
 `ai-gateway-http`; it adds no CLI state or command. Production and independent
 focused evidence are composed and all seven exact host tests pass. Pre-review
 gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree

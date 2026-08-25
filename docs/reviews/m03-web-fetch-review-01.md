@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 11 GREEN; REMOTE DELIVERY PENDING**
+Status: **COMPLETE — DELIVERED**
 
 ## Base and boundary
 
@@ -11,7 +11,8 @@ Status: **IN PROGRESS — CYCLE 11 GREEN; REMOTE DELIVERY PENDING**
 - Pinned comparison reference: [`vercel-labs/fx` commit
   `b1774fbf6c7602b503026f96f6e960e946c692ef`](https://github.com/vercel-labs/fx/commit/b1774fbf6c7602b503026f96f6e960e946c692ef).
 
-This is the live review ledger for the proposed twenty-seventh bounded slice.
+This is the retained review ledger for the delivered twenty-seventh bounded
+slice.
 Production, independently owned evidence, host composition, and a complete
 pre-review local gate exist. Formal cycle 1 rejected exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
@@ -1611,6 +1612,29 @@ This documentation-only review seal is exempt from a redundant adversarial
 cycle. It makes no workflow, integration, delivery, compatibility, product-
 performance, or fx-equivalence claim. Exact feature and `main` CI plus
 benchmark-evidence workflows remain required before the slice is delivered.
+
+## Delivery
+
+Documentation-only reviewed seal
+`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
+`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, names the green cycle-11 candidate
+without changing its behavior. Exact feature CI `32874471757` passed all six
+jobs. Feature benchmark-evidence workflow `32874471812` passed both jobs and
+retains exactly two nonexpired artifacts for the exact seal SHA.
+
+After refreshing both remote refs and verifying that delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e` was still the remote `main` and an
+ancestor of the seal, `main` was fast-forwarded without force. Exact main CI
+`32875016066` passed all six jobs. Main benchmark-evidence workflow
+`32875015892` passed both jobs and retains exactly two nonexpired artifacts for
+the exact seal SHA.
+
+The slice is therefore delivered as bounded Milestone 03 slice twenty-seven;
+Milestone 03 remains **IN PROGRESS**. These workflows are regression and
+delivery evidence, not product-performance, compatibility, or fx-equivalence
+evidence. This final documentation-only delivery record is exempt from another
+adversarial cycle under the user's instruction; its own exact feature and
+`main` workflows are still required externally.
 
 The local gate must include the repository-required commands:
 
