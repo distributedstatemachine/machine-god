@@ -264,6 +264,19 @@ strict complete paths, preserves the bounded partial-truncation path, and adds
 exact-message, trailing-byte, and zero-replay regressions. This remediation
 record makes no replacement-gate, formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim.
+Exact cycle-9 remediation
+`a184eba40470d210ba64e717649dc425200c0442`, tree
+`094a90e357f42fda5e7de3929124d3db5b9cc937`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. Required,
+complete 1,000-test, focused 36/15/14/6 plus manifest 1/1, 131-test Python,
+pinned-fx, exact dependency/audit, portability/edge-matrix, WASI/Node,
+protocol-exhaustion, official-link, documentation 74/99/535/378/0, exact
+diff/unsafe, locked-release, five-smoke, and no-XDG-root-creation checks are
+green. The foreign all-feature native build retains the established
+`aws-lc-sys` C-sysroot boundary, so native HTTP compilation remains an exact
+CI obligation. This gate record makes no formal-review outcome, candidate,
+workflow, integration, delivery, performance, or fx-equivalence claim;
+reviewer reports identify the exact candidate they reviewed.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2431,6 +2444,17 @@ trailing bytes, and rejects non-truncated UDP trailing bytes without replay.
 This remediation record makes no replacement-gate, formal-review outcome,
 candidate, workflow, integration, delivery, performance, or fx-equivalence
 claim.
+Exact cycle-9 remediation
+`a184eba40470d210ba64e717649dc425200c0442`, tree
+`094a90e357f42fda5e7de3929124d3db5b9cc937`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. Required,
+complete 1,000-test, focused 36/15/14/6 plus manifest 1/1, Python, pinned-fx,
+exact dependency/audit, portability/edge-matrix, WASI/Node, strict DNS wire
+exhaustion, official-link, documentation 74/99/535/378/0, exact diff/unsafe,
+locked-release, and five-smoke checks are green. This gate makes no formal-
+review outcome, candidate, workflow, integration, delivery, performance, or
+fx-equivalence claim; reviewer reports identify the exact candidate they
+reviewed.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3330,6 +3354,17 @@ gate:
   remediation record makes no replacement-gate, formal-review outcome,
   candidate, workflow, integration, delivery, performance, or fx-equivalence
   claim.
+  Exact cycle-9 remediation
+  `a184eba40470d210ba64e717649dc425200c0442`, tree
+  `094a90e357f42fda5e7de3929124d3db5b9cc937`, passed the complete replacement
+  local gate under exact Rust and Cargo 1.94.1 without fallback. Required,
+  complete 1,000-test, focused 36/15/14/6 plus manifest 1/1, Python, pinned-fx,
+  exact dependency/audit, portability/edge-matrix, WASI/Node, strict-wire,
+  official-link, documentation 74/99/535/378/0, exact diff/unsafe, locked-
+  release, five-smoke, and no-XDG-root-creation checks are green. This gate
+  record makes no formal-review outcome, candidate, workflow, integration,
+  delivery, performance, or fx-equivalence claim; reviewer reports identify
+  the exact candidate they reviewed.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

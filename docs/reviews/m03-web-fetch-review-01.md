@@ -1397,6 +1397,68 @@ This remediation record makes no replacement-gate, formal-review outcome,
 candidate, workflow, integration, delivery, performance, or fx-equivalence
 claim.
 
+## Cycle-9 remediation replacement gate
+
+Exact remediation commit
+`a184eba40470d210ba64e717649dc425200c0442`, tree
+`094a90e357f42fda5e7de3929124d3db5b9cc937`, passed the complete replacement
+local gate under exact rustc 1.94.1 (`e408947bf`) and Cargo 1.94.1
+(`29ea6fb6a`) without fallback. The four repository-required commands passed,
+as did the complete 1,000-test native all-target/all-feature workspace run.
+Focused evidence passed 36 private, 15 direct, 14 production HTTP, and six
+engine tests plus the parsed-manifest test 1/1.
+
+The CI-style Python run passed 131 tests with eight expected macOS skips in
+43.570 seconds. Compatibility regeneration with `--check` passed against clean
+pinned fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`. Exact
+`cargo-deny` 0.20.2 passed with the three established duplicate warnings for
+`core-foundation`, `cpufeatures`, and `syn`. Exact `cargo-audit` 0.22.2
+`--no-fetch` checked 1,225 cached advisories and 209 locked dependencies with
+zero vulnerabilities.
+
+The Linux baseline and warnings-denied native-library Clippy passed. The
+FreeBSD baseline and Clippy passed with only its two established cfg-only
+warning groups. An all-feature foreign native build from this macOS host stops
+at the established `aws-lc-sys` C-sysroot boundary, so native HTTP compilation
+remains an exact Linux CI obligation rather than a local cross-host claim. WASI
+Preview 1 and Preview 2 default and all-feature builds each produced 61 test
+executables with only the six established diagnostics. Node 22.22.0 actively
+passed the retained Preview-1 unsupported-target test 1/1.
+
+The native direct dependency matrix remains 14 edges on Linux, 15 on Apple, 14
+on FreeBSD, and 12 on Windows; all include `reqwest` and `sha2`. WASI Preview
+1, WASI Preview 2, and wasm64 each retain four direct edges, while WALI retains
+six; all four include neither dependency. The 209-package lockfile contains
+exactly one `sha2` 0.10.9 entry.
+
+Protocol evidence preserves the 4,096-byte raw DNS cap, header/count caps,
+validated partial-`TC=1` replay, and strict non-truncated/TCP response
+validation. Exact complete messages pass. A complete TCP-decoded message with
+undeclared trailing bytes fails, and a non-truncated UDP response with the same
+suffix fails without crossing the replay boundary or constructing or polling
+TCP work. All five official contract links returned HTTP 200. Documentation
+integrity covered 74 Markdown files, 99 fence blocks, 535 inline links, and 378
+relative targets with zero errors.
+
+The exact whole-feature diff from delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e` covers 22 files with 10,001
+insertions and 35 deletions. The cycle-9 remediation delta covers six files
+with 258 insertions and 29 deletions. Cargo manifests, `Cargo.lock`, CLI source,
+workflows, benchmark inputs, and generated compatibility data are unchanged in
+that delta. Changed Rust adds no unsafe construct.
+
+A freshly built locked release produced a 319,152-byte arm64 Mach-O binary
+with SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`. Bare,
+version, help, inert unavailable-path human-status, and inert unavailable-path
+JSON-status smokes passed with empty stderr, final LFs, and exact stdout sizes
+33, 33, 289, 140, and 192 bytes. Separate human and JSON status checks against
+missing XDG roots created neither root.
+
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim; reviewer reports
+identify the exact candidate they reviewed.
+
 The local gate must include the repository-required commands:
 
 ```sh
