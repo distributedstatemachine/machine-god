@@ -252,26 +252,40 @@ query ID, or DNS query and remains eligible when either snapshot failed.
 
 For a hostname, the invocation sends one rooted Internet-class A query and then
 one rooted Internet-class AAAA query directly to that nameserver on owned Tokio
-UDP sockets. Each query ID derives from the construction-time random seed and
-one atomic sequence step; invocation execution makes no blocking entropy call,
-and query-ID generation spawns or detaches no work. A truncated UDP answer
-permits exactly one TCP exchange of the same
-query; there is no other DNS retry, search-suffix expansion, cache, libc
-`getaddrinfo`, resolver thread, or spawned resolver task. A 4,097-byte UDP
-receive buffer supplies an explicit overflow witness and rejects any message
-over the 4 KiB inclusive cap. Before either UDP or TCP payload enters Hickory,
-one predecode check requires at least the 12-byte header, `QDCOUNT == 1`,
-`ANCOUNT <= 39`, `NSCOUNT <= 128`, `ARCOUNT <= 128`, and an aggregate
-`ANCOUNT + NSCOUNT + ARCOUNT <= 128`. The 39-answer cap covers the 32 admitted
-terminal addresses plus at most seven CNAME links in the eight-name chain. With
-checked arithmetic, the actual payload must also satisfy the count-implied
-minimum `12 + 5 * QDCOUNT + 11 * (ANCOUNT + NSCOUNT + ARCOUNT)`. A TCP length
-prefix outside 12 through 4,096 bytes is rejected before body allocation, and a
-TCP response that still carries the truncated flag is invalid. Response ID,
-opcode, class, rooted query name, requested record type, and response code are
-validated. A response may contain at most one consistent rooted CNAME chain of
-eight names including the original; only requested-type, Internet-class
-addresses owned by its terminal name are admitted.
+UDP sockets connected to the snapshotted nameserver address. Each query ID
+derives from the construction-time random seed and one atomic sequence step;
+invocation execution makes no blocking entropy call, and query-ID generation
+spawns or detaches no work. A 4,097-byte UDP receive buffer supplies an explicit
+overflow witness and rejects any datagram over the 4 KiB inclusive cap; the raw
+datagram retained after that check is therefore at most 4,096 bytes.
+
+Replay admission is ordered and fail-closed. Raw UDP header counts first require
+at least 12 bytes, `QDCOUNT == 1`, `ANCOUNT <= 39`, `NSCOUNT <= 128`, `ARCOUNT
+<= 128`, and aggregate `ANCOUNT + NSCOUNT + ARCOUNT <= 128`. Hickory then
+decodes only the header and single complete question before the truncation flag
+can authorize another effect. The ID must equal the outstanding query, `QR`
+must identify a response, opcode must be query, RCODE must be no-error, and the
+question must contain the exact rooted query name, requested record type, and
+Internet class. A mismatch or malformed question fails without constructing or
+polling TCP work. For an otherwise valid `TC=1` UDP response, the resource-
+record tail may be cut or shorter than its declared counts imply; that discarded
+tail is deliberately not fully decoded. After one fresh cancellation/deadline
+boundary, the invocation performs exactly one TCP exchange of the same query to
+the same snapshotted nameserver socket address. UDP response handling cannot
+rebind that destination, and there is no other DNS retry, search-suffix
+expansion, cache, libc `getaddrinfo`, resolver thread, or spawned resolver task.
+
+A non-truncated UDP response and every TCP response retain the strict complete
+path: checked arithmetic requires the count-implied minimum `12 + 5 * QDCOUNT +
+11 * (ANCOUNT + NSCOUNT + ARCOUNT)`, Hickory decodes the full declared message,
+and the complete response is validated. A TCP length prefix outside 12 through
+4,096 bytes is rejected before body allocation, the same raw count caps apply,
+and a TCP response that still carries the truncated flag is invalid. The
+39-answer cap covers the 32 admitted terminal addresses plus at most seven CNAME
+links in the eight-name chain. A complete response may contain at most one
+consistent rooted CNAME chain of eight names including the original; only
+requested-type, Internet-class addresses owned by its terminal name are
+admitted.
 
 The combined A/AAAA result accepts at most 32 addresses and fails closed unless
 every returned address is a public unicast destination. Every returned address

@@ -5,8 +5,9 @@
 //! query: polling on a driverless runtime can panic, and this workspace's
 //! abort-on-panic release profile can terminate the host.
 
-use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+use hickory_proto::op::{Header, Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name as DnsName, RData, RecordType};
+use hickory_proto::serialize::binary::{BinDecodable, BinDecoder};
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolCall, Tool, ToolCall,
     ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
@@ -55,6 +56,7 @@ const MAX_WEB_FETCH_DNS_ANSWER_RECORDS: usize =
 const MAX_WEB_FETCH_DNS_AUTHORITY_RECORDS: usize = 4 * MAX_WEB_FETCH_DNS_ADDRESSES;
 const MAX_WEB_FETCH_DNS_ADDITIONAL_RECORDS: usize = 4 * MAX_WEB_FETCH_DNS_ADDRESSES;
 const MAX_WEB_FETCH_DNS_RESOURCE_RECORDS: usize = 4 * MAX_WEB_FETCH_DNS_ADDRESSES;
+const MAX_WEB_FETCH_DNS_MESSAGE_BYTES: usize = 4 * 1_024;
 /// Maximum accepted Content-Type header size.
 pub const MAX_WEB_FETCH_MIME_TYPE_BYTES: usize = 256;
 /// Maximum serialized [`ToolOutput`] size.
@@ -1361,14 +1363,17 @@ async fn query_dns_addresses(
         .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
     request.execution_boundary(cancellation)?;
     let response = exchange_dns_udp(request, cancellation, nameserver, &wire).await?;
-    let response = if response.metadata.truncation {
-        request.execution_boundary(cancellation)?;
-        exchange_dns_tcp(request, cancellation, nameserver, &wire, connect_timeout).await?
-    } else {
-        response
-    };
+    let addresses = validate_dns_udp_response_with_replay(
+        &response,
+        id,
+        &name,
+        record_type,
+        || request.execution_boundary(cancellation),
+        || exchange_dns_tcp(request, cancellation, nameserver, &wire, connect_timeout),
+    )
+    .await?;
     request.execution_boundary(cancellation)?;
-    validate_dns_response(&response, id, &name, record_type)
+    Ok(addresses)
 }
 
 async fn exchange_dns_udp(
@@ -1376,7 +1381,7 @@ async fn exchange_dns_udp(
     cancellation: &CancellationToken,
     nameserver: SocketAddr,
     wire: &[u8],
-) -> Result<Message, WebFetchTransportError> {
+) -> Result<Vec<u8>, WebFetchTransportError> {
     let bind = match nameserver {
         SocketAddr::V4(_) => SocketAddr::from(([0, 0, 0, 0], 0)),
         SocketAddr::V6(_) => SocketAddr::from(([0_u16; 8], 0)),
@@ -1392,15 +1397,15 @@ async fn exchange_dns_udp(
     if sent != wire.len() {
         return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
     }
-    let mut response = [0_u8; 4_097];
+    let mut response = [0_u8; MAX_WEB_FETCH_DNS_MESSAGE_BYTES + 1];
     let received =
         await_native_effect(request, cancellation, || socket.recv(&mut response)).await?;
     let received =
         received.map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
-    if received > 4_096 {
+    if received > MAX_WEB_FETCH_DNS_MESSAGE_BYTES {
         return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
     }
-    decode_dns_response(&response[..received])
+    Ok(response[..received].to_vec())
 }
 
 async fn exchange_dns_tcp(
@@ -1435,6 +1440,71 @@ async fn exchange_dns_tcp(
     decode_dns_response(&response)
 }
 
+enum DnsUdpResponse {
+    Complete(Message),
+    Truncated,
+}
+
+async fn validate_dns_udp_response_with_replay<Boundary, Replay, ReplayFuture>(
+    response: &[u8],
+    id: u16,
+    name: &DnsName,
+    record_type: RecordType,
+    mut boundary: Boundary,
+    replay: Replay,
+) -> Result<Vec<IpAddr>, WebFetchTransportError>
+where
+    Boundary: FnMut() -> Result<(), WebFetchTransportError>,
+    Replay: FnOnce() -> ReplayFuture,
+    ReplayFuture: Future<Output = Result<Message, WebFetchTransportError>>,
+{
+    let response = match classify_dns_udp_response(response, id, name, record_type)? {
+        DnsUdpResponse::Complete(response) => response,
+        DnsUdpResponse::Truncated => {
+            // Retain authority immediately before constructing or polling the
+            // sole TCP replay. Rejected UDP packets never reach this boundary.
+            boundary()?;
+            replay().await?
+        }
+    };
+    validate_dns_response(&response, id, name, record_type)
+}
+
+fn classify_dns_udp_response(
+    response: &[u8],
+    id: u16,
+    name: &DnsName,
+    record_type: RecordType,
+) -> Result<DnsUdpResponse, WebFetchTransportError> {
+    validate_dns_header_count_caps(response)?;
+    let mut decoder = BinDecoder::new(response);
+    let header = Header::read(&mut decoder)
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    if header.metadata.id != id
+        || header.metadata.message_type != MessageType::Response
+        || header.metadata.op_code != OpCode::Query
+        || header.metadata.response_code != ResponseCode::NoError
+    {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    let query = Query::read(&mut decoder)
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    if !query.name().is_fqdn()
+        || query.name() != name
+        || query.query_type() != record_type
+        || query.query_class() != DNSClass::IN
+    {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    if header.metadata.truncation {
+        // RFC truncation permits the resource-record tail and its count-implied
+        // length to be incomplete. Ignore it and validate the TCP answer in full.
+        Ok(DnsUdpResponse::Truncated)
+    } else {
+        decode_dns_response(response).map(DnsUdpResponse::Complete)
+    }
+}
+
 fn decode_dns_response(response: &[u8]) -> Result<Message, WebFetchTransportError> {
     validate_dns_header_counts(response)?;
     Message::from_vec(response)
@@ -1442,20 +1512,12 @@ fn decode_dns_response(response: &[u8]) -> Result<Message, WebFetchTransportErro
 }
 
 fn validate_dns_header_counts(response: &[u8]) -> Result<(), WebFetchTransportError> {
-    let header = response
-        .get(..12)
-        .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
-    let questions = usize::from(u16::from_be_bytes([header[4], header[5]]));
-    let answers = usize::from(u16::from_be_bytes([header[6], header[7]]));
-    let authorities = usize::from(u16::from_be_bytes([header[8], header[9]]));
-    let additionals = usize::from(u16::from_be_bytes([header[10], header[11]]));
-    let resource_records = answers
-        .checked_add(authorities)
-        .and_then(|total| total.checked_add(additionals))
-        .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let counts = validate_dns_header_count_caps(response)?;
+    let resource_records = counts.resource_records()?;
     let minimum_wire_len = 12_usize
         .checked_add(
-            questions
+            counts
+                .questions
                 .checked_mul(5)
                 .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?,
         )
@@ -1465,21 +1527,56 @@ fn validate_dns_header_counts(response: &[u8]) -> Result<(), WebFetchTransportEr
                 .and_then(|records| length.checked_add(records))
         })
         .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
-    if questions != 1
-        || answers > MAX_WEB_FETCH_DNS_ANSWER_RECORDS
-        || authorities > MAX_WEB_FETCH_DNS_AUTHORITY_RECORDS
-        || additionals > MAX_WEB_FETCH_DNS_ADDITIONAL_RECORDS
-        || resource_records > MAX_WEB_FETCH_DNS_RESOURCE_RECORDS
-        || minimum_wire_len > response.len()
-    {
+    if minimum_wire_len > response.len() {
         return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
     }
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct DnsHeaderCounts {
+    questions: usize,
+    answers: usize,
+    authorities: usize,
+    additionals: usize,
+}
+
+impl DnsHeaderCounts {
+    fn resource_records(self) -> Result<usize, WebFetchTransportError> {
+        self.answers
+            .checked_add(self.authorities)
+            .and_then(|total| total.checked_add(self.additionals))
+            .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))
+    }
+}
+
+fn validate_dns_header_count_caps(
+    response: &[u8],
+) -> Result<DnsHeaderCounts, WebFetchTransportError> {
+    let header = response
+        .get(..12)
+        .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let counts = DnsHeaderCounts {
+        questions: usize::from(u16::from_be_bytes([header[4], header[5]])),
+        answers: usize::from(u16::from_be_bytes([header[6], header[7]])),
+        authorities: usize::from(u16::from_be_bytes([header[8], header[9]])),
+        additionals: usize::from(u16::from_be_bytes([header[10], header[11]])),
+    };
+    let resource_records = counts.resource_records()?;
+    if counts.questions != 1
+        || counts.answers > MAX_WEB_FETCH_DNS_ANSWER_RECORDS
+        || counts.authorities > MAX_WEB_FETCH_DNS_AUTHORITY_RECORDS
+        || counts.additionals > MAX_WEB_FETCH_DNS_ADDITIONAL_RECORDS
+        || resource_records > MAX_WEB_FETCH_DNS_RESOURCE_RECORDS
+    {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    Ok(counts)
+}
+
 fn bounded_dns_tcp_response_len(response_len: u16) -> Result<usize, WebFetchTransportError> {
     let response_len = usize::from(response_len);
-    if (12..=4_096).contains(&response_len) {
+    if (12..=MAX_WEB_FETCH_DNS_MESSAGE_BYTES).contains(&response_len) {
         Ok(response_len)
     } else {
         Err(transport_error(WebFetchTransportErrorKind::Unavailable))
@@ -2189,6 +2286,29 @@ mod tests {
         packet
     }
 
+    fn partial_truncated_dns_packet(mut response: Message) -> Vec<u8> {
+        response.metadata.truncation = true;
+        let owner = response.queries[0].name().clone();
+        for octet in [34, 35, 36] {
+            response.add_answer(Record::from_rdata(
+                owner.clone(),
+                60,
+                RData::A(A(Ipv4Addr::new(93, 184, 216, octet))),
+            ));
+        }
+        let mut packet = response.to_vec().unwrap();
+        let mut decoder = BinDecoder::new(&packet);
+        Header::read(&mut decoder).unwrap();
+        Query::read(&mut decoder).unwrap();
+        let question_end = decoder.index();
+        // Retain the first byte of the first A RDATA. The three declared
+        // answers also make this shorter than the count-implied minimum.
+        packet.truncate(question_end + 13);
+        assert!(packet.len() <= MAX_WEB_FETCH_DNS_MESSAGE_BYTES);
+        assert!(validate_dns_header_counts(&packet).is_err());
+        packet
+    }
+
     fn local_https_exchange(
         response_parts: Vec<Vec<u8>>,
     ) -> (
@@ -2629,6 +2749,219 @@ mod tests {
                 .kind(),
             WebFetchTransportErrorKind::Unavailable
         );
+    }
+
+    #[test]
+    fn valid_partial_truncated_udp_replays_once_and_fully_validates_tcp_response() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let id = 41;
+        let udp = partial_truncated_dns_packet(dns_response(id, &name, RecordType::A));
+        assert!(Message::from_vec(&udp).is_err());
+
+        let mut tcp = dns_response(id, &name, RecordType::A);
+        tcp.add_answer(Record::from_rdata(
+            name.clone(),
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+        ));
+        let boundary_calls = Arc::new(AtomicU32::new(0));
+        let replay_constructions = Arc::new(AtomicU32::new(0));
+        let replay_polls = Arc::new(AtomicU32::new(0));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let addresses = runtime
+            .block_on(validate_dns_udp_response_with_replay(
+                &udp,
+                id,
+                &name,
+                RecordType::A,
+                {
+                    let boundary_calls = Arc::clone(&boundary_calls);
+                    move || {
+                        boundary_calls.fetch_add(1, Ordering::AcqRel);
+                        Ok(())
+                    }
+                },
+                {
+                    let replay_constructions = Arc::clone(&replay_constructions);
+                    let replay_polls = Arc::clone(&replay_polls);
+                    move || {
+                        replay_constructions.fetch_add(1, Ordering::AcqRel);
+                        let mut tcp = Some(tcp);
+                        poll_fn(move |_context| {
+                            replay_polls.fetch_add(1, Ordering::AcqRel);
+                            Poll::Ready(Ok(tcp.take().unwrap()))
+                        })
+                    }
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(addresses, [IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]);
+        assert_eq!(boundary_calls.load(Ordering::Acquire), 1);
+        assert_eq!(replay_constructions.load(Ordering::Acquire), 1);
+        assert_eq!(replay_polls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn invalid_or_incomplete_udp_identity_never_constructs_or_polls_tcp_replay() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let other_name = DnsName::from_ascii("other.example.com.").unwrap();
+        let id = 42;
+
+        let mut qr = dns_response(id, &name, RecordType::A);
+        qr.metadata.message_type = MessageType::Query;
+        let mut opcode = dns_response(id, &name, RecordType::A);
+        opcode.metadata.op_code = OpCode::Status;
+        let mut response_code = dns_response(id, &name, RecordType::A);
+        response_code.metadata.response_code = ResponseCode::ServFail;
+        let mut wrong_class = dns_response(id, &name, RecordType::A);
+        wrong_class.queries[0].query_class = DNSClass::CH;
+
+        let valid = partial_truncated_dns_packet(dns_response(id, &name, RecordType::A));
+        let mut zero_questions = valid.clone();
+        zero_questions[4..6].copy_from_slice(&0_u16.to_be_bytes());
+        let mut two_questions = valid.clone();
+        two_questions[4..6].copy_from_slice(&2_u16.to_be_bytes());
+        let mut malformed_question = valid.clone();
+        let mut decoder = BinDecoder::new(&malformed_question);
+        Header::read(&mut decoder).unwrap();
+        Query::read(&mut decoder).unwrap();
+        malformed_question.truncate(decoder.index() - 1);
+        let mut too_many_answers = valid.clone();
+        too_many_answers[6..8].copy_from_slice(&40_u16.to_be_bytes());
+        let mut too_many_records = valid.clone();
+        too_many_records[6..8].copy_from_slice(&39_u16.to_be_bytes());
+        too_many_records[8..10].copy_from_slice(&90_u16.to_be_bytes());
+        let mut incomplete_non_truncated = valid;
+        incomplete_non_truncated[2] &= !0x02;
+
+        let rejected = [
+            partial_truncated_dns_packet(dns_response(id + 1, &name, RecordType::A)),
+            partial_truncated_dns_packet(qr),
+            partial_truncated_dns_packet(opcode),
+            partial_truncated_dns_packet(response_code),
+            partial_truncated_dns_packet(dns_response(id, &other_name, RecordType::A)),
+            partial_truncated_dns_packet(dns_response(id, &name, RecordType::AAAA)),
+            partial_truncated_dns_packet(wrong_class),
+            zero_questions,
+            two_questions,
+            malformed_question,
+            too_many_answers,
+            too_many_records,
+            incomplete_non_truncated,
+        ];
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        for packet in rejected {
+            let boundary_calls = Arc::new(AtomicU32::new(0));
+            let replay_constructions = Arc::new(AtomicU32::new(0));
+            let replay_polls = Arc::new(AtomicU32::new(0));
+            let result = runtime.block_on(validate_dns_udp_response_with_replay(
+                &packet,
+                id,
+                &name,
+                RecordType::A,
+                {
+                    let boundary_calls = Arc::clone(&boundary_calls);
+                    move || {
+                        boundary_calls.fetch_add(1, Ordering::AcqRel);
+                        Ok(())
+                    }
+                },
+                {
+                    let replay_constructions = Arc::clone(&replay_constructions);
+                    let replay_polls = Arc::clone(&replay_polls);
+                    let name = name.clone();
+                    move || {
+                        replay_constructions.fetch_add(1, Ordering::AcqRel);
+                        poll_fn(move |_context| {
+                            replay_polls.fetch_add(1, Ordering::AcqRel);
+                            Poll::Ready(Ok(dns_response(id, &name, RecordType::A)))
+                        })
+                    }
+                },
+            ));
+            assert_eq!(
+                result.unwrap_err().kind(),
+                WebFetchTransportErrorKind::Unavailable
+            );
+            assert_eq!(boundary_calls.load(Ordering::Acquire), 0);
+            assert_eq!(replay_constructions.load(Ordering::Acquire), 0);
+            assert_eq!(replay_polls.load(Ordering::Acquire), 0);
+        }
+    }
+
+    #[test]
+    fn truncated_udp_replay_obeys_boundary_and_rejects_truncated_tcp_response() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let id = 43;
+        let udp = partial_truncated_dns_packet(dns_response(id, &name, RecordType::A));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        for boundary_error in [
+            WebFetchTransportErrorKind::Cancelled,
+            WebFetchTransportErrorKind::Timeout,
+        ] {
+            let replay_constructions = Arc::new(AtomicU32::new(0));
+            let replay_polls = Arc::new(AtomicU32::new(0));
+            let replay_name = name.clone();
+            let rejected = runtime.block_on(validate_dns_udp_response_with_replay(
+                &udp,
+                id,
+                &name,
+                RecordType::A,
+                move || Err(transport_error(boundary_error)),
+                {
+                    let replay_constructions = Arc::clone(&replay_constructions);
+                    let replay_polls = Arc::clone(&replay_polls);
+                    move || {
+                        replay_constructions.fetch_add(1, Ordering::AcqRel);
+                        poll_fn(move |_context| {
+                            replay_polls.fetch_add(1, Ordering::AcqRel);
+                            Poll::Ready(Ok(dns_response(id, &replay_name, RecordType::A)))
+                        })
+                    }
+                },
+            ));
+            assert_eq!(rejected.unwrap_err().kind(), boundary_error);
+            assert_eq!(replay_constructions.load(Ordering::Acquire), 0);
+            assert_eq!(replay_polls.load(Ordering::Acquire), 0);
+        }
+
+        let replay_constructions = Arc::new(AtomicU32::new(0));
+        let replay_polls = Arc::new(AtomicU32::new(0));
+        let replay_name = name.clone();
+        let still_truncated = runtime.block_on(validate_dns_udp_response_with_replay(
+            &udp,
+            id,
+            &name,
+            RecordType::A,
+            || Ok(()),
+            {
+                let replay_constructions = Arc::clone(&replay_constructions);
+                let replay_polls = Arc::clone(&replay_polls);
+                move || {
+                    replay_constructions.fetch_add(1, Ordering::AcqRel);
+                    let mut response = dns_response(id, &replay_name, RecordType::A);
+                    response.metadata.truncation = true;
+                    poll_fn(move |_context| {
+                        replay_polls.fetch_add(1, Ordering::AcqRel);
+                        Poll::Ready(Ok(response.clone()))
+                    })
+                }
+            },
+        ));
+        assert_eq!(
+            still_truncated.unwrap_err().kind(),
+            WebFetchTransportErrorKind::Unavailable
+        );
+        assert_eq!(replay_constructions.load(Ordering::Acquire), 1);
+        assert_eq!(replay_polls.load(Ordering::Acquire), 1);
     }
 
     #[test]
