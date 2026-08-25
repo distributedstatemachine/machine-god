@@ -25,7 +25,14 @@ and an atomic per-query sequence, with no blocking per-query entropy. A failed
 resolver or seed snapshot makes later hostname execution return the same fixed,
 retryable unavailable result until reconstruction. Literal IP execution needs
 neither prerequisite and bypasses those failures. One outer cancellation
-waiter covers bounded permit/DNS/HTTP/body waits. The native transport checks
+waiter and one outer machine-god invocation-deadline sleep cover bounded
+permit/DNS/HTTP/body waits. Each truncated A or AAAA DNS TCP replay may own one
+additional short-lived configured connect-timeout sleep, for at most two
+sequential DNS replay sleeps per invocation; Reqwest/Hyper may own bounded HTTP
+connection-attempt timers. The outer sleep is allocated once; each DNS replay
+sleep is allocated once when that replay begins. None resets or extends the
+outer absolute deadline.
+The native transport checks
 cancellation and the same absolute total deadline before each sequential A,
 AAAA, TCP, HTTP, and body effect, including transitions where earlier work
 completed immediately. The final synchronous boundary directly checks the
@@ -106,9 +113,29 @@ it makes no native-DNS proof. Exact composed code/evidence precursor
 `56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
 record makes no replacement-gate, formal-review outcome, candidate, workflow,
 integration, or delivery claim; formal reviewer reports identify the exact
-candidate they reviewed. Native Linux HTTP
-compilation remains an exact-CI requirement because the macOS cross-host lacks
-the target C sysroot. M03 therefore remains in progress with twenty-six
+candidate they reviewed.
+Formal cycle 5 is **NOT GREEN** on exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The two low reports are the same timer-
+accounting mismatch, so the deduplicated union is 0 blocker, 0 high, 1 medium,
+and 1 low. The exact candidate is rejected. The medium finding permits a DNS
+TCP-connect success or error to escape when its configured connect deadline
+becomes due during the same effect poll. The replacement must reapply
+cancellation and outer-deadline precedence, then reject the expired connect
+deadline before accepting either result.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs` and implements that ordering. Exact composed code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, or delivery claim.
+Native Linux HTTP compilation remains an exact-CI requirement because the
+macOS cross-host lacks the target C sysroot. M03 therefore remains in progress
+with twenty-six
 delivered slices.
 
 The first Milestone 03 native slice only snapshots config/state environment inputs

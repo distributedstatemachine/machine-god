@@ -94,6 +94,33 @@ it makes no native-DNS proof. Exact composed code/evidence precursor
 record makes no replacement-gate, formal-review outcome, candidate, workflow,
 integration, or delivery claim; formal reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 5 is **NOT GREEN** on exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The two low reports describe the same
+timer-accounting mismatch, so the deduplicated union is 0 blocker, 0 high,
+1 medium, and 1 low. The exact candidate is rejected. The medium finding is a
+same-poll DNS TCP-connect boundary: a ready connect result rechecked
+cancellation and the outer deadline but could escape when the configured
+connect deadline became due during that effect poll. The corrected contract
+owns exactly one reusable outer machine-god invocation-deadline sleep; each
+truncated A or AAAA DNS TCP replay may additionally own one short-lived
+configured connect-timeout sleep, for at most two sequential DNS replay sleeps
+per invocation, and Reqwest/Hyper may own bounded HTTP connection-attempt
+timers. The outer sleep is allocated once; each DNS replay sleep is allocated
+once when that replay begins. None resets or extends the outer absolute
+deadline. The replacement
+must reapply cancellation and outer-deadline precedence and then reject an
+expired connect deadline before accepting either a ready success or error.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs` and implements that ordering. Exact composed code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, or delivery claim.
 Standalone HTTP cross-compilation remains deferred to exact
 native Linux CI because the macOS cross-host lacks the required C sysroot. The
 cfg-gated non-WASM candidate makes every production and explicitly injected/

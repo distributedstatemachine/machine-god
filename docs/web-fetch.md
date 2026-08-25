@@ -97,6 +97,28 @@ evidence precursor `d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
 record makes no replacement-gate, formal-review outcome, candidate, workflow,
 integration, or delivery claim; formal reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 5 is **NOT GREEN** on exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The two low reports describe the same
+timer-accounting mismatch, so the deduplicated union is 0 blocker, 0 high,
+1 medium, and 1 low. The exact candidate is rejected. The medium finding is a
+same-poll DNS TCP-connect deadline escape: after polling the configured timeout
+before the connect future, a ready connect result rechecked only cancellation
+and the outer deadline, so a connect deadline that became due during that
+effect poll could be missed for either success or later-mapped error. The
+replacement must reapply cancellation and outer-deadline precedence and then
+reject the expired connect deadline before accepting either result.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs` and implements that same-poll ordering. Exact composed code
+precursor `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, or delivery claim; formal reviewers identify only the
+exact candidate they inspect.
 Native Linux HTTP compilation remains an exact-CI requirement because the
 macOS cross-host lacks the target C sysroot. Milestone 03 therefore remains in
 progress with twenty-six delivered slices.
@@ -278,10 +300,15 @@ query that proves both drivers are enabled, so polling on a current runtime
 that lacks either driver may panic; the repository's release panic policy can
 turn that host-precondition violation into process termination. This is a
 documented `# Panics` API boundary, not a typed runtime-detection guarantee.
-One cancellation waiter and one Tokio deadline sleep are allocated per bounded
-invocation and reused across permit, DNS, HTTP, and body waits; progress never
-allocates or resets a new deadline timer. After bounded transport work, the
-final synchronous boundary checks cancellation/deadline state directly without
+Exactly one cancellation waiter and one outer machine-god Tokio invocation-
+deadline sleep are allocated per bounded invocation and reused across permit,
+DNS, HTTP, and body waits. Each truncated A or AAAA DNS TCP replay additionally
+owns one short-lived configured connect-timeout sleep, so one invocation owns
+at most two such sequential DNS replay sleeps. Reqwest/Hyper may own bounded
+HTTP connection-attempt timers. The outer timer is never reallocated. Each DNS
+replay timer is allocated once when that replay begins; none resets or extends
+the outer absolute deadline. After bounded transport work, the final
+synchronous boundary checks cancellation/deadline state directly without
 allocating a second waiter.
 The native transport receives that invocation's absolute deadline and
 cancellation token without creating a second waiter. It checks both at every
@@ -319,8 +346,9 @@ permit remains owned through that decision.
 background cleanup task. Dropping or cancelling its future drops the owned
 Reqwest request/response and permit. Reqwest/Hyper connection-dispatch cleanup
 may continue only on the host-owned Tokio runtime; this is not authority to
-keep a machine-god request worker alive or to retry the request. The one
-invocation deadline sleep is owned by the future and is never detached.
+keep a machine-god request worker alive or to retry the request. The one outer
+machine-god invocation-deadline sleep and each short-lived DNS replay connect-
+timeout sleep are owned by the future and are never detached.
 
 ## Content classification
 
@@ -480,3 +508,31 @@ DNS proof. Exact composed code/evidence precursor
 record makes no replacement-gate, formal-review outcome, candidate, workflow,
 integration, or delivery claim; formal reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 5 rejected exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The correctness and performance low
+reports are the same timer-accounting mismatch, so the deduplicated union is
+0 blocker, 0 high, 1 medium, and 1 low. The exact candidate is rejected. The
+medium finding is a same-poll DNS TCP-connect deadline escape: the helper
+polled its timeout before the connect effect, then a ready effect result
+rechecked cancellation and the outer deadline but not whether the configured
+connect deadline became due during that poll. A late success could be accepted,
+and a late error could be mapped as unavailable rather than timeout. The
+replacement must apply cancellation and outer-deadline precedence first, then
+reject an expired connect deadline before accepting either result. The
+normative timer inventory is exactly one reusable outer machine-god invocation-
+deadline sleep, at most two sequential short-lived DNS replay connect-timeout
+sleeps, and any bounded Reqwest/Hyper HTTP connection-attempt timers; none
+resets or extends the outer absolute deadline. The outer sleep is allocated
+once; each DNS replay sleep is allocated once when that replay begins.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs`. It applies cancellation and outer-deadline precedence and then
+the retained absolute connect deadline after a ready effect result. Exact
+composed code precursor `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the
+same tree. This remediation record makes no replacement-gate, formal-review
+outcome, candidate, workflow, integration, or delivery claim.

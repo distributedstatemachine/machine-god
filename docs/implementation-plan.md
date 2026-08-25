@@ -138,6 +138,25 @@ documentation, diff/unsafe, and release-smoke checks are green. This gate
 record makes no formal-review outcome, candidate, workflow, integration,
 delivery, performance, or fx-equivalence claim; reviewer reports identify the
 exact candidate they reviewed.
+Formal cycle 5 is **NOT GREEN** on exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The timer-accounting low is duplicated
+across correctness and performance, so the deduplicated union is 0 blocker,
+0 high, 1 medium, and 1 low; the exact candidate is rejected. A ready DNS TCP-
+connect result could escape when the configured connect deadline became due
+during the same effect poll. The replacement must preserve cancellation and
+outer-deadline precedence, then reject an expired connect deadline before
+accepting either a ready success or error.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs` and implements that boundary. Exact composed code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, or delivery claim.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -1875,10 +1894,16 @@ permit on every path; the tool owns no machine-god worker. Production
 construction is runtime-independent. Polling requires a current host-owned
 Tokio runtime with I/O and time enabled: no handle returns fixed
 `RuntimeRequired`, while a current driverless runtime violates the documented
-`# Panics` precondition and may terminate a release process. One deadline sleep
-and one cancellation future are reused across bounded permit, DNS, HTTP, and
-body waits. The final synchronous boundary checks token/deadline state directly
-without a second waiter. The
+`# Panics` precondition and may terminate a release process. Exactly one outer
+machine-god invocation-deadline sleep and one cancellation future are reused
+across bounded permit, DNS, HTTP, and body waits. Each truncated A or AAAA DNS
+TCP replay may additionally own one short-lived configured connect-timeout
+sleep, for at most two sequential DNS replay sleeps per invocation;
+Reqwest/Hyper may own bounded HTTP connection-attempt timers. The outer sleep
+is allocated once; each DNS replay sleep is allocated once when that replay
+begins. None resets or extends the outer absolute deadline. The final
+synchronous boundary checks token/deadline state directly without a second
+waiter. The
 native transport checks cancellation state and that same absolute deadline at
 pre-effect boundaries between A, AAAA, TCP replay, HTTP dispatch, and body
 work, including immediately completing phase transitions. The outer
@@ -2020,6 +2045,27 @@ release has SHA-256
 five exact smokes pass. This gate record makes no formal-review outcome,
 candidate, workflow, integration, delivery, performance, or fx-equivalence
 claim; reviewer reports identify the exact candidate they reviewed.
+Formal cycle 5 rejected exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0/0/0/1; network/HTTP lifecycle reported 0/0/1/0; performance/concurrency
+reported 0/0/0/1. The timer-accounting low is duplicated across correctness
+and performance, so the union is 0 blocker, 0 high, 1 medium, and 1 low. The
+exact candidate is rejected. The medium finding is a same-poll DNS TCP-connect
+deadline escape. The corrected timer contract owns one reusable outer machine-
+god invocation-deadline sleep, up to two sequential short-lived DNS replay
+connect-timeout sleeps, and bounded Reqwest/Hyper HTTP connection-attempt
+timers; no progress or subordinate timer resets the outer absolute deadline.
+The source replacement must reapply cancellation and outer-deadline precedence,
+then reject an expired connect deadline before accepting either a ready
+success or error.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs` and implements that ordering. Exact composed code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, or delivery claim.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -2794,6 +2840,27 @@ gate:
   checks are green. This gate record makes no formal-review outcome, candidate,
   workflow, integration, delivery, performance, or fx-equivalence claim;
   reviewer reports identify the exact candidate they reviewed.
+  Formal cycle 5 rejected exact candidate
+  `81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+  `f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+  0/0/0/1, network/HTTP lifecycle reported 0/0/1/0, and performance/
+  concurrency reported 0/0/0/1. The repeated timer-accounting low deduplicates
+  across correctness and performance, leaving 0 blocker, 0 high, 1 medium, and
+  1 low. The exact candidate is rejected. Its DNS TCP-connect helper could
+  accept a ready success or error after the configured connect deadline became
+  due during that same effect poll. The replacement must preserve cancellation
+  and outer-deadline precedence, then reject the expired connect deadline. The
+  maintained timer contract owns exactly one reusable outer machine-god
+  invocation-deadline sleep, at most two sequential short-lived DNS replay
+  connect-timeout sleeps, and bounded Reqwest/Hyper HTTP connection-attempt
+  timers; none resets or extends the outer absolute deadline.
+  Exact isolated source remediation
+  `cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+  `8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+  `web_fetch.rs` and implements the corrected ordering. Exact composed code
+  precursor `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+  remediation record makes no replacement-gate, formal-review outcome,
+  candidate, workflow, integration, or delivery claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

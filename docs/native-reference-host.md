@@ -97,6 +97,24 @@ it makes no native-DNS proof. Exact composed code/evidence precursor
 record makes no replacement-gate, formal-review outcome, candidate, workflow,
 integration, or delivery claim; formal reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 5 is **NOT GREEN** on exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The repeated timer-accounting low
+deduplicates across correctness and performance, yielding 0 blocker, 0 high,
+1 medium, and 1 low. The exact candidate is rejected. The medium finding is a
+same-poll native DNS TCP-connect deadline defect; it changes neither reference-
+host construction nor the thirteen-tool production/custom composition shape.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs`; exact composed code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. Reference-host
+composition is byte-unchanged. This remediation record makes no replacement-
+gate, formal-review outcome, candidate, workflow, integration, or delivery
+claim.
 The delivered count remains twenty-six and this is not a performance or
 fx-equivalence claim.
 
@@ -114,9 +132,15 @@ not reread resolver configuration or perform per-query entropy. A failed
 nameserver or seed snapshot makes later hostname execution return the same
 fixed, retryable unavailable result until a new transport is constructed.
 Literal public IPs skip DNS and bypass both prerequisites. One outer
-cancellation waiter is reused for bounded permit, DNS, HTTP, and body waits,
-and the native transport checks cancellation and the same absolute deadline at
-pre-effect boundaries between A, AAAA, TCP replay, HTTP dispatch, and body work.
+cancellation waiter and one outer machine-god invocation-deadline sleep are
+reused for bounded permit, DNS, HTTP, and body waits. Each truncated A or AAAA
+DNS TCP replay may additionally own one short-lived configured connect-timeout
+sleep, for at most two sequential DNS replay sleeps per invocation;
+Reqwest/Hyper may own bounded HTTP connection-attempt timers. The outer sleep
+is allocated once; each DNS replay sleep is allocated once when that replay
+begins. None resets or extends the outer absolute deadline. The native
+transport checks cancellation and the same absolute deadline at pre-effect
+boundaries between A, AAAA, TCP replay, HTTP dispatch, and body work.
 The final synchronous boundary checks the token/deadline directly without a
 second waiter. No workspace descriptor is used
 for resolver configuration, entropy, or network execution.

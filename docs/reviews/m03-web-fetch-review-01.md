@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 4 REJECTED; REPLACEMENT GATE GREEN**
+Status: **IN PROGRESS — CYCLE 5 REJECTED**
 
 ## Base and boundary
 
@@ -66,6 +66,21 @@ local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, candidate, workflow, integration, delivery,
 performance, or fx-equivalence claim; reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 5 rejected exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
+0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The repeated timer-accounting low
+deduplicates across correctness and performance. The union is 0 blocker,
+0 high, 1 medium, and 1 low, so the exact candidate is rejected.
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs`. Exact composed code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, delivery, compatibility, or product-performance claim.
 
 ## Frozen candidate boundary
 
@@ -93,17 +108,23 @@ subordinate to cancellation and any earlier overall deadline. Cancellation and
 drop release the response and permit and own no machine-god worker. One outer
 bounded wrapper retains the acquired permit through transport, rendering,
 serialized-result validation, and the final cancellation/deadline boundary.
-Its cancellation future and reused deadline sleep cover only bounded permit,
-DNS, HTTP, and body waits; the final synchronous boundary directly checks the
-token/deadline without another waiter.
+Its cancellation future and one reusable outer machine-god invocation-deadline
+sleep cover bounded permit, DNS, HTTP, and body waits; the final synchronous
+boundary directly checks the token/deadline without another waiter. Each
+truncated A or AAAA DNS TCP replay additionally owns one short-lived configured
+connect-timeout sleep, so one invocation owns at most two sequential DNS replay
+sleeps. Reqwest/Hyper may own bounded HTTP connection-attempt timers. The outer
+sleep is allocated once; each DNS replay sleep is allocated once when that
+replay begins. None resets or extends the outer absolute deadline.
 Construction is runtime-independent. Polling production requires a current
 host-owned Tokio runtime with I/O and time enabled; no current handle returns
 `RuntimeRequired`, while a current driverless runtime violates the documented
-`# Panics` precondition and may terminate a release process. One Tokio deadline
-sleep and one cancellation waiter are reused across bounded permit, DNS, HTTP,
-and body waits. The final synchronous boundary checks the token/deadline directly
-without a second waiter. The native transport checks cancellation and that
-same absolute deadline before each effect transition between A, AAAA, TCP
+`# Panics` precondition and may terminate a release process. The one outer
+machine-god Tokio invocation-deadline sleep and one cancellation waiter are
+reused across bounded permit, DNS, HTTP, and body waits. The final synchronous
+boundary checks the token/deadline directly without a second waiter. The native
+transport checks cancellation and that same absolute deadline before each
+effect transition between A, AAAA, TCP
 replay, HTTP dispatch, and body work.
 
 Native production-transport construction synchronously snapshots the first
@@ -317,11 +338,14 @@ numeric hosts, defines inferred fixed MIME values, describes default-port
 canonicalization accurately, records this candidate, and exposes the
 driver-enabled Tokio `# Panics` precondition rather than promising typed driver
 detection. The replacement boundary removes libc DNS in favor of bounded owned
-Tokio socket queries, reuses one invocation deadline sleep, retains the permit
-through render/final validation, and reuses one process-wide Rustls root
-configuration. At that checkpoint, documentation composition, a replacement
-SHA/tree, the complete local gate, and three fresh same-SHA review tracks
-remained pending. Their later exact results are recorded below.
+Tokio socket queries, reuses one outer machine-god invocation-deadline sleep
+rather than allocating another outer sleep per wait, retains the permit through
+render/final validation, and reuses one process-wide Rustls root configuration.
+Subordinate connection-attempt timer accounting was incomplete at that
+checkpoint and is corrected in cycle 5 below. At that checkpoint,
+documentation composition, a replacement SHA/tree, the complete local gate,
+and three fresh same-SHA review tracks remained pending. Their later exact
+results are recorded below.
 
 ## Cycle-1 remediation and replacement gate
 
@@ -556,9 +580,11 @@ query sequence derives each A/AAAA ID without a blocking per-query entropy
 call. A failed seed or resolver snapshot leaves hostname execution at the same
 fixed, retryable unavailable result until reconstruction, while an admitted
 literal IP bypasses those hostname-only prerequisites. The outer bounded
-invocation owns the only waiter and reusable sleep for permit/DNS/HTTP/body
-waits. Native execution receives the same token and absolute deadline and
-checks both before A, AAAA, TCP replay, HTTP dispatch, and response-body effects,
+invocation owns one outer cancellation waiter and one reusable outer invocation-
+deadline sleep for permit/DNS/HTTP/body waits. Subordinate connection-attempt
+timer accounting is corrected in cycle 5 below. Native execution receives the
+same token and absolute deadline and checks both before A, AAAA, TCP replay,
+HTTP dispatch, and response-body effects,
 including immediately completing phase transitions. The final synchronous
 boundary checks both directly and creates no second waiter.
 
@@ -747,6 +773,73 @@ This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
 
+## Formal cycle 5 — not green
+
+Three fresh agents independently inspected exact candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 5 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 0 medium, 1 low**.
+
+- **Low — incomplete timer inventory:** maintained claims described one
+  invocation deadline sleep without disclosing the additional configured
+  connect-timeout sleep owned by each truncated-DNS TCP replay or the bounded
+  connection-attempt timers Reqwest/Hyper may own.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 1 medium, 0 low**.
+
+- **Medium — same-poll DNS TCP-connect deadline escape:**
+  `await_native_connect_with_waiter` polled its configured connect-timeout
+  sleep before the TCP connect future, but a ready connect result rechecked
+  only cancellation and the outer invocation deadline. If the absolute connect
+  deadline became due during that same effect poll, a late success could be
+  accepted and a late error could later map as unavailable rather than timeout.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 0 medium, 1 low**.
+
+- **Low — incomplete timer inventory:** this is the same maintained-
+  documentation finding reported by correctness/API, not a second unique
+  defect.
+
+### Consolidated union and disposition
+
+Cycle 5 has **0 blocker, 0 high, 1 medium, and 1 low** deduplicated findings.
+Exact candidate `81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`, is rejected and must never be used
+as delivery evidence.
+
+The replacement must retain an absolute configured connect deadline and, after
+a ready connect poll, apply cancellation and outer-deadline precedence before
+rejecting an expired connect deadline and accepting either success or error.
+The maintained timer inventory is exactly one reusable outer machine-god
+invocation-deadline sleep; one additional short-lived configured connect-
+timeout sleep for each truncated A or AAAA DNS TCP replay, at most two
+sequential DNS replay sleeps per invocation; and any bounded Reqwest/Hyper HTTP
+connection-attempt timers. The outer sleep is allocated once; each DNS replay
+sleep is allocated once when that replay begins. None resets or extends the
+outer absolute deadline.
+
+Exact isolated source remediation
+`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only
+`crates/machine-god-native/src/web_fetch.rs`. It retains one absolute connect
+deadline and, after a ready effect result, applies cancellation and outer-
+deadline precedence before rejecting an expired connect deadline and accepting
+either success or error. Its focused checks passed 30/30 private, 14/14 direct,
+14/14 production HTTP, and 5/5 engine tests, native all-target/all-feature
+tests, formatting, and warnings-denied Clippy. Exact composed code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, delivery, compatibility, or product-performance claim;
+formal reviewers identify only the exact candidate they inspect.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -795,8 +888,18 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: formal cycles 1, 2, 3, and 4 are **NOT GREEN** on their exact
-recorded SHA/tree pairs. Exact cycle-2 remediation precursor
+Current state: formal cycles 1, 2, 3, 4, and 5 are **NOT GREEN** on their exact
+recorded SHA/tree pairs. Exact cycle-5 candidate
+`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
+`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`, is rejected with a deduplicated
+union of 0 blocker, 0 high, 1 medium, and 1 low. Exact isolated source
+remediation `cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
+`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
+`web_fetch.rs` and composes at exact code precursor
+`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` with the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, delivery, performance, or fx-equivalence claim. Exact
+cycle-2 remediation precursor
 `1a78f6437eb17f646bdd11337464c949beea49f0`, tree
 `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passed its complete replacement
 local gate before formal cycle 3. Exact cycle-3 candidate
