@@ -2,21 +2,27 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-frozen, not-yet-implemented twenty-ninth
-[`models` CLI contract](models-cli.md) keeps only validated available-model,
+locally composed, not-yet-reviewed twenty-ninth [`models` CLI
+implementation](models-cli.md) keeps only validated available-model,
 access, result, error, and catalog-trait values provider-neutral in core. It
 confines Gateway parsing, ordering, fallback, deadline, credentials, TLS, HTTP,
 limits, and cancellation effects to native; the thin current-thread runtime
 host owns rendering and the output cap. Production is pinned to one HTTPS
-origin/path; redirects,
+origin/path and identifies itself with the fixed application user agent
+`machine-god/<package-version>`; redirects,
 proxies, retries, decompression, cookies, team/referer/title metadata, and
 endpoint overrides are absent. Missing credentials select public access;
 selected invalid credentials fail closed; authenticated 401/403 alone permits
 one fully stripped anonymous fallback. The 30-second operation, default-8/hard-
-32 capacity, 256 KiB body plus witness, JSON depth/node, entry/ID, and 64 KiB
+32 capacity, 256 KiB retained body, JSON depth/node, entry/ID, and 64 KiB
 output bounds are normative. All external failures use a closed redacted map.
-This paragraph freezes a review target and makes no implementation or delivery
-claim; the kickoff ledger is
+One checked, unchanged absolute provider deadline covers both possible
+attempts; each HTTP call creates and drops its own attempt-local cancellation waiter and timer
+against that deadline. Terminal-precedence remediation is present at
+`52e9b7d74f3979f7f7f55387243e96bd78773fe3`, with 35 focused independent
+native tests at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. The complete local
+candidate gate, adversarial review, integration, and delivery remain pending;
+no candidate is green. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 The delivered twenty-eighth [`permissions` CLI slice](permissions-cli.md)

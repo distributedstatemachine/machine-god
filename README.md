@@ -7,7 +7,17 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-eight delivered bounded slices. The twenty-eighth top-level
+twenty-eight delivered bounded slices. A twenty-ninth top-level
+`models [--json]` implementation is composed locally through feature commit
+`e84ed2a46b1ac5fe7428414375609af562c65105`; core, native, and CLI ownership
+and exact behavior are documented in the
+[`models` CLI contract](docs/models-cli.md). Checked-deadline/terminal-
+precedence remediation is present at `52e9b7d74f3979f7f7f55387243e96bd78773fe3`,
+and 35 focused independent native tests are present at
+`12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. The complete local candidate gate,
+adversarial review, feature/main integration, and delivery remain pending, so
+this is not a green or delivered slice and makes no performance or fx-
+equivalence claim. The twenty-eighth top-level
 `permissions [--json]` slice is **DELIVERED** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; it is read-only, ask-only, and
 owns no persistent rules or runtime grant state. Exact cycle-5 reviewed

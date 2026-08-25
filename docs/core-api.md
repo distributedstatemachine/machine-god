@@ -86,6 +86,34 @@ serialization, clone, retained-value destruction, and downstream extension
 paths that follow iterative validation. Builder-owned Schemas are still drained
 iteratively if this configuration check fails.
 
+## Available-model catalog boundary
+
+The locally composed twenty-ninth Milestone 03 slice adds provider-neutral
+catalog types without changing `Engine`, `ModelProvider`, generation model
+selection, or turn orchestration. `AvailableModel::new` accepts one 1–128-byte
+ID whose bytes are all visible ASCII `0x21..=0x7e`; failures expose only
+`InvalidModelIdReason::{Empty, TooLong, NotVisibleAscii}`. `AvailableModel::id`
+returns the validated ID.
+
+`ModelCatalog::new` stores a provider-supplied ordered `Vec<AvailableModel>` and
+`ModelCatalogAccess`; `models`, `access`, and `into_models` expose that result
+without sorting or projection. Access is `Authenticated` or `PublicOnly` with
+`PublicCatalogReason::{NoCredential, AuthenticatedCredentialRejected}`. The
+object-safe `ModelCatalogProvider` exposes `name` and one
+`list_models(CancellationToken) -> BoxFuture<Result<ModelCatalog,
+ProviderError>>` operation. Its future is inert until polled.
+
+Core owns no catalog URL, Gateway fields, credential, access attempt,
+authentication fallback, deadline, clock, runtime, HTTP, parser, sort, vector
+cap, or output representation. The bounded native implementation validates and
+orders before constructing the core result; the thin CLI renders it. The local
+components through feature commit
+`e84ed2a46b1ac5fe7428414375609af562c65105`, terminal-precedence remediation
+`52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and 35-test native evidence
+`12263afa458e48f2963ae3d0e3db5cf219f8bdf6` have not yet passed the complete
+candidate gate, adversarial review, or integration/delivery. See
+[`models-cli.md`](models-cli.md).
+
 ## Native ask handler
 
 The integrated ninth bounded Milestone 03 slice implements the existing

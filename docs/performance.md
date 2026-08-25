@@ -4,15 +4,20 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The frozen, not-yet-implemented twenty-ninth top-level
-[`models` contract](models-cli.md) supplies resource and concurrency budgets,
-not a performance claim: one 30-second absolute deadline covers default-eight
-capacity waiting and at most two sequential requests; accepted body, JSON work,
-entries, IDs, and serialized output are independently bounded. Its catalog
-listing is not an equivalence-qualified benchmark workload. Implementation,
-fresh adversarial review, exact-SHA workflow artifacts, and a later claim-
-eligible M07 comparison remain required before any speed, latency, memory, or
-fx-equivalence statement.
+The locally composed, not-yet-reviewed twenty-ninth top-level
+[`models` implementation](models-cli.md) supplies resource and concurrency
+budgets, not a performance claim: one checked 30-second absolute provider deadline
+covers default-eight capacity waiting and at most two sequential requests.
+Each HTTP call creates an attempt-local timer against that unchanged deadline;
+fallback does not reset it. Accepted body, JSON work, entries, IDs, and
+serialized output are independently bounded. The 256 KiB machine-god body
+buffer retains no additional witness byte; the first dependency frame that
+would cross the cap is rejected before append. Its catalog listing is not an
+equivalence-qualified benchmark workload. Thirty-five focused independent
+native tests are present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`; the
+complete local candidate gate, fresh adversarial review, exact-SHA workflow
+artifacts, and a later claim-eligible M07 comparison remain required before any
+speed, latency, memory, or fx-equivalence statement.
 
 Initial workloads cover startup, help/status/session commands, session replay,
 file indexing, deterministic streaming, parallel read-only tools, cancellation,

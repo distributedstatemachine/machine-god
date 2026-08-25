@@ -246,10 +246,47 @@ when no Tokio runtime handle is active returns a fixed, redacted, non-retryable
 or time violates the API precondition; Tokio may panic, and the repository's
 abort-on-panic release profile may terminate that host process.
 
+## Separate model-catalog HTTP transport
+
+The locally composed `models [--json]` path uses a separate GET transport; it
+does not change the POST generation transport above. Under the same non-WASM
+`ai-gateway-http` gate, native publicly exports
+`AiGatewayModelCatalogHttpTransport`, `AiGatewayModelCatalogHttpEndpoint`,
+`AiGatewayModelCatalogHttpLimits`, fixed construction error kinds, and their
+endpoint/time/capacity/chunk constants. `new` takes an optional validated
+`AiGatewayBearerToken` and selects the fixed production endpoint and defaults;
+`with_endpoint_and_limits` accepts the optional token plus validated explicit
+values. The only alternate endpoint is the same strict class of canonical
+numeric-loopback HTTP test URL; it is not reachable from CLI, config, or
+environment endpoint input.
+
+Catalog production sends one bodyless HTTP/1.1 GET to
+`https://ai-gateway.vercel.sh/coding-agent/v1/models`. Its application-selected
+headers are `Accept: application/json`, `Accept-Encoding: identity`,
+`User-Agent: machine-god/<package-version>`, and bearer authorization only for
+authenticated access. It sends no team, referer,
+title, content-type, cookie, proxy, or endpoint-selection metadata. Redirects,
+automatic decompression, proxies, cookies, and retries are disabled. Only 200
+bodies are read; non-200 bodies are discarded.
+
+Default catalog limits are 30 seconds for connect, 30 seconds per attempt, and
+8 active requests; explicit concurrency is restricted to 1–32. The provider
+computes one checked 30-second absolute operation deadline and passes it unchanged to
+each possible call. Every `get` call constructs a new attempt-local
+cancellation waiter and Tokio timer for the earlier of its configured attempt
+deadline and the provider deadline, covering its permit wait, request,
+response head, and body. An authenticated 401/403 may therefore create a second
+set of attempt-local waiters, but never a new provider deadline. The body
+buffer retains at most 256 KiB; a frame that would cross the inclusive cap is
+rejected before any of that frame is appended. Drop releases the request/
+response, buffer, and permit. The full parser, fallback, output, and pending-
+review status are in [`models-cli.md`](models-cli.md).
+
 ## Deferred scope
 
-This slice adds no ambient credential or endpoint discovery, CLI or config
-composition, permission prompt, permission mode, session persistence,
+The generation transport slice above adds no ambient credential or endpoint
+discovery, CLI or config composition, permission prompt, permission mode,
+session persistence,
 provider-executed tools, retry/backoff, custom proxy, custom redirect policy,
 custom certificate roots, native enterprise trust, arbitrary destination,
 WASM transport, non-Tokio execution for the concrete transport, internal

@@ -2,8 +2,13 @@
 
 Status: Milestone 03 tenth slice integrated on `main` at
 `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`. Exact main CI run `32573320962`
-and benchmark-evidence run `32573320937` are green. This does not mean that the
-CLI makes model requests today. Review details are in the
+and benchmark-evidence run `32573320937` are green. The delivered generation-
+credential behavior remains unchanged. A local `models [--json]`
+implementation now reuses the snapshot and adds a catalog-specific optional-
+auth projection. Its six focused independent credential cases are present in
+native evidence `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`, but the complete
+local candidate gate, adversarial review, integration, and delivery remain
+pending. Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
 The adapter discovers one Vercel AI Gateway bearer credential from an
@@ -42,6 +47,12 @@ discover_ai_gateway_credential(environment: AiGatewayCredentialEnvironment)
 
 discover_process_ai_gateway_credential()
     -> Result<DiscoveredAiGatewayCredential, AiGatewayCredentialError>
+
+discover_ai_gateway_catalog_credential(environment: AiGatewayCredentialEnvironment)
+    -> Result<DiscoveredAiGatewayCatalogCredential, AiGatewayCredentialError>
+
+discover_process_ai_gateway_catalog_credential()
+    -> Result<DiscoveredAiGatewayCatalogCredential, AiGatewayCredentialError>
 ```
 
 `DiscoveredAiGatewayCredential::source` returns the non-secret selected
@@ -53,6 +64,14 @@ The snapshot and discovered result do not implement `Clone`, serialization, or
 equality. Discovery consumes the snapshot so the selected token moves into the
 result and an unused valid fallback can be dropped without cloning either
 secret. The source enum and error kind are ordinary non-secret value enums.
+
+`DiscoveredAiGatewayCatalogCredential` is either `Authenticated` with the same
+validated discovered credential or `PublicOnly`. Only the two catalog
+discovery functions translate a completely missing credential into
+`PublicOnly`. A selected invalid value retains the exact fail-closed behavior
+below. The generation functions continue to return
+`AiGatewayCredentialErrorKind::Missing`, so anonymous catalog listing does not
+weaken generation or `NativeReferenceHost` construction.
 
 ## Exact source precedence
 
@@ -125,8 +144,10 @@ receives an explicit validated bearer token and retains its existing endpoint,
 origin, redirect, proxy, status, timeout, and cancellation policy.
 
 This integrated adapter does not store or rotate credentials, write environment
-variables, add a setup command, compose a provider into the CLI, select a model,
-or make a network request. The thirteenth slice
+variables, add a setup command, select a generation model, or itself make a
+network request. The local CLI catalog composition explicitly calls the new
+process catalog convenience function after config validation; that host use
+does not give this adapter transport authority. The thirteenth slice
 [`native configuration schema-v3 contract`](configuration.md) adds a
 declarative non-secret acquisition-kind field; it adds no bearer value,
 arbitrary environment name, or ambient lookup and does not invoke this adapter.
@@ -145,9 +166,11 @@ checklist item is complete after the thirteenth slice passed every local,
 adversarial, feature, integration, and exact `main` gate. It is integrated at
 `8755757d`; all three adversarial tracks are green on exact behavior SHA
 `35ce591e`.
-This adapter's adversarial, feature-branch, documentation-seal, and `main` gates
-are green at the exact lineage recorded in its review. Existing CLI bytes and
-benchmark workloads are unchanged. Zig remains only a build input for the
+The delivered generation adapter's adversarial, feature-branch,
+documentation-seal, and `main` gates are green at the exact lineage recorded in
+its review. The new catalog projection and CLI composition are explicitly
+outside that historical green claim; benchmark workloads remain unchanged.
+Zig remains only a build input for the
 pinned upstream benchmark; machine-god remains a Rust product.
 
 ## Delivery evidence

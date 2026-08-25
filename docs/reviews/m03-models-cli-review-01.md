@@ -1,15 +1,27 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: kickoff ledger for bounded slice 29. No implementation candidate has
-been reviewed and no review track is green. The frozen contract is
-[`models-cli.md`](../models-cli.md); it starts from exact delivered base
-`1de3b7eddf6a4d9046d48098defecf6bfa336442` on branch
-`agent/m03-models-cli`. The pinned comparison input is fx
+Status: pending-review ledger for bounded slice 29. Local implementation and
+35 focused independent native tests exist, but the complete local candidate
+gate remains pending. No exact candidate has been submitted to adversarial
+review, and no review track is green. The frozen behavior contract is
+[`models-cli.md`](../models-cli.md); work started from exact delivered base
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
 
-This ledger records the review protocol before production code is composed. It
-does not claim implementation, test, local-gate, feature-CI, benchmark,
-integration, delivery, performance, compatibility, or fx-equivalence status.
+The locally composed lineage is:
+
+| Component | Exact commit/tree | Current status |
+| --- | --- | --- |
+| core contract and focused contract tests | `a6c6ff333176689b0c53bcf35070e9d59afd1b28` / `1ab98b4416ba4371e508ce65264bc7517c2dc851` | implemented locally |
+| native provider, credential projection, parser, sort, and HTTP transport | `7c966b23d75a880a23d49e1e6ba9780e512e84b8` / `8c324bee5a52f2269b6f795c100f8aa5c86149b2` | implemented locally |
+| CLI parser, current-thread host, rendering, and CLI tests | `e84ed2a46b1ac5fe7428414375609af562c65105` / `78e107e6e75e91667e1669681b48f8f7fa61ce61` | implemented locally |
+| native checked-deadline and terminal-precedence remediation | `52e9b7d74f3979f7f7f55387243e96bd78773fe3` / `56358767fcbf1ab216db0f1b8b8f4a550eb6c864` | implemented locally |
+| independent native evidence, sourced from `219f6a71a766e9b833a98f236cfbc3aaff292cd5` | `12263afa458e48f2963ae3d0e3db5cf219f8bdf6` / `9b6241cb023aa0f42b808b32dbee3afecefc3d01` | 35 focused tests green: 14 provider/parser, 15 loopback HTTP, 6 credential |
+
+These component commits are not a gated review candidate. The focused evidence
+does not substitute for the complete workspace/candidate gate. This ledger
+does not claim that complete gate, an adversarial result, feature CI, benchmark,
+integration, delivery, performance, compatibility promotion, or fx equivalence.
 
 ## Bounded ownership
 
@@ -40,12 +52,18 @@ Every candidate must prove all of these before review:
 - production GET is exactly
   `https://ai-gateway.vercel.sh/coding-agent/v1/models`, with no environment
   override, team query/header, proxy, redirect, referer, title, cookies,
-  decompression, or application retry;
+  decompression, or application retry; fixed headers are
+  `Accept: application/json`, `Accept-Encoding: identity`, and the package-
+  version machine-god user agent, plus authorization only for authenticated
+  access;
 - authenticated 401/403 alone causes exactly one fully anonymous fallback,
   under the original deadline, after dropping the first response and permit;
 - the total 30-second bound covers the default-8/hard-32 capacity wait and both
-  attempts without reset;
-- body 256 KiB plus one witness, depth 32, nodes 16,384, raw entries 1,024,
+  attempts without reset; the same absolute deadline reaches both calls, while
+  each call owns attempt-local cancellation/timer waiters rather than one outer
+  sleep spanning fallback;
+- body 256 KiB retained with a crossing frame rejected before append, depth 32,
+  nodes 16,384, raw entries 1,024,
   valid entries 512, ID 1–128 visible ASCII, aggregate IDs 24 KiB, and output
   64 KiB bounds are enforced at inclusive/exceeded boundaries;
 - root object plus `data` array is strict, malformed/non-language entries are
@@ -57,6 +75,8 @@ Every candidate must prove all of these before review:
   contract;
 - cancellation and same-poll precedence wake without peer progress, and drop
   releases all machine-god-owned futures, response bodies, buffers, and permits;
+  deadline construction is checked, and cancellation/deadline are rechecked on
+  Serde/trailing failures and around sort/final model construction;
 - the command creates no state/workspace/engine/generation provider/prompt/
   permission/session/cache/write effect; and
 - production and tests add no unsafe Rust and no secret/error reflection.
@@ -75,7 +95,8 @@ Focused tests must cover at least:
    all auth on fallback;
 5. no fallback for public 401/403 or authenticated 3xx/429/other 4xx/5xx,
    transport, timeout, cancellation, parse, limit, duplicate, or output failure;
-6. exact production request method/origin/path/headers and absence of body,
+6. exact production request method/origin/path/headers, including the machine-
+   god package-version user agent, and absence of body,
    team, query, proxy, redirect, referer, title, compression, cookie, and retry;
 7. numeric IPv4 and IPv6 loopback test endpoints plus every rejected endpoint
    class;
@@ -148,7 +169,7 @@ a documentation-only statement.
 
 | Cycle | Exact candidate/tree | Correctness/API | Network/security | Performance/concurrency | Union | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | pending | pending | pending | pending | pending | **NOT REVIEWED** |
+| 1 | pending after complete local gate | pending | pending | pending | pending | **NOT REVIEWED** |
 
 No findings or rejected rationales exist yet. Add every finding verbatim enough
 to identify its evidence, severity, affected invariant, resolution commit, and

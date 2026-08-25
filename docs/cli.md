@@ -50,8 +50,8 @@ or fx-equivalence claim. The final delivery-record commit is documentation-only
 and review-exempt; its own exact feature and `main` workflows will be reported at
 handoff rather than claimed here.
 
-The twenty-ninth bounded slice has a frozen, not-yet-implemented top-level
-`models [--json]` target in [`models-cli.md`](models-cli.md). That contract
+The twenty-ninth bounded slice has a locally composed top-level
+`models [--json]` implementation in [`models-cli.md`](models-cli.md). It
 preserves parse-before-effects, loads strict configuration exactly once, uses
 the existing two-name native credential policy, and composes a provider-neutral
 core catalog trait with one fixed bounded native Gateway GET provider. Native
@@ -60,9 +60,12 @@ rendering and the output cap. Its successful JSON starts with `kind` and
 deliberately does not prepend the
 identity/status fields from other commands. It owns no engine, selected
 generation model, prompt, permission, workspace, state, session, cache, or
-write effect. Until its production, evidence, review, and delivery gates are
-complete, it does not change the implemented accepted invocations, help bytes,
-diagnostics, or output documented below.
+write effect. Core/native/CLI components are present through local feature
+commit `e84ed2a46b1ac5fe7428414375609af562c65105`; native terminal-precedence
+remediation is `52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and 35 focused independent
+native tests are present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`.
+The complete local candidate gate, fresh adversarial review, feature/main
+integration, and delivery remain pending. No candidate is green.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -178,6 +181,8 @@ machine-god --help
 machine-god -h
 machine-god --version
 machine-god -V
+machine-god models
+machine-god models --json
 machine-god permissions
 machine-god permissions --json
 machine-god status
@@ -202,11 +207,13 @@ Embeddable coding-agent engine
 Usage:
   machine-god
   machine-god help
+  machine-god models [--json]
   machine-god permissions [--json]
   machine-god status [--json]
 
 Commands:
   help         Show this help
+  models       List available models
   permissions  Show the permission mode and rules
   status       Show configuration and runtime information
 
@@ -214,6 +221,38 @@ Options:
   -h, --help       Show this help
   -V, --version    Show version
 ```
+
+## Models output
+
+`machine-god models` writes this nonempty shape, with one ID line per native-
+sorted ID:
+
+```text
+[models] N available
+ - <id-1>
+ - <id-2>
+```
+
+An empty catalog instead writes `[models] no models returned by gateway`.
+Missing-credential public success appends exactly `[models] Using the public
+model catalog; set VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY to include private
+models.`. Authenticated-401/403 public fallback appends exactly `[models]
+Gateway authentication was rejected; showing the public model catalog.`.
+Authenticated success appends nothing. Each selected representation ends in
+one LF; the sentence wrapping in this paragraph is not output whitespace.
+
+`machine-god models --json` writes one compact object in fixed key order with a
+final LF and no identity prefix:
+
+```json
+{"kind":"models","count":2,"shown_count":2,"more_count":0,"private_models_hidden":false,"ids":["provider/a","provider/b"]}
+```
+
+The complete success output is built under an inclusive 64 KiB cap before its
+first stdout write. Exact failure shapes, codes, channels, credential/fallback
+behavior, and resource bounds are normative in
+[`models-cli.md`](models-cli.md). This local implementation is not yet a green
+or delivered slice.
 
 ## Permissions output
 
@@ -353,7 +392,7 @@ this exact stderr with a final LF:
 
 ```text
 machine-god: invalid arguments
-Usage: machine-god [help | --help | -h | --version | -V | permissions [--json] | status [--json]]
+Usage: machine-god [help | --help | -h | --version | -V | models [--json] | permissions [--json] | status [--json]]
 ```
 
 An output-write failure exits 1 and uses this fixed diagnostic on stderr:

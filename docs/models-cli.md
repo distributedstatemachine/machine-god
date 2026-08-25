@@ -1,11 +1,20 @@
 # Top-level `models` CLI contract
 
-Status: frozen contract for the in-progress twenty-ninth bounded Milestone 03
-slice. This document defines the implementation and review boundary; it does
-not claim that `models` is present in the binary, reviewed, integrated, or
-delivered. The pinned comparison input is fx commit
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. The implementation starts from
-machine-god commit `1de3b7eddf6a4d9046d48098defecf6bfa336442`.
+Status: locally implemented, not yet a reviewed or delivered twenty-ninth
+bounded Milestone 03 slice. The provider-neutral core contract is component
+`a6c6ff333176689b0c53bcf35070e9d59afd1b28`, the bounded native catalog is
+component `7c966b23d75a880a23d49e1e6ba9780e512e84b8`, and the thin CLI composition
+is present in local feature commit
+`e84ed2a46b1ac5fe7428414375609af562c65105`. Checked-deadline and terminal-
+precedence remediation is component
+`52e9b7d74f3979f7f7f55387243e96bd78773fe3`. Independent native evidence is
+present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`: 35 focused tests split
+across 14 provider/parser, 15 loopback HTTP, and 6 credential cases. The
+complete local candidate gate, three fresh adversarial reviews, feature/main
+integration, and delivery all remain pending; no candidate is green. The
+pinned comparison input remains fx commit
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
+compatibility-promotion, workflow, integration, or delivery claim.
 
 The slice adds one read-only top-level command:
 
@@ -88,18 +97,19 @@ release CLI exposes no fake-network or endpoint switch.
 ## Core provider-neutral boundary
 
 `machine-god-core` owns a validated `AvailableModel`, a closed catalog-access
-value, a bounded catalog result, a closed redacted error, and one object-safe
-provider trait. The trait has only the conceptual operation:
+value, a catalog result, and one object-safe provider trait. Catalog failures
+reuse core's existing redacted `ProviderError`. The trait has this public
+operation:
 
 ```rust,ignore
 fn list_models(
     &self,
     cancellation: CancellationToken,
-) -> ModelCatalogFuture;
+) -> BoxFuture<'_, Result<ModelCatalog, ProviderError>>;
 ```
 
 The future is inert until polled. It yields an already validated, already
-ordered complete result whose access says `Authenticated` or `Public`. Core's
+ordered complete result whose access says `Authenticated` or `PublicOnly`. Core's
 `AvailableModel` owns only its validated model ID; Gateway type, tags, tier,
 provider-rank, and release metadata do not cross the native boundary. The
 result is bounded by the native provider before construction.
@@ -110,8 +120,18 @@ sorting, fallback, or output-rendering policy. Core neither orchestrates calls
 nor reads a clock. The CLI calls the trait once; all internal HTTP decisions
 belong to the native implementation.
 
-The native provider receives the optional validated credential during
-construction and chooses exactly one of these internal access paths:
+The implemented public core surface is `AvailableModel`, `InvalidModelId`,
+`InvalidModelIdReason`, `ModelCatalog`, `ModelCatalogAccess`,
+`PublicCatalogReason`, and `ModelCatalogProvider`. `AvailableModel::new`
+validates one owned ID; `ModelCatalog::new` preserves its provider-supplied
+order and exposes `models`, `access`, and `into_models`. The access result is
+either `Authenticated` or `PublicOnly` with `NoCredential` or
+`AuthenticatedCredentialRejected`. Core does not independently cap the vector;
+the native implementation applies catalog bounds before constructing it.
+
+The CLI constructs the native HTTP transport with the optional validated
+credential and constructs the native provider with a matching access mode. The
+provider chooses exactly one of these internal access paths:
 
 - no credential: one `Public` call;
 - valid credential: one `Authenticated` call; or
@@ -126,7 +146,7 @@ There is no fallback or retry for cancellation, timeout, capacity failure, 3xx,
 a duplicate ID, output overflow, or any other error. A public first request is
 never retried. The core trait is not a retry interface.
 
-Native parses, bounds, validates, de-duplicates, and sorts the Gateway result,
+Native parses, bounds, validates, rejects duplicates, and sorts the Gateway result,
 then constructs validated core `AvailableModel` values and records the final
 access in the core result. The CLI derives presentation fields from that final
 access and renders them. Output construction is not part of core or native.
@@ -156,6 +176,15 @@ parameter and no `x-vercel-ai-gateway-team` header. Anonymous fallback strips
 the complete authorization header; it does not reuse an authenticated request
 object whose header is merely overwritten.
 
+The native credential module publicly exposes
+`DiscoveredAiGatewayCatalogCredential`,
+`discover_ai_gateway_catalog_credential`, and
+`discover_process_ai_gateway_catalog_credential` in addition to the existing
+generation discovery API. Only the catalog functions map a completely missing
+credential to `PublicOnly`. `discover_ai_gateway_credential` and
+`discover_process_ai_gateway_credential`, including generation/reference-host
+composition that uses them, continue to return the existing `Missing` error.
+
 ## Fixed native Gateway GET provider
 
 Production issues `GET` with no body to exactly:
@@ -165,16 +194,18 @@ https://ai-gateway.vercel.sh/coding-agent/v1/models
 ```
 
 The client uses Rustls with the repository's pinned WebPKI roots and HTTP/1.1.
-It sends fixed `Accept: application/json` and `Accept-Encoding: identity`
-headers plus authorization only for authenticated access. Machine-god adds no
-team header or query, proxy, cookie, referer, title, `User-Agent`, request-body
-content type, or endpoint-selection header. Dependency-required `Host` and
-wire-framing headers are allowed. Thus the application-selected header set is
-exactly `Accept`, `Accept-Encoding`, and optionally `Authorization`.
+It sends fixed `Accept: application/json`, `Accept-Encoding: identity`, and
+`User-Agent: machine-god/<package-version>` headers plus authorization only for
+authenticated access. Machine-god adds no team header or query, proxy, cookie,
+referer, title, request-body content type, or endpoint-selection header.
+Dependency-required `Host` and wire-framing headers are allowed. Thus the
+application-selected header set is exactly `Accept`, `Accept-Encoding`,
+`User-Agent`, and optionally `Authorization`.
 
 Redirect following, proxy discovery/use, cookies, automatic decompression,
 application retry, status retry, backoff, and referer generation are disabled.
-Every 3xx is a terminal redacted protocol failure; `Location` is not followed,
+Every 3xx is terminal and maps through the closed `Unavailable` presentation;
+`Location` is not followed,
 retained, or reflected. Only HTTP 200 has a body consumed. A non-200 body,
 reason phrase, headers, endpoint, dependency diagnostic, and operating-system
 diagnostic are never used in public error text. Authenticated 401/403 is the
@@ -185,9 +216,22 @@ plain HTTP only for a canonical numeric IPv4 address in `127.0.0.0/8` or
 canonical bracketed IPv6 `::1`, an explicit nonzero port, and an absolute path.
 It rejects hostnames including `localhost`, non-loopback addresses, alternate
 or encoded IP spellings, user information, query, fragment, HTTPS alternates,
-and all non-HTTP schemes. Endpoint input is at most 2,048 visible ASCII bytes.
+and all non-HTTP schemes. Endpoint input is at most 2,048 ASCII bytes.
 This constructor is not reachable from process environment, configuration, or
 release CLI parsing.
+
+The implemented native catalog module publicly exports the fixed provider
+name, all catalog resource constants, `AiGatewayModelCatalogAccessMode`,
+`AiGatewayModelCatalogRequestAccess`, the injected
+`AiGatewayModelCatalogTransport` trait and its fixed response/error types, and
+`AiGatewayModelCatalogProvider`. The optional non-WASM `ai-gateway-http`
+surface additionally exports `AiGatewayModelCatalogHttpEndpoint`,
+`AiGatewayModelCatalogHttpLimits`, `AiGatewayModelCatalogHttpTransport`, their
+fixed construction error, and the endpoint/time/capacity/chunk constants.
+`AiGatewayModelCatalogHttpTransport::new` selects production/default limits;
+`with_endpoint_and_limits` accepts only a validated production or numeric-
+loopback endpoint and validated limits. Construction performs no request;
+polling `get` requires a current Tokio runtime with I/O and time enabled.
 
 ## Time, concurrency, body, and JSON bounds
 
@@ -199,7 +243,7 @@ is allowed; observing one unit beyond it rejects the whole invocation.
 | total catalog operation | 30 seconds |
 | active native catalog attempts | default 8, configured range 1–32 |
 | accepted HTTP 200 body | 262,144 bytes (256 KiB) |
-| retained body overflow witness | at most one additional byte |
+| machine-god-retained overflow witness | none; the first frame that would exceed the cap is rejected before append |
 | JSON nesting depth | 32 containers, including the root |
 | JSON value nodes | 16,384, including root, keys' values, array entries, and nested values |
 | raw `data` array entries | 1,024 |
@@ -208,22 +252,34 @@ is allowed; observing one unit beyond it rejects the whole invocation.
 | aggregate accepted ID bytes | 24,576 bytes (24 KiB) |
 | serialized stdout value | 65,536 bytes (64 KiB), including final LF |
 
-On the first poll of `list_models`, native computes one checked absolute
-deadline before permit acquisition. The 30 seconds include native concurrency-
+On the first poll of `list_models`, native uses `checked_add` to compute one
+absolute deadline before permit acquisition; an unrepresentable deadline maps
+to `ResourceLimit` before transport. The 30 seconds include native concurrency-
 permit waiting, both possible sequential HTTP attempts, response-head and body
 waits, JSON decoding, entry validation, duplicate detection, and sorting. No
-phase and no anonymous fallback resets or extends it. Failure to represent the
-checked deadline fails before network access. CLI rendering follows a bounded
-native result and has its independent 64 KiB output cap; it does not extend the
+phase and no anonymous fallback resets or extends it. CLI rendering follows a
+bounded native result and has its independent 64 KiB output cap; it does not extend the
 network deadline or enter core.
+
+The provider passes that same absolute deadline unchanged to both possible
+transport calls. Each HTTP `get` call independently creates an attempt-local
+cancellation waiter and Tokio sleep for the earlier of its configured per-
+attempt timeout and that shared absolute deadline. The provider wrapper also
+creates one cancellation waiter per transport call. Therefore fallback creates
+a fresh set of attempt-local waiters, but it neither recomputes nor extends the
+provider deadline. There is no single outer Tokio sleep spanning both calls.
 
 One semaphore permit covers one active HTTP attempt through response drop.
 There are never two active attempts for one invocation. The authenticated
 permit is released before anonymous fallback waits for capacity. Construction
 rejects zero or more than 32 configured permits; production uses exactly 8.
 
-The body reader retains no more than 262,145 bytes while deciding overflow and
-does not trust `Content-Length` as proof that a response fits. Automatic
+The body reader retains no more than 262,144 bytes. An oversized declared
+`Content-Length` is rejected before reading; absent or in-range length is not
+trusted as proof that a response fits. The first dependency-provided data frame
+that would cross the cap is rejected before any bytes from that frame are
+appended. Reqwest/Hyper may transiently materialize that frame outside the
+machine-god buffer. Automatic
 decompression is disabled, so the cap applies to received representation
 bytes. Invalid UTF-8 is invalid JSON. The JSON decoder enforces depth and node
 budgets during decoding rather than building an unbounded value first. It
@@ -244,8 +300,9 @@ or non-string `type` is accepted as the pinned language default. Once a string
 ID reaches validation, an empty, longer-than-128-byte, non-ASCII, space, or
 control-containing ID is a terminal `MalformedResponse`; an unsafe ID is never
 silently skipped. Unknown fields and malformed optional metadata map only to
-the documented defaults. Nested ignored data still counts toward the global
-JSON budgets.
+the documented defaults. Repeating any recognized entry field (`id`, `type`,
+`released`, or `tags`) is terminal `MalformedResponse`. Nested ignored data
+still counts toward the global JSON budgets.
 
 Language classification follows the pinned catalog shape described above.
 Release metadata that is absent or not an integer fitting signed 64-bit maps to
@@ -360,6 +417,9 @@ The mapping is closed and exact:
 The public distinction is semantically useful but fully redacted. An
 authenticated 401/403 is not terminal when its one public fallback can begin;
 `AuthenticationRejected` is emitted only when the final result is that class.
+An initial public-only 401/403 has no fallback and maps directly to that same
+closed failure presentation.
+
 Internal typed errors remain available for deterministic tests and the single
 fallback decision. Output never reflects a token, source selection, model
 value from configuration, endpoint, response body or header, model ID from a
@@ -369,29 +429,40 @@ status reason, or redirect location.
 If writing either a completed success or completed JSON failure itself fails,
 the process exits 1 and makes a best-effort write of the existing fixed stderr
 diagnostic `machine-god: failed to write output\n`. No second network request is
-made. Failure output is itself checked against the 64 KiB serialized cap.
+made. The fixed failure representations are inherently far below the 64 KiB
+success-rendering cap and do not traverse that renderer.
 
 ## Cancellation and drop
 
 Catalog futures do no work until polled. Native checks cancellation before
 permit acquisition, request dispatch, each response-body read, JSON decoding,
-every bounded entry-processing batch, sorting/result construction, and each
-native-effect transition. A cancellation that is ready in the same poll as
-capacity, HTTP, body, or provider completion wins. Deadline expiry has the same
-pre-acceptance rule after cancellation precedence. Native checks both states
-again immediately before returning the completed result; the CLI then renders
+bounded entry processing, and each native-effect transition. A cancellation
+that is ready in the same poll as capacity, HTTP, body, or provider completion
+wins. Deadline expiry has the same pre-acceptance rule after cancellation
+precedence. On a Serde or trailing-input failure, native rechecks cancellation
+and deadline before accepting the parser classification. It also checks both
+before and after sorting, during each final `AvailableModel` construction, and
+again immediately before returning the completed result. The CLI then renders
 that result, and core performs no clock, sorting, or output work.
 
 Dropping or cancelling an attempt drops its owned Reqwest request/response,
 body buffer, and semaphore permit. Dropping the one trait future between the
 two native attempts prevents anonymous fallback. The native future owns one
-outer deadline sleep and one cancellation waiter across capacity and both
-attempts; neither is reset. Machine-god spawns no catalog worker, producer,
-retry/backoff, or detached task. Reqwest/Hyper connection dispatch and its
-bounded connection timers remain owned by the host runtime. The CLI keeps that
+provider cancellation waiter for the currently active transport call, while
+each HTTP call owns its attempt-local cancellation waiter and timer described
+above. All are dropped with that call; fallback creates new attempt-local
+waiters against the unchanged deadline. Machine-god spawns no catalog worker,
+producer, retry/backoff, or detached task. Reqwest/Hyper connection dispatch
+and its bounded connection timers remain owned by the host runtime. The CLI keeps that
 current-thread runtime driven through request completion and teardown.
 Cancellation/drop cannot recall bytes already sent or prove what the peer
 received.
+
+The CLI registers Ctrl-C cancellation on every supported native target and
+SIGTERM cancellation on Unix. Signal registration or wait failure maps to the
+closed `Unavailable` presentation. After the provider resolves, the CLI aborts
+and joins the still-pending signal tasks before rendering; no signal task is
+detached beyond the command.
 
 ## Intentional pinned-fx differences and deferred scope
 
@@ -405,7 +476,7 @@ intentionally differs by:
 - failing closed on a selected invalid credential rather than treating it as
   absence;
 - omitting fx login, team selection, team query/header, referer, title, and fx
-  `User-Agent` identity;
+  identity while sending `machine-god/<package-version>` as its own user agent;
 - pinning production origin/path with only a numeric-loopback test seam;
 - rejecting redirects, proxies, decompression, cookies, and retries;
 - bounding time, concurrency, body, JSON work, entry counts, ID bytes, and

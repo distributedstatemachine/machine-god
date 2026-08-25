@@ -3,7 +3,9 @@
 This page is the normative contract for the sixth bounded Milestone 03 slice.
 It adds an executor-neutral `AiGatewayProvider` codec to
 `machine-god-native`, behind an explicitly injected `AiGatewayTransport`. The
-current CLI does not construct this provider or make network requests.
+current CLI does not construct this generation provider or make generation
+requests. Its locally composed `models [--json]` command uses the separate
+bounded catalog provider documented in [`models-cli.md`](models-cli.md).
 The separate optional [`ai-gateway-http` transport](ai-gateway-http.md) is one
 possible native injection; custom transports remain supported. The separate
 [`native credential discovery`](ai-gateway-credentials.md) can
@@ -286,9 +288,9 @@ task, thread, timer, or retry survives cancellation or drop.
 
 ## Deferred scope
 
-This codec slice adds no URL or HTTP client, socket, DNS, proxy, TLS, native
-credential lookup, authorization header, status-code mapping, retry/backoff,
-clock, async runtime, endpoint selection, team routing, model catalog,
+This generation-codec slice adds no URL or HTTP client, socket, DNS, proxy,
+TLS, native credential lookup, authorization header, status-code mapping, retry/backoff,
+clock, async runtime, endpoint selection, team routing, or model-catalog logic,
 provider-executed tool, image, structured-output, temperature, or metadata
 support. It adds no CLI wiring or commands, production permission prompt, or
 permission mode beyond `ask`. The native session store remains a separate
@@ -302,6 +304,13 @@ credential adapter discovers only the explicit bearer input; it does not
 change this codec boundary or compose either component into the CLI. The
 configuration slice stores no credentials and likewise performs no
 composition.
+
+The catalog path is an adjacent implementation, not a mode of
+`AiGatewayProvider`: native owns its fixed GET transport, authenticated/public
+fallback, response parser, bounds, and ordering; core owns only catalog types
+and a trait; the CLI owns runtime composition and output. Catalog credentials
+may be absent for anonymous listing without changing this generation codec's
+required authenticated host composition.
 
 It also adds no compatibility or performance evidence. The pinned fx checkout
 and Zig toolchain remain benchmark-only inputs and are not Rust product runtime

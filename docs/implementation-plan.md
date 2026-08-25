@@ -128,19 +128,28 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
-The twenty-ninth bounded slice is now contract-frozen but not implemented,
-reviewed, integrated, or delivered. Its exact top-level `models [--json]`
-boundary is [`models-cli.md`](models-cli.md), and its kickoff review protocol is
+The twenty-ninth bounded slice is contract-frozen and locally implemented, but
+not yet a gated or reviewed candidate, integrated to `main`, or delivered. Its
+exact top-level `models [--json]` boundary is
+[`models-cli.md`](models-cli.md), and its pending review protocol is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). It starts
 from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442` and the pinned fx observation
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. Core owns only validated
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Local provider-neutral core,
+bounded native, and CLI components are
+`a6c6ff333176689b0c53bcf35070e9d59afd1b28`,
+`7c966b23d75a880a23d49e1e6ba9780e512e84b8`, and
+`e84ed2a46b1ac5fe7428414375609af562c65105` respectively. Core owns only validated
 provider-neutral available-model/access/result/error values and an object-safe
 catalog trait. Native owns process credentials plus Gateway access/fallback,
 deadline, parsing, bounds, ordering, and one fixed GET implementation. The CLI
-remains a thin current-thread Tokio host and owns rendering/output bounds. This
-frozen contract makes no product-performance, compatibility-promotion, or fx-
-equivalence claim.
+remains a thin current-thread Tokio host and owns rendering/output bounds.
+Checked-deadline/terminal-precedence remediation is present at
+`52e9b7d74f3979f7f7f55387243e96bd78773fe3`; 35 focused independent native
+tests are present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. A complete
+exact-toolchain candidate gate, three fresh adversarial reviews, feature/main
+integration, and delivery remain pending. No candidate is green, and no
+product-performance, compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2821,15 +2830,22 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Frozen bounded slice 29: top-level `models`
+### Locally implemented bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
-`1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative implementation and
-output boundary is [`models-cli.md`](models-cli.md); its pending adversarial
-protocol is
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
+boundary is [`models-cli.md`](models-cli.md); its pending adversarial protocol is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). The
-contract is frozen, but no code candidate, local gate, adversarial result,
-workflow, integration, or delivery is claimed here.
+contract is frozen and local core/native/CLI implementation exists in exact
+components `a6c6ff333176689b0c53bcf35070e9d59afd1b28`,
+`7c966b23d75a880a23d49e1e6ba9780e512e84b8`, and
+`e84ed2a46b1ac5fe7428414375609af562c65105`. Checked-deadline and terminal-
+precedence remediation is `52e9b7d74f3979f7f7f55387243e96bd78773fe3`.
+Independent native evidence `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`
+contains 35 focused tests (14 provider/parser, 15 loopback HTTP, and 6
+credential), sourced independently from `219f6a71a766e9b833a98f236cfbc3aaff292cd5`.
+The complete local candidate gate, adversarial results, workflow, integration,
+and delivery remain pending; no candidate is green.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -2851,10 +2867,17 @@ Tokio runtime with I/O and time enabled. An authenticated 401/403 alone receives
 exactly one fully anonymous retry under the original absolute deadline; no
 other result and no public request retries. Redirects, proxies, cookies,
 decompression, referer/title/team metadata, and application retry are disabled.
+The catalog request identifies itself with fixed
+`User-Agent: machine-god/<package-version>` in addition to
+`Accept: application/json`, `Accept-Encoding: identity`, and optional bearer
+authorization.
 
-The total catalog budget is 30 seconds including capacity wait, with active
-attempts defaulting to 8 and hard-limited to 32. Independent inclusive caps are
-256 KiB response body plus one overflow witness, JSON depth 32, JSON nodes
+The total catalog budget is a checked 30 seconds including capacity wait, with
+active attempts defaulting to 8 and hard-limited to 32. The same absolute deadline is
+passed unchanged to both possible transport calls; each HTTP call creates its
+own attempt-local cancellation waiter and timer against that deadline rather
+than sharing one outer sleep. Independent inclusive caps are
+256 KiB retained response body, JSON depth 32, JSON nodes
 16,384, 1,024 raw `data` entries, 512 valid language entries, 1–128 visible-
 ASCII bytes per model ID, 24 KiB aggregate accepted ID bytes, and 64 KiB
 serialized output including its final LF. A strict root object and `data` array
@@ -2888,7 +2911,7 @@ workflows. Benchmark evidence is delivery evidence only.
 
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices and frozen in-progress twenty-ninth slice do
+The twenty-eight delivered slices and locally implemented in-progress twenty-ninth slice do
 not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
@@ -3829,8 +3852,10 @@ gate:
   slash-command categories `general`, `session`, `model`, `security`, and
   `workspace`. Observable compatibility is scenario-based; command names may
   remain intentional differences when documented. `models [--json]` has its
-  bounded slice-29 contract frozen, but remains unchecked until implementation,
-  evidence, review, feature, fast-forward, and exact-`main` gates are complete.
+  bounded slice-29 contract and local implementation, but this combined item
+  remains unchecked until the complete local candidate gate, fresh review,
+  feature workflows, fast-forward, and exact-
+  `main` gates are complete.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

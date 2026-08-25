@@ -22,19 +22,45 @@ uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
 Milestone 03 has twenty-eight delivered bounded slices. In-progress slice
-twenty-nine freezes a top-level `models [--json]` contract without yet claiming
-implementation or delivery. Core will own only validated provider-neutral
-available-model/access/result/error values and an object-safe
-`list_models(CancellationToken)` trait. Native will own the fixed Gateway GET,
+twenty-nine has a locally composed top-level `models [--json]` implementation
+through feature commit `e84ed2a46b1ac5fe7428414375609af562c65105`, without
+yet claiming a green candidate, integration, or delivery. Core owns only
+validated provider-neutral available-model/access/result values, the existing
+redacted provider error, and an object-safe `list_models(CancellationToken)`
+trait. Native owns the fixed Gateway GET,
 strict response decoding, ordering, access/fallback, process credential, TLS,
-HTTP, total deadline, concurrency, and cancellation effects. The thin CLI will
-load config once, drive the native provider on a host-owned current-thread Tokio
-runtime, and own rendering/output bounds. The same architecture adds no catalog
-authority to the engine generation provider and no ambient, clock, retry,
+HTTP, total deadline, concurrency, and cancellation effects. The thin CLI
+loads config once, drives the native provider on a host-owned current-thread
+Tokio runtime, and owns rendering/output bounds. The same architecture adds no
+catalog authority to the engine generation provider and no ambient, clock, retry,
 Gateway-metadata, sorting, or output authority to core. Exact ownership and
-bounds are in
-[`models-cli.md`](models-cli.md), and review remains pending in
+bounds are in [`models-cli.md`](models-cli.md). Checked-deadline/terminal-
+precedence remediation is `52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and
+35 focused independent native tests are present at
+`12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. The complete local candidate gate
+and review remain pending in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
+
+```text
+machine-god-cli
+ parse + config + credential choice + Tokio + output
+                         |
+                         v
+machine-god-core ModelCatalogProvider trait + catalog value types
+                         ^
+                         |
+machine-god-native Gateway fallback + parser + sort + shared deadline
+                         |
+                         v
+machine-god-native catalog HTTP GET + TLS + attempt-local timer/permit
+```
+
+The provider computes one checked absolute deadline and passes it unchanged
+through both possible native calls. Each concrete HTTP call creates its own attempt-local
+cancellation waiter and timer targeting the earlier per-attempt/shared
+deadline; there is no single outer Tokio sleep spanning fallback. Catalog HTTP
+adds `User-Agent: machine-god/<package-version>` alongside fixed accept and
+identity-encoding headers, and optional authorization.
 
 Delivered slice
 twenty-eight adds read-only top-level `permissions [--json]` from exact base
@@ -1243,7 +1269,7 @@ The body contains only `prompt`, `tools`, `toolChoice`, and optional
 are structurally validated where applicable, and are then ignored and omitted.
 Fixed metadata carries content type, protocol/specification versions, model,
 streaming mode and the same core session ID for both session and affinity.
-Machine-god adds no endpoint, authorization, referer, title, or user-agent and
+The generation codec adds no endpoint, authorization, referer, title, or user-agent and
 makes at most one transport call without codec-side retry: exactly one only
 after a valid request future is polled through startup.
 
