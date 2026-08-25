@@ -100,6 +100,33 @@ pub struct DiscoveredAiGatewayCredential {
     bearer_token: AiGatewayBearerToken,
 }
 
+/// Credential state selected for a model-catalog request.
+///
+/// Unlike model generation, the catalog has an explicit anonymous mode. A
+/// completely absent credential therefore selects [`Self::PublicOnly`], while
+/// a selected malformed value still fails closed.
+pub enum DiscoveredAiGatewayCatalogCredential {
+    /// No supported credential was present; use the public catalog.
+    PublicOnly,
+    /// A validated credential is available for authenticated catalog access.
+    Authenticated(DiscoveredAiGatewayCredential),
+}
+
+impl fmt::Debug for DiscoveredAiGatewayCatalogCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PublicOnly => {
+                formatter.write_str("DiscoveredAiGatewayCatalogCredential::PublicOnly")
+            }
+            Self::Authenticated(credential) => formatter
+                .debug_tuple("DiscoveredAiGatewayCatalogCredential::Authenticated")
+                .field(&credential.source())
+                .field(&"<redacted>")
+                .finish(),
+        }
+    }
+}
+
 impl DiscoveredAiGatewayCredential {
     /// Returns the environment source selected by discovery.
     #[must_use]
@@ -226,6 +253,44 @@ pub fn discover_ai_gateway_credential(
 pub fn discover_process_ai_gateway_credential()
 -> Result<DiscoveredAiGatewayCredential, AiGatewayCredentialError> {
     discover_ai_gateway_credential(AiGatewayCredentialEnvironment::from_process())
+}
+
+/// Discovers optional catalog authentication from an injected snapshot.
+///
+/// Source precedence and validation are identical to
+/// [`discover_ai_gateway_credential`]. The sole difference is that a completely
+/// missing credential selects public-only access instead of returning an error.
+///
+/// # Errors
+///
+/// Returns [`AiGatewayCredentialError`] when the selected nonempty value is
+/// non-Unicode, malformed, or oversized.
+pub fn discover_ai_gateway_catalog_credential(
+    environment: AiGatewayCredentialEnvironment,
+) -> Result<DiscoveredAiGatewayCatalogCredential, AiGatewayCredentialError> {
+    match discover_ai_gateway_credential(environment) {
+        Ok(credential) => Ok(DiscoveredAiGatewayCatalogCredential::Authenticated(
+            credential,
+        )),
+        Err(error) if error.kind() == AiGatewayCredentialErrorKind::Missing => {
+            Ok(DiscoveredAiGatewayCatalogCredential::PublicOnly)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Captures the process environment and discovers optional catalog authentication.
+///
+/// This is the only catalog-credential convenience function that reads the
+/// ambient process environment.
+///
+/// # Errors
+///
+/// Returns [`AiGatewayCredentialError`] under the same conditions as
+/// [`discover_ai_gateway_catalog_credential`].
+pub fn discover_process_ai_gateway_catalog_credential()
+-> Result<DiscoveredAiGatewayCatalogCredential, AiGatewayCredentialError> {
+    discover_ai_gateway_catalog_credential(AiGatewayCredentialEnvironment::from_process())
 }
 
 fn discover_api_key(

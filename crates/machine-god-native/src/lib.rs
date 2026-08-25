@@ -11,6 +11,9 @@ mod ai_gateway;
 mod ai_gateway_credential;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod ai_gateway_http;
+mod ai_gateway_model_catalog;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+mod ai_gateway_model_catalog_http;
 mod ask_permission;
 mod config;
 mod copy_file;
@@ -50,8 +53,10 @@ pub use ai_gateway::{
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use ai_gateway_credential::{
     AI_GATEWAY_API_KEY_ENV, AiGatewayCredentialEnvironment, AiGatewayCredentialError,
-    AiGatewayCredentialErrorKind, AiGatewayCredentialSource, DiscoveredAiGatewayCredential,
-    VERCEL_OIDC_TOKEN_ENV, discover_ai_gateway_credential, discover_process_ai_gateway_credential,
+    AiGatewayCredentialErrorKind, AiGatewayCredentialSource, DiscoveredAiGatewayCatalogCredential,
+    DiscoveredAiGatewayCredential, VERCEL_OIDC_TOKEN_ENV, discover_ai_gateway_catalog_credential,
+    discover_ai_gateway_credential, discover_process_ai_gateway_catalog_credential,
+    discover_process_ai_gateway_credential,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use ai_gateway_http::{
@@ -63,6 +68,28 @@ pub use ai_gateway_http::{
     AI_GATEWAY_HTTP_MAX_RESPONSE_CHUNK_BYTES, AiGatewayBearerToken, AiGatewayHttpConfigError,
     AiGatewayHttpConfigErrorKind, AiGatewayHttpEndpoint, AiGatewayHttpLimits,
     AiGatewayHttpTransport,
+};
+pub use ai_gateway_model_catalog::{
+    AI_GATEWAY_MODEL_CATALOG_MAX_BODY_BYTES, AI_GATEWAY_MODEL_CATALOG_MAX_JSON_DEPTH,
+    AI_GATEWAY_MODEL_CATALOG_MAX_JSON_NODES, AI_GATEWAY_MODEL_CATALOG_MAX_MODEL_ID_BYTES,
+    AI_GATEWAY_MODEL_CATALOG_MAX_MODELS, AI_GATEWAY_MODEL_CATALOG_MAX_RAW_ENTRIES,
+    AI_GATEWAY_MODEL_CATALOG_PROVIDER_NAME, AI_GATEWAY_MODEL_CATALOG_REQUEST_TIMEOUT,
+    AiGatewayModelCatalogAccessMode, AiGatewayModelCatalogProvider,
+    AiGatewayModelCatalogRequestAccess, AiGatewayModelCatalogTransport,
+    AiGatewayModelCatalogTransportError, AiGatewayModelCatalogTransportErrorKind,
+    AiGatewayModelCatalogTransportResponse,
+};
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use ai_gateway_model_catalog_http::{
+    AI_GATEWAY_MODEL_CATALOG_HTTP_DEFAULT_CONNECT_TIMEOUT,
+    AI_GATEWAY_MODEL_CATALOG_HTTP_DEFAULT_ENDPOINT,
+    AI_GATEWAY_MODEL_CATALOG_HTTP_DEFAULT_MAX_ACTIVE_REQUESTS,
+    AI_GATEWAY_MODEL_CATALOG_HTTP_DEFAULT_REQUEST_TIMEOUT,
+    AI_GATEWAY_MODEL_CATALOG_HTTP_MAX_ACTIVE_REQUESTS,
+    AI_GATEWAY_MODEL_CATALOG_HTTP_MAX_ENDPOINT_BYTES,
+    AI_GATEWAY_MODEL_CATALOG_HTTP_MAX_RESPONSE_CHUNK_BYTES, AiGatewayModelCatalogHttpConfigError,
+    AiGatewayModelCatalogHttpConfigErrorKind, AiGatewayModelCatalogHttpEndpoint,
+    AiGatewayModelCatalogHttpLimits, AiGatewayModelCatalogHttpTransport,
 };
 pub use ask_permission::{
     ASK_PERMISSION_DENIED_REASON, ASK_PERMISSION_PROMPT_ERROR_CODE,

@@ -423,7 +423,7 @@ impl AiGatewayHttpTransport {
     }
 }
 
-fn root_certificates() -> Result<Vec<Certificate>, AiGatewayHttpConfigError> {
+pub(crate) fn root_certificates() -> Result<Vec<Certificate>, AiGatewayHttpConfigError> {
     static CERTIFICATES: OnceLock<Result<Vec<Certificate>, ()>> = OnceLock::new();
     CERTIFICATES
         .get_or_init(|| {
@@ -438,7 +438,7 @@ fn root_certificates() -> Result<Vec<Certificate>, AiGatewayHttpConfigError> {
         })
 }
 
-fn authorization_value(
+pub(crate) fn authorization_value(
     token: &AiGatewayBearerToken,
 ) -> Result<HeaderValue, AiGatewayHttpConfigError> {
     let mut bytes = Vec::with_capacity("Bearer ".len() + token.bytes.len());
