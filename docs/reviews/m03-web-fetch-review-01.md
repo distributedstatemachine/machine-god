@@ -111,6 +111,13 @@ names before network authority. Tree-identical isolated remediation
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, delivery, compatibility, product-performance, or fx-
 equivalence claim.
+Exact cycle-7 remediation precursor
+`b365cf7704bacb378b280f25d702896dcc216e0c`, tree
+`8a1cecf85ee3ad66e98930aca8f58f208f0ffb07`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim; reviewer reports identify the exact
+candidate they reviewed.
 
 ## Frozen candidate boundary
 
@@ -1102,6 +1109,65 @@ This remediation record makes no replacement-gate, formal-review outcome,
 candidate, workflow, integration, delivery, performance, or fx-equivalence
 claim.
 
+## Cycle-7 remediation replacement gate
+
+Exact remediation precursor
+`b365cf7704bacb378b280f25d702896dcc216e0c`, tree
+`8a1cecf85ee3ad66e98930aca8f58f208f0ffb07`, passed the complete replacement
+local gate under exact rustc 1.94.1 (`e408947bf`) and Cargo 1.94.1
+(`29ea6fb6a`) without fallback. The four repository-required commands below
+passed, as did the complete 995-test all-target/all-feature workspace run.
+Focused evidence passed 31 private, 15 direct, 14 production HTTP, and six
+engine tests plus the parsed-manifest test 1/1.
+
+The CI-style Python run passed 131 tests with eight expected macOS skips in
+49.059 seconds. Compatibility regeneration with `--check` passed against clean
+pinned fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`. Dependency
+policy passed under exact `cargo-deny` 0.20.2 with the three established
+duplicate warnings for `core-foundation`, `cpufeatures`, and `syn`. Exact
+`cargo-audit` 0.22.2 `--no-fetch` checked 1,225 cached advisories and 209 locked
+dependencies with zero vulnerabilities.
+
+The Linux baseline checked all 53 integration targets with zero warnings, and
+warnings-denied library Clippy passed. The FreeBSD baseline and Clippy passed
+with only its two established cfg-only warning groups. The macOS cross-host
+stopped at the `aws-lc-sys` foreign C-sysroot boundary, so this record makes no
+FreeBSD HTTP-compilation claim beyond that point. Each WASI variant produced
+61 test executables and only its six established diagnostics. Node 22.22.0
+actively passed the retained unsupported-target test 1/1.
+
+The native dependency matrix has 14 direct edges on Linux, 15 on macOS, 14 on
+FreeBSD, and 12 on Windows; every native tree includes `reqwest` and `sha2`.
+WASI Preview 1, WASI Preview 2, wasm64, and WALI have 4, 4, 4, and 6 direct
+edges respectively and include neither dependency. The 209-package lockfile
+contains exactly one `sha2` 0.10.9 entry.
+
+The exact allocation-free 11-entry final-label predicate passed `.arpa`
+negative cases and example-domain positive cases. Effect-free engine evidence
+proved rejection before policy or transport. All five official contract links
+returned HTTP 200. Documentation integrity covered 74 Markdown files, 99 fence
+blocks, 535 inline links, and 378 relative targets with zero errors.
+
+The exact whole-feature diff from delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e` covers 22 files with 8,999
+insertions and 35 deletions. The cycle-7 replacement delta from rejected
+candidate `47c6a2e7b209aec29f30fd7f7413f55ea039202f` covers six files with 342
+insertions and 20 deletions. CLI source, workflows, benchmark workloads,
+generated compatibility data, the root and native Cargo manifests, and
+`Cargo.lock` are unchanged in that delta. Changed Rust adds no unsafe
+construct.
+
+A locked isolated release build produced a 319,152-byte arm64 Mach-O binary
+with SHA-256
+`eed6f30ecbf19dc0c7dea498547e2562600745ed6f42561a589076083128e0e4`. Bare,
+version, help, inert missing-path human-status, and inert missing-path JSON-
+status smokes all passed with empty stderr. Human and JSON status checks against
+missing XDG roots created neither root.
+
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim; reviewer reports
+identify the exact candidate they reviewed.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -1160,7 +1226,13 @@ union of 0 blocker, 0 high, 1 medium, and 0 low. Exact root remediation
 remediation `8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` reject `.arpa`
 infrastructure names before policy or transport. This remediation record makes
 no replacement-gate, formal-review outcome, candidate, workflow, integration,
-delivery, performance, or fx-equivalence claim. Exact cycle-6 candidate
+delivery, performance, or fx-equivalence claim. Exact cycle-7 remediation
+precursor `b365cf7704bacb378b280f25d702896dcc216e0c`, tree
+`8a1cecf85ee3ad66e98930aca8f58f208f0ffb07`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim; reviewer reports identify the exact
+candidate they reviewed. Exact cycle-6 candidate
 `5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
 `a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`, is rejected with a deduplicated
 union of 0 blocker, 0 high, 1 medium, and 0 low. Exact source remediation

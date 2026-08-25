@@ -211,6 +211,15 @@ terminal-label correction and deterministic evidence. Isolated remediation
 `8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` has the same tree. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, delivery, performance, or fx-equivalence claim.
+Exact cycle-7 remediation precursor
+`b365cf7704bacb378b280f25d702896dcc216e0c`, tree
+`8a1cecf85ee3ad66e98930aca8f58f208f0ffb07`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. Required,
+complete 995-test, focused, Python, pinned-fx, dependency, portability, target-
+matrix, Node, policy-evidence, documentation/link, diff/unsafe, locked-release,
+and five-smoke checks are green. This gate record makes no formal-review
+outcome, candidate, workflow, integration, delivery, performance, or fx-
+equivalence claim; reviewer reports identify the exact candidate they reviewed.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2242,6 +2251,43 @@ HTTP, and six engine tests; formatting; full workspace warnings-denied Clippy;
 the complete native all-target/all-feature run; and clean diffs. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, delivery, performance, or fx-equivalence claim.
+Exact cycle-7 remediation precursor
+`b365cf7704bacb378b280f25d702896dcc216e0c`, tree
+`8a1cecf85ee3ad66e98930aca8f58f208f0ffb07`, passed the complete replacement
+local gate under exact rustc 1.94.1 (`e408947bf`) and Cargo 1.94.1
+(`29ea6fb6a`) without fallback. The four required commands, complete 995-test
+all-target/all-feature run, and focused 31-private/15-direct/14-HTTP/6-engine
+suites plus the parsed-manifest test 1/1 are green. Python passed 131 tests with
+eight expected macOS skips in 49.059 seconds. Pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility, exact
+`cargo-deny` 0.20.2 with the three established duplicate warnings for
+`core-foundation`, `cpufeatures`, and `syn`, and exact `cargo-audit` 0.22.2
+`--no-fetch` across 1,225 advisories and 209 dependencies with zero
+vulnerabilities are green. The Linux baseline checked all 53 integration
+targets with zero warnings, and warnings-denied library Clippy passed. The
+FreeBSD baseline and Clippy passed with only its two established cfg-only
+warning groups; the cross-host stopped at the `aws-lc-sys` foreign C-sysroot
+boundary, so no later FreeBSD HTTP compilation is claimed. Each WASI variant
+produced 61 test executables and six established diagnostics, and Node 22.22.0
+actively passed 1/1. Native direct-edge counts are Linux 14, macOS 15, FreeBSD
+14, and Windows 12, each with `reqwest` and `sha2`; WASI Preview 1, WASI
+Preview 2, wasm64, and WALI count 4, 4, 4, and 6 respectively, with neither
+edge. The 209-package lockfile contains exactly one `sha2` 0.10.9.
+The exact allocation-free 11-entry final-label predicate, `.arpa` negative cases,
+example-domain positive cases, and effect-free engine evidence are green. All
+five official contract links returned HTTP 200. Documentation is
+74/99/535/378/0. The whole diff from exact delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e` is 22 files at +8,999/-35; the
+cycle-7 replacement delta from rejected candidate `47c6a2e` is six files at
++342/-20. That delta leaves CLI source, workflows, benchmark workloads,
+generated compatibility data, the root and native Cargo manifests, and
+`Cargo.lock` unchanged and adds no unsafe construct. The locked isolated arm64
+Mach-O release is 319,152 bytes with SHA-256
+`eed6f30ecbf19dc0c7dea498547e2562600745ed6f42561a589076083128e0e4`; all five
+exact smokes pass, and status does not create missing XDG roots. This gate
+record makes no formal-review outcome, candidate, workflow, integration,
+delivery, performance, or fx-equivalence claim; reviewer reports identify the
+exact candidate they reviewed.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3089,6 +3135,17 @@ gate:
   all-target/all-feature, and diff checks are green. This remediation record
   makes no replacement-gate, formal-review outcome, candidate, workflow,
   integration, delivery, performance, or fx-equivalence claim.
+  Exact cycle-7 remediation precursor
+  `b365cf7704bacb378b280f25d702896dcc216e0c`, tree
+  `8a1cecf85ee3ad66e98930aca8f58f208f0ffb07`, passed the complete replacement
+  local gate under exact Rust and Cargo 1.94.1 without fallback. Required,
+  complete 995-test, focused 31/15/14/6 plus manifest 1/1, 131-test Python,
+  pinned-fx, dependency, portability/edge-matrix, Node, allocation-free policy,
+  official-link, documentation 74/99/535/378/0, exact diff/unsafe, locked
+  release, five-smoke, and no-XDG-root-creation checks are green. This gate
+  record makes no formal-review outcome, candidate, workflow, integration,
+  delivery, performance, or fx-equivalence claim; reviewer reports identify
+  the exact candidate they reviewed.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,
