@@ -1,6 +1,6 @@
 # Milestone 03 `permissions` CLI review 01
 
-Status: **BEHAVIOR GREEN — REMOTE DELIVERY PENDING**
+Status: **DELIVERED**
 
 ## Base and boundary
 
@@ -425,9 +425,23 @@ lifecycle, lazy process-environment access, supported-Unix qualification,
 dependency/unsafe boundary, portability, maintained-document agreement, and
 release behavior with no open finding at any severity.
 
-This subsequent documentation-only green seal names that reviewed candidate
+Documentation-only green seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, names that reviewed candidate
 and is exempt from redundant adversarial review under the user's instruction.
-It changes no production, test, generated, workflow, or benchmark byte. Exact
-feature workflows, non-force main integration, exact `main` workflows, and
-final delivery remain pending. The delivered-slice count therefore remains
-twenty-seven.
+It changes no production, test, generated, workflow, or benchmark byte.
+
+### Delivery
+
+Exact feature CI `32891031065` and feature benchmark-evidence `32891031147`
+are green on the exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; exact main CI `32891614025` and
+main benchmark-evidence `32891614060` are green on the same SHA. Each benchmark
+run retains exactly two unexpired exact-SHA artifacts for 90 days. Permissions
+is delivered as bounded slice twenty-eight, while M03 remains in progress.
+This delivery makes no product-performance or fx-equivalence claim.
+
+The final delivery-record commit is documentation-only, changes none of the
+production or evidence bytes reviewed above, and is exempt from redundant
+adversarial review. Its own exact feature and `main` workflows will be reported at
+handoff rather than self-claimed in this commit.

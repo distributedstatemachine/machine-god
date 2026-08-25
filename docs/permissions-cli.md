@@ -1,8 +1,8 @@
 # Native `permissions` CLI contract
 
-Status: **BEHAVIOR GREEN — REMOTE DELIVERY PENDING**.
+Status: **DELIVERED**.
 
-This is the implemented twenty-eighth bounded Milestone 03 slice. It starts from
+This is the delivered twenty-eighth bounded Milestone 03 slice. It starts from
 exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
 `e1508d91edfb524df470cdf7c9b3112c4d145e4a`. The slice adds one read-only
 top-level command to the thin native host. It does not complete the M03 CLI
@@ -29,11 +29,18 @@ reviewed candidate `0b13944d19cfb33b4542d82d74c302669817c1af`, tree
 replacement local gate under exact Rust and Cargo 1.94.1 without fallback, and
 correctness/API, native config/error lifecycle, and performance/CLI portability
 each reported 0 blocker, 0 high, 0 medium, and 0 low findings. The deduplicated
-union is zero and the behavior candidate is **GREEN**. This subsequent
-documentation-only green seal is exempt from redundant adversarial review.
-Exact feature workflows, non-force main integration, exact `main` workflows,
-and delivery remain pending. The slice makes no product-performance or fx-
-equivalence claim.
+union is zero and the behavior candidate is **GREEN**. Documentation-only green
+seal `3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, is exempt from redundant
+adversarial review. Exact feature CI `32891031065`, feature benchmark-evidence
+`32891031147`, main CI `32891614025`, and main benchmark-evidence `32891614060`
+are green on that exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The slice is delivered
+without completing M03 and makes no product-performance or fx-equivalence
+claim. The final delivery-record commit is documentation-only and exempt from
+redundant adversarial review; its own exact feature and `main` workflows will be
+reported at handoff rather than claimed here.
 
 ## Command grammar
 
@@ -189,6 +196,7 @@ has SHA-256
 passed the full release matrix. Three fresh independent ordinary product
 reviews—correctness/API, native config/error lifecycle, and performance/CLI
 portability—each reported 0/0/0/0, so the behavior candidate is formally
-green. The documentation-only green seal is exempt from another adversarial
-cycle. Exact feature workflows, non-force main integration, exact `main`
-workflows, and delivery remain pending.
+green. Documentation-only green seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b` is exempt from another
+adversarial cycle. Its exact feature and `main` delivery evidence is recorded
+above.

@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-seven delivered bounded slices. The twenty-seventh `web_fetch`
+with twenty-eight delivered bounded slices. The twenty-seventh `web_fetch`
 slice is delivered on reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`. Exact feature CI `32874471757`,
@@ -52,8 +52,8 @@ benchmark-evidence `32875015892` are green; each benchmark run retains two
 nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
-performance or fx-equivalence claim. The implemented twenty-eighth top-level
-`permissions [--json]` slice is **BEHAVIOR GREEN — REMOTE DELIVERY PENDING**
+performance or fx-equivalence claim. The twenty-eighth top-level
+`permissions [--json]` slice is **DELIVERED**
 from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`. It is a read-only projection of
 the already delivered ask-only native configuration and owns no rule, grant,
@@ -116,10 +116,18 @@ release matrix. Its 368,944-byte release binary has SHA-256
 `8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
 Correctness/API, native config/error lifecycle, and performance/CLI portability
 each reported 0/0/0/0 in three fresh reviews; the deduplicated union is zero
-and the behavior candidate is formally **GREEN**. This documentation-only
-green seal is exempt from redundant adversarial review. Exact feature
-workflows, non-force main integration, exact `main` workflows, and delivery
-remain pending, so the delivered count stays twenty-seven.
+and the behavior candidate is formally **GREEN**. Documentation-only green
+seal `3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, is exempt from redundant
+adversarial review. Exact feature CI `32891031065`, feature benchmark-evidence
+`32891031147`, main CI `32891614025`, and main benchmark-evidence `32891614060`
+are green on that exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
+twenty-eight and M03 remains in progress. This delivery makes no product-
+performance or fx-equivalence claim. The final delivery-record commit is
+documentation-only and review-exempt; its own exact feature and `main`
+workflows will be reported at handoff rather than claimed here.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2624,10 +2632,10 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
-M03 remains **IN PROGRESS** with twenty-seven delivered slices. The delivery
+M03 remains **IN PROGRESS** with twenty-eight delivered slices. The delivery
 evidence makes no product-performance or fx-equivalence claim.
 
-### In-progress bounded slice 28: top-level `permissions`
+### Delivered bounded slice 28: top-level `permissions`
 
 The implemented twenty-eighth slice starts from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
@@ -2785,17 +2793,24 @@ Formal cycle 5 reviewed that exact SHA/tree. Correctness/API, native
 config/error lifecycle, and performance/CLI portability each reported
 0 blocker, 0 high, 0 medium, and 0 low findings and are **GREEN**. The
 deduplicated union is zero at every severity, so the behavior candidate is
-formally green. The subsequent documentation-only green seal is exempt from
-redundant adversarial review under the user's instruction. Exact feature
-workflows, non-force main integration, exact `main` workflows, and delivery
-remain pending, and the delivered count stays twenty-seven. The combined top-
-level CLI inventory remains planned, and this slice makes no benchmark-
-workload, product-performance, compatibility-promotion, or fx-equivalence
-claim.
+formally green. Documentation-only green seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, is exempt from redundant
+adversarial review under the user's instruction. Exact feature CI `32891031065`
+and feature benchmark-evidence `32891031147` are green on the exact seal SHA.
+`main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; exact main CI `32891614025` and
+main benchmark-evidence `32891614060` are green on the same SHA. Each benchmark
+run retains exactly two unexpired exact-SHA artifacts for 90 days. The delivered
+count is twenty-eight and M03 remains in progress. The combined top-level CLI
+inventory remains planned, and this slice makes no benchmark-workload, product-
+performance, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed here.
 
 ### Milestone 03 completion boundary
 
-The twenty-seven delivered slices do not complete Milestone 03.
+The twenty-eight delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:

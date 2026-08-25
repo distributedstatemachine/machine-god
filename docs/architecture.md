@@ -21,16 +21,9 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-seven delivered bounded slices. The twenty-seventh
-`web_fetch` slice is delivered on reviewed seal
-`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
-`633ddd44406e22f373962c6a2ec965eae4b9cbdb`. Exact feature CI `32874471757`,
-feature benchmark-evidence `32874471812`, main CI `32875016066`, and main
-benchmark-evidence `32875015892` are green; both benchmark runs retain two
-nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
-product-performance or fx-equivalence claim. Implemented slice twenty-eight
-adds read-only top-level `permissions [--json]` from exact base `8d8ecc7`
+Milestone 03 has twenty-eight delivered bounded slices. Delivered slice
+twenty-eight adds read-only top-level `permissions [--json]` from exact base
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`
 without moving rule, grant, engine, session, runtime, credential, or network
 state into the CLI; see [`permissions-cli.md`](permissions-cli.md). Exact
 cycle-5 reviewed candidate `0b13944d19cfb33b4542d82d74c302669817c1af`,
@@ -43,10 +36,17 @@ or unsafe delta, and the full release matrix. The fresh 368,944-byte binary has
 SHA-256 `8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
 All three fresh correctness/API, native config/error lifecycle, and
 performance/CLI portability reviews reported 0/0/0/0; their union is zero and
-the behavior candidate is **GREEN**. This documentation-only green seal is
-exempt from redundant adversarial review. Exact feature workflows, non-force
-main integration, exact `main` workflows, and delivery remain pending, so M03
-still has twenty-seven delivered slices.
+the behavior candidate is **GREEN**. Documentation-only green seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, is exempt from redundant
+adversarial review. Exact feature CI `32891031065`, feature benchmark-evidence
+`32891031147`, main CI `32891614025`, and main benchmark-evidence `32891614060`
+are green on that exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress.
+This delivery makes no product-performance or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed here.
 The retained
 `web_fetch` review lineage begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
@@ -737,9 +737,9 @@ permissions, and argument errors are byte-stable presentation behavior, not an
 engine-owned command model. Exact cycle-5 behavior candidate
 `0b13944d19cfb33b4542d82d74c302669817c1af` is green after the complete
 replacement gate and three fresh zero-finding reviews. This documentation-only
-seal is exempt from another adversarial cycle; exact feature workflows,
-non-force main integration, exact `main` workflows, and delivery remain
-pending.
+seal `3e41cc6b90adb34d62aec21c6d03729d59ca0c1b` is exempt from another
+adversarial cycle and is delivered under the exact feature and `main` workflow
+evidence recorded above.
 
 The synchronous loader resolves only the config location. In the thirteenth
 slice, an unavailable location or missing file yields the explicit built-in

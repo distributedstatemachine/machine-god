@@ -2,7 +2,7 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-implemented twenty-eighth [`permissions` CLI slice](permissions-cli.md)
+delivered twenty-eighth [`permissions` CLI slice](permissions-cli.md)
 preserves that split: after strict argument parsing, the thin host invokes only
 the existing byte-bounded read-only configuration loader, exactly once, and
 reports no persistent rule or live grant state. Invalid configuration fails
@@ -19,9 +19,18 @@ the full release matrix. Its fresh 368,944-byte binary has SHA-256
 Correctness/API, native config/error lifecycle, and performance/CLI portability
 each reported 0/0/0/0; their union is zero and the behavior candidate is
 **GREEN**. It adds no engine, prompt, session, credential, runtime, state-root,
-write, or network effect. This documentation-only green seal is exempt from
-redundant adversarial review. Exact feature workflows, non-force fast-forward
-integration to `main`, exact `main` workflows, and delivery remain pending. The
+write, or network effect. Documentation-only green seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, is exempt from redundant
+adversarial review. Exact feature CI `32891031065`, feature benchmark-evidence
+`32891031147`, main CI `32891614025`, and main benchmark-evidence `32891614060`
+are green on that exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress
+with twenty-eight delivered slices. This delivery makes no product-performance
+or fx-equivalence claim. The final delivery-record commit is documentation-only
+and review-exempt; its own exact feature and `main` workflows will be reported at
+handoff rather than claimed here. The
 delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code owns DNS, TLS,
@@ -489,9 +498,9 @@ GREEN**: correctness/API and native config/error lifecycle each reported
 union is 0/0/0/1 for the sole terminology finding. The exact candidate is
 rejected, and remediation is composed in exact cycle-5 candidate `0b13944d`,
 which passed the complete replacement gate and all three fresh reviews at
-0/0/0/0. The feature-branch behavior is green; exact feature workflows,
-non-force fast-forward integration to `main`, exact `main` workflows, and
-delivery remain pending.
+0/0/0/0. Documentation-only green seal `3e41cc6b` passed the exact feature and
+`main` delivery workflow pairs recorded above, and the feature-branch behavior
+is delivered without changing this authority boundary.
 Configuration mutation or migration, a concrete prompt UI and modes beyond
 `ask`, token fields in configuration, CLI composition beyond that read-only
 projection, and remaining CLI expansion remain open product scope. Product

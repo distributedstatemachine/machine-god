@@ -7,17 +7,9 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-seven delivered bounded slices. The twenty-seventh `web_fetch` slice is
-delivered on reviewed seal `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
-`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, after three fresh cycle-11 review
-tracks reported zero findings at every severity. Exact feature CI
-`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
-and main benchmark-evidence `32875015892` are green; each benchmark run retains
-two nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
-product-performance or fx-equivalence claim. The implemented twenty-eighth
-top-level `permissions [--json]` slice is **BEHAVIOR GREEN — REMOTE DELIVERY
-PENDING** from exact delivered base `8d8ecc7`; it is read-only, ask-only, and
+twenty-eight delivered bounded slices. The twenty-eighth top-level
+`permissions [--json]` slice is **DELIVERED** from exact delivered base
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; it is read-only, ask-only, and
 owns no persistent rules or runtime grant state. Exact cycle-5 reviewed
 candidate `0b13944d19cfb33b4542d82d74c302669817c1af`, tree
 `2ea72e810f07ed8ca2d4e8647fa713088477d8b5`, passed the complete replacement
@@ -44,11 +36,19 @@ terminology component `2b686da95850fa6d7ae5790e1eaac19c585f3eb7`, tree
 `9ceff2e2e0a5f1fd1264cf0fff4e8cf02e05b5d6`, and ledger component
 `178c58002c1dcb37d411129a1547f686e4711570`, tree
 `5d6050f6d1486f26e9134353f34cacf74b90c0c2`, are part of the preserved
-pre-cycle-5 lineage. This subsequent documentation-only green seal names the
-reviewed candidate and is exempt from redundant adversarial review under the
-user's instruction. Exact feature workflows, non-force main integration, exact
-`main` workflows, and delivery remain pending, so the delivered count remains
-twenty-seven. See the
+pre-cycle-5 lineage. Documentation-only green seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, names that reviewed candidate
+and is exempt from redundant adversarial review under the user's instruction.
+Exact feature CI `32891031065`, feature benchmark-evidence `32891031147`, main
+CI `32891614025`, and main benchmark-evidence `32891614060` are green on that
+exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`. Each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. This delivery makes no
+product-performance or fx-equivalence claim. The final delivery-record commit
+is documentation-only and exempt from redundant adversarial review; its own
+exact feature and `main` workflows will be reported at handoff rather than claimed
+by this record. See the
 [`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
 review history begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree

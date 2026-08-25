@@ -19,7 +19,7 @@ surface. The separate fourteenth composed
 no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
-The implemented twenty-eighth bounded slice adds top-level
+The delivered twenty-eighth bounded slice adds top-level
 `permissions [--json]` under the frozen boundary in
 [`permissions-cli.md`](permissions-cli.md). It loads the existing strict native
 configuration read-only and reports ask-only permission configuration without
@@ -36,9 +36,18 @@ unsafe delta, and the full release matrix. The fresh 368,944-byte binary has
 SHA-256 `8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
 Correctness/API, native config/error lifecycle, and performance/CLI portability
 each reported 0/0/0/0 in three fresh reviews; the union is zero and the
-behavior candidate is **GREEN**. This documentation-only seal is exempt from
-redundant adversarial review. Exact feature workflows, non-force main
-integration, exact `main` workflows, and delivery remain pending.
+behavior candidate is **GREEN**. Documentation-only seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, is exempt from redundant
+adversarial review. Exact feature CI `32891031065`, feature benchmark-evidence
+`32891031147`, main CI `32891614025`, and main benchmark-evidence `32891614060`
+are green on that exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, and each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress
+with twenty-eight delivered slices. This delivery makes no product-performance
+or fx-equivalence claim. The final delivery-record commit is documentation-only
+and review-exempt; its own exact feature and `main` workflows will be reported at
+handoff rather than claimed here.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also

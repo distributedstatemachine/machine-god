@@ -26,8 +26,18 @@ focused native configuration 25+29 and CLI 6+19, pinned-fx compatibility and
 no dependency or unsafe delta, and the full release matrix. Its 368,944-byte
 binary has SHA-256
 `8756c7801285f1b09cad9a8b8ce47700a44127dec68ef2b0613e6a5dcecad45e`.
-The behavior candidate is **GREEN**; this documentation-only seal is exempt
-from another adversarial cycle, while feature/main delivery remains pending.
+The behavior candidate is **GREEN**. Documentation-only seal
+`3e41cc6b90adb34d62aec21c6d03729d59ca0c1b`, tree
+`bd74a96c4952c2eb1e15372f4ab716a76bba91a9`, is exempt from another
+adversarial cycle. Exact feature CI `32891031065`, feature benchmark-evidence
+`32891031147`, main CI `32891614025`, and main benchmark-evidence `32891614060`
+are green on that exact seal SHA. `main` was fast-forwarded without force from
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. Permissions is delivered
+as slice twenty-eight, while M03 remains in progress. This delivery makes no
+product-performance or fx-equivalence claim. The final delivery-record commit
+is documentation-only and review-exempt; its own exact feature and `main`
+workflows will be reported at handoff rather than claimed here.
 This configuration slice advances the built-in and current file
 schema to v3 while retaining strict read compatibility for the exact legacy v1
 and v2 objects.
