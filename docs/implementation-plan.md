@@ -128,6 +128,19 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
+The twenty-ninth bounded slice is now contract-frozen but not implemented,
+reviewed, integrated, or delivered. Its exact top-level `models [--json]`
+boundary is [`models-cli.md`](models-cli.md), and its kickoff review protocol is
+[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). It starts
+from exact delivered base
+`1de3b7eddf6a4d9046d48098defecf6bfa336442` and the pinned fx observation
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Core owns only validated
+provider-neutral available-model/access/result/error values and an object-safe
+catalog trait. Native owns process credentials plus Gateway access/fallback,
+deadline, parsing, bounds, ordering, and one fixed GET implementation. The CLI
+remains a thin current-thread Tokio host and owns rendering/output bounds. This
+frozen contract makes no product-performance, compatibility-promotion, or fx-
+equivalence claim.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2808,9 +2821,75 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
+### Frozen bounded slice 29: top-level `models`
+
+The twenty-ninth slice adds only `models [--json]` from exact base
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative implementation and
+output boundary is [`models-cli.md`](models-cli.md); its pending adversarial
+protocol is
+[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). The
+contract is frozen, but no code candidate, local gate, adversarial result,
+workflow, integration, or delivery is claimed here.
+
+Parsing is strict and completes before effects. Repeated `--json`, every extra
+or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
+configuration exactly once before credential and transport access. The
+existing environment credential precedence is retained: a missing credential
+selects public catalog access, while a selected non-Unicode, malformed, or
+oversized credential fails closed without lower-priority or anonymous fallback.
+Machine-god has no team source, so it sends no team query or header.
+
+Core owns validated provider-neutral available-model/access/result/error values
+and only an object-safe `list_models(CancellationToken)` trait; it receives no
+access request or deadline and owns no clock, fallback, sorting, Gateway
+metadata, or output rendering. Native owns the separate production GET to
+exactly
+`https://ai-gateway.vercel.sh/coding-agent/v1/models`, with only an explicitly
+injected numeric-loopback HTTP test endpoint. The release endpoint is not
+environment-overridable. The thin CLI constructs and drives a current-thread
+Tokio runtime with I/O and time enabled. An authenticated 401/403 alone receives
+exactly one fully anonymous retry under the original absolute deadline; no
+other result and no public request retries. Redirects, proxies, cookies,
+decompression, referer/title/team metadata, and application retry are disabled.
+
+The total catalog budget is 30 seconds including capacity wait, with active
+attempts defaulting to 8 and hard-limited to 32. Independent inclusive caps are
+256 KiB response body plus one overflow witness, JSON depth 32, JSON nodes
+16,384, 1,024 raw `data` entries, 512 valid language entries, 1–128 visible-
+ASCII bytes per model ID, 24 KiB aggregate accepted ID bytes, and 64 KiB
+serialized output including its final LF. A strict root object and `data` array
+are required. Only non-object entries, objects lacking a string ID, and entries
+with an explicit ASCII-case-insensitive non-language type are skipped. A string
+ID that is not safe visible ASCII in the exact length bound is a terminal
+malformed response. Duplicate valid IDs and global structural/resource defects
+also reject the whole response.
+
+All accepted IDs use native's pinned full-catalog total ordering: tool-use
+first, then ASCII-case-insensitive tier rank, exact case-sensitive provider ID-
+prefix rank, release descending, and ID ascending.
+Human success is `[models] N available` plus one ` - <id>` line per ID, with a
+separate empty-catalog line and machine-god-specific public-catalog explanation.
+JSON success is compact, has fixed key order
+`kind,count,shown_count,more_count,private_models_hidden,ids`, contains the full
+list, prepends no name/version fields, and ends in LF. Valid-command failures
+exit 1 through the closed redacted `AuthenticationRejected`, `Cancelled`,
+`MalformedResponse`, `ResourceLimit`, or `Unavailable` presentation map. The
+command creates no state/workspace/engine/generation-provider/prompt/permission/
+session/cache/write effect.
+
+Production, independent evidence, and documentation must use isolated,
+non-overlapping ownership. Each exact behavior candidate must pass focused and
+complete exact-1.94.1 local gates, then three fresh correctness/API,
+network/security, and performance/concurrency adversarial reviews. Any finding
+rejects the candidate and requires remediation, the complete replacement gate,
+and three fresh reviewers. Only a zero-finding exact candidate may proceed
+through feature exact-SHA workflows, a non-force fast-forward, and exact `main`
+workflows. Benchmark evidence is delivery evidence only.
+
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices do not complete Milestone 03.
+The twenty-eight delivered slices and frozen in-progress twenty-ninth slice do
+not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -3749,7 +3828,9 @@ gate:
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
   slash-command categories `general`, `session`, `model`, `security`, and
   `workspace`. Observable compatibility is scenario-based; command names may
-  remain intentional differences when documented.
+  remain intentional differences when documented. `models [--json]` has its
+  bounded slice-29 contract frozen, but remains unchecked until implementation,
+  evidence, review, feature, fast-forward, and exact-`main` gates are complete.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

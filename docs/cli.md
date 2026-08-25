@@ -1,8 +1,9 @@
 # Command-line interface
 
 The `machine-god` binary is the thin native reference host for the embeddable
-engine. This page defines the exact Milestone 03 config/status and permissions
-surfaces. Status inspects process environment and filesystem metadata without
+engine. This page defines the exact implemented Milestone 03 config/status and
+permissions surfaces. Status inspects process environment and filesystem
+metadata without
 parsing configuration. Permissions loads the existing strict native
 configuration exactly once and read-only. Neither path creates directories,
 writes files, starts the engine, or grants runtime authority.
@@ -48,6 +49,20 @@ with twenty-eight delivered slices. This delivery makes no product-performance
 or fx-equivalence claim. The final delivery-record commit is documentation-only
 and review-exempt; its own exact feature and `main` workflows will be reported at
 handoff rather than claimed here.
+
+The twenty-ninth bounded slice has a frozen, not-yet-implemented top-level
+`models [--json]` target in [`models-cli.md`](models-cli.md). That contract
+preserves parse-before-effects, loads strict configuration exactly once, uses
+the existing two-name native credential policy, and composes a provider-neutral
+core catalog trait with one fixed bounded native Gateway GET provider. Native
+owns access/fallback, deadline, parsing, bounds, and ordering; the CLI owns
+rendering and the output cap. Its successful JSON starts with `kind` and
+deliberately does not prepend the
+identity/status fields from other commands. It owns no engine, selected
+generation model, prompt, permission, workspace, state, session, cache, or
+write effect. Until its production, evidence, review, and delivery gates are
+complete, it does not change the implemented accepted invocations, help bytes,
+diagnostics, or output documented below.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also

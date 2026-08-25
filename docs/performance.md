@@ -4,6 +4,16 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
+The frozen, not-yet-implemented twenty-ninth top-level
+[`models` contract](models-cli.md) supplies resource and concurrency budgets,
+not a performance claim: one 30-second absolute deadline covers default-eight
+capacity waiting and at most two sequential requests; accepted body, JSON work,
+entries, IDs, and serialized output are independently bounded. Its catalog
+listing is not an equivalence-qualified benchmark workload. Implementation,
+fresh adversarial review, exact-SHA workflow artifacts, and a later claim-
+eligible M07 comparison remain required before any speed, latency, memory, or
+fx-equivalence statement.
+
 Initial workloads cover startup, help/status/session commands, session replay,
 file indexing, deterministic streaming, parallel read-only tools, cancellation,
 shutdown, RSS, and binary size. Model inference time is excluded.

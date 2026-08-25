@@ -38,6 +38,16 @@ as slice twenty-eight, while M03 remains in progress. This delivery makes no
 product-performance or fx-equivalence claim. The final delivery-record commit
 is documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
+
+The frozen, not-yet-implemented twenty-ninth
+[`models [--json]` contract](models-cli.md) will also invoke this loader exactly
+once after complete argument validation. It validates the closed provider,
+transport, and credential-source selections before native credential or
+network access, never reloads configuration for public fallback, never changes
+the configured generation model, and never writes or migrates the file. That
+catalog slice does not add an endpoint, team, token, cache, or catalog field to
+schema v3.
+
 This configuration slice advances the built-in and current file
 schema to v3 while retaining strict read compatibility for the exact legacy v1
 and v2 objects.

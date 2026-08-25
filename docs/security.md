@@ -2,7 +2,24 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-delivered twenty-eighth [`permissions` CLI slice](permissions-cli.md)
+frozen, not-yet-implemented twenty-ninth
+[`models` CLI contract](models-cli.md) keeps only validated available-model,
+access, result, error, and catalog-trait values provider-neutral in core. It
+confines Gateway parsing, ordering, fallback, deadline, credentials, TLS, HTTP,
+limits, and cancellation effects to native; the thin current-thread runtime
+host owns rendering and the output cap. Production is pinned to one HTTPS
+origin/path; redirects,
+proxies, retries, decompression, cookies, team/referer/title metadata, and
+endpoint overrides are absent. Missing credentials select public access;
+selected invalid credentials fail closed; authenticated 401/403 alone permits
+one fully stripped anonymous fallback. The 30-second operation, default-8/hard-
+32 capacity, 256 KiB body plus witness, JSON depth/node, entry/ID, and 64 KiB
+output bounds are normative. All external failures use a closed redacted map.
+This paragraph freezes a review target and makes no implementation or delivery
+claim; the kickoff ledger is
+[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
+
+The delivered twenty-eighth [`permissions` CLI slice](permissions-cli.md)
 preserves that split: after strict argument parsing, the thin host invokes only
 the existing byte-bounded read-only configuration loader, exactly once, and
 reports no persistent rule or live grant state. Invalid configuration fails

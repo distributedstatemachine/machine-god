@@ -1,0 +1,421 @@
+# Top-level `models` CLI contract
+
+Status: frozen contract for the in-progress twenty-ninth bounded Milestone 03
+slice. This document defines the implementation and review boundary; it does
+not claim that `models` is present in the binary, reviewed, integrated, or
+delivered. The pinned comparison input is fx commit
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. The implementation starts from
+machine-god commit `1de3b7eddf6a4d9046d48098defecf6bfa336442`.
+
+The slice adds one read-only top-level command:
+
+```text
+machine-god models
+machine-god models --json
+```
+
+It lists the Vercel AI Gateway coding-agent model catalog. The design preserves
+machine-god's existing ownership split: core owns only validated provider-
+neutral available-model, access, result, error, and catalog-provider contracts;
+native owns process credential acquisition and all Gateway parsing, sorting,
+access/fallback, deadline, concurrency, and HTTP behavior; the CLI owns strict
+parsing, thin composition, rendering/output bounds, and a current-thread Tokio
+host. Nothing in this contract changes the engine's model-generation provider
+or its prompt/session/tool orchestration.
+
+## Grammar and parse-before-effects rule
+
+The only new grammar is `models [--json]`. `--json` may occur at most once and
+only in the second position. Repeated `--json`, any other flag or positional
+argument, trailing arguments, and any non-Unicode argument are invalid. The
+entire process argument vector is validated before configuration, environment,
+clock, runtime, semaphore, credential, DNS, socket, or output effects.
+
+An invalid invocation exits 2, writes no stdout, and uses the existing fixed
+invalid-argument diagnostic with the new command in global usage:
+
+```text
+machine-god: invalid arguments
+Usage: machine-god [help | --help | -h | --version | -V | models [--json] | permissions [--json] | status [--json]]
+```
+
+Both lines and the complete diagnostic end with one LF. Global help lists
+`help`, `models`, `permissions`, and `status` in that order. The new row is
+exactly:
+
+```text
+  models       List available models
+```
+
+No parse failure may be replaced by a configuration or credential error, even
+when the environment or configuration is also invalid.
+
+## Authority and composition sequence
+
+A valid invocation performs this sequence exactly once unless a stated
+terminal failure stops it earlier:
+
+1. load the existing strict native configuration through
+   `load_process_config()` exactly once;
+2. validate that its closed provider, transport, and credential-source values
+   select the built-in Gateway/environment combination;
+3. snapshot and discover only `VERCEL_OIDC_TOKEN` and
+   `AI_GATEWAY_API_KEY` through the existing native credential adapter;
+4. create the fixed native catalog client and a host-owned current-thread
+   Tokio runtime with I/O and time enabled;
+5. call the native provider through the provider-neutral core catalog trait
+   with one cancellation token;
+6. render and serialize the bounded result completely in the CLI; then
+7. write the selected success or failure representation.
+
+Configuration is read-only. A missing file or unavailable configuration
+location uses the existing safe built-in schema-v3 configuration. A selected
+invalid configuration fails before credential or transport access. Config is
+not reloaded for the anonymous fallback.
+
+The command does not inspect or create the state root or workspace, construct
+the coding engine or generation provider, select or change the configured
+generation model, create a prompt or permission request, open a session store,
+read or write a session, persist a cache, or write configuration or any other
+file. The catalog result is not product state and is not retained after output.
+
+Production always uses the fixed endpoint below. It is not configurable through
+configuration, a CLI argument, or a process environment variable. Deterministic
+CLI unit tests may inject a catalog trait object, while native HTTP success is
+tested through the explicit numeric-loopback constructor. The production and
+release CLI exposes no fake-network or endpoint switch.
+
+## Core provider-neutral boundary
+
+`machine-god-core` owns a validated `AvailableModel`, a closed catalog-access
+value, a bounded catalog result, a closed redacted error, and one object-safe
+provider trait. The trait has only the conceptual operation:
+
+```rust,ignore
+fn list_models(
+    &self,
+    cancellation: CancellationToken,
+) -> ModelCatalogFuture;
+```
+
+The future is inert until polled. It yields an already validated, already
+ordered complete result whose access says `Authenticated` or `Public`. Core's
+`AvailableModel` owns only its validated model ID; Gateway type, tags, tier,
+provider-rank, and release metadata do not cross the native boundary. The
+result is bounded by the native provider before construction.
+
+The core API contains no URL, credential, access request, deadline, clock,
+environment-variable, Gateway-team, HTTP-header, Tokio, Reqwest, runtime,
+sorting, fallback, or output-rendering policy. Core neither orchestrates calls
+nor reads a clock. The CLI calls the trait once; all internal HTTP decisions
+belong to the native implementation.
+
+The native provider receives the optional validated credential during
+construction and chooses exactly one of these internal access paths:
+
+- no credential: one `Public` call;
+- valid credential: one `Authenticated` call; or
+- an `Authenticated` call returning the native, status-derived 401/403 class,
+  followed by exactly one `Public` call.
+
+The native fallback uses the same absolute deadline and cancellation token. It
+does not carry an authorization value or any other authenticated-only metadata.
+The first response and its permit are dropped before the public call begins.
+There is no fallback or retry for cancellation, timeout, capacity failure, 3xx,
+429, other 4xx, 5xx, DNS/TLS/transport failure, invalid JSON, a semantic limit,
+a duplicate ID, output overflow, or any other error. A public first request is
+never retried. The core trait is not a retry interface.
+
+Native parses, bounds, validates, de-duplicates, and sorts the Gateway result,
+then constructs validated core `AvailableModel` values and records the final
+access in the core result. The CLI derives presentation fields from that final
+access and renders them. Output construction is not part of core or native.
+
+## Credential selection and authentication
+
+Credential discovery retains the exact existing native contract:
+
+1. the first nonempty `VERCEL_OIDC_TOKEN`;
+2. otherwise the first nonempty `AI_GATEWAY_API_KEY`;
+3. otherwise no credential.
+
+Unset and exactly empty values are absent. Empty OIDC falls through to the API
+key. A selected nonempty value must be Unicode and a valid 1–4,096-byte RFC
+6750 `b64token`. A selected non-Unicode, malformed, or oversized value fails
+closed and does not fall through to a lower-priority value or make an anonymous
+request. Credential failures retain and display no source name or value.
+
+A request is authenticated only by:
+
+```text
+Authorization: Bearer <validated-token>
+```
+
+Machine-god has no team-selection source in this slice. It sends no team query
+parameter and no `x-vercel-ai-gateway-team` header. Anonymous fallback strips
+the complete authorization header; it does not reuse an authenticated request
+object whose header is merely overwritten.
+
+## Fixed native Gateway GET provider
+
+Production issues `GET` with no body to exactly:
+
+```text
+https://ai-gateway.vercel.sh/coding-agent/v1/models
+```
+
+The client uses Rustls with the repository's pinned WebPKI roots and HTTP/1.1.
+It sends fixed `Accept: application/json` and `Accept-Encoding: identity`
+headers plus authorization only for authenticated access. Machine-god adds no
+team header or query, proxy, cookie, referer, title, `User-Agent`, request-body
+content type, or endpoint-selection header. Dependency-required `Host` and
+wire-framing headers are allowed. Thus the application-selected header set is
+exactly `Accept`, `Accept-Encoding`, and optionally `Authorization`.
+
+Redirect following, proxy discovery/use, cookies, automatic decompression,
+application retry, status retry, backoff, and referer generation are disabled.
+Every 3xx is a terminal redacted protocol failure; `Location` is not followed,
+retained, or reflected. Only HTTP 200 has a body consumed. A non-200 body,
+reason phrase, headers, endpoint, dependency diagnostic, and operating-system
+diagnostic are never used in public error text. Authenticated 401/403 is the
+sole typed signal eligible for the one public fallback described above.
+
+The sole alternate endpoint is an explicit native test constructor. It accepts
+plain HTTP only for a canonical numeric IPv4 address in `127.0.0.0/8` or
+canonical bracketed IPv6 `::1`, an explicit nonzero port, and an absolute path.
+It rejects hostnames including `localhost`, non-loopback addresses, alternate
+or encoded IP spellings, user information, query, fragment, HTTPS alternates,
+and all non-HTTP schemes. Endpoint input is at most 2,048 visible ASCII bytes.
+This constructor is not reachable from process environment, configuration, or
+release CLI parsing.
+
+## Time, concurrency, body, and JSON bounds
+
+All bounds below are normative and independent. Reaching an inclusive maximum
+is allowed; observing one unit beyond it rejects the whole invocation.
+
+| Resource | Exact bound |
+| --- | --- |
+| total catalog operation | 30 seconds |
+| active native catalog attempts | default 8, configured range 1–32 |
+| accepted HTTP 200 body | 262,144 bytes (256 KiB) |
+| retained body overflow witness | at most one additional byte |
+| JSON nesting depth | 32 containers, including the root |
+| JSON value nodes | 16,384, including root, keys' values, array entries, and nested values |
+| raw `data` array entries | 1,024 |
+| accepted language-model entries | 512 |
+| one accepted model ID | 1–128 bytes, all in ASCII `0x21`–`0x7e` |
+| aggregate accepted ID bytes | 24,576 bytes (24 KiB) |
+| serialized stdout value | 65,536 bytes (64 KiB), including final LF |
+
+On the first poll of `list_models`, native computes one checked absolute
+deadline before permit acquisition. The 30 seconds include native concurrency-
+permit waiting, both possible sequential HTTP attempts, response-head and body
+waits, JSON decoding, entry validation, duplicate detection, and sorting. No
+phase and no anonymous fallback resets or extends it. Failure to represent the
+checked deadline fails before network access. CLI rendering follows a bounded
+native result and has its independent 64 KiB output cap; it does not extend the
+network deadline or enter core.
+
+One semaphore permit covers one active HTTP attempt through response drop.
+There are never two active attempts for one invocation. The authenticated
+permit is released before anonymous fallback waits for capacity. Construction
+rejects zero or more than 32 configured permits; production uses exactly 8.
+
+The body reader retains no more than 262,145 bytes while deciding overflow and
+does not trust `Content-Length` as proof that a response fits. Automatic
+decompression is disabled, so the cap applies to received representation
+bytes. Invalid UTF-8 is invalid JSON. The JSON decoder enforces depth and node
+budgets during decoding rather than building an unbounded value first. It
+rejects trailing non-whitespace bytes.
+
+## Gateway response and entry validation
+
+An accepted response is exactly one top-level JSON object with a `data` member
+whose value is an array. Missing `data`, a non-array `data`, a non-object root,
+invalid JSON, duplicate top-level `data`, or a raw array longer than 1,024
+rejects the response. Other top-level fields may be ignored while still
+counting toward the global JSON budgets.
+
+Each raw `data` value is inspected independently. Exactly three classes are
+skipped: a non-object value, an object with a missing or non-string `id`, and an
+object whose string `type` is not ASCII-case-insensitively `language`. An absent
+or non-string `type` is accepted as the pinned language default. Once a string
+ID reaches validation, an empty, longer-than-128-byte, non-ASCII, space, or
+control-containing ID is a terminal `MalformedResponse`; an unsafe ID is never
+silently skipped. Unknown fields and malformed optional metadata map only to
+the documented defaults. Nested ignored data still counts toward the global
+JSON budgets.
+
+Language classification follows the pinned catalog shape described above.
+Release metadata that is absent or not an integer fitting signed 64-bit maps to
+`0`. Tags that are absent or not an array provide no capability; a string tag
+equal to `tool-use`
+under ASCII case folding sets the tool-use bit. Other tag values are ignored.
+Tier and provider ranks derive only from the already validated ID; there are no
+separate provider or tier wire fields.
+
+After skipped entries are removed, more than 512 valid language entries or more
+than 24,576 aggregate ID bytes rejects the whole response. Two valid entries
+with byte-identical IDs reject the whole response; duplicates are not silently
+removed. ID comparison and all final tie-breaking are bytewise and locale-
+independent. Skipping only the three enumerated structural/non-language entry
+classes is intentional, but an unsafe string ID or any global structural,
+resource, or duplicate-ID defect is terminal.
+
+## Stable full-catalog ordering
+
+The command never applies an interactive picker limit. Every accepted ID is
+shown. Sorting is stable and compares these keys in order:
+
+1. tool-use capable entries first;
+2. tier rank ascending, using ASCII-case-insensitive ID substring matching in
+   this exact precedence: `preview` or `beta` rank 4; `haiku`, `mini`, or
+   `lite` rank 3; `flash` rank 2; `opus`, `sonnet`, `gpt-5`, `o1`, `o3`,
+   `o4`, `pro`, or `grok-4` rank 0; all others rank 1;
+3. provider rank ascending, using these exact case-sensitive ID prefixes:
+   `anthropic/` 0, `openai/` 1, `google/` 2, `xai/` 3, `deepseek/` 4,
+   `meta/` 5, `mistral/` 6, `alibaba/` 7, and every other prefix 8;
+4. release integer descending; then
+5. model ID ascending bytewise.
+
+The explicit tier precedence above matters: the first matching tier group wins.
+Type, tag, and tier matching are ASCII-case-insensitive; provider-prefix
+matching is deliberately case-sensitive like the pinned comparator. The
+comparator is total because the validated ID is the final key and duplicate IDs
+were rejected.
+
+## Success output
+
+Human output for a nonempty catalog is exactly:
+
+```text
+[models] N available
+ - <id-1>
+ - <id-2>
+```
+
+There is one ID line per accepted entry in stable order. `N` is the decimal
+number of accepted IDs. An empty catalog writes exactly:
+
+```text
+[models] no models returned by gateway
+```
+
+If the successful result is public because no credential was present, append:
+
+```text
+[models] Using the public model catalog; set VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY to include private models.
+```
+
+If an authenticated 401/403 caused successful public fallback, append instead:
+
+```text
+[models] Gateway authentication was rejected; showing the public model catalog.
+```
+
+No explanation is appended after authenticated success. These messages are
+machine-god-specific and do not advertise an unsupported fx login command.
+Every human result has exactly one final LF and no stderr.
+
+JSON success is one compact object with this exact key order and one final LF:
+
+```json
+{"kind":"models","count":2,"shown_count":2,"more_count":0,"private_models_hidden":false,"ids":["provider/a","provider/b"]}
+```
+
+`count` and `shown_count` both equal the complete accepted ID count;
+`more_count` is always zero; `ids` contains the complete sorted list; and
+`private_models_hidden` is true for either successful public path and false for
+authenticated success. JSON success has no stderr. The complete selected
+representation, including its LF, must fit 64 KiB before the first stdout
+write. There is no partial success or truncation path.
+
+## Failures, redaction, and exit status
+
+Every valid-command failure exits 1. Before any successful stdout bytes are
+written, human mode writes no stdout and one redacted line to stderr:
+
+```text
+machine-god models: could not list models: <detail>
+```
+
+JSON mode writes no stderr and this exact compact shape to stdout, followed by
+one LF:
+
+```json
+{"kind":"models","error":"could not list models: <detail>","code":"<code>"}
+```
+
+The mapping is closed and exact:
+
+| Internal terminal class | `<detail>` | `<code>` |
+| --- | --- | --- |
+| authentication rejected | `AuthenticationRejected` | `AuthenticationRejected` |
+| cancellation | `the request was cancelled` | `Cancelled` |
+| malformed response, including structural/duplicate defects | `MalformedResponse` | `MalformedResponse` |
+| any resource bound, including deadline, capacity/body/JSON/entry/ID/output overflow | `ResourceLimit` | `ResourceLimit` |
+| rate, Gateway, transport, configuration, credential, runtime, and every other failure | `Unavailable` | `Unavailable` |
+
+The public distinction is semantically useful but fully redacted. An
+authenticated 401/403 is not terminal when its one public fallback can begin;
+`AuthenticationRejected` is emitted only when the final result is that class.
+Internal typed errors remain available for deterministic tests and the single
+fallback decision. Output never reflects a token, source selection, model
+value from configuration, endpoint, response body or header, model ID from a
+rejected response, path, OS error, dependency error, numeric HTTP status,
+status reason, or redirect location.
+
+If writing either a completed success or completed JSON failure itself fails,
+the process exits 1 and makes a best-effort write of the existing fixed stderr
+diagnostic `machine-god: failed to write output\n`. No second network request is
+made. Failure output is itself checked against the 64 KiB serialized cap.
+
+## Cancellation and drop
+
+Catalog futures do no work until polled. Native checks cancellation before
+permit acquisition, request dispatch, each response-body read, JSON decoding,
+every bounded entry-processing batch, sorting/result construction, and each
+native-effect transition. A cancellation that is ready in the same poll as
+capacity, HTTP, body, or provider completion wins. Deadline expiry has the same
+pre-acceptance rule after cancellation precedence. Native checks both states
+again immediately before returning the completed result; the CLI then renders
+that result, and core performs no clock, sorting, or output work.
+
+Dropping or cancelling an attempt drops its owned Reqwest request/response,
+body buffer, and semaphore permit. Dropping the one trait future between the
+two native attempts prevents anonymous fallback. The native future owns one
+outer deadline sleep and one cancellation waiter across capacity and both
+attempts; neither is reset. Machine-god spawns no catalog worker, producer,
+retry/backoff, or detached task. Reqwest/Hyper connection dispatch and its
+bounded connection timers remain owned by the host runtime. The CLI keeps that
+current-thread runtime driven through request completion and teardown.
+Cancellation/drop cannot recall bytes already sent or prove what the peer
+received.
+
+## Intentional pinned-fx differences and deferred scope
+
+The command mirrors the pinned fx command name, full-catalog ordering, success
+shapes, and single authenticated-401/403 public fallback. These are deliberate
+compatibility inputs, not a claim of general fx equivalence. Machine-god
+intentionally differs by:
+
+- rejecting repeated `--json` and every extra/non-Unicode argument;
+- loading its strict config once before credential/network effects;
+- failing closed on a selected invalid credential rather than treating it as
+  absence;
+- omitting fx login, team selection, team query/header, referer, title, and fx
+  `User-Agent` identity;
+- pinning production origin/path with only a numeric-loopback test seam;
+- rejecting redirects, proxies, decompression, cookies, and retries;
+- bounding time, concurrency, body, JSON work, entry counts, ID bytes, and
+  serialized output;
+- rejecting duplicate valid IDs and global structural/resource defects; and
+- exposing only redacted fixed operational diagnostics.
+
+This slice adds no picker, model selection, generation call, catalog cache,
+offline catalog, account/team/login flow, pagination, streaming catalog,
+configuration schema field, SDK surface, or compatibility promotion. It makes
+no product-performance, speedup, latency, memory, or fx-equivalence claim.
+Benchmarks and remote workflow evidence remain later gates for the exact
+implemented candidate.

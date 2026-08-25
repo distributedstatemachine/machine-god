@@ -21,7 +21,22 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-eight delivered bounded slices. Delivered slice
+Milestone 03 has twenty-eight delivered bounded slices. In-progress slice
+twenty-nine freezes a top-level `models [--json]` contract without yet claiming
+implementation or delivery. Core will own only validated provider-neutral
+available-model/access/result/error values and an object-safe
+`list_models(CancellationToken)` trait. Native will own the fixed Gateway GET,
+strict response decoding, ordering, access/fallback, process credential, TLS,
+HTTP, total deadline, concurrency, and cancellation effects. The thin CLI will
+load config once, drive the native provider on a host-owned current-thread Tokio
+runtime, and own rendering/output bounds. The same architecture adds no catalog
+authority to the engine generation provider and no ambient, clock, retry,
+Gateway-metadata, sorting, or output authority to core. Exact ownership and
+bounds are in
+[`models-cli.md`](models-cli.md), and review remains pending in
+[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
+
+Delivered slice
 twenty-eight adds read-only top-level `permissions [--json]` from exact base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`
 without moving rule, grant, engine, session, runtime, credential, or network
