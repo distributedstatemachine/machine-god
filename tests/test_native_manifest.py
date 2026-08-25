@@ -15,6 +15,7 @@ SHA2_WEB_FETCH_ONLY_NATIVE_CFG = (
     'not(any(target_os = "linux", target_os = "macos"))))'
 )
 MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
+    "hickory-resolver",
     "hyper",
     "reqwest",
     "rustls",
@@ -160,13 +161,20 @@ class NativeManifestTests(unittest.TestCase):
 
     def test_model_catalog_http_feature_omits_web_fetch_dependencies(self) -> None:
         features = self.manifest["features"]
+        workspace_reqwest = self.workspace_manifest["workspace"]["dependencies"][
+            "reqwest"
+        ]
+        self.assertNotIn("hickory-dns", workspace_reqwest["features"])
         self.assertEqual(
             set(features["ai-gateway-model-catalog-http"]),
             {
                 f"dep:{dependency}"
                 for dependency in MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES
             }
-            | {"reqwest/hickory-dns"},
+            | {"hickory-resolver/tokio"},
+        )
+        self.assertNotIn(
+            "reqwest/hickory-dns", features["ai-gateway-model-catalog-http"]
         )
         self.assertEqual(
             set(features["ai-gateway-http"]),
@@ -211,9 +219,8 @@ class NativeManifestTests(unittest.TestCase):
         self.assertLessEqual(
             MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES, direct_dependencies
         )
-        self.assertTrue(
-            {"hickory-proto", "hickory-resolver"}.isdisjoint(direct_dependencies)
-        )
+        self.assertIn("hickory-resolver", direct_dependencies)
+        self.assertNotIn("hickory-proto", direct_dependencies)
 
         completed = subprocess.run(
             cargo_tree_command,

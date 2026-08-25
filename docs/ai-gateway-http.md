@@ -265,13 +265,14 @@ environment endpoint input.
 
 The CLI enables only `ai-gateway-model-catalog-http`. Its resolved native
 feature graph contains the shared bearer/TLS and catalog HTTP dependencies plus
-Reqwest's Hickory resolver and Hickory's transitive protocol, network, and Moka
-cache dependencies. Hickory is activated through
-`reqwest/hickory-dns`; native does not add direct Hickory dependencies to the
-catalog feature. The graph does not activate generation-only direct `bytes` or
-`web-fetch-http`, and it still omits Tokio's signal backend. The CLI dependency,
-not native catalog HTTP, requests Tokio signal handling. Existing consumers of
-`ai-gateway-http` retain direct `bytes`, the catalog feature, and
+the native Hickory resolver and Hickory's transitive protocol, network, and Moka
+cache dependencies. The narrow catalog feature activates one direct optional
+`hickory-resolver` edge with only its Tokio integration in addition to the
+workspace's system-configuration support. Reqwest's built-in `hickory-dns`
+feature is disabled. The graph does not activate generation-only direct `bytes`
+or `web-fetch-http`, and it still omits Tokio's signal backend. The CLI
+dependency, not native catalog HTTP, requests Tokio signal handling. Existing
+consumers of `ai-gateway-http` retain direct `bytes`, the catalog feature, and
 `web-fetch-http`; this topology change does not alter generation-transport
 behavior and makes no performance claim.
 
@@ -284,17 +285,18 @@ title, content-type, cookie, proxy, or endpoint-selection metadata. Redirects,
 automatic decompression, proxies, cookies, and retries are disabled. Only 200
 bodies are read; non-200 bodies are discarded.
 
-The catalog client explicitly selects Reqwest's Hickory resolver. It never uses
-Reqwest's default GAI resolver or its non-abortable blocking `getaddrinfo`
-worker. Hickory lazily reads the platform DNS configuration and performs its
-lookup I/O on the host Tokio runtime. If platform DNS configuration cannot be
-loaded, the pinned Reqwest Hickory adapter falls back to Hickory's Google
-UDP/TCP resolver configuration. Dropping or cancelling a pending catalog request
-drops that request's lookup future, response/request ownership, and
-active-request permit; it cannot leave a GAI blocking job that prevents a
-current-thread runtime from shutting down. Resolver-owned asynchronous I/O and
-connection teardown remain host-runtime work. Numeric-loopback test endpoints
-bypass DNS as before.
+The catalog client explicitly installs a machine-god `reqwest::dns::Resolve`
+adapter over Hickory's Tokio resolver. It never selects Reqwest's built-in
+Hickory adapter, default GAI resolver, or non-abortable blocking `getaddrinfo`
+worker. The adapter lazily reads only the platform DNS configuration and
+performs lookup I/O on the host Tokio runtime. Unavailable or invalid platform
+DNS configuration fails closed as the fixed redacted catalog `Transport`
+failure; there is no Google or other public-resolver fallback. Dropping or
+cancelling a pending catalog request drops that request's lookup future,
+response/request ownership, and active-request permit; it cannot leave a GAI
+blocking job that prevents a current-thread runtime from shutting down.
+Resolver-owned asynchronous I/O and connection teardown remain host-runtime
+work. Numeric-loopback test endpoints bypass DNS as before.
 
 Default catalog limits are 30 seconds for connect, 30 seconds per attempt, and
 8 active requests; explicit concurrency is restricted to 1–32. The provider
@@ -319,7 +321,9 @@ the same absolute-deadline timer and wakes at that deadline. Deterministic
 tests inject a permanently pending Reqwest resolver and paused Tokio time to
 prove cancellation and deadline completion, lookup-future drop, permit
 restoration, and current-thread runtime teardown without production DNS or
-test sleeps.
+test sleeps. A separate injected system-configuration failure proves fixed
+redaction, fail-closed completion, and permit release without a resolver or
+network effect.
 
 ## Deferred scope
 

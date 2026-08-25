@@ -13,7 +13,9 @@ use crate::{
     AiGatewayModelCatalogTransportError, AiGatewayModelCatalogTransportErrorKind,
     AiGatewayModelCatalogTransportResponse,
 };
+use hickory_resolver::{TokioResolver, config::LookupIpStrategy};
 use machine_god_core::{BoxFuture, CancellationToken, Cancelled};
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::header::{
     ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_LENGTH, HeaderValue, USER_AGENT,
 };
@@ -23,7 +25,7 @@ use std::fmt;
 use std::future::{Future, pending, poll_fn};
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -359,7 +361,7 @@ fn build_client(
     limits: AiGatewayModelCatalogHttpLimits,
 ) -> Result<Client, AiGatewayModelCatalogHttpConfigError> {
     client_builder(certificates, limits)
-        .hickory_dns(true)
+        .dns_resolver(SystemHickoryResolver::new())
         .build()
         .map_err(|_| {
             AiGatewayModelCatalogHttpConfigError::new(
@@ -367,6 +369,75 @@ fn build_client(
             )
         })
 }
+
+type SystemResolverFactory = fn() -> Result<TokioResolver, SystemResolverConfigurationUnavailable>;
+
+struct SystemHickoryResolver {
+    state: Arc<OnceLock<Result<TokioResolver, SystemResolverConfigurationUnavailable>>>,
+    factory: SystemResolverFactory,
+}
+
+impl SystemHickoryResolver {
+    fn new() -> Self {
+        Self::with_factory(load_system_hickory_resolver)
+    }
+
+    fn with_factory(factory: SystemResolverFactory) -> Self {
+        Self {
+            state: Arc::new(OnceLock::new()),
+            factory,
+        }
+    }
+}
+
+impl Resolve for SystemHickoryResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let state = Arc::clone(&self.state);
+        let factory = self.factory;
+        let name = name.as_str().to_owned();
+        Box::pin(async move {
+            let resolver = state
+                .get_or_init(factory)
+                .as_ref()
+                .map_err(|error| Box::new(*error) as Box<dyn std::error::Error + Send + Sync>)?;
+            let lookup = resolver.lookup_ip(name).await?;
+            let addrs: Addrs = Box::new(
+                lookup
+                    .iter()
+                    .map(|address| SocketAddr::new(address, 0))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            );
+            Ok(addrs)
+        })
+    }
+}
+
+fn load_system_hickory_resolver() -> Result<TokioResolver, SystemResolverConfigurationUnavailable> {
+    let mut builder =
+        TokioResolver::builder_tokio().map_err(|_| SystemResolverConfigurationUnavailable)?;
+    builder.options_mut().ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+    builder
+        .build()
+        .map_err(|_| SystemResolverConfigurationUnavailable)
+}
+
+#[derive(Clone, Copy)]
+struct SystemResolverConfigurationUnavailable;
+
+impl fmt::Debug for SystemResolverConfigurationUnavailable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SystemResolverConfigurationUnavailable")
+    }
+}
+
+impl fmt::Display for SystemResolverConfigurationUnavailable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("system resolver configuration unavailable")
+    }
+}
+
+impl std::error::Error for SystemResolverConfigurationUnavailable {}
 
 fn client_builder(
     certificates: Vec<Certificate>,
@@ -674,7 +745,6 @@ const fn cancelled_error() -> AiGatewayModelCatalogTransportError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::dns::{Addrs, Name, Resolve, Resolving};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Poll};
 
@@ -734,6 +804,11 @@ mod tests {
             .enable_all()
             .build()
             .expect("build current-thread runtime")
+    }
+
+    fn unavailable_system_resolver() -> Result<TokioResolver, SystemResolverConfigurationUnavailable>
+    {
+        Err(SystemResolverConfigurationUnavailable)
     }
 
     async fn poll_pending_once<F: Future>(future: Pin<&mut F>) {
@@ -808,5 +883,37 @@ mod tests {
             assert_eq!(transport.permits.available_permits(), 1);
         });
         drop(deadline_runtime);
+    }
+
+    #[test]
+    fn unavailable_system_dns_configuration_fails_closed_and_redacted() {
+        let limits = AiGatewayModelCatalogHttpLimits::new(
+            Duration::from_secs(30),
+            Duration::from_secs(30),
+            1,
+        )
+        .unwrap();
+        let resolver: Arc<dyn Resolve> = Arc::new(SystemHickoryResolver::with_factory(
+            unavailable_system_resolver,
+        ));
+        let transport = transport_with_resolver(resolver, limits);
+        let runtime = runtime();
+        let error = runtime
+            .block_on(transport.get(
+                AiGatewayModelCatalogRequestAccess::Public,
+                Instant::now() + Duration::from_secs(60),
+                CancellationToken::new(),
+            ))
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            AiGatewayModelCatalogTransportErrorKind::Transport
+        );
+        assert_eq!(
+            error.to_string(),
+            "AI Gateway model catalog transport failed"
+        );
+        assert_eq!(transport.permits.available_permits(), 1);
+        drop(runtime);
     }
 }
