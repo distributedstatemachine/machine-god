@@ -194,6 +194,23 @@ matrix, Node, documentation, diff/unsafe, locked-release, and five-smoke checks
 are green. This gate record makes no formal-review outcome, candidate,
 workflow, integration, delivery, performance, or fx-equivalence claim;
 reviewer reports identify the exact candidate they reviewed.
+Formal cycle 7 is **NOT GREEN** on exact candidate
+`47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
+`cc28286fa9bb8ac25cf05c2606a8cf9682872a52`. Correctness/API reported
+0 blocker, 0 high, 1 medium, and 0 low findings; network/HTTP lifecycle and
+performance/concurrency each reported zero findings at every severity. The
+deduplicated union is 0 blocker, 0 high, 1 medium, and 0 low, so the exact
+candidate is rejected. Maintained bounded-admission prose made special-use DNS
+names ineligible, but the lexical denylist omitted `.arpa`; `ipv4only.arpa`,
+`resolver.arpa`, and reverse descendants such as `10.in-addr.arpa` could
+prepare network authority before DNS. Reviewers reported no lineage defect,
+and the absence of a pre-review seal is protocol-correct. Exact root
+remediation `0c9d8b3c9c0283c7a297c6a4b53ca716a3ed04ae`, tree
+`66527a146dc87b1aa9f3b7ee99385efb8022a342`, implements the allocation-free
+terminal-label correction and deterministic evidence. Isolated remediation
+`8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` has the same tree. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, delivery, performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2194,6 +2211,37 @@ exact smokes pass, and status does not create missing XDG roots. This gate
 record makes no formal-review outcome, candidate, workflow, integration,
 delivery, performance, or fx-equivalence claim; reviewer reports identify the
 exact candidate they reviewed.
+Formal cycle 7 rejected exact candidate
+`47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
+`cc28286fa9bb8ac25cf05c2606a8cf9682872a52`. Correctness/API reported
+0/0/1/0; network/HTTP lifecycle and performance/concurrency were each green at
+0/0/0/0. The deduplicated union is 0 blocker, 0 high, 1 medium, and 0 low; the
+exact candidate is rejected. The maintained bounded admission contract said
+special-use DNS names were ineligible, but the lexical denylist omitted the
+infrastructure suffix `.arpa`. As a result, `ipv4only.arpa`, `resolver.arpa`,
+and reverse-name descendants such as `10.in-addr.arpa` could prepare a network
+capability before DNS. Candidate-focused evidence passed 30 private, 14 direct,
+14 production HTTP, five engine, and one parsed-manifest test. The exact
+target-matrix, lifecycle/cancellation, and deterministic stress/saturation
+evidence was green in the two zero-finding tracks. The candidate is the tree-
+identical formal freeze after the exact cycle-6 gate lineage; reviewers found
+no lineage defect, and the lack of a separate pre-review seal is protocol-
+correct.
+Exact root remediation `0c9d8b3c9c0283c7a297c6a4b53ca716a3ed04ae`, tree
+`66527a146dc87b1aa9f3b7ee99385efb8022a342`, and isolated remediation
+`8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` with the same tree replace suffix
+allocation with an allocation-free ASCII-case-insensitive exact final-label
+suffix predicate and add `.arpa`; it subsumes the older explicit `home.arpa`
+case.
+The exact bounded behavior document now lists the terminal-label policy, while
+`example.com`, `example.net`, `example.org`, and label-bounded names such as
+`resolver.arpa.example.com` remain eligible. Deterministic private, direct, and
+engine evidence proves rejection before policy or transport. Source checks
+passed under exact Rust and Cargo 1.94.1: 31 private, 15 direct, 14 production
+HTTP, and six engine tests; formatting; full workspace warnings-denied Clippy;
+the complete native all-target/all-feature run; and clean diffs. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, delivery, performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3024,6 +3072,23 @@ gate:
   are green. This gate record makes no formal-review outcome, candidate,
   workflow, integration, delivery, performance, or fx-equivalence claim;
   reviewer reports identify the exact candidate they reviewed.
+  Formal cycle 7 rejected exact candidate
+  `47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
+  `cc28286fa9bb8ac25cf05c2606a8cf9682872a52`. Correctness/API reported
+  0/0/1/0; lifecycle and performance were each green at 0/0/0/0. The union is
+  0 blocker, 0 high, 1 medium, and 0 low, so the exact candidate is rejected.
+  The lexical special-use denylist omitted `.arpa`, allowing infrastructure
+  and reverse-name descendants to prepare network capability before DNS.
+  Reviewers found no lineage defect, and no pre-review seal was required.
+  Exact root remediation `0c9d8b3c9c0283c7a297c6a4b53ca716a3ed04ae`, tree
+  `66527a146dc87b1aa9f3b7ee99385efb8022a342`, and tree-identical isolated
+  remediation `8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` implement the allocation-free
+  final-label suffix predicate, bounded docs, and no-policy/no-transport
+  regressions.
+  Exact-1.94.1 focused 31/15/14/6, formatting, full workspace Clippy, native
+  all-target/all-feature, and diff checks are green. This remediation record
+  makes no replacement-gate, formal-review outcome, candidate, workflow,
+  integration, delivery, performance, or fx-equivalence claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

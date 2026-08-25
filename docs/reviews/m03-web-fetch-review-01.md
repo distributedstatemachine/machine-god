@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 6 REJECTED**
+Status: **IN PROGRESS — CYCLE 7 REJECTED**
 
 ## Base and boundary
 
@@ -100,6 +100,17 @@ local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
 makes no formal-review outcome, candidate, workflow, integration, delivery,
 performance, or fx-equivalence claim; reviewer reports identify the exact
 candidate they reviewed.
+Formal cycle 7 rejected exact candidate
+`47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
+`cc28286fa9bb8ac25cf05c2606a8cf9682872a52`, with a deduplicated union of
+0 blocker, 0 high, 1 medium, and 0 low. Exact root remediation
+`0c9d8b3c9c0283c7a297c6a4b53ca716a3ed04ae`, tree
+`66527a146dc87b1aa9f3b7ee99385efb8022a342`, rejects `.arpa` infrastructure
+names before network authority. Tree-identical isolated remediation
+`8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` records the same correction. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, delivery, compatibility, product-performance, or fx-
+equivalence claim.
 
 ## Frozen candidate boundary
 
@@ -1021,6 +1032,76 @@ This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
 
+## Formal cycle 7 — not green
+
+Three fresh agents independently inspected exact candidate
+`47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
+`cc28286fa9bb8ac25cf05c2606a8cf9682872a52`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 7 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 1 medium, 0 low**.
+
+- **Medium — `.arpa` infrastructure names bypass lexical admission:** the
+  bounded contract made special-use names ineligible, but the lexical denylist
+  omitted `.arpa`. Names such as `ipv4only.arpa`, `resolver.arpa`, and reverse-
+  name descendants such as `10.in-addr.arpa` could therefore prepare a network
+  capability before the DNS answer-set boundary ran.
+
+Correctness reran the exact candidate's 30-private/14-direct/14-production-
+HTTP/5-engine focused suites plus the parsed-manifest test 1/1. The exact
+target-matrix evidence was also green.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-7 candidate; its focused transport, cancellation, deadline, and
+lifecycle evidence reported no finding.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-7 candidate; its deterministic admission, saturation, and stress
+evidence reported no finding.
+
+### Consolidated union and disposition
+
+Cycle 7 has **0 blocker, 0 high, 1 medium, and 0 low** deduplicated findings.
+Exact candidate `47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
+`cc28286fa9bb8ac25cf05c2606a8cf9682872a52`, is rejected and must never be used
+as delivery evidence.
+
+The candidate is the tree-identical formal freeze following the exact cycle-6
+replacement-gate lineage. Reviewers reported no lineage finding. The absence
+of a separate pre-review seal is protocol-correct.
+
+The replacement must perform an allocation-free ASCII-case-insensitive exact
+final-label suffix predicate, include `.arpa`, and preserve label boundaries so
+ordinary example domains remain eligible. The `.arpa` terminal label subsumes
+the older explicit `home.arpa` case. Preparation must reject the denied names
+without consulting policy or transport.
+
+Exact root remediation `0c9d8b3c9c0283c7a297c6a4b53ca716a3ed04ae`, tree
+`66527a146dc87b1aa9f3b7ee99385efb8022a342`, implements the final-label
+predicate and records the exact bounded behavior. Isolated remediation
+`8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` has the same tree. The predicate
+uses ASCII-case-insensitive equality without allocating, adds `.arpa`, and
+retains existing terminal labels; `home.arpa` is subsumed. `example.com`,
+`example.net`, `example.org`, and label-bounded names such as
+`resolver.arpa.example.com` remain eligible.
+
+Deterministic private, direct, and engine regressions prove `.arpa` and reverse-
+name rejection before policy or transport, including zero transport calls and
+polls. Exact Rust and Cargo 1.94.1 source checks passed 31/31 private, 15/15
+direct, 14/14 production HTTP, and 6/6 engine tests; formatting; full workspace
+warnings-denied Clippy; the complete native all-target/all-feature run; and
+clean diff checks.
+
+This remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -1069,8 +1150,17 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: formal cycles 1, 2, 3, 4, 5, and 6 are **NOT GREEN** on their
-exact recorded SHA/tree pairs. Exact cycle-6 candidate
+Current state: formal cycles 1, 2, 3, 4, 5, 6, and 7 are **NOT GREEN** on their
+exact recorded SHA/tree pairs. Exact cycle-7 candidate
+`47c6a2e7b209aec29f30fd7f7413f55ea039202f`, tree
+`cc28286fa9bb8ac25cf05c2606a8cf9682872a52`, is rejected with a deduplicated
+union of 0 blocker, 0 high, 1 medium, and 0 low. Exact root remediation
+`0c9d8b3c9c0283c7a297c6a4b53ca716a3ed04ae`, tree
+`66527a146dc87b1aa9f3b7ee99385efb8022a342`, and tree-identical isolated
+remediation `8fd1f89c5d4ac716d83fa16994ec01d8d4d1eda3` reject `.arpa`
+infrastructure names before policy or transport. This remediation record makes
+no replacement-gate, formal-review outcome, candidate, workflow, integration,
+delivery, performance, or fx-equivalence claim. Exact cycle-6 candidate
 `5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
 `a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`, is rejected with a deduplicated
 union of 0 blocker, 0 high, 1 medium, and 0 low. Exact source remediation
