@@ -16,11 +16,14 @@ The native configuration loader is a bounded, synchronous, read-only
 environment and filesystem. `machine-god status` remains metadata-only and
 does not invoke the loader. The implemented
 `machine-god permissions [--json]` path invokes it exactly once after complete
-argument validation and observes only permission mode. Formal permissions cycle
-2 rejected exact candidate `e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
-`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, with two low performance/
-portability findings after the complete replacement gate passed. Cycle-2
-remediation is composed but awaits its replacement gate and fresh reviews. This
+argument validation and observes only permission mode. Exact permissions
+cycle-3 candidate `4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
+`d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete exact-1.94.1
+replacement gate without fallback. Formal review rejected it only for one low
+stale lower permissions-lineage finding in `security.md`; native config/error
+lifecycle and performance/CLI portability were green with zero findings. The
+security prose remediation is composed, and another
+complete gate and three fresh reviews are required. This
 configuration slice advances the built-in and current file schema to v3 while retaining strict read
 compatibility for the exact legacy v1 and v2 objects.
 
@@ -45,8 +48,9 @@ permissions snapshot requests `XDG_CONFIG_HOME` and `HOME` and never requests
 composed replacement reads `XDG_CONFIG_HOME` first and reads `HOME` only when
 XDG is missing or empty. A nonempty XDG value decides selection whether it is
 valid, relative, or non-Unicode, so that path neither reads nor falls back to
-`HOME`. Status retains the general three-value snapshot. This cycle-2
-remediation is composed; its replacement gate and reviews are pending.
+`HOME`. Status retains the general three-value snapshot. The cycle-3 gate and
+all three review tracks confirmed this behavior; cycle 3 was rejected only for
+the separate stale lower-lineage prose finding described above.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
 the explicit built-in schema-v3 configuration. A resolved file that is missing
@@ -169,8 +173,11 @@ The composed replacement retries the first 15 cumulative interrupted results and
 maps the 16th to the existing fixed `Unreadable` error, with deterministic
 injected-reader evidence for both boundaries. Partial progress does not reset
 the count, and an over-reported read maps to `Unreadable`. The complete cycle-2
-replacement gate and review confirmed these bounds; the rejected candidate's
-two lows concern lazy environment access and target-qualified documentation.
+replacement gate and review confirmed these bounds; that rejected candidate's
+two lows concerned lazy environment access and target-qualified documentation.
+The complete cycle-3 gate and all three fresh tracks confirmed the remediated
+loader bounds and environment-selection behavior; cycle 3 was rejected only
+for the separate stale lower permissions lineage in `security.md`.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path with `O_NOFOLLOW` and nonblocking behavior. It performs a

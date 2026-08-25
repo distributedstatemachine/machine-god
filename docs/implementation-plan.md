@@ -53,7 +53,7 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
 performance or fx-equivalence claim. The implemented twenty-eighth top-level
-`permissions [--json]` slice is **IN PROGRESS — CYCLE 2 REMEDIATED;
+`permissions [--json]` slice is **IN PROGRESS — CYCLE 3 REMEDIATED;
 REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`. It is a read-only projection of
 the already delivered ask-only native configuration and owns no rule, grant,
@@ -75,8 +75,23 @@ gate but formal review reported a deduplicated 0 blocker, 0 high, 0 medium, and
 `a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
 `1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
 `058aa738487bfce08be2d964f8a577fdc12fea09`, compose cycle-2 remediation;
-integration adds the Windows cfg mirror of the non-Unicode regression. Another
-replacement gate, three fresh reviews, integration, and delivery remain pending.
+feature-branch integration adds the Windows cfg mirror of the non-Unicode
+regression. Exact cycle-3 candidate
+`4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
+`d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. Formal review reported
+a deduplicated 0 blocker, 0 high, 0 medium, and 1 low finding, so it is
+rejected. Correctness/API found stale lower permissions lineage in
+`docs/security.md`; native config/error lifecycle and performance/CLI
+portability were green with zero findings. Exact security-document components
+`4ade5d839be699accaa4dac834787eab135244b2`, tree
+`d2dabd20dcbd1bf0e6f3c005f715d8839e12a3f2`, and
+`32236fd8b67cdc44d9deb0ee3ca5b45708560f38`, tree
+`f179700fab0a38386cabda02e16d121edbb556a0`, plus ledger component
+`ef1f619e72193d08ba3729042201543a10f5d838`, tree
+`2368c3cd3fd209ba64a8f3a1cc3fcd5014521289`, are composed. Another complete
+replacement gate, three fresh
+reviews, main integration, and delivery remain pending.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2668,16 +2683,35 @@ exact candidate.
 Exact isolated native remediation `fa83c6c6427028c18e1c36ba6603eb44e4102eac`,
 tree `a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
 `1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
-`058aa738487bfce08be2d964f8a577fdc12fea09`, are composed. Integration adds the
-Windows cfg mirror of the non-Unicode regression. The replacement reads
+`058aa738487bfce08be2d964f8a577fdc12fea09`, are composed. Feature-branch
+integration adds the Windows cfg mirror of the non-Unicode regression. The
+replacement reads
 `XDG_CONFIG_HOME` first for config loading and permissions,
 reads `HOME` only when XDG is missing or empty, and never reads
 `XDG_STATE_HOME`. A nonempty valid, invalid-relative, or non-Unicode XDG value
 neither reads nor falls back to `HOME`. Maintained final-path `O_NOFOLLOW`,
 nonblocking, no-follow, and descriptor-regularity guarantees are explicitly
-supported-Unix behavior; hardened non-Unix opening remains deferred. Another
-complete replacement gate, three fresh same-SHA reviews, integration, delivery,
-and exact feature and `main` workflows remain pending. The combined top-level
+supported-Unix behavior; hardened non-Unix opening remains deferred.
+
+Exact cycle-3 candidate `4645a0fa646d2f2bb7138cd55a8ded924d9b8992`,
+tree `d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete
+replacement local gate under exact Rust and Cargo 1.94.1 without fallback. The
+four required workspace commands, focused native-configuration and CLI suites,
+pinned-fx `b1774fbf6c7602b503026f96f6e960e946c692ef` compatibility generator
+check and all 31 generator tests, and the 76-Markdown/110-fence/391-relative-
+target documentation check are green with zero errors. The candidate adds no
+dependency or unsafe Rust. Its freshly built 368,944-byte release binary has
+SHA-256 `c1ffef35588516903217aeefad173fcf55daa58cec9f6ebcae37a70140e56cc6` and
+passes the release-binary smoke matrix.
+
+Formal cycle 3 rejected that exact candidate. Correctness/API reported 0
+blocker, 0 high, 0 medium, and 1 low and is **NOT GREEN**; native config/error
+lifecycle and performance/CLI portability each reported 0/0/0/0 and are
+**GREEN**. The deduplicated union is 0/0/0/1. The sole finding is stale lower
+permissions lineage in `docs/security.md`. The security prose and ledger
+remediation are composed. Another complete replacement gate, three fresh
+same-SHA reviews, main integration, delivery, and exact feature and `main`
+workflows remain pending. The combined top-level
 CLI inventory remains planned, and this slice makes no benchmark-workload,
 product-performance, compatibility-promotion, or fx-equivalence claim.
 

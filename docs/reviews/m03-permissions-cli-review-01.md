@@ -1,6 +1,6 @@
 # Milestone 03 `permissions` CLI review 01
 
-Status: **IN PROGRESS — CYCLE 2 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 3 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
 
 ## Base and boundary
 
@@ -225,5 +225,73 @@ replacement:
 - reconcile the maintained current-candidate and gate record.
 
 The composed replacement must pass another complete local gate and receive
-three fresh reviews on one new immutable SHA and tree. Feature
-and `main` workflows, integration, and delivery remain pending.
+three fresh reviews on one new immutable SHA and tree. At that checkpoint,
+feature and `main` workflows, main integration, and delivery remained pending.
+
+### Exact cycle-3 replacement gate
+
+Exact candidate `4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
+`d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- `cargo +1.94.1 fmt --all -- --check` passed;
+- `cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings`
+  passed;
+- `cargo +1.94.1 test --workspace` passed;
+- `cargo +1.94.1 test --doc --workspace` passed;
+- focused native-configuration and CLI suites passed;
+- the compatibility generator check against pinned fx
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` and all 31 generator tests
+  passed;
+- documentation integrity covered 76 Markdown files, 110 fenced code blocks,
+  and 391 repository-relative targets with zero errors;
+- the candidate added no dependency and no unsafe Rust; and
+- a fresh 368,944-byte release binary had SHA-256
+  `c1ffef35588516903217aeefad173fcf55daa58cec9f6ebcae37a70140e56cc6` and
+  passed the release-binary smoke matrix.
+
+This replacement gate is evidence for the rejected cycle-3 candidate only. It
+makes no remediation, workflow, main-integration, delivery, compatibility,
+performance, or fx-equivalence claim.
+
+### Cycle 3 — NOT GREEN
+
+All three tracks reviewed exact candidate
+`4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
+`d1eba954a983d77f2d6d11521016dc3c8eae3735`:
+
+| Track | Blocker | High | Medium | Low | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Correctness/API | 0 | 0 | 0 | 1 | **NOT GREEN** |
+| Native config/error lifecycle | 0 | 0 | 0 | 0 | **GREEN** |
+| Performance/CLI portability | 0 | 0 | 0 | 0 | **GREEN** |
+| Deduplicated union | 0 | 0 | 0 | 1 | **NOT GREEN** |
+
+Any finding rejects a candidate, so exact cycle 3 is rejected. The sole
+finding is:
+
+1. **LOW — stale lower security-document lineage.** The lower permissions
+   paragraph in `docs/security.md` still describes cycle 2 as the current
+   rejected review and says its replacement gate and reviews are pending,
+   despite the exact cycle-3 gate and review above. This is maintained process
+   evidence, not a product-behavior defect. Reviewers confirmed the implemented
+   lazy environment selection, supported-Unix filesystem qualification, exact
+   CLI bytes, bounded work, and platform behavior remain correct.
+
+### Cycle-3 remediation composed
+
+Exact isolated documentation components are:
+
+- security correction `4ade5d839be699accaa4dac834787eab135244b2`, tree
+  `d2dabd20dcbd1bf0e6f3c005f715d8839e12a3f2`;
+- security lineage rollover `32236fd8b67cdc44d9deb0ee3ca5b45708560f38`,
+  tree `f179700fab0a38386cabda02e16d121edbb556a0`; and
+- review-ledger and maintained-summary component
+  `ef1f619e72193d08ba3729042201543a10f5d838`, tree
+  `2368c3cd3fd209ba64a8f3a1cc3fcd5014521289`.
+
+They are composed into one new immutable candidate. That candidate must pass
+the complete replacement local gate and receive three fresh
+correctness/API, native config/error lifecycle, and performance/CLI portability
+reviews. Exact feature workflows, non-force main integration, exact `main`
+workflows, and delivery remain pending.

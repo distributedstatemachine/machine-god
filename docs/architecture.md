@@ -33,15 +33,15 @@ product-performance or fx-equivalence claim. Implemented slice twenty-eight
 adds read-only top-level `permissions [--json]` from exact base `8d8ecc7`
 without moving rule, grant, engine, session, runtime, credential, or network
 state into the CLI; see [`permissions-cli.md`](permissions-cli.md). Exact
-cycle-2 candidate `e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
-`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
-local gate, but formal review is **NOT GREEN** with a deduplicated 0 blocker, 0
-high, 0 medium, and 2 low findings. Exact native component
-`fa83c6c6427028c18e1c36ba6603eb44e4102eac`, tree
-`a9ac7a1c147cb2ea61c61bcbf8cb58ac407bb14f`, and documentation component
-`1f8968d7592de544be3c5549c275c6bc876e62c0`, tree
-`058aa738487bfce08be2d964f8a577fdc12fea09`, compose the cycle-2 remediation;
-another replacement gate and reviews, integration, and delivery remain pending.
+cycle-3 candidate `4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
+`d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete exact-1.94.1
+replacement gate without fallback, but formal review is **NOT GREEN** with a
+deduplicated 0 blocker, 0 high, 0 medium, and 1 low finding. Correctness/API
+found stale lower permissions lineage in `security.md`; native config/error
+lifecycle and performance/CLI portability were green with zero findings. The
+security prose and cycle ledger remediation are composed; another complete
+replacement gate and three fresh reviews, main integration, and delivery remain
+pending.
 The retained
 `web_fetch` review lineage begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
@@ -730,9 +730,10 @@ even in human status so path contents do not become terminal controls. Bare
 invocation keeps the bootstrap identity contract. Help, version, status,
 permissions, and argument errors are byte-stable presentation behavior, not an
 engine-owned command model. The permissions slice remains in progress after a
-rejected cycle 2; remediation is composed, while another
-replacement local gate, three fresh reviews, integration, and delivery remain
-pending.
+rejected cycle 3. Its sole low finding is stale lower permissions lineage in
+`security.md`; that prose remediation is composed. Another
+complete replacement local gate, three fresh reviews, main integration, and
+delivery remain pending.
 
 The synchronous loader resolves only the config location. In the thirteenth
 slice, an unavailable location or missing file yields the explicit built-in
@@ -779,7 +780,10 @@ retries the first 15 cumulative interrupted results, maps the 16th to the
 existing fixed `Unreadable` result, and proves both boundaries plus cumulative
 counting with a deterministic injected reader. Cycle 2 confirmed those
 boundaries and reported only the lazy-environment and target-qualified-contract
-lows described above. Cycle-2 remediation is composed and replacement review is pending.
+lows described above. Cycle-2 remediation is composed. The complete cycle-3
+gate and all three fresh tracks confirmed the corrected loader behavior; cycle
+3 was rejected only for stale lower permissions lineage in `security.md`.
+That prose remediation is composed; its replacement gate and reviews are pending.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 model values, or operating-system error text. Credential bytes remain in no

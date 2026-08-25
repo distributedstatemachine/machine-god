@@ -25,12 +25,14 @@ The implemented twenty-eighth bounded slice adds top-level
 configuration read-only and reports ask-only permission configuration without
 constructing an engine or inventing persistent rule or runtime grant state.
 Its separate production, independent-evidence, and documentation components
-are composed in this feature change. Exact cycle-2 candidate
-`e0d590608640d7fe95f307163c99efd3e90fd2b3`, tree
-`cd8919b1ff86af1b1bfbd0421a8280fc57473444`, passed the complete replacement
-local gate but is **NOT GREEN** after formal review reported a deduplicated zero
-blocker, zero high, zero medium, and two low findings. Cycle-2 remediation is
-composed but not yet replacement-gated; another replacement gate, three fresh reviews,
+are composed in this feature change. Exact cycle-3 candidate
+`4645a0fa646d2f2bb7138cd55a8ded924d9b8992`, tree
+`d1eba954a983d77f2d6d11521016dc3c8eae3735`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback but is **NOT
+GREEN** after formal review reported a deduplicated zero blocker, zero high,
+zero medium, and one low finding. The only finding is stale lower permissions
+lineage in `security.md`; its prose remediation is composed. Another complete
+replacement gate, three fresh reviews, main
 integration, and delivery remain pending.
 
 The delivered by-ID native lifecycle and delivered sixteenth
@@ -233,8 +235,11 @@ cumulative interruption with fixed `Unreadable` and never requests
 when nonempty `XDG_CONFIG_HOME` already decides selection. The composed cycle-2
 replacement reads `XDG_CONFIG_HOME` first and reads `HOME` only when XDG is
 missing or empty; a nonempty valid, invalid-relative, or non-Unicode XDG value
-neither reads nor falls back to `HOME`. Its replacement gate and fresh reviews
-remain pending.
+neither reads nor falls back to `HOME`. The cycle-3 gate confirmed this
+behavior; cycle 3 was rejected only for stale lower permissions lineage in
+`security.md`.
+That prose remediation is composed, so another complete
+replacement gate and three fresh reviews remain pending.
 
 ## Status output
 
