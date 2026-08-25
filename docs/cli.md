@@ -1,9 +1,11 @@
 # Command-line interface
 
 The `machine-god` binary is the thin native reference host for the embeddable
-engine. This page defines the exact Milestone 03 config/status slice. The
-commands inspect process environment and filesystem metadata only; they do not
-parse configuration, create directories, write files, or start the engine.
+engine. This page defines the exact Milestone 03 config/status and permissions
+surfaces. Status inspects process environment and filesystem metadata without
+parsing configuration. Permissions loads the existing strict native
+configuration exactly once and read-only. Neither path creates directories,
+writes files, starts the engine, or grants runtime authority.
 The separate integrated [`native configuration schema v3`](configuration.md)
 does not change that boundary or any CLI byte documented below. Its production
 implementation, independent tests, local gates, and all three adversarial tracks
@@ -17,12 +19,14 @@ surface. The separate fourteenth composed
 no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
-A proposed twenty-eighth bounded slice freezes top-level
-`permissions [--json]` in [`permissions-cli.md`](permissions-cli.md). It will
-load the existing strict native configuration read-only and report ask-only
-permission configuration without constructing an engine or inventing
-persistent rule or runtime grant state. That command is not implemented by the
-config/status behavior documented on this page yet.
+The implemented twenty-eighth bounded slice adds top-level
+`permissions [--json]` under the frozen boundary in
+[`permissions-cli.md`](permissions-cli.md). It loads the existing strict native
+configuration read-only and reports ask-only permission configuration without
+constructing an engine or inventing persistent rule or runtime grant state.
+Its separate production, independent-evidence, and documentation components
+are composed in this feature change; local gates, formal review, integration,
+and delivery remain pending.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -138,6 +142,8 @@ machine-god --help
 machine-god -h
 machine-god --version
 machine-god -V
+machine-god permissions
+machine-god permissions --json
 machine-god status
 machine-god status --json
 ```
@@ -160,16 +166,55 @@ Embeddable coding-agent engine
 Usage:
   machine-god
   machine-god help
+  machine-god permissions [--json]
   machine-god status [--json]
 
 Commands:
-  help      Show this help
-  status    Show configuration and runtime information
+  help         Show this help
+  permissions  Show the permission mode and rules
+  status       Show configuration and runtime information
 
 Options:
   -h, --help       Show this help
   -V, --version    Show version
 ```
+
+## Permissions output
+
+`machine-god permissions` writes four lines with a final LF:
+
+```text
+machine-god 0.1.0 (engine API 1)
+permission_mode: ask
+persistent_rules: unsupported
+runtime_grants: unavailable
+```
+
+`machine-god permissions --json` writes this exact compact object in fixed key
+order, followed by one LF:
+
+```json
+{"name":"machine-god","version":"0.1.0","engine_api_version":1,"kind":"permissions","permission_mode":"ask","persistent_rules_supported":false,"runtime_grants_available":false}
+```
+
+Argument validation completes before any configuration access. A valid
+invocation calls `load_process_config()` exactly once. A missing file or
+unavailable configuration location uses the safe built-in schema-v3
+configuration; valid strict v1, v2, or v3 configuration reports `ask` and is
+never rewritten. The command observes no provider, transport, model, credential
+source, config path, or state path.
+
+Every configuration-load failure exits 1, writes no stdout, and writes this
+fixed redacted diagnostic with a final LF:
+
+```text
+machine-god: failed to load configuration
+```
+
+The fields reporting unsupported persistent rules and unavailable runtime
+grants are honest capability statements, not empty policy databases. The
+command creates no engine, permission prompt, session store, state root, Tokio
+runtime, credential discovery, network transport, rule store, or grant store.
 
 ## Status output
 
@@ -245,7 +290,7 @@ this exact stderr with a final LF:
 
 ```text
 machine-god: invalid arguments
-Usage: machine-god [help | --help | -h | --version | -V | status [--json]]
+Usage: machine-god [help | --help | -h | --version | -V | permissions [--json] | status [--json]]
 ```
 
 An output-write failure exits 1 and uses this fixed diagnostic on stderr:

@@ -29,10 +29,12 @@ feature benchmark-evidence `32874471812`, main CI `32875016066`, and main
 benchmark-evidence `32875015892` are green; both benchmark runs retain two
 nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
-product-performance or fx-equivalence claim. Proposed slice twenty-eight freezes
-read-only top-level `permissions [--json]` from exact base `8d8ecc7` without
-moving rule, grant, engine, session, runtime, credential, or network state into
-the CLI; see [`permissions-cli.md`](permissions-cli.md). The retained
+product-performance or fx-equivalence claim. Implemented slice twenty-eight
+adds read-only top-level `permissions [--json]` from exact base `8d8ecc7`
+without moving rule, grant, engine, session, runtime, credential, or network
+state into the CLI; see [`permissions-cli.md`](permissions-cli.md). Its separate
+components are composed in this feature change but have not yet passed local
+gates, formal review, integration, or delivery. The retained
 `web_fetch` review lineage begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
@@ -606,9 +608,12 @@ For config and status, `machine-god-native` snapshots only `XDG_CONFIG_HOME`,
 `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and state paths, and
 inspects their final metadata for status. A separate
 synchronous native authority can load the resolved config file read-only.
-`machine-god-cli` remains a thin formatter for status, does not invoke the
-loader, and owns no product state. The exact surfaces are documented in
-[`cli.md`](cli.md) and [`configuration.md`](configuration.md). The separate
+`machine-god-cli` remains a thin formatter and owns no product state. Status
+does not invoke the loader; the implemented `permissions [--json]` path invokes
+it exactly once after complete argument validation and observes only the
+validated permission mode. The exact surfaces are documented in
+[`cli.md`](cli.md), [`permissions-cli.md`](permissions-cli.md), and
+[`configuration.md`](configuration.md). The separate
 [`read_file` contract](read-file.md),
 [`list_files` contract](list-files.md), delivered
 [`file_info` contract](file-info.md), delivered eighteenth
@@ -629,6 +634,7 @@ credential authority.
 process environment -> resolved native paths
  config path --+-> final metadata -----------> status -> CLI text/JSON
                +-> bounded read-only loader -> strict v1/v2/v3 config data
+                                             -> permissions -> CLI text/JSON
  state path ------> final metadata -----------> status -> CLI text/JSON
 
 host-selected absolute workspace -> retained directory authority
@@ -698,15 +704,18 @@ Status inspection remains deliberately shallower than configuration loading. It
 uses `symlink_metadata` on the final path, reports
 missing/inaccessible/wrong-kind states, and treats a final symlink as
 wrong-kind. It does not open, read, or parse the config file. Permission mode is
-fixed to `ask`; the CLI does not construct an engine, register `read_file`,
+fixed to `ask`. The separate permissions path loads strict configuration once,
+reports only that mode plus explicit unsupported persistent-rule and
+unavailable runtime-grant state, and reflects no config path or content on
+failure. Neither CLI path constructs an engine, registers `read_file`,
 `list_files`, delivered `file_info`, delivered `glob_files`, or candidate
-`grep_files`, or prompt for
-permission. The CLI
+`grep_files`, or prompts for permission. The CLI
 serializes paths as JSON strings
 even in human status so path contents do not become terminal controls. Bare
-invocation keeps the bootstrap identity contract. Help, version, status, and
-argument errors remain byte-stable presentation behavior, not an engine-owned
-command model.
+invocation keeps the bootstrap identity contract. Help, version, status,
+permissions, and argument errors are byte-stable presentation behavior, not an
+engine-owned command model. The permissions slice remains in progress pending
+local gates, formal review, integration, and delivery.
 
 The synchronous loader resolves only the config location. In the thirteenth
 slice, an unavailable location or missing file yields the explicit built-in
@@ -757,11 +766,12 @@ injected credential snapshot. Its runtime `credential_source()` remains the
 concrete selected OIDC-token or API-key source; the custom-transport override
 skips discovery and reports `None`. Configuration mutation or migration,
 permission modes beyond `ask`, a concrete prompt UI, runtime ownership, token
-fields in config, CLI composition, the native tools beyond bounded `read_file`,
+fields in config, CLI composition beyond the read-only permissions projection,
+the native tools beyond bounded `read_file`,
 `list_files`, delivered `file_info`, delivered `glob_files`, and candidate
 `grep_files` library
 capabilities, session
-migration/encryption, CLI expansion, and composed release-binary end-to-end
+migration/encryption, remaining CLI expansion, and composed release-binary end-to-end
 evidence remain open. The by-ID lifecycle, session-listing extension, and
 `file_info` are delivered; the broader native-tool inventory remains open.
 

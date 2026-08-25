@@ -5,6 +5,18 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const IDENTITY: &str = "machine-god 0.1.0 (engine API 1)\n";
+const PERMISSIONS: &str = concat!(
+    "machine-god 0.1.0 (engine API 1)\n",
+    "permission_mode: ask\n",
+    "persistent_rules: unsupported\n",
+    "runtime_grants: unavailable\n",
+);
+const PERMISSIONS_JSON: &str = concat!(
+    "{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
+    "\"engine_api_version\":1,\"kind\":\"permissions\",",
+    "\"permission_mode\":\"ask\",\"persistent_rules_supported\":false,",
+    "\"runtime_grants_available\":false}\n",
+);
 const HELP: &str = concat!(
     "machine-god 0.1.0\n",
     "Embeddable coding-agent engine\n",
@@ -12,11 +24,13 @@ const HELP: &str = concat!(
     "Usage:\n",
     "  machine-god\n",
     "  machine-god help\n",
+    "  machine-god permissions [--json]\n",
     "  machine-god status [--json]\n",
     "\n",
     "Commands:\n",
-    "  help      Show this help\n",
-    "  status    Show configuration and runtime information\n",
+    "  help         Show this help\n",
+    "  permissions  Show the permission mode and rules\n",
+    "  status       Show configuration and runtime information\n",
     "\n",
     "Options:\n",
     "  -h, --help       Show this help\n",
@@ -24,8 +38,10 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | permissions [--json] | status [--json]]\n",
 );
+const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
+const MAX_CONFIG_BYTES: usize = 64 * 1024;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -80,10 +96,37 @@ fn run_with_roots(arguments: &[&str], config: &OsStr, state: &OsStr) -> Output {
         .unwrap()
 }
 
+fn run_without_roots(arguments: &[&str]) -> Output {
+    machine_god()
+        .args(arguments)
+        .env_remove("HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_STATE_HOME")
+        .output()
+        .unwrap()
+}
+
+fn config_path(config_root: &Path) -> PathBuf {
+    config_root.join("machine-god/config.json")
+}
+
+fn write_config(config_root: &Path, contents: &[u8]) -> PathBuf {
+    let path = config_path(config_root);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, contents).unwrap();
+    path
+}
+
 fn assert_success(output: &Output, stdout: &str) {
     assert!(output.status.success(), "status: {:?}", output.status);
     assert_eq!(output.stdout, stdout.as_bytes());
     assert!(output.stderr.is_empty());
+}
+
+fn assert_config_failure(output: &Output) {
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, CONFIG_FAILURE.as_bytes());
 }
 
 #[test]
@@ -106,6 +149,11 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["unknown"][..],
         &["help", "extra"][..],
         &["--json", "status"][..],
+        &["--json", "permissions"][..],
+        &["permissions", "--json=true"][..],
+        &["permissions", "extra"][..],
+        &["permissions", "--json", "extra"][..],
+        &["permissions", "--json", "--json"][..],
         &["status", "--json=true"][..],
         &["status", "--json", "extra"][..],
         &["status", "--json", "--json"][..],
@@ -115,6 +163,186 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         assert!(output.stdout.is_empty());
         assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
     }
+}
+
+#[test]
+fn permissions_missing_config_uses_exact_safe_defaults_without_writes() {
+    let temporary = TestDirectory::new("permissions-missing");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+
+    assert_success(
+        &run_with_roots(
+            &["permissions"],
+            config_root.as_os_str(),
+            state_root.as_os_str(),
+        ),
+        PERMISSIONS,
+    );
+    assert_success(
+        &run_with_roots(
+            &["permissions", "--json"],
+            config_root.as_os_str(),
+            state_root.as_os_str(),
+        ),
+        PERMISSIONS_JSON,
+    );
+
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn invalid_permissions_arguments_precede_invalid_configuration() {
+    let temporary = TestDirectory::new("permissions-argument-precedence");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("state");
+    let contents = b"CLI_ARGUMENT_PRECEDENCE_SECRET:not-json";
+    let path = write_config(&config_root, contents);
+
+    for arguments in [
+        &["permissions", "extra"][..],
+        &["permissions", "--json", "extra"][..],
+    ] {
+        let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+
+    assert_eq!(fs::read(path).unwrap(), contents);
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn permissions_reads_v1_v2_and_v3_without_rewrite_or_state_access() {
+    let schemas: [(&str, &[u8]); 3] = [
+        (
+            "v1",
+            br#"{"schema_version":1,"permission_mode":"ask"}"#,
+        ),
+        (
+            "v2",
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_V2_MODEL_MARKER"}"#,
+        ),
+        (
+            "v3",
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_V3_MODEL_MARKER","credential_source":"environment"}"#,
+        ),
+    ];
+
+    for (schema, contents) in schemas {
+        let temporary = TestDirectory::new(&format!("permissions-schema-{schema}"));
+        let config_root = temporary.path().join("config");
+        let state_root = temporary.path().join("missing-state");
+        let path = write_config(&config_root, contents);
+
+        assert_success(
+            &run_with_roots(
+                &["permissions"],
+                config_root.as_os_str(),
+                state_root.as_os_str(),
+            ),
+            PERMISSIONS,
+        );
+        assert_eq!(fs::read(&path).unwrap(), contents);
+        assert!(!state_root.exists());
+
+        assert_success(
+            &run_with_roots(
+                &["permissions", "--json"],
+                config_root.as_os_str(),
+                state_root.as_os_str(),
+            ),
+            PERMISSIONS_JSON,
+        );
+        assert_eq!(fs::read(&path).unwrap(), contents);
+        assert!(!state_root.exists());
+        let entries = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].file_name(), "config.json");
+    }
+}
+
+#[test]
+fn invalid_permission_configs_are_fixed_redacted_failures_without_writes() {
+    let mut oversized = vec![b'x'; MAX_CONFIG_BYTES + 1];
+    let oversize_marker = b"CLI_OVERSIZE_SECRET";
+    oversized[..oversize_marker.len()].copy_from_slice(oversize_marker);
+    let cases = [
+        (
+            "strict",
+            br#"{"schema_version":3,"permission_mode":"deny","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_INVALID_CONFIG_SECRET","credential_source":"environment"}"#.to_vec(),
+        ),
+        (
+            "malformed",
+            br#"{"schema_version":3,"model":"CLI_MALFORMED_SECRET""#.to_vec(),
+        ),
+        (
+            "non-utf8",
+            b"{\"schema_version\":3,\"model\":\"CLI_NON_UTF8_SECRET\xff\"}".to_vec(),
+        ),
+        (
+            "unsupported",
+            br#"{"schema_version":4,"future_secret":"CLI_UNSUPPORTED_SECRET"}"#.to_vec(),
+        ),
+        ("oversized", oversized),
+    ];
+
+    for (case, contents) in cases {
+        let temporary = TestDirectory::new(&format!("permissions-invalid-{case}"));
+        let config_root = temporary.path().join("config");
+        let state_root = temporary.path().join("state");
+        let path = write_config(&config_root, &contents);
+
+        for arguments in [&["permissions"][..], &["permissions", "--json"][..]] {
+            let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+            assert_config_failure(&output);
+            assert_eq!(fs::read(&path).unwrap(), contents);
+            assert!(!state_root.exists());
+        }
+    }
+}
+
+#[test]
+fn permission_config_wrong_file_type_is_a_fixed_redacted_failure() {
+    let temporary = TestDirectory::new("permissions-wrong-type");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("state");
+    let path = config_path(&config_root);
+    fs::create_dir_all(&path).unwrap();
+
+    for arguments in [&["permissions"][..], &["permissions", "--json"][..]] {
+        let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+        assert_config_failure(&output);
+    }
+
+    assert!(path.is_dir());
+    assert_eq!(fs::read_dir(path).unwrap().count(), 0);
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn invalid_config_environment_is_a_fixed_redacted_failure_without_fallback() {
+    let temporary = TestDirectory::new("permissions-invalid-environment");
+    let state_root = temporary.path().join("state");
+
+    for arguments in [&["permissions"][..], &["permissions", "--json"][..]] {
+        let output = machine_god()
+            .args(arguments)
+            .env("HOME", temporary.path())
+            .env("XDG_CONFIG_HOME", "CLI_RELATIVE_CONFIG_SECRET")
+            .env("XDG_STATE_HOME", &state_root)
+            .output()
+            .unwrap();
+        assert_config_failure(&output);
+    }
+
+    assert!(!state_root.exists());
+    assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
 }
 
 #[test]
@@ -246,13 +474,7 @@ fn schema_v2_composition_does_not_change_status_bytes_or_rewrite_config() {
 
 #[test]
 fn unavailable_environment_uses_null_paths() {
-    let output = machine_god()
-        .args(["status", "--json"])
-        .env_remove("HOME")
-        .env_remove("XDG_CONFIG_HOME")
-        .env_remove("XDG_STATE_HOME")
-        .output()
-        .unwrap();
+    let output = run_without_roots(&["status", "--json"]);
     assert_success(
         &output,
         concat!(
@@ -261,6 +483,11 @@ fn unavailable_environment_uses_null_paths() {
             "\"config_file\":{\"path\":null,\"state\":\"unavailable\"},",
             "\"state_directory\":{\"path\":null,\"state\":\"unavailable\"}}\n",
         ),
+    );
+    assert_success(&run_without_roots(&["permissions"]), PERMISSIONS);
+    assert_success(
+        &run_without_roots(&["permissions", "--json"]),
+        PERMISSIONS_JSON,
     );
 }
 
@@ -310,6 +537,57 @@ fn status_escapes_path_control_characters() {
 
 #[cfg(unix)]
 #[test]
+fn non_unicode_config_environment_is_a_fixed_redacted_failure() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let temporary = TestDirectory::new("permissions-non-unicode-environment");
+    let state_root = temporary.path().join("state");
+    let config_root = OsString::from_vec(b"CLI_ENV_SECRET-\xff".to_vec());
+
+    for arguments in [&["permissions"][..], &["permissions", "--json"][..]] {
+        let output = machine_god()
+            .args(arguments)
+            .env("HOME", temporary.path())
+            .env("XDG_CONFIG_HOME", &config_root)
+            .env("XDG_STATE_HOME", &state_root)
+            .output()
+            .unwrap();
+        assert_config_failure(&output);
+    }
+
+    assert!(!state_root.exists());
+    assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_permission_config_is_redacted_when_modes_are_enforced() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temporary = TestDirectory::new("permissions-unreadable");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("state");
+    let contents = br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_UNREADABLE_SECRET","credential_source":"environment"}"#;
+    let path = write_config(&config_root, contents);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+
+    if fs::File::open(&path).is_ok() {
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        return;
+    }
+
+    for arguments in [&["permissions"][..], &["permissions", "--json"][..]] {
+        let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+        assert_config_failure(&output);
+    }
+
+    assert!(!state_root.exists());
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(fs::read(path).unwrap(), contents);
+}
+
+#[cfg(unix)]
+#[test]
 fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
     use std::os::unix::ffi::OsStringExt;
 
@@ -338,8 +616,8 @@ fn final_symlinks_are_reported_as_wrong_kinds() {
     fs::create_dir(&target_directory).unwrap();
     fs::create_dir_all(config_path.parent().unwrap()).unwrap();
     fs::create_dir_all(state_path.parent().unwrap()).unwrap();
-    symlink(target_file, config_path).unwrap();
-    symlink(target_directory, state_path).unwrap();
+    symlink(&target_file, config_path).unwrap();
+    symlink(&target_directory, state_path).unwrap();
 
     let output = run_with_roots(
         &["status", "--json"],
@@ -351,4 +629,13 @@ fn final_symlinks_are_reported_as_wrong_kinds() {
     assert!(output.stderr.is_empty());
     assert!(stdout.contains("\"state\":\"not_file\""));
     assert!(stdout.contains("\"state\":\"not_directory\""));
+
+    let permissions = run_with_roots(
+        &["permissions"],
+        config_root.as_os_str(),
+        state_root.as_os_str(),
+    );
+    assert_config_failure(&permissions);
+    assert_eq!(fs::read(target_file).unwrap(), b"{}");
+    assert!(target_directory.is_dir());
 }

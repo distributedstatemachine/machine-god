@@ -15,11 +15,13 @@ tracks reported zero findings at every severity. Exact feature CI
 and main benchmark-evidence `32875015892` are green; each benchmark run retains
 two nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
-product-performance or fx-equivalence claim. A proposed twenty-eighth
-top-level `permissions [--json]` slice is **IN PROGRESS — CONTRACT FROZEN;
-IMPLEMENTATION PENDING** from exact delivered base `8d8ecc7`; it is read-only,
-ask-only, and owns no persistent rules or runtime grant state. See the
-[`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
+product-performance or fx-equivalence claim. The implemented twenty-eighth
+top-level `permissions [--json]` slice is **IN PROGRESS — LOCAL GATES AND FORMAL
+REVIEW PENDING** from exact delivered base `8d8ecc7`; it is read-only, ask-only,
+and owns no persistent rules or runtime grant state. Its separate production,
+evidence, and documentation components are composed in this feature change;
+complete local gates, formal review, integration, and delivery remain pending.
+See the [`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
 review history begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust

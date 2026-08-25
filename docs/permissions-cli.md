@@ -1,12 +1,16 @@
 # Native `permissions` CLI contract
 
-Status: **IN PROGRESS — CONTRACT FROZEN; IMPLEMENTATION PENDING**.
+Status: **IN PROGRESS — IMPLEMENTED; LOCAL GATES AND FORMAL REVIEW PENDING**.
 
-This is the proposed twenty-eighth bounded Milestone 03 slice. It starts from
+This is the implemented twenty-eighth bounded Milestone 03 slice. It starts from
 exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
 `e1508d91edfb524df470cdf7c9b3112c4d145e4a`. The slice adds one read-only
 top-level command to the thin native host. It does not complete the M03 CLI
-inventory and makes no product-performance or fx-equivalence claim.
+inventory. Production, independent evidence, and maintained documentation are
+separate isolated-worktree components composed in this feature change. The
+slice remains in progress pending complete local gates, three fresh zero-finding
+reviews on one exact candidate, integration, and exact remote workflows. It
+makes no product-performance or fx-equivalence claim.
 
 ## Command grammar
 
@@ -20,11 +24,26 @@ machine-god permissions --json
 `--json` is accepted exactly once and only after `permissions`. Unknown,
 reordered, repeated, additional, or non-Unicode arguments fail through the
 existing invalid-arguments boundary: exit code 2, empty standard output, and
-the one exact usage diagnostic on standard error. Argument validation completes
-before configuration is inspected.
+this exact diagnostic on standard error, including the final LF:
 
-The general `help`, `--help`, and `-h` output lists the new command. This slice
-does not add command-local help or a `/permissions` interactive slash command.
+```text
+machine-god: invalid arguments
+Usage: machine-god [help | --help | -h | --version | -V | permissions [--json] | status [--json]]
+```
+
+Argument validation completes before configuration is inspected.
+
+The general `help`, `--help`, and `-h` output lists `permissions` between
+`help` and `status`, with this exact command row:
+
+```text
+  permissions  Show the permission mode and rules
+```
+
+The global one-line invalid-argument usage includes
+`permissions [--json]` before `status [--json]`. The complete exact help and
+usage transcripts are maintained in [`cli.md`](cli.md). This slice does not add
+command-local help or a `/permissions` interactive slash command.
 
 ## Authority and loading
 

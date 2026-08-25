@@ -13,9 +13,12 @@ Milestone 03 remains `IN PROGRESS`. Full lineage is recorded in the
 
 The native configuration loader is a bounded, synchronous, read-only
 `machine-god-native` authority. Core remains independent of the process
-environment and filesystem, and the CLI does not invoke the loader. This
-slice advances the built-in and current file schema to v3 while retaining
-strict read compatibility for the exact legacy v1 and v2 objects.
+environment and filesystem. `machine-god status` remains metadata-only and
+does not invoke the loader. The implemented, not-yet-reviewed
+`machine-god permissions [--json]` path invokes it exactly once after complete
+argument validation and observes only permission mode. This slice advances the
+built-in and current file schema to v3 while retaining strict read compatibility
+for the exact legacy v1 and v2 objects.
 
 ## Location and defaults
 
@@ -203,9 +206,10 @@ the loader. Its preparation authority remains independent of this read-only
 surface; schema-v3 built-in and file bytes are unchanged.
 
 Configuration mutation, a migration or rewrite command, a terminal permission
-prompter and modes beyond `ask`, runtime and CLI composition, session lifecycle,
-the remaining native tools, CLI and session expansion, release-binary end-to-
-end host evidence, and compatibility or performance claims remain open. The
+prompter and modes beyond `ask`, runtime composition, CLI composition beyond
+the read-only permissions projection, session lifecycle, the remaining native
+tools, remaining CLI and session expansion, release-binary end-to-end host
+evidence, and compatibility or performance claims remain open. The
 combined credential-and-configuration
 checklist item is complete after implementation, independent tests, three green
 adversarial tracks, exact feature workflows, fast-forward integration, and

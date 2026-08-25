@@ -1,6 +1,6 @@
 # Milestone 03 `permissions` CLI review 01
 
-Status: **IN PROGRESS — CONTRACT FROZEN; IMPLEMENTATION PENDING**
+Status: **IN PROGRESS — IMPLEMENTED; LOCAL GATE AND FORMAL REVIEW PENDING**
 
 ## Base and boundary
 
@@ -24,6 +24,18 @@ Parallel agents use isolated worktrees and non-overlapping files:
 2. **Independent evidence** owns `crates/machine-god-cli/tests/cli.rs`.
 3. **Documentation** owns maintained behavior summaries after production and
    evidence compose.
+
+The isolated components are:
+
+- production `c75d44a26f401b6151563b11416d78aaf0ca8d03`, tree
+  `a6ee3296d1b183529238d29a7663dcd28df74d66`;
+- independent evidence `54832ba8ec10743b49d0154499fdf66c30b90dd1`,
+  tree `c030e2ce1290c926cb0229a443979c97067cd4f8`; and
+- maintained documentation `2379d90e2226fcbe20d86a5e19eb276cd9a63b5c`,
+  tree `a470d603ab5b325ac031a04c1d40964b46c1c2db`.
+
+They are composed in one feature change before candidate validation. None was
+pushed independently.
 
 No component may revert another agent's changes, edit generated compatibility
 artifacts manually, add dependencies, or move product state into the CLI.
@@ -62,4 +74,5 @@ exempt from redundant adversarial review under the user's instruction.
 
 ## Review cycles
 
-No implementation candidate has been nominated.
+No formal-review candidate has been nominated. The composed implementation
+must first pass the complete local gate above.

@@ -5,7 +5,7 @@
 - [Provider-neutral core API](core-api.md)
 - [Deterministic testkit](testkit.md)
 - [Command-line interface](cli.md)
-- [Top-level `permissions` CLI contract](permissions-cli.md)
+- [Implemented top-level `permissions` CLI contract](permissions-cli.md)
 - [Native configuration and schema-v3 credential source](configuration.md)
 - [Native `read_file` tool](read-file.md)
 - [Native `list_files` tool](list-files.md)

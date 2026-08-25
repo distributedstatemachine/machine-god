@@ -52,12 +52,15 @@ benchmark-evidence `32875015892` are green; each benchmark run retains two
 nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
-performance or fx-equivalence claim. A proposed twenty-eighth top-level
-`permissions [--json]` slice is **IN PROGRESS — CONTRACT FROZEN; IMPLEMENTATION
-PENDING** from exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`.
-It is a read-only projection of the already delivered ask-only native
-configuration and owns no rule, grant, engine, runtime, session, credential, or
-network state. The retained `web_fetch` review lineage begins with pre-review
+performance or fx-equivalence claim. The implemented twenty-eighth top-level
+`permissions [--json]` slice is **IN PROGRESS — LOCAL GATES AND FORMAL REVIEW
+PENDING** from exact delivered base
+`8d8ecc7a37f866251d4047c01acdf1bbd485f4da`. It is a read-only projection of
+the already delivered ask-only native configuration and owns no rule, grant,
+engine, runtime, session, credential, or network state. Its separate production,
+independent-evidence, and maintained-documentation components are composed in
+this feature change but are not yet reviewed, integrated, or delivered. The retained
+`web_fetch` review lineage begins with pre-review
 gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
@@ -2563,14 +2566,17 @@ original plus eleven clones.
 M03 remains **IN PROGRESS** with twenty-seven delivered slices. The delivery
 evidence makes no product-performance or fx-equivalence claim.
 
-### Proposed bounded slice 28: top-level `permissions`
+### In-progress bounded slice 28: top-level `permissions`
 
-The proposed twenty-eighth slice starts from exact delivered base
+The implemented twenty-eighth slice starts from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
 `e1508d91edfb524df470cdf7c9b3112c4d145e4a`. Its normative boundary and review
 protocol are [`permissions-cli.md`](permissions-cli.md) and
 [`m03-permissions-cli-review-01.md`](reviews/m03-permissions-cli-review-01.md).
-The only new grammar is `permissions [--json]`.
+The only new grammar is `permissions [--json]`. Global help lists `help`,
+`permissions`, and `status` in that order; the permissions row is exactly
+`permissions  Show the permission mode and rules`, with the two leading help
+indent spaces documented in [`cli.md`](cli.md).
 
 After complete argument validation, the thin CLI calls the existing bounded,
 read-only `load_process_config()` exactly once and reports only validated
@@ -2583,11 +2589,14 @@ runtime, and performs no write or network effect.
 
 Production owns only `machine-god-cli/src/main.rs`; independent evidence owns
 only `machine-god-cli/tests/cli.rs`; documentation owns the contract and
-maintained summaries. Components compose from isolated worktrees and may not
-add dependencies or hand-edit generated compatibility artifacts. The combined
-top-level CLI inventory remains planned, and this slice makes no benchmark-
-workload, product-performance, compatibility-promotion, or fx-equivalence
-claim.
+maintained summaries. Those separate components implement the frozen behavior
+and are composed in this feature change, but have not yet passed the complete
+local gate and three-track formal review. They were produced from isolated
+worktrees and may not add dependencies or hand-edit generated compatibility
+artifacts. Integration, delivery, and exact feature and `main` workflows
+remain pending. The combined top-level CLI inventory remains planned, and this
+slice makes no benchmark-workload, product-performance, compatibility-promotion,
+or fx-equivalence claim.
 
 ### Milestone 03 completion boundary
 

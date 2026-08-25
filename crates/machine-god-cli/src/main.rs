@@ -5,18 +5,22 @@ use std::io;
 use std::path::Path;
 use std::process::ExitCode;
 
-use machine_god_native::{NativeStatus, inspect_process_status};
+use machine_god_native::{
+    NativeStatus, PermissionMode, inspect_process_status, load_process_config,
+};
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | permissions [--json] | status [--json]]\n",
 );
+const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Command {
     Identity,
     Help,
+    Permissions { json: bool },
     Status { json: bool },
 }
 
@@ -39,6 +43,13 @@ fn run(
     let output = match command {
         Command::Identity => identity(),
         Command::Help => help(),
+        Command::Permissions { json } => {
+            let Ok(loaded) = load_process_config() else {
+                let _ = stderr.write_all(CONFIGURATION_FAILURE.as_bytes());
+                return 1;
+            };
+            permissions(loaded.config().permission_mode(), json)
+        }
         Command::Status { json } => status(&inspect_process_status(), json),
     };
 
@@ -61,6 +72,14 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
     let command = match first {
         "help" | "--help" | "-h" => Command::Help,
         "--version" | "-V" => Command::Identity,
+        "permissions" => {
+            let json = match arguments.next() {
+                None => false,
+                Some(argument) if argument == "--json" => true,
+                Some(_) => return Err(()),
+            };
+            Command::Permissions { json }
+        }
         "status" => {
             let json = match arguments.next() {
                 None => false,
@@ -95,11 +114,13 @@ fn help() -> String {
             "Usage:\n",
             "  machine-god\n",
             "  machine-god help\n",
+            "  machine-god permissions [--json]\n",
             "  machine-god status [--json]\n",
             "\n",
             "Commands:\n",
-            "  help      Show this help\n",
-            "  status    Show configuration and runtime information\n",
+            "  help         Show this help\n",
+            "  permissions  Show the permission mode and rules\n",
+            "  status       Show configuration and runtime information\n",
             "\n",
             "Options:\n",
             "  -h, --help       Show this help\n",
@@ -107,6 +128,35 @@ fn help() -> String {
         ),
         env!("CARGO_PKG_VERSION")
     )
+}
+
+fn permissions(permission_mode: PermissionMode, json: bool) -> String {
+    if json {
+        json_permissions(permission_mode)
+    } else {
+        human_permissions(permission_mode)
+    }
+}
+
+fn human_permissions(permission_mode: PermissionMode) -> String {
+    let mut output = identity();
+    let _ = writeln!(output, "permission_mode: {}", permission_mode.as_str());
+    output.push_str("persistent_rules: unsupported\n");
+    output.push_str("runtime_grants: unavailable\n");
+    output
+}
+
+fn json_permissions(permission_mode: PermissionMode) -> String {
+    let mut output = String::from("{\"name\":\"machine-god\",\"version\":");
+    push_json_string(&mut output, env!("CARGO_PKG_VERSION"));
+    let _ = write!(
+        output,
+        ",\"engine_api_version\":{},\"kind\":\"permissions\",\"permission_mode\":",
+        machine_god_native::supported_core_api_version()
+    );
+    push_json_string(&mut output, permission_mode.as_str());
+    output.push_str(",\"persistent_rules_supported\":false,\"runtime_grants_available\":false}\n");
+    output
 }
 
 fn status(status: &NativeStatus, json: bool) -> String {
@@ -198,7 +248,8 @@ fn push_json_string(output: &mut String, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Command, INVALID_ARGUMENTS, OUTPUT_FAILURE, parse_arguments, push_json_string, run,
+        Command, INVALID_ARGUMENTS, OUTPUT_FAILURE, PermissionMode, json_permissions,
+        parse_arguments, permissions, push_json_string, run,
     };
     use std::ffi::OsString;
     use std::io;
@@ -229,6 +280,14 @@ mod tests {
             );
         }
         assert_eq!(
+            parse_arguments([OsString::from("permissions")]),
+            Ok(Command::Permissions { json: false })
+        );
+        assert_eq!(
+            parse_arguments([OsString::from("permissions"), OsString::from("--json"),]),
+            Ok(Command::Permissions { json: true })
+        );
+        assert_eq!(
             parse_arguments([OsString::from("status")]),
             Ok(Command::Status { json: false })
         );
@@ -241,6 +300,12 @@ mod tests {
             vec![OsString::from("unknown")],
             vec![OsString::from("help"), OsString::from("extra")],
             vec![OsString::from("--json"), OsString::from("status")],
+            vec![OsString::from("permissions"), OsString::from("--json=true")],
+            vec![
+                OsString::from("permissions"),
+                OsString::from("--json"),
+                OsString::from("--json"),
+            ],
             vec![OsString::from("status"), OsString::from("--json=true")],
             vec![
                 OsString::from("status"),
@@ -250,6 +315,29 @@ mod tests {
         ] {
             assert_eq!(parse_arguments(arguments), Err(()));
         }
+    }
+
+    #[test]
+    fn permissions_outputs_are_exact() {
+        assert_eq!(
+            permissions(PermissionMode::Ask, false),
+            concat!(
+                "machine-god 0.1.0 (engine API 1)\n",
+                "permission_mode: ask\n",
+                "persistent_rules: unsupported\n",
+                "runtime_grants: unavailable\n",
+            )
+        );
+        assert_eq!(
+            json_permissions(PermissionMode::Ask),
+            concat!(
+                "{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
+                "\"engine_api_version\":1,\"kind\":\"permissions\",",
+                "\"permission_mode\":\"ask\",",
+                "\"persistent_rules_supported\":false,",
+                "\"runtime_grants_available\":false}\n",
+            )
+        );
     }
 
     #[test]

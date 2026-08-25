@@ -2,11 +2,14 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-proposed twenty-eighth [`permissions` CLI slice](permissions-cli.md) preserves
-that split: after strict argument parsing, the thin host may invoke only the
-existing bounded read-only configuration loader and reports no persistent rule
-or live grant state. It adds no engine, prompt, session, credential, runtime,
-state-root, write, or network authority. The
+implemented twenty-eighth [`permissions` CLI slice](permissions-cli.md)
+preserves that split: after strict argument parsing, the thin host invokes only
+the existing bounded read-only configuration loader, exactly once, and reports
+no persistent rule or live grant state. Invalid configuration fails with empty
+stdout and one fixed diagnostic that reflects no path, content, model, or
+operating-system error. It adds no engine, prompt, session, credential, runtime,
+state-root, write, or network authority. Its separate components are composed
+but remain unreviewed and undelivered pending the required gates. The
 delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code owns DNS, TLS,
@@ -436,10 +439,13 @@ discover or attach a bearer token, or perform network I/O. The non-secret
 acquisition kind may appear in config debug output; the model remains redacted.
 
 The existing status path remains metadata-only and its CLI output is
-byte-stable. Configuration mutation or migration, a concrete prompt UI and
-modes beyond `ask`, token fields in configuration, CLI composition and
-expansion, composed release-binary end-to-end host evidence, and compatibility
-or performance claims remain open. At the historical pre-`create_folder`
+byte-stable. The separate implemented permissions path loads configuration once
+and reports only ask-mode plus honest unsupported/unavailable rule and grant
+capability fields. Configuration mutation or migration, a concrete prompt UI
+and modes beyond `ask`, token fields in configuration, CLI composition beyond
+that read-only projection, remaining CLI expansion, composed release-binary
+end-to-end host evidence, and compatibility or performance claims remain open.
+At the historical pre-`create_folder`
 checkpoint, the delivered library composition included the ten bounded
 workspace tools documented below. `rename_file` and `copy_file` were delivered,
 while `create_folder` implementation and eleven-tool composition were present
