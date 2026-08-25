@@ -33,8 +33,12 @@ product-performance or fx-equivalence claim. Implemented slice twenty-eight
 adds read-only top-level `permissions [--json]` from exact base `8d8ecc7`
 without moving rule, grant, engine, session, runtime, credential, or network
 state into the CLI; see [`permissions-cli.md`](permissions-cli.md). Its separate
-components are composed in this feature change but have not yet passed local
-gates, formal review, integration, or delivery. The retained
+components are composed in exact candidate
+`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`. Its complete local gate passed,
+but formal cycle 1 is **NOT GREEN** with a deduplicated 0 blocker, 0 high, 1
+medium, and 2 low findings. Remediation is composed; a replacement gate and
+reviews, integration, and delivery remain pending. The retained
 `web_fetch` review lineage begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust
@@ -604,14 +608,19 @@ The seventh slice's exact feature-branch evidence is retained in the
 it is integrated on `main` at
 `508b0adbbe4447a85bd08f47095ae16c089c05d5`. Exact main CI run `32535790803`
 and benchmark run `32535790824` are green.
-For config and status, `machine-god-native` snapshots only `XDG_CONFIG_HOME`,
+For status, `machine-god-native` snapshots only `XDG_CONFIG_HOME`,
 `XDG_STATE_HOME`, and `HOME`, resolves namespaced config and state paths, and
-inspects their final metadata for status. A separate
+inspects their final metadata. A separate
 synchronous native authority can load the resolved config file read-only.
 `machine-god-cli` remains a thin formatter and owns no product state. Status
 does not invoke the loader; the implemented `permissions [--json]` path invokes
 it exactly once after complete argument validation and observes only the
-validated permission mode. The exact surfaces are documented in
+validated permission mode. The rejected cycle-1 permissions candidate uses the
+general three-value snapshot, unnecessarily observing `XDG_STATE_HOME`; its
+composed config-loading and permissions snapshot requests `XDG_CONFIG_HOME` and
+then `HOME` and never requests `XDG_STATE_HOME`. Status retains the three-value
+snapshot. The exact surfaces are
+documented in
 [`cli.md`](cli.md), [`permissions-cli.md`](permissions-cli.md), and
 [`configuration.md`](configuration.md). The separate
 [`read_file` contract](read-file.md),
@@ -714,8 +723,9 @@ serializes paths as JSON strings
 even in human status so path contents do not become terminal controls. Bare
 invocation keeps the bootstrap identity contract. Help, version, status,
 permissions, and argument errors are byte-stable presentation behavior, not an
-engine-owned command model. The permissions slice remains in progress pending
-local gates, formal review, integration, and delivery.
+engine-owned command model. The permissions slice remains in progress after a
+rejected cycle 1; remediation is composed, while a replacement local gate,
+three fresh reviews, integration, and delivery remain pending.
 
 The synchronous loader resolves only the config location. In the thirteenth
 slice, an unavailable location or missing file yields the explicit built-in
@@ -755,6 +765,11 @@ On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path no-follow and nonblocking. A preliminary path-kind check is followed
 by authoritative opened-descriptor regularity validation. The loader retains at
 most the 64 KiB cap plus one byte and never writes, creates, or canonicalizes.
+Cycle 1 found that this memory bound does not bound work: the rejected
+candidate retries `Interrupted` reads indefinitely. The composed replacement
+retries the first 15 cumulative interrupted results, maps the 16th to the
+existing fixed `Unreadable` result, and proves both boundaries plus cumulative
+counting with a deterministic injected reader. Replacement review is pending.
 Hardened open semantics for non-Unix targets remain deferred. Typed diagnostics
 distinguish failure classes without reflecting selected paths, file contents,
 model values, or operating-system error text. Credential bytes remain in no

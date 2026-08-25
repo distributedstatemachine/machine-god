@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
@@ -18,6 +19,8 @@ pub const CONFIG_SCHEMA_VERSION: u32 = 3;
 
 /// Maximum number of bytes retained while loading a native configuration.
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
+
+const MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS: usize = 16;
 
 /// Provider selected by a native host configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -278,14 +281,26 @@ pub fn load_native_config(
     }
 }
 
-/// Captures the process environment and synchronously loads native configuration.
+/// Captures only `XDG_CONFIG_HOME` and `HOME` from the process environment, then
+/// synchronously loads native configuration.
 ///
 /// # Errors
 ///
 /// Returns [`NativeConfigError`] under the same conditions as
 /// [`load_native_config`].
 pub fn load_process_config() -> Result<LoadedNativeConfig, NativeConfigError> {
-    load_native_config(&NativeEnvironment::from_process())
+    load_process_config_with(std::env::var_os)
+}
+
+fn load_process_config_with(
+    mut read_environment: impl FnMut(&'static str) -> Option<OsString>,
+) -> Result<LoadedNativeConfig, NativeConfigError> {
+    let environment = NativeEnvironment::new(
+        read_environment("XDG_CONFIG_HOME"),
+        None,
+        read_environment("HOME"),
+    );
+    load_native_config(&environment)
 }
 
 fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError> {
@@ -433,19 +448,32 @@ fn open_config_file(path: &Path) -> Result<Option<File>, NativeConfigError> {
 }
 
 fn read_bounded(file: &mut File) -> Result<Vec<u8>, NativeConfigError> {
+    read_bounded_from(file)
+}
+
+fn read_bounded_from(reader: &mut impl Read) -> Result<Vec<u8>, NativeConfigError> {
     let mut bytes = vec![0_u8; MAX_CONFIG_BYTES + 1];
-    let mut length = 0;
+    let mut length = 0_usize;
+    let mut interrupted_attempts = 0_usize;
     loop {
-        match file.read(&mut bytes[length..]) {
+        let remaining = bytes.len() - length;
+        match reader.read(&mut bytes[length..]) {
             Ok(0) => break,
-            Ok(read) => {
+            Ok(read) if read <= remaining => {
                 length += read;
                 if length > MAX_CONFIG_BYTES {
                     return Err(NativeConfigError::new(NativeConfigErrorKind::TooLarge));
                 }
             }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(_) => return Err(NativeConfigError::new(NativeConfigErrorKind::Unreadable)),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                interrupted_attempts += 1;
+                if interrupted_attempts >= MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS {
+                    return Err(NativeConfigError::new(NativeConfigErrorKind::Unreadable));
+                }
+            }
+            Ok(_) | Err(_) => {
+                return Err(NativeConfigError::new(NativeConfigErrorKind::Unreadable));
+            }
         }
     }
     bytes.truncate(length);
@@ -489,8 +517,10 @@ struct WireSchemaEnvelope<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES, NativeConfig, NativeConfigErrorKind,
+        CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES,
+        MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS, NativeConfig, NativeConfigErrorKind,
         NativeCredentialSourceKind, NativeProviderKind, NativeTransportKind, load_native_config,
+        load_process_config_with, read_bounded_from,
     };
     use crate::ai_gateway::valid_model;
     use crate::{
@@ -498,10 +528,56 @@ mod tests {
     };
     use std::ffi::OsString;
     use std::fs;
+    use std::io::{self, Read};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Clone, Copy, Debug)]
+    enum ReadStep {
+        Bytes(&'static [u8]),
+        Interrupted,
+        Overreported,
+        End,
+    }
+
+    #[derive(Debug)]
+    struct ScriptedReader {
+        steps: Vec<ReadStep>,
+        next: usize,
+    }
+
+    impl ScriptedReader {
+        fn new(steps: Vec<ReadStep>) -> Self {
+            Self { steps, next: 0 }
+        }
+
+        fn calls(&self) -> usize {
+            self.next
+        }
+    }
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let step = self
+                .steps
+                .get(self.next)
+                .copied()
+                .expect("scripted reader was called beyond its bounded fixture");
+            self.next += 1;
+            match step {
+                ReadStep::Bytes(bytes) => {
+                    assert!(bytes.len() <= buffer.len());
+                    buffer[..bytes.len()].copy_from_slice(bytes);
+                    Ok(bytes.len())
+                }
+                ReadStep::Interrupted => Err(io::Error::from(io::ErrorKind::Interrupted)),
+                ReadStep::Overreported => Ok(buffer.len() + 1),
+                ReadStep::End => Ok(0),
+            }
+        }
+    }
 
     #[derive(Debug)]
     struct TestDirectory(PathBuf);
@@ -587,6 +663,70 @@ mod tests {
             NativeCredentialSourceKind::Environment
         );
         assert_eq!(config.credential_source().as_str(), "environment");
+    }
+
+    #[test]
+    fn process_config_snapshot_requests_only_config_environment_keys() {
+        let mut requested = Vec::new();
+        let loaded = load_process_config_with(|key| {
+            requested.push(key);
+            None
+        })
+        .unwrap();
+
+        assert_eq!(requested, ["XDG_CONFIG_HOME", "HOME"]);
+        assert_eq!(loaded.origin(), ConfigOrigin::BuiltInDefaults);
+    }
+
+    #[test]
+    fn bounded_read_succeeds_before_the_sixteenth_interruption() {
+        let mut steps = vec![ReadStep::Interrupted; MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS - 1];
+        steps.extend([ReadStep::Bytes(b"config"), ReadStep::End]);
+        let mut reader = ScriptedReader::new(steps);
+
+        assert_eq!(read_bounded_from(&mut reader).unwrap(), b"config");
+        assert_eq!(reader.calls(), MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS + 1);
+    }
+
+    #[test]
+    fn bounded_read_maps_the_sixteenth_interruption_to_unreadable() {
+        let mut reader = ScriptedReader::new(vec![
+            ReadStep::Interrupted;
+            MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS
+        ]);
+
+        let error = read_bounded_from(&mut reader).unwrap_err();
+
+        assert_eq!(error.kind(), NativeConfigErrorKind::Unreadable);
+        assert_eq!(reader.calls(), MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS);
+    }
+
+    #[test]
+    fn bounded_read_counts_interleaved_interruptions_cumulatively() {
+        let first_interruptions = MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS / 2;
+        let mut steps = vec![ReadStep::Interrupted; first_interruptions];
+        steps.push(ReadStep::Bytes(b"partial"));
+        steps.extend(vec![
+            ReadStep::Interrupted;
+            MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS
+                - first_interruptions
+        ]);
+        let mut reader = ScriptedReader::new(steps);
+
+        let error = read_bounded_from(&mut reader).unwrap_err();
+
+        assert_eq!(error.kind(), NativeConfigErrorKind::Unreadable);
+        assert_eq!(reader.calls(), MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS + 1);
+    }
+
+    #[test]
+    fn bounded_read_maps_overreported_progress_to_unreadable() {
+        let mut reader = ScriptedReader::new(vec![ReadStep::Overreported]);
+
+        let error = read_bounded_from(&mut reader).unwrap_err();
+
+        assert_eq!(error.kind(), NativeConfigErrorKind::Unreadable);
+        assert_eq!(reader.calls(), 1);
     }
 
     #[test]

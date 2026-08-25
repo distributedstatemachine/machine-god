@@ -16,12 +16,17 @@ and main benchmark-evidence `32875015892` are green; each benchmark run retains
 two nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
 product-performance or fx-equivalence claim. The implemented twenty-eighth
-top-level `permissions [--json]` slice is **IN PROGRESS — LOCAL GATES AND FORMAL
-REVIEW PENDING** from exact delivered base `8d8ecc7`; it is read-only, ask-only,
-and owns no persistent rules or runtime grant state. Its separate production,
-evidence, and documentation components are composed in this feature change;
-complete local gates, formal review, integration, and delivery remain pending.
-See the [`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
+top-level `permissions [--json]` slice is **IN PROGRESS — CYCLE 1 REMEDIATED;
+REPLACEMENT GATE AND REVIEW PENDING** from exact delivered base `8d8ecc7`; it is read-only,
+ask-only, and owns no persistent rules or runtime grant state. Exact candidate
+`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed its complete local gate but
+was rejected with a deduplicated 0 blocker, 0 high, 1 medium, and 2 low cycle-1
+finding set. The composed remediation allows 15 cumulative interrupted reads,
+bounds the 16th with fixed `Unreadable`, and requests `XDG_CONFIG_HOME` then
+`HOME` without requesting `XDG_STATE_HOME`. Replacement gates, fresh reviews,
+integration, and delivery remain pending. See the
+[`permissions` CLI contract](docs/permissions-cli.md). The retained `web_fetch`
 review history begins with pre-review gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
 `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local Rust

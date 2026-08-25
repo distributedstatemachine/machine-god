@@ -1,6 +1,6 @@
 # Milestone 03 `permissions` CLI review 01
 
-Status: **IN PROGRESS — IMPLEMENTED; LOCAL GATE AND FORMAL REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 1 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**
 
 ## Base and boundary
 
@@ -55,6 +55,26 @@ cargo +1.94.1 test --doc --workspace
 An allowed stable fallback must report exact release 1.94.1 for both Rust and
 Cargo and must be recorded. A newer floating stable is not evidence.
 
+### Exact cycle-1 local gate
+
+Exact candidate `fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed its complete local gate
+under Rust and Cargo 1.94.1 without fallback:
+
+- the focused CLI suites passed six unit tests and 19 integration tests;
+- formatting, warnings-denied workspace all-target/all-feature Clippy,
+  workspace tests, and workspace doctests all passed;
+- the pinned compatibility generator check and all 31 generator tests passed;
+- a fresh 368,944-byte release binary had SHA-256
+  `3900c435bb108056f7916764a2b9542e479368a6b9166a499eae06d8f9b0dba3`;
+- release-binary human, JSON, valid-config no-rewrite, invalid-config
+  redaction, parse-precedence, help, and no-create smokes passed; and
+- the candidate added no dependency and no unsafe Rust.
+
+This gate is evidence for the rejected candidate only. It makes no formal-
+review, remediation, workflow, integration, delivery, compatibility,
+performance, or fx-equivalence claim.
+
 ## Formal review protocol
 
 After the complete local gate, three fresh agents independently inspect the
@@ -74,5 +94,60 @@ exempt from redundant adversarial review under the user's instruction.
 
 ## Review cycles
 
-No formal-review candidate has been nominated. The composed implementation
-must first pass the complete local gate above.
+### Cycle 1 — NOT GREEN
+
+All three tracks reviewed exact candidate
+`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`:
+
+| Track | Blocker | High | Medium | Low | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Correctness/API | 0 | 0 | 0 | 0 | **GREEN** |
+| Native config/error lifecycle | 0 | 0 | 0 | 0 | **GREEN** |
+| Performance/CLI portability | 0 | 0 | 1 | 2 | **NOT GREEN** |
+| Deduplicated union | 0 | 0 | 1 | 2 | **NOT GREEN** |
+
+Any finding rejects a candidate, so exact cycle 1 is rejected. The findings
+are:
+
+1. **MEDIUM — unbounded interrupted reads.** The configuration reader retries
+   every `std::io::ErrorKind::Interrupted` result without a cumulative attempt
+   bound. The 64 KiB plus one-byte storage limit remains intact, but a hostile
+   or pathological reader can keep one synchronous CLI invocation doing work
+   indefinitely.
+2. **LOW — unnecessary state-environment observation.** The permissions path
+   constructs the general process environment snapshot, including
+   `XDG_STATE_HOME`, even though it resolves and loads only configuration and
+   must not inspect state-root selection.
+3. **LOW — stale maintained process evidence.** The exact candidate's
+   summaries still described the complete local gate and formal candidate as
+   pending instead of identifying the exact precursor evidence and rejected
+   cycle-1 SHA/tree above. This is a process-evidence finding, not a production
+   defect, and is corrected as part of cycle-1 remediation.
+
+### Cycle-1 remediation composed
+
+Exact isolated components are:
+
+- production `4cf50b6f7e7ddec00e1e251902e5b9983036dd7b`, tree
+  `fb4d0dc7c7501ccd3547cdf1fcc83b84623f4a08`, changing only
+  `crates/machine-god-native/src/config.rs`; and
+- documentation `278dd45b9e38e8912d803832c37962b84faf9fe5`, tree
+  `536ef22cff93d5c478600e7554b65c8442b896ab`, changing only the maintained
+  cycle record and behavior summaries.
+
+They are composed in one remediation change. The replacement:
+
+- applies one cumulative 16-`Interrupted` limit to configuration reads, allowing
+  the first 15 interrupted results to retry and returning the existing fixed
+  `Unreadable` failure on the 16th;
+- adds deterministic injected-reader evidence for success after up to 15
+  interruptions and fixed failure on the 16th;
+- requests `XDG_CONFIG_HOME` and then `HOME` only for configuration loading and
+  permissions, never requesting `XDG_STATE_HOME`; status retains its separate
+  `XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`HOME` snapshot; and
+- reconciles the maintained current-candidate and local-gate record.
+
+The composed replacement must pass the complete local gate
+and receive three fresh reviews on one new immutable SHA and tree. Feature and
+`main` workflows, integration, and delivery remain pending.

@@ -1,6 +1,6 @@
 # Native `permissions` CLI contract
 
-Status: **IN PROGRESS — IMPLEMENTED; LOCAL GATES AND FORMAL REVIEW PENDING**.
+Status: **IN PROGRESS — CYCLE 1 REMEDIATED; REPLACEMENT GATE AND REVIEW PENDING**.
 
 This is the implemented twenty-eighth bounded Milestone 03 slice. It starts from
 exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
@@ -8,9 +8,13 @@ exact delivered base `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, tree
 top-level command to the thin native host. It does not complete the M03 CLI
 inventory. Production, independent evidence, and maintained documentation are
 separate isolated-worktree components composed in this feature change. The
-slice remains in progress pending complete local gates, three fresh zero-finding
-reviews on one exact candidate, integration, and exact remote workflows. It
-makes no product-performance or fx-equivalence claim.
+complete local gate passed, but formal cycle 1 rejected exact candidate
+`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, with a deduplicated union of zero
+blocker, zero high, one medium, and two low findings. The cycle-1 remediation is
+composed; a replacement local gate, three fresh reviews, integration, and exact
+remote workflows remain pending. The slice makes no product-
+performance or fx-equivalence claim.
 
 ## Command grammar
 
@@ -49,8 +53,13 @@ command-local help or a `/permissions` interactive slash command.
 
 After successful parsing, `permissions` calls `load_process_config()` exactly
 once and observes only the validated `NativeConfig::permission_mode()`. The
-loader remains bounded to 64 KiB, synchronous, read-only, no-follow for the
-selected final configuration path, and redacted on failure.
+loader's retained bytes remain bounded to 64 KiB plus one overflow witness. It
+is synchronous, read-only, no-follow for the selected final configuration path,
+and redacted on failure. Exact cycle 1 was rejected because its reader retried
+`Interrupted` without a cumulative work bound. The composed replacement allows
+the first 15 cumulative interrupted results to retry and returns the existing
+fixed `Unreadable` failure on the 16th. Partial progress does not reset the
+count, and an over-reported read fails as `Unreadable`.
 
 A missing file or unavailable configuration location uses the safe built-in
 configuration. Valid strict schema-v1, schema-v2, and schema-v3 files report the
@@ -66,10 +75,15 @@ machine-god: failed to load configuration
 The diagnostic does not disclose the error kind, path, configuration content,
 model, provider, transport, credential source, or operating-system detail.
 
-The command does not inspect or create the state root; construct an engine,
-provider, transport, credential source, permission prompter, session store, or
-Tokio runtime; read a credential; make a network request; prompt; persist a
-rule; or cache a grant.
+The command performs no state-root filesystem metadata access and creates no
+state root. The rejected cycle-1 candidate nevertheless snapshots the unused
+`XDG_STATE_HOME` value through the general process-environment adapter. The
+composed replacement requests `XDG_CONFIG_HOME` and then `HOME` only for this
+config-only command and never requests `XDG_STATE_HOME`. Status retains its
+separate `XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`HOME` snapshot. Neither version
+constructs an engine, provider, transport, credential source, permission
+prompter, session store, or Tokio runtime; reads a credential; makes a network
+request; prompts; persists a rule; or caches a grant.
 
 ## Exact output
 
@@ -121,14 +135,19 @@ Independent tests must cover:
   and unsupported-version failures with fixed redaction;
 - byte-identical configuration files and absence of newly created config/state
   roots;
+- a cumulative 16-`Interrupted` read limit with deterministic injected-reader
+  success after up to 15 interruptions and fixed `Unreadable` failure on the
+  16th;
+- config-only process snapshots that request `XDG_CONFIG_HOME` and then `HOME`
+  and never request `XDG_STATE_HOME`;
 - unchanged identity/version/status behavior except the intentional global
   help and invalid-usage additions; and
 - freshly built release-binary human, JSON, invalid-config, no-create, and
   no-rewrite smokes.
 
-The exact implementation must pass the repository-required Rust 1.94.1 gate,
-then one immutable candidate SHA and tree must receive three fresh independent
-ordinary product reviews: correctness/API, native config/error lifecycle, and
-performance/CLI portability. All findings are fixed and reviewed again until
-all three tracks report zero findings. Exact feature and `main` CI plus
-benchmark-evidence workflows remain delivery requirements.
+The composed remediation must pass the complete repository-required Rust
+1.94.1 gate, then one new immutable candidate SHA and tree must receive three
+fresh independent ordinary product reviews: correctness/API, native config/
+error lifecycle, and performance/CLI portability. All findings are fixed and
+reviewed again until all three tracks report zero findings. Exact feature and
+`main` CI plus benchmark-evidence workflows remain delivery requirements.

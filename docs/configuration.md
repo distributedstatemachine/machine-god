@@ -14,16 +14,20 @@ Milestone 03 remains `IN PROGRESS`. Full lineage is recorded in the
 The native configuration loader is a bounded, synchronous, read-only
 `machine-god-native` authority. Core remains independent of the process
 environment and filesystem. `machine-god status` remains metadata-only and
-does not invoke the loader. The implemented, not-yet-reviewed
+does not invoke the loader. The implemented
 `machine-god permissions [--json]` path invokes it exactly once after complete
-argument validation and observes only permission mode. This slice advances the
-built-in and current file schema to v3 while retaining strict read compatibility
-for the exact legacy v1 and v2 objects.
+argument validation and observes only permission mode. Formal permissions cycle
+1 rejected exact candidate `fe2475329b50e89bc069eded3eb2f398e8e1a167` for one
+medium unbounded-interruption finding and two low environment/evidence
+findings; its remediation is composed pending a replacement gate and fresh
+review. This configuration slice
+advances the built-in and current file schema to v3 while retaining strict read
+compatibility for the exact legacy v1 and v2 objects.
 
 ## Location and defaults
 
-The loader uses the same environment snapshot and config-path resolution as
-native status:
+The loader resolves only the configuration portion of an injected environment
+snapshot:
 
 - a nonempty `XDG_CONFIG_HOME` is selected and must be absolute Unicode;
 - an empty `XDG_CONFIG_HOME` falls back to a nonempty, absolute-Unicode `HOME`;
@@ -31,6 +35,13 @@ native status:
   `<HOME>/.config/machine-god/config.json` for the fallback; and
 - a selected nonempty relative or non-Unicode value is invalid. Selection fails
   without trying a different environment value.
+
+Native status still snapshots `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`
+because it reports both config and state metadata. The rejected permissions
+candidate unnecessarily uses that general snapshot even though its loader
+consumes only configuration inputs. The composed config-loading and permissions
+snapshot requests `XDG_CONFIG_HOME` and then `HOME` and never requests
+`XDG_STATE_HOME`; status retains the general snapshot.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
 the explicit built-in schema-v3 configuration. A resolved file that is missing
@@ -147,7 +158,13 @@ can be considered for parsing; any additional byte makes it oversized. Bytes
 must be valid UTF-8 and then valid strict v1, v2, or v3 JSON. The loader retains
 at most 64 KiB plus one byte while deciding whether input fits, so neither a
 stale size observation nor concurrent file growth turns loading into an
-unbounded read.
+unbounded retained buffer. Exact permissions cycle 1 found that the candidate's
+read loop retries every `Interrupted` result without a cumulative work bound.
+The composed replacement retries the first 15 cumulative interrupted results and
+maps the 16th to the existing fixed `Unreadable` error, with deterministic
+injected-reader evidence for both boundaries. Partial progress does not reset
+the count, and an over-reported read maps to `Unreadable`. Replacement-gate and
+review evidence remain pending.
 
 On the supported Unix targets exercised by Milestone 03, the loader opens the
 final path with no-follow and nonblocking behavior. It performs a preliminary
@@ -175,8 +192,10 @@ system error text. All listed failures fail closed.
 Native status remains a separate metadata-only observation. It still uses
 final-path metadata to report config-file and state-directory states, does not
 read or parse `config.json`, and reports permission mode `ask`. Existing CLI
-help, version, status, error, and bare-invocation bytes remain unchanged; no CLI
-command loads configuration in this slice.
+version, status, and bare-invocation bytes remain unchanged. The original
+configuration slice added no CLI command; the separate permissions slice
+intentionally changes help and invalid-usage bytes and loads configuration once
+after valid permissions parsing.
 
 Provider, transport, model, and credential-source fields are declarative data
 only. `environment` tells the production reference-host constructor which

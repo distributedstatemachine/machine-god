@@ -4,12 +4,17 @@ The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
 implemented twenty-eighth [`permissions` CLI slice](permissions-cli.md)
 preserves that split: after strict argument parsing, the thin host invokes only
-the existing bounded read-only configuration loader, exactly once, and reports
-no persistent rule or live grant state. Invalid configuration fails with empty
-stdout and one fixed diagnostic that reflects no path, content, model, or
-operating-system error. It adds no engine, prompt, session, credential, runtime,
-state-root, write, or network authority. Its separate components are composed
-but remain unreviewed and undelivered pending the required gates. The
+the existing byte-bounded read-only configuration loader, exactly once, and
+reports no persistent rule or live grant state. Invalid configuration fails
+with empty stdout and one fixed diagnostic that reflects no path, content,
+model, or operating-system error. Exact candidate
+`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed its local gate but formal
+cycle 1 is **NOT GREEN**: one medium unbounded-`Interrupted` read finding and
+two low excess-environment/evidence findings. It adds no engine, prompt,
+session, credential, runtime, state-root, write, or network effect. Remediation
+is composed; replacement gates, fresh reviews, integration, and delivery remain
+pending. The
 delivered twenty-seventh [`web_fetch` slice](web-fetch.md) preserves that split:
 effect-free core-facing preparation supplies one exact canonical HTTPS
 `Capability::Network`, while cfg-gated non-WASM native code owns DNS, TLS,
@@ -397,6 +402,11 @@ non-secret credential-source kind `environment`. Exact legacy schema-v1 and
 schema-v2 objects map in memory to that acquisition kind while remaining
 observable as versions `1` and `2`. The loader never rewrites or migrates them.
 An invalid selected config-location environment value does not fall back.
+Status legitimately snapshots `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`
+for its two metadata locations. The rejected permissions candidate reuses that
+snapshot and observes unused `XDG_STATE_HOME`; the composed config-only
+replacement requests `XDG_CONFIG_HOME` and then `HOME` and never requests
+`XDG_STATE_HOME`.
 
 On the supported Unix targets exercised by Milestone 03, a present path is
 opened no-follow and nonblocking. A preliminary path-kind check is followed by
@@ -418,6 +428,13 @@ has exactly integer `schema_version: 1` and
 string `permission_mode: "ask"`. Oversize files, invalid UTF-8, malformed JSON,
 unknown or duplicate fields, missing or wrong fields, unsupported versions or
 enum values, and invalid models are rejected.
+
+This byte bound does not bound the rejected candidate's total work when a
+reader repeatedly returns `Interrupted`: cycle 1 found that it retries without
+a cumulative limit. The composed replacement retries the first 15 cumulative
+interrupted results, maps the 16th to fixed `Unreadable`, and adds deterministic
+injected-reader evidence for both boundaries and cumulative counting. The
+replacement review remains pending.
 
 The model validator is shared with the AI Gateway provider, preventing config
 and provider acceptance from drifting. Config owns the bounded model string and
@@ -441,7 +458,8 @@ acquisition kind may appear in config debug output; the model remains redacted.
 The existing status path remains metadata-only and its CLI output is
 byte-stable. The separate implemented permissions path loads configuration once
 and reports only ask-mode plus honest unsupported/unavailable rule and grant
-capability fields. Configuration mutation or migration, a concrete prompt UI
+capability fields. Its exact cycle-1 candidate is rejected, and replacement
+gates remain pending. Configuration mutation or migration, a concrete prompt UI
 and modes beyond `ask`, token fields in configuration, CLI composition beyond
 that read-only projection, remaining CLI expansion, composed release-binary
 end-to-end host evidence, and compatibility or performance claims remain open.

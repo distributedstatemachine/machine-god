@@ -53,13 +53,21 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 `a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its pinned fx observation is
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; delivery makes no product-
 performance or fx-equivalence claim. The implemented twenty-eighth top-level
-`permissions [--json]` slice is **IN PROGRESS — LOCAL GATES AND FORMAL REVIEW
-PENDING** from exact delivered base
+`permissions [--json]` slice is **IN PROGRESS — CYCLE 1 NOT GREEN;
+REMEDIATION COMPOSED** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`. It is a read-only projection of
 the already delivered ask-only native configuration and owns no rule, grant,
 engine, runtime, session, credential, or network state. Its separate production,
 independent-evidence, and maintained-documentation components are composed in
-this feature change but are not yet reviewed, integrated, or delivered. The retained
+exact candidate `fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`. The candidate passed its complete
+local gate but formal cycle 1 reported a deduplicated 0 blocker, 0 high, 1
+medium, and 2 low findings, so it is rejected. Remediation is composed from
+exact production component `4cf50b6f7e7ddec00e1e251902e5b9983036dd7b`,
+tree `fb4d0dc7c7501ccd3547cdf1fcc83b84623f4a08`, and documentation
+component `278dd45b9e38e8912d803832c37962b84faf9fe5`, tree
+`536ef22cff93d5c478600e7554b65c8442b896ab`; replacement gates, integration,
+and delivery remain pending. The retained
 `web_fetch` review lineage begins with pre-review
 gate record
 `0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
@@ -2578,11 +2586,12 @@ The only new grammar is `permissions [--json]`. Global help lists `help`,
 `permissions  Show the permission mode and rules`, with the two leading help
 indent spaces documented in [`cli.md`](cli.md).
 
-After complete argument validation, the thin CLI calls the existing bounded,
-read-only `load_process_config()` exactly once and reports only validated
-ask-mode configuration plus explicit unsupported/unavailable persistent-rule
-and runtime-grant state. Missing or unavailable configuration uses built-in
-defaults. Every invalid configuration category fails closed with exit 1, empty
+After complete argument validation, the thin CLI calls the existing byte-
+bounded, read-only `load_process_config()` exactly once and reports only the
+validated ask-mode configuration plus explicit unsupported/unavailable
+persistent-rule and runtime-grant state. Missing or unavailable configuration
+uses built-in defaults. Every invalid configuration category fails closed with
+exit 1, empty
 stdout, and one fixed redacted diagnostic. The slice constructs no engine,
 provider, transport, credential source, prompt, session store, state root, or
 runtime, and performs no write or network effect.
@@ -2590,13 +2599,46 @@ runtime, and performs no write or network effect.
 Production owns only `machine-god-cli/src/main.rs`; independent evidence owns
 only `machine-god-cli/tests/cli.rs`; documentation owns the contract and
 maintained summaries. Those separate components implement the frozen behavior
-and are composed in this feature change, but have not yet passed the complete
-local gate and three-track formal review. They were produced from isolated
+and are composed in this feature change. They were produced from isolated
 worktrees and may not add dependencies or hand-edit generated compatibility
-artifacts. Integration, delivery, and exact feature and `main` workflows
-remain pending. The combined top-level CLI inventory remains planned, and this
-slice makes no benchmark-workload, product-performance, compatibility-promotion,
-or fx-equivalence claim.
+artifacts.
+
+Exact candidate `fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed the complete local gate
+under Rust and Cargo 1.94.1 without fallback. Focused CLI evidence is six unit
+and 19 integration tests. Formatting, warnings-denied workspace all-target/all-
+feature Clippy, workspace tests, and workspace doctests are green. The pinned
+compatibility generator check and its 31 tests are green. A fresh 368,944-byte
+release binary has SHA-256
+`3900c435bb108056f7916764a2b9542e479368a6b9166a499eae06d8f9b0dba3` and
+passes human, JSON, valid-config no-rewrite, invalid-config redaction, parse-
+precedence, help, and no-create smokes. The slice adds no dependency or unsafe
+Rust. This is candidate-local evidence, not delivery evidence.
+
+Formal cycle 1 reviewed that exact SHA/tree. Correctness/API and native config/
+error lifecycle are each **GREEN** at 0 blocker, 0 high, 0 medium, and 0 low.
+Performance/CLI portability is **NOT GREEN** at 0 blocker, 0 high, 1 medium,
+and 2 low; the deduplicated union is the same. The medium finding is unbounded
+retry work when configuration reads repeatedly return `Interrupted`. The low
+findings are the config-only command's unnecessary `XDG_STATE_HOME` snapshot
+and stale pre-review gate/candidate summaries. The stale-summary low is process
+evidence, not a production defect, and this remediation documentation corrects
+it. Any finding rejects the exact candidate.
+
+Exact production remediation `4cf50b6f7e7ddec00e1e251902e5b9983036dd7b`,
+tree `fb4d0dc7c7501ccd3547cdf1fcc83b84623f4a08`, and documentation
+component `278dd45b9e38e8912d803832c37962b84faf9fe5`, tree
+`536ef22cff93d5c478600e7554b65c8442b896ab`, are composed in this remediation
+change. The replacement retries the first 15 cumulative `Interrupted` results, maps the
+16th to the existing fixed `Unreadable` result, and proves both boundaries with
+a deterministic injected reader. Configuration loading and permissions
+request `XDG_CONFIG_HOME` and then `HOME` and never request `XDG_STATE_HOME`;
+status retains its separate `XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`HOME` snapshot.
+A complete replacement gate, three fresh same-SHA reviews, integration,
+delivery, and exact feature and `main` workflows remain pending. The combined
+top-level CLI inventory remains planned, and this slice makes no benchmark-
+workload, product-performance, compatibility-promotion, or fx-equivalence
+claim.
 
 ### Milestone 03 completion boundary
 

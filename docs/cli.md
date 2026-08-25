@@ -25,8 +25,13 @@ The implemented twenty-eighth bounded slice adds top-level
 configuration read-only and reports ask-only permission configuration without
 constructing an engine or inventing persistent rule or runtime grant state.
 Its separate production, independent-evidence, and documentation components
-are composed in this feature change; local gates, formal review, integration,
-and delivery remain pending.
+are composed in this feature change. Exact candidate
+`fe2475329b50e89bc069eded3eb2f398e8e1a167`, tree
+`757f5169f03bf4018b4d85830cf37a2b716cd0cb`, passed the complete local gate but
+is **NOT GREEN** after formal cycle 1 reported a deduplicated zero blocker, zero
+high, one medium, and two low findings. The remediation is composed; a
+replacement gate, three fresh reviews, integration, and delivery remain
+pending.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -216,6 +221,14 @@ grants are honest capability statements, not empty policy databases. The
 command creates no engine, permission prompt, session store, state root, Tokio
 runtime, credential discovery, network transport, rule store, or grant store.
 
+Cycle 1 rejected this exact candidate because configuration reads can retry
+`Interrupted` indefinitely and because the config-only command snapshots an
+unused `XDG_STATE_HOME` value. The composed replacement retries the first 15
+cumulative interrupted reads, maps the 16th to fixed `Unreadable`, requests
+`XDG_CONFIG_HOME` and then `HOME`, and never requests `XDG_STATE_HOME`.
+Deterministic injected-reader evidence is composed; the replacement local gate
+and three fresh reviews remain pending.
+
 ## Status output
 
 `machine-god status` writes four lines with a final LF:
@@ -275,6 +288,12 @@ nonempty XDG root is relative or not Unicode, that location is
 `invalid_environment`; the CLI does not fall back to `HOME`. A selected
 nonempty `HOME` must likewise be absolute Unicode. Absent or empty `HOME` makes
 a fallback location `unavailable`.
+
+Status snapshots `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME` because it
+reports both locations. The rejected permissions candidate also snapshots all
+three even though it uses only config resolution. Its composed config-only
+replacement requests `XDG_CONFIG_HOME` and then `HOME` and never requests
+`XDG_STATE_HOME`.
 
 Inspection calls `symlink_metadata` on each final path. A final symlink is not
 followed: a config symlink reports `not_file`, and a state-directory symlink
