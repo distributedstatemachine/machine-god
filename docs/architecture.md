@@ -42,8 +42,11 @@ dependency-topology remediations are composed at `02c9f86`, `d2890c3`, and
 candidate `2ea9d94`, tree `3a948b2`, passed the complete replacement gate but
 was rejected with one high, one medium, and one low finding. Parser, async DNS/
 runtime, and fail-closed resolver remediation is composed at `9cf8c74`,
-`8187b12`, and `499af85`. The complete cycle-3 replacement gate and three fresh
-cycle-3 reviews remain pending in
+`8187b12`, and `499af85`. Pre-review gate attempt `c011398`, tree `4ac4e5b`,
+was rejected by its DNS-config lifecycle audit. Eager bounded snapshot and
+per-runtime absolute-name resolver remediation is composed at `d9922ef` and
+`e5248b1`. The complete cycle-3 replacement gate and three fresh cycle-3
+reviews remain pending in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 ```text

@@ -70,7 +70,9 @@ rejected with two medium and six low findings. Remediation is composed at
 CLI unit evidence 18. Exact cycle-2 behavior candidate `2ea9d94`, tree
 `3a948b2`, passed the complete replacement gate but was rejected with one high,
 one medium, and one low finding. Parser and HTTP lifecycle remediation is
-composed at `9cf8c74`, `8187b12`, and `499af85`. The complete cycle-3 gate,
+composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate attempt
+`c011398`, tree `4ac4e5b`, was rejected by its DNS-config lifecycle audit;
+remediation is composed at `d9922ef` and `e5248b1`. The complete cycle-3 gate,
 three fresh cycle-3 reviews, feature/main integration, and delivery remain
 pending. No candidate is green.
 
@@ -258,7 +260,7 @@ final LF and no identity prefix:
 The complete success output is built under an inclusive 64 KiB cap before its
 first stdout write. Exact failure shapes, codes, channels, credential/fallback
 behavior, and resource bounds are normative in
-[`models-cli.md`](models-cli.md). This cycle-2-rejected, locally remediated
+[`models-cli.md`](models-cli.md). This pre-review-gate-rejected, locally remediated
 implementation is not yet a green or delivered slice.
 
 ## Permissions output

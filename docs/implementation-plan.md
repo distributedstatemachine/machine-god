@@ -154,9 +154,14 @@ CLI unit evidence to 18. Exact cycle-2 behavior candidate
 replacement gate but was rejected with a deduplicated union of one high, one
 medium, and one low finding. Arbitrary-number, async DNS/no-runtime, and fail-
 closed resolver remediation is composed at `9cf8c74`, `8187b12`, and `499af85`.
-The complete cycle-3 replacement gate, three fresh cycle-3 reviews, feature/main
-integration, and delivery remain pending. No candidate is green, and no
-product-performance, compatibility-promotion, or fx-equivalence claim is made.
+Pre-review gate attempt `c01139811685ae73031ed6f6cbd771e4ff636714`, tree
+`4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected because synchronous
+system-DNS discovery remained inside timed request polling. Bounded eager
+snapshot and per-runtime absolute-name resolver remediation is composed at
+`d9922ef` and `e5248b1`; private resolver evidence is now 6/6. The complete
+cycle-3 replacement gate, three fresh cycle-3 reviews, feature/main integration,
+and delivery remain pending. No candidate is green, and no product-performance,
+compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2885,9 +2890,15 @@ gate but was rejected with one high, one medium, and one low finding. Parser
 remediation `9cf8c74`, async DNS/no-runtime remediation `8187b12`, and fail-
 closed system-resolver remediation `499af85` are composed locally. Provider/
 parser evidence is now 17 tests, HTTP integration is 16, and private resolver
-lifecycle evidence is 2. The complete cycle-3 gate, fresh cycle-3 review, exact
-feature workflows, fast-forward integration, and exact `main` workflows remain
-pending; no candidate is green and this makes no product-performance claim.
+lifecycle evidence was 2. Pre-review gate attempt
+`c01139811685ae73031ed6f6cbd771e4ff636714`, tree
+`4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected when dependency
+inspection found synchronous system-DNS discovery inside the timed request
+poll. Bounded eager snapshot remediation `d9922ef` and custom absolute-name/
+per-runtime resolver hardening `e5248b1` raise private resolver evidence to 6.
+The complete cycle-3 gate, fresh cycle-3 review, exact feature workflows, fast-
+forward integration, and exact `main` workflows remain pending; no candidate is
+green and this makes no product-performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads

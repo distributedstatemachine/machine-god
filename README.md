@@ -22,10 +22,13 @@ signal/config/WASI, and dependency-topology remediations are composed at
 exact cycle-2 candidate `2ea9d94`, tree `3a948b2`, passed its complete
 replacement gate but was rejected with one high, one medium, and one low
 finding. Arbitrary-number, async DNS/no-runtime, and fail-closed system-resolver
-remediation is composed at `9cf8c74`, `8187b12`, and `499af85`; its complete
-cycle-3 gate and three fresh cycle-3 reviews remain pending. This is not a green
-or delivered slice. The CLI selects a dedicated
-`ai-gateway-model-catalog-http` feature that omits `web-fetch-http`,
+remediation is composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate
+attempt `c011398`, tree `4ac4e5b`, was rejected when dependency inspection found
+synchronous system-DNS discovery inside request polling. Bounded eager snapshot,
+per-runtime resolver, and absolute-name remediation is composed at `d9922ef`
+and `e5248b1`; a complete replacement gate and three fresh cycle-3 reviews
+remain pending. This is not a green or delivered slice. The CLI selects a
+dedicated `ai-gateway-model-catalog-http` feature that omits `web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a
 system-config-only async Hickory resolver and its protocol/network/cache graph
 so default blocking GAI cannot outlive runtime teardown. Signal handling is

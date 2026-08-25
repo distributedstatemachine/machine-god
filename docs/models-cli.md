@@ -24,12 +24,18 @@ is `06c94087e91ec298877fbe981695d2638fa1db1e`. Cycle-2 remediation accepts
 arbitrary-size ignored/defaulted JSON number tokens at `9cf8c741`, replaces
 blocking default DNS and repairs no-runtime composition at `8187b12`, and
 fails closed on unavailable system DNS configuration with no public fallback
-at `499af85`. Catalog HTTP directly activates only the async Hickory resolver
-needed for this lifecycle plus its transitive protocol/network/cache graph; it
-still omits generation-only direct `bytes`, `web-fetch-http`, and Tokio's signal
-backend. The complete cycle-3 replacement gate, three fresh cycle-3 reviews,
-and remote CI remain pending; no candidate is green. The pinned comparison
-input remains fx commit
+at `499af85`. Pre-review gate attempt `c01139811685ae73031ed6f6cbd771e4ff636714`,
+tree `4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected because synchronous
+platform DNS discovery still occurred inside timed request polling. Bounded
+eager snapshot remediation is `d9922ef1`, and per-runtime absolute-name/custom-
+resolver hardening is `e5248b10`. Focused provider/parser, credential, HTTP,
+private resolver, CLI unit, CLI integration, and manifest evidence is now
+17/17, 6/6, 16/16, 6/6, 18/18, 23/23, and 4/4. Catalog HTTP directly activates
+only the async Hickory resolver needed for this lifecycle plus its transitive
+protocol/network/cache graph; it still omits generation-only direct `bytes`,
+`web-fetch-http`, and Tokio's signal backend. The complete cycle-3 replacement
+gate, three fresh cycle-3 reviews, and remote CI remain pending; no candidate is
+green. The pinned comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
 

@@ -54,8 +54,11 @@ tree `b5e2445`, was rejected; config-once/order remediation is composed at
 `d2890c3`. Exact cycle-2 behavior candidate `2ea9d94`, tree `3a948b2`, passed
 the complete replacement gate but was rejected by its review union. The cycle-2
 findings did not change configuration behavior; parser and HTTP lifecycle
-remediation is composed at `9cf8c74`, `8187b12`, and `499af85`. The complete
-cycle-3 gate, fresh cycle-3 review, integration, and delivery remain pending.
+remediation is composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate
+attempt `c011398` was rejected by request-time DNS configuration discovery;
+bounded eager snapshot remediation is composed at `d9922ef` and `e5248b1`.
+The complete cycle-3 gate, fresh cycle-3 review, integration, and delivery
+remain pending.
 The historical configuration green status above does not make this new
 composition green.
 

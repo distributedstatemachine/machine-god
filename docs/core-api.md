@@ -114,8 +114,10 @@ components through feature commit
 behavior candidate `2ea9d94`, tree `3a948b2`, which passed the complete
 replacement gate but was rejected by its review union. The findings and local
 native-only remediation at `9cf8c74`, `8187b12`, and `499af85` do not expand
-core authority. The complete cycle-3 gate, adversarial review, and integration/
-delivery remain pending. See [`models-cli.md`](models-cli.md).
+core authority. Pre-review gate attempt `c011398` was rejected for a concrete
+native DNS-config lifecycle issue; remediation at `d9922ef` and `e5248b1` also
+does not expand core authority. The complete cycle-3 gate, adversarial review,
+and integration/delivery remain pending. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 

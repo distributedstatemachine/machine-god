@@ -1,6 +1,7 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: cycle-2-rejected ledger for bounded slice 29. Exact cycle-1 candidate
+Status: cycle-3-pre-review-gate-remediated ledger for bounded slice 29. Exact
+cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
 was rejected by three fresh product-review tracks with a deduplicated union of
@@ -9,9 +10,12 @@ two medium and six low findings. Exact cycle-2 behavior candidate
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, includes all cycle-1 remediation
 and passed the complete replacement gate under exact Rust and Cargo 1.94.1.
 Three fresh cycle-2 tracks rejected it with a deduplicated union of one high,
-one medium, and one low finding. Cycle-2 remediation is locally composed, but
-its complete replacement gate and three fresh cycle-3 reviews remain pending;
-no candidate is green. The frozen behavior contract is
+one medium, and one low finding. Cycle-2 remediation is locally composed.
+Pre-review gate attempt `c01139811685ae73031ed6f6cbd771e4ff636714`, tree
+`4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected by a medium DNS-
+configuration lifecycle finding before formal cycle-3 review. That finding is
+locally remediated; its complete replacement gate and three fresh cycle-3
+reviews remain pending. No candidate is green. The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -31,14 +35,17 @@ The locally composed lineage is:
 | arbitrary-precision metadata/default handling | `9cf8c741255c8834d21090cc1e6255c1746d57ff` / `9a6052c9275ec1049ae4fdeb4bfd54c4c1033e17` | cycle-2 remediation; provider/parser 17/17 green |
 | async DNS lifecycle and provider-over-HTTP no-runtime handling | `8187b12` / `b985229bffe0cf3c3ccc141c146b0041e4b35b54` | cycle-2 remediation; HTTP integration 16/16 and source lifecycle regression green |
 | fail-closed system DNS configuration with no public fallback | `499af85d43738b0b138051ba4669ec27efd0ae1b` / `d96525945f34f067f969d34aa8a5712c40551c78` | cycle-2 remediation; source resolver regressions 2/2 and manifest 4/4 green |
+| eager bounded DNS snapshot and fresh resolver per runtime | `d9922ef1b0173c5da6f57aa39a5c7b1c69c55346` / `df03b97d40d9b927022a518eeba5099b33160662` | pre-review gate remediation; generic-Unix bounded input and sequential-runtime evidence green |
+| custom absolute-name resolver pinning | `e5248b103c5df67b733006da8210ada05d366345` / `d194034189082b1d71ae9cc69c38060ae6e8c886` | pre-review gate hardening; private resolver 6/6 and HTTP integration 16/16 green |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
 cycle-2 behavior candidate `2ea9d94`. Documentation-only submission seal
 `0b5976da573697b8d7cbc2c393b480559d5c3db7` recorded that immutable candidate
 and is exempt from redundant adversarial review under the user's instruction.
-The three cycle-2 remediation commits above are not yet a replacement-gated
-cycle-3 candidate. This ledger does not claim a green adversarial result,
+The three cycle-2 remediation commits formed rejected pre-review gate attempt
+`c011398`; the two later remediation commits above are not yet a replacement-
+gated cycle-3 candidate. This ledger does not claim a green adversarial result,
 feature CI, benchmark, integration, delivery, performance, compatibility
 promotion, or fx equivalence.
 
@@ -51,15 +58,18 @@ signal feature. Cycle-2 remediation adds one narrowly scoped direct Hickory
 resolver with Tokio integration because Reqwest's default GAI resolver can
 leave non-abortable blocking DNS work. Machine-god uses its own system-config-
 only adapter, disables Reqwest's built-in public-resolver fallback, and fails
-closed when system DNS configuration is unavailable. Generation transport/
-reference-host exports remain broader-feature-only, while shared credential/
-bearer/TLS and catalog HTTP exports are available under either native HTTP
-feature.
+closed when system DNS configuration is unavailable. Pre-review gate
+remediation eagerly captures a bounded configuration snapshot, builds a fresh
+zero-cache/hosts-disabled resolver on each active runtime, and makes the fixed
+hostname absolute before lookup. No synchronous configuration or hosts-file
+work remains in request polling. Generation transport/reference-host exports
+remain broader-feature-only, while shared credential/bearer/TLS and catalog
+HTTP exports are available under either native HTTP feature.
 
 Current remediation-focused local evidence under exact Rust and Cargo 1.94.1 is
 green: the parsed-manifest/resolved-tree suite passes 4/4; provider/parser,
 credential, loopback HTTP, and private resolver lifecycle suites pass 17/17,
-6/6, 16/16, and 2/2. Native focused warnings-denied Clippy also passes. These
+6/6, 16/16, and 6/6. Native focused warnings-denied Clippy also passes. These
 focused results do not replace the pending complete cycle-3 gate. The complete
 cycle-2 target matrix had previously confirmed that native default, catalog-
 only, compatibility-umbrella, and all-feature checks compile, and that native
@@ -119,6 +129,52 @@ cross-link claim; exact remote Linux CI remains authoritative. This candidate-
 local gate makes no review, workflow, integration, delivery, performance, or
 fx-equivalence claim. The following documentation-only submission seal records
 the evidence and is exempt from redundant adversarial review.
+
+## Rejected cycle-3 pre-review gate attempt
+
+Exact pre-review behavior attempt
+`c01139811685ae73031ed6f6cbd771e4ff636714`, tree
+`4ac4e5bd67b98900159aec1772f75d6003ba1d70`, did not pass its complete gate and
+was never submitted to the three formal cycle-3 reviewers. Under exact Rust and
+Cargo 1.94.1 without fallback:
+
+- formatting, workspace all-target/all-feature warnings-denied Clippy, all 960
+  registered non-documentation tests, and both doctests passed;
+- focused core 6/6, provider/parser 17/17, credential 6/6, loopback HTTP 16/16,
+  private resolver 2/2, CLI unit 18/18, CLI integration 23/23, and manifest 4/4
+  suites passed;
+- the full 134-test Python rerun passed with eight expected macOS skips after
+  one fake-Git timeout case produced an initial timing-only failure and then
+  passed both its isolated retry and the complete sequential rerun;
+- the pinned-fx generator was byte-stable; documentation integrity covered 78
+  Markdown files, 127 fence blocks, 561 inline links, and 409 repository-
+  relative targets with zero errors;
+- host/feature, Linux/FreeBSD no-feature, WASI, dependency-policy, unsafe, deny,
+  and audit checks passed. Audit scanned 1,226 advisories across 211 lockfile
+  dependencies with zero vulnerabilities; and
+- a fresh locked 4,282,880-byte release binary with SHA-256
+  `a5c27976519c887e00f219f79fb009191355fe7a5f6c611380fd5536ea0f3500`
+  passed six release black-box cases with no state writes. Its 138-package
+  inventory included the intended Hickory/Moka graph.
+
+The dependency/lifecycle audit nevertheless found one **medium** issue:
+`SystemHickoryResolver` initialized Hickory's system configuration lazily while
+the timed Reqwest future was being polled. Hickory's platform loader is
+synchronous, and generic Unix used allocation-unbounded `fs::read`; neither the
+request deadline nor cancellation could preempt that nested poll. The attempt
+was therefore rejected before review despite its other green checks.
+
+Remediation `d9922ef1b0173c5da6f57aa39a5c7b1c69c55346` eagerly retains only a
+validated configuration snapshot, bounds generic-Unix input to 64 KiB plus one
+overflow byte with nonblocking regular-file reads, disables hosts-file and
+response-cache work, and builds a fresh resolver for each active runtime.
+Hardening `e5248b103c5df67b733006da8210ada05d366345` explicitly disables Reqwest's
+built-in Hickory selector and resolves exactly one absolute fixed hostname,
+without system search suffixes. Deterministic private evidence now passes 6/6,
+including eager-once/no-request-time loading, redacted unavailable/oversized
+configuration, pending lookup teardown, and a local UDP resolver reused across
+two sequential current-thread runtimes. Focused loopback HTTP remains 16/16.
+These focused results do not replace the next complete gate.
 
 ## Bounded ownership
 
