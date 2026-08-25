@@ -119,9 +119,30 @@ precursor `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, or delivery claim; formal reviewers identify only the
 exact candidate they inspect.
-Native Linux HTTP compilation remains an exact-CI requirement because the
-macOS cross-host lacks the target C sysroot. Milestone 03 therefore remains in
-progress with twenty-six delivered slices.
+Formal cycle 6 is **NOT GREEN** on exact candidate
+`5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
+`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`. A medium manifest-portability
+finding rejects the candidate: `web-fetch-http` and `web_fetch.rs` cover every
+non-WASM target, but the direct `sha2` dependency required for DNS query-ID
+derivation covered only Linux and macOS. The remediation places the one direct
+`sha2` entry in the existing `cfg(not(target_family = "wasm"))` dependency
+table. That target table still covers the existing Linux/macOS `copy_file` and
+session-store uses without a duplicate or overlapping target entry, while no
+longer activating the native edge on Rust 1.94.1's
+`wasm32-wali-linux-musl` target, which has Linux as its target OS but belongs to
+the WASM target family. A stdlib `tomllib` regression parses the manifest and
+proves that the feature remains declared, its explicit optional dependencies
+share the non-WASM table, and `sha2` has exactly that one direct target
+placement.
+
+Linux and FreeBSD target-specific dependency-tree probes are valid manifest-
+resolution evidence only. Native Linux HTTP compilation remains an exact-CI
+requirement. Fully compiling the HTTP feature for FreeBSD is not claimed here:
+third-party `aws-lc-sys` stops first because this macOS cross-host lacks the
+FreeBSD C sysroot headers. A FreeBSD host or suitable C sysroot is required for
+that compilation evidence. This remediation record makes no replacement-gate,
+formal-review, workflow, integration, or delivery claim. Milestone 03 remains
+in progress with twenty-six delivered slices.
 
 ## Scope and feature boundary
 

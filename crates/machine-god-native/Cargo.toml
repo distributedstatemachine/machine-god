@@ -33,9 +33,6 @@ machine-god-core.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-sha2.workspace = true
-
 [target.'cfg(target_os = "macos")'.dependencies]
 calcifer-macos-acl.workspace = true
 
@@ -47,6 +44,7 @@ hickory-resolver = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
+sha2.workspace = true
 tokio = { workspace = true, optional = true }
 webpki-root-certs = { workspace = true, optional = true }
 
