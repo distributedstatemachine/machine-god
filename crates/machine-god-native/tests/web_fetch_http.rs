@@ -26,6 +26,10 @@ enum BoundedMode {
     Text(Vec<u8>),
     TextWithCompletionProbe(Vec<u8>),
     CancelThenText(CancellationToken),
+    DelayThenText {
+        delay: Duration,
+        cancellation: Option<CancellationToken>,
+    },
     Error(WebFetchTransportErrorKind),
     Pending,
 }
@@ -105,6 +109,20 @@ impl Future for BoundedFuture {
                     200,
                     Some("text/plain".to_owned()),
                     b"must not escape final cancellation".to_vec(),
+                ))
+            }
+            BoundedMode::DelayThenText {
+                delay,
+                cancellation,
+            } => {
+                std::thread::sleep(*delay);
+                if let Some(cancellation) = cancellation {
+                    assert!(cancellation.cancel());
+                }
+                Some(WebFetchResponse::new(
+                    200,
+                    Some("text/plain".to_owned()),
+                    b"must not escape an authoritative boundary".to_vec(),
                 ))
             }
             BoundedMode::Error(kind) => Some(Err(WebFetchTransportError::new(*kind))),
@@ -561,6 +579,37 @@ fn bounded_transport_releases_capacity_when_cancellation_races_ready_response() 
     });
     assert_eq!(state.active.load(Ordering::SeqCst), 0);
     assert_eq!(state.drops.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn bounded_transport_rechecks_deadline_and_cancellation_after_late_same_poll_completion() {
+    let request_timeout = Duration::from_millis(1);
+    let completion_delay = Duration::from_millis(10);
+
+    for (cancel_at_completion, expected_code) in
+        [(false, "web_fetch_timeout"), (true, "web_fetch_cancelled")]
+    {
+        let cancellation = CancellationToken::new();
+        let state = BoundedState::scripted([BoundedMode::DelayThenText {
+            delay: completion_delay,
+            cancellation: cancel_at_completion.then(|| cancellation.clone()),
+        }]);
+        let limits =
+            WebFetchLimits::new(request_timeout, request_timeout, 1).expect("valid tight limits");
+        let tool = bounded_tool(&state, limits);
+
+        let started = Instant::now();
+        let result = runtime().block_on(execute_bounded(&tool, cancellation));
+
+        assert!(
+            started.elapsed() >= request_timeout,
+            "scripted transport must return only after the total deadline"
+        );
+        assert_error_code(result, expected_code);
+        assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.active.load(Ordering::SeqCst), 0);
+        assert_eq!(state.drops.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[test]
