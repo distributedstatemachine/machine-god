@@ -18,7 +18,14 @@ ai-gateway-http = [
     "dep:webpki-root-certs",
     "web-fetch-http",
 ]
-web-fetch-http = ["dep:reqwest", "dep:rustls", "dep:tokio", "dep:webpki-root-certs"]
+web-fetch-http = [
+    "dep:hickory-proto",
+    "dep:hickory-resolver",
+    "dep:reqwest",
+    "dep:rustls",
+    "dep:tokio",
+    "dep:webpki-root-certs",
+]
 
 [dependencies]
 futures-core.workspace = true
@@ -27,7 +34,6 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-getrandom.workspace = true
 sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -35,6 +41,9 @@ calcifer-macos-acl.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 bytes = { workspace = true, optional = true }
+getrandom.workspace = true
+hickory-proto = { workspace = true, optional = true }
+hickory-resolver = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
@@ -49,6 +58,7 @@ rustix.workspace = true
 futures-executor = "0.3.31"
 futures-util = "0.3.31"
 machine-god-testkit = { version = "0.1.0", path = "../machine-god-testkit" }
+rcgen = { version = "=0.14.5", default-features = false, features = ["aws_lc_rs"] }
 
 [lints]
 workspace = true

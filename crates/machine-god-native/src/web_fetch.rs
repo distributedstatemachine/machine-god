@@ -1,5 +1,12 @@
 //! Bounded public-web fetch tool and native HTTPS transport.
+//!
+//! Native fetch futures must be polled inside a live Tokio runtime built with
+//! both I/O and time drivers. Tokio 1.53 exposes no stable fallible driver
+//! query: polling on a driverless runtime can panic, and this workspace's
+//! abort-on-panic release profile can terminate the host.
 
+use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+use hickory_proto::rr::{DNSClass, Name as DnsName, RData, RecordType};
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolCall, Tool, ToolCall,
     ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
@@ -10,7 +17,8 @@ use reqwest::header::{
     ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap,
     HeaderValue, USER_AGENT,
 };
-use reqwest::{Certificate, Client, Method, Request, Version};
+use reqwest::{Client, Method, Request, Version};
+use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::error::Error as _;
@@ -21,6 +29,7 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::task::Poll;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Instant, Sleep};
 
@@ -173,7 +182,7 @@ pub enum WebFetchTransportErrorKind {
     Cancelled,
     /// DNS produced a non-public or otherwise inadmissible destination.
     DestinationRejected,
-    /// A Tokio runtime with I/O and time drivers is required.
+    /// No active Tokio runtime was present at first poll.
     RuntimeRequired,
     /// The absolute request deadline expired.
     Timeout,
@@ -281,11 +290,11 @@ impl fmt::Debug for WebFetchRequest {
 }
 
 /// Complete bounded response returned by a [`WebFetchTransport`].
-#[derive(Clone, Eq, PartialEq)]
 pub struct WebFetchResponse {
     status: u16,
     content_type: Option<String>,
     body: Vec<u8>,
+    completion: Option<BoundedCompletion>,
 }
 
 impl WebFetchResponse {
@@ -316,6 +325,7 @@ impl WebFetchResponse {
             status,
             content_type,
             body,
+            completion: None,
         })
     }
 
@@ -336,7 +346,47 @@ impl WebFetchResponse {
     pub fn body(&self) -> &[u8] {
         &self.body
     }
+
+    fn attach_completion(&mut self, completion: BoundedCompletion) {
+        self.completion = Some(completion);
+    }
+
+    fn final_boundary(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<(), WebFetchTransportError> {
+        match &self.completion {
+            Some(completion) => cancellation_boundary(cancellation, completion.deadline),
+            None if cancellation.is_cancelled() => {
+                Err(transport_error(WebFetchTransportErrorKind::Cancelled))
+            }
+            None => Ok(()),
+        }
+    }
 }
+
+impl Clone for WebFetchResponse {
+    fn clone(&self) -> Self {
+        Self {
+            status: self.status,
+            content_type: self.content_type.clone(),
+            body: self.body.clone(),
+            // Completion ownership deliberately remains with the authoritative
+            // response that the bounded transport returned.
+            completion: None,
+        }
+    }
+}
+
+impl PartialEq for WebFetchResponse {
+    fn eq(&self, other: &Self) -> bool {
+        self.status == other.status
+            && self.content_type == other.content_type
+            && self.body == other.body
+    }
+}
+
+impl Eq for WebFetchResponse {}
 
 impl fmt::Debug for WebFetchResponse {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -345,6 +395,7 @@ impl fmt::Debug for WebFetchResponse {
             .field("status", &self.status)
             .field("has_content_type", &self.content_type.is_some())
             .field("body_bytes", &self.body.len())
+            .field("bounded_completion", &self.completion.is_some())
             .finish()
     }
 }
@@ -359,6 +410,82 @@ pub trait WebFetchTransport: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<WebFetchResponse, WebFetchTransportError>>;
 }
 
+struct BoundedCompletion {
+    deadline: Instant,
+    _permit: OwnedSemaphorePermit,
+}
+
+struct BoundedWebFetchTransport {
+    inner: Arc<dyn WebFetchTransport>,
+    limits: WebFetchLimits,
+    permits: Arc<Semaphore>,
+}
+
+impl BoundedWebFetchTransport {
+    fn new(inner: Arc<dyn WebFetchTransport>, limits: WebFetchLimits) -> Self {
+        Self {
+            inner,
+            limits,
+            permits: Arc::new(Semaphore::new(limits.max_active_requests)),
+        }
+    }
+}
+
+impl fmt::Debug for BoundedWebFetchTransport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BoundedWebFetchTransport")
+            .field("inner", &"<redacted>")
+            .field("limits", &self.limits)
+            .field("permits", &"<redacted>")
+            .finish()
+    }
+}
+
+impl WebFetchTransport for BoundedWebFetchTransport {
+    fn fetch(
+        &self,
+        request: WebFetchRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<WebFetchResponse, WebFetchTransportError>> {
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(transport_error(WebFetchTransportErrorKind::Cancelled));
+            }
+            if tokio::runtime::Handle::try_current().is_err() {
+                return Err(transport_error(WebFetchTransportErrorKind::RuntimeRequired));
+            }
+            let deadline = Instant::now() + self.limits.request_timeout;
+            let mut cancelled = cancellation.cancelled();
+            let mut timeout = deadline_sleep(deadline);
+            let permit = await_bounded_with_waiters(
+                Arc::clone(&self.permits).acquire_owned(),
+                &cancellation,
+                deadline,
+                Pin::new(&mut cancelled),
+                timeout.as_mut(),
+            )
+            .await?
+            .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+            cancellation_boundary(&cancellation, deadline)?;
+            let mut response = await_bounded_with_waiters(
+                self.inner.fetch(request, cancellation.clone()),
+                &cancellation,
+                deadline,
+                Pin::new(&mut cancelled),
+                timeout.as_mut(),
+            )
+            .await??;
+            cancellation_boundary(&cancellation, deadline)?;
+            response.attach_completion(BoundedCompletion {
+                deadline,
+                _permit: permit,
+            });
+            Ok(response)
+        })
+    }
+}
+
 /// Rootless, permission-gated public-web fetch tool.
 pub struct WebFetchTool {
     transport: Arc<dyn WebFetchTransport>,
@@ -370,6 +497,11 @@ impl WebFetchTool {
     /// # Errors
     ///
     /// Returns a fixed redacted error if the HTTPS backend cannot initialize.
+    ///
+    /// # Panics
+    ///
+    /// Polling a native execution produced by this tool can panic if its active
+    /// Tokio runtime lacks I/O or time drivers.
     pub fn new() -> Result<Self, WebFetchConfigError> {
         Self::with_limits(WebFetchLimits::default())
     }
@@ -379,16 +511,39 @@ impl WebFetchTool {
     /// # Errors
     ///
     /// Returns a fixed redacted error if the HTTPS backend cannot initialize.
+    ///
+    /// # Panics
+    ///
+    /// Polling a native execution produced by this tool can panic if its active
+    /// Tokio runtime lacks I/O or time drivers.
     pub fn with_limits(limits: WebFetchLimits) -> Result<Self, WebFetchConfigError> {
-        Ok(Self::with_transport(Arc::new(
-            NativeWebFetchTransport::new(limits)?,
-        )))
+        let transport = Arc::new(NativeWebFetchTransport::new(limits.connect_timeout)?);
+        Ok(Self::with_bounded_transport(transport, limits))
     }
 
     /// Constructs a tool around an explicitly injected transport.
     #[must_use]
     pub fn with_transport(transport: Arc<dyn WebFetchTransport>) -> Self {
         Self { transport }
+    }
+
+    /// Constructs a tool around an injected transport with native total-time
+    /// and active-request bounds.
+    ///
+    /// The permit remains owned through response rendering, serialized-result
+    /// validation, and the final cancellation/deadline boundary.
+    ///
+    /// # Panics
+    ///
+    /// Polling an execution produced by this tool can panic if its active Tokio
+    /// runtime lacks a time driver. An injected transport may impose additional
+    /// documented runtime preconditions.
+    #[must_use]
+    pub fn with_bounded_transport(
+        transport: Arc<dyn WebFetchTransport>,
+        limits: WebFetchLimits,
+    ) -> Self {
+        Self::with_transport(Arc::new(BoundedWebFetchTransport::new(transport, limits)))
     }
 }
 
@@ -464,7 +619,12 @@ impl Tool for WebFetchTool {
             )
             .await?
             .map_err(map_transport_error)?;
-            render_response(&request, &response)
+            let output = render_response(&request, &response);
+            let final_boundary = response
+                .final_boundary(&cancellation)
+                .map_err(map_transport_error);
+            final_boundary?;
+            output
         })
     }
 }
@@ -515,10 +675,13 @@ fn canonical_request(input: &str) -> Result<WebFetchRequest, ToolError> {
 
     let parsed_host = unbracket_ipv6(url.host_str().ok_or_else(invalid_url_error)?).to_owned();
     let raw_unbracketed = unbracket_ipv6(raw_host);
+    let raw_ipv4_had_trailing_dot = raw_unbracketed.ends_with('.');
     let raw_unbracketed = raw_unbracketed.strip_suffix('.').unwrap_or(raw_unbracketed);
     let address = parsed_host.parse::<IpAddr>().ok();
     if let Some(address) = address {
-        if matches!(address, IpAddr::V4(_)) && raw_unbracketed != parsed_host {
+        if matches!(address, IpAddr::V4(_))
+            && (raw_ipv4_had_trailing_dot || raw_unbracketed != parsed_host)
+        {
             return Err(destination_rejected_error());
         }
         if !is_public_ip(address) {
@@ -666,6 +829,7 @@ fn reserved_dns_name(host: &str) -> bool {
         "invalid",
         "example",
         "onion",
+        "alt",
     ]
     .iter()
     .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
@@ -869,18 +1033,15 @@ fn validate_response_status(status: u16) -> Result<(), WebFetchTransportError> {
 }
 
 struct NativeWebFetchTransport {
-    certificates: Vec<Certificate>,
-    limits: WebFetchLimits,
-    permits: Arc<Semaphore>,
+    connect_timeout: Duration,
+    tls_config: RustlsClientConfig,
 }
 
 impl NativeWebFetchTransport {
-    fn new(limits: WebFetchLimits) -> Result<Self, WebFetchConfigError> {
-        let certificates = root_certificates()?;
+    fn new(connect_timeout: Duration) -> Result<Self, WebFetchConfigError> {
         Ok(Self {
-            certificates,
-            limits,
-            permits: Arc::new(Semaphore::new(limits.max_active_requests)),
+            connect_timeout,
+            tls_config: root_tls_config()?,
         })
     }
 }
@@ -889,9 +1050,8 @@ impl fmt::Debug for NativeWebFetchTransport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("NativeWebFetchTransport")
-            .field("certificates", &"<redacted>")
-            .field("limits", &self.limits)
-            .field("permits", &"<redacted>")
+            .field("connect_timeout", &self.connect_timeout)
+            .field("tls_config", &"<redacted>")
             .finish()
     }
 }
@@ -906,79 +1066,263 @@ impl WebFetchTransport for NativeWebFetchTransport {
             if cancellation.is_cancelled() {
                 return Err(transport_error(WebFetchTransportErrorKind::Cancelled));
             }
-            if tokio::runtime::Handle::try_current().is_err() {
-                return Err(transport_error(WebFetchTransportErrorKind::RuntimeRequired));
-            }
-            let deadline = Instant::now() + self.limits.request_timeout;
-            let _permit =
-                acquire_web_fetch_permit(Arc::clone(&self.permits), &cancellation, deadline)
-                    .await?;
-            cancellation_boundary(&cancellation, deadline)?;
-            let admitted = resolve_public_addresses(&request, &cancellation, deadline).await?;
-            cancellation_boundary(&cancellation, deadline)?;
-            let client = build_pinned_client(
-                &request,
-                &admitted,
-                &self.certificates,
-                self.limits,
-                deadline,
-            )?;
+            let admitted = resolve_public_addresses(&request, system_nameserver()?).await?;
+            let client =
+                build_pinned_client(&request, &admitted, &self.tls_config, self.connect_timeout)?;
             let http_request = build_http_request(&request)?;
-            cancellation_boundary(&cancellation, deadline)?;
-            let response = await_bounded(client.execute(http_request), &cancellation, deadline)
-                .await?
+            let response = client
+                .execute(http_request)
+                .await
                 .map_err(|error| map_reqwest_error(&error))?;
-            cancellation_boundary(&cancellation, deadline)?;
-            read_bounded_response(response, &cancellation, deadline).await
+            read_bounded_response(response).await
         })
     }
 }
 
-fn root_certificates() -> Result<Vec<Certificate>, WebFetchConfigError> {
-    static CERTIFICATES: OnceLock<Result<Vec<Certificate>, ()>> = OnceLock::new();
-    CERTIFICATES
+fn root_tls_config() -> Result<RustlsClientConfig, WebFetchConfigError> {
+    static TLS_CONFIG: OnceLock<Result<RustlsClientConfig, ()>> = OnceLock::new();
+    TLS_CONFIG
         .get_or_init(|| {
-            webpki_root_certs::TLS_SERVER_ROOT_CERTS
-                .iter()
-                .map(|certificate| Certificate::from_der(certificate.as_ref()).map_err(|_| ()))
-                .collect()
+            let mut roots = RootCertStore::empty();
+            let (valid, invalid) = roots.add_parsable_certificates(
+                webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned(),
+            );
+            if valid == 0 || invalid != 0 {
+                return Err(());
+            }
+            let mut config = RustlsClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            // HTTP/1.1 only: offer no HTTP/2 ALPN and retain Rustls's default
+            // certificate validation, SNI, and disabled key logging.
+            config.alpn_protocols = vec![b"http/1.1".to_vec()];
+            Ok(config)
         })
         .clone()
         .map_err(|()| WebFetchConfigError::new(WebFetchConfigErrorKind::ClientInitialization))
 }
 
-async fn acquire_web_fetch_permit(
-    permits: Arc<Semaphore>,
-    cancellation: &CancellationToken,
-    deadline: Instant,
-) -> Result<OwnedSemaphorePermit, WebFetchTransportError> {
-    await_bounded(permits.acquire_owned(), cancellation, deadline)
-        .await?
-        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))
+fn system_nameserver() -> Result<SocketAddr, WebFetchTransportError> {
+    let (config, _) = hickory_resolver::system_conf::read_system_conf()
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let nameserver = config
+        .name_servers()
+        .iter()
+        .flat_map(|server| {
+            server.connections.iter().filter_map(move |connection| {
+                matches!(
+                    connection.protocol,
+                    hickory_resolver::config::ProtocolConfig::Udp
+                )
+                .then_some(SocketAddr::new(server.ip, connection.port))
+            })
+        })
+        .next()
+        .ok_or_else(|| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    Ok(nameserver)
 }
 
 async fn resolve_public_addresses(
     request: &WebFetchRequest,
-    cancellation: &CancellationToken,
-    deadline: Instant,
+    nameserver: SocketAddr,
 ) -> Result<Vec<SocketAddr>, WebFetchTransportError> {
     let effective_port = request.port.unwrap_or(443);
     let addresses = if let Ok(address) = request.host.parse::<IpAddr>() {
         vec![SocketAddr::new(address, effective_port)]
     } else {
-        let resolved = await_bounded(
-            tokio::net::lookup_host((request.host.as_str(), effective_port)),
-            cancellation,
-            deadline,
-        )
-        .await?
-        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
-        resolved
-            .take(MAX_WEB_FETCH_DNS_ADDRESSES + 1)
-            .collect::<Vec<_>>()
+        let mut addresses = query_dns_addresses(&request.host, nameserver, RecordType::A).await?;
+        addresses.extend(query_dns_addresses(&request.host, nameserver, RecordType::AAAA).await?);
+        addresses
+            .into_iter()
+            .map(|address| SocketAddr::new(address, effective_port))
+            .collect()
     };
-    cancellation_boundary(cancellation, deadline)?;
     admit_resolved_addresses(addresses)
+}
+
+async fn query_dns_addresses(
+    host: &str,
+    nameserver: SocketAddr,
+    record_type: RecordType,
+) -> Result<Vec<IpAddr>, WebFetchTransportError> {
+    let name = DnsName::from_ascii(format!("{host}."))
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let mut id_bytes = [0_u8; 2];
+    getrandom::fill(&mut id_bytes)
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let id = u16::from_ne_bytes(id_bytes);
+    let mut query = Message::new(id, MessageType::Query, OpCode::Query);
+    query.metadata.recursion_desired = true;
+    query.add_query(Query::query(name.clone(), record_type));
+    let wire = query
+        .to_vec()
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let response = exchange_dns_udp(nameserver, &wire).await?;
+    let response = if response.metadata.truncation {
+        exchange_dns_tcp(nameserver, &wire).await?
+    } else {
+        response
+    };
+    validate_dns_response(&response, id, &name, record_type)
+}
+
+async fn exchange_dns_udp(
+    nameserver: SocketAddr,
+    wire: &[u8],
+) -> Result<Message, WebFetchTransportError> {
+    let bind = match nameserver {
+        SocketAddr::V4(_) => SocketAddr::from(([0, 0, 0, 0], 0)),
+        SocketAddr::V6(_) => SocketAddr::from(([0_u16; 8], 0)),
+    };
+    let socket = tokio::net::UdpSocket::bind(bind)
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    socket
+        .connect(nameserver)
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let sent = socket
+        .send(wire)
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    if sent != wire.len() {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    let mut response = [0_u8; 4_097];
+    let received = socket
+        .recv(&mut response)
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    if received > 4_096 {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    Message::from_vec(&response[..received])
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))
+}
+
+async fn exchange_dns_tcp(
+    nameserver: SocketAddr,
+    wire: &[u8],
+) -> Result<Message, WebFetchTransportError> {
+    let wire_len = u16::try_from(wire.len())
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let mut stream = tokio::net::TcpStream::connect(nameserver)
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    stream
+        .write_all(&wire_len.to_be_bytes())
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    stream
+        .write_all(wire)
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let response_len = stream
+        .read_u16()
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    let response_len = bounded_dns_tcp_response_len(response_len)?;
+    let mut response = vec![0_u8; response_len];
+    stream
+        .read_exact(&mut response)
+        .await
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))?;
+    Message::from_vec(&response)
+        .map_err(|_| transport_error(WebFetchTransportErrorKind::Unavailable))
+}
+
+fn bounded_dns_tcp_response_len(response_len: u16) -> Result<usize, WebFetchTransportError> {
+    let response_len = usize::from(response_len);
+    if response_len > 4_096 {
+        Err(transport_error(WebFetchTransportErrorKind::Unavailable))
+    } else {
+        Ok(response_len)
+    }
+}
+
+fn validate_dns_response(
+    response: &Message,
+    id: u16,
+    name: &DnsName,
+    record_type: RecordType,
+) -> Result<Vec<IpAddr>, WebFetchTransportError> {
+    if response.metadata.id != id
+        || response.metadata.message_type != MessageType::Response
+        || response.metadata.op_code != OpCode::Query
+        || response.metadata.response_code != ResponseCode::NoError
+        || response.metadata.truncation
+        || response.queries.len() != 1
+        || response.queries[0].name() != name
+        || response.queries[0].query_type() != record_type
+        || response.queries[0].query_class() != DNSClass::IN
+    {
+        return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+    }
+    let mut chain = vec![name.clone()];
+    let terminal = loop {
+        let current = chain
+            .last()
+            .expect("the DNS validation chain starts nonempty");
+        let mut targets = response.answers.iter().filter_map(|record| {
+            (&record.name == current)
+                .then_some(record)
+                .and_then(|record| match &record.data {
+                    RData::CNAME(target) if record.dns_class == DNSClass::IN => {
+                        Some(target.0.clone())
+                    }
+                    _ => None,
+                })
+        });
+        let Some(target) = targets.next() else {
+            break current.clone();
+        };
+        if targets.any(|candidate| candidate != target)
+            || chain.contains(&target)
+            || chain.len() >= 8
+        {
+            return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+        }
+        chain.push(target);
+    };
+
+    let mut addresses = Vec::new();
+    for record in &response.answers {
+        match &record.data {
+            RData::A(address) => {
+                if record_type != RecordType::A
+                    || record.dns_class != DNSClass::IN
+                    || record.name != terminal
+                {
+                    return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+                }
+                addresses.push(IpAddr::V4(address.0));
+            }
+            RData::AAAA(address) => {
+                if record_type != RecordType::AAAA
+                    || record.dns_class != DNSClass::IN
+                    || record.name != terminal
+                {
+                    return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+                }
+                addresses.push(IpAddr::V6(address.0));
+            }
+            RData::CNAME(target) => {
+                let Some(position) = chain.iter().position(|name| name == &record.name) else {
+                    return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+                };
+                if record.dns_class != DNSClass::IN || chain.get(position + 1) != Some(&target.0) {
+                    return Err(transport_error(WebFetchTransportErrorKind::Unavailable));
+                }
+            }
+            _ => {}
+        }
+        if addresses.len() > MAX_WEB_FETCH_DNS_ADDRESSES {
+            return Err(transport_error(
+                WebFetchTransportErrorKind::DestinationRejected,
+            ));
+        }
+    }
+    Ok(addresses)
 }
 
 fn admit_resolved_addresses(
@@ -1016,14 +1360,9 @@ impl Resolve for FailClosedResolver {
 fn build_pinned_client(
     request: &WebFetchRequest,
     admitted: &[SocketAddr],
-    certificates: &[Certificate],
-    limits: WebFetchLimits,
-    deadline: Instant,
+    tls_config: &RustlsClientConfig,
+    connect_timeout: Duration,
 ) -> Result<Client, WebFetchTransportError> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        return Err(transport_error(WebFetchTransportErrorKind::Timeout));
-    }
     Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -1035,15 +1374,13 @@ fn build_pinned_client(
         .no_zstd()
         .http1_only()
         .https_only(true)
-        .connect_timeout(limits.connect_timeout)
-        .timeout(remaining)
+        .connect_timeout(connect_timeout)
         .pool_idle_timeout(None)
         .pool_max_idle_per_host(0)
         .connection_verbose(false)
-        .tls_backend_rustls()
         .tls_sni(true)
         .tls_sslkeylogfile(false)
-        .tls_certs_only(certificates.to_vec())
+        .tls_backend_preconfigured(tls_config.clone())
         .dns_resolver(FailClosedResolver)
         .resolve_to_addrs(&request.host, admitted)
         .build()
@@ -1072,8 +1409,6 @@ fn build_http_request(request: &WebFetchRequest) -> Result<Request, WebFetchTran
 
 async fn read_bounded_response(
     mut response: reqwest::Response,
-    cancellation: &CancellationToken,
-    deadline: Instant,
 ) -> Result<WebFetchResponse, WebFetchTransportError> {
     let status = response.status().as_u16();
     validate_response_status(status)?;
@@ -1112,22 +1447,32 @@ async fn read_bounded_response(
             .min(MAX_WEB_FETCH_BODY_BYTES),
     );
     loop {
-        cancellation_boundary(cancellation, deadline)?;
-        let chunk = await_bounded(response.chunk(), cancellation, deadline)
-            .await?
+        let chunk = response
+            .chunk()
+            .await
             .map_err(|error| map_reqwest_error(&error))?;
-        cancellation_boundary(cancellation, deadline)?;
         let Some(chunk) = chunk else {
             break;
         };
-        if chunk.len() > MAX_WEB_FETCH_BODY_BYTES - body.len() {
-            return Err(transport_error(
-                WebFetchTransportErrorKind::ResponseTooLarge,
-            ));
-        }
-        body.extend_from_slice(&chunk);
+        append_bounded_body_chunk(&mut body, &chunk)?;
     }
     WebFetchResponse::new(status, content_type, body)
+}
+
+fn append_bounded_body_chunk(
+    body: &mut Vec<u8>,
+    chunk: &[u8],
+) -> Result<(), WebFetchTransportError> {
+    if MAX_WEB_FETCH_BODY_BYTES
+        .checked_sub(body.len())
+        .is_none_or(|remaining| chunk.len() > remaining)
+    {
+        return Err(transport_error(
+            WebFetchTransportErrorKind::ResponseTooLarge,
+        ));
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
 }
 
 fn validate_content_encoding(headers: &HeaderMap) -> Result<(), WebFetchTransportError> {
@@ -1169,16 +1514,16 @@ enum WaitError {
     Timeout,
 }
 
-async fn await_bounded<F: Future>(
+async fn await_bounded_with_waiters<F: Future, C: Future<Output = ()> + ?Sized>(
     future: F,
     cancellation: &CancellationToken,
     deadline: Instant,
+    mut cancelled: Pin<&mut C>,
+    mut timeout: Pin<&mut Sleep>,
 ) -> Result<F::Output, WebFetchTransportError> {
     let mut future = std::pin::pin!(future);
-    let mut cancelled = cancellation.cancelled();
-    let mut timeout = deadline_sleep(deadline);
     poll_fn(|context| {
-        if Pin::new(&mut cancelled).poll(context).is_ready() {
+        if cancelled.as_mut().poll(context).is_ready() {
             return Poll::Ready(Err(WaitError::Cancelled));
         }
         if timeout.as_mut().poll(context).is_ready() {
@@ -1358,7 +1703,14 @@ fn result_too_large_error() -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hickory_proto::rr::Record;
+    use hickory_proto::rr::rdata::{A, AAAA, CNAME};
     use reqwest::header::{AUTHORIZATION, COOKIE, ORIGIN, PROXY_AUTHORIZATION, REFERER};
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::Duration;
 
     fn request(url: &str, host: &str, port: Option<u16>) -> WebFetchRequest {
         WebFetchRequest {
@@ -1367,6 +1719,87 @@ mod tests {
             host: host.to_owned(),
             port,
         }
+    }
+
+    fn dns_response(id: u16, name: &DnsName, record_type: RecordType) -> Message {
+        let mut response = Message::response(id, OpCode::Query);
+        response.add_query(Query::query(name.clone(), record_type));
+        response
+    }
+
+    fn local_https_exchange(
+        response_parts: Vec<Vec<u8>>,
+    ) -> (
+        Result<WebFetchResponse, WebFetchTransportError>,
+        String,
+        Option<String>,
+    ) {
+        let rcgen::CertifiedKey { cert, signing_key } =
+            rcgen::generate_simple_self_signed(vec!["example.com".to_owned()]).unwrap();
+        let certificate = cert.der().clone();
+        let private_key =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der()));
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate.clone()], private_key)
+            .unwrap();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let connection = rustls::ServerConnection::new(Arc::new(server_config)).unwrap();
+            let mut stream = rustls::StreamOwned::new(connection, stream);
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1_024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).unwrap();
+                assert_ne!(read, 0);
+                request.extend_from_slice(&buffer[..read]);
+                assert!(request.len() <= 8 * 1_024);
+            }
+            let sni = stream.conn.server_name().map(str::to_owned);
+            for part in response_parts {
+                if stream.write_all(&part).is_err() {
+                    break;
+                }
+                if stream.flush().is_err() {
+                    break;
+                }
+                thread::yield_now();
+            }
+            (String::from_utf8(request).unwrap(), sni)
+        });
+
+        let mut roots = RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let mut tls_config = RustlsClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let request = request(
+            &format!("https://example.com:{port}/resource?q=secret"),
+            "example.com",
+            Some(port),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async {
+            let client = build_pinned_client(
+                &request,
+                &[SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)],
+                &tls_config,
+                Duration::from_secs(2),
+            )?;
+            let response = client
+                .execute(build_http_request(&request)?)
+                .await
+                .map_err(|error| map_reqwest_error(&error))?;
+            read_bounded_response(response).await
+        });
+        let (wire_request, sni) = server.join().unwrap();
+        (result, wire_request, sni)
     }
 
     #[test]
@@ -1414,12 +1847,14 @@ mod tests {
     #[test]
     fn canonicalization_rejects_reserved_names_ambiguous_ips_and_unsafe_escapes() {
         for url in [
+            "https://host.alt/",
             "https://host.internal/",
             "https://host.local/",
             "https://host.test/",
             "https://host.onion/",
             "https://127.1/",
             "https://2130706433/",
+            "https://8.8.8.8./",
             "https://example.com/%20",
             "https://example.com/%0d%0aheader",
             "https://example.com:0/",
@@ -1534,6 +1969,90 @@ mod tests {
     }
 
     #[test]
+    fn dns_response_validation_accepts_direct_and_bounded_cname_answers() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let alias = DnsName::from_ascii("edge.example.net.").unwrap();
+        let mut direct = dns_response(7, &name, RecordType::A);
+        direct.add_answer(Record::from_rdata(
+            name.clone(),
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+        ));
+        assert_eq!(
+            validate_dns_response(&direct, 7, &name, RecordType::A).unwrap(),
+            [IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]
+        );
+
+        let mut cname = dns_response(8, &name, RecordType::AAAA);
+        cname.add_answer(Record::from_rdata(
+            name.clone(),
+            60,
+            RData::CNAME(CNAME(alias.clone())),
+        ));
+        cname.add_answer(Record::from_rdata(
+            alias,
+            60,
+            RData::AAAA(AAAA("2606:4700:4700::1111".parse().unwrap())),
+        ));
+        assert_eq!(
+            validate_dns_response(&cname, 8, &name, RecordType::AAAA).unwrap(),
+            [IpAddr::V6("2606:4700:4700::1111".parse().unwrap())]
+        );
+    }
+
+    #[test]
+    fn dns_response_validation_rejects_mismatches_unrelated_data_and_cycles() {
+        let name = DnsName::from_ascii("example.com.").unwrap();
+        let unrelated = DnsName::from_ascii("unrelated.example.net.").unwrap();
+        let address = RData::A(A(Ipv4Addr::new(93, 184, 216, 34)));
+
+        let mut wrong_id = dns_response(9, &name, RecordType::A);
+        wrong_id.add_answer(Record::from_rdata(name.clone(), 60, address.clone()));
+        assert!(validate_dns_response(&wrong_id, 10, &name, RecordType::A).is_err());
+
+        let mut truncated = dns_response(10, &name, RecordType::A);
+        truncated.metadata.truncation = true;
+        assert!(validate_dns_response(&truncated, 10, &name, RecordType::A).is_err());
+
+        let mut wrong_question = dns_response(10, &name, RecordType::AAAA);
+        wrong_question.add_answer(Record::from_rdata(name.clone(), 60, address.clone()));
+        assert!(validate_dns_response(&wrong_question, 10, &name, RecordType::A).is_err());
+
+        let mut wrong_class = dns_response(10, &name, RecordType::A);
+        wrong_class.queries[0].query_class = DNSClass::CH;
+        assert!(validate_dns_response(&wrong_class, 10, &name, RecordType::A).is_err());
+
+        let mut unrelated_answer = dns_response(10, &name, RecordType::A);
+        unrelated_answer.add_answer(Record::from_rdata(unrelated.clone(), 60, address));
+        assert!(validate_dns_response(&unrelated_answer, 10, &name, RecordType::A).is_err());
+
+        let mut unrelated_cname = dns_response(10, &name, RecordType::A);
+        unrelated_cname.add_answer(Record::from_rdata(
+            unrelated.clone(),
+            60,
+            RData::CNAME(CNAME(name.clone())),
+        ));
+        assert!(validate_dns_response(&unrelated_cname, 10, &name, RecordType::A).is_err());
+
+        let alias = DnsName::from_ascii("alias.example.net.").unwrap();
+        let mut cycle = dns_response(10, &name, RecordType::A);
+        cycle.add_answer(Record::from_rdata(
+            name.clone(),
+            60,
+            RData::CNAME(CNAME(alias.clone())),
+        ));
+        cycle.add_answer(Record::from_rdata(
+            alias,
+            60,
+            RData::CNAME(CNAME(name.clone())),
+        ));
+        assert!(validate_dns_response(&cycle, 10, &name, RecordType::A).is_err());
+
+        assert_eq!(bounded_dns_tcp_response_len(4_096).unwrap(), 4_096);
+        assert!(bounded_dns_tcp_response_len(4_097).is_err());
+    }
+
+    #[test]
     fn request_builder_has_only_fixed_get_http11_headers_and_no_body() {
         let request = build_http_request(&request(
             "https://example.com/report?q=private",
@@ -1553,6 +2072,103 @@ mod tests {
         for forbidden in [AUTHORIZATION, PROXY_AUTHORIZATION, COOKIE, REFERER, ORIGIN] {
             assert!(!request.headers().contains_key(forbidden));
         }
+    }
+
+    #[test]
+    fn pinned_https_exchange_preserves_address_override_sni_host_and_fixed_headers() {
+        let (response, wire_request, sni) = local_https_exchange(vec![
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                .to_vec(),
+        ]);
+        assert_eq!(response.unwrap().body(), b"ok");
+        assert_eq!(sni.as_deref(), Some("example.com"));
+        assert!(
+            wire_request.starts_with("GET /resource?q=secret HTTP/1.1\r\n"),
+            "{wire_request:?}"
+        );
+        let lowercase = wire_request.to_ascii_lowercase();
+        assert!(lowercase.contains("\r\nhost: example.com:"));
+        assert!(lowercase.contains("\r\nuser-agent: machine-god-web-fetch/0.1\r\n"));
+        assert!(lowercase.contains("\r\naccept-encoding: identity\r\n"));
+        assert!(lowercase.contains("\r\naccept: text/html,"));
+        for forbidden in [
+            "authorization:",
+            "proxy-authorization:",
+            "cookie:",
+            "referer:",
+        ] {
+            assert!(!lowercase.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn production_response_path_rejects_redirect_encoding_status_and_large_length() {
+        for (head, expected) in [
+            (
+                b"HTTP/1.1 302 Found\r\nLocation: https://example.com/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .as_slice(),
+                WebFetchTransportErrorKind::Redirect,
+            ),
+            (
+                b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .as_slice(),
+                WebFetchTransportErrorKind::UnsupportedEncoding,
+            ),
+            (
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .as_slice(),
+                WebFetchTransportErrorKind::RejectedStatus,
+            ),
+            (
+                b"HTTP/1.1 200 OK\r\nContent-Length: 24577\r\nConnection: close\r\n\r\n"
+                    .as_slice(),
+                WebFetchTransportErrorKind::ResponseTooLarge,
+            ),
+        ] {
+            let (result, _, _) = local_https_exchange(vec![head.to_vec()]);
+            assert_eq!(result.unwrap_err().kind(), expected);
+        }
+    }
+
+    #[test]
+    fn bounded_body_accumulator_reuses_storage_across_fragmented_exact_and_overflow() {
+        let mut exact = Vec::with_capacity(MAX_WEB_FETCH_BODY_BYTES);
+        for size in [1, 1_023, 4_096, MAX_WEB_FETCH_BODY_BYTES - 5_120] {
+            append_bounded_body_chunk(&mut exact, &vec![b'x'; size]).unwrap();
+        }
+        assert_eq!(exact.len(), MAX_WEB_FETCH_BODY_BYTES);
+        assert_eq!(exact.capacity(), MAX_WEB_FETCH_BODY_BYTES);
+        assert_eq!(
+            append_bounded_body_chunk(&mut exact, b"!")
+                .unwrap_err()
+                .kind(),
+            WebFetchTransportErrorKind::ResponseTooLarge
+        );
+
+        let mut unknown_length_parts = vec![
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n"
+                .to_vec(),
+        ];
+        for chunk in [8_192_usize, 8_192, 8_192] {
+            unknown_length_parts.push(format!("{chunk:x}\r\n").into_bytes());
+            unknown_length_parts.push(vec![b'y'; chunk]);
+            unknown_length_parts.push(b"\r\n".to_vec());
+        }
+        unknown_length_parts.push(b"0\r\n\r\n".to_vec());
+        let (response, _, _) = local_https_exchange(unknown_length_parts);
+        assert_eq!(response.unwrap().body().len(), MAX_WEB_FETCH_BODY_BYTES);
+
+        let mut overflow_parts = vec![
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".to_vec(),
+            format!("{:x}\r\n", MAX_WEB_FETCH_BODY_BYTES + 1).into_bytes(),
+            vec![b'z'; MAX_WEB_FETCH_BODY_BYTES + 1],
+            b"\r\n0\r\n\r\n".to_vec(),
+        ];
+        let (overflow, _, _) = local_https_exchange(std::mem::take(&mut overflow_parts));
+        assert_eq!(
+            overflow.unwrap_err().kind(),
+            WebFetchTransportErrorKind::ResponseTooLarge
+        );
     }
 
     #[test]

@@ -21,6 +21,8 @@ bytes = { version = "1.12.1", default-features = false, features = ["std"] }
 calcifer-macos-acl = "=0.1.0"
 futures-core = "0.3.31"
 getrandom = "=0.4.3"
+hickory-proto = { version = "=0.26.1", default-features = false, features = ["std"] }
+hickory-resolver = { version = "=0.26.1", default-features = false, features = ["system-config"] }
 hyper = { version = "=1.11.0", default-features = false }
 libc = "0.2.189"
 machine-god-core = { version = "0.1.0", path = "crates/machine-god-core" }
@@ -31,7 +33,7 @@ rustix = { version = "1.1.4", features = ["fs", "process", "rand"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
-tokio = { version = "1.53.1", default-features = false, features = ["net", "rt", "sync", "time"] }
+tokio = { version = "1.53.1", default-features = false, features = ["io-util", "net", "rt", "sync", "time"] }
 webpki-root-certs = { version = "1.0.9", default-features = false }
 
 [workspace.lints.rust]
