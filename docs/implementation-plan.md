@@ -277,6 +277,23 @@ green. The foreign all-feature native build retains the established
 CI obligation. This gate record makes no formal-review outcome, candidate,
 workflow, integration, delivery, performance, or fx-equivalence claim;
 reviewer reports identify the exact candidate they reviewed.
+Formal cycle 10 is **NOT GREEN** on exact candidate
+`698f9d924fe363014dc97971ae60781297d32c2c`, tree
+`08a7d2b8af02b7cb06ec6961dc88192b93aa6658`. Correctness/API reported
+0 blocker, 0 high, 0 medium, and 0 low; network/HTTP lifecycle reported
+0 blocker, 0 high, 0 medium, and 0 low; performance/concurrency reported
+0 blocker, 0 high, 0 medium, and 1 low. The deduplicated union is therefore
+0 blocker, 0 high, 0 medium, and 1 low, so the exact candidate is rejected.
+The direct non-WASM `sha2` dependency was unconditional although it is used
+outside `web_fetch` only by Linux/macOS default copy/session implementations.
+Focused default compilation narrowed the review's broad premise: those two
+targets must retain the edge, but FreeBSD/Windows default builds unnecessarily
+carried it with `web-fetch-http` disabled. Remediation uses disjoint target
+declarations, retaining required Linux/macOS `sha2`, making it optional for
+other non-WASM targets through `web-fetch-http`, and omitting it on WASM.
+Parsed-manifest and resolved direct-tree evidence proves that matrix. This
+remediation record makes no replacement-gate, formal-review outcome, candidate,
+workflow, integration, delivery, performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2455,6 +2472,24 @@ locked-release, and five-smoke checks are green. This gate makes no formal-
 review outcome, candidate, workflow, integration, delivery, performance, or
 fx-equivalence claim; reviewer reports identify the exact candidate they
 reviewed.
+Formal cycle 10 rejected exact candidate
+`698f9d924fe363014dc97971ae60781297d32c2c`, tree
+`08a7d2b8af02b7cb06ec6961dc88192b93aa6658`. Correctness/API was green at
+0/0/0/0; network/HTTP lifecycle was green at 0/0/0/0; performance/concurrency
+reported 0/0/0/1. The deduplicated union is 0 blocker, 0 high, 0 medium, and
+1 low. The exact candidate is rejected because the direct non-WASM `sha2`
+dependency remained unconditional. Focused compilation narrowed the review's
+broad premise: Linux/macOS default copy/session implementations independently
+require it, while FreeBSD/Windows default builds do not and unnecessarily
+carried the edge with `web-fetch-http` disabled.
+The remediation uses disjoint target declarations. Linux/macOS retain required
+default `sha2`; other non-WASM targets declare it optional and activate it from
+`web-fetch-http`; WASM omits it. The parsed-manifest regression requires those
+placements and the feature edge. Resolved depth-one trees prove Linux/macOS
+default and feature presence, FreeBSD/Windows default absence and feature
+presence, and WASM absence. This remediation record makes no replacement-gate,
+formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -3365,6 +3400,18 @@ gate:
   record makes no formal-review outcome, candidate, workflow, integration,
   delivery, performance, or fx-equivalence claim; reviewer reports identify
   the exact candidate they reviewed.
+  Formal cycle 10 rejected exact candidate
+  `698f9d924fe363014dc97971ae60781297d32c2c`, tree
+  `08a7d2b8af02b7cb06ec6961dc88192b93aa6658`. Correctness/API and lifecycle
+  were green at 0/0/0/0; performance reported 0/0/0/1. The deduplicated union
+  is 0 blocker, 0 high, 0 medium, and 1 low. Focused compilation narrowed the
+  broad finding: Linux/macOS default copy/session hashing requires `sha2`, but
+  FreeBSD/Windows default builds unnecessarily carried it. Remediation retains
+  the Linux/macOS edge, makes it optional through `web-fetch-http` on other
+  non-WASM targets, omits it on WASM, and adds manifest plus target-matrix tree
+  regressions. This remediation record makes no replacement-gate, formal-
+  review outcome, candidate, workflow, integration, delivery, performance, or
+  fx-equivalence claim.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

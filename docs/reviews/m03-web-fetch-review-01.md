@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 9 REJECTED**
+Status: **IN PROGRESS — CYCLE 10 REJECTED**
 
 ## Base and boundary
 
@@ -153,6 +153,22 @@ plus deterministic exact-message, trailing-byte, and zero-replay evidence.
 This remediation record makes no replacement-gate, formal-review outcome,
 candidate, workflow, integration, delivery, performance, or fx-equivalence
 claim.
+Formal cycle 10 rejected exact candidate
+`698f9d924fe363014dc97971ae60781297d32c2c`, tree
+`08a7d2b8af02b7cb06ec6961dc88192b93aa6658`. Correctness/API and network/HTTP
+lifecycle each reported 0 blocker, 0 high, 0 medium, and 0 low. Performance/
+concurrency reported 0 blocker, 0 high, 0 medium, and 1 low. The deduplicated
+union is 0 blocker, 0 high, 0 medium, and 1 low, so the exact candidate is
+rejected. The direct non-WASM `sha2` dependency remained unconditional even
+though only Linux/macOS default copy/session code uses it outside feature-gated
+`web_fetch`. Focused default compilation narrowed the review's broad premise:
+Linux/macOS must retain the edge, but FreeBSD/Windows default builds carried it
+unnecessarily. Remediation uses disjoint target declarations to retain the
+Linux/macOS dependency, make it optional through `web-fetch-http` on other non-
+WASM targets, and omit it on WASM. Parsed-manifest and resolved target-matrix
+tree evidence proves that scope. This remediation record makes no replacement-
+gate, formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim.
 
 ## Frozen candidate boundary
 
@@ -1458,6 +1474,53 @@ missing XDG roots created neither root.
 This gate record makes no formal-review outcome, candidate, workflow,
 integration, delivery, performance, or fx-equivalence claim; reviewer reports
 identify the exact candidate they reviewed.
+
+## Formal cycle 10 — not green
+
+Three fresh agents independently inspected exact candidate
+`698f9d924fe363014dc97971ae60781297d32c2c`, tree
+`08a7d2b8af02b7cb06ec6961dc88192b93aa6658`, in isolated clean worktrees. Any
+finding rejects the candidate, so cycle 10 is **NOT GREEN**.
+
+### Correctness and public API
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-10 candidate.
+
+### Network/HTTP lifecycle and robustness
+
+Counts: **0 blocker, 0 high, 0 medium, 0 low**. This track is **GREEN** on the
+exact cycle-10 candidate.
+
+### Performance and concurrency
+
+Counts: **0 blocker, 0 high, 0 medium, 1 low**.
+
+- **Low — some default native builds retain web-fetch-only hashing:** `sha2`
+  was a non-optional dependency in the non-WASM target table. Linux/macOS need
+  it for default copy/session hashing, but FreeBSD/Windows use it only behind
+  `web-fetch-http` and retained the direct edge when that feature was disabled.
+
+### Consolidated union and disposition
+
+Cycle 10 has **0 blocker, 0 high, 0 medium, and 1 low** deduplicated finding.
+Exact candidate `698f9d924fe363014dc97971ae60781297d32c2c`, tree
+`08a7d2b8af02b7cb06ec6961dc88192b93aa6658`, is rejected and must never be used
+as delivery evidence.
+
+Focused host compilation rejected the review's broad all-native premise because
+Linux/macOS default copy/session implementations independently require `sha2`.
+The concrete FreeBSD/Windows unnecessary edge remains confirmed. The
+remediation uses disjoint target declarations: Linux/macOS retain the required
+default dependency; other non-WASM targets make it optional and activate it
+through `web-fetch-http`; WASM omits it. The parsed-manifest regression requires
+those unaliased placements and the exact feature edge. Resolved depth-one trees
+prove Linux/macOS default/feature presence, FreeBSD/Windows default absence and
+feature presence, and WASM absence.
+
+This remediation record makes no replacement-gate, formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim.
 
 The local gate must include the repository-required commands:
 

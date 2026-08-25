@@ -144,6 +144,24 @@ that compilation evidence. This remediation record makes no replacement-gate,
 formal-review, workflow, integration, or delivery claim. Milestone 03 remains
 in progress with twenty-six delivered slices.
 
+Formal cycle 10 is **NOT GREEN** on exact candidate
+`698f9d924fe363014dc97971ae60781297d32c2c`, tree
+`08a7d2b8af02b7cb06ec6961dc88192b93aa6658`. Correctness/API and network/HTTP
+lifecycle each reported zero findings at every severity. Performance/
+concurrency reported 0 blocker, 0 high, 0 medium, and 1 low finding, so the
+deduplicated union is 0 blocker, 0 high, 0 medium, and 1 low and the exact
+candidate is rejected. The direct non-WASM `sha2` dependency remained
+unconditional. Focused default compilation narrowed the review's broad premise:
+Linux/macOS must retain `sha2` for independent default `copy_file` and session-
+store hashing, but FreeBSD/Windows used it only through feature-gated
+`web_fetch` and still carried the disabled feature's edge. The remediation uses
+disjoint target declarations: Linux/macOS retain the required dependency;
+other non-WASM targets make it optional and activate it through
+`web-fetch-http`; WASM omits it. Parsed-manifest and resolved direct-dependency-
+tree evidence enforces that matrix. This remediation record makes no
+replacement-gate, formal-review outcome, candidate, workflow, integration,
+delivery, performance, or fx-equivalence claim.
+
 ## Scope and feature boundary
 
 The candidate adds a rootless `WebFetchTool`: it owns no workspace, state root,
@@ -152,7 +170,11 @@ public-web GET only after core authorizes the exact normalized network target.
 The implementation is available only on non-WebAssembly targets through the
 optional `machine-god-native` feature `web-fetch-http`. The existing
 `ai-gateway-http` feature includes `web-fetch-http`; a base/no-feature build and
-every WASM build expose no concrete HTTP web-fetch implementation.
+every WASM build expose no concrete HTTP web-fetch implementation. Linux/macOS
+default builds retain direct `sha2` for independent copy/session hashing.
+FreeBSD/Windows default trees omit it, while `web-fetch-http` supplies the
+optional edge on those targets and includes the dependency on every supported
+non-WASM target. WASM trees omit it with or without the feature.
 
 Every production and explicitly injected/custom candidate reference-host
 composition contains thirteen alphabetical tools. Exactly twelve workspace-
