@@ -165,7 +165,8 @@ class NativeManifestTests(unittest.TestCase):
             {
                 f"dep:{dependency}"
                 for dependency in MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES
-            },
+            }
+            | {"reqwest/hickory-dns"},
         )
         self.assertEqual(
             set(features["ai-gateway-http"]),
@@ -226,15 +227,11 @@ class NativeManifestTests(unittest.TestCase):
             for line in completed.stdout.splitlines()[1:]
             if line
         }
-        self.assertTrue(
-            {
-                "hickory-net",
-                "hickory-proto",
-                "hickory-resolver",
-                "moka",
-                "signal-hook-registry",
-            }.isdisjoint(resolved_dependencies)
+        self.assertLessEqual(
+            {"hickory-net", "hickory-proto", "hickory-resolver", "moka"},
+            resolved_dependencies,
         )
+        self.assertNotIn("signal-hook-registry", resolved_dependencies)
 
 
 if __name__ == "__main__":

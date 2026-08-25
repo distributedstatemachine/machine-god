@@ -20,6 +20,7 @@ ai-gateway-model-catalog-http = [
     "dep:rustls",
     "dep:tokio",
     "dep:webpki-root-certs",
+    "reqwest/hickory-dns",
 ]
 web-fetch-http = [
     "dep:hickory-proto",
@@ -65,6 +66,9 @@ rustix.workspace = true
 futures-executor = "0.3.31"
 futures-util = "0.3.31"
 machine-god-testkit = { version = "0.1.0", path = "../machine-god-testkit" }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

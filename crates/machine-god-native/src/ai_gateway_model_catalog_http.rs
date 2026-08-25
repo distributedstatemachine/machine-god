@@ -20,7 +20,7 @@ use reqwest::header::{
 use reqwest::{Certificate, Client, Method, Request, Url};
 use std::error::Error as _;
 use std::fmt;
-use std::future::{Future, poll_fn};
+use std::future::{Future, pending, poll_fn};
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -358,6 +358,20 @@ fn build_client(
     certificates: Vec<Certificate>,
     limits: AiGatewayModelCatalogHttpLimits,
 ) -> Result<Client, AiGatewayModelCatalogHttpConfigError> {
+    client_builder(certificates, limits)
+        .hickory_dns(true)
+        .build()
+        .map_err(|_| {
+            AiGatewayModelCatalogHttpConfigError::new(
+                AiGatewayModelCatalogHttpConfigErrorKind::ClientInitialization,
+            )
+        })
+}
+
+fn client_builder(
+    certificates: Vec<Certificate>,
+    limits: AiGatewayModelCatalogHttpLimits,
+) -> reqwest::ClientBuilder {
     Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -374,12 +388,6 @@ fn build_client(
         .tls_backend_rustls()
         .tls_sslkeylogfile(false)
         .tls_certs_only(certificates)
-        .build()
-        .map_err(|_| {
-            AiGatewayModelCatalogHttpConfigError::new(
-                AiGatewayModelCatalogHttpConfigErrorKind::ClientInitialization,
-            )
-        })
 }
 
 impl fmt::Debug for AiGatewayModelCatalogHttpTransport {
@@ -398,6 +406,10 @@ impl fmt::Debug for AiGatewayModelCatalogHttpTransport {
 impl AiGatewayModelCatalogTransport for AiGatewayModelCatalogHttpTransport {
     fn wait_until(&self, deadline: Instant) -> BoxFuture<'_, ()> {
         Box::pin(async move {
+            if tokio::runtime::Handle::try_current().is_err() {
+                pending::<()>().await;
+                return;
+            }
             tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
         })
     }
@@ -657,4 +669,144 @@ const fn runtime_required_error() -> AiGatewayModelCatalogTransportError {
 
 const fn cancelled_error() -> AiGatewayModelCatalogTransportError {
     AiGatewayModelCatalogTransportError::new(AiGatewayModelCatalogTransportErrorKind::Cancelled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll};
+
+    #[derive(Debug)]
+    struct PendingResolver {
+        started: Arc<AtomicUsize>,
+        dropped: Arc<AtomicUsize>,
+    }
+
+    impl Resolve for PendingResolver {
+        fn resolve(&self, _: Name) -> Resolving {
+            self.started.fetch_add(1, Ordering::SeqCst);
+            Box::pin(PendingResolution {
+                dropped: Arc::clone(&self.dropped),
+            })
+        }
+    }
+
+    struct PendingResolution {
+        dropped: Arc<AtomicUsize>,
+    }
+
+    impl Future for PendingResolution {
+        type Output = Result<Addrs, Box<dyn std::error::Error + Send + Sync>>;
+
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PendingResolution {
+        fn drop(&mut self) {
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn transport_with_resolver(
+        resolver: Arc<dyn Resolve>,
+        limits: AiGatewayModelCatalogHttpLimits,
+    ) -> AiGatewayModelCatalogHttpTransport {
+        let certificates = root_certificates().expect("load fixed root certificates");
+        let client = client_builder(certificates, limits)
+            .dns_resolver(resolver)
+            .build()
+            .expect("build catalog client with deterministic resolver");
+        AiGatewayModelCatalogHttpTransport {
+            client,
+            endpoint: AiGatewayModelCatalogHttpEndpoint::default(),
+            authorization: None,
+            limits,
+            permits: Arc::new(Semaphore::new(limits.max_active_requests)),
+        }
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime")
+    }
+
+    async fn poll_pending_once<F: Future>(future: Pin<&mut F>) {
+        let mut future = future;
+        poll_fn(|context| {
+            assert!(future.as_mut().poll(context).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+    }
+
+    #[test]
+    fn pending_async_dns_releases_request_and_permit_on_cancel_and_deadline() {
+        let started = Arc::new(AtomicUsize::new(0));
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let limits = AiGatewayModelCatalogHttpLimits::new(
+            Duration::from_secs(30),
+            Duration::from_secs(30),
+            1,
+        )
+        .unwrap();
+        let resolver: Arc<dyn Resolve> = Arc::new(PendingResolver {
+            started: Arc::clone(&started),
+            dropped: Arc::clone(&dropped),
+        });
+        let transport = transport_with_resolver(Arc::clone(&resolver), limits);
+
+        let cancellation = CancellationToken::new();
+        let request_cancellation = cancellation.clone();
+        let cancellation_runtime = runtime();
+        cancellation_runtime.block_on(async {
+            tokio::time::pause();
+            let mut request = Box::pin(transport.get(
+                AiGatewayModelCatalogRequestAccess::Public,
+                Instant::now() + Duration::from_secs(60),
+                request_cancellation,
+            ));
+            poll_pending_once(request.as_mut()).await;
+            assert_eq!(started.load(Ordering::SeqCst), 1);
+            assert_eq!(dropped.load(Ordering::SeqCst), 0);
+            assert_eq!(transport.permits.available_permits(), 0);
+
+            cancellation.cancel();
+            assert_eq!(
+                request.await.unwrap_err().kind(),
+                AiGatewayModelCatalogTransportErrorKind::Cancelled
+            );
+            assert_eq!(dropped.load(Ordering::SeqCst), 1);
+            assert_eq!(transport.permits.available_permits(), 1);
+        });
+        drop(cancellation_runtime);
+
+        let deadline_runtime = runtime();
+        deadline_runtime.block_on(async {
+            tokio::time::pause();
+            let mut request = Box::pin(transport.get(
+                AiGatewayModelCatalogRequestAccess::Public,
+                Instant::now() + Duration::from_secs(60),
+                CancellationToken::new(),
+            ));
+            poll_pending_once(request.as_mut()).await;
+            assert_eq!(started.load(Ordering::SeqCst), 2);
+            assert_eq!(dropped.load(Ordering::SeqCst), 1);
+            assert_eq!(transport.permits.available_permits(), 0);
+
+            tokio::time::advance(Duration::from_secs(31)).await;
+            assert_eq!(
+                request.await.unwrap_err().kind(),
+                AiGatewayModelCatalogTransportErrorKind::ResourceLimit
+            );
+            assert_eq!(dropped.load(Ordering::SeqCst), 2);
+            assert_eq!(transport.permits.available_permits(), 1);
+        });
+        drop(deadline_runtime);
+    }
 }

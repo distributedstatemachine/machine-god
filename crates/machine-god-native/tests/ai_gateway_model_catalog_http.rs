@@ -639,6 +639,18 @@ fn unpolled_expired_cancelled_and_runtime_missing_requests_dispatch_zero_network
     assert!(matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock));
 }
 
+#[test]
+fn provider_over_concrete_transport_returns_runtime_required_without_panicking() {
+    let transport = Arc::new(AiGatewayModelCatalogHttpTransport::new(None).unwrap());
+    let provider =
+        AiGatewayModelCatalogProvider::new(AiGatewayModelCatalogAccessMode::PublicOnly, transport);
+    let error =
+        futures_executor::block_on(provider.list_models(CancellationToken::new())).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Transport);
+    assert_eq!(error.code, "RuntimeRequired");
+    assert!(!error.retryable);
+}
+
 struct StalledBodyServer {
     endpoint: String,
     received: tokio::sync::oneshot::Receiver<()>,
