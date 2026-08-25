@@ -2513,12 +2513,15 @@ gate:
   Formal cycle 1 rejected exact candidate
   `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
   `1378b02e92973ab15fbf4623138a643b70057f33`, with findings in every track.
-  Isolated production remediation component
-  `0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
-  `d96c13c853424325a688631dfea25c504bb62250`, and focused-green evidence tip
-  `c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
-  `558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
-  the complete replacement gate, three fresh same-SHA reviews, feature
+  Cycle-1 remediation, independent evidence, and the static-fixture portability
+  correction are composed through exact replacement precursor
+  `5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
+  `f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`. Its complete exact Rust 1.94.1
+  replacement gate is green across required/full/focused Rust tests, Python,
+  pinned-fx compatibility, dependency policy/audit, Linux/FreeBSD/WASI plus
+  active Node, documentation integrity, diff/unsafe checks, and release-binary
+  smoke. This documentation-complete tree and its immutable cycle-2 marker
+  still require exact-tree checks. Three fresh same-SHA reviews, feature
   workflows, integration, exact `main` workflows, and delivery remain pending;
   the delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:

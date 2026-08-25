@@ -1,6 +1,6 @@
 # Milestone 03 native `web_fetch` review 01
 
-Status: **IN PROGRESS — CYCLE 1 NOT GREEN**
+Status: **IN PROGRESS — CYCLE 1 NOT GREEN; REPLACEMENT GATE GREEN**
 
 ## Base and boundary
 
@@ -281,10 +281,46 @@ is green: 14/14 direct, 11/11 HTTP lifecycle, 5/5 engine, and 17/17 private
 tests, plus formatting, native all-target/all-feature warnings-denied Clippy,
 clean diff, and clean status.
 
-These components do not form a documentation-complete replacement candidate
-and have not passed the complete replacement gate or formal rereview.
-Integration with this documentation, the immutable replacement SHA/tree, its
-complete gate, and three fresh same-SHA tracks remain pending.
+The components and documentation correction are composed through `8006846`. A
+first portability correction at `2be69c8` excluded `rcgen` from WASI, but the
+expanded baseline cross-target gate then proved that the non-WASM
+dev-dependency still pulled `aws-lc-sys` into Linux and FreeBSD no-feature
+all-target builds. Exact correction
+`5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
+`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`, removes `rcgen` and its seven
+lock-only packages. A deterministic P-256 `example.com` DER certificate and
+PKCS#8 key, valid through 2126, keep the production Rustls verifier, root,
+address pinning, SNI, hostname, and fixed-header test path intact.
+
+That exact code-and-test precursor passed the complete replacement local gate
+with Rust/Cargo 1.94.1 and no fallback. The four repository-required commands,
+the complete 976-test all-target/all-feature run, 881-test default inventory,
+and two doctests passed. Focused evidence is 17 private, 14 direct, 11 HTTP
+lifecycle, and five engine tests. The fresh release CLI is byte-identical at
+319,152 bytes with SHA-256
+`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`; bare,
+version, help, inert human status, and inert JSON status passed.
+
+Two consecutive CI-style Python runs each passed 130 tests with eight expected
+macOS skips. Pinned-fx compatibility regeneration passed at exact upstream
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Exact cargo-deny 0.20.2 passed
+with three allowed duplicate warnings. Cached cargo-audit 0.22.2 passed against
+1,225 advisories and 209 dependencies. All 74 Markdown files, 99 fence blocks,
+527 links, and 378 relative targets passed; unsafe Rust remains absent and
+forbidden. The exact 21-file diff is clean and changes no CLI source, workflow,
+benchmark, generated compatibility inventory, or compatibility status.
+
+Linux and FreeBSD workspace all-target no-feature checks and native-library
+warnings-denied Clippy passed. WASI all-target check and test compilation passed
+with and without all features; its dependency trees exclude `rcgen`, `time`,
+and `yasna`. Node 22.22.0 actively ran the all-feature unsupported-target test
+1/1. Established cfg-only cross-target warnings remain outside the
+warnings-denied library gates. Native Linux HTTP execution remains an exact-CI
+requirement because this macOS cross-host lacks the target C sysroot.
+
+This documentation-complete tree still requires exact-tree checks and an
+immutable cycle-2 candidate marker. No formal replacement review has started;
+three fresh same-SHA tracks remain pending.
 
 The local gate must include the repository-required commands:
 
@@ -334,12 +370,10 @@ required evidence workflows must then pass for the integrated SHA. Record all
 SHAs, trees, run IDs, attempts, jobs, and retained artifacts here without
 turning regression or size evidence into a product-performance claim.
 
-Current state: the pre-review local gate was green, but formal cycle 1 is
-**NOT GREEN** on the exact SHA/tree above. The isolated production component is
-`0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
-`d96c13c853424325a688631dfea25c504bb62250`; focused-green evidence tip is
-`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
-`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`. Documentation composition and a
-complete replacement local gate are pending. No replacement review has
-started, and feature workflows, fast-forward integration, exact `main`
-workflows, and delivery remain pending.
+Current state: formal cycle 1 is **NOT GREEN** on its exact SHA/tree. Exact
+replacement precursor `5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
+`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`, passes the complete replacement
+local gate. This documentation-complete tree and its immutable marker remain to
+be checked before the three fresh cycle-2 review tracks begin. Feature
+workflows, fast-forward integration, exact `main` workflows, and delivery
+remain pending.

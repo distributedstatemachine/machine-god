@@ -19,13 +19,17 @@ binary gate. Formal cycle 1 rejected exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
 `1378b02e92973ab15fbf4623138a643b70057f33`. The complete per-track finding
 inventory is in the [`review ledger`](reviews/m03-web-fetch-review-01.md).
-Isolated production remediation component
-`0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
-`d96c13c853424325a688631dfea25c504bb62250`, and evidence tip
-`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
-`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, exist. Documentation composition,
-the complete replacement gate, three fresh same-SHA reviews, feature workflows,
-integration, and exact `main` workflows remain pending.
+Cycle-1 remediation, independent evidence, and the deterministic static TLS
+test fixture are composed through exact code-and-test precursor
+`5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
+`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`. That precursor passed the complete
+replacement Rust 1.94.1, focused, integrity, dependency, baseline portability,
+WASI, active unsupported-target, and release-binary gate. The fixture removes
+the test-only `rcgen` dependency without weakening the real Rustls verifier,
+SNI, hostname, or pinned-address test path. This documentation composition and
+the immutable cycle-2 candidate still require exact-tree checks. Three fresh
+same-SHA reviews, feature workflows, integration, and exact `main` workflows
+remain pending.
 Native Linux HTTP compilation remains an exact-CI requirement because the
 macOS cross-host lacks the target C sysroot. Milestone 03 therefore remains in
 progress with twenty-six delivered slices.
@@ -305,10 +309,9 @@ The composed source at exact pre-review record
 cycle 1 nevertheless rejected exact candidate
 `3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
 `1378b02e92973ab15fbf4623138a643b70057f33`. This contract correction records
-the review findings. Isolated production remediation is
-`0c8c76935a6e3ca392e58b2aa9c375f88221f41f`, tree
-`d96c13c853424325a688631dfea25c504bb62250`. Evidence tip
-`c3dc6a00da22738b6840fc2bc66840dc735eee6f`, tree
-`558140e5ac31f6f8f2cd7d15064681b53e7fd39b`, is focused-green. Documentation
-composition, a complete replacement gate, and three fresh same-SHA reviews are
-pending.
+the review findings. The remediation and evidence components are composed with
+the static-fixture portability correction through exact precursor
+`5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
+`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`. Its complete replacement local
+gate is green. This documentation-complete tree must be checked and frozen as
+an immutable cycle-2 candidate before three fresh same-SHA reviews begin.
