@@ -216,7 +216,9 @@ impl ModelCatalogProvider for AiGatewayModelCatalogProvider {
     ) -> BoxFuture<'_, Result<ModelCatalog, ProviderError>> {
         Box::pin(async move {
             check_cancelled(&cancellation)?;
-            let deadline = Instant::now() + AI_GATEWAY_MODEL_CATALOG_REQUEST_TIMEOUT;
+            let deadline = Instant::now()
+                .checked_add(AI_GATEWAY_MODEL_CATALOG_REQUEST_TIMEOUT)
+                .ok_or_else(resource_limit_error)?;
             let (response, access) = match self.access_mode {
                 AiGatewayModelCatalogAccessMode::PublicOnly => {
                     let response = request_transport(
@@ -876,14 +878,22 @@ fn parse_catalog(
     let mut deserializer = serde_json::Deserializer::from_slice(body);
     let mut candidates = CatalogSeed { context: &context }
         .deserialize(&mut deserializer)
-        .map_err(|_| parse_error(context.failure.get()))?;
-    deserializer.end().map_err(|_| malformed_response_error())?;
+        .map_err(|_| parse_terminal_error(&context))?;
+    deserializer
+        .end()
+        .map_err(|_| parse_terminal_error(&context))?;
     check_cancelled(cancellation)?;
+    check_deadline(deadline)?;
     candidates.sort_by(compare_candidates);
-    candidates
-        .into_iter()
-        .map(|candidate| AvailableModel::new(candidate.id).map_err(|_| malformed_response_error()))
-        .collect()
+    check_cancelled(cancellation)?;
+    check_deadline(deadline)?;
+    let mut models = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        check_cancelled(cancellation)?;
+        check_deadline(deadline)?;
+        models.push(AvailableModel::new(candidate.id).map_err(|_| malformed_response_error())?);
+    }
+    Ok(models)
 }
 
 fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
@@ -949,6 +959,16 @@ fn parse_error(failure: Option<ParseFailure>) -> ProviderError {
         ParseFailure::Malformed => malformed_response_error(),
         ParseFailure::ResourceLimit | ParseFailure::Deadline => resource_limit_error(),
         ParseFailure::Cancelled => cancelled_error(),
+    }
+}
+
+fn parse_terminal_error(context: &ParseContext<'_>) -> ProviderError {
+    if context.cancellation.is_cancelled() {
+        cancelled_error()
+    } else if Instant::now() >= context.deadline {
+        resource_limit_error()
+    } else {
+        parse_error(context.failure.get())
     }
 }
 
