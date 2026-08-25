@@ -157,6 +157,15 @@ Exact isolated source remediation
 `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, or delivery claim.
+Exact composed cycle-5 remediation precursor
+`8687898ee19b55fa44864af5f27f7fae8ec3d97e`, tree
+`5d8224eb8afcd297ed53e30909c3d037524f00ba`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. Required,
+complete 992-test, focused, compatibility, dependency, portability, Node,
+documentation, diff/unsafe, locked-release, and five-smoke checks are green.
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim; reviewer reports
+identify the exact candidate they reviewed.
 Every production and explicitly injected/custom candidate host contains
 thirteen alphabetical tools, while its descriptor-backed workspace set remains
 twelve tools using one original descriptor plus eleven clones because
@@ -2066,6 +2075,33 @@ Exact isolated source remediation
 `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, or delivery claim.
+Exact composed cycle-5 remediation precursor
+`8687898ee19b55fa44864af5f27f7fae8ec3d97e`, tree
+`5d8224eb8afcd297ed53e30909c3d037524f00ba`, passed the complete replacement
+local gate under exact rustc 1.94.1 (`e408947bf`) and Cargo 1.94.1
+(`29ea6fb6a`) without fallback. The four required commands, complete 992-test
+all-target/all-feature run, and focused 30-private/14-direct/14-HTTP/5-engine
+suites are green. Python passed 130 tests with eight expected macOS skips in
+84.454 seconds; pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef`
+compatibility, exact `cargo-deny` 0.20.2 with the three established duplicate
+warnings for `core-foundation`, `cpufeatures`, and `syn`, and exact
+`cargo-audit` 0.22.2 `--no-fetch` across 1,225 advisories and 209 dependencies
+with zero vulnerabilities are green. Linux passed with zero warnings; FreeBSD
+passed with its two established cfg-only warnings; both the default and all-
+feature WASI variants produced 61 executable artifacts with six established
+cfg diagnostics each; and Node 22.22.0 ran the active unsupported-target check
+at 1/1. Documentation is 74/99/530/378/0. The whole diff from exact delivered
+base `a56ff350c2aace1dc22cb14c269aee89d399cd8e` is 21 files at +8,233/-32;
+the cycle-5 replacement delta from rejected candidate `81b963ad` is nine files
+at +542/-42. CLI source, workflows, benchmark workloads, generated
+compatibility data, Cargo manifests, and the lockfile are unchanged in that
+cycle-5 delta, and it adds no unsafe construct. The locked isolated arm64
+Mach-O release is 319,152 bytes with SHA-256
+`eed6f30ecbf19dc0c7dea498547e2562600745ed6f42561a589076083128e0e4`; all five
+exact smokes pass with empty stderr, and the inert status smokes do not create
+their missing XDG roots. This gate record makes no formal-review outcome,
+candidate, workflow, integration, delivery, performance, or fx-equivalence
+claim; reviewer reports identify the exact candidate they reviewed.
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
@@ -2861,6 +2897,16 @@ gate:
   precursor `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
   remediation record makes no replacement-gate, formal-review outcome,
   candidate, workflow, integration, or delivery claim.
+  Exact composed cycle-5 remediation precursor
+  `8687898ee19b55fa44864af5f27f7fae8ec3d97e`, tree
+  `5d8224eb8afcd297ed53e30909c3d037524f00ba`, passed the complete replacement
+  local gate under exact Rust and Cargo 1.94.1 without fallback. Required,
+  complete 992-test, focused 30/14/14/5, Python, pinned-fx, dependency,
+  portability, Node, documentation 74/99/530/378/0, exact diff/unsafe, locked
+  release, and five-smoke checks are green. This gate record makes no formal-
+  review outcome, candidate, workflow, integration, delivery, performance, or
+  fx-equivalence claim; reviewer reports identify the exact candidate they
+  reviewed.
   The delivered count remains twenty-six.
 - [ ] Complete the M03 top-level CLI ownership from the pinned inventory:
   `help`, `ask`, `status`, `permissions`, `models`, `doctor`, `session`,

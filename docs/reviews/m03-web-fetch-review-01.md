@@ -840,6 +840,49 @@ remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, delivery, compatibility, or product-performance claim;
 formal reviewers identify only the exact candidate they inspect.
 
+## Cycle-5 remediation replacement gate
+
+Exact composed remediation precursor
+`8687898ee19b55fa44864af5f27f7fae8ec3d97e`, tree
+`5d8224eb8afcd297ed53e30909c3d037524f00ba`, passed the complete replacement
+local gate under exact rustc 1.94.1 (`e408947bf`) and Cargo 1.94.1
+(`29ea6fb6a`) without fallback. The four repository-required commands below
+passed, as did the complete 992-test all-target/all-feature workspace run.
+Focused evidence passed 30 private, 14 direct, 14 production HTTP, and five
+engine tests.
+
+The CI-style Python run passed 130 tests with eight expected macOS skips in
+84.454 seconds. Compatibility regeneration with `--check` passed against clean
+pinned fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`. Dependency
+policy passed under exact `cargo-deny` 0.20.2 with the three established
+duplicate warnings for `core-foundation`, `cpufeatures`, and `syn`. Exact
+`cargo-audit` 0.22.2 `--no-fetch` checked 1,225 cached advisories and 209 locked
+dependencies with zero vulnerabilities.
+
+Linux portability passed with zero warnings. FreeBSD passed with its two
+established cfg-only warnings. The default and all-feature WASI variants each
+produced 61 executable artifacts and only their six established cfg
+diagnostics. Node 22.22.0 actively passed the retained unsupported-target test
+1/1. Documentation integrity covered 74 Markdown files, 99 fence blocks, 530
+inline links, and 378 relative targets with zero errors.
+
+The exact whole-feature diff from delivered base
+`a56ff350c2aace1dc22cb14c269aee89d399cd8e` covers 21 files with 8,233
+insertions and 32 deletions. The cycle-5 replacement delta from rejected
+candidate `81b963ad5a2033fb2295f7325a28fba6b66197d5` covers nine files with 542
+insertions and 42 deletions. CLI source, workflows, benchmark workloads,
+generated compatibility data, Cargo manifests, and the lockfile are unchanged
+in that delta, and changed Rust adds no unsafe construct. A locked isolated
+release build produced a 319,152-byte arm64 Mach-O binary with SHA-256
+`eed6f30ecbf19dc0c7dea498547e2562600745ed6f42561a589076083128e0e4`. Bare,
+version, help, inert missing-path human-status, and inert missing-path JSON-
+status smokes all passed with empty stderr; the XDG missing roots were not
+created.
+
+This gate record makes no formal-review outcome, candidate, workflow,
+integration, delivery, performance, or fx-equivalence claim; reviewer reports
+identify the exact candidate they reviewed.
+
 The local gate must include the repository-required commands:
 
 ```sh
@@ -899,6 +942,13 @@ remediation `cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
 `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` with the same tree. This
 remediation record makes no replacement-gate, formal-review outcome, candidate,
 workflow, integration, delivery, performance, or fx-equivalence claim. Exact
+composed cycle-5 remediation precursor
+`8687898ee19b55fa44864af5f27f7fae8ec3d97e`, tree
+`5d8224eb8afcd297ed53e30909c3d037524f00ba`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
+makes no formal-review outcome, candidate, workflow, integration, delivery,
+performance, or fx-equivalence claim; reviewer reports identify the exact
+candidate they reviewed. Exact
 cycle-2 remediation precursor
 `1a78f6437eb17f646bdd11337464c949beea49f0`, tree
 `b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passed its complete replacement
