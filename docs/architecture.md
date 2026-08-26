@@ -49,7 +49,9 @@ the escaping-sensitive serialized-output boundary. Exact remediation precursor
 replacement gate. Formal cycle 3 rejected exact candidate `aef6abe`, tree
 `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca`
 and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
-`f3557a5`, passes the complete replacement gate; formal cycle 4 is pending.
+`f3557a5`, passes the complete replacement gate. Formal cycle 4 rejected exact
+`cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`; remediation is
+pending.
 The candidate is not green, integrated, or delivered, the delivered count
 remains 32, and no performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,

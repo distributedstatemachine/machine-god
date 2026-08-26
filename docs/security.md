@@ -14,8 +14,9 @@ composed in exact precursor `366cef9`, tree `40c05cb`, which passes the complete
 replacement gate. Formal cycle 3 rejected exact candidate `aef6abe`, tree
 `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca`
 and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
-`f3557a5`, passes the complete replacement gate; formal cycle 4 is pending. It
-remains a local authority-bearing tool: strict
+`f3557a5`, passes the complete replacement gate. Formal cycle 4 rejected exact
+`cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`; remediation is
+pending. It remains a local authority-bearing tool: strict
 effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares
 `Capability::Network` for the exact configured AI Gateway scheme/host/port,

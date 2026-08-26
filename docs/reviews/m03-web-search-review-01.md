@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 3 REJECTED; REMEDIATION PENDING**
+Status: **IN PROGRESS — CYCLE 4 REJECTED; REMEDIATION PENDING**
 
 ## Base and boundary
 
@@ -346,6 +346,29 @@ read-only tracks must independently cover correctness/API/protocol, native
 effects/lifecycle/platform behavior, and performance/resources. No feature
 workflow may begin unless every track and the deduplicated union report
 `0/0/0/0`.
+
+Formal cycle 4 reviewed exact candidate
+`cc1d3d19ffaec71ca85ff80366199173b0ef5df1`, tree
+`ad0c3d353eca7b75bac67db97b9551f0e0f0184e`. Correctness/API/protocol reported
+`0/0/1/0`, native effects/lifecycle/platform reported `0/0/0/0`, and
+performance/resources reported `0/0/0/1`. The deduplicated union is `0/0/1/1`,
+so cycle 4 is rejected.
+
+The medium finding is an incomplete raw-v4 terminal envelope. The decoder
+checks only `finishReason.unified == "stop"`, and the positive fixture therefore
+omits both required `usage` and the finish reason's raw provider value. At
+Vercel AI commit `ce6849a`, the official
+[`LanguageModelV4StreamPart`](https://github.com/vercel/ai/blob/ce6849a1832e2b900bb700a7bcc24f7436eb9e5c/packages/provider/src/language-model/v4/language-model-v4-stream-part.ts)
+requires usage on every finish, while
+[`LanguageModelV4FinishReason`](https://github.com/vercel/ai/blob/ce6849a1832e2b900bb700a7bcc24f7436eb9e5c/packages/provider/src/language-model/v4/language-model-v4-finish-reason.ts)
+contains both unified and raw reasons. Remediation must strictly validate and
+discard the bounded official finish metadata and replace the manufactured
+success fixture, with missing/mistyped regressions.
+
+The low finding is this ledger's stale top-level cycle-3 status despite its own
+cycle-4 kickoff evidence. That status is corrected above. After protocol
+remediation and a complete exact gate, three fresh isolated product reviews
+repeat on one new immutable candidate.
 
 ## Worktree lifecycle
 

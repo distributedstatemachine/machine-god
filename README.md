@@ -29,7 +29,8 @@ tree `5abcef3`, with a deduplicated `1/0/2/2`; its protocol, terminal-release,
 numeric-host, port-grammar, and documentation remediations are composed from
 exact isolated components `5d45dca` and `454f8fd`. Exact composed precursor
 `b834205`, tree `f3557a5`, passes the complete replacement gate; formal cycle 4
-is pending.
+rejected exact candidate `cc1d3d1`, tree `ad0c3d3`, with a deduplicated
+`0/0/1/1`. Finish-envelope and ledger-status remediation is pending.
 Slice 33 is not yet review-green, integrated, or delivered; the
 delivered count remains 32. It is unmeasured and makes no product-performance
 or fx-equivalence claim. See the [`web_search` contract](docs/web-search.md) and

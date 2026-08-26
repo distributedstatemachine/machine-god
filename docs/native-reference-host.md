@@ -13,9 +13,10 @@ passes the complete local gate. Exact cycle-2 remediation `366cef9`, tree
 `40c05cb`, also passed its complete gate; formal cycle 3 rejected exact candidate
 `aef6abe`, tree `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated
 components `5d45dca` and `454f8fd` compose its remediation. Exact precursor
-`b834205`, tree `f3557a5`, passes the complete replacement gate; formal cycle 4
-is pending. No replacement exact candidate has passed formal review, so this
-paragraph does not promote that catalog to delivered status. See
+`b834205`, tree `f3557a5`, passes the complete replacement gate. Formal cycle 4
+rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
+remediation is pending. No replacement exact candidate has passed formal review,
+so this paragraph does not promote that catalog to delivered status. See
 [`web-search.md`](web-search.md) and the
 [`slice-33 ledger`](reviews/m03-web-search-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal

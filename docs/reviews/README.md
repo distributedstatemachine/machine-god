@@ -1,7 +1,7 @@
 # Adversarial reviews
 
 Current bounded slice 33, native `web_search`, is **IN PROGRESS — CYCLE 3
-REMEDIATION GATE GREEN; CYCLE 4 PENDING** from exact delivered base `4ba9f5a`. Its frozen
+REMEDIATION GATE GREEN; CYCLE 4 REJECTED** from exact delivered base `4ba9f5a`. Its frozen
 local-tool contract performs exact Gateway-network preflight, then at most one
 approved required Perplexity worker request through the shared transport and a
 dedicated bounded native provider-executed decoder. Composed behavior precursor
@@ -15,8 +15,9 @@ isolated components `096b11c4` and `ca0b990a`. Exact composed precursor
 `40c05cb`. Formal cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`,
 with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca` and
 `454f8fd` compose its remediation. Exact precursor `b834205`, tree `f3557a5`,
-passes the complete replacement gate; formal cycle 4 is pending. No feature
-workflow, integration, or `main`
+passes the complete replacement gate. Formal cycle 4 rejected exact `cc1d3d1`,
+tree `ad0c3d3`, with a deduplicated `0/0/1/1`; remediation is pending. No
+feature workflow, integration, or `main`
 workflow exists. The delivered count remains
 32. Review scope, fixed resources, deferrals, and the per-iteration committed/
 integrated/clean worktree-removal invariant are tracked in
