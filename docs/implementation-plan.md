@@ -3202,10 +3202,15 @@ workflows. Benchmark evidence is delivery evidence only.
 
 The thirtieth slice is contract-frozen from exact delivered base
 `f82ce46736f7bac4154da508e3b768d0b9248e15` and is **IN PROGRESS**. It adds
-only strict `doctor [--json]`. The exact candidate SHA remains pending.
-Production, independent evidence, documentation, complete local checks, three
-fresh adversarial tracks, feature workflows, non-force integration, exact
-`main` workflows, and delivery remain pending. The delivered-slice count stays
+only strict `doctor [--json]`. Exact cycle-1 candidate `761bf0b` passed its
+complete local gate but was rejected by one medium and two deduplicated low
+product-review findings: real process inspection order, partial-write evidence,
+and complete native classification/build-mode evidence. Isolated remediations
+`04444d9`, `3de641f`, and `1e5bf28` are composed and their focused exact-1.94.1
+gate is green. The exact replacement candidate, complete replacement gate,
+three entirely fresh adversarial tracks, feature workflows, non-force
+integration, exact `main` workflows, and delivery remain pending. Cycle-1
+reviewers cannot approve the replacement. The delivered-slice count stays
 twenty-nine.
 
 Parsing completes before effects. Accepted forms are exactly `doctor` and
