@@ -1,6 +1,6 @@
 # Native `web_search` tool
 
-Status: **IN PROGRESS** as bounded Milestone 03 slice 33. The contract is
+Status: **DELIVERED** as bounded Milestone 03 slice 33. The contract was
 frozen from exact delivered base
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334` and pinned fx observation
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. The original production,
@@ -32,8 +32,11 @@ a deduplicated `0/0/1/1`. Finish-envelope remediation is composed from exact
 component `dc79c8d`, tree `e2fed70`, and host-fixture component `9f6c474`. Exact
 precursor `2e9c44d`, tree `3e25daa`, passes the complete replacement gate.
 Formal cycle 5 is green on exact `782aa54`, tree `b1ba692`, with a `0/0/0/0`
-union. The slice is review-green but not yet integrated or delivered. The live
-status is recorded in the
+union. Review-exempt delivery record `52b5885`, tree `148b358`, passed feature
+CI/Benchmark runs `33023313461`/`33023313463` and main CI/Benchmark runs
+`33023812814`/`33023812808`; every run succeeded for that exact SHA and both
+benchmark runs retained two unexpired exact-SHA artifacts. The delivered count
+is 33. The complete record is in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 
 ## Boundary

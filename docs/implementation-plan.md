@@ -44,8 +44,25 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-third bounded slice, native `web_search`, is contract-frozen and
+The thirty-fourth bounded slice, native `terminal`, is contract-frozen and
 **IN PROGRESS** from exact delivered base
+`52b5885f275c9f6f4f16b378f71780c29f2ebab2`. Its normative boundary is
+[`terminal.md`](terminal.md) and its live ledger is
+[`m03-terminal-review-01.md`](reviews/m03-terminal-review-01.md). This first
+slice implements only bounded foreground `exec`: fixed `/bin/sh -c`, a
+descriptor-retained workspace-relative starting directory, a bounded
+construction-time environment snapshot identified in the exact process
+capability, separate bounded stdout/stderr capture, fail-fast concurrency,
+deadline, cancellation, process-group termination, and synchronous ownership
+cleanup. The production system executor is Linux-only because safe standard
+Rust exposes no descriptor-relative process cwd primitive on macOS and unsafe
+Rust is forbidden. It is not a sandbox and makes no PTY, durable-session,
+fx-equivalence, benchmark, or product-performance claim. Production,
+independent evidence, documentation, local gates, three fresh adversarial
+product review tracks, and remote delivery are pending.
+
+The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
+delivered base
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334`. Its normative boundary is
 [`web-search.md`](web-search.md) and its live ledger is
 [`m03-web-search-review-01.md`](reviews/m03-web-search-review-01.md). Production,
@@ -93,9 +110,14 @@ tree `ad0c3d3`, with a deduplicated `0/0/1/1`; finish-envelope and documentation
 remediation is composed from exact isolated component `dc79c8d`, tree
 `e2fed70`, plus host-fixture component `9f6c474`. Exact precursor `2e9c44d`, tree
 `3e25daa`, passes the complete replacement gate. Formal cycle 5 is green on
-exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union. Delivery workflows are
-pending; this slice is not yet integrated or delivered and the delivered count
-remains thirty-two.
+exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union. Review-exempt delivery
+record `52b5885f275c9f6f4f16b378f71780c29f2ebab2`, tree
+`148b358ce520645c4c4a9e4f186459e40a325572`, passed feature CI
+`33023313461`, feature Benchmark evidence `33023313463`, main CI
+`33023812814`, and main Benchmark evidence `33023812808`. Every run reports
+that exact SHA and succeeded; both benchmark workflows retained exactly two
+unexpired exact-SHA artifacts. `main` was fast-forwarded without force. Slice
+33 is delivered and the delivered count is thirty-three.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive

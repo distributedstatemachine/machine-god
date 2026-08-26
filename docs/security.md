@@ -1,7 +1,15 @@
 # Security
 
-Bounded slice 33, native `web_search`, is **IN PROGRESS** and not yet review-
-green or delivered. Its composed behavior precursor
+Bounded slice 34, native `terminal`, is **IN PROGRESS**. Its frozen foreground-
+exec boundary requires exact process capability identity before one fixed
+`/bin/sh -c` invocation. The retained workspace descriptor constrains only the
+starting directory; this is explicitly not a sandbox, and an approved command
+may exercise host authority available to the machine account. The production
+system executor is Linux-only, output/time/concurrency are bounded, and
+cancellation/drop own process-group termination and reaping. See
+[`terminal.md`](terminal.md).
+
+Bounded slice 33, native `web_search`, is **DELIVERED**. Its composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
 local gate. Formal cycle 1 rejected exact `89c5ec95`, tree `8d91a55`. Source
 remediation is composed from exact isolated components `096b11c4` and
@@ -19,7 +27,8 @@ and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
 composed from exact component `dc79c8d`, tree `e2fed70`, and host-fixture
 component `9f6c474`. Exact precursor `2e9c44d`, tree `3e25daa`, passes the
 complete replacement gate. Formal cycle 5 is green on exact `782aa54`, tree
-`b1ba692`, with a `0/0/0/0` union; delivery workflows are pending. It remains a
+`b1ba692`, with a `0/0/0/0` union. Delivery record `52b5885` passed exact
+feature and main CI/Benchmark workflows. It remains a
 local authority-bearing tool: strict effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares
 `Capability::Network` for the exact configured AI Gateway scheme/host/port,
@@ -50,8 +59,8 @@ caps are normative in [`web-search.md`](web-search.md). The ordinary outer
 `AiGatewayProvider` continues to reject provider execution and response-side
 tool results, and provider-specific identity remains native rather than core.
 Production is non-WASM; current host composition is Linux/macOS-only. The
-candidate has no retry, fallback, cache, artifact, page fetch, live-provider
-test, compatibility, or performance claim. Remediation and rereview remain in the
+delivered tool has no retry, fallback, cache, artifact, page fetch, live-provider
+test, compatibility, or performance claim. Its review record remains in the
 [`slice-33 ledger`](reviews/m03-web-search-review-01.md).
 
 Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact

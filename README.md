@@ -6,35 +6,26 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Current bounded Milestone 03 slice 33, native `web_search`, is **IN PROGRESS**
-from exact delivered base `4ba9f5afde89b9666fe9929bb81fbabcaa834334`.
-The frozen slice is a locally permissioned tool: required `query` plus optional
-mutually exclusive allow/block DNS filters prepare the exact configured AI
-Gateway network target, then one approved execution makes at most one required
-Perplexity provider-tool worker request through the shared injected transport.
-A dedicated bounded native codec owns that inner provider-executed result;
-core and the ordinary outer AI Gateway provider keep their existing local-tool
-contract. Production, independent evidence, and documentation compose through
-behavior precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
-`5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
-gate is green. Formal cycle 1 rejected exact candidate `89c5ec95fb5353efcba34af6a44bc27d7b6027f7`,
-tree `8d91a556f786169d42406e91e8ad2f476b7c6cf4`, with a deduplicated
-`0/2/5/2` blocker/high/medium/low finding union. Source remediation is composed
-from exact isolated components `096b11c4` and `ca0b990a`. Exact composed
-remediation precursor `e662fa8047c5ca321d622b9b5920166804a35c27`, tree
-`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes the complete local gate.
-Cycle 2's accepted `0/1/1/1` union was remediated through exact precursor
-`366cef9`, tree `40c05cb`. Formal cycle 3 rejected exact candidate `aef6abe`,
-tree `5abcef3`, with a deduplicated `1/0/2/2`; its protocol, terminal-release,
-numeric-host, port-grammar, and documentation remediations are composed from
-exact isolated components `5d45dca` and `454f8fd`. Exact composed precursor
-`b834205`, tree `f3557a5`, passes the complete replacement gate; formal cycle 4
-rejected exact candidate `cc1d3d1`, tree `ad0c3d3`, with a deduplicated
-`0/0/1/1`. Finish-envelope and ledger-status remediation is pending.
-Slice 33 is not yet review-green, integrated, or delivered; the
-delivered count remains 32. It is unmeasured and makes no product-performance
-or fx-equivalence claim. See the [`web_search` contract](docs/web-search.md) and
-[`live review ledger`](docs/reviews/m03-web-search-review-01.md).
+Current bounded Milestone 03 slice 34, native `terminal`, is **IN PROGRESS**
+from exact delivered base `52b5885f275c9f6f4f16b378f71780c29f2ebab2`.
+The frozen first slice implements only bounded foreground `exec`: fixed
+`/bin/sh -c`, descriptor-retained workspace cwd, exact environment-snapshot
+identity in the process capability, separate bounded stdout/stderr, deadline,
+cancellation, fail-fast concurrency, and process-group cleanup. Its system
+executor is Linux-only. It adds no PTY, durable session, sandbox, CLI command,
+benchmark, product-performance, or fx-equivalence claim. See the
+[`terminal` contract](docs/terminal.md) and
+[`live review ledger`](docs/reviews/m03-terminal-review-01.md).
+
+Slice 33, native `web_search`, is **DELIVERED**. Formal cycle 5 was green on
+exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union. Review-exempt delivery
+record `52b5885`, tree `148b358`, passed feature CI/Benchmark runs
+`33023313461`/`33023313463` and main CI/Benchmark runs
+`33023812814`/`33023812808`; every run succeeded for that exact SHA and both
+benchmark runs retained two unexpired exact-SHA artifacts. The delivered count
+is 33. It remains unmeasured and makes no product-performance or fx-equivalence
+claim. See the [`web_search` contract](docs/web-search.md) and
+[`review ledger`](docs/reviews/m03-web-search-review-01.md).
 
 Current bounded Milestone 03 slice 32, strict top-level
 `session <id> [--json]`, is **DELIVERED**. Formal cycle 4 rejected exact

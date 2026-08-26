@@ -1,24 +1,16 @@
 # Native reference-host composition
 
-Status: **DELIVERED** for `web_fetch`; slice-33 `web_search` is **IN PROGRESS**;
-Milestone 03 remains **IN PROGRESS**.
-The delivered composition contains thirteen alphabetical tools: exactly twelve
+Status: **DELIVERED** through slice-33 `web_search`; slice-34 `terminal` is
+**IN PROGRESS**; Milestone 03 remains **IN PROGRESS**.
+The delivered composition contains fourteen alphabetical tools: twelve
 workspace-backed tools share one original retained descriptor plus eleven
-identity-preserving clones, and rootless `web_fetch` owns no descriptor.
-The cycle-1-remediated slice-33 candidate inserts Gateway-backed, workspace-rootless
-`web_search` after `web_fetch` and before `write_file`, producing fourteen
-alphabetical tools while leaving the descriptor-backed set and clone count
-unchanged. Exact composed remediation precursor `e662fa8`, tree `6c0ace9`,
-passes the complete local gate. Exact cycle-2 remediation `366cef9`, tree
-`40c05cb`, also passed its complete gate; formal cycle 3 rejected exact candidate
-`aef6abe`, tree `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated
-components `5d45dca` and `454f8fd` compose its remediation. Exact precursor
-`b834205`, tree `f3557a5`, passes the complete replacement gate. Formal cycle 4
-rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
-remediation is pending. No replacement exact candidate has passed formal review,
-so this paragraph does not promote that catalog to delivered status. See
-[`web-search.md`](web-search.md) and the
-[`slice-33 ledger`](reviews/m03-web-search-review-01.md).
+identity-preserving clones, while rootless `web_fetch` and Gateway-backed
+`web_search` own no workspace descriptor. Slice 34 will insert workspace-backed
+`terminal` after `rename_file` and before `web_fetch`, producing fifteen tools
+and thirteen descriptor-backed tools. Its Linux system executor is the only
+platform-default process implementation in this slice. See
+[`terminal.md`](terminal.md) and the
+[`slice-34 ledger`](reviews/m03-terminal-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI

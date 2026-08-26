@@ -4,7 +4,15 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-Bounded slice 33, native `web_search`, is **IN PROGRESS**, unmeasured, and
+Bounded slice 34, native `terminal`, is **IN PROGRESS**, unmeasured, and
+claim-ineligible. Its 32 KiB command, 4,096-byte/256-component cwd, bounded
+256 KiB environment snapshot, 64 KiB retained raw output, 1 MiB produced-output
+cutoff, 48 KiB serialized output, 120-second default deadline, default active
+limit four, and hard active limit sixteen are resource ceilings, not measured
+performance results. No benchmark workload changes in this slice. See
+[`terminal.md`](terminal.md).
+
+Bounded slice 33, native `web_search`, is **DELIVERED**, unmeasured, and
 claim-ineligible. It changes no benchmark workload or recorded comparison. Its
 fixed ceilings are regression and denial-of-service boundaries, not performance
 results: 4,096 query bytes, 16 domains and 4,096 aggregate domain bytes, ten
@@ -34,8 +42,8 @@ rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
 exact finish-envelope remediation component `dc79c8d`, tree `e2fed70`, is
 composed with host-fixture component `9f6c474`. Exact precursor `2e9c44d`, tree
 `3e25daa`, passes the complete replacement gate. Formal cycle 5 is green on
-exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union; delivery workflows are
-pending. No
+exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union. Delivery record
+`52b5885` passed exact feature and main CI/Benchmark workflows. No
 latency, throughput, allocation
 improvement, binary-size improvement, compatibility promotion, or
 fx-equivalence claim follows. The

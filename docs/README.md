@@ -1,6 +1,17 @@
 # Documentation
 
-Current bounded Milestone 03 slice 33, native `web_search`, is **IN PROGRESS**
+Current bounded Milestone 03 slice 34, native `terminal`, is **IN PROGRESS**
+from exact delivered base `52b5885f275c9f6f4f16b378f71780c29f2ebab2`.
+It freezes only bounded foreground `exec`: fixed `/bin/sh -c`, a descriptor-
+retained workspace-relative starting directory, exact environment-snapshot
+identity in the process capability, bounded separate stdout/stderr, timeout,
+cancellation, fail-fast concurrency, process-group cleanup, and a Linux-only
+system executor. It adds no PTY, durable session, sandbox, CLI command,
+benchmark, product-performance, or fx-equivalence claim. See the
+[`terminal` contract](terminal.md) and
+[`live review ledger`](reviews/m03-terminal-review-01.md).
+
+Bounded Milestone 03 slice 33, native `web_search`, is **DELIVERED**
 from exact delivered base `4ba9f5afde89b9666fe9929bb81fbabcaa834334`.
 Its frozen strict input is required `query` plus optional mutually exclusive
 `allowed_domains` / `blocked_domains`. Effect-free preflight prepares the exact
@@ -29,8 +40,12 @@ exact finish-envelope remediation component `dc79c8d`, tree `e2fed70`, is
 composed with maintained documentation and exact host-fixture component
 `9f6c474`. Exact precursor `2e9c44d`, tree `3e25daa`, passes the complete
 replacement gate. Formal cycle 5 is green on exact `782aa54`, tree `b1ba692`,
-with a `0/0/0/0` union. The slice is review-green but not yet integrated or
-delivered, and the delivered count remains 32. The fixed
+with a `0/0/0/0` union. Review-exempt delivery record `52b5885`, tree
+`148b358`, passed exact feature CI/Benchmark runs
+`33023313461`/`33023313463` and main CI/Benchmark runs
+`33023812814`/`33023812808`. All four runs succeeded for that exact SHA; each
+benchmark run retained two unexpired exact-SHA artifacts. The delivered count
+is 33. The fixed
 resource/platform/deferred boundary is the
 [`native web search contract`](web-search.md), and status is tracked in its
 [`live review ledger`](reviews/m03-web-search-review-01.md). The slice is
@@ -133,6 +148,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Native `open_file` delivered contract](open-file.md)
 - [Native `web_fetch` delivered contract](web-fetch.md)
 - [Native `web_search` slice-33 contract](web-search.md)
+- [Native `terminal` slice-34 foreground-exec contract](terminal.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
 - [Native AI Gateway credential discovery](ai-gateway-credentials.md)
@@ -169,6 +185,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Milestone 03 native `open_file` delivery review](reviews/m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](reviews/m03-web-fetch-review-01.md)
 - [Milestone 03 native `web_search` live review ledger](reviews/m03-web-search-review-01.md)
+- [Milestone 03 native `terminal` live review ledger](reviews/m03-terminal-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](reviews/m03-permissions-cli-review-01.md)
 - [Milestone 03 `models` CLI delivery review ledger](reviews/m03-models-cli-review-01.md)
 - [Milestone 03 `doctor` CLI live review ledger](reviews/m03-doctor-cli-review-01.md)

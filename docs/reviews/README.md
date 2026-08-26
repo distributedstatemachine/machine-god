@@ -1,7 +1,14 @@
 # Adversarial reviews
 
-Current bounded slice 33, native `web_search`, is **IN PROGRESS — CYCLE 3
-REMEDIATION GATE GREEN; CYCLE 4 REJECTED** from exact delivered base `4ba9f5a`. Its frozen
+Current bounded slice 34, native `terminal`, is **IN PROGRESS — CONTRACT
+FROZEN** from exact delivered base `52b5885`. It implements only bounded
+foreground `exec` with a Linux-only system executor. Production, independent
+evidence, local gates, and the first three fresh product-review tracks are
+pending. Scope and worktree cleanup are recorded in
+[`m03-terminal-review-01.md`](m03-terminal-review-01.md).
+
+Bounded slice 33, native `web_search`, is **DELIVERED** from exact delivered
+base `4ba9f5a`. Its frozen
 local-tool contract performs exact Gateway-network preflight, then at most one
 approved required Perplexity worker request through the shared transport and a
 dedicated bounded native provider-executed decoder. Composed behavior precursor
@@ -16,10 +23,13 @@ isolated components `096b11c4` and `ca0b990a`. Exact composed precursor
 with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca` and
 `454f8fd` compose its remediation. Exact precursor `b834205`, tree `f3557a5`,
 passes the complete replacement gate. Formal cycle 4 rejected exact `cc1d3d1`,
-tree `ad0c3d3`, with a deduplicated `0/0/1/1`; remediation is pending. No
-feature workflow, integration, or `main`
-workflow exists. The delivered count remains
-32. Review scope, fixed resources, deferrals, and the per-iteration committed/
+tree `ad0c3d3`, with a deduplicated `0/0/1/1`; the remediation passed formal
+cycle 5 with a `0/0/0/0` union. Review-exempt delivery record `52b5885`, tree
+`148b358`, passed feature CI/Benchmark runs `33023313461`/`33023313463` and
+main CI/Benchmark runs `33023812814`/`33023812808`; every run succeeded for
+the exact SHA, and both benchmark runs retained two unexpired exact-SHA
+artifacts. The delivered count is 33. Review scope, fixed resources, deferrals,
+and the per-iteration committed/
 integrated/clean worktree-removal invariant are tracked in
 [`m03-web-search-review-01.md`](m03-web-search-review-01.md). No performance or
 fx-equivalence claim is made.
@@ -149,6 +159,7 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native `open_file` delivery review](m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](m03-web-fetch-review-01.md)
 - [Milestone 03 native `web_search` live review ledger](m03-web-search-review-01.md)
+- [Milestone 03 native `terminal` live review ledger](m03-terminal-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](m03-permissions-cli-review-01.md)
 - [Milestone 03 `models` CLI delivery review ledger](m03-models-cli-review-01.md)
 - [Milestone 03 `doctor` CLI live review ledger](m03-doctor-cli-review-01.md)
