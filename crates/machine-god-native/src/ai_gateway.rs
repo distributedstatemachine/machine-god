@@ -603,6 +603,14 @@ fn build_request(
         cancellation,
     )?;
     let session = request.session_id.to_string();
+    Ok(build_gateway_transport_request(model, &session, body))
+}
+
+pub(crate) fn build_gateway_transport_request(
+    model: &str,
+    session: &str,
+    body: Vec<u8>,
+) -> AiGatewayTransportRequest {
     let headers = [
         ("content-type", CONTENT_TYPE),
         ("ai-gateway-protocol-version", AI_GATEWAY_PROTOCOL_VERSION),
@@ -612,8 +620,8 @@ fn build_request(
         ),
         ("ai-language-model-id", model),
         ("ai-language-model-streaming", "true"),
-        ("x-session-id", session.as_str()),
-        ("x-session-affinity", session.as_str()),
+        ("x-session-id", session),
+        ("x-session-affinity", session),
     ]
     .into_iter()
     .map(|(name, value)| AiGatewayHeader {
@@ -621,7 +629,7 @@ fn build_request(
         value: value.to_owned(),
     })
     .collect();
-    Ok(AiGatewayTransportRequest { headers, body })
+    AiGatewayTransportRequest { headers, body }
 }
 
 fn build_prompt(
@@ -1174,7 +1182,7 @@ impl<'de> Visitor<'de> for StrictValueVisitor<'_> {
     }
 }
 
-fn parse_strict_json(text: &str, max_nodes: usize) -> Result<Value, serde_json::Error> {
+pub(crate) fn parse_strict_json(text: &str, max_nodes: usize) -> Result<Value, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let nodes = Cell::new(0);
     let value = StrictValueSeed {

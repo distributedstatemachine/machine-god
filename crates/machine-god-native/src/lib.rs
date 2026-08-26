@@ -25,6 +25,8 @@ mod ai_gateway_model_catalog;
     not(target_family = "wasm")
 ))]
 mod ai_gateway_model_catalog_http;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+mod ai_gateway_web_search;
 mod ask_permission;
 mod config;
 mod copy_file;
@@ -56,6 +58,8 @@ mod session_store;
 mod state_environment;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+mod web_search;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace;
 mod write_file;
@@ -119,6 +123,8 @@ pub use ai_gateway_model_catalog_http::{
     AiGatewayModelCatalogHttpConfigErrorKind, AiGatewayModelCatalogHttpEndpoint,
     AiGatewayModelCatalogHttpLimits, AiGatewayModelCatalogHttpTransport,
 };
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use ai_gateway_web_search::AiGatewayWebSearchTransport;
 pub use ask_permission::{
     ASK_PERMISSION_DENIED_REASON, ASK_PERMISSION_PROMPT_ERROR_CODE,
     ASK_PERMISSION_PROMPT_ERROR_MESSAGE, AskPermissionHandler, PermissionPromptDecision,
@@ -247,6 +253,19 @@ pub use web_fetch::{
     WebFetchConfigError, WebFetchConfigErrorKind, WebFetchLimits, WebFetchRequest,
     WebFetchResponse, WebFetchTool, WebFetchTransport, WebFetchTransportError,
     WebFetchTransportErrorKind,
+};
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use web_search::{
+    MAX_WEB_SEARCH_DOMAIN_BYTES, MAX_WEB_SEARCH_DOMAIN_FILTERS, MAX_WEB_SEARCH_JSON_NODES,
+    MAX_WEB_SEARCH_QUERY_BYTES, MAX_WEB_SEARCH_REQUEST_BYTES, MAX_WEB_SEARCH_RESPONSE_BYTES,
+    MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES, MAX_WEB_SEARCH_RESPONSE_RECORDS,
+    MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES, MAX_WEB_SEARCH_SOURCE_TITLE_BYTES,
+    MAX_WEB_SEARCH_SOURCE_URL_BYTES, MAX_WEB_SEARCH_SOURCES, MAX_WEB_SEARCH_TOTAL_DOMAIN_BYTES,
+    WEB_SEARCH_DEFAULT_MAX_ACTIVE_REQUESTS, WEB_SEARCH_DEFAULT_REQUEST_TIMEOUT,
+    WEB_SEARCH_MAX_ACTIVE_REQUESTS, WEB_SEARCH_TOOL_NAME, WebSearchConfigError,
+    WebSearchConfigErrorKind, WebSearchLimits, WebSearchRequest, WebSearchResponse,
+    WebSearchSource, WebSearchTool, WebSearchTransport, WebSearchTransportError,
+    WebSearchTransportErrorKind,
 };
 pub use write_file::{
     MAX_WRITE_FILE_CHUNK_BYTES, MAX_WRITE_FILE_CONTENT_BYTES, MAX_WRITE_FILE_PATH_BYTES,

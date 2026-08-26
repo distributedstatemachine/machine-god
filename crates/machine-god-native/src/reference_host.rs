@@ -3,14 +3,15 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
-use machine_god_core::Engine;
+use machine_god_core::{Engine, NetworkTarget};
 
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
-    AiGatewayProvider, AiGatewayTransport, AskPermissionHandler, FileSessionStore,
-    LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
-    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, WebFetchTool,
+    AiGatewayProvider, AiGatewayTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
+    FileSessionStore, LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind,
+    NativeSessionLifecycle, NativeTransportKind, PermissionMode, PermissionPrompter,
+    PreparedNativeRoots, WebFetchTool, WebSearchLimits, WebSearchTool,
     discover_ai_gateway_credential,
 };
 
@@ -30,6 +31,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     HttpTransport,
     /// The production bounded web-fetch transport could not be constructed.
     WebFetchTransport,
+    /// The production bounded web-search transport could not be constructed.
+    WebSearchTransport,
     /// The selected provider could not be constructed.
     Provider,
     /// The provider-neutral engine could not be constructed.
@@ -83,6 +86,9 @@ impl fmt::Display for NativeReferenceHostBuildError {
             }
             NativeReferenceHostBuildErrorKind::WebFetchTransport => {
                 "native reference-host web-fetch transport construction failed"
+            }
+            NativeReferenceHostBuildErrorKind::WebSearchTransport => {
+                "native reference-host web-search transport construction failed"
             }
             NativeReferenceHostBuildErrorKind::Provider => {
                 "native reference-host provider construction failed"
@@ -296,10 +302,32 @@ impl NativeReferenceHost {
         permission_prompter: Arc<dyn PermissionPrompter>,
         credential_source: Option<AiGatewayCredentialSource>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        let provider = AiGatewayProvider::new(loaded_config.config().model().to_owned(), transport)
-            .map_err(|_| {
-                NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
-            })?;
+        let model = loaded_config.config().model().to_owned();
+        let search_transport =
+            AiGatewayWebSearchTransport::new(model.clone(), Arc::clone(&transport)).map_err(
+                |_| {
+                    NativeReferenceHostBuildError::new(
+                        NativeReferenceHostBuildErrorKind::WebSearchTransport,
+                    )
+                },
+            )?;
+        let web_search = WebSearchTool::with_bounded_transport(
+            NetworkTarget {
+                scheme: "https".to_owned(),
+                host: "ai-gateway.vercel.sh".to_owned(),
+                port: None,
+            },
+            Arc::new(search_transport),
+            WebSearchLimits::default(),
+        )
+        .map_err(|_| {
+            NativeReferenceHostBuildError::new(
+                NativeReferenceHostBuildErrorKind::WebSearchTransport,
+            )
+        })?;
+        let provider = AiGatewayProvider::new(model, transport).map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
+        })?;
         let web_fetch = WebFetchTool::new().map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebFetchTransport)
         })?;
@@ -323,6 +351,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.read_file)
             .tool(workspace_tools.rename_file)
             .tool(web_fetch)
+            .tool(web_search)
             .tool(workspace_tools.write_file)
             .build()
             .map_err(|_| {
