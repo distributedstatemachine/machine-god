@@ -79,8 +79,12 @@ adjudication rejects the purported blocker: the raw language-model-v4 stream
 uses `result`, which the higher-level Vercel AI SDK maps to public `output`.
 The accepted union is `0/1/1/1`. Remediation covers URL-standard numeric IPv4
 aliases, a reachable escaping-sensitive serialized-output boundary, and stale
-host-composition wording. This slice is not yet review-green, integrated, or
-delivered; the delivered count remains thirty-two.
+host-composition wording. Exact composed remediation precursor
+`366cef966d7dcf1b11101a37d4493099e6f421a7`, tree
+`40c05cb2999c641bc7ccbdc369fc6d9251b989b7`, passes the complete exact-1.94.1
+replacement gate without fallback; formal cycle 3 is pending on its immutable
+kickoff candidate. This slice is not yet review-green, integrated, or delivered;
+the delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive

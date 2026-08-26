@@ -10,7 +10,8 @@ complete local gate. Formal cycle 2 reported `1/1/1/1` on exact `399f5f7`, tree
 `99a88a4`; primary-source adjudication rejects the layer-confused provider-
 envelope blocker, leaving an accepted `0/1/1/1` union. Remediation of numeric
 IPv4 aliases, the reachable output boundary, and stale composition wording is
-in progress. It remains a local
+composed in exact precursor `366cef9`, tree `40c05cb`, which passes the complete
+replacement gate. Formal cycle 3 is pending. It remains a local
 authority-bearing tool: strict
 effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares

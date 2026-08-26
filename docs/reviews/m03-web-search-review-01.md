@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 2 REJECTED; REMEDIATION PENDING**
+Status: **IN PROGRESS — CYCLE 3 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -234,8 +234,31 @@ regression. Exact isolated validation component
 IPv4 classification for targets, filters, and citations plus public execution
 evidence at exactly 49,152 and 49,153 serialized output bytes. Both components
 and the maintained behavior corrections are composed in the current
-remediation; its exact local gate and replacement review candidate remain
-pending.
+remediation. Exact precursor
+`366cef966d7dcf1b11101a37d4493099e6f421a7`, tree
+`40c05cb2999c641bc7ccbdc369fc6d9251b989b7`, passes the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. The focused decoder and
+tool suites ran 28 tests with zero failures. All four required commands passed;
+default-feature and all-feature workspace tests passed; repository-wide Python
+ran 136 tests with eight expected platform skips; and pinned-fx regeneration
+against exact `b1774fbf` was byte-stable.
+
+FreeBSD no-default and WASI all-feature library checks passed with only the
+established unrelated WASI `read_file` dead-code warning. All 87 maintained
+Markdown files had zero missing repository-relative targets. Cargo manifests
+and `Cargo.lock` are unchanged, the base diff is clean, and no unsafe Rust
+construct was added. The freshly built locked release binary is 3,985,216 bytes
+with SHA-256
+`ef8751d1a50c933b42657d9b1abecb013426abc4bd8c95c89990862371b7c5b9` and
+passes exact version/help smoke. Both remediation worktrees were verified
+committed and clean after composition, then removed and pruned.
+
+The formal cycle-3 candidate is the commit containing this kickoff paragraph.
+Reviewers receive its exact SHA and tree out of band. Three fresh isolated
+read-only tracks must independently cover correctness/API/protocol,
+native effects/lifecycle/platform behavior, and performance/resources. No
+feature workflow may begin unless every track and the deduplicated union report
+`0/0/0/0`.
 
 ## Worktree lifecycle
 

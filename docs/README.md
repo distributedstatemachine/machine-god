@@ -18,8 +18,11 @@ tree `6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes the complete local gate;
 cycle 2 reported `1/1/1/1` on exact candidate `399f5f7`, tree `99a88a4`.
 Primary-source adjudication rejects the layer-confused provider-envelope
 blocker, leaving the accepted `0/1/1/1` union under remediation. The slice is
-not yet review-green, integrated, or delivered and the delivered count remains
-32. The fixed resource/platform/deferred boundary is the
+remediated through exact precursor `366cef966d7dcf1b11101a37d4493099e6f421a7`,
+tree `40c05cb2999c641bc7ccbdc369fc6d9251b989b7`, whose complete exact-1.94.1
+replacement gate is green. Formal cycle 3 is pending. The slice is not yet
+review-green, integrated, or delivered and the delivered count remains 32. The
+fixed resource/platform/deferred boundary is the
 [`native web search contract`](web-search.md), and status is tracked in its
 [`live review ledger`](reviews/m03-web-search-review-01.md). The slice is
 unmeasured and makes no product-performance or fx-equivalence claim.

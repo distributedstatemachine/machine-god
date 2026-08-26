@@ -38,7 +38,9 @@ cycle 2 reported a deduplicated `1/1/1/1` on exact candidate `399f5f7`, tree
 raw language-model-v4 `result` is mapped to public SDK `output` above this
 transport seam. The accepted `0/1/1/1` union still rejects the candidate;
 current remediation rejects noncanonical URL-standard IPv4 aliases and proves
-the escaping-sensitive serialized-output boundary.
+the escaping-sensitive serialized-output boundary. Exact remediation precursor
+`366cef966d7dcf1b11101a37d4493099e6f421a7`, tree `40c05cb`, passes the complete
+replacement gate; formal cycle 3 is pending.
 The candidate is not green, integrated, or delivered, the delivered count
 remains 32, and no performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,

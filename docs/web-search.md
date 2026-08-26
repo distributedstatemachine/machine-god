@@ -17,9 +17,13 @@ evidence and the complete same-SHA gate pass on exact composed precursor
 `e662fa8047c5ca321d622b9b5920166804a35c27`, tree
 `6c0ace98ea9931af9d16cc9fb2ade969df477d3c`. Formal cycle 2 rejected exact
 candidate `399f5f7a14c1473d9e737d44838549ba305746de`, tree
-`99a88a45fd6f0823b23fd879633784433194cf8d`, with a deduplicated `1/1/1/1`
-finding union. Remediation and fresh review remain pending. The slice is not
-yet review-green, integrated, or delivered. The live status is recorded in the
+`99a88a45fd6f0823b23fd879633784433194cf8d`, with a reported `1/1/1/1`
+finding union; primary-source adjudication rejects its layer-confused blocker,
+leaving an accepted `0/1/1/1`. Exact remediation precursor
+`366cef966d7dcf1b11101a37d4493099e6f421a7`, tree
+`40c05cb2999c641bc7ccbdc369fc6d9251b989b7`, passes the complete replacement
+gate and formal cycle 3 is pending. The slice is not yet review-green,
+integrated, or delivered. The live status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 
 ## Boundary
