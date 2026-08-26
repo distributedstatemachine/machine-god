@@ -352,6 +352,7 @@ fn classify_session_inspection_error_kind(
         | NativeSessionInspectionErrorKind::Unavailable => SessionOperationalFailure::Unavailable,
         NativeSessionInspectionErrorKind::NotFound => SessionOperationalFailure::NotFound,
         NativeSessionInspectionErrorKind::Corrupt => SessionOperationalFailure::Corrupt,
+        _ => SessionOperationalFailure::Unavailable,
     }
 }
 
@@ -1305,7 +1306,7 @@ fn help() -> String {
             "  doctor       Run local health and preflight checks\n",
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
-            "  session      Inspect one saved session\n",
+            "  session      Inspect a saved session\n",
             "  sessions     List saved sessions\n",
             "  status       Show configuration and runtime information\n",
             "\n",
@@ -3276,7 +3277,7 @@ mod tests {
             .find("  permissions  Show the permission mode and rules\n")
             .expect("permissions command");
         let session_command = output
-            .find("  session      Inspect one saved session\n")
+            .find("  session      Inspect a saved session\n")
             .expect("session command");
         let sessions_command = output
             .find("  sessions     List saved sessions\n")
