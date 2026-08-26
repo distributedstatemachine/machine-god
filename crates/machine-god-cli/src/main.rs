@@ -28,17 +28,51 @@ use machine_god_native::{
     DiscoveredAiGatewayCatalogCredential, discover_process_ai_gateway_catalog_credential,
 };
 use machine_god_native::{
-    NativeCredentialSourceKind, NativeProviderKind, NativeStatus, NativeTransportKind,
-    PermissionMode, inspect_process_status, load_process_config,
+    NativeCredentialSourceKind, NativeDoctorCheckStatus, NativeDoctorReport, NativeProviderKind,
+    NativeStatus, NativeTransportKind, PermissionMode, inspect_process_doctor,
+    inspect_process_status, load_process_config,
 };
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | models [--json] | permissions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | status [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
+const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
 const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
+const DOCTOR_CHECK_COUNT: usize = 4;
+const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
 const MAX_MODELS_OUTPUT_BYTES: usize = 64 * 1024;
+
+#[derive(Debug)]
+struct BoundedDoctorOutput {
+    value: String,
+}
+
+impl BoundedDoctorOutput {
+    fn new() -> Self {
+        Self {
+            value: String::with_capacity(1024),
+        }
+    }
+
+    fn finish(self) -> String {
+        self.value
+    }
+}
+
+impl std::fmt::Write for BoundedDoctorOutput {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        let Some(new_len) = self.value.len().checked_add(value.len()) else {
+            return Err(std::fmt::Error);
+        };
+        if new_len > MAX_DOCTOR_OUTPUT_BYTES {
+            return Err(std::fmt::Error);
+        }
+        self.value.push_str(value);
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 struct BoundedModelsOutput {
@@ -74,9 +108,95 @@ impl std::fmt::Write for BoundedModelsOutput {
 enum Command {
     Identity,
     Help,
+    Doctor { json: bool },
     Models { json: bool },
     Permissions { json: bool },
     Status { json: bool },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DoctorCheckStatus {
+    Ok,
+    Warn,
+    Fail,
+}
+
+impl DoctorCheckStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
+        }
+    }
+}
+
+impl From<NativeDoctorCheckStatus> for DoctorCheckStatus {
+    fn from(status: NativeDoctorCheckStatus) -> Self {
+        match status {
+            NativeDoctorCheckStatus::Ok => Self::Ok,
+            NativeDoctorCheckStatus::Warn => Self::Warn,
+            NativeDoctorCheckStatus::Fail => Self::Fail,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DoctorCheckSnapshot {
+    name: &'static str,
+    status: DoctorCheckStatus,
+    detail: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DoctorReportSnapshot {
+    ok_count: usize,
+    warn_count: usize,
+    fail_count: usize,
+    checks: [DoctorCheckSnapshot; DOCTOR_CHECK_COUNT],
+}
+
+impl DoctorReportSnapshot {
+    fn from_native(report: &NativeDoctorReport) -> Result<Self, ()> {
+        if report.checked_count() != DOCTOR_CHECK_COUNT
+            || report.checks().len() != DOCTOR_CHECK_COUNT
+            || report
+                .ok_count()
+                .checked_add(report.warn_count())
+                .and_then(|count| count.checked_add(report.fail_count()))
+                != Some(DOCTOR_CHECK_COUNT)
+        {
+            return Err(());
+        }
+
+        let checks = std::array::from_fn(|index| {
+            let check = &report.checks()[index];
+            DoctorCheckSnapshot {
+                name: check.name(),
+                status: check.status().into(),
+                detail: check.detail(),
+            }
+        });
+        Ok(Self {
+            ok_count: report.ok_count(),
+            warn_count: report.warn_count(),
+            fail_count: report.fail_count(),
+            checks,
+        })
+    }
+}
+
+trait DoctorCommandHost {
+    fn inspect_doctor(&self) -> Result<DoctorReportSnapshot, ()>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ProductionDoctorCommandHost;
+
+impl DoctorCommandHost for ProductionDoctorCommandHost {
+    fn inspect_doctor(&self) -> Result<DoctorReportSnapshot, ()> {
+        DoctorReportSnapshot::from_native(&inspect_process_doctor())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -715,7 +835,13 @@ fn run(
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
 ) -> u8 {
-    run_with_models_host(arguments, stdout, stderr, &ProductionModelsCommandHost)
+    run_with_hosts(
+        arguments,
+        stdout,
+        stderr,
+        &ProductionModelsCommandHost,
+        &ProductionDoctorCommandHost,
+    )
 }
 
 fn run_with_models_host(
@@ -723,6 +849,38 @@ fn run_with_models_host(
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
     models_host: &impl ModelsCommandHost,
+) -> u8 {
+    run_with_hosts(
+        arguments,
+        stdout,
+        stderr,
+        models_host,
+        &ProductionDoctorCommandHost,
+    )
+}
+
+#[cfg(test)]
+fn run_with_doctor_host(
+    arguments: impl IntoIterator<Item = OsString>,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    doctor_host: &impl DoctorCommandHost,
+) -> u8 {
+    run_with_hosts(
+        arguments,
+        stdout,
+        stderr,
+        &ProductionModelsCommandHost,
+        doctor_host,
+    )
+}
+
+fn run_with_hosts(
+    arguments: impl IntoIterator<Item = OsString>,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    models_host: &impl ModelsCommandHost,
+    doctor_host: &impl DoctorCommandHost,
 ) -> u8 {
     let Ok(command) = parse_arguments(arguments) else {
         let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
@@ -732,6 +890,9 @@ fn run_with_models_host(
     let output = match command {
         Command::Identity => identity(),
         Command::Help => help(),
+        Command::Doctor { json } => {
+            return run_doctor(doctor_host, json, stdout, stderr);
+        }
         Command::Models { json } => {
             return run_models(models_host, json, stdout, stderr);
         }
@@ -764,6 +925,14 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
     let command = match first {
         "help" | "--help" | "-h" => Command::Help,
         "--version" | "-V" => Command::Identity,
+        "doctor" => {
+            let json = match arguments.next() {
+                None => false,
+                Some(argument) if argument == "--json" => true,
+                Some(_) => return Err(()),
+            };
+            Command::Doctor { json }
+        }
         "models" => {
             let json = match arguments.next() {
                 None => false,
@@ -814,12 +983,14 @@ fn help() -> String {
             "Usage:\n",
             "  machine-god\n",
             "  machine-god help\n",
+            "  machine-god doctor [--json]\n",
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
             "  machine-god status [--json]\n",
             "\n",
             "Commands:\n",
             "  help         Show this help\n",
+            "  doctor       Run local health and preflight checks\n",
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
             "  status       Show configuration and runtime information\n",
@@ -830,6 +1001,108 @@ fn help() -> String {
         ),
         env!("CARGO_PKG_VERSION")
     )
+}
+
+fn run_doctor(
+    host: &impl DoctorCommandHost,
+    json: bool,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+) -> u8 {
+    let report = match host.inspect_doctor() {
+        Ok(report) => report,
+        Err(()) => {
+            let _ = stderr.write_all(DOCTOR_RENDER_FAILURE.as_bytes());
+            return 1;
+        }
+    };
+    let output = match render_doctor(&report, json) {
+        Ok(output) => output,
+        Err(()) => {
+            let _ = stderr.write_all(DOCTOR_RENDER_FAILURE.as_bytes());
+            return 1;
+        }
+    };
+    if stdout.write_all(output.as_bytes()).is_err() {
+        let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
+        return 1;
+    }
+    0
+}
+
+fn render_doctor(report: &DoctorReportSnapshot, json: bool) -> Result<String, ()> {
+    if report.checks.len() != DOCTOR_CHECK_COUNT {
+        return Err(());
+    }
+    let mut ok_count = 0usize;
+    let mut warn_count = 0usize;
+    let mut fail_count = 0usize;
+    for check in &report.checks {
+        match check.status {
+            DoctorCheckStatus::Ok => ok_count += 1,
+            DoctorCheckStatus::Warn => warn_count += 1,
+            DoctorCheckStatus::Fail => fail_count += 1,
+        }
+    }
+    if (report.ok_count, report.warn_count, report.fail_count) != (ok_count, warn_count, fail_count)
+    {
+        return Err(());
+    }
+
+    let mut output = BoundedDoctorOutput::new();
+    let rendered = if json {
+        write_json_doctor(&mut output, report)
+    } else {
+        write_human_doctor(&mut output, report)
+    };
+    rendered.map_err(|_| ())?;
+    Ok(output.finish())
+}
+
+fn write_human_doctor(
+    output: &mut BoundedDoctorOutput,
+    report: &DoctorReportSnapshot,
+) -> std::fmt::Result {
+    writeln!(
+        output,
+        "[doctor] ok={} warn={} fail={}",
+        report.ok_count, report.warn_count, report.fail_count
+    )?;
+    for check in &report.checks {
+        writeln!(
+            output,
+            "[{}] {}: {}",
+            check.status.as_str(),
+            check.name,
+            check.detail
+        )?;
+    }
+    Ok(())
+}
+
+fn write_json_doctor(
+    output: &mut BoundedDoctorOutput,
+    report: &DoctorReportSnapshot,
+) -> std::fmt::Result {
+    output.write_str("{\"kind\":\"doctor\",\"ok_count\":")?;
+    write!(
+        output,
+        "{},\"warn_count\":{},\"fail_count\":{},\"checks\":[",
+        report.ok_count, report.warn_count, report.fail_count
+    )?;
+    for (index, check) in report.checks.iter().enumerate() {
+        if index != 0 {
+            output.write_char(',')?;
+        }
+        output.write_str("{\"name\":")?;
+        write_json_string(output, check.name)?;
+        output.write_str(",\"status\":")?;
+        write_json_string(output, check.status.as_str())?;
+        output.write_str(",\"detail\":")?;
+        write_json_string(output, check.detail)?;
+        output.write_char('}')?;
+    }
+    output.write_str("]}\n")
 }
 
 fn run_models(
@@ -1060,9 +1333,11 @@ fn write_json_string(output: &mut impl std::fmt::Write, value: &str) -> std::fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        Command, INVALID_ARGUMENTS, ModelsCommandExecution, ModelsCommandHost,
-        ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode, json_permissions,
-        parse_arguments, permissions, push_json_string, run, run_with_models_host,
+        Command, DOCTOR_RENDER_FAILURE, DoctorCheckSnapshot, DoctorCheckStatus, DoctorCommandHost,
+        DoctorReportSnapshot, INVALID_ARGUMENTS, MAX_DOCTOR_OUTPUT_BYTES, ModelsCommandExecution,
+        ModelsCommandHost, ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode, help,
+        json_permissions, parse_arguments, permissions, push_json_string, render_doctor, run,
+        run_with_doctor_host, run_with_models_host,
     };
     #[cfg(not(target_family = "wasm"))]
     use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
@@ -1115,6 +1390,67 @@ mod tests {
             self.calls.set(self.calls.get() + 1);
             ModelsCommandExecution::without_signal_guard(self.result.clone())
         }
+    }
+
+    #[derive(Clone, Debug)]
+    struct FakeDoctorHost {
+        result: Result<DoctorReportSnapshot, ()>,
+        calls: Cell<usize>,
+    }
+
+    impl FakeDoctorHost {
+        fn new(result: Result<DoctorReportSnapshot, ()>) -> Self {
+            Self {
+                result,
+                calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl DoctorCommandHost for FakeDoctorHost {
+        fn inspect_doctor(&self) -> Result<DoctorReportSnapshot, ()> {
+            self.calls.set(self.calls.get() + 1);
+            self.result
+        }
+    }
+
+    fn doctor_report(
+        checks: [DoctorCheckSnapshot; super::DOCTOR_CHECK_COUNT],
+    ) -> DoctorReportSnapshot {
+        let ok_count = checks
+            .iter()
+            .filter(|check| check.status == DoctorCheckStatus::Ok)
+            .count();
+        let warn_count = checks
+            .iter()
+            .filter(|check| check.status == DoctorCheckStatus::Warn)
+            .count();
+        let fail_count = checks
+            .iter()
+            .filter(|check| check.status == DoctorCheckStatus::Fail)
+            .count();
+        DoctorReportSnapshot {
+            ok_count,
+            warn_count,
+            fail_count,
+            checks,
+        }
+    }
+
+    fn check(
+        name: &'static str,
+        status: DoctorCheckStatus,
+        detail: &'static str,
+    ) -> DoctorCheckSnapshot {
+        DoctorCheckSnapshot {
+            name,
+            status,
+            detail,
+        }
+    }
+
+    fn leaked(value: String) -> &'static str {
+        Box::leak(value.into_boxed_str())
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -2006,6 +2342,14 @@ mod tests {
             );
         }
         assert_eq!(
+            parse_arguments([OsString::from("doctor")]),
+            Ok(Command::Doctor { json: false })
+        );
+        assert_eq!(
+            parse_arguments([OsString::from("doctor"), OsString::from("--json")]),
+            Ok(Command::Doctor { json: true })
+        );
+        assert_eq!(
             parse_arguments([OsString::from("models")]),
             Ok(Command::Models { json: false })
         );
@@ -2034,6 +2378,13 @@ mod tests {
             vec![OsString::from("unknown")],
             vec![OsString::from("help"), OsString::from("extra")],
             vec![OsString::from("--json"), OsString::from("status")],
+            vec![OsString::from("doctor"), OsString::from("--json=true")],
+            vec![
+                OsString::from("doctor"),
+                OsString::from("--json"),
+                OsString::from("--json"),
+            ],
+            vec![OsString::from("doctor"), OsString::from("extra")],
             vec![OsString::from("models"), OsString::from("--json=true")],
             vec![
                 OsString::from("models"),
@@ -2054,6 +2405,228 @@ mod tests {
             ],
         ] {
             assert_eq!(parse_arguments(arguments), Err(()));
+        }
+    }
+
+    #[test]
+    fn help_lists_doctor_before_models_with_the_frozen_summary() {
+        let output = help();
+        let doctor_usage = output
+            .find("  machine-god doctor [--json]\n")
+            .expect("doctor usage");
+        let models_usage = output
+            .find("  machine-god models [--json]\n")
+            .expect("models usage");
+        assert!(doctor_usage < models_usage);
+
+        let doctor_command = output
+            .find("  doctor       Run local health and preflight checks\n")
+            .expect("doctor command");
+        let models_command = output
+            .find("  models       List available models\n")
+            .expect("models command");
+        assert!(doctor_command < models_command);
+    }
+
+    #[test]
+    fn doctor_human_output_is_exact_and_fail_findings_exit_zero() {
+        let report = doctor_report([
+            check(
+                "configuration",
+                DoctorCheckStatus::Ok,
+                "configuration loaded",
+            ),
+            check(
+                "credentials",
+                DoctorCheckStatus::Warn,
+                "credential is missing",
+            ),
+            check(
+                "state",
+                DoctorCheckStatus::Fail,
+                "state directory is unavailable",
+            ),
+            check(
+                "workspace",
+                DoctorCheckStatus::Ok,
+                "working directory is available",
+            ),
+        ]);
+        let host = FakeDoctorHost::new(Ok(report));
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit =
+            run_with_doctor_host([OsString::from("doctor")], &mut stdout, &mut stderr, &host);
+
+        assert_eq!(exit, 0);
+        assert_eq!(
+            stdout,
+            concat!(
+                "[doctor] ok=2 warn=1 fail=1\n",
+                "[ok] configuration: configuration loaded\n",
+                "[warn] credentials: credential is missing\n",
+                "[fail] state: state directory is unavailable\n",
+                "[ok] workspace: working directory is available\n",
+            )
+            .as_bytes()
+        );
+        assert!(stderr.is_empty());
+        assert_eq!(host.calls.get(), 1);
+    }
+
+    #[test]
+    fn doctor_json_output_has_exact_shape_order_escaping_and_lf() {
+        let report = doctor_report([
+            check(
+                "config\"uration",
+                DoctorCheckStatus::Ok,
+                "loaded\\ready\nnext",
+            ),
+            check(
+                "cred\u{1b}",
+                DoctorCheckStatus::Warn,
+                "missing\u{2028}credential",
+            ),
+            check("state", DoctorCheckStatus::Fail, "not available"),
+            check("workspace", DoctorCheckStatus::Ok, "café"),
+        ]);
+        let host = FakeDoctorHost::new(Ok(report));
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit = run_with_doctor_host(
+            [OsString::from("doctor"), OsString::from("--json")],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(
+            stdout,
+            concat!(
+                "{\"kind\":\"doctor\",\"ok_count\":2,\"warn_count\":1,\"fail_count\":1,\"checks\":[",
+                "{\"name\":\"config\\\"uration\",\"status\":\"ok\",\"detail\":\"loaded\\\\ready\\nnext\"},",
+                "{\"name\":\"cred\\u001b\",\"status\":\"warn\",\"detail\":\"missing\\u2028credential\"},",
+                "{\"name\":\"state\",\"status\":\"fail\",\"detail\":\"not available\"},",
+                "{\"name\":\"workspace\",\"status\":\"ok\",\"detail\":\"café\"}]}",
+                "\n",
+            )
+            .as_bytes()
+        );
+        assert!(stderr.is_empty());
+        assert_eq!(host.calls.get(), 1);
+    }
+
+    #[test]
+    fn invalid_doctor_arguments_are_rejected_before_host_effects() {
+        for arguments in [
+            vec![OsString::from("doctor"), OsString::from("extra")],
+            vec![
+                OsString::from("doctor"),
+                OsString::from("--json"),
+                OsString::from("extra"),
+            ],
+        ] {
+            let host = FakeDoctorHost::new(Err(()));
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let exit = run_with_doctor_host(arguments, &mut stdout, &mut stderr, &host);
+
+            assert_eq!(exit, 2);
+            assert!(stdout.is_empty());
+            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
+            assert_eq!(host.calls.get(), 0);
+        }
+    }
+
+    #[test]
+    fn doctor_output_cap_and_invalid_report_fail_before_stdout() {
+        let oversized = doctor_report([
+            check(
+                "configuration",
+                DoctorCheckStatus::Ok,
+                leaked("x".repeat(MAX_DOCTOR_OUTPUT_BYTES)),
+            ),
+            check("credentials", DoctorCheckStatus::Ok, "available"),
+            check("state", DoctorCheckStatus::Ok, "available"),
+            check("workspace", DoctorCheckStatus::Ok, "available"),
+        ]);
+        let mut invalid = oversized;
+        invalid.fail_count = 1;
+
+        for report in [oversized, invalid] {
+            for json in [false, true] {
+                let host = FakeDoctorHost::new(Ok(report));
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                let arguments = if json {
+                    vec![OsString::from("doctor"), OsString::from("--json")]
+                } else {
+                    vec![OsString::from("doctor")]
+                };
+
+                let exit = run_with_doctor_host(arguments, &mut stdout, &mut stderr, &host);
+
+                assert_eq!(exit, 1);
+                assert!(stdout.is_empty());
+                assert_eq!(stderr, DOCTOR_RENDER_FAILURE.as_bytes());
+                assert_eq!(host.calls.get(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn doctor_render_cap_is_inclusive() {
+        let baseline = doctor_report([
+            check("configuration", DoctorCheckStatus::Ok, ""),
+            check("credentials", DoctorCheckStatus::Ok, "available"),
+            check("state", DoctorCheckStatus::Ok, "available"),
+            check("workspace", DoctorCheckStatus::Ok, "available"),
+        ]);
+        let baseline_len = render_doctor(&baseline, false)
+            .expect("baseline report renders")
+            .len();
+        let report = doctor_report([
+            check(
+                "configuration",
+                DoctorCheckStatus::Ok,
+                leaked("x".repeat(MAX_DOCTOR_OUTPUT_BYTES - baseline_len)),
+            ),
+            check("credentials", DoctorCheckStatus::Ok, "available"),
+            check("state", DoctorCheckStatus::Ok, "available"),
+            check("workspace", DoctorCheckStatus::Ok, "available"),
+        ]);
+
+        let output = render_doctor(&report, false).expect("inclusive limit is accepted");
+
+        assert_eq!(output.len(), MAX_DOCTOR_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn doctor_broken_stdout_uses_fixed_output_diagnostic() {
+        let report = doctor_report([
+            check("configuration", DoctorCheckStatus::Ok, "loaded"),
+            check("credentials", DoctorCheckStatus::Warn, "missing"),
+            check("state", DoctorCheckStatus::Ok, "available"),
+            check("workspace", DoctorCheckStatus::Ok, "available"),
+        ]);
+        for json in [false, true] {
+            let host = FakeDoctorHost::new(Ok(report));
+            let mut stdout = BrokenWriter;
+            let mut stderr = Vec::new();
+            let arguments = if json {
+                vec![OsString::from("doctor"), OsString::from("--json")]
+            } else {
+                vec![OsString::from("doctor")]
+            };
+
+            let exit = run_with_doctor_host(arguments, &mut stdout, &mut stderr, &host);
+
+            assert_eq!(exit, 1);
+            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+            assert_eq!(host.calls.get(), 1);
         }
     }
 
@@ -2465,6 +3038,10 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
 
         assert_eq!(parse_arguments([OsString::from_vec(vec![0xff])]), Err(()));
+        assert_eq!(
+            parse_arguments([OsString::from("doctor"), OsString::from_vec(vec![0xff]),]),
+            Err(())
+        );
         assert_eq!(
             parse_arguments([OsString::from("models"), OsString::from_vec(vec![0xff]),]),
             Err(())
