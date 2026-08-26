@@ -1,6 +1,6 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: cycle-4-submitted bounded slice 29, not review-green or delivered. Exact
+Status: cycle-4-rejected bounded slice 29, not review-green or delivered. Exact
 cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
@@ -30,8 +30,19 @@ remediation
 `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, is locally composed. Exact
 cycle-4 behavior candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`,
 tree `d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
-gate under exact Rust and Cargo 1.94.1 and is **SUBMITTED** to three fresh formal
-cycle-4 reviews. Their results remain pending. No candidate is review-green.
+gate under exact Rust and Cargo 1.94.1. Three fresh formal cycle-4 reviews
+rejected it. Correctness/API reported 0 blocker, 0 high, 0 medium, and 2 low;
+network/error lifecycle reported 0 blocker, 0 high, 1 medium, and 0 low; and
+performance/concurrency reported 0 blocker, 0 high, 0 medium, and 1 low. The
+raw candidate union is 0 blocker, 0 high, 1 medium, and 2 low after overlap
+deduplication. Before verdict collection, review-exempt submission seal
+`fd404d456b242cc10ceb797d74b2da79b2ba283e` had already corrected both
+correctness documentation findings and the overlapping portions of the
+performance topology finding. The unresolved union at collection was therefore
+0 blocker, 0 high, 1 medium, and 1 low. Review-exempt documentation fix
+`268d35a447d6ceb29b37b0c5f789ad589e4792e4` then corrected that remaining
+AI Gateway topology low. The signal/output-backpressure medium remains pending;
+no candidate is review-green.
 The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
@@ -58,7 +69,9 @@ The locally composed lineage is:
 | stale topology and checklist documentation remediation | `f80bd0560e49306ce56093ea667aa45a22b2c6dd` / `d6d3f354fa1eca6221d482567f9128ac6f73a3bc` | cycle-3 remediation for all three low findings |
 | private bounded DNS and construction-time entropy remediation | `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d` / `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a` | cycle-3 medium remediation; focused resolver 14/14, HTTP 16/16, and manifest 4/4 green; later composed in replacement-gated cycle-4 candidate |
 | Android fail-closed catalog DNS remediation | `bd4746197736004f3a02c4c910c569444e4653e7` / `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3` | preflight high remediation; Android bypasses the panicking platform loader; exact focused resolver 14/14, manifest 5/5, formatting, and native Clippy green; later composed in replacement-gated cycle-4 candidate |
-| cycle-4 replacement gate and maintained status | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | complete exact-1.94.1 replacement gate green; submitted to three fresh formal cycle-4 reviews; results pending |
+| cycle-4 replacement gate and maintained status | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | complete exact-1.94.1 replacement gate green; formal cycle-4 review rejected the exact candidate |
+| review-exempt cycle-4 submission seal | `fd404d456b242cc10ceb797d74b2da79b2ba283e` / `49192c44d67b928358a5729635e7a0a638b2c7d9` | corrected the two correctness documentation lows and overlapping topology summaries before verdict collection; no behavior change |
+| review-exempt AI Gateway topology correction | `268d35a447d6ceb29b37b0c5f789ad589e4792e4` / `1f21f1dc955df71a703f36c8ce2e31ed67288edb` | corrected the performance track's remaining `docs/ai-gateway.md` topology low; no behavior change |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -75,9 +88,13 @@ documentation remediation `f80bd056` and native remediation `b6cf4cb` formed
 the first cycle-4 precursor. Read-only preflight rejected that precursor before
 its complete replacement gate; exact Android remediation `bd47461` is composed
 in replacement-gated cycle-4 behavior candidate `57d2ac2`, tree `d30bb656`.
-That candidate is submitted to three fresh formal cycle-4 reviews. This ledger
-does not claim their results, a green adversarial result, feature CI, benchmark,
-integration, delivery, performance, compatibility promotion, or fx equivalence.
+Three fresh formal cycle-4 reviews rejected that exact candidate. Review-exempt
+submission seal `fd404d4` had already corrected both correctness documentation
+lows and the overlapping topology summaries before verdict collection. Exact
+review-exempt documentation fix `268d35a` then corrected the remaining
+AI Gateway topology low. The lifecycle medium remains pending. This ledger
+does not claim a green adversarial result, feature CI, benchmark, integration,
+delivery, performance, compatibility promotion, or fx equivalence.
 
 A local feature-topology refinement adds native
 `ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
@@ -115,7 +132,9 @@ Exact cycle-4 candidate `57d2ac2` passed the complete replacement gate under
 exact Rust and Cargo 1.94.1. Focused core 6/6, provider/parser 17/17, credential
 6/6, loopback HTTP 16/16, private resolver 14/14, CLI unit 18/18, CLI integration
 23/23, and parsed-manifest/resolved-tree 5/5 suites are green. The complete
-target evidence and its honest foreign-C boundary are recorded below.
+target evidence and its honest foreign-C boundary are recorded below. The later
+formal cycle-4 verdict rejects that candidate; passing the gate does not make it
+review-green.
 
 On rejected cycle-2 candidate `2ea9d94`, the resolved CLI package-name inventory
 drops from 137 on exact precursor
@@ -130,10 +149,10 @@ not a speed, memory, binary-size improvement, product-performance, or delivery
 claim. That cycle-2 replacement gate is green but its reviews rejected the
 candidate. Exact cycle-3 candidate `2cecc921` passed its replacement gate and
 its reviews rejected it. Preflight rejected the first cycle-4 precursor before
-the complete gate; it was not a formal review. Exact replacement-gated cycle-4
-candidate `57d2ac2`, tree `d30bb656`, is now submitted to three fresh formal
-reviews. Their results, feature CI, integration, and exact `main` CI remain
-pending.
+the complete gate; it was not a formal review. Three fresh formal reviews
+rejected exact replacement-gated cycle-4 candidate `57d2ac2`, tree `d30bb656`.
+The lifecycle remediation, replacement gate, fresh review cycle, feature CI,
+integration, and exact `main` CI remain pending.
 
 ## Exact cycle-2 replacement gate
 
@@ -419,7 +438,7 @@ a documentation-only statement.
 | 1 | `6277aa3dc26f9c485707c667f63525a2138f316b` / `b5e2445ed90df000255b51c2c989d71965db1d77` | 0 blocker, 0 high, 0 medium, 4 low | 0 blocker, 0 high, 2 medium, 1 low | 0 blocker, 0 high, 2 medium, 3 low | 0 blocker, 0 high, 2 medium, 6 low after deduplication | **REJECTED** |
 | 2 | `2ea9d94374c4dd18f43255af785ee31088126c56` / `3a948b2950d870a9cabe479bc6c3889dd5a13a3b` | 0 blocker, 0 high, 0 medium, 1 low | 0 blocker, 1 high, 1 medium, 0 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 1 high, 1 medium, 1 low after deduplication | **REJECTED** |
 | 3 | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | 0 blocker, 0 high, 0 medium, 2 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 1 medium, 3 low after deduplication | **REJECTED** |
-| 4 | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | pending | pending | pending | pending | **SUBMITTED** |
+| 4 | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | 0 blocker, 0 high, 0 medium, 2 low | 0 blocker, 0 high, 1 medium, 0 low | 0 blocker, 0 high, 0 medium, 1 low | raw candidate: 0 blocker, 0 high, 1 medium, 2 low after overlap deduplication; unresolved at verdict collection after prior sealed dispositions: 0 blocker, 0 high, 1 medium, 1 low | **REJECTED** |
 
 ### Cycle 1 rejected findings and remediation
 
@@ -556,7 +575,7 @@ unavailable locally, so no Android compile result is claimed. Foreign Linux
 HTTP compilation retained the existing `aws-lc-sys` C-sysroot blocker before
 product Rust, so exact remote Linux CI remains authoritative.
 
-## Exact cycle-4 replacement gate and submission
+## Exact cycle-4 replacement gate and formal rejection
 
 Exact behavior candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
 `d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
@@ -598,12 +617,82 @@ local gate under exact Rust and Cargo 1.94.1 without fallback:
 
 These are correctness, boundedness, portability, and regression checks. They
 make no speed, memory, binary-size-improvement, catalog-equivalence, product-
-performance, or fx-equivalence claim. Exact candidate `57d2ac2`, tree
-`d30bb656`, is **SUBMITTED** to three fresh formal cycle-4 reviewers. Their
-results remain pending, so no review-green, workflow, integration, or delivery
-claim is made. This following documentation-only submission seal changes no
-behavior and is exempt from redundant adversarial review under the user's
-instruction.
+performance, or fx-equivalence claim. Three fresh formal cycle-4 reviewers
+rejected exact candidate `57d2ac2`, tree `d30bb656`; the complete gate does not
+override that verdict. No review-green, workflow, integration, or delivery
+claim is made.
+
+### Cycle 4 rejected findings and disposition
+
+The three fresh read-only tracks reviewed exact behavior candidate
+`57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
+`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, from exact delivered base
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`. Their raw reports were:
+
+1. **Correctness/API/compatibility — 0 blocker, 0 high, 0 medium, 2 low.**
+   The first low found maintained frozen-behavior summaries that still said
+   cycle-3 review was pending instead of recording its rejection, remediation,
+   and pending cycle-4 boundary. Primary evidence was `docs/models-cli.md:3`
+   and `docs/models-cli.md:41`, corroborated by `README.md:29-31`,
+   `docs/architecture.md:48-50`, `docs/security.md:32-35`,
+   `docs/performance.md:26-29`, `docs/configuration.md:60-63`,
+   `docs/core-api.md:119-121`, `docs/cli.md:75-78`,
+   `docs/ai-gateway-credentials.md:15-16`, `docs/README.md:8`,
+   `docs/README.md:59`, and `docs/reviews/README.md:41`. The second low found
+   frozen README, security, and performance summaries describing the removed
+   asynchronous Hickory network resolver. Production instead used
+   `SystemBoundedResolver` and private bounded UDP/TCP in
+   `machine-god-native/src/ai_gateway_model_catalog_http.rs:394-400`,
+   `:456-523`, `:621-783`, and `:867-930`, with its no-Hickory-network
+   invariant at `:1283-1285`; `hickory-resolver` remained configuration-only at
+   `:18` and `:1152-1168`. The reviewer reported exact Rust 1.94.1, diff,
+   core 6/6, provider/parser 17/17, credential 6/6, HTTP 16/16, DNS 14/14,
+   CLI unit 8, CLI integration 4, manifest 5, and release-smoke checks.
+2. **Network/error lifecycle — 0 blocker, 0 high, 1 medium, 0 low.** Unix
+   signal handlers installed at `machine-god-cli/src/main.rs:186`, `:520`, and
+   `:540` survive listener-future teardown. The CLI returns from
+   `block_on(list_models_with_signals(...))` and drops the signal futures before
+   synchronous rendering and output; Tokio does not restore the default Unix
+   dispositions. The reviewer reproduced the defect with the exact release
+   binary by saturating a child stdout pipe to 65,536 bytes, starting
+   `models --json`, sending `SIGINT` during the request, and then sending
+   `SIGINT` plus `SIGTERM` after cancellation. The child stayed alive until the
+   pipe was drained, then emitted the fixed cancelled JSON and exited 1. Under
+   output backpressure the command can therefore require `SIGKILL`. The
+   reviewer reported private DNS 14/14, loopback HTTP 16/16, WASI all-feature
+   compilation with its established warning, and exact release-build checks.
+   Remediation must own signals for the command lifetime, avoid blocking output,
+   restore or otherwise provide repeated-signal termination, and retain a
+   saturated-pipe subprocess regression.
+3. **Performance/concurrency/portability — 0 blocker, 0 high, 0 medium,
+   1 low.** `docs/ai-gateway.md:313-316` said the narrow feature omitted
+   Hickory DNS and Moka, while `machine-god-native/Cargo.toml:17-25` enables
+   Hickory and `Cargo.lock:447-459` shows the resolver's Moka edge. The same
+   review corroborated private request-time resolution through
+   `SystemBoundedResolver` in the native catalog file at `:389-400`, A/AAAA
+   paths at `:495-523` and `:621-683`, and the no-Hickory-network invariant at
+   `:1279-1285`. It reported no further performance, concurrency, resource, or
+   portability defect.
+
+The raw candidate union is 0 blocker, 0 high, 1 medium, and 2 low after
+deduplicating the correctness and performance topology overlap. The reviewers
+correctly saw the frozen behavior documentation. Before their verdicts were
+collected, later review-exempt submission seal
+`fd404d456b242cc10ceb797d74b2da79b2ba283e`, tree
+`49192c44d67b928358a5729635e7a0a638b2c7d9`, had already corrected the stale
+cycle status and the obsolete README, security, and performance topology
+summaries. Those two correctness lows therefore required no second remediation
+at collection. The performance low overlapped those corrected summaries but
+uniquely identified `docs/ai-gateway.md`; the unresolved, disposition-adjusted
+union at verdict collection was 0 blocker, 0 high, 1 medium, and 1 low.
+
+Review-exempt documentation fix
+`268d35a447d6ceb29b37b0c5f789ad589e4792e4`, tree
+`1f21f1dc955df71a703f36c8ce2e31ed67288edb`, now corrects that remaining
+AI Gateway topology low without changing behavior. The signal/output-
+backpressure medium remains pending. Cycle 4 stays **REJECTED**; a behavior
+remediation, complete replacement gate, and three entirely fresh formal tracks
+are required before any green, workflow, integration, or delivery claim.
 
 ## Remote and integration boundary
 
