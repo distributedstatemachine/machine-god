@@ -33,7 +33,8 @@ components `5d45dca` and `454f8fd` compose its remediation. Exact precursor
 rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
 exact finish-envelope remediation component `dc79c8d`, tree `e2fed70`, is
 composed with host-fixture component `9f6c474`. Exact precursor `2e9c44d`, tree
-`3e25daa`, passes the complete replacement gate; formal cycle 5 review is
+`3e25daa`, passes the complete replacement gate. Formal cycle 5 is green on
+exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union; delivery workflows are
 pending. No
 latency, throughput, allocation
 improvement, binary-size improvement, compatibility promotion, or

@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 5 REVIEW PENDING**
+Status: **REVIEW GREEN — FEATURE WORKFLOWS PENDING**
 
 ## Base and boundary
 
@@ -259,6 +259,31 @@ read-only tracks must independently cover correctness/API/protocol,
 native effects/lifecycle/platform behavior, and performance/resources. No
 feature workflow may begin unless every track and the deduplicated union report
 `0/0/0/0`.
+
+Formal cycle 5 reviewed exact candidate
+`782aa5431307b820e4b8e8084115813000909ecb`, tree
+`b1ba6920fa8ba9e2bb5fabe20fb9f32d3ab79800`. Correctness/API/protocol,
+native effects/lifecycle/platform, and performance/concurrency/resources each
+reported `0/0/0/0`; the deduplicated union is `0/0/0/0`. The candidate is
+review-green.
+
+Correctness reconfirmed 39 focused tests and the strict raw-v4 JSON-wire
+contract, including required usage groups, omitted undefined properties,
+bounded counters, optional raw/provider metadata, ordering, identity,
+projection, and outer/inner codec separation. Native reconfirmed 46 focused
+tests, exact permission and dispatch behavior, capacity-one stream release,
+terminal/drop/cancellation/deadline behavior, FreeBSD/WASI topology, redaction,
+and no manifest or unsafe delta. Performance reconfirmed 16 codec, 20 tool, two
+engine, one capacity-one, and six topology tests; it found no streaming,
+allocation, concurrency, resource-bound, or claim-discipline defect. Every
+review worktree remained exact and clean and was removed and pruned after its
+report.
+
+This documentation-only result seal records review of exact `782aa54` /
+`b1ba692`; under the user's explicit instruction it is exempt from adversarial
+re-review and does not claim that the seal commit itself was reviewed. Feature
+and `main` exact-SHA CI and benchmark-evidence workflows, fast-forward
+integration, and final delivery status remain pending.
 
 Formal cycle 3 reviewed exact candidate
 `aef6abed174760195e712b2701e241b656733621`, tree

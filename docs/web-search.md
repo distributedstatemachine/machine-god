@@ -30,9 +30,10 @@ exact composed precursor `b834205`, tree `f3557a5`, passes the complete
 replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree `ad0c3d3`, with
 a deduplicated `0/0/1/1`. Finish-envelope remediation is composed from exact
 component `dc79c8d`, tree `e2fed70`, and host-fixture component `9f6c474`. Exact
-precursor `2e9c44d`, tree `3e25daa`, passes the complete replacement gate;
-formal cycle 5 review is pending. The slice is not yet review-green, integrated,
-or delivered. The live status is recorded in the
+precursor `2e9c44d`, tree `3e25daa`, passes the complete replacement gate.
+Formal cycle 5 is green on exact `782aa54`, tree `b1ba692`, with a `0/0/0/0`
+union. The slice is review-green but not yet integrated or delivered. The live
+status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 
 ## Boundary

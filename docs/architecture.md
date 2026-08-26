@@ -55,9 +55,10 @@ and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
 `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`. Remediation is
 composed from exact component `dc79c8d`, tree `e2fed70`, and host-fixture
 component `9f6c474`. Exact precursor `2e9c44d`, tree `3e25daa`, passes the
-complete replacement gate; formal cycle 5 review is pending.
-The candidate is not green, integrated, or delivered, the delivered count
-remains 32, and no performance or fx-equivalence claim is made. Exact input,
+complete replacement gate. Formal cycle 5 is green on exact `782aa54`, tree
+`b1ba692`, with a `0/0/0/0` union. The candidate is review-green but not yet
+integrated or delivered, the delivered count remains 32, and no performance or
+fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,
 and deferrals are frozen in [`web-search.md`](web-search.md), with status in the
 [`slice-33 ledger`](reviews/m03-web-search-review-01.md). A candidate host has

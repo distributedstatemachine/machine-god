@@ -18,8 +18,9 @@ and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
 `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`. Remediation is
 composed from exact component `dc79c8d`, tree `e2fed70`, and host-fixture
 component `9f6c474`. Exact precursor `2e9c44d`, tree `3e25daa`, passes the
-complete replacement gate; formal cycle 5 review is pending. It remains a local
-authority-bearing tool: strict effect-free
+complete replacement gate. Formal cycle 5 is green on exact `782aa54`, tree
+`b1ba692`, with a `0/0/0/0` union; delivery workflows are pending. It remains a
+local authority-bearing tool: strict effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares
 `Capability::Network` for the exact configured AI Gateway scheme/host/port,
 and supplies the same canonical arguments to execution. Core's existing

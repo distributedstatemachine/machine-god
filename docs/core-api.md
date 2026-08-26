@@ -42,8 +42,9 @@ replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree `ad0c3d3`, with
 a deduplicated `0/0/1/1`. Exact finish-envelope remediation component
 `dc79c8d`, tree `e2fed70`, and host-fixture component `9f6c474` are composed in
 exact precursor `2e9c44d`, tree `3e25daa`, which passes the complete replacement
-gate. Formal cycle 5 review is pending, so the slice has no review-green,
-delivery, performance, or fx-equivalence claim.
+gate. Formal cycle 5 is green on exact `782aa54`, tree `b1ba692`, with a
+`0/0/0/0` union. Delivery workflows remain pending, so the slice has no delivery,
+performance, or fx-equivalence claim.
 
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};

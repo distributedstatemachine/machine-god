@@ -92,9 +92,10 @@ passes the complete replacement gate. Formal cycle 4 rejected exact `cc1d3d1`,
 tree `ad0c3d3`, with a deduplicated `0/0/1/1`; finish-envelope and documentation
 remediation is composed from exact isolated component `dc79c8d`, tree
 `e2fed70`, plus host-fixture component `9f6c474`. Exact precursor `2e9c44d`, tree
-`3e25daa`, passes the complete replacement gate; formal cycle 5 review is
-pending. This slice is not yet review-green, integrated, or delivered; the
-delivered count remains thirty-two.
+`3e25daa`, passes the complete replacement gate. Formal cycle 5 is green on
+exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union. Delivery workflows are
+pending; this slice is not yet integrated or delivered and the delivered count
+remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive
