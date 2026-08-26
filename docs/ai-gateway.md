@@ -322,8 +322,9 @@ Formal cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`, with a
 deduplicated `1/0/2/2`. Exact isolated components `5d45dca` and `454f8fd`
 compose its remediation. Exact precursor `b834205`, tree `f3557a5`, passes the
 complete replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree
-`ad0c3d3`, with a deduplicated `0/0/1/1`; remediation is pending, and the slice
-makes no compatibility or performance claim.
+`ad0c3d3`, with a deduplicated `0/0/1/1`. Exact remediation precursor `2e9c44d`,
+tree `3e25daa`, passes the complete replacement gate; formal cycle 5 review is
+pending, and the slice makes no compatibility or performance claim.
 
 ## Deferred scope
 

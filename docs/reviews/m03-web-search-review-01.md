@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 4 REMEDIATION COMPOSED; REPLACEMENT GATE PENDING**
+Status: **IN PROGRESS — CYCLE 5 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -393,6 +393,35 @@ with the same official bounded shape. Its focused capacity-one regression passed
 and the complete all-feature workspace then passed under exact Rust 1.94.1. The
 component worktree was clean after commit. The composed replacement gate restarts
 on the new exact remediation commit before review kickoff.
+
+Exact composed cycle-4 remediation precursor
+`2e9c44db39dee1afc795ddff742d65b4e8fc1e01`, tree
+`3e25daa9495fb92dce1a8422ff1725967ecb43b7`, passes the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. The dedicated codec ran
+16/16, native web search 20/20, web-search engine integration 2/2, the
+capacity-one reference-host regression 1/1, and the complete reference-host
+suite 8/8. All four required commands and the all-feature workspace passed.
+Repository-wide Python passed 136 tests with eight expected platform skips.
+
+FreeBSD no-default and WASI all-feature native-library checks passed with only
+the established unrelated WASI `read_file` dead-code warning. Six manifest and
+topology tests passed. All 87 maintained Markdown files expose 663 parsed links
+and 500 repository-relative targets with zero missing targets. Pinned-fx
+compatibility regeneration against exact `b1774fbf` is byte-stable. Cargo
+manifests and `Cargo.lock` are unchanged from the delivered base; the base diff
+is clean and no unsafe Rust construct was added. The freshly built locked
+release binary is 3,985,216 bytes with SHA-256
+`e6a5735dbb00c4c4ba39ca26b7fe8171a5e655f9cb9532a73e0aa7e7eb1c8f17`;
+exact version, help, doctor, and sessions smoke passes without creating the
+isolated missing roots. Every remediation and evidence worktree was verified
+clean and removed, leaving only the primary worktree.
+
+The formal cycle-5 candidate is the commit containing this kickoff paragraph.
+Reviewers receive its exact SHA and tree out of band. Three fresh isolated
+read-only product tracks must independently cover correctness/API/protocol,
+native effects/lifecycle/platform behavior, and performance/resources. No
+feature workflow may begin unless every track and the deduplicated union report
+`0/0/0/0`.
 
 ## Worktree lifecycle
 

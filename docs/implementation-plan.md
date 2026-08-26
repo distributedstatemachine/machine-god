@@ -91,8 +91,10 @@ documentation remediation is composed from exact isolated components
 passes the complete replacement gate. Formal cycle 4 rejected exact `cc1d3d1`,
 tree `ad0c3d3`, with a deduplicated `0/0/1/1`; finish-envelope and documentation
 remediation is composed from exact isolated component `dc79c8d`, tree
-`e2fed70`. Its replacement gate and review remain pending. This slice is not yet
-review-green, integrated, or delivered; the delivered count remains thirty-two.
+`e2fed70`, plus host-fixture component `9f6c474`. Exact precursor `2e9c44d`, tree
+`3e25daa`, passes the complete replacement gate; formal cycle 5 review is
+pending. This slice is not yet review-green, integrated, or delivered; the
+delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive

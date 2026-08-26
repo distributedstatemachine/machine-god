@@ -417,8 +417,9 @@ components `5d45dca` and `454f8fd` compose its remediation. Exact precursor
 `b834205`, tree `f3557a5`, passes the complete replacement gate. Formal cycle 4
 rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
 finish-envelope remediation is composed from exact component `dc79c8d`, tree
-`e2fed70`. Its replacement gate and review remain pending, so the slice is not
-yet review-green or delivered.
+`e2fed70`, plus exact host-fixture component `9f6c474`. Exact precursor
+`2e9c44d`, tree `3e25daa`, passes the complete replacement gate; formal cycle 5
+review is pending, so the slice is not yet review-green or delivered.
 
 ## Deferred scope
 

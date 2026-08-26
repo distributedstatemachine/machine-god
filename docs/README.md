@@ -26,9 +26,11 @@ isolated components `5d45dca` and `454f8fd`. Exact composed precursor `b834205`,
 tree `f3557a5`, passes the complete replacement gate. Formal cycle 4 rejected
 exact candidate `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
 exact finish-envelope remediation component `dc79c8d`, tree `e2fed70`, is
-composed with maintained documentation. Its replacement gate and review remain
-pending. The slice is not yet review-green, integrated, or delivered and the
-delivered count remains 32. The fixed resource/platform/deferred boundary is the
+composed with maintained documentation and exact host-fixture component
+`9f6c474`. Exact precursor `2e9c44d`, tree `3e25daa`, passes the complete
+replacement gate; formal cycle 5 review is pending. The slice is not yet
+review-green, integrated, or delivered and the delivered count remains 32. The
+fixed resource/platform/deferred boundary is the
 [`native web search contract`](web-search.md), and status is tracked in its
 [`live review ledger`](reviews/m03-web-search-review-01.md). The slice is
 unmeasured and makes no product-performance or fx-equivalence claim.

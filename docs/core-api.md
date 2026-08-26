@@ -40,9 +40,10 @@ cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`, with a deduplicated
 remediation. Exact precursor `b834205`, tree `f3557a5`, passes the complete
 replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree `ad0c3d3`, with
 a deduplicated `0/0/1/1`. Exact finish-envelope remediation component
-`dc79c8d`, tree `e2fed70`, is composed; its replacement gate and review remain
-pending, so the slice has no review-green, delivery, performance, or
-fx-equivalence claim.
+`dc79c8d`, tree `e2fed70`, and host-fixture component `9f6c474` are composed in
+exact precursor `2e9c44d`, tree `3e25daa`, which passes the complete replacement
+gate. Formal cycle 5 review is pending, so the slice has no review-green,
+delivery, performance, or fx-equivalence claim.
 
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};
