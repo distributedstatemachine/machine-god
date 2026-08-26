@@ -1,10 +1,11 @@
 # Adversarial reviews
 
 - [`m03-sessions-cli-review-01.md`](m03-sessions-cli-review-01.md) tracks the
-  in-progress bounded slice-31 `sessions [--json]` candidate. Cycle 1 rejected
+  delivered bounded slice-31 `sessions [--json]` candidate. Cycle 1 rejected
   exact candidate `9448738` with `0/0/0/3` deduplicated findings. Exact
   replacement `a527652`, tree `0249dd0`, passed three fresh cycle-2 reviews at
-  `0/0/0/0` each; feature delivery gates remain pending.
+  `0/0/0/0` each. Seal `b5b9116`, tree `3e61754`, passed exact feature and main
+  CI/benchmark delivery gates.
 
 Each feature and milestone receives fresh correctness/API, security/abuse, and
 performance/concurrency reviews. Store reports as `mNN-feature-review-NN.md` and

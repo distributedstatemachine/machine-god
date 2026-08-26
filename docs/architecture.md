@@ -1,6 +1,6 @@
 # Architecture
 
-In-progress bounded slice 31 preserves the host boundary for top-level
+Delivered bounded slice 31 preserves the host boundary for top-level
 `sessions [--json]`. `machine-god-cli` owns only strict parsing, bounded
 rendering, exit/channel behavior, and an injected host seam. `machine-god-
 native` owns state-only process environment capture, no-create state-root selection,

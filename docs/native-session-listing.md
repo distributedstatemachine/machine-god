@@ -209,7 +209,7 @@ live registry state, or directory order.
 Consequently the delivered library slice adds no rich summaries, workspace
 filter, newest or latest selection, ordering other than lexical ID order,
 cursor, pagination, session-ID generation, deletion, cleanup, or slash command.
-In-progress bounded slice 31 now consumes this result through strict top-level
+Delivered bounded slice 31 consumes this result through strict top-level
 `sessions [--json]`, without adding any of those absent semantics. Its separate
 [`CLI contract`](sessions-cli.md) uses a no-create, engine-free native process
 facade and preserves the exact scan bounds and per-record lock-sidecar effect.

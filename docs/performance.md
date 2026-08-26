@@ -17,7 +17,7 @@ different output/status/exit semantics. No sample, comparison, threshold,
 compatibility promotion, product-performance result, or fx-equivalence claim
 is introduced.
 
-The in-progress slice-31 [`sessions` command](sessions-cli.md) likewise adds
+The delivered slice-31 [`sessions` command](sessions-cli.md) likewise adds
 resource bounds without a performance result. It preserves the native scan's
 100-ID, 1,024-entry, 64 MiB aggregate-record, and per-record ceilings and adds
 a 16 KiB complete serialized-output ceiling. `sessions-json` moves from
@@ -287,7 +287,7 @@ this bootstrap artifact.
 
 The delivered sixteenth
 [`native session-listing candidate`](native-session-listing.md) established the
-sorted validated IDs and truncation flag. In-progress slice 31 adds its CLI
+sorted validated IDs and truncation flag. Delivered slice 31 adds its CLI
 path, so `sessions-json` is no longer called unimplemented. It remains
 non-equivalent and claim-ineligible, with both commands not measured and no
 samples or threshold claim, because it still lacks fx's workspace-aware rich

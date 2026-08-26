@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 31, strict top-level `sessions [--json]`, is in
-progress from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. It
+Bounded Milestone 03 slice 31, strict top-level `sessions [--json]`, is
+**DELIVERED** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. It
 exposes the already-delivered bounded native session-ID observation through an
 engine-free process facade and thin CLI. Existing safe state roots yield at
 most 100 ascending IDs plus an explicit truncation bit; absent selected roots
@@ -19,10 +19,13 @@ library's documented ability to create a private `0600` lock sidecar. The
 [`live review ledger`](docs/reviews/m03-sessions-cli-review-01.md) records exact
 candidate `9448738` and its rejected `0/0/0/3` cycle-1 verdict; remediation is
 now composed in exact candidate `a527652`, tree `0249dd0`, which passed three
-fresh exact-SHA cycle-2 reviews at `0/0/0/0` each. Feature delivery gates remain
-pending. No delivery, compatibility, product-performance, or fx-equivalence
-claim is made yet. The delivered count remains thirty and M03 remains in
-progress.
+fresh exact-SHA cycle-2 reviews at `0/0/0/0` each. Review-exempt seal
+`b5b9116`, tree `3e61754`, passed feature CI `32939742230`, feature benchmark
+evidence `32939742231`, main CI `32940279028`, and main benchmark evidence
+`32940279005`; both benchmark runs retain exactly two unexpired exact-SHA
+artifacts. `main` was fast-forwarded without force. This makes no compatibility,
+product-performance, or fx-equivalence claim. The delivered count is thirty-
+one and M03 remains in progress.
 
 Bounded Milestone 03 slice 30, strict top-level `doctor [--json]`, is
 **DELIVERED** from exact delivered base

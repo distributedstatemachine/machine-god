@@ -41,8 +41,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-first bounded slice, strict top-level `sessions [--json]`, is **IN
-PROGRESS** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
+The thirty-first bounded slice, strict top-level `sessions [--json]`, is
+**DELIVERED** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
 Its normative boundary is [`sessions-cli.md`](sessions-cli.md), and its live
 review ledger is
 [`m03-sessions-cli-review-01.md`](reviews/m03-sessions-cli-review-01.md).
@@ -64,9 +64,13 @@ status, and passed the complete replacement local gate. Exact candidate
 `a52765250bf7b0e6a7224ae95cf5a4ab046ffa75`, tree
 `0249dd0b97197fa37ab64d2c1baa3b818717211a`, then passed three fresh exact-SHA
 cycle-2 reviews at `0/0/0/0` each and is formally green. Feature workflows,
-integration, and `main` workflows remain pending; no delivery, product-
-performance, or fx-equivalence claim exists yet. The delivered count remains
-thirty.
+integration, and `main` workflows completed under review-exempt seal
+`b5b911621d448b11f6e68b9862896b11c4f13d78`, tree
+`3e61754ef6ae82edd2ddffa78e690f5423a7eca8`: feature CI `32939742230`, feature
+benchmark evidence `32939742231`, main CI `32940279028`, and main benchmark
+evidence `32940279005` are green, with exactly two unexpired exact-SHA artifacts
+in each benchmark run. `main` was fast-forwarded without force. No product-
+performance or fx-equivalence claim is made. The delivered count is thirty-one.
 
 The thirtieth bounded slice, strict top-level `doctor [--json]`, is
 **DELIVERED** from exact delivered base
@@ -3298,7 +3302,7 @@ Sessions and background remain unimplemented. Pinned fx commit
 inventory, schema, and exit boundary; this slice makes no semantic-equivalence
 or product-performance claim.
 
-### In-progress bounded slice 31: top-level `sessions`
+### Delivered bounded slice 31: top-level `sessions`
 
 The thirty-first slice is contract-frozen from exact delivered base
 `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. It adds only strict
@@ -3316,8 +3320,12 @@ passed the complete replacement local gate. Exact candidate
 `a52765250bf7b0e6a7224ae95cf5a4ab046ffa75`, tree
 `0249dd0b97197fa37ab64d2c1baa3b818717211a`, passed three fresh exact-SHA
 cycle-2 tracks at `0/0/0/0` each and is formally green. Feature workflows,
-integration, and `main` workflows remain pending, so no delivery claim exists
-yet. The delivered count remains thirty and M03 remains in progress.
+integration, and `main` workflows passed under review-exempt seal `b5b9116`,
+tree `3e61754`: feature CI `32939742230`, feature benchmark evidence
+`32939742231`, main CI `32940279028`, and main benchmark evidence `32940279005`
+are green. Both benchmark runs retain exactly two unexpired exact-SHA artifacts,
+and `main` was fast-forwarded without force. The delivered count is thirty-one
+and M03 remains in progress.
 
 The command exposes the delivered bounded native session-ID scan through a new
 engine-free native process facade. It selects only the machine-god state
@@ -4311,14 +4319,16 @@ gate:
   `32933464047`, main CI `32933879888`, and main benchmark-evidence
   `32933879930`; `main` was fast-forwarded without force. It adds exactly four
   ordered read-only checks and no authority-bearing repair behavior. The
-  delivered count is thirty, and this combined item stays
-  unchecked. Strict `sessions [--json]` is the in-progress bounded slice 31
+  delivered count before sessions was thirty, and this combined item stays
+  unchecked. Strict `sessions [--json]` is delivered as bounded slice 31
   from exact base `feaf9fa`. Exact candidate `9448738`, tree `e5342f7`, passed
   its complete local gate but cycle 1 rejected it with `0/0/0/3` deduplicated
   findings. The replacement remediation and complete local gate are green;
   exact candidate `a527652`, tree `0249dd0`, passed three fresh exact-SHA
-  reviews at `0/0/0/0` each. Feature workflows, integration, and `main`
-  workflows remain pending, so no delivery claim exists yet. `models [--json]` is
+  reviews at `0/0/0/0` each. Seal `b5b9116`, tree `3e61754`, passed feature CI
+  `32939742230`, feature benchmark `32939742231`, main CI `32940279028`, and
+  main benchmark `32940279005`; `main` was fast-forwarded without force. The
+  delivered count is thirty-one. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

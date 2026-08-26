@@ -1,6 +1,6 @@
 # Command-line interface
 
-Bounded slice 31 adds an in-progress strict top-level `sessions [--json]`
+Delivered slice 31 adds a strict top-level `sessions [--json]`
 surface under the frozen [`sessions` contract](sessions-cli.md). Only those two
 forms are accepted, and parsing precedes environment and persistence effects.
 The command lists the existing native store's bounded, ascending session IDs;
@@ -15,8 +15,10 @@ implemented but remains non-equivalent, not measured, and claim-ineligible.
 The [`live review ledger`](reviews/m03-sessions-cli-review-01.md) records exact
 candidate `9448738` and its rejected `0/0/0/3` cycle-1 verdict; remediation is
 composed in exact candidate `a527652`, tree `0249dd0`, which passed three fresh
-exact-SHA cycle-2 reviews at `0/0/0/0` each. Feature delivery gates remain
-pending; the delivered count remains thirty and no delivery claim exists yet.
+exact-SHA cycle-2 reviews at `0/0/0/0` each. Review-exempt seal `b5b9116`, tree
+`3e61754`, passed exact feature CI `32939742230`, feature benchmark evidence
+`32939742231`, main CI `32940279028`, and main benchmark evidence `32940279005`;
+`main` was fast-forwarded without force. The delivered count is thirty-one.
 
 The `machine-god` binary is the thin native reference host for the embeddable
 engine. This page defines the exact implemented Milestone 03 config/status and

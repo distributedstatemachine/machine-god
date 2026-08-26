@@ -1,9 +1,11 @@
 # Top-level sessions command
 
-Status: in-progress bounded Milestone 03 slice 31. This document freezes the
-contract before implementation and formal adversarial review. Delivery is not
-claimed until the exact behavior candidate, three fresh review tracks, feature
-workflows, fast-forward integration, and exact `main` workflows are green.
+Status: delivered as bounded Milestone 03 slice 31. Exact candidate `a527652`,
+tree `0249dd0`, passed three fresh cycle-2 review tracks at `0/0/0/0` each.
+Review-exempt seal `b5b9116`, tree `3e61754`, passed exact feature and integrated
+`main` CI/benchmark workflows with two unexpired exact-SHA artifacts in each
+benchmark run. Full evidence is retained in the
+[review ledger](reviews/m03-sessions-cli-review-01.md).
 
 The command exposes the existing bounded native session-ID observation through
 the thin CLI. It does not construct an engine, provider, model transport,

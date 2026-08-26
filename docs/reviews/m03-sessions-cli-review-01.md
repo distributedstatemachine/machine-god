@@ -1,7 +1,7 @@
 # Milestone 03 sessions CLI review ledger
 
-Status: formally green after cycle 2; delivery gates are pending. Bounded slice
-31 starts from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
+Status: delivered after green cycle 2 and exact feature/main workflows. Bounded
+slice 31 starts from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
 
 ## Frozen boundary
 
@@ -122,8 +122,17 @@ fast-forwarded to `main`, whose exact SHA must pass both workflows.
 
 ## Delivery gate
 
-After a green candidate, a documentation-only review seal may record the exact
-verdict. The feature branch must then pass exact-SHA CI and benchmark-evidence
-workflows before `main` is fast-forwarded without force. The exact integrated
-`main` SHA must pass both workflows. No package publication or GitHub release is
-authorized.
+Review-exempt documentation seal
+`b5b911621d448b11f6e68b9862896b11c4f13d78`, tree
+`3e61754ef6ae82edd2ddffa78e690f5423a7eca8`, passed:
+
+| Ref | CI | Benchmark evidence | Artifacts |
+| --- | ---: | ---: | --- |
+| `agent/m03-sessions-cli` | `32939742230` | `32939742231` | exactly two unexpired exact-SHA artifacts |
+| `main` | `32940279028` | `32940279005` | exactly two unexpired exact-SHA artifacts |
+
+The feature benchmark run retained upstream artifact `9596240206` and bootstrap
+artifact `9596130197`. The main run retained upstream artifact `9596417480` and
+bootstrap artifact `9596296970`. Both remote refs were exactly `b5b9116` after
+the non-force fast-forward from `feaf9fa`. Slice 31 is therefore delivered. No
+package publication or GitHub release was performed or authorized.
