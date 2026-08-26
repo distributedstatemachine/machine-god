@@ -175,12 +175,19 @@ pub fn inspect_native_doctor(
     environment: &NativeEnvironment,
     credential_status: NativeDoctorCredentialStatus,
 ) -> NativeDoctorReport {
-    NativeDoctorReport::new([
-        inspect_config(environment),
-        inspect_credential(credential_status),
-        inspect_state(environment),
-        inspect_platform(),
-    ])
+    inspect_native_doctor_with_credential(environment, || credential_status)
+}
+
+fn inspect_native_doctor_with_credential(
+    environment: &NativeEnvironment,
+    inspect_credential_status: impl FnOnce() -> NativeDoctorCredentialStatus,
+) -> NativeDoctorReport {
+    let config = inspect_config(environment);
+    let credential = inspect_credential(inspect_credential_status());
+    let state = inspect_state(environment);
+    let platform = inspect_platform();
+
+    NativeDoctorReport::new([config, credential, state, platform])
 }
 
 /// Captures process environment inputs and returns a bounded native doctor report.
@@ -191,7 +198,7 @@ pub fn inspect_native_doctor(
 #[must_use]
 pub fn inspect_process_doctor() -> NativeDoctorReport {
     let environment = NativeEnvironment::from_process();
-    inspect_native_doctor(&environment, inspect_process_credential())
+    inspect_native_doctor_with_credential(&environment, inspect_process_credential)
 }
 
 fn inspect_config(environment: &NativeEnvironment) -> NativeDoctorCheck {
@@ -291,22 +298,24 @@ fn inspect_state(environment: &NativeEnvironment) -> NativeDoctorCheck {
     NativeDoctorCheck::new(status, "state", detail)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 const fn inspect_platform() -> NativeDoctorCheck {
-    NativeDoctorCheck::new(
-        NativeDoctorCheckStatus::Ok,
-        "platform",
-        "native host platform is supported",
-    )
+    classify_platform(cfg!(any(target_os = "linux", target_os = "macos")))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-const fn inspect_platform() -> NativeDoctorCheck {
-    NativeDoctorCheck::new(
-        NativeDoctorCheckStatus::Fail,
-        "platform",
-        "native host platform is unsupported",
-    )
+const fn classify_platform(supported: bool) -> NativeDoctorCheck {
+    if supported {
+        NativeDoctorCheck::new(
+            NativeDoctorCheckStatus::Ok,
+            "platform",
+            "native host platform is supported",
+        )
+    } else {
+        NativeDoctorCheck::new(
+            NativeDoctorCheckStatus::Fail,
+            "platform",
+            "native host platform is unsupported",
+        )
+    }
 }
 
 #[cfg(all(
@@ -357,7 +366,8 @@ mod tests {
 
     use super::{
         NATIVE_DOCTOR_CHECK_COUNT, NativeDoctorCheckStatus, NativeDoctorCredentialStatus,
-        config_error_detail, inspect_credential, inspect_native_doctor,
+        classify_platform, config_error_detail, inspect_credential, inspect_native_doctor,
+        inspect_native_doctor_with_credential,
     };
     use crate::{NativeConfigErrorKind, NativeEnvironment};
 
@@ -467,6 +477,47 @@ mod tests {
             report.ok_count() + report.warn_count() + report.fail_count(),
             report.checked_count()
         );
+    }
+
+    #[test]
+    fn configuration_is_inspected_before_credential_status() {
+        let temporary = TestDirectory::new("inspection-order");
+        let config_root = temporary.path().join("config");
+        let state_root = temporary.path().join("state");
+        let config_path = config_root.join("machine-god/config.json");
+        let report = inspect_native_doctor_with_credential(
+            &environment(&config_root, &state_root),
+            || {
+                fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+                fs::write(
+                    &config_path,
+                    br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"openai/gpt-5.2-codex","credential_source":"environment"}"#,
+                )
+                .unwrap();
+                NativeDoctorCredentialStatus::ApiKeyAvailable
+            },
+        );
+
+        assert!(config_path.is_file());
+        assert_eq!(report.checks()[0].status(), NativeDoctorCheckStatus::Warn);
+        assert_eq!(
+            report.checks()[0].detail(),
+            "configuration file is missing; using built-in defaults"
+        );
+        assert_eq!(report.checks()[1].status(), NativeDoctorCheckStatus::Ok);
+    }
+
+    #[test]
+    fn platform_classifier_has_fixed_supported_and_unsupported_results() {
+        let supported = classify_platform(true);
+        assert_eq!(supported.name(), "platform");
+        assert_eq!(supported.status(), NativeDoctorCheckStatus::Ok);
+        assert_eq!(supported.detail(), "native host platform is supported");
+
+        let unsupported = classify_platform(false);
+        assert_eq!(unsupported.name(), "platform");
+        assert_eq!(unsupported.status(), NativeDoctorCheckStatus::Fail);
+        assert_eq!(unsupported.detail(), "native host platform is unsupported");
     }
 
     #[test]
