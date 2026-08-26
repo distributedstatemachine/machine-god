@@ -380,12 +380,32 @@ and generic-Unix bounded-file tests prove that request polling never loads
 platform configuration or entropy and that failures remain fixed, redacted,
 and permit-safe.
 
+## Slice-33 shared web-search use
+
+The in-progress native [`web_search` slice](web-search.md) reuses the same
+credential-bearing `Arc<dyn AiGatewayTransport>` and fixed production endpoint
+instead of adding a second HTTP client, credential lookup, proxy, redirect,
+certificate, or endpoint policy. Its one private worker request is still one
+ordinary transport POST under this document's status, authentication, TLS,
+header, cancellation, and no-replay guarantees. Web search adds separate
+smaller codec-owned request/stream/record/node/deadline/concurrency ceilings;
+the HTTP transport's own limits continue to apply independently.
+
+`AiGatewayWebSearchTransport` is non-WebAssembly and available only with
+`ai-gateway-http`. The current production reference host remains Linux/macOS-
+only. It reuses the already validated configured model and credential source,
+advertises only required Perplexity search, and makes no retry or fallback.
+The dedicated provider-executed decoder sits above this byte transport; the
+HTTP layer neither parses provider tool records nor changes the ordinary outer
+generation codec. The slice is in initial composition and is not yet green or
+delivered.
+
 ## Deferred scope
 
 The generation transport slice above adds no ambient credential or endpoint
 discovery, CLI or config composition, permission prompt, permission mode,
-session persistence,
-provider-executed tools, retry/backoff, custom proxy, custom redirect policy,
+session persistence, provider-executed tools in the HTTP layer or ordinary
+generation codec, retry/backoff, custom proxy, custom redirect policy,
 custom certificate roots, native enterprise trust, arbitrary destination,
 WASM transport, non-Tokio execution for the concrete transport, internal
 runtime, extra tool, package, GitHub release, compatibility promotion or

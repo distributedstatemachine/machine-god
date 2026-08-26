@@ -1,5 +1,36 @@
 # Architecture
 
+Bounded Milestone 03 slice 33 is **IN PROGRESS** from exact delivered base
+`4ba9f5afde89b9666fe9929bb81fbabcaa834334`. It adds native `web_search` without
+moving provider-executed semantics into provider-neutral core. The outer model
+still sees and calls an ordinary local `web_search` function tool; core performs
+the existing effect-free preparation, exact `Capability::Network` permission,
+and local execution lifecycle. Only after approval does native issue one
+private required Perplexity worker request through the shared injected Gateway
+transport. A dedicated bounded native codec consumes the inner
+`providerExecuted: true` call/result; the ordinary `AiGatewayProvider` remains
+unchanged and continues to reject such response records.
+
+The slice-33 topology is:
+
+```text
+outer model -> local web_search ToolCall -> core preflight + Ask permission
+            -> native WebSearchTransport -> one private Gateway worker POST
+            -> provider perplexity_search call + result
+            -> dedicated native decoder -> bounded untrusted sources
+            -> local ToolOutput -> ordinary core tool-result round
+```
+
+Production and independent evidence are being composed in isolated worktrees;
+no exact composed candidate has completed the full local gate or fresh review.
+The candidate is not green, integrated, or delivered, the delivered count
+remains 32, and no performance or fx-equivalence claim is made. Exact input,
+DNS normalization, permission, provider identity, resources, platform scope,
+and deferrals are frozen in [`web-search.md`](web-search.md), with status in the
+[`slice-33 ledger`](reviews/m03-web-search-review-01.md). A candidate host has
+fourteen alphabetical tools: twelve descriptor-backed workspace tools plus
+rootless `web_fetch` and Gateway-backed `web_search`.
+
 Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact
 `df72e084`, tree `99bf524`, with correctness/API, native effects, and
 performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is

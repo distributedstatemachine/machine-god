@@ -4,6 +4,25 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
+Bounded slice 33, native `web_search`, is **IN PROGRESS**, unmeasured, and
+claim-ineligible. It changes no benchmark workload or recorded comparison. Its
+fixed ceilings are regression and denial-of-service boundaries, not performance
+results: 4,096 query bytes, 16 domains and 4,096 aggregate domain bytes, ten
+sources, 512 title bytes, 2,048 URL bytes, 16 KiB request, 256 KiB response,
+64 KiB record, 256 records, 16,384 JSON nodes, 48 KiB serialized output, a
+30-second total deadline beginning before capacity wait, default concurrency
+four, and hard concurrency sixteen.
+
+One approved execution makes at most one Perplexity worker request with no
+retry, fallback, cache, page fetch, progress stream, or detached work. The
+private decoder and transport limits apply independently of core engine and
+outer `AiGatewayProvider` limits. Production and independent evidence are in
+initial composition; no exact candidate has completed the local gate or fresh
+review. No latency, throughput, allocation improvement, binary-size
+improvement, compatibility promotion, or fx-equivalence claim follows. The
+normative bounds are in [`web-search.md`](web-search.md) and status is in the
+[`slice-33 ledger`](reviews/m03-web-search-review-01.md).
+
 Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact
 `df72e084`, tree `99bf524`, with correctness/API, native effects, and
 performance/resources each at `0/0/1/0`; its deduplicated `0/0/2/0` union is

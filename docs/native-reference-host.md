@@ -1,9 +1,17 @@
 # Native reference-host composition
 
-Status: **DELIVERED** for `web_fetch`; Milestone 03 remains **IN PROGRESS**.
+Status: **DELIVERED** for `web_fetch`; slice-33 `web_search` is **IN PROGRESS**;
+Milestone 03 remains **IN PROGRESS**.
 The delivered composition contains thirteen alphabetical tools: exactly twelve
 workspace-backed tools share one original retained descriptor plus eleven
 identity-preserving clones, and rootless `web_fetch` owns no descriptor.
+The review-pending slice-33 candidate inserts Gateway-backed, workspace-rootless
+`web_search` after `web_fetch` and before `write_file`, producing fourteen
+alphabetical tools while leaving the descriptor-backed set and clone count
+unchanged. No composed exact candidate has passed the complete gate or formal
+review, so this paragraph does not promote that candidate catalog to delivered
+status. See [`web-search.md`](web-search.md) and the
+[`slice-33 ledger`](reviews/m03-web-search-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
@@ -558,6 +566,32 @@ review and delivery gates are in the
 [`review record`](reviews/m03-grep-files-review-01.md). It changes no constructor
 arguments, provider, transport, permission handler, session, runtime,
 credential, root-selection, or CLI authority.
+
+## Pending slice-33 web-search composition
+
+The frozen slice-33 extension reuses the production host's already validated
+model, bearer-backed `Arc<dyn AiGatewayTransport>`, and canonical Gateway
+network target to construct one `AiGatewayWebSearchTransport`. It registers a
+local `WebSearchTool` over that injected transport in both production and
+explicit custom-transport paths. Synchronous host construction makes no worker
+request, polls no prompt, and starts no task, timer, DNS, or HTTP work.
+
+The resulting candidate catalog is `copy_file`, `create_folder`, `delete_file`,
+`edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`, `open_file`,
+`read_file`, `rename_file`, `web_fetch`, `web_search`, `write_file`. Exactly
+twelve tools retain the original workspace descriptor plus eleven identity-
+preserving clones; neither network tool owns a workspace descriptor.
+`web_search` preparation supplies core with the exact configured Gateway
+`NetworkTarget`, so the existing `AskPermissionHandler` resolves policy before
+the one private worker request can begin.
+
+The production adapter is present only under the existing non-WASM
+`ai-gateway-http` composition gate, and this reference host remains Linux/macOS-
+only. It adds no constructor environment lookup, configuration field,
+credential source, runtime, CLI ownership, provider-neutral core event, retry,
+fallback, live-provider test, or performance/equivalence claim. Initial
+production, independent-evidence, and documentation components remain to be
+composed into one exact local-gate and review candidate.
 
 ## Feature and platform boundary
 

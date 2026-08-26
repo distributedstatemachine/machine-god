@@ -12,6 +12,26 @@ host requirement; the optional native AI Gateway HTTP transport requires a
 host-owned Tokio runtime. All public extension traits are object-safe, `Send`,
 and `Sync`.
 
+## Slice-33 `web_search` boundary
+
+The in-progress native [`web_search` slice](web-search.md) requires no new core
+provider event, provider-tool advertisement, permission mode, or ambient
+authority. The outer model receives an ordinary `ToolSpec`; its `ToolCall`
+passes through the existing registered-tool, strict-round, effect-free
+`prepare`, critical-risk permission, local `execute`, durable `ToolResult`, and
+next-round lifecycle. Preparation supplies `Capability::Network` for the exact
+configured Gateway target and canonical arguments that execution reparses.
+
+The provider-executed Perplexity call occurs only inside the approved native
+tool's injected transport adapter. A dedicated native one-shot codec decodes
+that inner call/result and converts it to a bounded local `ToolOutput`. It does
+not enter `ModelEvent`, `ContentBlock`, `ToolCall`, or `ModelRequest`, and the
+ordinary AI Gateway `ModelProvider` continues to reject provider-executed
+records. This keeps provider-specific wire identity and network authority in
+`machine-god-native` while preserving core's provider-neutral local-tool
+invariants. Slice 33 is still in initial composition and has no green, delivery,
+performance, or fx-equivalence claim.
+
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};
 

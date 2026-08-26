@@ -1,5 +1,17 @@
 # Adversarial reviews
 
+Current bounded slice 33, native `web_search`, is **IN PROGRESS — INITIAL
+COMPOSITION; REVIEW PENDING** from exact delivered base `4ba9f5a`. Its frozen
+local-tool contract performs exact Gateway-network preflight, then at most one
+approved required Perplexity worker request through the shared transport and a
+dedicated bounded native provider-executed decoder. No exact composed candidate
+has passed the complete local gate, and no formal review cycle, feature
+workflow, integration, or `main` workflow exists. The delivered count remains
+32. Review scope, fixed resources, deferrals, and the per-iteration committed/
+integrated/clean worktree-removal invariant are tracked in
+[`m03-web-search-review-01.md`](m03-web-search-review-01.md). No performance or
+fx-equivalence claim is made.
+
 Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact
 `df72e084`, tree `99bf524`, with correctness/API, native effects, and
 performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is
@@ -124,6 +136,7 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native `create_folder` delivery review](m03-create-folder-review-01.md)
 - [Milestone 03 native `open_file` delivery review](m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](m03-web-fetch-review-01.md)
+- [Milestone 03 native `web_search` live review ledger](m03-web-search-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](m03-permissions-cli-review-01.md)
 - [Milestone 03 `models` CLI delivery review ledger](m03-models-cli-review-01.md)
 - [Milestone 03 `doctor` CLI live review ledger](m03-doctor-cli-review-01.md)

@@ -44,6 +44,48 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
+The thirty-third bounded slice, native `web_search`, is contract-frozen and
+**IN PROGRESS** from exact delivered base
+`4ba9f5afde89b9666fe9929bb81fbabcaa834334`. Its normative boundary is
+[`web-search.md`](web-search.md) and its live ledger is
+[`m03-web-search-review-01.md`](reviews/m03-web-search-review-01.md). Production,
+independent evidence, and documentation are owned in separate isolated
+worktrees and are in initial composition. No exact composed candidate or tree
+has completed the required local gate or three fresh adversarial reviews, so
+this slice is not green, integrated, or delivered; the delivered count remains
+thirty-two.
+
+The frozen tool is locally executed through core's existing strict tool loop.
+It accepts required `query` plus optional mutually exclusive
+`allowed_domains` / `blocked_domains`, performs bounded canonical DNS-filter
+normalization, and prepares the exact configured AI Gateway `NetworkTarget`
+and canonical execution arguments before the default critical-risk ask flow.
+One approved execution makes at most one private required Perplexity provider-
+tool request through the shared injected `Arc<dyn AiGatewayTransport>`. A
+dedicated bounded native one-shot codec accepts exactly one expected
+`providerExecuted: true` call, one matching final result, and a successful
+finish. The ordinary outer `AiGatewayProvider` and provider-neutral core do not
+gain provider-executed advertisement or event semantics.
+
+Public ceilings are 4,096 query bytes; 16 normalized domains and 4,096
+aggregate domain bytes; ten sources; 512 title bytes; 2,048 URL bytes; 16 KiB
+request; 256 KiB SSE response; 64 KiB SSE record; 256 records; 16,384 JSON
+nodes; 48 KiB serialized output; one 30-second total deadline beginning before
+capacity wait; default concurrency four and hard concurrency sixteen. The
+production adapter is non-WebAssembly behind `ai-gateway-http`, and current
+reference-host composition remains Linux/macOS-only. The candidate catalog has
+fourteen alphabetical tools: twelve descriptor-backed workspace tools plus
+rootless `web_fetch` and Gateway-backed `web_search`.
+
+This slice deliberately adds no retry, fallback, Parallel backend, multiple
+provider search use, progress, inner usage or billing, snippet/page content,
+cache, artifact, `read_tool_result`, CLI command, live-provider test, benchmark
+workload, product-performance result, compatibility promotion, or fx-
+equivalence claim. Every implementation and review/remediation iteration must
+end by verifying that its changes are committed, integrated where required,
+and clean before safely removing its isolated worktrees. Active or uncommitted
+worktrees are retained.
+
 The thirty-second bounded slice, strict top-level
 `session <id> [--json]`, is **DELIVERED** from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Its normative boundaries are
@@ -3738,9 +3780,10 @@ artifacts. Slice 32 is delivered and the delivered count is thirty-two.
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, integration, and exact `main` workflows. Exact reviewed candidate
 `d724b61`, tree `6439863`, is review-green; seal `b6db9a6`, tree `59dd628`,
-completed those delivery gates. With slice 32 delivered, the next bounded
-development slice returns to completing the
-remaining native tools rather than expanding the CLI inspection surface.
+completed those delivery gates. With slice 32 delivered, bounded slice 33 has
+returned to the remaining native tools through the frozen `web_search`
+contract rather than expanding the CLI inspection surface. Its initial
+composition remains review-pending as recorded above.
 Every review/remediation iteration must end with committed/integrated worktrees
 verified clean and safely removed; active or uncommitted worktrees are retained.
 
@@ -3799,7 +3842,14 @@ gate:
   `read_tool_result`. Every authority-bearing tool requires normalized
   preflight, exact policy/execution agreement, resource bounds, redacted
   diagnostics, cancellation/drop tests, and platform scope stated before
-  integration. The delivered seventeenth slice supplies only `file_info`; production
+  integration. Slice 33 contract-freezes `web_search` from exact delivered base
+  `4ba9f5a` with one locally permissioned, required Perplexity worker request,
+  a dedicated native provider-executed decoder over the shared transport, the
+  exact resource/platform/deferred boundary in `web-search.md`, and initial
+  production/test/documentation composition. It is not yet an exact local-gate
+  candidate, review-green, integrated, or delivered, so this combined item
+  remains unchecked and the remaining tools stay pending. The delivered
+  seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit
   tests at `b69ec4b`. The first formal candidate was not green; replacement

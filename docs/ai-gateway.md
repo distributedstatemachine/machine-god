@@ -22,6 +22,13 @@ The wire shape is deliberately scoped to the behavior needed from pinned
 It is not a claim of compatibility with a current Vercel AI Gateway protocol,
 full fx equivalence, or a measured performance improvement.
 
+The in-progress slice-33 [`web_search` tool](web-search.md) does not broaden
+this outer generation codec. Its private worker reuses an injected
+`Arc<dyn AiGatewayTransport>` but owns a separate bounded request projection and
+provider-executed response decoder in native. `AiGatewayProvider` continues to
+reject `providerExecuted: true` and response-side `tool-result` events exactly
+as documented below.
+
 ## Public boundary
 
 `AiGatewayProvider` implements core's `ModelProvider`. `new` takes a default
@@ -286,13 +293,32 @@ deep hostile tree does not fall back to recursive `serde_json::Value`
 destruction. Accepted trees are within the fixed safe depth ceiling. No detached
 task, thread, timer, or retry survives cancellation or drop.
 
+## Adjacent slice-33 web-search worker
+
+The native web-search adapter is deliberately adjacent rather than a mode of
+`AiGatewayProvider`. After core has approved a local `web_search` call, the
+adapter makes one private required-tool request for exactly
+`gateway.perplexity_search` / `perplexity_search`, with `maxResults: 10` and
+`maxTokens: 4096`, over the same injected transport boundary. A separate strict
+codec requires exactly one provider-executed call, one matching final result,
+and a successful finish. Its 16 KiB request, 256 KiB response, 64 KiB record,
+256-record, 16,384-node, 30-second, and concurrency bounds do not borrow unused
+capacity from `AiGatewayLimits`. The complete contract is
+[`web-search.md`](web-search.md).
+
+No provider-executed value crosses the provider-neutral `ModelProvider`
+boundary. The inner result becomes a bounded local `ToolOutput` and returns to
+the ordinary core tool round. This composition is still review-pending and
+makes no compatibility or performance claim.
+
 ## Deferred scope
 
 This generation-codec slice adds no URL or HTTP client, socket, DNS, proxy,
 TLS, native credential lookup, authorization header, status-code mapping, retry/backoff,
 clock, async runtime, endpoint selection, team routing, or model-catalog logic,
-provider-executed tool, image, structured-output, temperature, or metadata
-support. It adds no CLI wiring or commands, production permission prompt, or
+provider-executed tool support in this outer codec, image, structured-output,
+temperature, or metadata support. It adds no CLI wiring or commands,
+production permission prompt, or
 permission mode beyond `ask`. The native session store remains a separate
 library boundary. Native configuration may declare the codec's provider kind
 and model but does not compose or invoke this codec.

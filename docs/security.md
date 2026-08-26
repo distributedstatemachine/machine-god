@@ -1,5 +1,35 @@
 # Security
 
+Bounded slice 33, native `web_search`, is **IN PROGRESS** and not yet green or
+delivered. It remains a local authority-bearing tool: strict effect-free
+preflight normalizes the query and mutually exclusive DNS filters, prepares
+`Capability::Network` for the exact configured AI Gateway scheme/host/port,
+and supplies the same canonical arguments to execution. Core's existing
+critical-risk `Ask` path therefore resolves before any private worker transport
+request. Provider execution inside that approved request does not bypass the
+permission handler or become a second local tool call.
+
+The production adapter makes at most one required Perplexity request through
+the existing bearer-bearing transport. Its separate strict codec requires one
+expected `providerExecuted: true` call and one matching final result; malformed,
+duplicate, missing, reordered, ambiguous, preliminary-only, provider-error, or
+incomplete state fails closed. Titles and absolute HTTP(S) URLs are independently
+bounded; unsafe, credential-bearing, or malformed URLs are not exposed. Every
+success marks the ordered sources as untrusted reference material. Fixed errors
+and debug output reflect no credentials, endpoint, query, filter, request,
+response, title, URL, or dependency diagnostic.
+
+The 30-second deadline begins before the bounded concurrency wait, cancellation
+is checked at each effect boundary, and drop owns no detached task or thread.
+Request, stream, record, JSON-node, source, title, URL, and serialized-output
+caps are normative in [`web-search.md`](web-search.md). The ordinary outer
+`AiGatewayProvider` continues to reject provider execution and response-side
+tool results, and provider-specific identity remains native rather than core.
+Production is non-WASM; current host composition is Linux/macOS-only. The
+candidate has no retry, fallback, cache, artifact, page fetch, live-provider
+test, compatibility, or performance claim. Review remains pending in the
+[`slice-33 ledger`](reviews/m03-web-search-review-01.md).
+
 Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact
 `df72e084`, tree `99bf524`, with correctness/API, native effects, and
 performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is

@@ -1,5 +1,20 @@
 # Documentation
 
+Current bounded Milestone 03 slice 33, native `web_search`, is **IN PROGRESS**
+from exact delivered base `4ba9f5afde89b9666fe9929bb81fbabcaa834334`.
+Its frozen strict input is required `query` plus optional mutually exclusive
+`allowed_domains` / `blocked_domains`. Effect-free preflight prepares the exact
+configured AI Gateway `NetworkTarget`; one allowed execution makes at most one
+required Perplexity worker request through the shared injected transport, and a
+separate bounded native codec admits its one provider-executed call/result.
+Production, independent evidence, and these docs are in initial composition.
+No composed exact SHA has passed the complete gate or fresh review, so the
+slice is not green, integrated, or delivered and the delivered count remains
+32. The fixed resource/platform/deferred boundary is the
+[`native web search contract`](web-search.md), and status is tracked in its
+[`live review ledger`](reviews/m03-web-search-review-01.md). The slice is
+unmeasured and makes no product-performance or fx-equivalence claim.
+
 Current bounded Milestone 03 slice 32, strict `session <id> [--json]`, is
 **DELIVERED**. Cycle 4 rejected exact `df72e084`, tree `99bf524`, with
 correctness/API, native effects, and performance/resources each at `0/0/1/0`;
@@ -96,6 +111,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Native `create_folder` delivered contract](create-folder.md)
 - [Native `open_file` delivered contract](open-file.md)
 - [Native `web_fetch` delivered contract](web-fetch.md)
+- [Native `web_search` slice-33 contract](web-search.md)
 - [Injected-transport AI Gateway provider](ai-gateway.md)
 - [Optional native AI Gateway HTTP transport](ai-gateway-http.md)
 - [Native AI Gateway credential discovery](ai-gateway-credentials.md)
@@ -131,6 +147,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Milestone 03 native `create_folder` delivery review](reviews/m03-create-folder-review-01.md)
 - [Milestone 03 native `open_file` delivery review](reviews/m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](reviews/m03-web-fetch-review-01.md)
+- [Milestone 03 native `web_search` live review ledger](reviews/m03-web-search-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](reviews/m03-permissions-cli-review-01.md)
 - [Milestone 03 `models` CLI delivery review ledger](reviews/m03-models-cli-review-01.md)
 - [Milestone 03 `doctor` CLI live review ledger](reviews/m03-doctor-cli-review-01.md)

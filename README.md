@@ -6,6 +6,21 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
+Current bounded Milestone 03 slice 33, native `web_search`, is **IN PROGRESS**
+from exact delivered base `4ba9f5afde89b9666fe9929bb81fbabcaa834334`.
+The frozen slice is a locally permissioned tool: required `query` plus optional
+mutually exclusive allow/block DNS filters prepare the exact configured AI
+Gateway network target, then one approved execution makes at most one required
+Perplexity provider-tool worker request through the shared injected transport.
+A dedicated bounded native codec owns that inner provider-executed result;
+core and the ordinary outer AI Gateway provider keep their existing local-tool
+contract. Production, independent evidence, and documentation are in initial
+composition. No exact candidate has completed the local gate or adversarial
+review, so slice 33 is not green, integrated, or delivered; the delivered count
+remains 32. It is unmeasured and makes no product-performance or fx-equivalence
+claim. See the [`web_search` contract](docs/web-search.md) and
+[`live review ledger`](docs/reviews/m03-web-search-review-01.md).
+
 Current bounded Milestone 03 slice 32, strict top-level
 `session <id> [--json]`, is **DELIVERED**. Formal cycle 4 rejected exact
 candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
