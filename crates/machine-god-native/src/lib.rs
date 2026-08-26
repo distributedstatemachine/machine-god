@@ -47,10 +47,13 @@ mod reference_host;
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod root_selection;
+mod session_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_lifecycle;
 mod session_listing;
 mod session_store;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod state_environment;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -215,6 +218,10 @@ pub use rename_file::{
 pub use root_selection::{
     NativeRootSelection, NativeRootSelectionError, NativeRootSelectionErrorKind,
     PreparedNativeRoots, PreparedNativeRootsError, PreparedNativeRootsErrorKind,
+};
+pub use session_inspection::{
+    NativeSessionInspection, NativeSessionInspectionError, NativeSessionInspectionErrorKind,
+    inspect_native_session, inspect_process_session,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use session_lifecycle::{

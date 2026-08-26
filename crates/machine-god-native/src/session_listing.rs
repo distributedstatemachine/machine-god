@@ -1,6 +1,4 @@
 use std::error::Error;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::ffi::{OsStr, OsString};
 use std::fmt;
 
 use machine_god_core::{BoxFuture, SessionId};
@@ -10,6 +8,10 @@ use machine_god_core::{SessionStoreError, SessionStoreErrorKind};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::FileSessionStore;
 use crate::NativeEnvironment;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::state_environment::{
+    ProcessStateEnvironmentReader, StateEnvironmentReader, capture_state_environment,
+};
 
 /// Bounded durable session-ID observation from one native store scan.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,7 +148,7 @@ pub fn list_process_sessions()
 -> BoxFuture<'static, Result<NativeSessionList, NativeSessionListingError>> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        list_process_sessions_with_reader(ProcessEnvironmentReader)
+        list_process_sessions_with_reader(ProcessStateEnvironmentReader)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -157,42 +159,16 @@ pub fn list_process_sessions()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-trait EnvironmentReader {
-    fn read(&mut self, name: &'static str) -> Option<OsString>;
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct ProcessEnvironmentReader;
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl EnvironmentReader for ProcessEnvironmentReader {
-    fn read(&mut self, name: &'static str) -> Option<OsString> {
-        std::env::var_os(name)
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn list_process_sessions_with_reader<R>(
     mut reader: R,
 ) -> BoxFuture<'static, Result<NativeSessionList, NativeSessionListingError>>
 where
-    R: EnvironmentReader + Send + 'static,
+    R: StateEnvironmentReader + Send + 'static,
 {
     Box::pin(async move {
         let environment = capture_state_environment(&mut reader);
         list_native_sessions_polled(&environment)
     })
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn capture_state_environment(reader: &mut impl EnvironmentReader) -> NativeEnvironment {
-    let xdg_state_home = reader.read("XDG_STATE_HOME");
-    let home = if xdg_state_home.as_deref().is_none_or(OsStr::is_empty) {
-        reader.read("HOME")
-    } else {
-        None
-    };
-    NativeEnvironment::new(None, xdg_state_home, home)
 }
 
 fn list_native_sessions_polled(
@@ -303,7 +279,7 @@ mod tests {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    impl EnvironmentReader for RecordingEnvironmentReader {
+    impl StateEnvironmentReader for RecordingEnvironmentReader {
         fn read(&mut self, name: &'static str) -> Option<OsString> {
             self.requests.lock().unwrap().push(name);
             match name {
