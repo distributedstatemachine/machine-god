@@ -22,9 +22,13 @@ use std::time::{Duration, Instant};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_core::{
     Message, Role, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreErrorKind,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use machine_god_native::{FileSessionStore, MAX_FILE_SESSION_BYTES};
+use machine_god_native::{
+    FileSessionStore, MAX_FILE_SESSION_BYTES, NativeEnvironment, NativeSessionListingErrorKind,
+    list_native_sessions,
+};
 
 const IDENTITY: &str = "machine-god 0.1.0 (engine API 1)\n";
 const PERMISSIONS: &str = concat!(
@@ -381,6 +385,107 @@ fn seed_session_over_engine_defaults(state_base: &Path) -> (PathBuf, Vec<u8>) {
     assert!(bytes.len() < MAX_FILE_SESSION_BYTES);
     fs::write(&record_path, &bytes).unwrap();
     (record_path, bytes)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn seed_manual_current_schema_record(
+    state_base: &Path,
+    id: &str,
+    metadata: &str,
+) -> (FileSessionStore, PathBuf, Vec<u8>) {
+    let (record_path, _) =
+        save_session_summary(state_base, id, &format!("incarnation-{id}"), 1, 1, 0, 0);
+    let bytes = format!(
+        concat!(
+            "{{\"schema_version\":1,\"record\":{{",
+            "\"id\":\"{id}\",\"incarnation_id\":\"incarnation-{id}\",",
+            "\"revision\":9,\"next_turn_sequence\":6,",
+            "\"messages\":[],\"metadata\":{metadata}}}}}",
+        ),
+        id = id,
+        metadata = metadata,
+    )
+    .into_bytes();
+    assert!(bytes.len() < MAX_FILE_SESSION_BYTES);
+    fs::write(&record_path, &bytes).unwrap();
+
+    let store = FileSessionStore::open(&state_base.join("machine-god")).unwrap();
+    (store, record_path, bytes)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn assert_store_accepts_and_lists(
+    store: &FileSessionStore,
+    state_base: &Path,
+    id: &str,
+) -> SessionRecord {
+    let session_id = SessionId::new(id).unwrap();
+    let record = ready(store.load(session_id.clone())).unwrap().unwrap();
+    let environment =
+        NativeEnvironment::new(None, Some(state_base.as_os_str().to_os_string()), None);
+    let listing = ready(list_native_sessions(environment)).unwrap();
+    assert!(!listing.truncated());
+    assert_eq!(listing.session_ids(), std::slice::from_ref(&session_id));
+    record
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn assert_store_rejects_and_listing_agrees(store: &FileSessionStore, state_base: &Path, id: &str) {
+    let error = ready(store.load(SessionId::new(id).unwrap())).unwrap_err();
+    assert_eq!(error.kind, SessionStoreErrorKind::Corrupt);
+    let environment =
+        NativeEnvironment::new(None, Some(state_base.as_os_str().to_os_string()), None);
+    let error = ready(list_native_sessions(environment)).unwrap_err();
+    assert_eq!(error.kind(), NativeSessionListingErrorKind::Corrupt);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_session_bounded(config: &OsStr, state: &OsStr, id: &str) -> Output {
+    let mut command = session_command(config, state);
+    command
+        .args(["session", id, "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = ScopedChild::spawn(&mut command).wait_with_output(Duration::from_secs(10));
+    assert!(output.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
+    output
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn expected_session_json(id: &str, metadata_entry_count: usize) -> String {
+    format!(
+        concat!(
+            "{{\"kind\":\"session\",\"id\":\"{id}\",",
+            "\"incarnation_id\":\"incarnation-{id}\",",
+            "\"revision\":9,\"next_turn_sequence\":6,",
+            "\"message_count\":0,\"metadata_entry_count\":{metadata_entry_count}}}\n",
+        ),
+        id = id,
+        metadata_entry_count = metadata_entry_count,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn assert_duplicate_metadata_case(id: &str, metadata: &str, final_secret: &str) {
+    let temporary = TestDirectory::new(id);
+    let state_base = temporary.path().join("state");
+    let (store, record_path, record_before) =
+        seed_manual_current_schema_record(&state_base, id, metadata);
+    let record = assert_store_accepts_and_lists(&store, &state_base, id);
+    assert_eq!(record.metadata.len(), 1);
+    assert_eq!(
+        record.metadata.get("same").and_then(|value| value.as_str()),
+        Some(final_secret)
+    );
+
+    let output = run_session_bounded(
+        OsStr::new("relative-config-must-not-be-read"),
+        state_base.as_os_str(),
+        id,
+    );
+    assert_success(&output, &expected_session_json(id, 1));
+    assert_output_omits(&output, &["CLI_", final_secret]);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1193,6 +1298,126 @@ fn session_inspects_store_valid_records_over_engine_defaults_without_rewrite() {
     assert!(json.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
     assert_eq!(fs::read(record_path).unwrap(), record_before);
     assert!(!config_root.exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_an_out_of_range_number() {
+    let temporary = TestDirectory::new("session-number-rejected");
+    let state_base = temporary.path().join("state");
+    let (store, record_path, record_before) = seed_manual_current_schema_record(
+        &state_base,
+        "number-rejected",
+        r#"{"value":1.7976931348623158e308}"#,
+    );
+    assert_store_rejects_and_listing_agrees(&store, &state_base, "number-rejected");
+    let output = run_session_bounded(
+        OsStr::new("relative-config-must-not-be-read"),
+        state_base.as_os_str(),
+        "number-rejected",
+    );
+    assert_session_error(&output, true, "Corrupt");
+    assert_output_omits(&output, &["1.7976931348623158e308"]);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_accepts_the_maximum_finite_number() {
+    let temporary = TestDirectory::new("session-number-accepted");
+    let state_base = temporary.path().join("state");
+    let (store, record_path, record_before) = seed_manual_current_schema_record(
+        &state_base,
+        "number-accepted",
+        r#"{"value":1.79769313486231581e308}"#,
+    );
+    let record = assert_store_accepts_and_lists(&store, &state_base, "number-accepted");
+    assert_eq!(record.metadata.len(), 1);
+    let output = run_session_bounded(
+        OsStr::new("relative-config-must-not-be-read"),
+        state_base.as_os_str(),
+        "number-accepted",
+    );
+    assert_success(&output, &expected_session_json("number-accepted", 1));
+    assert_output_omits(&output, &["1.79769313486231581e308"]);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_uses_last_literal_metadata_value() {
+    assert_duplicate_metadata_case(
+        "duplicate-literal",
+        r#"{"same":"CLI_DUPLICATE_OLD_SECRET","same":"CLI_DUPLICATE_FINAL_SECRET"}"#,
+        "CLI_DUPLICATE_FINAL_SECRET",
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_uses_last_escaped_equivalent_metadata_value() {
+    assert_duplicate_metadata_case(
+        "duplicate-escaped",
+        r#"{"same":"CLI_ESCAPED_OLD_SECRET","s\u0061me":"CLI_ESCAPED_FINAL_SECRET"}"#,
+        "CLI_ESCAPED_FINAL_SECRET",
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_ignores_shadowed_json_nodes() {
+    let over_nodes = std::iter::repeat_n("null", 65_536)
+        .collect::<Vec<_>>()
+        .join(",");
+    let temporary = TestDirectory::new("session-shadowed-over-nodes");
+    let state_base = temporary.path().join("state");
+    let metadata = format!(
+        "{{\"payload\":{{\"same\":[{over_nodes}],\"s\\u0061me\":\"CLI_SHADOWED_FINAL_SECRET\"}}}}"
+    );
+    let (store, record_path, record_before) =
+        seed_manual_current_schema_record(&state_base, "shadowed-over-nodes", &metadata);
+    let record = assert_store_accepts_and_lists(&store, &state_base, "shadowed-over-nodes");
+    assert_eq!(record.metadata.len(), 1);
+    assert_eq!(
+        record
+            .metadata
+            .get("payload")
+            .and_then(|value| value.get("same"))
+            .and_then(|value| value.as_str()),
+        Some("CLI_SHADOWED_FINAL_SECRET")
+    );
+    let output = run_session_bounded(
+        OsStr::new("relative-config-must-not-be-read"),
+        state_base.as_os_str(),
+        "shadowed-over-nodes",
+    );
+    assert_success(&output, &expected_session_json("shadowed-over-nodes", 1));
+    assert_output_omits(&output, &["CLI_SHADOWED_FINAL_SECRET"]);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_final_json_node_overflow() {
+    let over_nodes = std::iter::repeat_n("null", 65_536)
+        .collect::<Vec<_>>()
+        .join(",");
+    let temporary = TestDirectory::new("session-final-over-nodes");
+    let state_base = temporary.path().join("state");
+    let metadata = format!(
+        "{{\"payload\":{{\"same\":\"CLI_SHADOWED_OLD_SECRET\",\"s\\u0061me\":[{over_nodes}]}}}}"
+    );
+    let (store, record_path, record_before) =
+        seed_manual_current_schema_record(&state_base, "final-over-nodes", &metadata);
+    assert_store_rejects_and_listing_agrees(&store, &state_base, "final-over-nodes");
+    let output = run_session_bounded(
+        OsStr::new("relative-config-must-not-be-read"),
+        state_base.as_os_str(),
+        "final-over-nodes",
+    );
+    assert_session_error(&output, true, "Corrupt");
+    assert_output_omits(&output, &["CLI_SHADOWED_OLD_SECRET"]);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

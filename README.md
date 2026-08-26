@@ -8,44 +8,39 @@ performance evidence live in [`docs/`](docs/README.md).
 
 Bounded Milestone 03 slice 32, strict top-level
 `session <id> [--json]`, is **IN PROGRESS** from exact delivered base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. Production and independent
-evidence were initially composed through `852fec7`; focused composition-gate
-remediation is exact
-`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Exact gate precursor
-`fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
-`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
-gate under exact Rust/Cargo 1.94.1: formatting, workspace all-target/all-feature
-warnings-denied Clippy, workspace tests, and workspace doctests. It inspects
-one exact current-schema machine-god record through an engine-free native
-facade and returns only ID, incarnation, revision, allocator, message-count, and top-level
-metadata-count fields. It exposes no transcript or metadata content and
-constructs no workspace, engine, provider, credential, permission handler,
-network transport, or runtime. The
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
+gate but is rejected by formal review. Correctness/API reported `0/0/1/2`,
+native boundary/effects `0/0/1/2`, and performance/concurrency/resources
+`0/0/1/1`, in blocker/high/medium/low order. The deduplicated union has two
+medium themes—noncanonical JSON-number acceptance and remaining payload-
+proportional allocations—and two low themes—duplicate-key semantics that do
+not match ordinary load and stale maintained documentation. The synchronized
+replacement contract now requires a specialized one-pass summary parser with
+a fixed 4 KiB input buffer, canonical `serde_json::Number` semantics, fixed-
+stack known-token handling, retention of only the two returned ID strings, and
+a fixed-digest, strictly node-capped duplicate tracker that preserves last-
+value-wins behavior for metadata and nested JSON. It inspects one exact current-
+schema record without constructing a full `SessionRecord`, transcript, or
+metadata payload. It constructs no workspace, engine, provider, credential,
+permission handler, network transport, or runtime. The
 [`session` contract](docs/session-cli.md),
 [`native inspection contract`](docs/native-session-inspection.md), and
 [`live review ledger`](docs/reviews/m03-session-cli-review-01.md) remain
-normative. Focused exact-1.94.1 evidence is green for 12 native inspection
-tests, 56 CLI unit tests, 46 independent CLI process tests, and native/CLI
-all-target/all-feature warnings-denied Clippy. The 135-test Python suite, exact
-pinned-fx regeneration, WASI/FreeBSD target checks, diff/no-unsafe checks, and
-fresh exact-tree release matrix are also green. That release matrix covers
-human/JSON success, invalid grammar before effects, missing-root JSON
-`NotFound`/no-create, record immutability, the private lock, and unrelated-root
-isolation. Documentation integrity is green across 85 Markdown files, 146
-fenced blocks, 620 parsed links, and 81 unique repository targets with zero
-errors. Exact cycle-1 candidate
-`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
-effects `0/0/0/1`, and performance/concurrency/resources `0/0/1/2`, in
-blocker/high/medium/low order. One low overlaps, so the deduplicated union is
-`0/0/1/2`. Full raw-JSON/owned-record materialization is the medium;
-engine-limit-validation and unbounded lock/filesystem/`EINTR` latency
-documentation are the unique lows. Documentation remediation does not claim
-production remediation or green review. A replacement local gate, three fresh
-reviews, remote workflows, `main` integration, and delivery remain pending. No
-review-green or delivered claim is made. No
+normative. The pre-remediation `1d09a0d` gate was green under exact Rust/Cargo
+1.94.1 for all four required Rust commands; Python passed 135 tests with eight
+expected macOS skips, pinned-fx regeneration and target/diff/no-unsafe checks
+passed, and documentation integrity covered 85 Markdown files, 146 fenced
+blocks, 626 parsed links, and 81 unique repository targets with zero errors.
+Its 4,001,712-byte release binary had SHA-256
+`e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb` and
+passed the documented human/JSON, grammar-before-effects, `NotFound`/no-create,
+immutability, private-lock, and root-isolation matrix. Those results do not
+approve the rejected parser. The synchronized replacement has no exact composed
+SHA yet; its complete replacement gate, three fresh reviews, remote workflows,
+`main` integration, and delivery remain pending. No review-green or delivered
+claim is made. No
 compatibility, product-performance, or fx-equivalence claim is made; the
 delivered count remains thirty-one.
 

@@ -1,11 +1,12 @@
 # Milestone 03 session CLI review ledger
 
-Status: exact cycle-1 candidate
-`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected by formal review. Documentation remediation is recorded
-here; production remediation, its complete replacement gate, three fresh
-replacement reviews, remote delivery gates, and integration remain pending.
+Status: exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete exact same-SHA
+local gate but is rejected by formal review. This ledger records the
+synchronized replacement contract; its exact composed SHA, complete replacement
+gate, three fresh replacement reviews, remote delivery gates, and integration
+remain pending.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
 composition was `852fec7`; focused composition-gate remediation advances the
@@ -166,11 +167,99 @@ therefore three unique findings, and deduplicating the overlapping native/
 performance low yields `0/0/1/2`. Any finding rejects the exact candidate, so
 `5381d4b` is rejected.
 
-This documentation commit corrects the two normative low themes but neither
-implements nor claims the production optimization. Production remediation,
-the complete replacement exact-SHA local gate, and a new three-agent review
-cycle are pending. No remote workflow, `main` integration, delivery,
-performance, compatibility-promotion, or fx-equivalence claim is made.
+Cycle-1 documentation corrected its two normative low themes. Production
+remediation then produced cycle-2 candidate `1d09a0d`, whose replacement parser
+and evidence are assessed below. No remote workflow, `main` integration,
+delivery, performance, compatibility-promotion, or fx-equivalence claim is
+made.
+
+## Cycle 2 pre-remediation gate evidence
+
+Exact cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed all four required commands
+under exact Rust/Cargo 1.94.1 without fallback:
+
+```sh
+cargo +1.94.1 fmt --all -- --check
+cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings
+cargo +1.94.1 test --workspace
+cargo +1.94.1 test --doc --workspace
+```
+
+The complete Python discovery suite passed 135 tests with eight expected macOS
+skips. Pinned-fx compatibility regeneration passed at exact upstream
+`b1774fbf6c7602b503026f96f6e960e946c692ef`; native WASI no-default/all-
+feature, CLI WASI, native FreeBSD no-default, diff, and explicit unsafe-Rust
+checks passed. Documentation integrity covered 85 Markdown files, 146 fenced
+blocks, 626 parsed links, and 81 unique repository targets with zero errors.
+
+The freshly rebuilt 4,001,712-byte exact-tree release binary had SHA-256
+`e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb`. Its
+matrix passed human and JSON success, invalid grammar before effects, missing-
+root JSON `NotFound`/no-create, record immutability, private-lock permissions,
+and unrelated-root isolation. These are pre-remediation gate results only.
+They do not resolve the formal findings or make `1d09a0d` review-green.
+
+## Formal cycle 2 verdict
+
+Three fresh isolated agents reviewed exact candidate `1d09a0d`, tree
+`72a63c0`. Counts are blocker/high/medium/low:
+
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Rejected | `0/0/1/2` |
+| Native boundary/effects and portability | Rejected | `0/0/1/2` |
+| Performance/concurrency/resources and evidence | Rejected | `0/0/1/1` |
+
+The overlapping reports deduplicate to four themes:
+
+1. **Medium — canonical-number mismatch.** The specialized parser accepts
+   arbitrary JSON number spellings that canonical `serde_json::Number` parsing
+   rejects, so it can summarize a record that ordinary `FileSessionStore::load`
+   reports as corrupt.
+2. **Medium — residual payload-proportional allocations.** Known tokens and
+   discarded payload strings still allocate by payload length, and metadata-key
+   ownership grows with payload bytes. A streaming read buffer alone does not
+   establish summary-oriented auxiliary memory.
+3. **Low — duplicate-key mismatch.** The parser rejects duplicate top-level
+   metadata keys and does not reproduce nested arbitrary-JSON last-value-wins
+   behavior and final-tree node accounting used by ordinary deserialization.
+4. **Low — stale maintained documentation.** Maintained summaries described the
+   prior cycle and did not identify `1d09a0d` or its current gate/review state.
+
+Any finding rejects the whole exact candidate. The deduplicated verdict is
+therefore two medium and two low findings, and `1d09a0d` is rejected.
+
+## Synchronized replacement contract
+
+The next replacement must preserve the CLI grammar, output, redaction, root,
+lock, and no-record-mutation behavior while replacing the internal parser
+contract as follows:
+
+- inspect through a specialized one-pass summary operation rather than
+  `FileSessionStore::load` or a full `SessionRecord`;
+- use one fixed 4 KiB input buffer and fixed-stack scratch for known field,
+  variant, and role tokens;
+- accept and reject numbers with canonical `serde_json::Number` semantics;
+- retain payload-sized ownership only for the two returned ID strings;
+- stream-discard transcript strings, metadata keys/values, tool payloads, and
+  arbitrary JSON scalars after validation; and
+- use fixed-size key digests in a strictly node-capped duplicate tracker so
+  metadata and nested arbitrary JSON match ordinary last-value-wins semantics,
+  including replacement of a repeated key's prior logical node contribution.
+
+The 8,651,165-byte file ceiling, depth-64 and final-tree 65,536-node aggregate
+JSON ceilings, identifier/counter/content-shape rules, and duplicate tracking
+are store-owned persistence limits. They do not prove or enforce the engine's
+configurable/default message, serialized-transcript, or serialized-metadata
+limits. Likewise, finite parser memory and transferred bytes do not bound
+exclusive lock wait, filesystem latency, or `EINTR` retries; those have no
+wall-clock or attempt ceiling and synchronously block the polling thread.
+
+This is the synchronized current contract awaiting its exact composed SHA,
+complete same-SHA replacement gate, and three fresh adversarial reviews. It is
+not a claim that the current source already satisfies the contract, that review
+is green, or that the slice is delivered.
 
 ## Required replacement adversarial product review
 
@@ -191,6 +280,12 @@ composed, the complete replacement gate rerun, and three new agents must review
 the replacement exact SHA. No prior discovery, implementation, review, or
 remediation agent may approve its own work or be reused in a later review
 cycle. Only a deduplicated `0/0/0/0` candidate is formally green.
+
+After each review/remediation iteration, committed and integrated worktrees
+must be verified clean and then safely removed; active or uncommitted worktrees
+must never be deleted. After this slice is delivered, bounded development
+returns to completing the remaining Milestone 03 native tools rather than
+expanding the CLI inspection surface.
 
 ## Delivery gate
 

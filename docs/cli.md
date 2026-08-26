@@ -1,11 +1,8 @@
 # Command-line interface
 
-In-progress slice 32 composes strict top-level `session <id> [--json]`
-production and independent evidence. Initial composition was `852fec7`;
-focused composition-gate remediation is exact
-`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`, under the normative
-[`session` contract](session-cli.md). The command loads one exact
+In-progress slice 32 owns strict top-level `session <id> [--json]` under the
+normative
+[`session` contract](session-cli.md). The command inspects one exact
 current-schema record through the separate
 [`native inspection facade`](native-session-inspection.md) and renders only its
 validated ID, incarnation ID, revision, next turn sequence, message count, and
@@ -16,24 +13,20 @@ are outside the slice. Parsing and ID validation precede effects; existing-root
 inspection is no-create except for the file store's documented private `0600`
 lock sidecar on a present record. Human/JSON output is assembled under 4,096
 bytes. Non-exhaustive native categories fail closed to `Unavailable`, and help
-bytes use `Inspect a saved session`. Focused exact-1.94.1 evidence is green for
-12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
-tests, and native/CLI warnings-denied Clippy. Python, pinned-fx regeneration,
-WASI/FreeBSD target, diff/no-unsafe, and exact-tree release-matrix checks are
-also green. The full workspace exact gate passed on exact precursor
-`fa099f75277f7ae23a3ac220e66356c45223d1a5`,
-tree `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, under exact Rust/Cargo 1.94.1;
-documentation integrity is 85/146/620/81 with zero errors. Exact cycle-1
-candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected. Track counts are correctness/API `0/0/0/0`, native
-boundary/effects `0/0/0/1`, and performance/concurrency/resources `0/0/1/2`;
-one low overlaps and the deduplicated union is `0/0/1/2`. Documentation
-remediation is recorded, while production remediation, the replacement gate,
-three fresh reviews, remote workflows, `main` integration, and delivery remain
-pending. There is no matching bootstrap workload and no claim that the
-candidate is green or the feature is delivered, performant, or equivalent. The
-delivered count remains thirty-one; evidence is in the
+bytes use `Inspect a saved session`. Exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
+gate but is rejected. The three track counts are `0/0/1/2`, `0/0/1/2`, and
+`0/0/1/1`; deduplication yields canonical-number and payload-allocation medium
+themes plus duplicate-key and stale-documentation low themes. The synchronized
+native replacement uses one-pass fixed-4-KiB streaming, canonical
+`serde_json::Number` semantics, fixed-stack known tokens, two retained ID
+strings, and a fixed-digest strictly node-capped last-value-wins duplicate
+tracker. It has no exact composed SHA yet; its complete gate, three fresh
+reviews, remote workflows, `main` integration, and delivery remain pending.
+There is no matching bootstrap workload and no claim that the feature is green,
+delivered, performant, or equivalent. The delivered count remains thirty-one;
+evidence is in the
 [`live ledger`](reviews/m03-session-cli-review-01.md).
 
 Delivered slice 31 adds a strict top-level `sessions [--json]`

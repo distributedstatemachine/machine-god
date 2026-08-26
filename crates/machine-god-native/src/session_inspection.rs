@@ -558,6 +558,17 @@ mod tests {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn replace_empty_metadata(root: &Path, metadata: &str) -> PathBuf {
+        let data = entry_with_suffix(root, ".json");
+        let persisted = String::from_utf8(fs::read(&data).unwrap()).unwrap();
+        let replacement =
+            persisted.replacen("\"metadata\":{}", &format!("\"metadata\":{metadata}"), 1);
+        assert_ne!(replacement, persisted);
+        fs::write(&data, replacement).unwrap();
+        data
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn process_capture_is_first_poll_state_only_and_lazy() {
         for (xdg, home, expected_requests) in [
@@ -817,7 +828,147 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn envelope_types_unknowns_duplicates_and_metadata_duplicates_are_corrupt() {
+    fn streamed_numbers_match_authoritative_serde_boundaries() {
+        let cases = [
+            ("1.7976931348623158e308".to_owned(), false),
+            ("1.79769313486231581e308".to_owned(), true),
+            (format!("17976931348623158{}", "0".repeat(292)), false),
+        ];
+        for (index, (number, accepted)) in cases.into_iter().enumerate() {
+            let temporary = TempDirectory::new(&format!("number-boundary-{index}"));
+            let store = FileSessionStore::open(temporary.path()).unwrap();
+            save_record(
+                &store,
+                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+            );
+            replace_empty_metadata(temporary.path(), &format!("{{\"number\":{number}}}"));
+
+            let ordinary = ready(store.load(id("alpha")));
+            let streamed = store.inspect_session_summary(id("alpha"));
+            assert_eq!(ordinary.is_ok(), accepted, "ordinary load for {number}");
+            assert_eq!(streamed.is_ok(), accepted, "streamed load for {number}");
+            if !accepted {
+                assert_eq!(ordinary.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+                assert_eq!(streamed.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn metadata_duplicates_use_last_value_and_count_unique_decoded_keys() {
+        let temporary = TempDirectory::new("metadata-duplicates");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        save_record(
+            &store,
+            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+        );
+        replace_empty_metadata(
+            temporary.path(),
+            r#"{"same":[null,null],"s\u0061me":null,"second":true}"#,
+        );
+
+        let record = ready(store.load(id("alpha"))).unwrap().unwrap();
+        let summary = store.inspect_session_summary(id("alpha")).unwrap().unwrap();
+
+        assert_eq!(record.metadata.len(), 2);
+        assert_eq!(record.metadata["same"], serde_json::Value::Null);
+        assert_eq!(summary.metadata_entry_count, 2);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn nested_duplicates_account_only_the_final_value() {
+        let over_budget = std::iter::repeat_n("null", 65_536)
+            .collect::<Vec<_>>()
+            .join(",");
+        for (label, object, accepted) in [
+            (
+                "shadowed",
+                format!("{{\"same\":[{over_budget}],\"s\\u0061me\":null}}"),
+                true,
+            ),
+            (
+                "final-overflow",
+                format!("{{\"same\":null,\"s\\u0061me\":[{over_budget}]}}"),
+                false,
+            ),
+        ] {
+            let temporary = TempDirectory::new(label);
+            let store = FileSessionStore::open(temporary.path()).unwrap();
+            save_record(
+                &store,
+                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+            );
+            replace_empty_metadata(temporary.path(), &format!("{{\"root\":{object}}}"));
+
+            let ordinary = ready(store.load(id("alpha")));
+            let streamed = store.inspect_session_summary(id("alpha"));
+            assert_eq!(ordinary.is_ok(), accepted, "ordinary {label}");
+            assert_eq!(streamed.is_ok(), accepted, "streamed {label}");
+            if !accepted {
+                assert_eq!(ordinary.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+                assert_eq!(streamed.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn parser_owned_allocations_are_payload_independent() {
+        fn inspect_shape(label: &str, record: SessionRecord) -> usize {
+            let temporary = TempDirectory::new(label);
+            let store = FileSessionStore::open(temporary.path()).unwrap();
+            save_record(&store, record);
+            store
+                .inspect_session_summary(id("alpha"))
+                .unwrap()
+                .unwrap()
+                .parser_allocation_events
+        }
+
+        let empty = inspect_shape(
+            "allocation-empty",
+            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+        );
+        let mut messages = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+        messages.messages = (0..5_000)
+            .map(|_| Message {
+                role: Role::User,
+                content: Vec::new(),
+            })
+            .collect();
+        let messages = inspect_shape("allocation-messages", messages);
+        let mut near_cap = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+        near_cap.messages.push(Message::text(
+            Role::User,
+            "x".repeat(crate::MAX_FILE_SESSION_BYTES - 512),
+        ));
+        let near_cap = inspect_shape("allocation-near-cap", near_cap);
+
+        let temporary = TempDirectory::new("allocation-metadata-keys");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        save_record(
+            &store,
+            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+        );
+        let metadata = (0..5_000)
+            .map(|index| format!("\"key-{index}\":{{\"nested\":null}}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        replace_empty_metadata(temporary.path(), &format!("{{{metadata}}}"));
+        let metadata = store
+            .inspect_session_summary(id("alpha"))
+            .unwrap()
+            .unwrap()
+            .parser_allocation_events;
+
+        assert_eq!([empty, messages, near_cap, metadata], [4; 4]);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn envelope_types_unknowns_and_schema_duplicates_are_corrupt() {
         let temporary = TempDirectory::new("strict-summary-schema");
         let store = FileSessionStore::open(temporary.path()).unwrap();
         save_record(
@@ -835,7 +986,6 @@ mod tests {
                 persisted.strip_suffix('}').unwrap()
             ),
             format!("{{\"schema_version\":1,\"schema_version\":1,\"record\":{record_json}}}"),
-            persisted.replacen("\"metadata\":{}", "\"metadata\":{\"same\":1,\"same\":2}", 1),
         ];
 
         for contents in cases {

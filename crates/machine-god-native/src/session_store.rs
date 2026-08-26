@@ -3,9 +3,9 @@ use std::fmt;
 use std::path::Path;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 
 use machine_god_core::{
     BoxFuture, ContentBlock, SessionId, SessionRecord, SessionRevision, SessionStore,
@@ -53,6 +53,12 @@ const MAX_STORED_JSON_DEPTH: usize = 64;
 const MAX_STORED_JSON_NODES: usize = 65_536;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SESSION_INSPECTION_READ_BUFFER_BYTES: usize = 4 * 1_024;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const JSON_KEY_TRACKER_BUCKETS: usize = MAX_STORED_JSON_NODES;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_STREAMED_JSON_PARSE_DEPTH: usize = 128;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const JSON_KEY_VERIFICATION_DOMAIN: &[u8] = b"machine-god:json-key-verification:v1:";
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const FILE_NAME_DOMAIN: &[u8] = b"machine-god:file-session:v1:";
@@ -159,6 +165,8 @@ pub(crate) struct FileSessionInspection {
     pub(crate) bytes_read: usize,
     #[cfg(test)]
     pub(crate) max_read_request: usize,
+    #[cfg(test)]
+    pub(crate) parser_allocation_events: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -745,6 +753,12 @@ fn read_session_inspection(
             .parse_envelope()
             .map_err(map_inspection_parse_error)?;
         parser.finish().map_err(map_inspection_parse_error)?;
+        #[cfg(test)]
+        let inspection = {
+            let mut inspection = inspection;
+            inspection.parser_allocation_events = parser.allocation_events;
+            inspection
+        };
         inspection
     };
     if &inspection.session_id != expected_id {
@@ -849,6 +863,9 @@ impl<'a> InspectionReader<'a> {
 struct InspectionParser<'a, 'fd> {
     reader: &'a mut InspectionReader<'fd>,
     json_nodes: usize,
+    json_keys: JsonKeyTracker,
+    #[cfg(test)]
+    allocation_events: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -857,6 +874,9 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
         Self {
             reader,
             json_nodes: 0,
+            json_keys: JsonKeyTracker::new(),
+            #[cfg(test)]
+            allocation_events: 2,
         }
     }
 
@@ -869,7 +889,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             return Err(InspectionParseError::Corrupt);
         }
         loop {
-            let field = self.parse_bounded_string(32)?;
+            let field = self.parse_stack_string::<32>()?;
             self.expect(b':')?;
             match field.as_str() {
                 "schema_version" => {
@@ -906,22 +926,16 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             return Err(InspectionParseError::Corrupt);
         }
         loop {
-            let field = self.parse_bounded_string(32)?;
+            let field = self.parse_stack_string::<32>()?;
             self.expect(b':')?;
             match field.as_str() {
                 "id" => {
                     mark_field(&mut fields, 1)?;
-                    session_id = Some(
-                        SessionId::new(self.parse_bounded_string(128)?)
-                            .map_err(|_| InspectionParseError::Corrupt)?,
-                    );
+                    session_id = Some(self.parse_session_id()?);
                 }
                 "incarnation_id" => {
                     mark_field(&mut fields, 2)?;
-                    incarnation_id = Some(
-                        SessionIncarnationId::new(self.parse_bounded_string(128)?)
-                            .map_err(|_| InspectionParseError::Corrupt)?,
-                    );
+                    incarnation_id = Some(self.parse_incarnation_id()?);
                 }
                 "revision" => {
                     mark_field(&mut fields, 4)?;
@@ -968,6 +982,8 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             bytes_read: 0,
             #[cfg(test)]
             max_read_request: 0,
+            #[cfg(test)]
+            parser_allocation_events: 0,
         })
     }
 
@@ -994,12 +1010,12 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             return Err(InspectionParseError::Corrupt);
         }
         loop {
-            let field = self.parse_bounded_string(16)?;
+            let field = self.parse_stack_string::<16>()?;
             self.expect(b':')?;
             match field.as_str() {
                 "role" => {
                     mark_field(&mut fields, 1)?;
-                    match self.parse_bounded_string(16)?.as_str() {
+                    match self.parse_stack_string::<16>()?.as_str() {
                         "system" | "user" | "assistant" | "tool" => {}
                         _ => return Err(InspectionParseError::Corrupt),
                     }
@@ -1044,12 +1060,12 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             return Err(InspectionParseError::Corrupt);
         }
         loop {
-            let field = self.parse_bounded_string(16)?;
+            let field = self.parse_stack_string::<16>()?;
             self.expect(b':')?;
             match field.as_str() {
                 "type" => {
                     mark_field(&mut fields, 1)?;
-                    kind = Some(match self.parse_bounded_string(16)?.as_str() {
+                    kind = Some(match self.parse_stack_string::<16>()?.as_str() {
                         "text" => ContentInspectionKind::Text,
                         "json" => ContentInspectionKind::Json,
                         "tool_call" => ContentInspectionKind::ToolCall,
@@ -1063,7 +1079,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
                 }
                 "value" => {
                     mark_field(&mut fields, 4)?;
-                    self.parse_embedded_json(0)?;
+                    self.parse_and_account_embedded_json()?;
                 }
                 "call" => {
                     mark_field(&mut fields, 8)?;
@@ -1071,8 +1087,8 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
                 }
                 "call_id" => {
                     mark_field(&mut fields, 16)?;
-                    ToolCallId::new(self.parse_bounded_string(128)?)
-                        .map_err(|_| InspectionParseError::Corrupt)?;
+                    let id = self.parse_stack_string::<128>()?;
+                    ToolCallId::validate(id.as_str()).map_err(|_| InspectionParseError::Corrupt)?;
                 }
                 "output" => {
                     mark_field(&mut fields, 32)?;
@@ -1105,22 +1121,22 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             return Err(InspectionParseError::Corrupt);
         }
         loop {
-            let field = self.parse_bounded_string(16)?;
+            let field = self.parse_stack_string::<16>()?;
             self.expect(b':')?;
             match field.as_str() {
                 "id" => {
                     mark_field(&mut fields, 1)?;
-                    ToolCallId::new(self.parse_bounded_string(128)?)
-                        .map_err(|_| InspectionParseError::Corrupt)?;
+                    let id = self.parse_stack_string::<128>()?;
+                    ToolCallId::validate(id.as_str()).map_err(|_| InspectionParseError::Corrupt)?;
                 }
                 "name" => {
                     mark_field(&mut fields, 2)?;
-                    ToolName::new(self.parse_bounded_string(128)?)
-                        .map_err(|_| InspectionParseError::Corrupt)?;
+                    let name = self.parse_stack_string::<128>()?;
+                    ToolName::validate(name.as_str()).map_err(|_| InspectionParseError::Corrupt)?;
                 }
                 "arguments" => {
                     mark_field(&mut fields, 4)?;
-                    self.parse_embedded_json(0)?;
+                    self.parse_and_account_embedded_json()?;
                 }
                 _ => return Err(InspectionParseError::Corrupt),
             }
@@ -1143,12 +1159,12 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             return Err(InspectionParseError::Corrupt);
         }
         loop {
-            let field = self.parse_bounded_string(16)?;
+            let field = self.parse_stack_string::<16>()?;
             self.expect(b':')?;
             match field.as_str() {
                 "content" => {
                     mark_field(&mut fields, 1)?;
-                    self.parse_embedded_json(0)?;
+                    self.parse_and_account_embedded_json()?;
                 }
                 "is_error" => {
                     mark_field(&mut fields, 2)?;
@@ -1170,83 +1186,130 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
 
     fn parse_metadata(&mut self) -> Result<usize, InspectionParseError> {
         self.expect(b'{')?;
-        let mut keys = BTreeSet::new();
+        let scope = self.json_keys.begin_scope()?;
         if self.consume(b'}')? {
             return Ok(0);
         }
+        let mut overflowed = false;
         loop {
-            let key = self.parse_bounded_string(MAX_FILE_SESSION_BYTES)?;
-            if !keys.insert(key) {
-                return Err(InspectionParseError::Corrupt);
-            }
+            let key = self.parse_string_digest()?;
             self.expect(b':')?;
-            self.parse_embedded_json(0)?;
+            let summary = self.parse_embedded_json(0)?;
+            overflowed |= self.json_keys.upsert(scope, key, summary)?.is_full();
             if self.consume(b'}')? {
-                return Ok(keys.len());
+                let values = self.json_keys.finish_scope(scope)?;
+                if overflowed || values.nodes > MAX_STORED_JSON_NODES {
+                    return Err(InspectionParseError::Corrupt);
+                }
+                if values.max_depth > MAX_STORED_JSON_DEPTH {
+                    return Err(InspectionParseError::Corrupt);
+                }
+                self.add_json_nodes(values.nodes)?;
+                return Ok(values.entries);
             }
             self.expect(b',')?;
         }
     }
 
-    /// Validates one arbitrary JSON root. The node budget is shared across all
-    /// metadata, JSON-block, tool-argument, and tool-output roots exactly like
-    /// `validate_record_json`; schema containers and text are not counted.
-    fn parse_embedded_json(&mut self, parent_depth: usize) -> Result<(), InspectionParseError> {
-        self.json_nodes = self
-            .json_nodes
-            .checked_add(1)
-            .ok_or(InspectionParseError::Corrupt)?;
+    /// Validates one arbitrary JSON root and accounts only the final decoded
+    /// value. Object duplicates therefore have serde's last-value-wins shape.
+    fn parse_and_account_embedded_json(&mut self) -> Result<(), InspectionParseError> {
+        let summary = self.parse_embedded_json(0)?;
+        if summary.max_depth > MAX_STORED_JSON_DEPTH {
+            return Err(InspectionParseError::Corrupt);
+        }
+        self.add_json_nodes(summary.nodes)
+    }
+
+    fn add_json_nodes(&mut self, nodes: usize) -> Result<(), InspectionParseError> {
+        self.json_nodes = capped_json_nodes(self.json_nodes, nodes);
         if self.json_nodes > MAX_STORED_JSON_NODES {
+            Err(InspectionParseError::Corrupt)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn parse_embedded_json(
+        &mut self,
+        parse_depth: usize,
+    ) -> Result<JsonSummary, InspectionParseError> {
+        if parse_depth > MAX_STREAMED_JSON_PARSE_DEPTH {
             return Err(InspectionParseError::Corrupt);
         }
         self.skip_whitespace()?;
         match self.peek()?.ok_or(InspectionParseError::Corrupt)? {
-            b'{' => {
-                let depth = parent_depth
-                    .checked_add(1)
-                    .ok_or(InspectionParseError::Corrupt)?;
-                if depth > MAX_STORED_JSON_DEPTH {
-                    return Err(InspectionParseError::Corrupt);
-                }
-                self.expect(b'{')?;
-                if self.consume(b'}')? {
-                    return Ok(());
-                }
-                loop {
-                    self.skip_string()?;
-                    self.expect(b':')?;
-                    self.parse_embedded_json(depth)?;
-                    if self.consume(b'}')? {
-                        return Ok(());
-                    }
-                    self.expect(b',')?;
-                }
+            b'{' => self.parse_json_object(parse_depth),
+            b'[' => self.parse_json_array(parse_depth),
+            b'"' => {
+                self.skip_string()?;
+                Ok(JsonSummary::scalar())
             }
-            b'[' => {
-                let depth = parent_depth
-                    .checked_add(1)
-                    .ok_or(InspectionParseError::Corrupt)?;
-                if depth > MAX_STORED_JSON_DEPTH {
-                    return Err(InspectionParseError::Corrupt);
-                }
-                self.expect(b'[')?;
-                if self.consume(b']')? {
-                    return Ok(());
-                }
-                loop {
-                    self.parse_embedded_json(depth)?;
-                    if self.consume(b']')? {
-                        return Ok(());
-                    }
-                    self.expect(b',')?;
-                }
+            b't' => {
+                self.expect_literal(b"true")?;
+                Ok(JsonSummary::scalar())
             }
-            b'"' => self.skip_string(),
-            b't' => self.expect_literal(b"true"),
-            b'f' => self.expect_literal(b"false"),
-            b'n' => self.expect_literal(b"null"),
-            b'-' | b'0'..=b'9' => self.parse_json_number(),
+            b'f' => {
+                self.expect_literal(b"false")?;
+                Ok(JsonSummary::scalar())
+            }
+            b'n' => {
+                self.expect_literal(b"null")?;
+                Ok(JsonSummary::scalar())
+            }
+            b'-' | b'0'..=b'9' => {
+                self.parse_json_number()?;
+                Ok(JsonSummary::scalar())
+            }
             _ => Err(InspectionParseError::Corrupt),
+        }
+    }
+
+    fn parse_json_object(
+        &mut self,
+        parse_depth: usize,
+    ) -> Result<JsonSummary, InspectionParseError> {
+        self.expect(b'{')?;
+        let scope = self.json_keys.begin_scope()?;
+        if self.consume(b'}')? {
+            return Ok(JsonSummary::container(0, 0));
+        }
+        let mut overflowed = false;
+        loop {
+            let key = self.parse_string_digest()?;
+            self.expect(b':')?;
+            let value = self.parse_embedded_json(parse_depth.saturating_add(1))?;
+            overflowed |= self.json_keys.upsert(scope, key, value)?.is_full();
+            if self.consume(b'}')? {
+                let values = self.json_keys.finish_scope(scope)?;
+                return Ok(if overflowed {
+                    JsonSummary::over_limit()
+                } else {
+                    JsonSummary::container(values.nodes, values.max_depth)
+                });
+            }
+            self.expect(b',')?;
+        }
+    }
+
+    fn parse_json_array(
+        &mut self,
+        parse_depth: usize,
+    ) -> Result<JsonSummary, InspectionParseError> {
+        self.expect(b'[')?;
+        let mut nodes = 0;
+        let mut max_depth = 0;
+        if self.consume(b']')? {
+            return Ok(JsonSummary::container(nodes, max_depth));
+        }
+        loop {
+            let value = self.parse_embedded_json(parse_depth.saturating_add(1))?;
+            nodes = capped_json_nodes(nodes, value.nodes);
+            max_depth = max_depth.max(value.max_depth);
+            if self.consume(b']')? {
+                return Ok(JsonSummary::container(nodes, max_depth));
+            }
+            self.expect(b',')?;
         }
     }
 
@@ -1282,158 +1345,60 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
         Ok(value)
     }
 
-    // A linear state machine keeps whitespace acceptance and numeric token
-    // boundaries visible in one place.
-    #[allow(clippy::too_many_lines)]
     fn parse_json_number(&mut self) -> Result<(), InspectionParseError> {
         self.skip_whitespace()?;
-        let mut token = [0_u8; 96];
-        let mut token_len = 0_usize;
-        let mut overflowed_token = false;
-        let mut integer_digits: i64;
-        let mut digit_position = 0_i64;
-        let mut first_significant_position = None;
-        let mut significant_prefix = 0_u64;
-        let mut significant_prefix_digits = 0_u8;
-        let mut later_nonzero = false;
-
-        if self.peek_raw()? == Some(b'-') {
-            push_number_byte(&mut token, &mut token_len, &mut overflowed_token, b'-');
-            self.next()?;
-        }
-        match self.next()?.ok_or(InspectionParseError::Corrupt)? {
-            b'0' => {
-                push_number_byte(&mut token, &mut token_len, &mut overflowed_token, b'0');
-                integer_digits = 1;
-                digit_position = 1;
-                if self.peek_raw()?.is_some_and(|byte| byte.is_ascii_digit()) {
-                    return Err(InspectionParseError::Corrupt);
-                }
-            }
-            first @ b'1'..=b'9' => {
-                track_significant_digit(
-                    first,
-                    &mut digit_position,
-                    &mut first_significant_position,
-                    &mut significant_prefix,
-                    &mut significant_prefix_digits,
-                    &mut later_nonzero,
-                );
-                integer_digits = 1;
-                push_number_byte(&mut token, &mut token_len, &mut overflowed_token, first);
-                while let Some(byte @ b'0'..=b'9') = self.peek_raw()? {
-                    self.next()?;
-                    track_significant_digit(
-                        byte,
-                        &mut digit_position,
-                        &mut first_significant_position,
-                        &mut significant_prefix,
-                        &mut significant_prefix_digits,
-                        &mut later_nonzero,
-                    );
-                    integer_digits = integer_digits.saturating_add(1);
-                    push_number_byte(&mut token, &mut token_len, &mut overflowed_token, byte);
-                }
-            }
-            _ => return Err(InspectionParseError::Corrupt),
-        }
-
-        if self.peek_raw()? == Some(b'.') {
-            self.next()?;
-            push_number_byte(&mut token, &mut token_len, &mut overflowed_token, b'.');
-            if !self.peek_raw()?.is_some_and(|byte| byte.is_ascii_digit()) {
-                return Err(InspectionParseError::Corrupt);
-            }
-            while let Some(byte @ b'0'..=b'9') = self.peek_raw()? {
-                self.next()?;
-                track_significant_digit(
-                    byte,
-                    &mut digit_position,
-                    &mut first_significant_position,
-                    &mut significant_prefix,
-                    &mut significant_prefix_digits,
-                    &mut later_nonzero,
-                );
-                push_number_byte(&mut token, &mut token_len, &mut overflowed_token, byte);
-            }
-        }
-
-        let mut explicit_exponent = 0_i64;
-        if self
-            .peek_raw()?
-            .is_some_and(|byte| matches!(byte, b'e' | b'E'))
-        {
-            let marker = self.next()?.ok_or(InspectionParseError::Corrupt)?;
-            push_number_byte(&mut token, &mut token_len, &mut overflowed_token, marker);
-            let mut exponent_negative = false;
-            if self
-                .peek_raw()?
-                .is_some_and(|byte| matches!(byte, b'+' | b'-'))
-            {
-                let sign = self.next()?.ok_or(InspectionParseError::Corrupt)?;
-                exponent_negative = sign == b'-';
-                push_number_byte(&mut token, &mut token_len, &mut overflowed_token, sign);
-            }
-            if !self.peek_raw()?.is_some_and(|byte| byte.is_ascii_digit()) {
-                return Err(InspectionParseError::Corrupt);
-            }
-            while let Some(byte @ b'0'..=b'9') = self.peek_raw()? {
-                self.next()?;
-                explicit_exponent = explicit_exponent
-                    .saturating_mul(10)
-                    .saturating_add(i64::from(byte - b'0'));
-                push_number_byte(&mut token, &mut token_len, &mut overflowed_token, byte);
-            }
-            if exponent_negative {
-                explicit_exponent = explicit_exponent.saturating_neg();
-            }
-        }
-
-        if !overflowed_token {
-            let token = std::str::from_utf8(&token[..token_len])
-                .map_err(|_| InspectionParseError::Corrupt)?;
-            let number = token
-                .parse::<f64>()
-                .map_err(|_| InspectionParseError::Corrupt)?;
-            if !number.is_finite() {
-                return Err(InspectionParseError::Corrupt);
-            }
-            return Ok(());
-        }
-
-        let Some(first_significant_position) = first_significant_position else {
-            return Ok(());
-        };
-        let adjusted_exponent = explicit_exponent
-            .saturating_add(integer_digits)
-            .saturating_sub(first_significant_position)
-            .saturating_sub(1);
-        match adjusted_exponent.cmp(&308) {
-            std::cmp::Ordering::Less => Ok(()),
-            std::cmp::Ordering::Greater => Err(InspectionParseError::Corrupt),
-            std::cmp::Ordering::Equal => {
-                const MAX_FINITE_PREFIX: u64 = 17_976_931_348_623_158;
-                if significant_prefix < MAX_FINITE_PREFIX
-                    || (significant_prefix == MAX_FINITE_PREFIX && !later_nonzero)
-                {
-                    Ok(())
-                } else {
-                    Err(InspectionParseError::Corrupt)
-                }
-            }
-        }
+        let mut adapter = JsonNumberReader::new(self.reader);
+        serde_json::from_reader::<_, serde_json::Number>(&mut adapter)
+            .map_err(|_| adapter.error.unwrap_or(InspectionParseError::Corrupt))?;
+        adapter.error.map_or(Ok(()), Err)
     }
 
-    fn parse_bounded_string(&mut self, byte_limit: usize) -> Result<String, InspectionParseError> {
-        let mut value = String::new();
+    fn parse_stack_string<const N: usize>(
+        &mut self,
+    ) -> Result<StackString<N>, InspectionParseError> {
+        let mut value = StackString::new();
+        self.parse_string_chars(|character| value.push(character))?;
+        Ok(value)
+    }
+
+    fn parse_session_id(&mut self) -> Result<SessionId, InspectionParseError> {
+        let value = self.parse_stack_string::<128>()?;
+        #[cfg(test)]
+        {
+            self.allocation_events += 1;
+        }
+        SessionId::new(value.as_str()).map_err(|_| InspectionParseError::Corrupt)
+    }
+
+    fn parse_incarnation_id(&mut self) -> Result<SessionIncarnationId, InspectionParseError> {
+        let value = self.parse_stack_string::<128>()?;
+        #[cfg(test)]
+        {
+            self.allocation_events += 1;
+        }
+        SessionIncarnationId::new(value.as_str()).map_err(|_| InspectionParseError::Corrupt)
+    }
+
+    fn parse_string_digest(&mut self) -> Result<JsonKeyFingerprint, InspectionParseError> {
+        let mut digest = Sha256::new();
+        let mut verifier = Sha256::new();
+        verifier.update(JSON_KEY_VERIFICATION_DOMAIN);
+        let mut length = 0_usize;
         self.parse_string_chars(|character| {
-            if character.len_utf8() > byte_limit.saturating_sub(value.len()) {
-                return Err(InspectionParseError::Corrupt);
-            }
-            value.push(character);
+            let mut bytes = [0_u8; 4];
+            let bytes = character.encode_utf8(&mut bytes).as_bytes();
+            length = length
+                .checked_add(bytes.len())
+                .ok_or(InspectionParseError::Corrupt)?;
+            digest.update(bytes);
+            verifier.update(bytes);
             Ok(())
         })?;
-        Ok(value)
+        Ok(JsonKeyFingerprint {
+            digest: digest.finalize().into(),
+            verifier: verifier.finalize().into(),
+            length,
+        })
     }
 
     fn skip_string(&mut self) -> Result<(), InspectionParseError> {
@@ -1590,6 +1555,281 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct JsonNumberReader<'a, 'fd> {
+    reader: &'a mut InspectionReader<'fd>,
+    error: Option<InspectionParseError>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'a, 'fd> JsonNumberReader<'a, 'fd> {
+    fn new(reader: &'a mut InspectionReader<'fd>) -> Self {
+        Self {
+            reader,
+            error: None,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Read for JsonNumberReader<'_, '_> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() || self.error.is_some() {
+            return Ok(0);
+        }
+        let mut written = 0;
+        while written < output.len() {
+            let byte = match self.reader.peek() {
+                Ok(Some(byte))
+                    if matches!(byte, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E') =>
+                {
+                    byte
+                }
+                Ok(_) => break,
+                Err(error) => {
+                    self.error = Some(error);
+                    return Err(io::Error::other("session inspection read failed"));
+                }
+            };
+            match self.reader.next() {
+                Ok(Some(_)) => {
+                    output[written] = byte;
+                    written += 1;
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    self.error = Some(error);
+                    return Err(io::Error::other("session inspection read failed"));
+                }
+            }
+        }
+        Ok(written)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct StackString<const N: usize> {
+    bytes: [u8; N],
+    len: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<const N: usize> StackString<N> {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; N],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, character: char) -> Result<(), InspectionParseError> {
+        let mut encoded = [0_u8; 4];
+        let bytes = character.encode_utf8(&mut encoded).as_bytes();
+        let end = self
+            .len
+            .checked_add(bytes.len())
+            .ok_or(InspectionParseError::Corrupt)?;
+        let destination = self
+            .bytes
+            .get_mut(self.len..end)
+            .ok_or(InspectionParseError::Corrupt)?;
+        destination.copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len])
+            .expect("stack string contains parser-validated UTF-8")
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+struct JsonSummary {
+    nodes: usize,
+    max_depth: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl JsonSummary {
+    const fn scalar() -> Self {
+        Self {
+            nodes: 1,
+            max_depth: 0,
+        }
+    }
+
+    fn container(child_nodes: usize, child_depth: usize) -> Self {
+        Self {
+            nodes: capped_json_nodes(1, child_nodes),
+            max_depth: child_depth.saturating_add(1),
+        }
+    }
+
+    const fn over_limit() -> Self {
+        Self {
+            nodes: MAX_STORED_JSON_NODES + 1,
+            max_depth: 0,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn capped_json_nodes(left: usize, right: usize) -> usize {
+    left.saturating_add(right).min(MAX_STORED_JSON_NODES + 1)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+struct JsonKeyScope {
+    id: u64,
+    base: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+struct JsonKeyFingerprint {
+    digest: [u8; 32],
+    verifier: [u8; 32],
+    length: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct JsonKeyEntry {
+    key: JsonKeyFingerprint,
+    scope: u64,
+    summary: JsonSummary,
+    bucket: usize,
+    next: Option<usize>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct JsonKeyTracker {
+    entries: Vec<JsonKeyEntry>,
+    buckets: Vec<Option<usize>>,
+    next_scope: u64,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl JsonKeyTracker {
+    fn new() -> Self {
+        Self {
+            entries: Vec::with_capacity(MAX_STORED_JSON_NODES),
+            buckets: vec![None; JSON_KEY_TRACKER_BUCKETS],
+            next_scope: 0,
+        }
+    }
+
+    fn begin_scope(&mut self) -> Result<JsonKeyScope, InspectionParseError> {
+        self.next_scope = self
+            .next_scope
+            .checked_add(1)
+            .ok_or(InspectionParseError::Corrupt)?;
+        Ok(JsonKeyScope {
+            id: self.next_scope,
+            base: self.entries.len(),
+        })
+    }
+
+    fn upsert(
+        &mut self,
+        scope: JsonKeyScope,
+        key: JsonKeyFingerprint,
+        summary: JsonSummary,
+    ) -> Result<JsonKeyInsert, InspectionParseError> {
+        let bucket = json_key_bucket(scope.id, &key.digest);
+        let mut cursor = self.buckets[bucket];
+        while let Some(index) = cursor {
+            let entry = &mut self.entries[index];
+            if entry.scope == scope.id && entry.key.digest == key.digest {
+                if entry.key.verifier != key.verifier || entry.key.length != key.length {
+                    return Err(InspectionParseError::Corrupt);
+                }
+                entry.summary = summary;
+                return Ok(JsonKeyInsert::Updated);
+            }
+            cursor = entry.next;
+        }
+        if self.entries.len() == MAX_STORED_JSON_NODES {
+            return Ok(JsonKeyInsert::Full);
+        }
+        let index = self.entries.len();
+        self.entries.push(JsonKeyEntry {
+            key,
+            scope: scope.id,
+            summary,
+            bucket,
+            next: self.buckets[bucket],
+        });
+        self.buckets[bucket] = Some(index);
+        Ok(JsonKeyInsert::Inserted)
+    }
+
+    fn finish_scope(
+        &mut self,
+        scope: JsonKeyScope,
+    ) -> Result<JsonScopeSummary, InspectionParseError> {
+        let entries = self
+            .entries
+            .get(scope.base..)
+            .ok_or(InspectionParseError::Corrupt)?;
+        if entries.iter().any(|entry| entry.scope != scope.id) {
+            return Err(InspectionParseError::Corrupt);
+        }
+        let mut nodes = 0;
+        let mut max_depth = 0;
+        for entry in entries {
+            nodes = capped_json_nodes(nodes, entry.summary.nodes);
+            max_depth = max_depth.max(entry.summary.max_depth);
+        }
+        let entry_count = entries.len();
+        for index in (scope.base..self.entries.len()).rev() {
+            let entry = &self.entries[index];
+            if self.buckets[entry.bucket] != Some(index) {
+                return Err(InspectionParseError::Corrupt);
+            }
+            self.buckets[entry.bucket] = entry.next;
+        }
+        self.entries.truncate(scope.base);
+        Ok(JsonScopeSummary {
+            entries: entry_count,
+            nodes,
+            max_depth,
+        })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn json_key_bucket(scope: u64, digest: &[u8; 32]) -> usize {
+    let mut prefix = [0_u8; 8];
+    prefix.copy_from_slice(&digest[..8]);
+    let hash = u64::from_le_bytes(prefix) ^ scope.rotate_left(17);
+    usize::try_from(hash % JSON_KEY_TRACKER_BUCKETS as u64)
+        .expect("JSON key bucket is always representable")
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+enum JsonKeyInsert {
+    Inserted,
+    Updated,
+    Full,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl JsonKeyInsert {
+    const fn is_full(&self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct JsonScopeSummary {
+    entries: usize,
+    nodes: usize,
+    max_depth: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy)]
 enum ContentInspectionKind {
     Text,
@@ -1605,39 +1845,6 @@ fn mark_field(fields: &mut u8, bit: u8) -> Result<(), InspectionParseError> {
     }
     *fields |= bit;
     Ok(())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn push_number_byte(token: &mut [u8; 96], token_len: &mut usize, overflowed: &mut bool, byte: u8) {
-    if let Some(slot) = token.get_mut(*token_len) {
-        *slot = byte;
-        *token_len += 1;
-    } else {
-        *overflowed = true;
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn track_significant_digit(
-    byte: u8,
-    digit_position: &mut i64,
-    first_significant_position: &mut Option<i64>,
-    significant_prefix: &mut u64,
-    significant_prefix_digits: &mut u8,
-    later_nonzero: &mut bool,
-) {
-    if byte != b'0' && first_significant_position.is_none() {
-        *first_significant_position = Some(*digit_position);
-    }
-    if first_significant_position.is_some() {
-        if *significant_prefix_digits < 17 {
-            *significant_prefix = *significant_prefix * 10 + u64::from(byte - b'0');
-            *significant_prefix_digits += 1;
-        } else if byte != b'0' {
-            *later_nonzero = true;
-        }
-    }
-    *digit_position = digit_position.saturating_add(1);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2268,8 +2475,9 @@ mod tests {
 
     use machine_god_core::SessionStoreErrorKind;
 
-    use super::FileSessionStore;
-    use super::retry_interrupted;
+    use super::{
+        FileSessionStore, JsonKeyFingerprint, JsonKeyTracker, JsonSummary, retry_interrupted,
+    };
 
     static NEXT_LISTING_ROOT: AtomicU64 = AtomicU64::new(0);
 
@@ -2322,5 +2530,29 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, rustix::io::Errno::IO);
         assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn json_key_digest_collision_fails_closed() {
+        let mut tracker = JsonKeyTracker::new();
+        let Ok(scope) = tracker.begin_scope() else {
+            panic!("first JSON key scope must be available")
+        };
+        let first = JsonKeyFingerprint {
+            digest: [7; 32],
+            verifier: [11; 32],
+            length: 4,
+        };
+        let collision = JsonKeyFingerprint {
+            digest: [7; 32],
+            verifier: [13; 32],
+            length: 4,
+        };
+        assert!(tracker.upsert(scope, first, JsonSummary::scalar()).is_ok());
+        assert!(
+            tracker
+                .upsert(scope, collision, JsonSummary::scalar())
+                .is_err()
+        );
     }
 }

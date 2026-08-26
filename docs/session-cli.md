@@ -1,29 +1,18 @@
 # Top-level session command
 
-Status: production and independent evidence composed for bounded Milestone 03
-slice 32 from exact delivered base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. Initial composition was
-`852fec7`; focused composition-gate remediation is exact
-`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused exact-1.94.1 evidence is
-green for 12 native inspection tests, 56 CLI unit tests, 46 independent CLI
-process tests, and native/CLI warnings-denied Clippy. Python, pinned-fx
-regeneration, WASI/FreeBSD target, diff/no-unsafe, and exact-tree release-matrix
-checks are also green. The full workspace gate passed on exact precursor
-`fa099f75277f7ae23a3ac220e66356c45223d1a5`,
-tree `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, under exact Rust/Cargo 1.94.1;
-documentation integrity is 85/146/620/81 with zero errors. Exact cycle-1
-candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected by formal review. Correctness/API reported `0/0/0/0`,
-native boundary/effects reported `0/0/0/1`, and performance/concurrency/
-resources reported `0/0/1/2`, in blocker/high/medium/low order. One native low
-duplicates the performance track's engine-limit-documentation low, so the
-deduplicated union is `0/0/1/2`. Remediation, its replacement local gate, and a
-three-fresh-review cycle remain pending, as do remote workflows, `main`
-integration, and delivery. This documentation correction does not claim that
-production remediation exists or that review is green. No compatibility or
-performance claim exists. The live evidence record is the
+Status: bounded Milestone 03 slice 32 remains in progress from exact delivered
+base `6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
+gate but is rejected. Correctness/API reported `0/0/1/2`, native boundary/
+effects `0/0/1/2`, and performance/concurrency/resources `0/0/1/1`, in
+blocker/high/medium/low order. The deduplicated findings are two medium themes
+(canonical-number mismatch and residual payload-proportional allocations) and
+two low themes (duplicate-key mismatch and stale maintained documentation).
+The contract below is the synchronized replacement contract, not a description
+of a green candidate: its exact composed SHA, complete gate, three fresh
+reviews, remote workflows, `main` integration, and delivery remain pending.
+No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
 This slice adds a strict, engine-free inspection of one current-schema
@@ -86,18 +75,21 @@ Successful inspection returns exactly these fields:
 | `message_count` | The number of provider-neutral stored messages, not a turn or history count. |
 | `metadata_entry_count` | The number of top-level metadata keys, without keys or values. |
 
-The native store must already have proved that the stored ID equals the
-requested ID, both identifiers satisfy the core bound, `revision >= 1`,
-`next_turn_sequence >= 1`, and the full record satisfies the store-owned
+The specialized native inspection parser must prove that the stored ID equals
+the requested ID, both identifiers satisfy the core bound, `revision >= 1`,
+`next_turn_sequence >= 1`, and the complete stream satisfies the store-owned
 current-schema, file-byte, aggregate-JSON-depth, aggregate-JSON-node,
-identifier, counter, and content-shape constraints. Loading for inspection does
-not invoke an engine and therefore does not prove or enforce its configurable
-limits, including the default 4,096-message, 8 MiB serialized-transcript, or
-256 KiB serialized-metadata limits. A store-valid historical record written
-under different engine limits remains inspectable even when it exceeds those
-current defaults. The inspection facade projects only the six fields above.
-It does not return or clone message bodies, tool arguments/results, reasoning,
-metadata keys, or metadata values into the CLI snapshot.
+identifier, counter, number, duplicate-key, and content-shape constraints. It
+must use canonical `serde_json::Number` acceptance and the same last-value-wins
+semantics as ordinary deserialization for duplicate keys in metadata and
+nested arbitrary JSON. Inspection does not invoke an engine and therefore does
+not prove or enforce its configurable limits, including the default 4,096-
+message, 8 MiB serialized-transcript, or 256 KiB serialized-metadata limits. A
+store-valid historical record written under different engine limits remains
+inspectable even when it exceeds those current defaults. The native boundary
+returns only the six fields above and never returns or clones message bodies,
+tool arguments/results, reasoning, metadata keys, or metadata values into the
+CLI snapshot.
 
 Human success is exactly this shape and order:
 
@@ -139,26 +131,37 @@ suffixes, or exact records are `NotFound`; no missing component is created.
 Unsafe, inaccessible, symlink, wrong-kind, or otherwise unavailable roots fail
 closed. Unsupported targets fail without filesystem access.
 
-An existing store loads exactly the requested record through
-`FileSessionStore::load`. The existing per-record ceiling is 8,651,165 bytes;
-stored JSON depth is at most 64 and stored JSON nodes at most 65,536. Current
-strict schema, digest, filename/ID binding, positive revision/allocator, and
-all message/metadata structural validation remain authoritative. Corrupt or
-future records are not skipped, repaired, migrated, or rewritten.
+An existing store inspects exactly the requested record through a specialized
+summary path, not `FileSessionStore::load`. The path makes one forward pass,
+requests at most 4 KiB per read, and never buffers the full file or constructs a
+`SessionRecord`. The existing per-record ceiling is 8,651,165 bytes; stored
+arbitrary JSON depth is at most 64 and the final deserialized arbitrary-JSON
+forest is at most 65,536 nodes. Current strict schema, digest, filename/ID
+binding, positive revision/allocator, canonical number acceptance, and all
+message/metadata structural validation remain authoritative. Known field,
+variant, and role tokens are recognized with fixed-stack scratch space. Only
+the returned session and incarnation ID strings are retained as payload-sized
+owned strings. Metadata and nested JSON object keys are represented during the
+pass by fixed-size digests in a strictly node-capped tracker; repeated keys
+replace the prior logical value and node contribution so the result matches
+ordinary last-value-wins deserialization. No transcript string, metadata key,
+or arbitrary JSON scalar is retained after validation. Corrupt or future
+records are not skipped, repaired, migrated, or rewritten.
 
 The command creates no state root and does not create, repair, rewrite,
-migrate, reset, or delete a record. Loading a present canonical record may
+migrate, reset, or delete a record. Inspecting a present canonical record may
 create its missing permanent private `0600` advisory-lock sidecar, as already
 documented for the file session store. The command is therefore described as
 no-root/no-record mutation, not strictly no-write. A missing root or record
 creates no sidecar.
 
-All state selection, descriptor work, record loading, and projection occur on
-the thread polling the future. The retained summary and successful transferred
-bytes/work are capped by the store and output ceilings, but this is not a
-latency or attempt bound. Exclusive sidecar-lock acquisition, filesystem
-latency, and retries after `EINTR` have no wall-clock or attempt ceiling and
-synchronously block the polling and CLI thread. There is no detached task,
+All state selection, descriptor work, streaming validation, and projection
+occur on the thread polling the future. File bytes, parser depth/nodes,
+fixed-size duplicate records, the two returned IDs, and final output are capped
+by store-owned limits; these are not engine limits and do not create a latency
+or attempt bound. Exclusive sidecar-lock acquisition, filesystem latency, and
+retries after `EINTR` have no wall-clock or attempt ceiling and synchronously
+block the polling and CLI thread. There is no detached task,
 thread, timer, Tokio runtime, configuration read, credential discovery, engine,
 provider, permission handler, prompt, workspace access, network access,
 terminal replay, resume, migration, recovery, or `.fx` access.

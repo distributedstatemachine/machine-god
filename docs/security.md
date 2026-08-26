@@ -1,39 +1,37 @@
 # Security
 
-In-progress bounded slice 32 has production and independent evidence composed
-initially through `852fec7` and focused composition-gate remediation through
-exact production precursor `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused native/CLI warnings-denied
-Clippy, explicit no-unsafe scanning, target checks, and the exact-tree release
-effect matrix are green. Exact precursor
-`fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
-`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
-gate under exact Rust/Cargo 1.94.1; documentation integrity is 85/146/620/81
-with zero errors. Exact cycle-1 candidate
-`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
-effects reported `0/0/0/1`, and performance/concurrency/resources reported
-`0/0/1/2`, with one overlapping low and deduplicated union `0/0/1/2`.
-Documentation remediation does not claim production remediation or green
-review. The replacement gate, three fresh reviews, remote workflows, `main`
-integration, and delivery remain pending. It adds no network, subprocess,
-credential, provider, permission, workspace, configuration,
-runtime, or engine authority. Its
+In-progress bounded slice 32 has rejected exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`. Correctness/API and native
+boundary/effects each reported `0/0/1/2`; performance/concurrency/resources
+reported `0/0/1/1`. The deduplicated findings are canonical-number mismatch,
+residual payload-proportional allocation, duplicate-key mismatch, and stale
+maintained documentation. Its complete exact-1.94.1 pre-remediation gate,
+Python 135/8-skip suite, pinned-fx/target/diff/no-unsafe checks, 85/146/626/81
+documentation check, and release effect matrix were green, but do not approve
+the rejected candidate. The synchronized replacement gate, three fresh
+reviews, remote workflows, `main` integration, and delivery remain pending.
+The slice adds no network, subprocess, credential, provider, permission,
+workspace, configuration, runtime, or engine authority. Its
 `session` facade captures only state environment inputs on first poll, opens
-only an existing validated machine-god hierarchy, and loads exactly one
-validated current-schema record. The CLI receives only bounded structural
-fields; message bodies, tool content, reasoning, metadata keys, and metadata
-values are dropped inside native. Missing hierarchy or record is `NotFound`
-without creation. Present loads retain only the store's documented ability to
+only an existing validated machine-god hierarchy, and must inspect exactly one
+validated current-schema record through the synchronized one-pass fixed-4-KiB
+summary parser. Canonical `serde_json::Number` semantics, fixed-stack known
+tokens, only two retained ID strings, and a fixed-digest strictly node-capped
+last-value-wins duplicate tracker are required. The CLI receives only bounded
+structural fields; message bodies, tool content, reasoning, metadata keys, and
+metadata values are dropped inside native. Missing hierarchy or record is `NotFound`
+without creation. Present inspections retain only the store's documented ability to
 create a private `0600` lock sidecar; no record is created, repaired, rewritten,
 migrated, reset, or deleted. Closed redacted error categories expose no path,
 environment value, record content, filename, or OS diagnostic. The exact
 boundary is in [`session-cli.md`](session-cli.md),
 [`native-session-inspection.md`](native-session-inspection.md), and the
 [`live ledger`](reviews/m03-session-cli-review-01.md). Non-exhaustive native
-categories fail closed to the CLI's `Unavailable` presentation. The composition
-adds no dependency or unsafe Rust; review is rejected, and the feature is not
+categories fail closed to the CLI's `Unavailable` presentation. File, depth,
+node, schema, identifier, and counter constraints are store-owned rather than
+engine limits. Lock wait, filesystem latency, and `EINTR` retries remain
+unbounded in time and attempts. Review is rejected, and the feature is not
 delivered. No compatibility or performance claim is made.
 
 Delivered bounded slice 31 adds no new network, subprocess, credential,

@@ -33,7 +33,7 @@ impl fmt::Display for InvalidId {
 
 impl std::error::Error for InvalidId {}
 
-fn validate(value: &str, kind: &'static str) -> Result<(), InvalidId> {
+fn validate_identifier(value: &str, kind: &'static str) -> Result<(), InvalidId> {
     if value.is_empty() {
         return Err(InvalidId {
             kind,
@@ -66,6 +66,16 @@ macro_rules! identifier {
         pub struct $name(String);
 
         impl $name {
+            #[doc = concat!("Validates borrowed ", $kind, " text without taking ownership.")]
+            ///
+            /// # Errors
+            ///
+            /// Returns [`InvalidId`] when the value is empty, longer than 128
+            /// bytes, or contains a character outside the portable ID alphabet.
+            pub fn validate(value: &str) -> Result<(), InvalidId> {
+                validate_identifier(value, $kind)
+            }
+
             #[doc = concat!("Parses a ", $kind, ".")]
             ///
             /// # Errors
@@ -74,7 +84,7 @@ macro_rules! identifier {
             /// bytes, or contains a character outside the portable ID alphabet.
             pub fn new(value: impl Into<String>) -> Result<Self, InvalidId> {
                 let value = value.into();
-                validate(&value, $kind)?;
+                Self::validate(&value)?;
                 Ok(Self(value))
             }
 
@@ -136,7 +146,7 @@ identifier!(ToolName, "tool name");
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionId, SessionIncarnationId, ToolName};
+    use super::{SessionId, SessionIncarnationId, ToolCallId, ToolName};
 
     #[test]
     fn identifiers_reject_log_and_path_injection_characters() {
@@ -154,5 +164,19 @@ mod tests {
         assert!(serde_json::from_str::<ToolName>(r#""not/a/tool""#).is_err());
         let tool = serde_json::from_str::<ToolName>(r#""read_file""#).unwrap();
         assert_eq!(tool.as_str(), "read_file");
+    }
+
+    #[test]
+    fn borrowed_validation_matches_owned_construction() {
+        for candidate in ["call-1", "read_file", "", "not/a/tool"] {
+            assert_eq!(
+                ToolCallId::validate(candidate).is_ok(),
+                ToolCallId::new(candidate).is_ok()
+            );
+            assert_eq!(
+                ToolName::validate(candidate).is_ok(),
+                ToolName::new(candidate).is_ok()
+            );
+        }
     }
 }

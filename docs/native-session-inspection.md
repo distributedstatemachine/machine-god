@@ -1,28 +1,16 @@
 # Native session inspection
 
-Status: production and focused evidence composed for in-progress Milestone 03
-slice 32 from exact delivered base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. Initial composition was
-`852fec7`; focused composition-gate remediation is exact
-`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. All 12 native inspection tests and
-focused native/CLI warnings-denied Clippy are green under exact Rust/Cargo
-1.94.1. Python, pinned-fx regeneration, WASI/FreeBSD target, diff/no-unsafe, and
-exact-tree release-matrix checks are also green. Exact precursor
-`fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
-`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
-formatting, workspace warnings-denied Clippy, test, and doctest gate under exact
-Rust/Cargo 1.94.1. Documentation integrity is 85/146/620/81 with zero errors.
-Exact cycle-1 candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected by formal review. Correctness/API reported `0/0/0/0`,
-native boundary/effects reported `0/0/0/1`, and performance/concurrency/
-resources reported `0/0/1/2`, in blocker/high/medium/low order. The native low
-duplicates one performance low, yielding a deduplicated `0/0/1/2` union.
-Remediation, a complete replacement gate, three fresh replacement reviews,
-remote workflows, `main` integration, and delivery remain pending. These
-documentation corrections do not claim that production remediation exists or
-that review is green. Its sole first consumer is the strict
+Status: bounded Milestone 03 slice 32 remains in progress from exact delivered
+base `6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
+gate but is rejected. The three formal verdicts were `0/0/1/2`, `0/0/1/2`, and
+`0/0/1/1`; the deduplicated findings are canonical-number mismatch, residual
+payload-proportional allocations, duplicate-key mismatch, and stale maintained
+documentation. This page now states the synchronized replacement contract.
+Its exact composed SHA, complete replacement gate, three fresh reviews, remote
+workflows, `main` integration, and delivery remain pending. Its sole first
+consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -40,10 +28,12 @@ inspect_process_session(id)
 ```
 
 Both constructors are inert. The first poll performs the synchronous native
-work. Successful data transfer and retained values have finite ceilings, but
-the operation has no wall-clock or attempt bound. Linux and macOS are
-supported. Other targets return fixed `UnsupportedPlatform` without state
-selection or filesystem access.
+work. The one-pass parser's file bytes, 4 KiB input buffer, fixed-stack token
+scratch, duplicate-tracker nodes, two returned ID strings, and retained summary
+have finite store-owned ceilings. They are not engine limits, and the operation
+has no wall-clock or attempt bound. Linux and macOS are supported. Other
+targets return fixed `UnsupportedPlatform` without state selection or
+filesystem access.
 
 `NativeSessionInspection` owns validated `SessionId` and
 `SessionIncarnationId` values plus `SessionRevision`, `next_turn_sequence`,
@@ -83,35 +73,41 @@ nonempty XDG behavior, no unrelated reads, and construction-versus-first-poll
 timing. A reusable crate-private helper is permitted, but no new public ambient
 environment API is required.
 
-## Existing-root load and projection
+## Existing-root streaming inspection and projection
 
 The facade reuses `open_existing_session_store`. Missing selected base or fixed
 suffix returns `NotFound` rather than the empty success used by listing.
 Existing hierarchy validation and descriptor retention remain unchanged. The
-facade calls `FileSessionStore::load` exactly once with the caller's already-
-validated ID and polls it to completion within its own future. A theoretically
-pending store future is an `Unavailable` failure; production load is currently
-synchronous on poll.
+facade invokes a crate-private specialized summary operation with the caller's
+already-validated ID. It does not call `FileSessionStore::load` and does not
+construct a `SessionRecord`.
 
-`Ok(None)` becomes `NotFound`. A loaded record is accepted only after the store
-has validated exact ID binding, schema, digest, file-byte and aggregate JSON
-depth/node ceilings, positive revision, positive next turn sequence, identifier
-bounds, and deserialized content shape. This store path does not invoke the
-engine's configurable validation and therefore does not enforce the default
-4,096-message, 8 MiB serialized-transcript, or 256 KiB serialized-metadata
-limits. A store-valid historical or differently configured record over those
-engine limits remains inspectable. The facade then moves the two IDs from the
-record, copies the scalar values, counts the top-level message vector and
-metadata map, and drops the remaining record without exporting it. Projection
-performs no serialization and adds no independent scan or aggregate limit.
+The summary operation reads the present no-follow regular record in one forward
+pass under the existing per-record advisory lock. Each OS read request is at
+most 4 KiB; no full-file buffer exists. Known envelope, record, message,
+content, tool, role, and variant tokens are recognized with fixed-stack scratch
+space. Long transcript strings and arbitrary JSON scalars are validated and
+discarded as they stream. Only the validated session ID and incarnation ID are
+retained as payload-sized strings; the remaining result fields are scalars.
 
-The rejected cycle-1 implementation first reads the complete capped record
-bytes, deserializes the complete envelope, and materializes an owned
-`SessionRecord` before discarding all but six summary fields. Output and final
-snapshot retention are bounded, but those properties do not make the internal
-load summary-oriented. Formal performance review classed that unnecessary raw
-JSON and owned-record materialization as a medium finding. Production
-remediation is pending and is not claimed by this documentation commit.
+The parser must match ordinary strict deserialization, not approximate its
+wire grammar. Typed envelope and record fields remain unique and closed.
+Numbers use canonical `serde_json::Number` acceptance before positive `u64`
+conversion where required. Metadata and nested arbitrary JSON use ordinary
+last-value-wins duplicate-key semantics. A fixed-digest tracker records object
+key identity and each key's current logical node contribution; a repeated key
+replaces its prior contribution. Tracker entries and aggregate arbitrary-JSON
+work are strictly capped by the store's 65,536-node limit, and container depth
+is capped at 64. This preserves final deserialized-tree node/count semantics
+without retaining key text or values. Exact filename/ID binding, schema,
+8,651,165-byte file ceiling, identifier bounds, positive revision and
+allocator, and content shape remain authoritative.
+
+These are store-owned persistence constraints. The summary path does not
+invoke engine validation and therefore does not enforce the configurable or
+default 4,096-message, 8 MiB serialized-transcript, or 256 KiB serialized-
+metadata limits. A store-valid historical or differently configured record
+over those engine limits remains inspectable.
 
 Store `NotFound` maps to `NotFound`, `Corrupt` maps to `Corrupt`, and every
 other store category maps to `Unavailable`. Root categories remain distinct in
@@ -120,7 +116,7 @@ collapses invalid/unsafe root details to its `Unavailable` presentation.
 
 ## Effects, races, and bounds
 
-Missing hierarchy or record is effect-free and no-create. Loading a present
+Missing hierarchy or record is effect-free and no-create. Inspecting a present
 record may create only its permanent owner-only lock sidecar through the
 existing store protocol. No record bytes are modified. No engine registry,
 live session, provider, event sink, permission policy, workspace, network,
@@ -128,17 +124,19 @@ configuration, credential, runtime, migration, recovery, reset, or upstream
 state is consulted.
 
 The retained root descriptor prevents path replacement from redirecting an
-in-flight load. Existing record-lock serialization, no-follow data/lock checks,
-exact read cap, strict decoding, and concurrent replacement semantics remain
-those of `FileSessionStore`. The retained summary and successful transferred
-bytes/work have finite ceilings, but exclusive sidecar-lock acquisition,
-filesystem latency, and retries after `EINTR` have no wall-clock or attempt
-bound. They execute synchronously and may block the polling and CLI thread.
-Inspection is one point-in-time durable snapshot; a later writer may advance
-the record after the load linearization point.
+in-flight inspection. Existing record-lock serialization, no-follow data/lock
+checks, exact file cap, and concurrent replacement semantics remain those of
+`FileSessionStore`. The bounded parser resources above do not bound exclusive
+sidecar-lock acquisition, filesystem latency, or retries after `EINTR`; those
+have no wall-clock or attempt ceiling. They execute synchronously and may block
+the polling and CLI thread. Inspection is one point-in-time durable snapshot;
+a later writer may advance the record after the inspection linearization point.
 
-Focused evidence must cover inert construction, state capture, supported and
-unsupported targets, missing hierarchy/record, exact projection of a nonempty
-record, lock-sidecar permissions, invalid and unsafe roots, corrupt/oversized/
-wrong-ID/nonregular/symlink records, retained-root replacement, redaction, and
-all category mappings. CLI and release-binary evidence is owned separately.
+Replacement evidence must cover inert construction, state capture, supported
+and unsupported targets, missing hierarchy/record, exact projection of a
+nonempty record, chunk boundaries, canonical and out-of-range number behavior,
+duplicate metadata/nested keys with last-value-wins counts, fixed resource
+ceilings, lock-sidecar permissions, invalid and unsafe roots, corrupt/
+oversized/wrong-ID/nonregular/symlink records, retained-root replacement,
+redaction, and all category mappings. CLI and release-binary evidence is owned
+separately. These requirements are pending on the replacement exact SHA.

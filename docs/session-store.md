@@ -136,9 +136,10 @@ Writes use the compact representation shown: the envelope has exactly
 `SessionRecord` JSON representation. Decoding is strict and versioned. Unknown
 or duplicate typed schema fields, missing or wrong-typed fields, malformed or
 non-UTF-8 documents, trailing data, and unsupported versions are rejected
-rather than ignored or migrated. Duplicate keys inside arbitrary embedded JSON
-values are not separately rejected. Revision zero and `next_turn_sequence`
-zero are not accepted from a stored file.
+rather than ignored or migrated. Duplicate keys in the metadata map and inside
+arbitrary embedded JSON values use `serde_json`'s ordinary last-value-wins map
+semantics; they are not typed-schema duplicates. Revision zero and
+`next_turn_sequence` zero are not accepted from a stored file.
 
 `MAX_FILE_SESSION_BYTES` is exactly `8_651_165`. It includes the v1 envelope
 and is sufficient for every `SessionRecord` that obeys all default
@@ -182,6 +183,34 @@ exclusive lock remains held. Malformed, oversized, wrong-version, wrong-ID, or
 nonregular state fails closed. The store does not truncate, quarantine,
 rewrite, unlink, migrate, or otherwise repair a corrupt record or nonregular
 artifact.
+
+## Specialized inspection summary
+
+The in-progress slice-32 native inspection boundary adds a crate-private
+summary operation beside ordinary `SessionStore::load`; it does not change the
+provider-neutral trait or the load behavior above. The synchronized replacement
+contract requires one forward pass over the same no-follow, locked record with
+OS read requests of at most 4 KiB. The operation does not buffer the complete
+file and does not construct a `SessionRecord`. Known schema and variant tokens
+use fixed-stack scratch space. Transcript strings and arbitrary JSON payloads
+are validated and discarded while streaming; only the returned session and
+incarnation ID strings survive as payload-sized allocations.
+
+The summary parser must accept and reject numbers exactly as canonical
+`serde_json::Number` parsing does. Typed schema fields remain unique. Metadata
+and nested arbitrary JSON preserve the last-value-wins behavior above through a
+fixed-digest duplicate tracker whose entries and logical node accounting are
+strictly capped by the 65,536-node store limit; repeated keys replace the prior
+logical value and its node contribution. The 64-level arbitrary-JSON depth cap,
+8,651,165-byte record cap, identifier/counter/content-shape checks, and exact
+filename/ID binding remain store-owned constraints. They are not the engine's
+configurable message, transcript, or metadata limits.
+
+Exact cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected and does not satisfy
+this synchronized contract. The replacement exact SHA, complete local gate,
+and fresh review cycle are pending; this subsection does not claim the
+specialized path is green or delivered.
 
 ## Save, compare-and-swap, and durability
 

@@ -53,48 +53,36 @@ review ledger is
 [`m03-session-cli-review-01.md`](reviews/m03-session-cli-review-01.md). Two
 independent discovery agents audited the remaining M03 CLI and pinned-fx
 surfaces and agreed this summary-only exact-ID inspection is the smallest
-coherent next slice. Production and independent evidence components were
-initially composed through `852fec7`; focused composition-gate remediation
-advances the production precursor to exact
-`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Exact gate precursor
-`fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
-`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
-gate under exact Rust/Cargo 1.94.1: formatting, workspace all-target/all-feature
-warnings-denied Clippy, workspace tests, and workspace doctests. The command
-returns only validated ID, incarnation, revision, allocator, message-count,
-and top-level metadata-count fields from one current-schema machine-god record.
-It exposes no transcript or metadata content and constructs no workspace, engine, provider,
-credential, permission handler, network transport, or runtime. State capture
-is first-poll and state-only; missing roots/records are no-create `NotFound`,
-while a present load may create only the store's documented private `0600` lock
-sidecar. Complete output is capped at 4,096 bytes. Composition fixed two seams:
-non-exhaustive native categories fail closed to `Unavailable`, and help bytes
-align to `Inspect a saved session`. Focused exact-1.94.1 evidence is green for
-12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
-tests, and native/CLI all-target/all-feature warnings-denied Clippy. The complete
-135-test Python suite passed with eight expected macOS skips; exact pinned-fx
-regeneration, native WASI no-default/all-feature, CLI WASI, native FreeBSD no-
-default, diff, and explicit no-unsafe checks are green. Only the documented
-pre-existing WASI `read_file` `dead_code` warning remains. A freshly rebuilt
-exact-tree release binary passed human/JSON success, invalid grammar before
-effects, missing-root JSON `NotFound`/no-create, record immutability, private-
-lock, and unrelated-root checks. Documentation integrity covers 85 Markdown
-files, 146 fenced blocks, 620 parsed links, and 81 unique repository targets
-with zero errors. Exact cycle-1 candidate
-`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected by formal review. Correctness/API reported `0/0/0/0`,
-native boundary/effects reported `0/0/0/1`, and performance/concurrency/
-resources reported `0/0/1/2`, in blocker/high/medium/low order. One native low
-duplicates the performance engine-limit-documentation low, so the deduplicated
-union is `0/0/1/2`. The medium finding is complete raw-JSON and owned-record
-materialization for a six-field summary. The unique lows are the inaccurate
-engine-limit-validation contract and the undisclosed unbounded exclusive-lock,
-filesystem-latency, and `EINTR`-retry behavior. The corrected documentation
-does not claim production remediation exists or review is green. Remediation,
-its complete replacement gate, three fresh replacement reviews, remote
-workflows, `main` integration, and delivery remain pending.
+coherent next slice. Exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
+gate but is rejected. Correctness/API reported `0/0/1/2`, native boundary/
+effects `0/0/1/2`, and performance/concurrency/resources `0/0/1/1`, in
+blocker/high/medium/low order. Deduplication yields two medium themes—canonical-
+number mismatch and residual payload-proportional allocations—and two low
+themes—duplicate-key mismatch and stale maintained documentation.
+
+The synchronized replacement contract keeps the strict CLI and six-field
+projection but requires a specialized one-pass summary operation rather than
+`FileSessionStore::load` or a full `SessionRecord`. It uses at most 4 KiB per
+read, fixed-stack known-token scratch, canonical `serde_json::Number`
+semantics, payload-sized ownership only for the two returned IDs, and a fixed-
+digest strictly 65,536-node-capped duplicate tracker that reproduces ordinary
+last-value-wins metadata/nested-JSON semantics. The 8,651,165-byte file,
+depth-64, node, schema, identifier, counter, and content-shape constraints are
+store-owned, not engine limits. Lock wait, filesystem latency, and `EINTR`
+retries remain unbounded in wall-clock time and attempt count.
+
+The pre-remediation `1d09a0d` gate passed all four required exact-1.94.1 Rust
+commands, Python 135 tests with eight expected macOS skips, exact pinned-fx
+regeneration, WASI/FreeBSD target, diff/no-unsafe, and release-matrix checks.
+Documentation integrity was 85 Markdown files, 146 fenced blocks, 626 parsed
+links, and 81 unique repository targets with zero errors. The 4,001,712-byte
+release binary had SHA-256
+`e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb`.
+Those results do not approve the rejected candidate. The synchronized
+replacement has no exact composed SHA; its complete gate, three fresh reviews,
+remote workflows, `main` integration, and delivery remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
@@ -3436,11 +3424,11 @@ force fast-forward, and exact `main` workflows.
 
 ### In-progress bounded slice 32: top-level `session`
 
-The thirty-second slice has production and independent evidence composed from
-exact delivered base `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
-composition was `852fec7`; focused composition-gate remediation advances the
-production precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. It adds only strict
+The thirty-second slice is in progress from exact delivered base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected; the synchronized
+replacement contract awaits its exact composed SHA. The slice adds only strict
 `session <id>` and `session <id> --json`. The ID is parsed through the core
 portable contract before effects, while exact tokens `last`, `--id`, and
 `--json` are reserved in ID position. Every upstream-style selector, reordered
@@ -3452,16 +3440,20 @@ tracked in
 [`m03-session-cli-review-01.md`](reviews/m03-session-cli-review-01.md).
 
 Native captures only `XDG_STATE_HOME` and lazy-fallback `HOME` on first poll,
-opens the already-existing validated machine-god hierarchy, loads the exact
-current-schema record once, and projects only ID, incarnation ID, positive
-revision, positive next turn sequence, message count, and top-level metadata-
-entry count. A successful inspection proves the store's file-byte, aggregate
-JSON depth/node, identifier, counter, and content-shape constraints. It does
-not invoke engine validation and therefore does not enforce the engine's
-configurable/default 4,096-message, 8 MiB serialized-transcript, or 256 KiB
-serialized-metadata limits; a store-valid historical or differently configured
-record over those limits remains inspectable. Missing hierarchy or record is
-no-create `NotFound`. Existing record loads may create only the file store's
+opens the already-existing validated machine-god hierarchy, and projects only
+ID, incarnation ID, positive revision, positive next turn sequence, message
+count, and top-level metadata-entry count. The synchronized replacement must
+inspect the exact current-schema record in one forward pass through a fixed
+4 KiB input buffer without calling `FileSessionStore::load` or constructing a
+full `SessionRecord`. Known tokens use fixed-stack scratch; only the two
+returned IDs retain payload-sized strings. Canonical `serde_json::Number`
+parsing and a fixed-digest strictly node-capped duplicate tracker must match
+ordinary last-value-wins metadata/nested-JSON semantics. These file-byte,
+aggregate JSON depth/node, identifier, counter, and content-shape constraints
+are store-owned. Inspection does not invoke engine validation and does not
+enforce its configurable/default 4,096-message, 8 MiB serialized-transcript, or
+256 KiB serialized-metadata limits. Missing hierarchy or record is no-create
+`NotFound`. Existing record inspections may create only the file store's
 permanent private `0600` lock sidecar. No transcript, metadata key/value,
 engine, provider, credential, configuration, permission, workspace, network,
 runtime, resume, replay, migration, recovery, or `.fx` authority crosses this
@@ -3494,27 +3486,19 @@ WASI/FreeBSD, documentation, diff/no-unsafe, and complete exact-tree release-
 binary gates are green. The fixed benchmark inventory remains unchanged, and
 no new dependency or unsafe Rust is introduced.
 
-Exact gate precursor `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
-`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
-gate under exact Rust/Cargo 1.94.1: formatting, workspace all-target/all-feature
-warnings-denied Clippy, workspace tests, and workspace doctests. Documentation
-integrity is green over 85 Markdown files, 146 fenced blocks, 620 parsed links,
-and 81 unique repository targets with zero errors. The complete Python suite,
-exact pinned-fx regeneration, WASI/FreeBSD target checks, diff/no-unsafe checks,
-and exact-tree release matrix described in the review ledger are also green.
-Exact cycle-1 candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`,
-tree `4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA
-local gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
-effects reported `0/0/0/1`, and performance/concurrency/resources reported
-`0/0/1/2`, in blocker/high/medium/low order. The native low duplicates the
-performance engine-limit-documentation low, so the deduplicated union is
-`0/0/1/2`. Performance's medium finding is that the candidate reads complete
-raw JSON and materializes a full owned `SessionRecord` for a six-field summary.
-The other performance low is the unbounded-lock/filesystem/`EINTR` latency
-documentation overclaim. This documentation commit corrects the two normative
-low themes but does not provide or claim the production optimization. Production
-remediation, the complete replacement gate, and three new reviewers remain
-pending. Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
+Exact cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`, passed the complete required local
+gate under exact Rust/Cargo 1.94.1 plus Python 135/8 skips, pinned-fx,
+WASI/FreeBSD, diff/no-unsafe, 85/146/626/81 documentation-integrity, and release-
+matrix checks. Its 4,001,712-byte release binary had SHA-256
+`e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb`.
+Formal cycle 2 rejected it: correctness/API reported `0/0/1/2`, native
+boundary/effects `0/0/1/2`, and performance/concurrency/resources `0/0/1/1`.
+The deduplicated union has two medium themes (canonical-number mismatch and
+residual payload-proportional allocations) and two low themes (duplicate-key
+mismatch and stale maintained docs). The synchronized contract above awaits an
+exact composed replacement SHA, complete replacement gate, and three new
+reviewers. Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, a non-force fast-forward, and exact `main` workflows. There is no
 claim that the candidate is green or that integration, workflows, or delivery
 are complete; the delivered count remains thirty-one. After slice 32 is
@@ -4480,28 +4464,23 @@ gate:
   `32939742230`, feature benchmark `32939742231`, main CI `32940279028`, and
   main benchmark `32940279005`; `main` was fast-forwarded without force. The
   delivered count is thirty-one. Strict `session <id> [--json]` is the
-  in-progress bounded slice 32 from exact delivered base `6e687b6`. Production
-  and independent evidence were initially composed through `852fec7`, with
-  focused remediation through production precursor `c0c16a7`. Its 12 native, 56
-  CLI unit, and 46 independent CLI process tests, focused native/CLI Clippy,
-  and representative release-binary human/JSON/`NotFound` smokes are green
-  under exact 1.94.1. Exact gate precursor `fa099f7`, tree `64d6a72`, passed the
-  complete required local exact-1.94.1 gate and documentation integrity with
-  zero errors. Its 135-test Python, exact pinned-fx regeneration, WASI/FreeBSD,
-  diff/no-unsafe, and exact-tree release-matrix checks are also green. Exact
-  cycle-1 candidate `5381d4b`, tree `4435bde`, passed its exact same-SHA local
-  gate but is rejected: correctness/API reported `0/0/0/0`, native boundary/
-  effects reported `0/0/0/1`, and performance/concurrency/resources reported
-  `0/0/1/2`, in blocker/high/medium/low order. The native low duplicates the
-  performance engine-limit-documentation low, yielding a deduplicated
-  `0/0/1/2` union. Full raw-JSON/owned-record materialization is the medium;
-  engine-limit-validation and unbounded lock/filesystem/`EINTR` latency
-  documentation are the unique lows. Documentation remediation is in progress;
-  production remediation, its replacement local gate, three fresh reviews,
-  remote workflows, `main` integration, and delivery remain pending. It is
-  limited to six structural fields from one exact machine-god record and makes
-  no compatibility or performance claim. After its delivery, bounded work
-  returns to the remaining native tools rather than further CLI inspection.
+  in-progress bounded slice 32 from exact delivered base `6e687b6`. Exact
+  cycle-2 candidate `1d09a0d`, tree `72a63c0`, passed its complete exact-
+  1.94.1 local gate plus Python 135/8 skips, pinned-fx, WASI/FreeBSD, diff/no-
+  unsafe, 85/146/626/81 docs-integrity, and release-matrix checks. Its
+  4,001,712-byte binary had SHA-256
+  `e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb`.
+  Formal cycle 2 rejected it: the three counts were `0/0/1/2`, `0/0/1/2`, and
+  `0/0/1/1`, deduplicated to canonical-number and residual-allocation medium
+  themes plus duplicate-key and stale-docs low themes. The synchronized
+  replacement requires one-pass fixed-4-KiB streaming, canonical
+  `serde_json::Number` semantics, fixed-stack known tokens, only two retained
+  ID strings, and a fixed-digest strictly node-capped last-value-wins duplicate
+  tracker. Its exact composed SHA, complete replacement gate, three fresh
+  reviews, remote workflows, `main` integration, and delivery remain pending.
+  It remains limited to six structural fields and makes no compatibility or
+  performance claim. After its delivery, bounded work returns to the remaining
+  native tools rather than further CLI inspection.
   `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but

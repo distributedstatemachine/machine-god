@@ -4,44 +4,41 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The in-progress slice-32 [`session` command](session-cli.md) has production and
-independent evidence initially composed through `852fec7` and focused
-composition-gate remediation composed through `c0c16a7`. Exact gate precursor
-`fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
-`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
-exact-1.94.1 gate. Exact cycle-1 candidate
-`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
-`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
-gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
-effects reported `0/0/0/1`, and performance/concurrency/resources reported
-`0/0/1/2`, in blocker/high/medium/low order. The native low duplicates the
-performance track's engine-limit-documentation low; the deduplicated union is
-`0/0/1/2`. The performance medium found that the six-field summary loads the
-full raw JSON and materializes an owned `SessionRecord`. Its two lows found the
-engine-limit-validation overclaim and the missing disclosure that lock wait,
-filesystem latency, and `EINTR` retries are unbounded. Remediation, a complete
-replacement gate, and three fresh replacement reviews are pending. This
-documentation correction neither supplies the production optimization nor
-makes review green; remote workflows, `main` integration, and delivery also
-remain pending.
+The in-progress slice-32 [`session` command](session-cli.md) has rejected exact
+cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+`72a63c07e4a48356f87c918a85def12b5943dad3`. Correctness/API reported
+`0/0/1/2`, native boundary/effects `0/0/1/2`, and performance/concurrency/
+resources `0/0/1/1`, in blocker/high/medium/low order. The deduplicated union
+has two medium themes—noncanonical JSON-number acceptance and residual payload-
+proportional allocations—and two low themes—duplicate-key mismatch and stale
+maintained documentation. The pre-remediation exact gate was green, including
+all four exact-1.94.1 Rust commands, Python 135 with eight expected macOS skips,
+pinned-fx regeneration, target/diff/no-unsafe checks, documentation integrity
+85/146/626/81, and the release matrix. Its 4,001,712-byte binary had SHA-256
+`e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb`.
+Those results are not a performance result and do not approve the rejected
+candidate.
 
-Python, pinned-fx regeneration, target, diff/no-unsafe, and exact-tree release-
-matrix checks are green but provide no performance result. A successful load
-accepts at most 8,651,165 file bytes and enforces aggregate JSON depth 64 and
-65,536 nodes before projecting six bounded structural fields and assembling
-complete output under an inclusive 4,096-byte ceiling. Those store and output
-ceilings do not enforce the engine's configurable/default message,
-serialized-transcript, or serialized-metadata limits; store-valid historical
-or differently configured records over those limits remain inspectable. The
-rejected implementation reads the complete capped record and materializes the
-complete owned record before projection. Retained summary and successful
-transferred bytes/work are finite, but exclusive sidecar-lock wait, filesystem
-latency, and `EINTR` retries have no wall-clock or attempt bound and
-synchronously block the polling and CLI thread. The fixed bootstrap inventory
-has no `session-json` workload and is unchanged. This slice is deliberately
-non-equivalent, not measured, and claim-ineligible; no sample, comparison,
-threshold, compatibility promotion, product-performance result, or fx-
-equivalence claim exists. The composition adds no dependency or unsafe Rust.
+The synchronized replacement contract requires a specialized one-pass summary
+parser with at most 4 KiB per read, fixed-stack known-token scratch, canonical
+`serde_json::Number` semantics, and payload-sized ownership only for the two
+returned IDs. Metadata and nested arbitrary JSON use fixed-size key digests in
+a strictly 65,536-node-capped tracker that replaces a repeated key's prior
+logical contribution, matching ordinary last-value-wins deserialization. The
+parser never buffers the full file, constructs a `SessionRecord`, or retains
+transcript/metadata payloads. The 8,651,165-byte file, depth-64, node, schema,
+identifier, counter, and content-shape ceilings are store-owned limits; they do
+not enforce engine-configurable/default message, serialized-transcript, or
+serialized-metadata limits. Exclusive sidecar-lock wait, filesystem latency,
+and `EINTR` retries remain unbounded in wall-clock time and attempt count and
+synchronously block the polling and CLI thread.
+
+The synchronized replacement has no exact composed SHA yet. Its complete gate,
+three fresh reviews, remote workflows, `main` integration, and delivery remain
+pending. The fixed bootstrap inventory has no `session-json` workload and is
+unchanged. This slice is deliberately non-equivalent, not measured, and claim-
+ineligible; no sample, comparison, threshold, compatibility promotion, product-
+performance result, or fx-equivalence claim exists.
 
 The delivered slice-30 [`doctor` command](doctor-cli.md) has explicit resource
 bounds but no performance result: exactly four closed checks and one complete
