@@ -2,14 +2,29 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_family = "wasm"))]
+use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(not(target_family = "wasm"))]
+use machine_god_native::inspect_process_doctor;
 use machine_god_native::{
     MAX_CONFIG_BYTES, NATIVE_DOCTOR_CHECK_COUNT, NativeDoctorCheckStatus,
     NativeDoctorCredentialStatus, NativeDoctorReport, NativeEnvironment, inspect_native_doctor,
 };
 
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(not(target_family = "wasm"))]
+const PROCESS_CHILD_MODE_ENV: &str = "MACHINE_GOD_DOCTOR_TEST_CHILD_MODE";
+#[cfg(not(target_family = "wasm"))]
+const PROCESS_OIDC_TOKEN: &str = "doctor-process-oidc_SECRET_NEVER_REAL";
+#[cfg(not(target_family = "wasm"))]
+const PROCESS_API_KEY: &str = "doctor-process-api-key_SECRET_NEVER_REAL";
+#[cfg(not(target_family = "wasm"))]
+const PROCESS_INVALID_TOKEN: &str = "doctor-process-invalid_SECRET NEVER REAL";
+#[cfg(not(target_family = "wasm"))]
+const PROCESS_PROBE_OK: &str = "machine-god doctor process probe ok";
 
 struct TemporaryDirectory(PathBuf);
 
@@ -448,4 +463,226 @@ fn non_unicode_selected_locations_are_redacted_and_invalid() {
         ),
     );
     assert!(!format!("{report:?}").contains("doctor-secret"));
+}
+
+#[cfg(unix)]
+#[test]
+fn overlong_roots_are_inaccessible_redacted_and_never_created() {
+    let temporary = TemporaryDirectory::new("overlong-roots");
+    let secret_component = "DOCTOR_OVERLONG_PATH_SECRET_".repeat(32);
+    let overlong_root = temporary.path().join(&secret_component);
+    let report = inspect_native_doctor(
+        &environment(Some(&overlong_root), Some(&overlong_root), None),
+        NativeDoctorCredentialStatus::Missing,
+    );
+
+    assert_report(
+        &report,
+        expected_report(
+            (
+                NativeDoctorCheckStatus::Fail,
+                "native configuration file is unreadable",
+            ),
+            (
+                NativeDoctorCheckStatus::Fail,
+                "no AI Gateway credential is configured",
+            ),
+            (
+                NativeDoctorCheckStatus::Fail,
+                "state directory is inaccessible",
+            ),
+        ),
+    );
+    assert!(!format!("{report:?}").contains("DOCTOR_OVERLONG_PATH_SECRET"));
+    assert!(!overlong_root.exists());
+    assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+}
+
+#[cfg(not(target_family = "wasm"))]
+struct ProcessDoctorCase {
+    mode: &'static str,
+    oidc: Option<OsString>,
+    api_key: Option<OsString>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_process_doctor_child(case: ProcessDoctorCase, temporary: &TemporaryDirectory) -> Output {
+    let config_root = temporary.path().join("PROCESS_CONFIG_PATH_SECRET");
+    let state_root = temporary.path().join("PROCESS_STATE_PATH_SECRET");
+    let home = temporary.path().join("PROCESS_HOME_PATH_SECRET");
+    let mut command = Command::new(std::env::current_exe().expect("doctor test executable"));
+    command
+        .arg("--exact")
+        .arg("process_doctor_environment_probe")
+        .arg("--nocapture")
+        .env(PROCESS_CHILD_MODE_ENV, case.mode)
+        .env("XDG_CONFIG_HOME", &config_root)
+        .env("XDG_STATE_HOME", &state_root)
+        .env("HOME", &home)
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY");
+    if let Some(value) = case.oidc {
+        command.env("VERCEL_OIDC_TOKEN", value);
+    }
+    if let Some(value) = case.api_key {
+        command.env("AI_GATEWAY_API_KEY", value);
+    }
+
+    let output = command.output().expect("run doctor inspection child");
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
+    assert!(!home.exists());
+    output
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn assert_process_doctor_child_success(mode: &str, output: &Output) {
+    assert!(
+        output.status.success(),
+        "doctor child failed for mode {mode}; stdout bytes={}, stderr bytes={}",
+        output.stdout.len(),
+        output.stderr.len()
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains(PROCESS_PROBE_OK),
+        "doctor child probe did not execute for mode {mode}"
+    );
+    for bytes in [&output.stdout, &output.stderr] {
+        let text = String::from_utf8_lossy(bytes);
+        for forbidden in [
+            PROCESS_OIDC_TOKEN,
+            PROCESS_API_KEY,
+            PROCESS_INVALID_TOKEN,
+            "PROCESS_NON_UNICODE_SECRET",
+            "PROCESS_CONFIG_PATH_SECRET",
+            "PROCESS_STATE_PATH_SECRET",
+            "PROCESS_HOME_PATH_SECRET",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "doctor child output leaked an injected marker in mode {mode}"
+            );
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn process_doctor_environment_probe() {
+    let Some(mode) = std::env::var_os(PROCESS_CHILD_MODE_ENV) else {
+        return;
+    };
+    let mode = mode.into_string().expect("doctor child mode is Unicode");
+    let credential = if cfg!(any(
+        feature = "ai-gateway-http",
+        feature = "ai-gateway-model-catalog-http"
+    )) {
+        match mode.as_str() {
+            "missing" => (
+                NativeDoctorCheckStatus::Fail,
+                "no AI Gateway credential is configured",
+            ),
+            "api-key" => (
+                NativeDoctorCheckStatus::Ok,
+                "AI_GATEWAY_API_KEY is configured",
+            ),
+            "oidc-precedence" => (
+                NativeDoctorCheckStatus::Ok,
+                "VERCEL_OIDC_TOKEN is configured",
+            ),
+            "invalid-bearer" => (
+                NativeDoctorCheckStatus::Fail,
+                "AI Gateway bearer token is invalid",
+            ),
+            #[cfg(unix)]
+            "invalid-environment" => (
+                NativeDoctorCheckStatus::Fail,
+                "AI Gateway credential environment is invalid",
+            ),
+            other => panic!("unsupported doctor child mode {other}"),
+        }
+    } else {
+        (
+            NativeDoctorCheckStatus::Fail,
+            "credential inspection is unavailable on this build",
+        )
+    };
+    let report = inspect_process_doctor();
+
+    assert_report(
+        &report,
+        expected_report(
+            (
+                NativeDoctorCheckStatus::Warn,
+                "configuration file is missing; using built-in defaults",
+            ),
+            credential,
+            (
+                NativeDoctorCheckStatus::Warn,
+                "state directory is not initialized",
+            ),
+        ),
+    );
+    let diagnostics = format!("{report:?}");
+    for forbidden in [
+        PROCESS_OIDC_TOKEN,
+        PROCESS_API_KEY,
+        PROCESS_INVALID_TOKEN,
+        "PROCESS_NON_UNICODE_SECRET",
+        "PROCESS_CONFIG_PATH_SECRET",
+        "PROCESS_STATE_PATH_SECRET",
+        "PROCESS_HOME_PATH_SECRET",
+    ] {
+        assert!(!diagnostics.contains(forbidden));
+    }
+    println!("{PROCESS_PROBE_OK}");
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn process_doctor_inspection_isolated_by_feature_mode_and_redacted() {
+    let cases = vec![
+        ProcessDoctorCase {
+            mode: "missing",
+            oidc: None,
+            api_key: None,
+        },
+        ProcessDoctorCase {
+            mode: "api-key",
+            oidc: None,
+            api_key: Some(OsString::from(PROCESS_API_KEY)),
+        },
+        ProcessDoctorCase {
+            mode: "oidc-precedence",
+            oidc: Some(OsString::from(PROCESS_OIDC_TOKEN)),
+            api_key: Some(OsString::from(PROCESS_API_KEY)),
+        },
+        ProcessDoctorCase {
+            mode: "invalid-bearer",
+            oidc: Some(OsString::from(PROCESS_INVALID_TOKEN)),
+            api_key: Some(OsString::from(PROCESS_API_KEY)),
+        },
+    ];
+    #[cfg(unix)]
+    let cases = {
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut cases = cases;
+        cases.push(ProcessDoctorCase {
+            mode: "invalid-environment",
+            oidc: Some(OsString::from_vec(
+                b"PROCESS_NON_UNICODE_SECRET\xff".to_vec(),
+            )),
+            api_key: Some(OsString::from(PROCESS_API_KEY)),
+        });
+        cases
+    };
+
+    for case in cases {
+        let mode = case.mode;
+        let temporary = TemporaryDirectory::new(mode);
+        let output = run_process_doctor_child(case, &temporary);
+        assert_process_doctor_child_success(mode, &output);
+        assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+    }
 }
