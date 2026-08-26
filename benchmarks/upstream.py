@@ -1402,13 +1402,17 @@ def validate_upstream_evidence(
             [fx_binary["path"], "doctor", "--json"],
             [machine_binary["path"], "doctor", "--json"],
         ),
+        "sessions-json": (
+            [fx_binary["path"], "sessions", "--json"],
+            [machine_binary["path"], "sessions", "--json"],
+        ),
     }
     expected_local_workloads = unavailable_workloads(
         Path(fx_binary["path"]), Path(machine_binary["path"])
     )
     if workloads[1:] != expected_local_workloads:
         raise ValueError("local workload inventory and narratives are not canonical")
-    for index, workload in enumerate(workloads[1:4], 1):
+    for index, workload in enumerate(workloads[1:5], 1):
         field = f"workloads[{index}]"
         if (
             workload.get("equivalence") != "non-equivalent"
@@ -1450,10 +1454,9 @@ def validate_upstream_evidence(
         require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
 
     unimplemented_commands = {
-        "sessions-json": [fx_binary["path"], "sessions", "--json"],
         "background-json": [fx_binary["path"], "background", "--json"],
     }
-    for index, workload in enumerate(workloads[4:], 4):
+    for index, workload in enumerate(workloads[5:], 5):
         field = f"workloads[{index}]"
         if (
             workload.get("equivalence") != "unimplemented"
@@ -3345,13 +3348,17 @@ def unavailable_workloads(
                 "intentional status, output, and exit-semantics differences from fx"
             ),
         ),
-    )
-    unimplemented = (
         (
             "sessions-json",
             [str(fx_binary), "sessions", "--json"],
-            "machine-god has no persisted session list command",
+            [str(machine_binary), "sessions", "--json"],
+            (
+                "machine-god reports only bounded persisted session IDs with "
+                "intentional schema, metadata, and truncation differences from fx"
+            ),
         ),
+    )
+    unimplemented = (
         (
             "background-json",
             [str(fx_binary), "background", "--json"],

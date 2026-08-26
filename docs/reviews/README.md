@@ -1,5 +1,9 @@
 # Adversarial reviews
 
+- [`m03-sessions-cli-review-01.md`](m03-sessions-cli-review-01.md) tracks the
+  in-progress bounded slice-31 `sessions [--json]` candidate. It is pre-review;
+  no formal green or delivery claim exists yet.
+
 Each feature and milestone receives fresh correctness/API, security/abuse, and
 performance/concurrency reviews. Store reports as `mNN-feature-review-NN.md` and
 record the exact reviewed commit, findings, resolutions, and rejected rationales.

@@ -1,5 +1,16 @@
 # Architecture
 
+In-progress bounded slice 31 preserves the host boundary for top-level
+`sessions [--json]`. `machine-god-cli` owns only strict parsing, bounded
+rendering, exit/channel behavior, and an injected host seam. `machine-god-
+native` owns process environment capture, no-create state-root selection,
+descriptor-safe ownership/mode/ACL validation, the file-store scan, and fixed
+redacted failures. `machine-god-core` gains no ambient environment, filesystem,
+process, workspace, or network authority. The command does not construct the
+full native reference host because session observation does not require config,
+credentials, provider transport, permission prompts, workspace tools, an
+engine, or a runtime. See the frozen [`sessions` contract](sessions-cli.md).
+
 `machine-god-core` contains provider-neutral contracts and orchestration without
 ambient operating-system authority. `machine-god-native` provides explicit native
 capabilities. `machine-god-cli` composes them. `machine-god-testkit` provides

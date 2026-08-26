@@ -6,6 +6,21 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
+Bounded Milestone 03 slice 31, strict top-level `sessions [--json]`, is in
+progress from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. It
+exposes the already-delivered bounded native session-ID observation through an
+engine-free process facade and thin CLI. Existing safe state roots yield at
+most 100 ascending IDs plus an explicit truncation bit; absent selected roots
+are empty without creation, while invalid or unsafe roots fail redacted. The
+command does not construct a workspace, engine, provider, credential, network
+transport, or runtime. Validation of an existing record retains the native
+library's documented ability to create a private `0600` lock sidecar. The
+[`sessions` contract](docs/sessions-cli.md) is frozen, and the
+[`live review ledger`](docs/reviews/m03-sessions-cli-review-01.md) remains pre-
+review. No delivery, compatibility, product-performance, or fx-equivalence
+claim is made yet. The delivered count remains thirty and M03 remains in
+progress.
+
 Bounded Milestone 03 slice 30, strict top-level `doctor [--json]`, is
 **DELIVERED** from exact delivered base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. It reports exactly four ordered

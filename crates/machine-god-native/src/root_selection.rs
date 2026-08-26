@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
-use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags};
 
 use crate::workspace::WorkspaceRoot;
 #[cfg(feature = "ai-gateway-http")]
@@ -140,19 +140,7 @@ impl NativeRootSelection {
         }
         let workspace_root = workspace_root.components().collect::<PathBuf>();
 
-        let state_selection = if let Some(value) = nonempty(environment.xdg_state_home.as_deref()) {
-            StateSelection::Xdg {
-                base: validated_state_base(value)?,
-            }
-        } else if let Some(value) = nonempty(environment.home.as_deref()) {
-            StateSelection::Home {
-                base: validated_state_base(value)?,
-            }
-        } else {
-            return Err(NativeRootSelectionError::new(
-                NativeRootSelectionErrorKind::StateRootUnavailable,
-            ));
-        };
+        let state_selection = select_state(environment)?;
 
         let state_root = state_selection
             .suffix()
@@ -180,6 +168,24 @@ impl NativeRootSelection {
     }
 }
 
+fn select_state(
+    environment: &NativeEnvironment,
+) -> Result<StateSelection, NativeRootSelectionError> {
+    if let Some(value) = nonempty(environment.xdg_state_home.as_deref()) {
+        Ok(StateSelection::Xdg {
+            base: validated_state_base(value)?,
+        })
+    } else if let Some(value) = nonempty(environment.home.as_deref()) {
+        Ok(StateSelection::Home {
+            base: validated_state_base(value)?,
+        })
+    } else {
+        Err(NativeRootSelectionError::new(
+            NativeRootSelectionErrorKind::StateRootUnavailable,
+        ))
+    }
+}
+
 impl fmt::Debug for NativeRootSelection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -200,6 +206,36 @@ fn validated_state_base(value: &OsStr) -> Result<PathBuf, NativeRootSelectionErr
         ));
     }
     Ok(path.components().collect())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExistingSessionStoreError {
+    InvalidEnvironment,
+    UnsafeStateRoot,
+    Unavailable,
+}
+
+pub(crate) fn open_existing_session_store(
+    environment: &NativeEnvironment,
+) -> Result<Option<FileSessionStore>, ExistingSessionStoreError> {
+    let selection =
+        select_state(environment).map_err(|_| ExistingSessionStoreError::InvalidEnvironment)?;
+    let effective_uid = rustix::process::geteuid().as_raw();
+    let Some(mut state_root) = open_existing_state_base(selection.base())? else {
+        return Ok(None);
+    };
+    validate_listing_directory(&state_root, effective_uid, false)?;
+
+    for (index, component) in selection.suffix().iter().enumerate() {
+        let is_final = index + 1 == selection.suffix().len();
+        let Some(next) = open_existing_suffix_directory(state_root.as_fd(), component)? else {
+            return Ok(None);
+        };
+        validate_listing_directory(&next, effective_uid, is_final)?;
+        state_root = next;
+    }
+
+    Ok(Some(FileSessionStore::from_root_descriptor(state_root)))
 }
 
 /// Stable category for native-root preparation failure.
@@ -390,6 +426,83 @@ fn open_state_base(path: &Path) -> Result<OwnedFd, PreparedNativeRootsError> {
     ensure_directory(&descriptor)
         .map_err(|()| PreparedNativeRootsError::new(PreparedNativeRootsErrorKind::StateBase))?;
     Ok(descriptor)
+}
+
+fn open_existing_state_base(path: &Path) -> Result<Option<OwnedFd>, ExistingSessionStoreError> {
+    let path_metadata = match rustix::fs::statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(metadata) => metadata,
+        Err(error) if error == rustix::io::Errno::NOENT => return Ok(None),
+        Err(_) => return Err(ExistingSessionStoreError::Unavailable),
+    };
+    if !FileType::from_raw_mode(path_metadata.st_mode).is_dir() {
+        return Err(ExistingSessionStoreError::UnsafeStateRoot);
+    }
+
+    let descriptor = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map_err(|_| ExistingSessionStoreError::Unavailable)?;
+    let descriptor_metadata =
+        rustix::fs::fstat(&descriptor).map_err(|_| ExistingSessionStoreError::Unavailable)?;
+    if !same_identity(&path_metadata, &descriptor_metadata)
+        || !FileType::from_raw_mode(descriptor_metadata.st_mode).is_dir()
+    {
+        return Err(ExistingSessionStoreError::Unavailable);
+    }
+    Ok(Some(descriptor))
+}
+
+fn open_existing_suffix_directory(
+    parent: BorrowedFd<'_>,
+    name: &str,
+) -> Result<Option<OwnedFd>, ExistingSessionStoreError> {
+    let path_metadata = match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(metadata) => metadata,
+        Err(error) if error == rustix::io::Errno::NOENT => return Ok(None),
+        Err(_) => return Err(ExistingSessionStoreError::Unavailable),
+    };
+    if !FileType::from_raw_mode(path_metadata.st_mode).is_dir() {
+        return Err(ExistingSessionStoreError::UnsafeStateRoot);
+    }
+
+    let Ok(descriptor) = rustix::fs::openat(
+        parent,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) else {
+        return Err(ExistingSessionStoreError::Unavailable);
+    };
+    let descriptor_metadata =
+        rustix::fs::fstat(&descriptor).map_err(|_| ExistingSessionStoreError::Unavailable)?;
+    if !same_identity(&path_metadata, &descriptor_metadata)
+        || !FileType::from_raw_mode(descriptor_metadata.st_mode).is_dir()
+    {
+        return Err(ExistingSessionStoreError::Unavailable);
+    }
+    Ok(Some(descriptor))
+}
+
+fn validate_listing_directory(
+    descriptor: &OwnedFd,
+    effective_uid: u32,
+    is_final: bool,
+) -> Result<(), ExistingSessionStoreError> {
+    validate_existing_directory(descriptor, effective_uid, is_final).map_err(|error| {
+        match error.kind() {
+            PreparedNativeRootsErrorKind::UnsafeStateDirectory => {
+                ExistingSessionStoreError::UnsafeStateRoot
+            }
+            PreparedNativeRootsErrorKind::WorkspaceRoot
+            | PreparedNativeRootsErrorKind::StateBase
+            | PreparedNativeRootsErrorKind::StateRoot
+            | PreparedNativeRootsErrorKind::OverlappingRoots => {
+                ExistingSessionStoreError::Unavailable
+            }
+        }
+    })
 }
 
 fn prepare_suffix_directory(

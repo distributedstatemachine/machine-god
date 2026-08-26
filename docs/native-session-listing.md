@@ -206,17 +206,21 @@ store has no authoritative session index. This slice does not derive those
 values from filesystem modification times, message contents, metadata maps,
 live registry state, or directory order.
 
-Consequently this slice adds no rich summaries, workspace filter, newest or
-latest selection, ordering other than lexical ID order, cursor, pagination,
-session-ID generation, deletion, cleanup, CLI command, slash command, or
-existing CLI-byte change. In particular, it does not implement fx's richer
-`sessions` behavior and makes no compatibility or upstream-equivalence claim.
+Consequently the delivered library slice adds no rich summaries, workspace
+filter, newest or latest selection, ordering other than lexical ID order,
+cursor, pagination, session-ID generation, deletion, cleanup, or slash command.
+In-progress bounded slice 31 now consumes this result through strict top-level
+`sessions [--json]`, without adding any of those absent semantics. Its separate
+[`CLI contract`](sessions-cli.md) uses a no-create, engine-free native process
+facade and preserves the exact scan bounds and per-record lock-sidecar effect.
+It does not implement fx's richer `sessions` behavior and makes no compatibility
+or upstream-equivalence claim.
 
-The `sessions-json` performance workload remains unimplemented for
-machine-god and claim-ineligible. This slice changes no benchmark workload,
-classification, inventory, workflow, or performance claim. Zig remains only
-the pinned toolchain used to build the upstream fx benchmark reference;
-machine-god remains a Rust product.
+The in-progress CLI changes the `sessions-json` performance workload only to
+implemented/non-equivalent/not-measured/claim-ineligible. It adds no samples,
+threshold, workflow, product-performance result, or compatibility promotion.
+Zig remains only the pinned toolchain used to build the upstream fx benchmark
+reference; machine-god remains a Rust product.
 
 The combined Milestone 03 root plus native create/list/resume/replay/reset
 library boundary is delivered: replacement regressions, all three formal

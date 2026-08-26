@@ -7,7 +7,8 @@ use machine_god_core::{
     SessionStore, SessionStoreError, SessionStoreErrorKind,
 };
 
-use crate::FileSessionStore;
+use crate::session_listing::list_sessions_from_store;
+use crate::{FileSessionStore, NativeSessionList};
 
 /// Maximum number of source values considered while avoiding the current
 /// session incarnation during reset.
@@ -227,33 +228,6 @@ impl fmt::Display for NativeSessionLifecycleError {
 
 impl Error for NativeSessionLifecycleError {}
 
-/// Bounded durable session-ID observation from one native store scan.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NativeSessionList {
-    session_ids: Vec<SessionId>,
-    truncated: bool,
-}
-
-impl NativeSessionList {
-    /// Returns the observed session IDs in ascending identifier order.
-    #[must_use]
-    pub fn session_ids(&self) -> &[SessionId] {
-        &self.session_ids
-    }
-
-    /// Consumes this result and returns its observed session IDs.
-    #[must_use]
-    pub fn into_session_ids(self) -> Vec<SessionId> {
-        self.session_ids
-    }
-
-    /// Reports whether a work or result bound prevented an exhaustive scan.
-    #[must_use]
-    pub const fn truncated(&self) -> bool {
-        self.truncated
-    }
-}
-
 /// By-ID durable lifecycle over one engine and its exact concrete file store.
 ///
 /// Construction verifies that `engine` contains the exact supplied
@@ -417,14 +391,7 @@ impl NativeSessionLifecycle {
     }
 
     fn list_sessions_polled(&self) -> Result<NativeSessionList, NativeSessionLifecycleError> {
-        let listing = self
-            .session_store
-            .list_session_ids()
-            .map_err(map_store_error)?;
-        Ok(NativeSessionList {
-            session_ids: listing.session_ids,
-            truncated: listing.truncated,
-        })
+        list_sessions_from_store(&self.session_store).map_err(map_store_error)
     }
 
     async fn reset_polled(&self, id: SessionId) -> Result<Session, NativeSessionLifecycleError> {

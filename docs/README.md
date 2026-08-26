@@ -8,6 +8,7 @@
 - [In-progress top-level `doctor` CLI contract](doctor-cli.md)
 - [Delivered top-level `models` CLI contract](models-cli.md)
 - [Implemented top-level `permissions` CLI contract](permissions-cli.md)
+- [In-progress top-level `sessions` CLI contract](sessions-cli.md)
 - [Native configuration and schema-v3 credential source](configuration.md)
 - [Native `read_file` tool](read-file.md)
 - [Native `list_files` tool](list-files.md)
@@ -59,3 +60,4 @@
 - [Milestone 03 `permissions` CLI review ledger](reviews/m03-permissions-cli-review-01.md)
 - [Milestone 03 `models` CLI delivery review ledger](reviews/m03-models-cli-review-01.md)
 - [Milestone 03 `doctor` CLI live review ledger](reviews/m03-doctor-cli-review-01.md)
+- [Milestone 03 `sessions` CLI live review ledger](reviews/m03-sessions-cli-review-01.md)

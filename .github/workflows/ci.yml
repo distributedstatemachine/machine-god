@@ -208,6 +208,61 @@ jobs:
               raise SystemExit("doctor JSON framing or output bound changed")
           if any(path.exists() for path in (config_root, state_root, home)):
               raise SystemExit("doctor created an isolated missing root")
+
+          sessions_root = Path(
+              tempfile.mkdtemp(prefix="machine-god-sessions-", dir=os.environ["RUNNER_TEMP"])
+          )
+          sessions_config_root = sessions_root / "missing-config"
+          sessions_state_root = sessions_root / "missing-state"
+          sessions_home = sessions_root / "missing-home"
+          sessions_environment = os.environ.copy()
+          sessions_environment.update(
+              {
+                  "XDG_CONFIG_HOME": str(sessions_config_root),
+                  "XDG_STATE_HOME": str(sessions_state_root),
+                  "HOME": str(sessions_home),
+              }
+          )
+          sessions_environment.pop("VERCEL_OIDC_TOKEN", None)
+          sessions_environment.pop("AI_GATEWAY_API_KEY", None)
+
+          def run_sessions(*arguments: str) -> subprocess.CompletedProcess[str]:
+              return subprocess.run(
+                  [str(binary), *arguments],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+                  env=sessions_environment,
+              )
+
+          sessions_human = run_sessions("sessions")
+          sessions_machine = run_sessions("sessions", "--json")
+          if sessions_human.returncode != 0 or sessions_machine.returncode != 0:
+              raise SystemExit(
+                  "sessions smoke exits: "
+                  f"human={sessions_human.returncode} json={sessions_machine.returncode}"
+              )
+          if sessions_human.stderr or sessions_machine.stderr:
+              raise SystemExit("sessions smoke wrote unexpected stderr")
+          if sessions_human.stdout != "[sessions] no saved sessions\n":
+              raise SystemExit(f"unexpected human sessions output: {sessions_human.stdout!r}")
+          sessions_report = json.loads(sessions_machine.stdout)
+          if list(sessions_report) != ["kind", "count", "truncated", "sessions"]:
+              raise SystemExit("sessions JSON top-level key order changed")
+          if sessions_report != {
+              "kind": "sessions",
+              "count": 0,
+              "truncated": False,
+              "sessions": [],
+          }:
+              raise SystemExit(f"unexpected sessions JSON report: {sessions_report!r}")
+          if not sessions_machine.stdout.endswith("\n"):
+              raise SystemExit("sessions JSON lost its final LF")
+          if any(
+              path.exists()
+              for path in (sessions_config_root, sessions_state_root, sessions_home)
+          ):
+              raise SystemExit("sessions created an isolated missing root")
           PY
 
   security:

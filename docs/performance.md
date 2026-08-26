@@ -4,17 +4,30 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The in-progress slice-30 [`doctor` command](doctor-cli.md) has explicit resource
+The delivered slice-30 [`doctor` command](doctor-cli.md) has explicit resource
 bounds but no performance result: exactly four closed checks and one complete
 human or compact JSON representation capped at 4,096 bytes including final LF.
 The bootstrap `doctor-json` record moves from unimplemented to implemented with
 both pinned-fx and machine-god commands `not-measured`, `equivalence: non-
-equivalent`, and `claim_eligible: false`. Workload order is unchanged;
-`sessions-json` and `background-json` remain unimplemented. The distinction is
+equivalent`, and `claim_eligible: false`. Workload order is unchanged. At that
+delivery `sessions-json` and `background-json` were unimplemented; slice 31
+below supersedes only the sessions classification. The doctor distinction is
 intentional because machine-god has a four-check readiness contract and
 different output/status/exit semantics. No sample, comparison, threshold,
 compatibility promotion, product-performance result, or fx-equivalence claim
 is introduced.
+
+The in-progress slice-31 [`sessions` command](sessions-cli.md) likewise adds
+resource bounds without a performance result. It preserves the native scan's
+100-ID, 1,024-entry, 64 MiB aggregate-record, and per-record ceilings and adds
+a 16 KiB complete serialized-output ceiling. `sessions-json` moves from
+`unimplemented` to implemented with both pinned-fx and machine-god commands
+`not-measured`, `equivalence: non-equivalent`, and `claim_eligible: false`.
+Machine-god returns a global, ascending, IDs-only truncated observation; fx
+returns workspace-aware, newest-first, rich cursor-paged summaries and has
+different corruption behavior. No sample, comparison, threshold, compatibility
+promotion, product-performance result, or fx-equivalence claim is introduced.
+`background-json` remains unimplemented.
 
 The delivered twenty-ninth top-level
 [`models` implementation](models-cli.md) supplies resource and concurrency
@@ -261,26 +274,24 @@ claim-ineligible shape. The current machine-god status is
 only read-only native configuration/runtime metadata, and neither its behavior
 nor its output contract has been shown equivalent to fx. Machine-god doctor is
 the strict four-check read-only contract above, not a semantic match for fx.
-`sessions-json` and background-task workloads remain `unimplemented` for
-machine-god; their fx commands also remain unmeasured because an unpaired result
-is not a comparison.
+`sessions-json` now exists in both binaries, but existence is not semantic
+equivalence. It has the same non-equivalent, not-measured, claim-ineligible
+shape as the other implemented local commands. The background-task workload
+remains `unimplemented`; its fx command remains unmeasured because an unpaired
+result is not a comparison.
 The validator fixes these distinct shapes and rejects commands, statuses,
 sample fields, or eligibility that drift from them. No M03 performance or
 compatibility claim is made. A later milestone must define matching semantics
 and fixtures and introduce claim-eligible reviewed evidence rather than relabel
 this bootstrap artifact.
 
-The first formal sixteenth
-[`native session-listing candidate`](native-session-listing.md) does not change
-that classification. Its first formal candidate was not green; the composed
-replacement is green across all three review tracks and awaits remote delivery.
-Its
-library result contains only sorted validated IDs and a truncation flag; it has
-no CLI path and is not semantically equivalent to fx's
-workspace-aware rich `sessions --json` surface. The `sessions-json` workload
-therefore remains unimplemented and claim-ineligible, with no samples or
-threshold claim. No benchmark definition, evidence schema, inventory, workflow,
-or pinned Zig input changes in this slice.
+The delivered sixteenth
+[`native session-listing candidate`](native-session-listing.md) established the
+sorted validated IDs and truncation flag. In-progress slice 31 adds its CLI
+path, so `sessions-json` is no longer called unimplemented. It remains
+non-equivalent and claim-ineligible, with both commands not measured and no
+samples or threshold claim, because it still lacks fx's workspace-aware rich
+summary and pagination semantics. The pinned Zig input remains unchanged.
 
 The eighteenth [`glob_files` candidate](glob-files.md) likewise adds no
 benchmark workload or result data. Its strict fields, enum values, and bytewise

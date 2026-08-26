@@ -41,6 +41,21 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
+The thirty-first bounded slice, strict top-level `sessions [--json]`, is **IN
+PROGRESS** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
+Its normative boundary is [`sessions-cli.md`](sessions-cli.md), and its pre-
+review ledger is
+[`m03-sessions-cli-review-01.md`](reviews/m03-sessions-cli-review-01.md).
+Native process composition, CLI production, and independent evidence are
+assigned to isolated non-overlapping worktrees while documentation and
+integration remain coordinator-owned. The command will expose only the existing
+bounded sorted session IDs and truncation bit through a safe no-create state-
+root facade; it will not invent fx's workspace, summary, newest-first, or
+pagination semantics. `sessions-json` becomes implemented but remains non-
+equivalent, not measured, and claim-ineligible. No candidate, green, workflow,
+integration, delivery, product-performance, or fx-equivalence claim exists yet.
+The delivered count remains thirty.
+
 The thirtieth bounded slice, strict top-level `doctor [--json]`, is
 **DELIVERED** from exact delivered base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Its normative boundary is
@@ -3271,9 +3286,64 @@ Sessions and background remain unimplemented. Pinned fx commit
 inventory, schema, and exit boundary; this slice makes no semantic-equivalence
 or product-performance claim.
 
+### In-progress bounded slice 31: top-level `sessions`
+
+The thirty-first slice is contract-frozen from exact delivered base
+`feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. It adds only strict
+`sessions [--json]`; every extension, reordered/repeated flag, extra or non-
+Unicode argument is rejected before environment or persistence effects. The
+normative boundary is [`sessions-cli.md`](sessions-cli.md), and the pre-review
+ledger is
+[`m03-sessions-cli-review-01.md`](reviews/m03-sessions-cli-review-01.md). No
+behavior-candidate, formal-green, workflow, integration, or delivery claim
+exists yet. The delivered count remains thirty and M03 remains in progress.
+
+The command exposes the delivered bounded native session-ID scan through a new
+engine-free native process facade. It selects only the machine-god state
+namespace, safely walks an existing root under the established ownership,
+mode, no-follow, and macOS ACL policy, and creates no missing root. A genuinely
+absent selected base or fixed suffix is an empty, non-truncated result. Invalid,
+unsafe, inaccessible, symlink, and wrong-kind roots fail with fixed redacted
+categories. The command does not construct the full reference host, workspace
+tools, config, credential source, provider, transport, permission handler,
+engine, or runtime. The existing scan may create a missing permanent private
+`0600` per-record lock sidecar while validating a canonical candidate; it never
+creates, repairs, rewrites, migrates, or deletes a record.
+
+Success returns no more than 100 distinct IDs in strict ascending lexical order
+plus `truncated`. Human output uses an empty `no saved sessions` line or a
+counted header and one ID row, with an explicit resource-limit line whenever
+truncated. Compact JSON fixes key order `kind,count,truncated,sessions`; each
+session object currently contains only `id`. Both representations end in one LF,
+are assembled before the first success write, and fit under an inclusive 16 KiB
+cap. Truncation is successful incomplete observation, not `has_more`, a cursor,
+or pagination. Closed operational categories are `Corrupt`, `Unavailable`,
+`Unsupported`, and `ResourceLimit`; neither channel reflects external details.
+
+Pinned fx instead defaults to the current workspace, supports `--all`,
+`--limit`, and `--cursor`, orders rich summaries newest-first, paginates, and
+skips/reports corrupt records. Current machine-god records have no
+authoritative workspace, title, preview, language, time, history-length, or
+display-rank fields. This slice therefore stays deliberately non-equivalent.
+The `sessions-json` benchmark record moves from `unimplemented` only to
+implemented/non-equivalent/not-measured/claim-ineligible. It gains no samples,
+threshold, performance claim, or compatibility promotion. Workload order and
+the pinned upstream input stay fixed; `background-json` remains unimplemented.
+
+Production and evidence work is assigned to three isolated, non-overlapping
+worktrees: native facade/root/store sharing, CLI production, and independent
+native/CLI/benchmark/CI evidence. Documentation and integration stay with the
+coordinator. After composition, focused checks and the complete exact Rust
+1.94.1 gate must pass before three fresh correctness/API, native persistence/
+portability, and performance/resource reviewers inspect the same exact SHA.
+Any finding rejects that candidate and requires remediation, the complete
+replacement gate, and three new reviewers. Discovery agents are not reviewers.
+Only a zero-finding candidate may proceed to exact feature workflows, a non-
+force fast-forward, and exact `main` workflows.
+
 ### Milestone 03 completion boundary
 
-The twenty-nine delivered slices do not complete Milestone 03.
+The thirty delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -4221,7 +4291,9 @@ gate:
   `32933879930`; `main` was fast-forwarded without force. It adds exactly four
   ordered read-only checks and no authority-bearing repair behavior. The
   delivered count is thirty, and this combined item stays
-  unchecked. `models [--json]` is
+  unchecked. Strict `sessions [--json]` is the in-progress bounded slice 31
+  from exact base `feaf9fa`; no behavior-candidate or delivery claim exists
+  yet. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

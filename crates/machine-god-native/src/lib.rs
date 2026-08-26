@@ -49,6 +49,7 @@ mod rename_file;
 mod root_selection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_lifecycle;
+mod session_listing;
 mod session_store;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
@@ -219,8 +220,11 @@ pub use root_selection::{
 pub use session_lifecycle::{
     MAX_SESSION_INCARNATION_ATTEMPTS, NativeSessionLifecycle, NativeSessionLifecycleBuildError,
     NativeSessionLifecycleBuildErrorKind, NativeSessionLifecycleError,
-    NativeSessionLifecycleErrorKind, NativeSessionList, SessionIncarnationSource,
-    SessionIncarnationSourceError,
+    NativeSessionLifecycleErrorKind, SessionIncarnationSource, SessionIncarnationSourceError,
+};
+pub use session_listing::{
+    NativeSessionList, NativeSessionListingError, NativeSessionListingErrorKind,
+    list_native_sessions, list_process_sessions,
 };
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,

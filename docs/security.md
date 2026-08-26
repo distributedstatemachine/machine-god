@@ -1,5 +1,19 @@
 # Security
 
+In-progress bounded slice 31 adds no new network, subprocess, credential,
+provider, permission, workspace, or engine authority. Its native `sessions`
+facade selects only the state namespace, walks existing fixed components without
+following symlinks, requires the established effective-user and private-root
+policy, and creates no missing state path. A missing selected root is an empty
+observation; invalid, unsafe, inaccessible, symlink, and wrong-kind roots fail
+with fixed redacted categories. The bounded store scan continues to validate
+canonical records under per-ID advisory locks, so it may create a missing
+private `0600` lock sidecar for an existing candidate; it does not create,
+repair, rewrite, migrate, or delete records. The full contract and current pre-
+review status are in [`sessions-cli.md`](sessions-cli.md) and the
+[`live ledger`](reviews/m03-sessions-cli-review-01.md). No green or delivery
+claim exists yet.
+
 Bounded slice 30 is **DELIVERED** from exact base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Strict top-level
 [`doctor [--json]`](doctor-cli.md) performs exactly four ordered read-only

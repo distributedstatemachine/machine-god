@@ -1,5 +1,20 @@
 # Command-line interface
 
+Bounded slice 31 adds an in-progress strict top-level `sessions [--json]`
+surface under the frozen [`sessions` contract](sessions-cli.md). Only those two
+forms are accepted, and parsing precedes environment and persistence effects.
+The command lists the existing native store's bounded, ascending session IDs;
+it does not invent workspace, title, preview, time, history, ranking, cursor, or
+pagination data. A narrow native process facade safely opens an existing state
+root without a workspace, engine, provider, credential, network transport, or
+runtime. Missing selected roots are empty without creation. Existing canonical
+records may cause the already-documented private `0600` lock sidecar to be
+created during validation. Human and compact JSON representations are built
+before output and capped at 16 KiB. The pinned `sessions-json` workload becomes
+implemented but remains non-equivalent, not measured, and claim-ineligible.
+The [`live review ledger`](reviews/m03-sessions-cli-review-01.md) is pre-review;
+the delivered count remains thirty and no green or delivery claim exists yet.
+
 The `machine-god` binary is the thin native reference host for the embeddable
 engine. This page defines the exact implemented Milestone 03 config/status and
 permissions surfaces. Status inspects process environment and filesystem
@@ -240,6 +255,8 @@ machine-god models
 machine-god models --json
 machine-god permissions
 machine-god permissions --json
+machine-god sessions
+machine-god sessions --json
 machine-god status
 machine-god status --json
 ```
@@ -265,6 +282,7 @@ Usage:
   machine-god doctor [--json]
   machine-god models [--json]
   machine-god permissions [--json]
+  machine-god sessions [--json]
   machine-god status [--json]
 
 Commands:
@@ -272,6 +290,7 @@ Commands:
   doctor       Run local health and preflight checks
   models       List available models
   permissions  Show the permission mode and rules
+  sessions     List saved sessions
   status       Show configuration and runtime information
 
 Options:
@@ -405,6 +424,25 @@ terminology in `security.md`. Exact cycle-5 candidate `0b13944d` then passed
 the complete replacement gate and three fresh reviews with zero findings at
 every severity.
 
+## Sessions output
+
+`machine-god sessions` writes `[sessions] no saved sessions` for an empty
+complete observation. A nonempty result writes `[sessions] N saved` followed by
+one ` - <id>` line per ascending session ID. Every truncated result appends
+`[sessions] listing incomplete: a resource limit was reached`. JSON uses fixed
+top-level key order `kind,count,truncated,sessions`, and each array element has
+the sole current key `id`:
+
+```json
+{"kind":"sessions","count":2,"truncated":false,"sessions":[{"id":"alpha"},{"id":"beta"}]}
+```
+
+Both forms end in one LF and are assembled under a 16 KiB ceiling before the
+first success write. The strict grammar, redacted error/channel boundary,
+state-root policy, native scan limits, permitted lock-sidecar write, and pinned-
+fx differences are normative in [`sessions-cli.md`](sessions-cli.md). Slice 31
+is still in progress; this exact-byte contract is not yet a delivery claim.
+
 ## Status output
 
 `machine-god status` writes four lines with a final LF:
@@ -488,7 +526,7 @@ this exact stderr with a final LF:
 
 ```text
 machine-god: invalid arguments
-Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | status [--json]]
+Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | sessions [--json] | status [--json]]
 ```
 
 An output-write failure exits 1 and uses this fixed diagnostic on stderr:
