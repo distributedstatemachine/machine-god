@@ -251,7 +251,7 @@ abort-on-panic release profile may terminate that host process.
 
 ## Separate model-catalog HTTP transport
 
-The locally composed `models [--json]` path uses a separate GET transport; it
+The delivered `models [--json]` path uses a separate GET transport; it
 does not change the POST generation transport above. Under the dedicated non-WASM
 `ai-gateway-model-catalog-http` gate, native publicly exports
 `AiGatewayModelCatalogHttpTransport`, `AiGatewayModelCatalogHttpEndpoint`,
@@ -358,8 +358,8 @@ response head, and body. An authenticated 401/403 may therefore create a second
 set of attempt-local waiters, but never a new provider deadline. The body
 buffer retains at most 256 KiB; a frame that would cross the inclusive cap is
 rejected before any of that frame is appended. Drop releases the request/
-response, buffer, and permit. The full parser, fallback, output, and candidate
-review status are in [`models-cli.md`](models-cli.md).
+response, buffer, and permit. The full parser, fallback, output, and delivery
+status are in [`models-cli.md`](models-cli.md).
 
 The concrete deadline waiter checks for a current Tokio handle before it
 constructs a Tokio timer. Without a runtime it remains inert, allowing the

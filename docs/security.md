@@ -2,7 +2,7 @@
 
 The core has no ambient filesystem, process, environment, credential, or
 network authority. Native capabilities are supplied explicitly by a host. The
-locally composed, replacement-gated twenty-ninth [`models` CLI
+delivered twenty-ninth [`models` CLI
 implementation](models-cli.md) keeps only validated available-model,
 access, result, error, and catalog-trait values provider-neutral in core. It
 confines Gateway parsing, ordering, fallback, deadline, credentials, TLS, HTTP,
@@ -43,13 +43,25 @@ cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the complete exact-1.94.1
 replacement gate without fallback. Three fresh formal reviews each reported
 0 blocker, 0 high, 0 medium, and 0 low findings; the deduplicated union is zero
 and the behavior candidate is **GREEN**. Exact feature-SHA workflows, non-force
-integration, exact `main` workflows, and delivery remained pending. Its pushed
-review seal passed feature benchmark run `32923421739`, but feature CI
+integration, exact `main` workflows, and delivery remained pending at that
+cycle-5 checkpoint. Its pushed review seal passed feature benchmark run
+`32923421739`, but feature CI
 `32923421679` failed solely on one Linux test-helper Clippy diagnostic; no
 integration occurred. Exact test-only cycle-6 replacement candidate `831d38c8`,
 tree `a92acc14`, passed its complete replacement gate and three fresh formal
-reviews with a zero-finding union. Replacement workflows, integration, and
-delivery remain pending. The ledger is
+reviews with a zero-finding union. Review-exempt delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress
+with twenty-nine delivered slices. This delivery makes no product-performance,
+speed, latency, memory, binary-size-improvement, catalog-equivalence,
+compatibility-promotion, or fx-equivalence claim. The final delivery-record
+commit is documentation-only and review-exempt; its own exact feature and
+`main` workflows will be reported at handoff rather than claimed here. The
+ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 Catalog HTTP now has a dedicated non-WASM
@@ -93,7 +105,7 @@ adversarial review. Exact feature CI `32891031065`, feature benchmark-evidence
 are green on that exact seal SHA. `main` was fast-forwarded without force from
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; each benchmark run retains
 exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress
-with twenty-eight delivered slices. This delivery makes no product-performance
+with twenty-nine delivered slices. This delivery makes no product-performance
 or fx-equivalence claim. The final delivery-record commit is documentation-only
 and review-exempt; its own exact feature and `main` workflows will be reported at
 handoff rather than claimed here. The

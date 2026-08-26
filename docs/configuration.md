@@ -39,7 +39,7 @@ product-performance or fx-equivalence claim. The final delivery-record commit
 is documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
 
-The locally composed twenty-ninth
+The delivered twenty-ninth
 [`models [--json]` implementation](models-cli.md) invokes this loader exactly
 once after complete argument validation. It validates the closed provider,
 transport, and credential-source selections before native credential or
@@ -69,13 +69,25 @@ and signal/output-lifecycle remediation is integrated at exact `aa60db1`, tree
 without fallback. Three fresh formal reviews each reported 0 blocker, 0 high,
 0 medium, and 0 low findings; their deduplicated union is zero and the behavior
 candidate is **GREEN**. Exact feature-SHA workflows, non-force integration,
-exact `main` workflows, and delivery remained pending. Its first pushed review
-seal passed feature benchmark run `32923421739`, but feature CI `32923421679`
+exact `main` workflows, and delivery remained pending at that cycle-5
+checkpoint. Its first pushed review seal passed feature benchmark run
+`32923421739`, but feature CI `32923421679`
 failed solely on one Linux test-helper Clippy diagnostic; no integration
 occurred. Exact test-only cycle-6 replacement candidate `831d38c8`, tree
 `a92acc14`, passed the complete replacement gate and three fresh formal reviews
-with a zero-finding union. Replacement workflows, integration, and delivery
-remain pending.
+with a zero-finding union. Review-exempt delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
+twenty-nine and M03 remains in progress. This delivery makes no product-
+performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed
+here.
 This catalog review result does not change the separate delivered configuration
 behavior.
 

@@ -1,7 +1,6 @@
 # Top-level `models` CLI contract
 
-Status: cycle-6 replacement review **GREEN**, but not yet replacement-CI-green,
-integrated, or delivered as the twenty-ninth bounded Milestone 03 slice. Exact
+Status: **DELIVERED** as the twenty-ninth bounded Milestone 03 slice. Exact
 cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
@@ -71,9 +70,19 @@ one-line test-only remediation is exact cycle-6 replacement candidate
 gate and three fresh formal reviews at 0 blocker, 0 high, 0 medium, and 0 low in
 every track, so the replacement is **REVIEW-GREEN**. The pinned comparison input
 remains fx commit
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
-compatibility-promotion, replacement-feature-workflow, integration, `main`-
-workflow, or delivery claim.
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Review-exempt delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
+twenty-nine and M03 remains in progress. This delivery makes no product-
+performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed
+here.
 
 The cycle-4 DNS remediation replaces Hickory's request-polled resolver with
 private bounded UDP/TCP exchange. It snapshots one fallible query-ID key at
@@ -87,8 +96,9 @@ candidate `27c75f4`, tree `5e40b24`. Its three fresh formal reviews are green
 with a zero-finding union. The first review seal's benchmark passed and its CI
 failed solely on the test-only Linux lint described above. Exact cycle-6
 replacement `831d38c8`, tree `a92acc14`, passed its complete gate and three
-fresh zero-finding reviews. Replacement feature-SHA CI and benchmark evidence,
-non-force fast-forward integration, and exact `main` workflows remain pending.
+fresh zero-finding reviews. Delivered seal `bacc5c3`, tree `da3183a`, passed
+the exact feature and `main` CI and benchmark-evidence workflow pairs recorded
+above and was fast-forwarded to `main` without force.
 
 The slice adds one read-only top-level command:
 
@@ -650,5 +660,6 @@ This slice adds no picker, model selection, generation call, catalog cache,
 offline catalog, account/team/login flow, pagination, streaming catalog,
 configuration schema field, SDK surface, or compatibility promotion. It makes
 no product-performance, speedup, latency, memory, or fx-equivalence claim.
-Benchmarks and remote workflow evidence remain later gates for the exact
-implemented candidate.
+Exact feature and `main` workflow delivery evidence is recorded above. A claim-
+eligible M07 benchmark comparison remains a later gate for any product-
+performance assertion.

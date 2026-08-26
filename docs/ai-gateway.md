@@ -4,7 +4,7 @@ This page is the normative contract for the sixth bounded Milestone 03 slice.
 It adds an executor-neutral `AiGatewayProvider` codec to
 `machine-god-native`, behind an explicitly injected `AiGatewayTransport`. The
 current CLI does not construct this generation provider or make generation
-requests. Its locally composed `models [--json]` command uses the separate
+requests. Its delivered `models [--json]` command uses the separate
 bounded catalog provider documented in [`models-cli.md`](models-cli.md).
 The separate optional [`ai-gateway-http` transport](ai-gateway-http.md) is one
 possible native injection; custom transports remain supported. The separate

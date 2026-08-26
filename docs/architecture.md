@@ -21,10 +21,9 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-eight delivered bounded slices. In-progress slice
-twenty-nine has a locally composed top-level `models [--json]` implementation
-through feature commit `e84ed2a46b1ac5fe7428414375609af562c65105`, without
-yet claiming a green candidate, integration, or delivery. Core owns only
+Milestone 03 has twenty-nine delivered bounded slices. Delivered slice
+twenty-nine adds top-level `models [--json]` through feature commit
+`e84ed2a46b1ac5fe7428414375609af562c65105`. Core owns only
 validated provider-neutral available-model/access/result values, the existing
 redacted provider error, and an object-safe `list_models(CancellationToken)`
 trait. Native owns the fixed Gateway GET,
@@ -66,8 +65,19 @@ Review-exempt seal `2064084`, tree `33818a4`, passed feature benchmark run
 Linux test-helper Clippy diagnostic; no integration occurred. Exact test-only
 cycle-6 replacement candidate `831d38c8`, tree `a92acc14`, passed its complete
 replacement gate and three fresh formal reviews with zero findings in every
-track. Replacement feature workflows, non-force integration, exact `main`
-workflows, and delivery remain pending.
+track. Review-exempt delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
+twenty-nine and M03 remains in progress. This delivery makes no product-
+performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed
+here.
 
 ```text
 machine-god-cli

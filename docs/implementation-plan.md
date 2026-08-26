@@ -43,7 +43,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-eight delivered bounded slices. The twenty-seventh `web_fetch`
+with twenty-nine delivered bounded slices. The twenty-seventh `web_fetch`
 slice is delivered on reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`. Exact feature CI `32874471757`,
@@ -128,10 +128,8 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
-The twenty-ninth bounded slice is contract-frozen, locally implemented, and
-formally **REVIEW-GREEN** in replacement cycle 6; it is not yet replacement-
-CI-green, integrated to `main`, or delivered. Its cycle-4 raw overlap-
-deduplicated union was 0 blocker,
+The twenty-ninth bounded slice is contract-frozen and **DELIVERED**. Its
+cycle-4 raw overlap-deduplicated union was 0 blocker,
 0 high, 1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
 1 medium, and 1 low remained unresolved at verdict collection. Topology
 documentation remediation is exact `268d35a`; signal/output-lifecycle
@@ -150,11 +148,19 @@ no integration occurred. Exact one-line test-only remediation and cycle-6
 replacement candidate `831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
 `a92acc141cab42061614a2e6f0f9d1f240325e2f`, passed the complete replacement
 gate. Three fresh formal cycle-6 tracks each reported 0 blocker, 0 high,
-0 medium, and 0 low; the deduplicated union is zero. Replacement exact feature-
-SHA CI and benchmark evidence, non-force fast-forward integration, exact
-`main` workflows, and delivery remain pending.
-Its
-exact top-level `models [--json]` boundary is
+0 medium, and 0 low; the deduplicated union is zero. Review-exempt delivered
+seal `bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
+twenty-nine and M03 remains in progress. This delivery makes no product-
+performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed
+here. Its exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). It starts
 from exact delivered base
@@ -227,10 +233,13 @@ review seal `2064084`, tree `33818a4`, passed feature benchmark run
 `32923421739`, while feature CI `32923421679` failed solely on the test-only
 Linux `needless_continue` lint. Exact test-only cycle-6 replacement `831d38c8`,
 tree `a92acc14`, passed the complete replacement gate and three fresh formal
-reviews with a zero-finding union. Replacement feature workflows, non-force
-integration, exact `main` workflows, and delivery remain pending. No product-
-performance, size-improvement,
-compatibility-promotion, or fx-equivalence claim is made.
+reviews with a zero-finding union. Delivered seal `bacc5c3`, tree `da3183a`,
+passed exact feature CI `32925681006`, feature benchmark-evidence `32925681009`,
+main CI `32926242609`, and main benchmark-evidence `32926242564`. `main` was
+fast-forwarded without force from `1de3b7e`; both benchmark runs retain exactly
+two unexpired exact-SHA artifacts for 90 days. The delivered count is twenty-
+nine and M03 remains in progress. No product-performance, size-improvement,
+compatibility-promotion, catalog-equivalence, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2735,7 +2744,7 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
-M03 remains **IN PROGRESS** with twenty-eight delivered slices. The delivery
+M03 remains **IN PROGRESS** with twenty-nine delivered slices. The delivery
 evidence makes no product-performance or fx-equivalence claim.
 
 ### Delivered bounded slice 28: top-level `permissions`
@@ -2911,7 +2920,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Review-green bounded slice 29: top-level `models`
+### Delivered bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -3098,11 +3107,21 @@ Three fresh formal cycle-6 correctness/API/compatibility, lifecycle/network/
 portability, and performance/concurrency/resources tracks bound exact candidate
 `831d38c8`, tree `a92acc14`. Each reported 0 blocker, 0 high, 0 medium, and
 0 low findings; the deduplicated union is zero. The replacement is formally
-**REVIEW-GREEN**. Exact replacement feature CI and benchmark-evidence workflows,
-non-force fast-forward integration, exact `main` workflows, and delivery remain
-pending. This replacement evidence makes no product-performance, speed,
-latency, memory, binary-size-improvement, catalog-equivalence, or fx-equivalence
-claim.
+**REVIEW-GREEN**. Documentation-only delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, is exempt from redundant
+adversarial review under the user's instruction. Exact feature CI `32925681006`
+and feature benchmark-evidence `32925681009` are green on that exact seal SHA.
+`main` was fast-forwarded without force from
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`; exact main CI `32926242609` and
+main benchmark-evidence `32926242564` are green on the same SHA. Each benchmark
+run retains exactly two unexpired exact-SHA artifacts for 90 days. The delivered
+count is twenty-nine and M03 remains in progress. This delivery makes no
+product-performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed
+here.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -3169,8 +3188,7 @@ workflows. Benchmark evidence is delivery evidence only.
 
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices and locally implemented, cycle-6 replacement-
-review-green twenty-ninth slice do not complete Milestone 03.
+The twenty-nine delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -4109,8 +4127,8 @@ gate:
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
   slash-command categories `general`, `session`, `model`, `security`, and
   `workspace`. Observable compatibility is scenario-based; command names may
-  remain intentional differences when documented. `models [--json]` has its
-  bounded slice-29 contract and local implementation. Exact cycle-2 candidate
+  remain intentional differences when documented. `models [--json]` is
+  delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt
   `c01139811685ae73031ed6f6cbd771e4ff636714` was also rejected and remediated.
@@ -4152,9 +4170,12 @@ gate:
   `needless_continue` diagnostic, so no integration occurred. Exact test-only
   cycle-6 replacement `831d38c8`, tree `a92acc14`, passed the complete
   replacement gate and three fresh reviews at 0 blocker, 0 high, 0 medium, and
-  0 low in every track. This combined item remains unchecked while replacement
-  feature workflows, non-force fast-forward, exact `main` gates, and the rest
-  of the M03 CLI inventory are pending.
+  0 low in every track. Delivered seal `bacc5c3`, tree `da3183a`, passed exact
+  feature CI `32925681006`, feature benchmark-evidence `32925681009`, main CI
+  `32926242609`, and main benchmark-evidence `32926242564`; `main` was fast-
+  forwarded without force from `1de3b7e`, and each benchmark run retains two
+  unexpired exact-SHA artifacts for 90 days. This combined item remains
+  unchecked because the rest of the M03 CLI inventory is pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

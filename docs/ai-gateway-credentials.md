@@ -3,9 +3,9 @@
 Status: Milestone 03 tenth slice integrated on `main` at
 `ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`. Exact main CI run `32573320962`
 and benchmark-evidence run `32573320937` are green. The delivered generation-
-credential behavior remains unchanged. A local `models [--json]`
-implementation now reuses the snapshot and adds a catalog-specific optional-
-auth projection. Its six focused independent credential cases are present in
+credential behavior remains unchanged. The delivered `models [--json]` slice
+reuses the snapshot and adds a catalog-specific optional-auth projection. Its
+six focused independent credential cases are present in
 native evidence `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. Exact catalog
 behavior candidate `2ea9d94`, tree `3a948b2`, passed its complete replacement
 gate but was rejected by cycle-2 review; none of its findings changed credential
@@ -29,8 +29,15 @@ review seal passed feature benchmark run `32923421739`, but feature CI
 `32923421679` failed solely on one Linux test-helper Clippy diagnostic; no
 integration occurred. Exact test-only cycle-6 replacement candidate `831d38c8`,
 tree `a92acc14`, passed the complete replacement gate and three fresh formal
-reviews with a zero-finding union. Replacement feature workflows, non-force
-integration, exact `main` workflows, and delivery remain pending.
+reviews with a zero-finding union. Documentation-only delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI
+`32926242609`, and main benchmark-evidence `32926242564`. `main` was fast-
+forwarded without force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`;
+each benchmark run retains two unexpired exact-SHA artifacts for 90 days.
+The final delivery-record commit is documentation-only and review-exempt; its
+own workflows will be reported at handoff rather than claimed here.
 Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 

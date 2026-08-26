@@ -4,7 +4,7 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The locally composed, replacement-gated twenty-ninth top-level
+The delivered twenty-ninth top-level
 [`models` implementation](models-cli.md) supplies resource and concurrency
 budgets, not a performance claim: one checked 30-second absolute provider deadline
 covers default-eight capacity waiting and at most two sequential requests.
@@ -37,14 +37,22 @@ integrated at exact `aa60db1`, tree `278fa365`. Exact cycle-5 candidate
 `27c75f4`, tree `5e40b24`, passed the complete exact-1.94.1 replacement gate
 without fallback. Three fresh formal reviews each reported 0 blocker, 0 high,
 0 medium, and 0 low findings; the deduplicated union is zero and the behavior
-candidate is **GREEN**. Exact feature-SHA workflow artifacts and a later claim-
-eligible M07 comparison remain required. Review seal `2064084`, tree `33818a4`,
+candidate is **GREEN**. A later claim-eligible M07 comparison remains required.
+Review seal `2064084`, tree `33818a4`,
 passed feature benchmark-evidence run `32923421739`, while CI `32923421679`
 failed solely on a test-only Linux Clippy diagnostic. Exact test-only cycle-6
 replacement candidate `831d38c8`, tree `a92acc14`, passed the complete local
-gate and three zero-finding formal reviews. This is regression and delivery-
+gate and three zero-finding formal reviews. Documentation-only delivered seal
+`bacc5c3`, tree `da3183a`, passed exact feature CI `32925681006`, feature
+benchmark-evidence `32925681009`, main CI `32926242609`, and main benchmark-
+evidence `32926242564`. `main` was fast-forwarded without force from
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`, and each benchmark run retains two
+unexpired exact-SHA artifacts for 90 days. This is regression and delivery-
 pipeline evidence only; it makes no speed, latency, memory, binary-size-
-improvement, catalog-equivalence, product-performance, or fx-equivalence claim.
+improvement, catalog-equivalence, compatibility-promotion, product-performance,
+or fx-equivalence claim. The final delivery-record commit is documentation-only
+and review-exempt; its workflows will be reported at handoff rather than claimed
+here.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence

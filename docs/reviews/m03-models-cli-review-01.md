@@ -1,7 +1,7 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: cycle-6 replacement review **GREEN** for bounded slice 29, but not yet
-replacement-CI-green, integrated, or delivered. Exact cycle-1 candidate
+Status: bounded slice 29 **DELIVERED** on cycle-6 replacement review **GREEN**.
+Exact cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
 was rejected by three fresh product-review tracks with a deduplicated union of
@@ -60,14 +60,19 @@ No integration occurred. Exact one-line test-only remediation and cycle-6
 replacement candidate `831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
 `a92acc141cab42061614a2e6f0f9d1f240325e2f`, passed the complete replacement
 gate and three fresh formal reviews with zero findings in every track.
-Replacement feature-SHA CI and benchmark evidence, non-force fast-forward
-integration, exact `main` workflows, and delivery remain pending.
+Review-exempt delivered seal `bacc5c3dbc2bf094cca12102030d21f468f11e7a`,
+tree `da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
+twenty-nine and M03 remains in progress.
 The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
 
-The locally composed lineage is:
+The composed delivery lineage is:
 
 | Component | Exact commit/tree | Current status |
 | --- | --- | --- |
@@ -95,7 +100,8 @@ The locally composed lineage is:
 | cycle-5 replacement gate and reviewed behavior | `27c75f4365af92759686402574d310ada596a923` / `5e40b24259d76196d573f752258c9a764b53f990` | complete exact-1.94.1 replacement gate and three fresh formal reviews green; zero findings in every track |
 | review-exempt cycle-5 submission seal | `31ce2f0a6493b3507dfcd1ee47d978ac5fc8a386` / `51aa5941877c65140a4bda058f4b909ec513a785` | recorded the immutable candidate and complete local gate before verdict collection; documentation only |
 | review-exempt cycle-5 green seal and first feature attempt | `20640843f49faf3de1b208bc6e8ee49ff0ff9c94` / `33818a48d3ef4f000789d10574ee2024de95cb29` | benchmark-evidence `32923421739` green; CI `32923421679` failed solely on exact-1.94.1 Quality Linux's test-only `needless_continue`; no integration |
-| cycle-6 Linux-lint remediation and reviewed replacement | `831d38c8da72b849704ef3ab508588a9d0499c5f` / `a92acc141cab42061614a2e6f0f9d1f240325e2f` | one-line test-only control-flow spelling fix; complete exact-1.94.1 gate and three fresh cycle-6 reviews green; zero findings in every track; replacement push pending |
+| cycle-6 Linux-lint remediation and reviewed replacement | `831d38c8da72b849704ef3ab508588a9d0499c5f` / `a92acc141cab42061614a2e6f0f9d1f240325e2f` | one-line test-only control-flow spelling fix; complete exact-1.94.1 gate and three fresh cycle-6 reviews green; zero findings in every track |
+| review-exempt delivered seal | `bacc5c3dbc2bf094cca12102030d21f468f11e7a` / `da3183a3368273c2b34324a5f33266dfe5644a0d` | exact feature and main CI plus benchmark-evidence workflows green; delivered as bounded slice 29 |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -123,9 +129,12 @@ cycle-5 reviews with a zero-finding union. Green seal `2064084`, tree `33818a4`,
 passed feature benchmark-evidence `32923421739`; feature CI `32923421679`
 failed solely on its test-only Linux lint. Exact test-only replacement
 `831d38c8`, tree `a92acc14`, passes the complete replacement gate and three
-fresh zero-finding cycle-6 reviews. This ledger does not claim replacement
-feature workflow success, integration, delivery, performance, compatibility
-promotion, or fx equivalence.
+fresh zero-finding cycle-6 reviews. Delivered seal `bacc5c3`, tree `da3183a`,
+passed exact feature CI `32925681006`, feature benchmark-evidence `32925681009`,
+main CI `32926242609`, and main benchmark-evidence `32926242564`; `main` was
+fast-forwarded without force from `1de3b7e`. This ledger makes no product-
+performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim.
 
 A local feature-topology refinement adds native
 `ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
@@ -187,8 +196,9 @@ integrates the lifecycle remediation. Exact replacement-gated cycle-5 candidate
 `27c75f4`, tree `5e40b24`, is green in all three fresh formal reviews with a
 zero-finding union. Its first feature benchmark passed and its first feature CI
 failed solely on test-only Linux lint. Exact replacement `831d38c8`, tree
-`a92acc14`, is green in all three fresh cycle-6 reviews. Replacement feature CI,
-integration, and exact `main` CI remain pending.
+`a92acc14`, is green in all three fresh cycle-6 reviews. Delivered seal
+`bacc5c3`, tree `da3183a`, passed exact feature and main CI plus benchmark-
+evidence workflows and was fast-forwarded to `main` without force.
 
 ## Exact cycle-2 replacement gate
 
@@ -863,10 +873,27 @@ Three fresh isolated product-review tracks bound exact replacement candidate
 The overlap-deduplicated union is 0 blocker, 0 high, 0 medium, and 0 low. No
 finding remains to remediate, so exact candidate `831d38c8`, tree `a92acc14`,
 is formally **REVIEW-GREEN**. The subsequent documentation-only green seal is
-exempt from another adversarial cycle under the user's instruction. Exact
-replacement feature CI and benchmark-evidence workflows, non-force fast-forward
-to `main`, exact `main` CI and benchmark-evidence workflows, and delivery remain
-pending.
+exempt from another adversarial cycle under the user's instruction.
+
+## Delivery
+
+Documentation-only delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006` and feature benchmark-evidence `32925681009`. `main` was fast-
+forwarded without force from exact delivered base
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`. Exact main CI `32926242609` and
+main benchmark-evidence `32926242564` then passed on the same seal SHA. Each
+benchmark run retains exactly two unexpired exact-SHA artifacts for 90 days.
+
+The slice is delivered as bounded slice 29, the delivered count is twenty-nine,
+and M03 remains **IN PROGRESS** because the remaining top-level CLI inventory
+and composed end-to-end boundary are still pending. Delivery makes no product-
+performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim. This final
+delivery-record commit is documentation-only and review-exempt under the user's
+instruction; its own exact feature and `main` workflows will be reported at
+handoff rather than claimed here.
 
 ## Remote and integration boundary
 

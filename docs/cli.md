@@ -45,13 +45,13 @@ adversarial review. Exact feature CI `32891031065`, feature benchmark-evidence
 are green on that exact seal SHA. `main` was fast-forwarded without force from
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`, and each benchmark run retains
 exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress
-with twenty-eight delivered slices. This delivery makes no product-performance
+with twenty-nine delivered slices. This delivery makes no product-performance
 or fx-equivalence claim. The final delivery-record commit is documentation-only
 and review-exempt; its own exact feature and `main` workflows will be reported at
 handoff rather than claimed here.
 
-The twenty-ninth bounded slice has a locally composed top-level
-`models [--json]` implementation in [`models-cli.md`](models-cli.md). It
+The delivered twenty-ninth bounded slice adds top-level `models [--json]` in
+[`models-cli.md`](models-cli.md). It
 preserves parse-before-effects, loads strict configuration exactly once, uses
 the existing two-name native credential policy, and composes a provider-neutral
 core catalog trait with one fixed bounded native Gateway GET provider. Native
@@ -90,9 +90,18 @@ review seal `2064084`, tree `33818a4`, passed feature benchmark run
 `32923421739`; feature CI `32923421679` failed solely on one Linux test-helper
 Clippy diagnostic, and no integration occurred. Exact test-only cycle-6
 replacement candidate `831d38c8`, tree `a92acc14`, passed the complete
-replacement gate and three fresh formal reviews with zero findings. Replacement
-feature workflows, non-force integration, exact `main` workflows, and delivery
-remain pending.
+replacement gate and three fresh formal reviews with zero findings. Review-
+exempt delivered seal `bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress
+with twenty-nine delivered slices. This delivery makes no product-performance,
+speed, latency, memory, binary-size-improvement, catalog-equivalence,
+compatibility-promotion, or fx-equivalence claim. The final delivery-record
+commit is documentation-only and review-exempt; its own exact feature and
+`main` workflows will be reported at handoff rather than claimed here.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -278,8 +287,9 @@ final LF and no identity prefix:
 The complete success output is built under an inclusive 64 KiB cap before its
 first stdout write. Exact failure shapes, codes, channels, credential/fallback
 behavior, and resource bounds are normative in
-[`models-cli.md`](models-cli.md). This exact cycle-6 replacement is review-green
-but not yet replacement-CI-green, integrated, or delivered.
+[`models-cli.md`](models-cli.md). Exact cycle-6 replacement `831d38c8`, tree
+`a92acc14`, is delivered under exact seal `bacc5c3`, tree `da3183a`, and the
+feature and `main` workflow evidence recorded above.
 
 The native command keeps its Ctrl-C listener and, on Unix, SIGTERM listener
 actively driven through rendering and every synchronous success or failure

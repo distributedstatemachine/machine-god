@@ -7,9 +7,9 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-eight delivered bounded slices. A twenty-ninth top-level
-`models [--json]` implementation is composed locally through feature commit
-`e84ed2a46b1ac5fe7428414375609af562c65105`; core, native, and CLI ownership
+twenty-nine delivered bounded slices. The twenty-ninth top-level
+`models [--json]` slice is **DELIVERED** from exact delivered base
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`; core, native, and CLI ownership
 and exact behavior are documented in the
 [`models` CLI contract](docs/models-cli.md). Checked-deadline/terminal-
 precedence remediation is present at `52e9b7d74f3979f7f7f55387243e96bd78773fe3`,
@@ -54,9 +54,18 @@ no integration occurred. Exact test-only replacement candidate
 `831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
 `a92acc141cab42061614a2e6f0f9d1f240325e2f`, passed the complete replacement
 gate and three fresh formal cycle-6 reviews at 0 blocker, 0 high, 0 medium, and
-0 low in every track. The slice is **REVIEW-GREEN**; replacement feature
-workflows, non-force fast-forward integration, exact `main` workflows, and
-delivery remain pending.
+0 low in every track. Documentation-only delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, is exempt from redundant
+adversarial review under the user's instruction. Exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI
+`32926242609`, and main benchmark-evidence `32926242564` are green on that
+exact seal SHA. `main` was fast-forwarded without force from
+`1de3b7eddf6a4d9046d48098defecf6bfa336442`, and each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. M03 remains in progress.
+The final delivery-record commit is documentation-only and review-exempt; its
+own exact feature and `main` workflows will be reported at handoff rather than
+claimed by this record.
 The CLI selects a dedicated `ai-gateway-model-catalog-http` feature that omits
 `web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a
@@ -67,7 +76,8 @@ handling is requested only by the CLI dependency; the existing
 `ai-gateway-http` umbrella continues to include direct `bytes`, catalog HTTP,
 and web fetch. The cycle-5 gate's 3,852,144-byte release binary and SHA are
 retained as regression evidence only and make no size-improvement, performance,
-or fx-equivalence claim.
+speed, latency, memory, catalog-equivalence, compatibility-promotion, or fx-
+equivalence claim.
 The twenty-eighth top-level
 `permissions [--json]` slice is **DELIVERED** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; it is read-only, ask-only, and

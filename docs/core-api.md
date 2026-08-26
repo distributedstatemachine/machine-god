@@ -88,7 +88,7 @@ iteratively if this configuration check fails.
 
 ## Available-model catalog boundary
 
-The locally composed twenty-ninth Milestone 03 slice adds provider-neutral
+The delivered twenty-ninth Milestone 03 slice adds provider-neutral
 catalog types without changing `Engine`, `ModelProvider`, generation model
 selection, or turn orchestration. `AvailableModel::new` accepts one 1–128-byte
 ID whose bytes are all visible ASCII `0x21..=0x7e`; failures expose only
@@ -131,13 +131,25 @@ complete exact-1.94.1 replacement gate without fallback. Three fresh formal
 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
 deduplicated union is zero and the behavior candidate is **GREEN**. Exact
 feature-SHA workflows, non-force integration, exact `main` workflows, and
-delivery remained pending. First pushed review seal `2064084`, tree `33818a4`,
+delivery remained pending at that cycle-5 checkpoint. First pushed review seal
+`2064084`, tree `33818a4`,
 passed feature benchmark run `32923421739`, while feature CI `32923421679`
 failed solely on one Linux test-helper Clippy diagnostic; no integration
 occurred. Exact test-only cycle-6 replacement candidate `831d38c8`, tree
 `a92acc14`, passed the complete replacement gate and three fresh formal reviews
-with zero findings. Replacement workflows, integration, and delivery remain
-pending. See [`models-cli.md`](models-cli.md).
+with zero findings. Review-exempt delivered seal
+`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
+`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
+`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
+and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
+force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
+exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
+twenty-nine and M03 remains in progress. This delivery makes no product-
+performance, speed, latency, memory, binary-size-improvement, catalog-
+equivalence, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows will be reported at handoff rather than claimed
+here. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 
