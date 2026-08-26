@@ -301,9 +301,10 @@ adapter makes one private required-tool request for exactly
 `gateway.perplexity_search` / `perplexity_search`, with `maxResults: 10` and
 `maxTokens: 4096`, over the same injected transport boundary. A separate strict
 codec requires exactly one provider-executed call, one matching final result,
-and a successful finish. Its 16 KiB request, 256 KiB response, 64 KiB record,
-256-record, 16,384-node, 30-second, and concurrency bounds do not borrow unused
-capacity from `AiGatewayLimits`. The complete contract is
+and a strict successful raw-v4 finish whose usage/raw-reason metadata is
+validated and discarded. Its 16 KiB request, 256 KiB response, 64 KiB record,
+256-record, 16,384-node, 30-second, and concurrency bounds do not borrow
+unused capacity from `AiGatewayLimits`. The complete contract is
 [`web-search.md`](web-search.md).
 
 After the outer provider has validated its finish event, it immediately drops

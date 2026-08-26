@@ -304,7 +304,7 @@ impl ResponseState {
             "response-metadata" if self.call_id.is_none() => Ok(()),
             "tool-call" => self.consume_call(&object),
             "tool-result" => self.consume_result(object),
-            "finish" => self.consume_finish(&object),
+            "finish" => self.consume_finish(object),
             _ => Err(protocol_error()),
         }
     }
@@ -359,22 +359,71 @@ impl ResponseState {
 
     fn consume_finish(
         &mut self,
-        object: &serde_json::Map<String, Value>,
+        mut object: serde_json::Map<String, Value>,
     ) -> Result<(), WebSearchTransportError> {
         if self.call_id.is_none() || self.result.is_none() || self.finished {
             return Err(protocol_error());
         }
-        let reason = object
-            .get("finishReason")
-            .and_then(Value::as_object)
-            .and_then(|reason| reason.get("unified"))
-            .and_then(Value::as_str);
-        if reason != Some("stop") {
+        if !(2..=3).contains(&object.len())
+            || !valid_finish_reason(object.remove("finishReason"))
+            || !valid_usage(object.remove("usage"))
+            || !valid_provider_metadata(object.remove("providerMetadata"))
+            || !object.is_empty()
+        {
             return Err(protocol_error());
         }
         self.finished = true;
         Ok(())
     }
+}
+
+fn valid_finish_reason(reason: Option<Value>) -> bool {
+    let Some(Value::Object(reason)) = reason else {
+        return false;
+    };
+    (1..=2).contains(&reason.len())
+        && reason.get("unified").and_then(Value::as_str) == Some("stop")
+        && reason.get("raw").is_none_or(Value::is_string)
+        && reason
+            .keys()
+            .all(|name| matches!(name.as_str(), "unified" | "raw"))
+}
+
+fn valid_usage(usage: Option<Value>) -> bool {
+    let Some(Value::Object(mut usage)) = usage else {
+        return false;
+    };
+    if !(2..=3).contains(&usage.len())
+        || !valid_token_group(
+            usage.remove("inputTokens"),
+            &["total", "noCache", "cacheRead", "cacheWrite"],
+        )
+        || !valid_token_group(
+            usage.remove("outputTokens"),
+            &["total", "text", "reasoning"],
+        )
+        || !usage.remove("raw").is_none_or(|value| value.is_object())
+    {
+        return false;
+    }
+    usage.is_empty()
+}
+
+fn valid_token_group(group: Option<Value>, allowed: &[&str]) -> bool {
+    let Some(Value::Object(group)) = group else {
+        return false;
+    };
+    group
+        .iter()
+        .all(|(name, value)| allowed.contains(&name.as_str()) && value.as_u64().is_some())
+}
+
+fn valid_provider_metadata(metadata: Option<Value>) -> bool {
+    metadata.is_none_or(|value| {
+        value
+            .as_object()
+            .is_some_and(|metadata| metadata.values().all(Value::is_object))
+    })
 }
 
 fn decode_provider_result(result: Value) -> Result<WebSearchResponse, WebSearchTransportError> {

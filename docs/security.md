@@ -15,8 +15,9 @@ replacement gate. Formal cycle 3 rejected exact candidate `aef6abe`, tree
 `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca`
 and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
 `f3557a5`, passes the complete replacement gate. Formal cycle 4 rejected exact
-`cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`; remediation is
-pending. It remains a local authority-bearing tool: strict
+`cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`. Remediation is
+composed from exact component `dc79c8d`, tree `e2fed70`; its replacement gate
+and review remain pending. It remains a local authority-bearing tool: strict
 effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares
 `Capability::Network` for the exact configured AI Gateway scheme/host/port,
@@ -31,7 +32,9 @@ expected `providerExecuted: true` call and one matching final result; malformed,
 duplicate, missing, reordered, ambiguous, preliminary-only, provider-error, or
 incomplete state fails closed. The call's bounded stringified input and the
 official Perplexity success result are strictly decoded; result ID, snippet, and
-date fields are validated then discarded. Titles and absolute HTTP(S) URLs are
+date fields are validated then discarded. Required raw-v4 finish usage and raw-
+reason metadata are also strictly validated and discarded under the same
+record/response/node ceilings. Titles and absolute HTTP(S) URLs are
 independently bounded; unsafe, credential-bearing, malformed, or URL-invalid
 numeric hosts and ports are not exposed. Every success marks the ordered sources
 as untrusted reference material. Fixed errors and debug output reflect no

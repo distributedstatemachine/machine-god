@@ -28,7 +28,8 @@ gate. Formal cycle 3 rejected exact candidate
 exact isolated components `5d45dca` and `454f8fd` compose its remediation. The
 exact composed precursor `b834205`, tree `f3557a5`, passes the complete
 replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree `ad0c3d3`, with
-a deduplicated `0/0/1/1`; finish-envelope and documentation remediation is
+a deduplicated `0/0/1/1`. Finish-envelope remediation is composed from exact
+component `dc79c8d`, tree `e2fed70`, with its replacement gate and review
 pending. The slice is not yet review-green, integrated, or delivered. The live status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 
@@ -128,6 +129,18 @@ by exactly one matching, final, non-preliminary `tool-result`. Missing,
 duplicated, reordered, malformed, ambiguous, or conflicting identities and
 results fail closed. An incomplete, provider-error, content-filtered, missing,
 or contradictory finish also fails closed.
+
+The authoritative finish is a strict raw-v4 envelope. It requires exact
+`finishReason` and `usage` objects, permits only optional object
+`providerMetadata` whose provider-keyed values are objects, and accepts only
+unified `stop`. The finish reason contains an optional string raw reason because
+a TypeScript `undefined` value is absent on the JSON wire. Usage requires
+`inputTokens` and `outputTokens` objects and permits optional object `raw`;
+present standard token counters must be
+nonnegative integers representable as `u64`, while undefined counters are
+absent on the wire. Usage and provider metadata are validated and discarded
+under the existing record, response, and decoded-node ceilings. Unknown or
+mistyped finish members fail closed, and inner usage or billing is not exposed.
 
 The decoder accepts one optional initial exact `stream-start` warnings envelope
 and the bounded response metadata used by the raw v4 stream. A `tool-call` input

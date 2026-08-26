@@ -12,7 +12,9 @@ sources, 512 title bytes, 2,048 URL bytes, 16 KiB request, 256 KiB response,
 64 KiB record, 256 records, 16,384 JSON nodes, a separately parsed 16 KiB/256-
 node provider-call input, a 512-byte provider-result ID, 48 KiB serialized
 output, a 30-second total deadline beginning before capacity wait, default
-concurrency four, and hard concurrency sixteen.
+concurrency four, and hard concurrency sixteen. Required finish usage and
+provider metadata are not retained beyond validation and share the fixed
+record, response, and decoded-node ceilings.
 
 One approved execution makes at most one Perplexity worker request with no
 retry, fallback, cache, page fetch, progress stream, or detached work. The
@@ -29,7 +31,8 @@ passes the complete local gate. Exact cycle-2 remediation `366cef9`, tree
 components `5d45dca` and `454f8fd` compose its remediation. Exact precursor
 `b834205`, tree `f3557a5`, passes the complete replacement gate. Formal cycle 4
 rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
-remediation is pending. No
+exact finish-envelope remediation component `dc79c8d`, tree `e2fed70`, is
+composed. Its replacement gate and review remain pending. No
 latency, throughput, allocation
 improvement, binary-size improvement, compatibility promotion, or
 fx-equivalence claim follows. The

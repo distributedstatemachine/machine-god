@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 4 REJECTED; REMEDIATION PENDING**
+Status: **IN PROGRESS — CYCLE 4 REMEDIATION COMPOSED; REPLACEMENT GATE PENDING**
 
 ## Base and boundary
 
@@ -369,6 +369,19 @@ The low finding is this ledger's stale top-level cycle-3 status despite its own
 cycle-4 kickoff evidence. That status is corrected above. After protocol
 remediation and a complete exact gate, three fresh isolated product reviews
 repeat on one new immutable candidate.
+
+Exact isolated finish-envelope remediation component
+`dc79c8d873f51663e05b3d8b7a76527574a2f16a`, tree
+`e2fed7084067402ecb43b5664b942acfaefd9913`, strictly validates required raw-v4
+`finishReason` and `usage`, optional provider-keyed object metadata, and every
+present bounded nonnegative token counter before discarding accounting data.
+Its official-shape success fixtures cover full and JSON-wire-minimal envelopes;
+missing, mistyped, negative, fractional, overflowed, and unknown members fail
+closed. The component's exact-1.94.1 focused codec suite ran 16 tests with zero
+failures; format, all-target/all-feature check, and Clippy with `-D warnings`
+also passed in its clean isolated worktree. Maintained behavior documentation is
+composed with the component in the current remediation. The complete replacement
+gate and one new immutable review candidate remain pending.
 
 ## Worktree lifecycle
 

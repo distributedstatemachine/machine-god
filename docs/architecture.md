@@ -17,7 +17,9 @@ The inner raw-v4 codec separately validates the stringified provider-call input
 and official Perplexity `{id,results}` success schema, projects only bounded
 title/URL citations, and drops the worker stream after fully processing
 `[DONE]` rather than waiting for transport EOF. Nonprojected ID, snippet, and
-date fields remain native and are discarded.
+date fields remain native and are discarded. The same boundary strictly
+validates and discards required raw-v4 finish usage/raw-reason metadata before
+the result becomes authoritative.
 
 The slice-33 topology is:
 
@@ -50,8 +52,9 @@ replacement gate. Formal cycle 3 rejected exact candidate `aef6abe`, tree
 `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca`
 and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
 `f3557a5`, passes the complete replacement gate. Formal cycle 4 rejected exact
-`cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`; remediation is
-pending.
+`cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`. Remediation is
+composed from exact component `dc79c8d`, tree `e2fed70`; its replacement gate
+and review remain pending.
 The candidate is not green, integrated, or delivered, the delivered count
 remains 32, and no performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,

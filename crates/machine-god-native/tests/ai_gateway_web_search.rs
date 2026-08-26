@@ -255,8 +255,37 @@ fn success_result(id: impl Into<String>, results: impl IntoIterator<Item = Value
 fn finish_event(reason: &str) -> Value {
     json!({
         "type": "finish",
-        "finishReason": { "unified": reason }
+        "finishReason": {
+            "unified": reason,
+            "raw": "provider-stop"
+        },
+        "usage": {
+            "inputTokens": {
+                "total": u64::MAX,
+                "noCache": 8,
+                "cacheRead": 2,
+                "cacheWrite": 0
+            },
+            "outputTokens": {
+                "total": 5,
+                "text": 5,
+                "reasoning": 0
+            },
+            "raw": {"provider": {"promptTokens": 10}}
+        },
+        "providerMetadata": {"gateway": {"route": "direct"}}
     })
+}
+
+fn events_with_finish(finish: Value) -> Vec<Value> {
+    vec![
+        call_event("provider-search-1", "perplexity_search", true),
+        result_event(
+            "provider-search-1",
+            success_result("search-response-1", Vec::new()),
+        ),
+        finish,
+    ]
 }
 
 fn valid_events_after_stream_start() -> Vec<Value> {
@@ -552,6 +581,169 @@ fn dedicated_codec_enforces_raw_v4_call_result_and_stream_start_shapes() {
             .1
             .is_ok()
     );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn dedicated_codec_requires_the_exact_bounded_raw_v4_finish_shape() {
+    let minimal = json!({
+        "type": "finish",
+        "finishReason": {"unified": "stop"},
+        "usage": {
+            "inputTokens": {},
+            "outputTokens": {}
+        }
+    });
+    assert!(execute(sse(&events_with_finish(minimal))).1.is_ok());
+
+    let bounded_metadata = json!({
+        "type": "finish",
+        "finishReason": {
+            "unified": "stop",
+            "raw": "r".repeat(4_096)
+        },
+        "usage": {
+            "inputTokens": {"total": u64::MAX},
+            "outputTokens": {"reasoning": 0},
+            "raw": {
+                "provider": {
+                    "nested": [null, true, {"value": "u".repeat(4_096)}]
+                }
+            }
+        },
+        "providerMetadata": {
+            "gateway": {"route": ["primary", {"attempt": 1}]},
+            "model": {}
+        }
+    });
+    assert!(
+        execute(sse(&events_with_finish(bounded_metadata)))
+            .1
+            .is_ok()
+    );
+
+    let invalid = [
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": null
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {"outputTokens": {}}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {"inputTokens": {}}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {"inputTokens": "not-an-object", "outputTokens": {}}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {"inputTokens": {}, "outputTokens": []}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {
+                "inputTokens": {"total": -1},
+                "outputTokens": {}
+            }
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {
+                "inputTokens": {},
+                "outputTokens": {"text": 1.5}
+            }
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {
+                "inputTokens": {"total": null},
+                "outputTokens": {}
+            }
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {
+                "inputTokens": {"unknown": 1},
+                "outputTokens": {}
+            }
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {
+                "inputTokens": {},
+                "outputTokens": {},
+                "raw": []
+            }
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {
+                "inputTokens": {},
+                "outputTokens": {},
+                "unknown": true
+            }
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop", "raw": 7},
+            "usage": {"inputTokens": {}, "outputTokens": {}}
+        }),
+        json!({
+            "type": "finish",
+            "usage": {"inputTokens": {}, "outputTokens": {}}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": "stop",
+            "usage": {"inputTokens": {}, "outputTokens": {}}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop", "unknown": true},
+            "usage": {"inputTokens": {}, "outputTokens": {}}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {"inputTokens": {}, "outputTokens": {}},
+            "providerMetadata": []
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {"inputTokens": {}, "outputTokens": {}},
+            "providerMetadata": {"gateway": "not-an-object"}
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": {"inputTokens": {}, "outputTokens": {}},
+            "unknown": true
+        }),
+    ];
+    for finish in invalid {
+        let error = execute(sse(&events_with_finish(finish))).1.unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::Execution);
+    }
 }
 
 fn explicitly_non_error_events(success: &Value) -> Vec<Value> {

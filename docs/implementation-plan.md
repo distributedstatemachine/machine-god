@@ -90,8 +90,9 @@ documentation remediation is composed from exact isolated components
 `5d45dca` and `454f8fd`. Exact composed precursor `b834205`, tree `f3557a5`,
 passes the complete replacement gate. Formal cycle 4 rejected exact `cc1d3d1`,
 tree `ad0c3d3`, with a deduplicated `0/0/1/1`; finish-envelope and documentation
-remediation is pending. This slice is not yet review-green, integrated, or
-delivered; the delivered count remains thirty-two.
+remediation is composed from exact isolated component `dc79c8d`, tree
+`e2fed70`. Its replacement gate and review remain pending. This slice is not yet
+review-green, integrated, or delivered; the delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive
@@ -101,9 +102,10 @@ and canonical execution arguments before the default critical-risk ask flow.
 One approved execution makes at most one private required Perplexity provider-
 tool request through the shared injected `Arc<dyn AiGatewayTransport>`. A
 dedicated bounded native one-shot codec accepts exactly one expected
-`providerExecuted: true` call, one matching final result, and a successful
-finish. The ordinary outer `AiGatewayProvider` and provider-neutral core do not
-gain provider-executed advertisement or event semantics.
+`providerExecuted: true` call, one matching final result, and a strict raw-v4
+successful finish whose usage and provider metadata are validated then
+discarded. The ordinary outer `AiGatewayProvider` and provider-neutral core do
+not gain provider-executed advertisement or event semantics.
 
 Public ceilings are 4,096 query bytes; 16 normalized domains and 4,096
 aggregate domain bytes; ten sources; 512 title bytes; 2,048 URL bytes; 16 KiB
