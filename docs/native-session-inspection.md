@@ -52,8 +52,20 @@ shadowed duplicate values may parse more nodes than survive in the final tree.
 The 65,536 caps apply separately to tracker entries and aggregate final decoded-
 tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
 total parse work. Production and resource behavior were otherwise green. The
-current cycle-8 candidate contains this wording correction. Only formal cycle-8
-review, remote workflows, `main` integration, and delivery are pending. Its
+wording correction is present. Formal cycle 8 is **GREEN** on exact reviewed
+candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+`6439863a9b7fd1720156c790fedc4798256c2b6d`: correctness/API, native/effects,
+and performance/resources each reported `0/0/0/0`, with a deduplicated
+`0/0/0/0` union. Independent evidence included 598 release-binary
+differentials with zero mismatches plus focused 24 native, 14 CLI unit, and 24
+CLI process tests; native also reconfirmed focused 24 and green WASI/FreeBSD
+checks with the established `read_file` warning; performance confirmed the
+exact allocator tuples recorded in the review ledger and the corrected cap
+semantics. This documentation-only result seal is review-exempt: it records
+review of `d724b61` / `6439863` and does not imply that the seal commit itself
+was reviewed. Remote feature workflows, `main` integration, exact `main`
+workflows, and delivery remain pending; the delivered count remains 31. No
+product-performance or fx-equivalence claim is made. Its
 sole first consumer is the strict
 [`session` CLI contract](session-cli.md).
 
@@ -229,6 +241,10 @@ cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
 production finding exists. Formal cycle 7 rejected exact `399e75e`, tree
 `d056b96`, with correctness/API and native at `0/0/0/0` and performance/
 resources at `0/0/0/1`, deduplicated to the sole imprecise node/work-cap wording
-low. Production and resources were otherwise green. The current cycle-8
-candidate contains this wording correction. Only formal cycle-8 review remains
-pending at this contract checkpoint.
+low. Production and resources were otherwise green. Formal cycle 8 is green on
+exact reviewed candidate `d724b61`, tree `6439863`, with all three tracks and
+the deduplicated union at `0/0/0/0`. This review-exempt result seal records only
+that reviewed SHA/tree; it does not claim that its own commit was reviewed.
+Remote feature workflows, `main` integration and workflows, and delivery remain
+pending at this contract checkpoint; the delivered count remains 31. No
+product-performance or fx-equivalence claim is made.

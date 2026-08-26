@@ -63,10 +63,21 @@ shadowed duplicate values may parse more nodes than survive in the final tree.
 The 65,536 caps apply separately to tracker entries and aggregate final decoded-
 tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
 total parse work. Production and resource behavior were otherwise green. The
-current cycle-8 candidate contains this wording correction. Only formal cycle-8
-review, remote workflows, `main` integration, and delivery are pending; this is
-not a review-green or delivered claim.
-No compatibility or performance claim exists. The live evidence record is the
+wording correction is present. Formal cycle 8 is **GREEN** on exact reviewed
+candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+`6439863a9b7fd1720156c790fedc4798256c2b6d`: correctness/API, native/effects,
+and performance/resources each reported `0/0/0/0`, with a deduplicated
+`0/0/0/0` union. Independent evidence included 598 release-binary
+differentials with zero mismatches plus focused 24 native, 14 CLI unit, and 24
+CLI process tests; native also reconfirmed focused 24 and green WASI/FreeBSD
+checks with the established `read_file` warning; performance confirmed the
+exact allocator tuples recorded in the review ledger and the corrected cap
+semantics. This documentation-only result seal is review-exempt: it records
+review of `d724b61` / `6439863` and does not imply that the seal commit itself
+was reviewed. Remote feature workflows, `main` integration, exact `main`
+workflows, and delivery remain pending; the delivered count remains 31. The
+exact reviewed candidate is review-green, but the slice is not delivered. No
+product-performance or fx-equivalence claim is made. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
 This slice adds a strict, engine-free inspection of one current-schema

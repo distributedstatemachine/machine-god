@@ -1,17 +1,15 @@
 # Milestone 03 session CLI review ledger
 
-Status: formal cycle 7 rejected exact candidate
-`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
-`d056b96ef8361e841c936c5f61c138de913b5fff`. Correctness/API and native effects
-each reported `0/0/0/0`; performance/resources reported `0/0/0/1`, so the
-deduplicated union is `0/0/0/1`. The sole low corrects imprecise resource
-wording: shadowed duplicate values may parse more nodes than survive in the
-final tree. Tracker entries and aggregate final decoded-tree logical-node
-accounting have separate 65,536 caps, while the 8,651,165-byte file ceiling
-bounds total parse work. Production and resources were otherwise green. The
-current cycle-8 candidate contains this wording correction. Only formal cycle-8
-review, remote delivery gates, integration, and delivery are pending. This is
-not a review-green or delivered claim.
+Status: formal cycle 8 is **GREEN** on exact reviewed candidate
+`d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+`6439863a9b7fd1720156c790fedc4798256c2b6d`. Correctness/API, native/effects,
+and performance/resources each reported `0/0/0/0`; the deduplicated union is
+`0/0/0/0`. This documentation-only result seal is review-exempt: it records the
+reviews of `d724b61` / `6439863` and does not imply that its own commit was
+reviewed. Remote feature workflows, `main` integration, exact `main` workflows,
+and delivery remain pending. The delivered count remains 31. This is a review-
+green claim only for the exact reviewed candidate, not a delivered,
+product-performance, or fx-equivalence claim.
 Historical rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
@@ -575,12 +573,46 @@ The reports deduplicate to `0/0/0/1`:
 
 There is no production-behavior, API, native-effect, compatibility, allocation,
 or other resource finding. Any finding rejects the entire candidate, so
-`399e75e` is not review-green. The current cycle-8 candidate contains this
-wording correction. Only formal cycle-8 review, remote workflows, `main`
-integration, and delivery are pending. Do not claim cycle 8 green before those
-reviews report `0/0/0/0` on one exact SHA. No prior discovery, implementation,
-review, or remediation agent may approve its own work or be reused in a later
-review cycle. Product-performance and fx-equivalence claims remain absent.
+`399e75e` is not review-green. The wording correction is present in exact
+cycle-8 candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+`6439863a9b7fd1720156c790fedc4798256c2b6d`, assessed next.
+
+## Formal cycle 8 verdict
+
+Three fresh isolated agents reviewed exact candidate
+`d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+`6439863a9b7fd1720156c790fedc4798256c2b6d`. Counts are blocker/high/medium/
+low:
+
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Green | `0/0/0/0` |
+| Native boundary/effects and portability | Green | `0/0/0/0` |
+| Performance/concurrency/resources and evidence | Green | `0/0/0/0` |
+
+The deduplicated union is `0/0/0/0`; exact candidate `d724b61`, tree
+`6439863`, is formally **REVIEW-GREEN**.
+
+Independent correctness evidence completed 598 release-binary differentials
+with zero mismatches plus focused 24 native, 14 CLI unit, and 24 CLI process
+tests. The native track reconfirmed all 24 focused tests and green WASI/FreeBSD
+checks with only the established WASI `read_file` warning. The performance track
+confirmed the corrected resource semantics: tracker entries and aggregate final
+decoded-tree logical nodes have separate 65,536 caps, while the 8,651,165-byte
+file ceiling bounds total parse work including shadowed values. Exact isolated
+allocator total/current/maximum tuples remain:
+
+- empty, short-text, and long-text: `12/2/7` allocations and `819/14/645` bytes;
+- short-JSON and long-JSON: `14/2/8` allocations and `1,427/14/1,059` bytes; and
+- 5,000 keys: `35/2/9` allocations and `2,228,435/14/1,606,083` bytes.
+
+No prior discovery, implementation, review, or remediation agent approved its
+own work or was reused for this review cycle. This documentation-only result
+seal is review-exempt and records the returned results for exact reviewed
+`d724b61` / `6439863`; the seal commit itself was not reviewed and makes no such
+claim. Remote feature workflows, `main` integration, exact `main` workflows,
+and delivery remain pending. The delivered count remains 31. Product-
+performance and fx-equivalence claims remain absent.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees

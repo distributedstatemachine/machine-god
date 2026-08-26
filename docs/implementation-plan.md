@@ -175,9 +175,20 @@ deduplicated `0/0/0/1` union. The sole low is imprecise resource wording:
 shadowed duplicate values may parse more nodes than survive in the final tree.
 The 65,536 caps apply separately to tracker entries and aggregate final decoded-
 tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
-total parse work. Production and resources were otherwise green. The current
-cycle-8 candidate contains this wording correction. Only formal cycle-8 review,
-remote workflows, `main` integration, and delivery are pending.
+total parse work. Production and resources were otherwise green. The wording
+correction is present in exact reviewed cycle-8 candidate
+`d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+`6439863a9b7fd1720156c790fedc4798256c2b6d`. Formal cycle 8 is **GREEN**:
+correctness/API, native/effects, and performance/resources each reported
+`0/0/0/0`, with a deduplicated `0/0/0/0` union. Independent correctness evidence
+ran 598 release-binary differentials with zero mismatches plus focused 24
+native, 14 CLI unit, and 24 CLI process tests. Native reconfirmed focused 24 and
+green WASI/FreeBSD checks with the established `read_file` warning. Performance
+confirmed the exact recorded allocator tuples and corrected separate cap
+semantics. This documentation-only result seal is review-exempt and records the
+reviews of `d724b61` / `6439863`; it does not imply that the seal commit was
+reviewed. Remote feature workflows, `main` integration, exact `main` workflows,
+and delivery remain pending; the delivered count remains thirty-one.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
@@ -3704,14 +3715,19 @@ candidate `399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
 `d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
 each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
 deduplicated union is `0/0/0/1`. The sole low corrects the node/work-cap wording;
-production and resources were otherwise green. The current cycle-8 candidate
-contains this wording correction. Only formal cycle-8 review, remote workflows,
-`main` integration, and delivery are pending.
+production and resources were otherwise green. Formal cycle 8 is green on exact
+reviewed candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+`6439863a9b7fd1720156c790fedc4798256c2b6d`: every track and the deduplicated
+union reported `0/0/0/0`. The review-exempt documentation result seal records
+that reviewed candidate and does not imply its own commit was reviewed. Remote
+feature workflows, `main` integration, exact `main` workflows, and delivery
+remain pending; the delivered count remains thirty-one.
 
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
-workflows, a non-force fast-forward, and exact `main` workflows. There is no
-claim that the candidate is green or that integration, workflows, or delivery
-are complete; the delivered count remains thirty-one. After slice 32 is
+workflows, a non-force fast-forward, and exact `main` workflows. Exact reviewed
+candidate `d724b61`, tree `6439863`, is review-green, but feature workflows,
+integration, exact `main` workflows, and delivery are not complete; the
+delivered count remains thirty-one. After slice 32 is
 delivered, the next bounded development slice returns to completing the
 remaining native tools rather than expanding the CLI inspection surface.
 Every review/remediation iteration must end with committed/integrated worktrees
@@ -4743,9 +4759,13 @@ gate:
   deduplicated to `0/0/0/1`. The sole low corrects node/work-cap wording:
   tracker entries and aggregate final decoded-tree logical nodes have separate
   65,536 caps, while the 8,651,165-byte file ceiling bounds total parse work,
-  including shadowed values. Production/resources were otherwise green. The
-  current cycle-8 candidate contains this wording correction. Only formal
-  cycle-8 review, remote workflows, `main` integration, and delivery are pending.
+  including shadowed values. Production/resources were otherwise green. Formal
+  cycle 8 is green on exact reviewed candidate
+  `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
+  `6439863a9b7fd1720156c790fedc4798256c2b6d`: all three tracks and the union
+  reported `0/0/0/0`. The review-exempt documentation result seal records that
+  reviewed SHA/tree only. Remote feature workflows, `main` integration, exact
+  `main` workflows, and delivery remain pending; the delivered count remains 31.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.
