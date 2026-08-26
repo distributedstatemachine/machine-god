@@ -311,10 +311,19 @@ fallback, response parser, bounds, and ordering; core owns only catalog types
 and a trait; the CLI owns runtime composition and output. Catalog credentials
 may be absent for anonymous listing without changing this generation codec's
 required authenticated host composition. The CLI selects the dedicated
-non-WASM `ai-gateway-model-catalog-http` feature, which omits the unrelated
-`web-fetch-http`, Hickory DNS, and Moka graph. The broader
-`ai-gateway-http` feature still includes both catalog HTTP and web fetch, and
-the generation transport remains exported only through that broader feature.
+non-WASM `ai-gateway-model-catalog-http` feature. That feature does not enable
+`web-fetch-http` or the optional direct-generation `bytes` edge, and it does
+not compile the web-fetch or direct-generation production modules. The broader
+`ai-gateway-http` feature enables the catalog, web fetch, and the direct
+generation transport. The catalog-only dependency tree still contains
+`hickory-resolver`, `hickory-proto`, and Hickory Resolver's
+transitive Moka graph. Machine God uses those Hickory packages for bounded
+platform-resolver configuration parsing and bounded DNS protocol construction
+and decoding, not for request-time resolution. Request-time DNS uses Machine
+God's private bounded resolver over Tokio UDP/TCP. The Reqwest client explicitly
+disables its Hickory resolver and receives the private resolver instead of its
+default getaddrinfo path. The CLI manifest separately enables Tokio's signal
+backend for command cancellation.
 The injected catalog transport supplies both its request future and a separate
 absolute-deadline waiter. The native provider polls cancellation, that waiter,
 and the request in precedence order, so a conforming pending request cannot
