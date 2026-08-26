@@ -1,5 +1,10 @@
 # Adversarial reviews
 
+- [`m03-session-cli-review-01.md`](m03-session-cli-review-01.md) tracks the
+  in-progress bounded slice-32 `session <id> [--json]` candidate from exact
+  delivered base `6e687b6`. Contracts are frozen; implementation and formal
+  review have not started.
+
 - [`m03-sessions-cli-review-01.md`](m03-sessions-cli-review-01.md) tracks the
   delivered bounded slice-31 `sessions [--json]` candidate. Cycle 1 rejected
   exact candidate `9448738` with `0/0/0/3` deduplicated findings. Exact
@@ -16,7 +21,7 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 02 deterministic testkit review](m02-testkit-review-01.md)
 - [Milestone 02 bounded tool-loop review](m02-tool-loop-review-01.md)
 - [Milestone 02 completion evidence and review status](m02-milestone-review.md)
-- [Milestone 03 config/status CLI review candidate](m03-config-status-cli-review-01.md)
+- [Milestone 03 config/status CLI delivery review](m03-config-status-cli-review-01.md)
 - [Milestone 03 bounded native configuration loading review](m03-native-config-load-review-01.md)
 - [Milestone 03 capability-aware tool preflight review](m03-tool-preflight-review-01.md)
 - [Milestone 03 confined native read_file review](m03-read-file-review-01.md)
@@ -30,19 +35,19 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native host configuration schema-v2 review](m03-native-host-config-review-01.md)
 - [Milestone 03 native reference-host composition review](m03-native-reference-host-review-01.md)
 - [Milestone 03 configured credential-source review](m03-configured-credential-source-review-01.md)
-- [Milestone 03 native root-selection composed candidate](m03-native-root-selection-review-01.md)
+- [Milestone 03 native root-selection delivery review](m03-native-root-selection-review-01.md)
 - [Milestone 03 native session-lifecycle review](m03-native-session-lifecycle-review-01.md)
 - [Milestone 03 native session-listing delivery review](m03-native-session-listing-review-01.md)
 - [Milestone 03 native `file_info` delivery review](m03-file-info-review-01.md)
-- [Milestone 03 native `glob_files` candidate review](m03-glob-files-review-01.md)
-- [Milestone 03 native `grep_files` candidate review](m03-grep-files-review-01.md)
-- [Milestone 03 native `write_file` candidate review](m03-write-file-review-01.md)
+- [Milestone 03 native `glob_files` delivery review](m03-glob-files-review-01.md)
+- [Milestone 03 native `grep_files` delivery review](m03-grep-files-review-01.md)
+- [Milestone 03 native `write_file` delivery review](m03-write-file-review-01.md)
 - [Milestone 03 native `edit_file` delivery review](m03-edit-file-review-01.md)
 - [Milestone 03 native `delete_file` delivery review](m03-delete-file-review-01.md)
-- [Milestone 03 native `rename_file` implementation review](m03-rename-file-review-01.md)
+- [Milestone 03 native `rename_file` delivery review](m03-rename-file-review-01.md)
 - [Milestone 03 native `copy_file` delivery review](m03-copy-file-review-01.md)
 - [Milestone 03 native `create_folder` delivery review](m03-create-folder-review-01.md)
-- [Milestone 03 native `open_file` contract review](m03-open-file-review-01.md)
+- [Milestone 03 native `open_file` delivery review](m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](m03-web-fetch-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](m03-permissions-cli-review-01.md)
 - [Milestone 03 `models` CLI delivery review ledger](m03-models-cli-review-01.md)

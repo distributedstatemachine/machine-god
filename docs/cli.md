@@ -1,5 +1,21 @@
 # Command-line interface
 
+In-progress slice 32 freezes strict top-level `session <id> [--json]` under the
+[`session` contract](session-cli.md). The command will load one exact
+current-schema record through the separate
+[`native inspection facade`](native-session-inspection.md) and render only its
+validated ID, incarnation ID, revision, next turn sequence, message count, and
+top-level metadata-entry count. Transcript content, metadata keys/values,
+`last`, `--id`, resume, replay, migration, recovery, workspace selection,
+configuration, credentials, engine/provider construction, network, and runtime
+are outside the slice. Parsing and ID validation precede effects; existing-root
+inspection is no-create except for the file store's documented private `0600`
+lock sidecar on a present record. Human/JSON output is assembled under 4,096
+bytes. There is no matching bootstrap workload, and no implementation,
+delivery, performance, or equivalence claim exists yet. The delivered count
+remains thirty-one; evidence will accumulate in the
+[`live ledger`](reviews/m03-session-cli-review-01.md).
+
 Delivered slice 31 adds a strict top-level `sessions [--json]`
 surface under the frozen [`sessions` contract](sessions-cli.md). Only those two
 forms are accepted, and parsing precedes environment and persistence effects.

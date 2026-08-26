@@ -1,5 +1,18 @@
 # Architecture
 
+In-progress bounded slice 32 preserves the host boundary for strict
+`session <id> [--json]`. `machine-god-cli` owns grammar, core-ID parsing,
+bounded rendering, exit/channel behavior, and an injected host seam.
+`machine-god-native` owns state-only first-poll environment capture, existing-
+root safety, the exact file-store load, structural projection, and redacted
+native errors. `machine-god-core` remains unchanged and receives no ambient
+authority. The CLI receives a purpose-built `NativeSessionInspection`, not a
+full `SessionRecord`, so transcript and metadata content never cross into the
+renderer. No full native reference host, engine, provider, workspace, config,
+credential, network transport, permission handler, or runtime is constructed.
+See the frozen [`CLI`](session-cli.md) and
+[`native`](native-session-inspection.md) contracts.
+
 Delivered bounded slice 31 preserves the host boundary for top-level
 `sessions [--json]`. `machine-god-cli` owns only strict parsing, bounded
 rendering, exit/channel behavior, and an injected host seam. `machine-god-
@@ -32,7 +45,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has thirty delivered bounded slices. Delivered slice
+Milestone 03 has thirty-one delivered bounded slices. Delivered slice
 twenty-nine adds top-level `models [--json]` through feature commit
 `e84ed2a46b1ac5fe7428414375609af562c65105`. Core owns only
 validated provider-neutral available-model/access/result values, the existing

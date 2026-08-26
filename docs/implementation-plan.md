@@ -41,6 +41,28 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
+The thirty-second bounded slice, strict top-level
+`session <id> [--json]`, is **IN PROGRESS** from exact delivered base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Its normative boundaries are
+[`session-cli.md`](session-cli.md) and
+[`native-session-inspection.md`](native-session-inspection.md), and its live
+review ledger is
+[`m03-session-cli-review-01.md`](reviews/m03-session-cli-review-01.md). Two
+independent discovery agents audited the remaining M03 CLI and pinned-fx
+surfaces and agreed this summary-only exact-ID inspection is the smallest
+coherent next slice. The command will return only validated ID, incarnation,
+revision, allocator, message-count, and top-level metadata-count fields from
+one current-schema machine-god record. It will expose no transcript or metadata
+content and construct no workspace, engine, provider, credential, permission
+handler, network transport, or runtime. State capture is first-poll and state-
+only; missing roots/records are no-create `NotFound`, while a present load may
+create only the store's documented private `0600` lock sidecar. Complete output
+is capped at 4,096 bytes. Pinned fx has broader `last`, `--id`, history,
+workspace, resume, migration, and recovery semantics, so this slice is
+deliberately non-equivalent, unmeasured, and claim-ineligible. No implementation,
+candidate, formal-review, workflow, integration, delivery, product-performance,
+or fx-equivalence claim exists yet. The delivered count remains thirty-one.
+
 The thirty-first bounded slice, strict top-level `sessions [--json]`, is
 **DELIVERED** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
 Its normative boundary is [`sessions-cli.md`](sessions-cli.md), and its live
@@ -94,7 +116,7 @@ feature and `main` workflows are reported at handoff rather than claimed here.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with thirty delivered bounded slices. The twenty-seventh `web_fetch`
+with thirty-one delivered bounded slices. The twenty-seventh `web_fetch`
 slice is delivered on reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`. Exact feature CI `32874471757`,
@@ -3370,9 +3392,53 @@ replacement gate, and three new reviewers. Discovery agents are not reviewers.
 Only a zero-finding candidate may proceed to exact feature workflows, a non-
 force fast-forward, and exact `main` workflows.
 
+### In-progress bounded slice 32: top-level `session`
+
+The thirty-second slice is contract-frozen from exact delivered base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. It adds only strict
+`session <id>` and `session <id> --json`. The ID is parsed through the core
+portable contract before effects, while exact tokens `last`, `--id`, and
+`--json` are reserved in ID position. Every upstream-style selector, reordered
+or repeated flag, extra/non-Unicode argument, or invalid ID fails before state
+environment or filesystem access. The normative contracts are
+[`session-cli.md`](session-cli.md) and
+[`native-session-inspection.md`](native-session-inspection.md); evidence is
+tracked in
+[`m03-session-cli-review-01.md`](reviews/m03-session-cli-review-01.md).
+
+Native will capture only `XDG_STATE_HOME` and lazy-fallback `HOME` on first
+poll, open the already-existing validated machine-god hierarchy, load the exact
+current-schema record once, and project only ID, incarnation ID, positive
+revision, positive next turn sequence, message count, and top-level metadata-
+entry count. Missing hierarchy or record is no-create `NotFound`. Existing
+record loads may create only the file store's permanent private `0600` lock
+sidecar. No transcript, metadata key/value, engine, provider, credential,
+configuration, permission, workspace, network, runtime, resume, replay,
+migration, recovery, or `.fx` authority crosses this boundary.
+
+Human output has one header and five fixed structural rows. Compact JSON fixes
+key order
+`kind,id,incarnation_id,revision,next_turn_sequence,message_count,metadata_entry_count`.
+Both modes end in one LF, are completely assembled before writing, and fit
+under an inclusive 4,096-byte cap. Closed presentation failures are `NotFound`,
+`Corrupt`, `Unavailable`, `Unsupported`, and `ResourceLimit`; no external
+detail is reflected. There is no matching bootstrap `session-json` workload,
+so the fixed inventory and its classifications remain unchanged. The feature
+is intentionally non-equivalent, not measured, and claim-ineligible.
+
+Native and CLI production/evidence will be assigned to isolated,
+non-overlapping worktrees after this contract commit. The composed exact
+candidate must pass focused evidence and the complete exact-1.94.1 local gate,
+then three fresh correctness/API, native persistence/portability, and
+performance/resource reviewers. Any finding rejects the candidate and requires
+remediation, the complete replacement gate, and three new reviewers. Only a
+deduplicated `0/0/0/0` exact SHA may proceed through feature workflows, a non-
+force fast-forward, and exact `main` workflows. No implementation or delivery
+claim exists yet, and the delivered count remains thirty-one.
+
 ### Milestone 03 completion boundary
 
-The thirty delivered slices do not complete Milestone 03.
+The thirty-one delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -4328,7 +4394,11 @@ gate:
   reviews at `0/0/0/0` each. Seal `b5b9116`, tree `3e61754`, passed feature CI
   `32939742230`, feature benchmark `32939742231`, main CI `32940279028`, and
   main benchmark `32940279005`; `main` was fast-forwarded without force. The
-  delivered count is thirty-one. `models [--json]` is
+  delivered count is thirty-one. Strict `session <id> [--json]` is the
+  contract-frozen in-progress bounded slice 32 from exact delivered base
+  `6e687b6`; implementation and formal review have not started. It is limited
+  to six structural fields from one exact machine-god record and makes no
+  compatibility or performance claim. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

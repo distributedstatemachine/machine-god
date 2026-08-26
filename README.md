@@ -6,6 +6,22 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
+Bounded Milestone 03 slice 32, strict top-level
+`session <id> [--json]`, is **IN PROGRESS** from exact delivered base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. It will inspect one exact
+current-schema machine-god record through an engine-free native facade and
+return only ID, incarnation, revision, allocator, message-count, and top-level
+metadata-count fields. It will expose no transcript or metadata content and
+will construct no workspace, engine, provider, credential, permission handler,
+network transport, or runtime. The
+[`session` contract](docs/session-cli.md),
+[`native inspection contract`](docs/native-session-inspection.md), and
+[`live review ledger`](docs/reviews/m03-session-cli-review-01.md) are frozen
+before implementation. Two independent discovery agents agreed this is the
+smallest coherent remaining M03 CLI slice. No implementation, delivery,
+compatibility, product-performance, or fx-equivalence claim exists yet; the
+delivered count remains thirty-one.
+
 Bounded Milestone 03 slice 31, strict top-level `sessions [--json]`, is
 **DELIVERED** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. It
 exposes the already-delivered bounded native session-ID observation through an
@@ -50,7 +66,7 @@ fx `b1774fbf6c7602b503026f96f6e960e946c692ef`, `doctor-json` is implemented
 but intentionally non-equivalent, not measured, and claim-ineligible; no
 performance or fx-equivalence claim is made.
 
-Milestones 01 and 02 are complete, and Milestone 03 is in progress with thirty
+Milestones 01 and 02 are complete, and Milestone 03 is in progress with thirty-one
 delivered bounded slices. The twenty-ninth top-level
 `models [--json]` slice is **DELIVERED** from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`; core, native, and CLI ownership

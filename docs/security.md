@@ -1,5 +1,21 @@
 # Security
 
+In-progress bounded slice 32 adds no network, subprocess, credential, provider,
+permission, workspace, configuration, runtime, or engine authority. Its
+`session` facade captures only state environment inputs on first poll, opens
+only an existing validated machine-god hierarchy, and loads exactly one
+validated current-schema record. The CLI receives only bounded structural
+fields; message bodies, tool content, reasoning, metadata keys, and metadata
+values are dropped inside native. Missing hierarchy or record is `NotFound`
+without creation. Present loads retain only the store's documented ability to
+create a private `0600` lock sidecar; no record is created, repaired, rewritten,
+migrated, reset, or deleted. Closed redacted error categories expose no path,
+environment value, record content, filename, or OS diagnostic. The exact
+boundary is in [`session-cli.md`](session-cli.md),
+[`native-session-inspection.md`](native-session-inspection.md), and the
+[`live ledger`](reviews/m03-session-cli-review-01.md). No implementation or
+delivery claim exists yet.
+
 Delivered bounded slice 31 adds no new network, subprocess, credential,
 provider, permission, workspace, or engine authority. Its native `sessions`
 facade selects only the state namespace, walks existing fixed components without
