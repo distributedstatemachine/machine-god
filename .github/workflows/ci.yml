@@ -141,8 +141,10 @@ jobs:
         run: |
           cargo +"${RUST_TOOLCHAIN}" build --locked --release -p machine-god-cli
           python3 - <<'PY'
+          import hashlib
           import json
           import os
+          import stat
           import subprocess
           import tempfile
           from pathlib import Path
@@ -263,6 +265,114 @@ jobs:
               for path in (sessions_config_root, sessions_state_root, sessions_home)
           ):
               raise SystemExit("sessions created an isolated missing root")
+
+          session_root = Path(
+              tempfile.mkdtemp(prefix="machine-god-session-", dir=os.environ["RUNNER_TEMP"])
+          )
+          session_config_root = session_root / "missing-config"
+          session_state_root = session_root / "state"
+          session_store_root = session_state_root / "machine-god"
+          session_home = session_root / "missing-home"
+          session_state_root.mkdir(mode=0o700)
+          session_store_root.mkdir(mode=0o700)
+          session_id = "ci-session"
+          session_incarnation = "ci-incarnation"
+          session_record = {
+              "schema_version": 1,
+              "record": {
+                  "id": session_id,
+                  "incarnation_id": session_incarnation,
+                  "revision": 7,
+                  "next_turn_sequence": 4,
+                  "messages": [
+                      {"role": "user", "content": [{"type": "text", "text": "private"}]},
+                  ],
+                  "metadata": {"private-key": "private-value"},
+              },
+          }
+          session_bytes = json.dumps(
+              session_record, separators=(",", ":"), ensure_ascii=True
+          ).encode()
+          session_digest = hashlib.sha256(
+              b"machine-god:file-session:v1:" + session_id.encode()
+          ).hexdigest()
+          session_data = session_store_root / f"session-{session_digest}.json"
+          session_lock = session_store_root / f"session-{session_digest}.lock"
+          session_data.write_bytes(session_bytes)
+          session_data.chmod(0o600)
+          session_environment = os.environ.copy()
+          session_environment.update(
+              {
+                  "XDG_CONFIG_HOME": str(session_config_root),
+                  "XDG_STATE_HOME": str(session_state_root),
+                  "HOME": str(session_home),
+                  "VERCEL_OIDC_TOKEN": "ignored invalid credential",
+                  "AI_GATEWAY_API_KEY": "ignored lower credential",
+              }
+          )
+
+          def run_session(*arguments: str) -> subprocess.CompletedProcess[str]:
+              return subprocess.run(
+                  [str(binary), *arguments],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+                  env=session_environment,
+              )
+
+          session_human = run_session("session", session_id)
+          session_machine = run_session("session", session_id, "--json")
+          session_missing = run_session("session", "missing-session")
+          if session_human.returncode != 0 or session_machine.returncode != 0:
+              raise SystemExit(
+                  "session smoke exits: "
+                  f"human={session_human.returncode} json={session_machine.returncode}"
+              )
+          if session_human.stderr or session_machine.stderr:
+              raise SystemExit("session success smoke wrote unexpected stderr")
+          expected_session_human = (
+              "[session] ci-session\n"
+              " - incarnation_id: ci-incarnation\n"
+              " - revision: 7\n"
+              " - next_turn_sequence: 4\n"
+              " - message_count: 1\n"
+              " - metadata_entry_count: 1\n"
+          )
+          if session_human.stdout != expected_session_human:
+              raise SystemExit(f"unexpected human session output: {session_human.stdout!r}")
+          expected_session_json = (
+              '{"kind":"session","id":"ci-session",'
+              '"incarnation_id":"ci-incarnation","revision":7,'
+              '"next_turn_sequence":4,"message_count":1,'
+              '"metadata_entry_count":1}\n'
+          )
+          if session_machine.stdout != expected_session_json:
+              raise SystemExit(f"unexpected JSON session output: {session_machine.stdout!r}")
+          session_report = json.loads(session_machine.stdout)
+          if list(session_report) != [
+              "kind",
+              "id",
+              "incarnation_id",
+              "revision",
+              "next_turn_sequence",
+              "message_count",
+              "metadata_entry_count",
+          ]:
+              raise SystemExit("session JSON top-level key order changed")
+          if any(len(output.stdout.encode()) > 4096 for output in (session_human, session_machine)):
+              raise SystemExit("session success output bound changed")
+          if session_missing.returncode != 1 or session_missing.stdout:
+              raise SystemExit(f"unexpected missing session exit/output: {session_missing!r}")
+          if session_missing.stderr != (
+              "machine-god session: could not inspect session: NotFound\n"
+          ):
+              raise SystemExit(f"unexpected missing session error: {session_missing.stderr!r}")
+          if session_data.read_bytes() != session_bytes:
+              raise SystemExit("session inspection rewrote the record")
+          if not session_lock.is_file() or stat.S_IMODE(session_lock.stat().st_mode) != 0o600:
+              raise SystemExit("session inspection did not create an exact private lock sidecar")
+          if session_config_root.exists() or session_home.exists():
+              raise SystemExit("session inspection touched an unrelated root")
           PY
 
   security:

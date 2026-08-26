@@ -16,7 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use machine_god_core::{SessionId, SessionIncarnationId, SessionRecord, SessionStore};
+use machine_god_core::{
+    Message, Role, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_native::FileSessionStore;
 
@@ -43,6 +45,7 @@ const HELP: &str = concat!(
     "  machine-god doctor [--json]\n",
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
+    "  machine-god session <id> [--json]\n",
     "  machine-god sessions [--json]\n",
     "  machine-god status [--json]\n",
     "\n",
@@ -51,6 +54,7 @@ const HELP: &str = concat!(
     "  doctor       Run local health and preflight checks\n",
     "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
+    "  session      Inspect a saved session\n",
     "  sessions     List saved sessions\n",
     "  status       Show configuration and runtime information\n",
     "\n",
@@ -60,11 +64,14 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | sessions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
+#[cfg(target_os = "linux")]
+const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
+const MAX_SESSION_OUTPUT_BYTES: usize = 4096;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -210,6 +217,62 @@ fn save_session(state_base: &Path, value: &str) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn session_artifacts(state_root: &Path) -> (PathBuf, PathBuf) {
+    let entries = fs::read_dir(state_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    let data = entries
+        .iter()
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .unwrap()
+        .clone();
+    let lock = data.with_extension("lock");
+    (data, lock)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn save_session_summary(
+    state_base: &Path,
+    id: &str,
+    incarnation_id: &str,
+    revision: u64,
+    next_turn_sequence: u64,
+    message_count: usize,
+    metadata_entry_count: usize,
+) -> (PathBuf, PathBuf) {
+    let root = state_base.join("machine-god");
+    private_directory(&root);
+    let store = FileSessionStore::open(&root).unwrap();
+    let mut record = SessionRecord::empty(
+        SessionId::new(id).unwrap(),
+        SessionIncarnationId::new(incarnation_id).unwrap(),
+    );
+    record.next_turn_sequence = next_turn_sequence;
+    record.messages = (0..message_count)
+        .map(|index| Message::text(Role::User, format!("private-message-{index}")))
+        .collect();
+    for index in 0..metadata_entry_count {
+        record
+            .metadata
+            .entry(format!("private-metadata-{index}"))
+            .or_default();
+    }
+
+    let mut expected_revision = None;
+    for expected in 1..=revision {
+        let assigned = ready(store.save(record.clone(), expected_revision)).unwrap();
+        assert_eq!(assigned, SessionRevision(expected));
+        record.revision = assigned;
+        expected_revision = Some(assigned);
+    }
+    session_artifacts(&root)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn sessions_command(config: &OsStr, state: &OsStr) -> Command {
     let mut command = machine_god();
     command
@@ -224,6 +287,21 @@ fn sessions_command(config: &OsStr, state: &OsStr) -> Command {
             "AI_GATEWAY_API_KEY",
             "CLI_SESSIONS_IGNORED_LOWER_CREDENTIAL",
         );
+    command
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn session_command(config: &OsStr, state: &OsStr) -> Command {
+    let mut command = machine_god();
+    command
+        .env_remove("HOME")
+        .env("XDG_CONFIG_HOME", config)
+        .env("XDG_STATE_HOME", state)
+        .env(
+            "VERCEL_OIDC_TOKEN",
+            "CLI_SESSION_IGNORED_INVALID CREDENTIAL",
+        )
+        .env("AI_GATEWAY_API_KEY", "CLI_SESSION_IGNORED_LOWER_CREDENTIAL");
     command
 }
 
@@ -242,6 +320,26 @@ fn assert_sessions_error(output: &Output, json: bool, category: &str) {
         assert_eq!(
             output.stderr,
             format!("machine-god sessions: {message}\n").as_bytes()
+        );
+    }
+}
+
+fn assert_session_error(output: &Output, json: bool, category: &str) {
+    assert_eq!(output.status.code(), Some(1));
+    let message = format!("could not inspect session: {category}");
+    if json {
+        assert_eq!(
+            output.stdout,
+            format!("{{\"kind\":\"session\",\"error\":\"{message}\",\"code\":\"{category}\"}}\n")
+                .as_bytes()
+        );
+        assert!(output.stderr.is_empty());
+        assert!(output.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
+    } else {
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            output.stderr,
+            format!("machine-god session: {message}\n").as_bytes()
         );
     }
 }
@@ -314,6 +412,16 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["permissions", "extra"][..],
         &["permissions", "--json", "extra"][..],
         &["permissions", "--json", "--json"][..],
+        &["session"][..],
+        &["session", "last"][..],
+        &["session", "--id"][..],
+        &["session", "--id", "alpha"][..],
+        &["session", "--json"][..],
+        &["session", "--json", "alpha"][..],
+        &["session", "alpha", "--json=true"][..],
+        &["session", "alpha", "extra"][..],
+        &["session", "alpha", "--json", "extra"][..],
+        &["session", "alpha", "--json", "--json"][..],
         &["sessions", "--json=true"][..],
         &["sessions", "extra"][..],
         &["sessions", "--json", "extra"][..],
@@ -743,6 +851,342 @@ fn models_reads_v1_v2_and_v3_without_rewrite_or_state_access() {
             .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].file_name(), "config.json");
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_exact_outputs_use_xdg_state_and_create_only_the_private_lock() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temporary = TestDirectory::new("session-exact");
+    let config_root = temporary.path().join("config-CLI_SESSION_CONFIG_PATH");
+    let config_contents = b"CLI_SESSION_INVALID_CONFIG_SECRET:not-json";
+    let config_path = write_config(&config_root, config_contents);
+    let xdg_state = temporary.path().join("state-CLI_SESSION_STATE_PATH");
+    let home = temporary.path().join("home");
+    let (record_path, lock_path) =
+        save_session_summary(&xdg_state, "alpha", "incarnation-alpha", 7, 4, 3, 2);
+    let (_, home_lock) = save_session_summary(
+        &home.join(".local/state"),
+        "alpha",
+        "home-must-not-be-read",
+        1,
+        1,
+        0,
+        0,
+    );
+    fs::remove_file(&lock_path).unwrap();
+    fs::remove_file(&home_lock).unwrap();
+    let record_before = fs::read(&record_path).unwrap();
+
+    let mut human_command = machine_god();
+    human_command
+        .args(["session", "alpha"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_root)
+        .env("XDG_STATE_HOME", &xdg_state)
+        .env(
+            "VERCEL_OIDC_TOKEN",
+            "CLI_SESSION_IGNORED_INVALID CREDENTIAL",
+        )
+        .env("AI_GATEWAY_API_KEY", "CLI_SESSION_IGNORED_LOWER_CREDENTIAL");
+    let human = human_command.output().unwrap();
+    assert_success(
+        &human,
+        concat!(
+            "[session] alpha\n",
+            " - incarnation_id: incarnation-alpha\n",
+            " - revision: 7\n",
+            " - next_turn_sequence: 4\n",
+            " - message_count: 3\n",
+            " - metadata_entry_count: 2\n",
+        ),
+    );
+    assert!(human.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
+
+    let mut json_command = machine_god();
+    json_command
+        .args(["session", "alpha", "--json"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_root)
+        .env("XDG_STATE_HOME", &xdg_state)
+        .env(
+            "VERCEL_OIDC_TOKEN",
+            "CLI_SESSION_IGNORED_INVALID CREDENTIAL",
+        )
+        .env("AI_GATEWAY_API_KEY", "CLI_SESSION_IGNORED_LOWER_CREDENTIAL");
+    let json = json_command.output().unwrap();
+    assert_success(
+        &json,
+        concat!(
+            "{\"kind\":\"session\",\"id\":\"alpha\",",
+            "\"incarnation_id\":\"incarnation-alpha\",\"revision\":7,",
+            "\"next_turn_sequence\":4,\"message_count\":3,",
+            "\"metadata_entry_count\":2}\n",
+        ),
+    );
+    assert!(json.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
+
+    for output in [&human, &json] {
+        assert_output_omits(
+            output,
+            &[
+                "CLI_SESSION_CONFIG_PATH",
+                "CLI_SESSION_STATE_PATH",
+                "CLI_SESSION_INVALID_CONFIG_SECRET",
+                "CLI_SESSION_IGNORED_INVALID CREDENTIAL",
+                "CLI_SESSION_IGNORED_LOWER_CREDENTIAL",
+                "private-message",
+                "private-metadata",
+                "home-must-not-be-read",
+            ],
+        );
+    }
+    assert_eq!(fs::read(&record_path).unwrap(), record_before);
+    assert_eq!(
+        fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(!home_lock.exists());
+    assert_eq!(fs::read(config_path).unwrap(), config_contents);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_missing_root_and_record_are_exact_not_found_without_creation() {
+    let temporary = TestDirectory::new("session-not-found");
+    let config_root = temporary.path().join("missing-config");
+    let missing_state = temporary.path().join("missing-state");
+
+    for (arguments, json) in [
+        (&["session", "missing"][..], false),
+        (&["session", "missing", "--json"][..], true),
+    ] {
+        let output = session_command(config_root.as_os_str(), missing_state.as_os_str())
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert_session_error(&output, json, "NotFound");
+    }
+    assert!(!missing_state.exists());
+    assert!(!config_root.exists());
+
+    let existing_state = temporary.path().join("existing-state");
+    let existing_root = existing_state.join("machine-god");
+    private_directory(&existing_root);
+    let output = session_command(config_root.as_os_str(), existing_state.as_os_str())
+        .args(["session", "missing", "--json"])
+        .output()
+        .unwrap();
+    assert_session_error(&output, true, "NotFound");
+    assert_eq!(fs::read_dir(existing_root).unwrap().count(), 0);
+    assert!(!config_root.exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_home_fallback_is_exact_and_bounded_for_maximum_identifiers() {
+    let temporary = TestDirectory::new("session-home-fallback");
+    let home = temporary.path().join("home");
+    let id = "x".repeat(128);
+    let incarnation_id = "i".repeat(128);
+    save_session_summary(&home.join(".local/state"), &id, &incarnation_id, 1, 1, 0, 0);
+
+    let output = machine_god()
+        .args(["session", &id, "--json"])
+        .env("HOME", &home)
+        .env_remove("XDG_STATE_HOME")
+        .env("XDG_CONFIG_HOME", "relative-config-must-not-be-read")
+        .env("VERCEL_OIDC_TOKEN", "invalid credential must not be read")
+        .output()
+        .unwrap();
+    let expected = format!(
+        "{{\"kind\":\"session\",\"id\":\"{id}\",\"incarnation_id\":\"{incarnation_id}\",\"revision\":1,\"next_turn_sequence\":1,\"message_count\":0,\"metadata_entry_count\":0}}\n"
+    );
+    assert_success(&output, &expected);
+    assert!(output.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn invalid_session_grammar_precedes_corrupt_state_and_all_writes() {
+    let temporary = TestDirectory::new("session-argument-precedence");
+    let config_root = temporary.path().join("missing-config");
+    let state_base = temporary.path().join("state");
+    let (record_path, lock_path) =
+        save_session_summary(&state_base, "alpha", "incarnation-alpha", 1, 1, 0, 0);
+    let contents = b"CLI_SESSION_ARGUMENT_PRECEDENCE_SECRET:not-json";
+    fs::write(&record_path, contents).unwrap();
+    fs::remove_file(&lock_path).unwrap();
+
+    for arguments in [
+        &["session"][..],
+        &["session", "last"][..],
+        &["session", "--id"][..],
+        &["session", "--id", "alpha"][..],
+        &["session", "--json"][..],
+        &["session", "--json", "alpha"][..],
+        &["session", "bad/id"][..],
+        &["session", "alpha", "--json=true"][..],
+        &["session", "alpha", "extra"][..],
+        &["session", "alpha", "--json", "extra"][..],
+        &["session", "alpha", "--json", "--json"][..],
+    ] {
+        let output = session_command(config_root.as_os_str(), state_base.as_os_str())
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+    let too_long = "x".repeat(129);
+    let output = session_command(config_root.as_os_str(), state_base.as_os_str())
+        .args(["session", &too_long])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+
+    assert_eq!(fs::read(record_path).unwrap(), contents);
+    assert!(!lock_path.exists());
+    assert!(!config_root.exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_corrupt_and_wrong_id_records_are_fixed_and_redacted() {
+    let malformed = TestDirectory::new("session-malformed");
+    let malformed_state = malformed
+        .path()
+        .join("state-CLI_SESSION_MALFORMED_STATE_SECRET");
+    let (malformed_record, _) =
+        save_session_summary(&malformed_state, "alpha", "incarnation-alpha", 1, 1, 0, 0);
+    fs::write(
+        malformed_record,
+        b"CLI_SESSION_MALFORMED_RECORD_SECRET:not-json",
+    )
+    .unwrap();
+
+    let wrong_id = TestDirectory::new("session-wrong-id");
+    let wrong_state = wrong_id
+        .path()
+        .join("state-CLI_SESSION_WRONG_ID_STATE_SECRET");
+    let (alpha_record, _) =
+        save_session_summary(&wrong_state, "alpha", "incarnation-alpha", 1, 1, 0, 0);
+    let donor_state = wrong_id.path().join("donor-state");
+    let (beta_record, _) =
+        save_session_summary(&donor_state, "beta", "incarnation-beta", 1, 1, 0, 0);
+    fs::copy(beta_record, alpha_record).unwrap();
+
+    for (state, forbidden) in [
+        (
+            &malformed_state,
+            &[
+                "CLI_SESSION_MALFORMED_STATE_SECRET",
+                "CLI_SESSION_MALFORMED_RECORD_SECRET",
+                "alpha",
+            ][..],
+        ),
+        (
+            &wrong_state,
+            &[
+                "CLI_SESSION_WRONG_ID_STATE_SECRET",
+                "incarnation-beta",
+                "beta",
+            ][..],
+        ),
+    ] {
+        for (arguments, json) in [
+            (&["session", "alpha"][..], false),
+            (&["session", "alpha", "--json"][..], true),
+        ] {
+            let output = session_command(OsStr::new("relative-config"), state.as_os_str())
+                .args(arguments)
+                .output()
+                .unwrap();
+            assert_session_error(&output, json, "Corrupt");
+            assert_output_omits(&output, forbidden);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_rejects_unsafe_symlink_and_wrong_kind_roots_without_mutation() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let temporary = TestDirectory::new("session-invalid-roots");
+    let config_root = temporary.path().join("missing-config");
+    let target = temporary.path().join("target");
+    private_directory(&target);
+
+    let wrong_kind_base = temporary.path().join("wrong-kind-base");
+    fs::create_dir(&wrong_kind_base).unwrap();
+    fs::write(
+        wrong_kind_base.join("machine-god"),
+        b"CLI_SESSION_WRONG_KIND_SECRET",
+    )
+    .unwrap();
+
+    let symlink_base = temporary.path().join("symlink-base");
+    fs::create_dir(&symlink_base).unwrap();
+    symlink(&target, symlink_base.join("machine-god")).unwrap();
+
+    let unsafe_base = temporary.path().join("unsafe-base");
+    let unsafe_root = unsafe_base.join("machine-god");
+    fs::create_dir_all(&unsafe_root).unwrap();
+    fs::set_permissions(&unsafe_root, fs::Permissions::from_mode(0o755)).unwrap();
+
+    for state_base in [&wrong_kind_base, &symlink_base, &unsafe_base] {
+        let output = session_command(config_root.as_os_str(), state_base.as_os_str())
+            .args(["session", "alpha", "--json"])
+            .output()
+            .unwrap();
+        assert_session_error(&output, true, "Unavailable");
+        assert_output_omits(&output, &["CLI_SESSION_WRONG_KIND_SECRET"]);
+    }
+
+    assert_eq!(
+        fs::read(wrong_kind_base.join("machine-god")).unwrap(),
+        b"CLI_SESSION_WRONG_KIND_SECRET"
+    );
+    assert!(symlink_base.join("machine-god").is_symlink());
+    assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(&unsafe_root).unwrap().count(), 0);
+    assert!(!config_root.exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn session_stdout_failure_uses_the_global_fixed_diagnostic() {
+    use std::fs::OpenOptions;
+    use std::process::Stdio;
+
+    let temporary = TestDirectory::new("session-stdout-failure");
+    let state_base = temporary.path().join("state");
+    save_session_summary(&state_base, "alpha", "incarnation-alpha", 1, 1, 0, 0);
+    let full = OpenOptions::new().write(true).open("/dev/full").unwrap();
+    let output = session_command(OsStr::new("relative-config"), state_base.as_os_str())
+        .args(["session", "alpha"])
+        .stdout(Stdio::from(full))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, OUTPUT_FAILURE.as_bytes());
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[test]
+fn session_is_fixed_unsupported_on_other_targets() {
+    for (arguments, json) in [
+        (&["session", "alpha"][..], false),
+        (&["session", "alpha", "--json"][..], true),
+    ] {
+        assert_session_error(&run(arguments), json, "Unsupported");
     }
 }
 
@@ -1629,6 +2073,12 @@ fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
     for arguments in [
         vec![OsString::from_vec(vec![0xff])],
         vec![OsString::from("doctor"), OsString::from_vec(vec![0xff])],
+        vec![OsString::from("session"), OsString::from_vec(vec![0xff])],
+        vec![
+            OsString::from("session"),
+            OsString::from("alpha"),
+            OsString::from_vec(vec![0xff]),
+        ],
         vec![OsString::from("sessions"), OsString::from_vec(vec![0xff])],
     ] {
         let output = machine_god().args(arguments).output().unwrap();
