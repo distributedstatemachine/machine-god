@@ -1,13 +1,15 @@
 # Native `doctor` CLI contract
 
-Status: **IN PROGRESS**.
+Status: **LOCALLY GREEN; WORKFLOWS PENDING**.
 
 This is the frozen contract for bounded Milestone 03 slice 30. It starts from
 exact delivered base `f82ce46736f7bac4154da508e3b768d0b9248e15` and adds only
-top-level `doctor [--json]` to the thin native host. The exact candidate SHA is
-pending. Local gates, three fresh adversarial reviews, feature workflows,
-non-force integration, exact `main` workflows, and delivery are all pending.
-The delivered-slice count remains twenty-nine.
+top-level `doctor [--json]` to the thin native host. Exact behavior candidate
+`15f8176b9322ef989a8c3db01bd404b79d6469fb`, tree
+`8278a777dbfe375e126ce782f581182a73d1e25e`, passed the complete exact-1.94.1
+local gate and three fresh adversarial tracks with `0/0/0/0` findings in each.
+Feature workflows, non-force integration, exact `main` workflows, and delivery
+remain pending. The delivered-slice count remains twenty-nine.
 
 The comparison observation remains pinned to `vercel-labs/fx` commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Machine-god deliberately does

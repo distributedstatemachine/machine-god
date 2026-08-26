@@ -6,17 +6,19 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 30, strict top-level `doctor [--json]`, is **IN
-PROGRESS** from exact delivered base
+Bounded Milestone 03 slice 30, strict top-level `doctor [--json]`, is **LOCALLY
+GREEN; WORKFLOWS PENDING** from exact delivered base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. It reports exactly four ordered
 read-only `config`, `credential`, `state`, and `platform` checks with fixed
 redacted details and compact human/JSON output capped at 4,096 bytes. Diagnostic
 failures remain a successful report; invalid arguments, render failures, and
 write failures retain separate exit boundaries. The command creates nothing
 and exposes no network, process, runtime, session, workspace, model, or path
-state. Its exact candidate, local gates, adversarial reviews, feature workflows,
-integration, `main` workflows, and delivery are pending, so the delivered count
-remains twenty-nine. See the [`doctor` contract](docs/doctor-cli.md) and
+state. Exact candidate `15f8176b9322ef989a8c3db01bd404b79d6469fb`, tree
+`8278a777dbfe375e126ce782f581182a73d1e25e`, passed the complete exact-1.94.1
+local gate and three fresh adversarial tracks with `0/0/0/0` findings in each.
+Feature workflows, integration, `main` workflows, and delivery remain pending,
+so the delivered count remains twenty-nine. See the [`doctor` contract](docs/doctor-cli.md) and
 [`live review ledger`](docs/reviews/m03-doctor-cli-review-01.md). Against pinned
 fx `b1774fbf6c7602b503026f96f6e960e946c692ef`, `doctor-json` is implemented
 but intentionally non-equivalent, not measured, and claim-ineligible; no

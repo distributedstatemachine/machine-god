@@ -41,14 +41,16 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirtieth bounded slice, strict top-level `doctor [--json]`, is **IN
-PROGRESS** from exact delivered base
+The thirtieth bounded slice, strict top-level `doctor [--json]`, is **LOCALLY
+GREEN; WORKFLOWS PENDING** from exact delivered base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Its normative boundary is
 [`doctor-cli.md`](doctor-cli.md), and its live ledger is
-[`m03-doctor-cli-review-01.md`](reviews/m03-doctor-cli-review-01.md). The exact
-candidate SHA, complete local gate, three fresh reviews, feature workflows,
-non-force integration, exact `main` workflows, and delivery are pending. The
-delivered count remains twenty-nine. Against pinned fx
+[`m03-doctor-cli-review-01.md`](reviews/m03-doctor-cli-review-01.md). Exact
+candidate `15f8176b9322ef989a8c3db01bd404b79d6469fb`, tree
+`8278a777dbfe375e126ce782f581182a73d1e25e`, passed the complete exact-1.94.1
+local gate and three fresh review tracks with `0/0/0/0` findings in each.
+Feature workflows, non-force integration, exact `main` workflows, and delivery
+are pending. The delivered count remains twenty-nine. Against pinned fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`, `doctor-json` is implemented but
 non-equivalent, not measured, and claim-ineligible. This record makes no
 performance, compatibility-promotion, delivery, or fx-equivalence claim.
@@ -3198,10 +3200,11 @@ and three fresh reviewers. Only a zero-finding exact candidate may proceed
 through feature exact-SHA workflows, a non-force fast-forward, and exact `main`
 workflows. Benchmark evidence is delivery evidence only.
 
-### In-progress bounded slice 30: top-level `doctor`
+### Locally green bounded slice 30: top-level `doctor`
 
 The thirtieth slice is contract-frozen from exact delivered base
-`f82ce46736f7bac4154da508e3b768d0b9248e15` and is **IN PROGRESS**. It adds
+`f82ce46736f7bac4154da508e3b768d0b9248e15` and is **LOCALLY GREEN; WORKFLOWS
+PENDING**. It adds
 only strict `doctor [--json]`. Exact cycle-1 candidate `761bf0b` passed its
 complete local gate but was rejected by one medium and two deduplicated low
 product-review findings: real process inspection order, partial-write evidence,
@@ -3216,11 +3219,13 @@ Exact cycle-2 candidate `408e6ff` then passed its complete replacement gate.
 Two fresh reviewers were zero-finding, but the performance/resource reviewer
 reported one low evidence gap: no test fixed the `Ok(0)`/`WriteZero` stdout
 boundary. That finding rejected the entire candidate. Isolated remediation
-`5a125b6` covers both human and JSON zero-progress writes, and the composed
-cycle-3 focused exact-1.94.1 gate is green at 9/9 doctor CLI unit tests plus
-warnings-denied Clippy. The exact cycle-3 candidate, its complete gate, and
-three new same-SHA reviews remain pending; neither prior reviewer set can
-approve it.
+`5a125b6` covers both human and JSON zero-progress writes. Exact cycle-3
+candidate `15f8176`, tree `8278a77`, passed its complete exact-1.94.1
+replacement gate without fallback. Three new same-SHA review tracks each
+reported `0/0/0/0`, so the deduplicated union is zero and the behavior
+candidate is formally **GREEN**. Neither prior reviewer set was reused.
+Feature workflows, integration, exact `main` workflows, and delivery remain
+pending.
 
 Parsing completes before effects. Accepted forms are exactly `doctor` and
 `doctor --json`; every other, repeated, extra, reordered, or non-Unicode
@@ -4202,9 +4207,10 @@ gate:
   slash-command categories `general`, `session`, `model`, `security`, and
   `workspace`. Observable compatibility is scenario-based; command names may
   remain intentional differences when documented. Strict `doctor [--json]` is
-  contract-frozen as **IN PROGRESS** slice 30 from exact base `f82ce467`; its
-  candidate, local gate, three fresh reviews, feature workflows, integration,
-  exact `main` workflows, and delivery are pending. It adds exactly four
+  locally green as slice 30 from exact base `f82ce467`. Exact candidate
+  `15f8176`, tree `8278a77`, passed the complete exact-1.94.1 gate and three
+  fresh reviews at `0/0/0/0` each. Feature workflows, integration, exact
+  `main` workflows, and delivery are pending. It adds exactly four
   ordered read-only checks and no authority-bearing repair behavior. The
   delivered count therefore remains twenty-nine, and this combined item stays
   unchecked. `models [--json]` is

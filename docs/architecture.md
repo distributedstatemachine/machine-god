@@ -79,7 +79,7 @@ delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed
 here.
 
-Slice 30 is **IN PROGRESS** from exact base
+Slice 30 is **LOCALLY GREEN; WORKFLOWS PENDING** from exact base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Its strict top-level
 [`doctor [--json]` boundary](doctor-cli.md) preserves the architecture split:
 native owns bounded read-only configuration, credential, state-metadata, and
@@ -89,9 +89,11 @@ validation, fixed rendering, the inclusive 4,096-byte output cap, channels,
 and exits. Core and
 the engine receive no new diagnostic, filesystem, environment, or platform
 authority. The command constructs no provider, transport, runtime, session, or
-workspace and emits no model or path state. Its exact candidate, review, CI,
-integration, and delivery remain pending, and the delivered count remains
-twenty-nine. The pinned-fx workload is implemented/non-equivalent/not-measured/
+workspace and emits no model or path state. Exact candidate `15f8176`, tree
+`8278a77`, passed the complete exact-1.94.1 local gate and three fresh review
+tracks with zero findings. Feature CI, integration, exact `main` workflows, and
+delivery remain pending, and the delivered count remains twenty-nine. The
+pinned-fx workload is implemented/non-equivalent/not-measured/
 claim-ineligible; no product-performance or fx-equivalence claim is made.
 
 ```text

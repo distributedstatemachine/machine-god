@@ -1,6 +1,6 @@
 # Milestone 03 `doctor` CLI review 01
 
-Status: **IN PROGRESS**
+Status: **LOCALLY GREEN; WORKFLOWS PENDING**
 
 ## Base and boundary
 
@@ -8,7 +8,9 @@ Status: **IN PROGRESS**
   `f82ce46736f7bac4154da508e3b768d0b9248e15`.
 - Feature branch: `agent/m03-doctor-cli`.
 - Normative contract: [`doctor-cli.md`](../doctor-cli.md).
-- Cycle-3 replacement candidate SHA: **PENDING**. Cycle-1 candidate
+- Cycle-3 replacement candidate SHA:
+  `15f8176b9322ef989a8c3db01bd404b79d6469fb`, tree
+  `8278a777dbfe375e126ce782f581182a73d1e25e`. Cycle-1 candidate
   `761bf0bce9faf7b9a40189dc837e38dc2d8e1a82` and cycle-2 candidate
   `408e6ff54aa53d94965657107da8046945811244` are rejected.
 - Pinned comparison reference: `vercel-labs/fx` commit
@@ -21,9 +23,9 @@ process, runtime, session, workspace, model, repair, migration, or mutation
 behavior. It also excludes compatibility promotion and every product-
 performance or fx-equivalence claim.
 
-The slice is not zero-finding approved, workflow-green, integrated, or
-delivered. The delivered count remains twenty-nine and Milestone 03 remains in
-progress.
+The exact behavior candidate is zero-finding approved locally. It is not yet
+workflow-green, integrated, or delivered. The delivered count remains twenty-
+nine and Milestone 03 remains in progress.
 
 ## Component ownership
 
@@ -81,9 +83,11 @@ isolated missing XDG roots, removes both credential variables, compares human
 and JSON check/count content, and proves no root was created.
 
 Cycle-1 and cycle-2 complete gates passed before their candidates were rejected
-by review. The cycle-3 complete gate is pending. If exact `+1.94.1` is damaged
-locally, the only permitted fallback is `+stable` after both Rust and Cargo
-report release 1.94.1 exactly, and the fallback must be recorded.
+by review. Exact cycle-3 candidate `15f8176b9322ef989a8c3db01bd404b79d6469fb`
+passed the complete gate under exact Rust and Cargo 1.94.1 without fallback. If
+exact `+1.94.1` is damaged locally, the only permitted fallback is `+stable`
+after both Rust and Cargo report release 1.94.1 exactly, and the fallback must
+be recorded.
 
 ## Formal review protocol
 
@@ -177,7 +181,35 @@ output diagnostic, zero accepted bytes, one write attempt, and one host call.
 The composed cycle-3 focused gate is green: formatter, 9/9 doctor CLI unit
 tests, and warnings-denied all-target/all-feature CLI Clippy pass under exact
 Rust 1.94.1. The complete cycle-3 gate and three entirely fresh same-SHA
-reviews remain pending; neither prior review set can approve cycle 3.
+reviews are recorded below; neither prior review set was reused.
+
+## Review cycle 3: green
+
+Exact cycle-3 candidate `15f8176b9322ef989a8c3db01bd404b79d6469fb`,
+tree `8278a777dbfe375e126ce782f581182a73d1e25e`, passed the four required
+workspace commands under exact Rust and Cargo 1.94.1 without fallback. Focused
+doctor evidence passed 10/10 native unit and 10/10 native integration tests in
+both no-default and all-feature modes, 9/9 CLI unit tests, and 7/7 CLI black-
+box tests. The gate also passed 135 Python tests with eight host-specific
+skips, pinned compatibility regeneration, documentation integrity across
+80 Markdown files, 136 fenced blocks, 574 inline links, and 422 repository-
+relative targets with zero errors, dependency policy and advisory checks,
+installed WASI/FreeBSD/Linux no-feature compilation, and fresh release-binary
+human/JSON/count-consistency/no-create smoke. The release outputs were 254 and
+418 bytes and created none of the isolated missing roots.
+
+Three entirely fresh reviewers inspected that same immutable candidate in
+separate detached worktrees:
+
+1. Correctness/API reported `blocker=0 high=0 medium=0 low=0` and **GREEN**.
+2. Configuration/credential/state lifecycle and portability reported
+   `blocker=0 high=0 medium=0 low=0` and **GREEN**.
+3. Performance/resource/CLI lifecycle reported
+   `blocker=0 high=0 medium=0 low=0` and **GREEN**.
+
+The deduplicated union is zero. The behavior candidate is formally **GREEN**.
+The documentation-only review seal containing this record is exempt from a
+redundant adversarial cycle; exact feature workflows remain the next gate.
 
 ## Pending evidence
 
@@ -193,13 +225,15 @@ reviews remain pending; neither prior review set can approve cycle 3.
 - Independent-evidence lineage:
   `761bf0bce9faf7b9a40189dc837e38dc2d8e1a82`, then remediation
   `3de641f975c235edd19e2fd365f275f85ea2a56b`.
-- Fully composed cycle-3 replacement candidate SHA/tree: **PENDING**.
+- Fully composed cycle-3 replacement candidate SHA/tree:
+  `15f8176b9322ef989a8c3db01bd404b79d6469fb` /
+  `8278a777dbfe375e126ce782f581182a73d1e25e`.
 - Cycle-1 complete local gate: **GREEN, CANDIDATE REJECTED BY REVIEW**.
 - Cycle-2 complete local gate: **GREEN, CANDIDATE REJECTED BY REVIEW**.
-- Cycle-3 focused gate: **GREEN**; complete gate: **PENDING**.
+- Cycle-3 focused and complete gates: **GREEN** under exact Rust 1.94.1.
 - Formal review cycle 1: **REJECTED, REMEDIATED**.
 - Formal review cycle 2: **REJECTED, REMEDIATED**.
-- Formal review cycle 3: **PENDING**.
+- Formal review cycle 3: **GREEN, 0/0/0/0 IN ALL THREE TRACKS**.
 - Exact feature CI and benchmark-evidence workflows: **PENDING**.
 - Non-force `main` integration and exact `main` workflows: **PENDING**.
 

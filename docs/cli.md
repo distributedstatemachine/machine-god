@@ -21,9 +21,11 @@ no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
 Bounded slice 30 adds strict top-level `doctor [--json]` under the frozen
-[`doctor` contract](doctor-cli.md). The slice is **IN PROGRESS** from exact base
-`f82ce46736f7bac4154da508e3b768d0b9248e15`; its exact candidate, local gates,
-reviews, workflows, integration, and delivery are pending. It reports exactly
+[`doctor` contract](doctor-cli.md). The slice is **LOCALLY GREEN; WORKFLOWS
+PENDING** from exact base `f82ce46736f7bac4154da508e3b768d0b9248e15`.
+Exact candidate `15f8176`, tree `8278a77`, passed the complete exact-1.94.1
+local gate and three fresh review tracks at `0/0/0/0` each. Workflows,
+integration, and delivery remain pending. It reports exactly
 four ordered read-only checks, builds either representation under an inclusive
 4,096-byte cap, and creates nothing. A check-level `fail` remains exit 0;
 invalid arguments exit 2, while render and output-write failures exit 1. The
