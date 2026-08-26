@@ -136,8 +136,17 @@ must make the five stored structs object-only and `Role` string-only, grow
 fixed-fingerprint tracker entries/buckets fallibly in proportion to unique
 keys under the unchanged 65,536 ceiling, bound small-record allocator high-
 water use, and compare long/short discarded values at equal structure.
-Remediation, its complete gate, fresh cycle-5 reviews, remote workflows,
-`main` integration, and delivery remain pending.
+Exact remediation `1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
+`b320f55219ebc808790138dfd293d32e83da77c3`, is composed and passed the
+complete local gate under exact Rust/Cargo 1.94.1 without fallback. Focused 24
+native and 64 CLI process tests, including 16 differentials, are green. Python
+135/8 skips, byte-stable pinned fx, WASI/FreeBSD, documentation 85/147/626/81,
+dependency policy/audit, unchanged production graph, diff/inventory/no-added-
+unsafe, release evidence, and the native near-cap probe are green. The
+3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`.
+Fresh cycle-5 reviews, remote workflows, `main` integration, and delivery
+remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
@@ -3627,7 +3636,22 @@ records. The replacement must enforce object-only stored structs and a string-
 only role consistently, fallibly grow fixed-fingerprint entries/buckets in
 proportion to unique keys under the unchanged ceiling, bound empty/small-record
 allocator high-water use, and compare long and short values at equal structure.
-Remediation, its complete gate, and three fresh cycle-5 reviews remain pending.
+Exact isolated components `65012426ee9e174c15ededac7c0c95f9f496b2cf`
+for native remediation and `225fee4af82c24ea226db185801a7fe397407593`
+for CLI differentials compose through `7c191b8`, `c73467e`, and exact
+remediation `1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
+`b320f55219ebc808790138dfd293d32e83da77c3`. The complete local gate passed
+under exact Rust/Cargo 1.94.1 without fallback. Focused 24 native and 64 CLI
+process tests, including 16 differentials, are green. Python 135/8 skips,
+byte-stable pinned fx, WASI/FreeBSD, docs 85/147/626/81, dependency policy/
+audit, unchanged 364-line production graph, diff/inventory/no-added-unsafe,
+release evidence, and the native near-cap probe are green. The 3,985,216-byte
+release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`.
+Allocator evidence gives equal `12/2/7` allocation counts and `819/14/645`
+bytes for empty/short/long text, equal `14/2/8` and `1,427/14/1,059` for
+short/long JSON, and `35/2/9` plus `2,228,435/14/1,606,083` for 5,000 keys, in
+total/current/maximum order. Three fresh cycle-5 reviews remain pending.
 
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, a non-force fast-forward, and exact `main` workflows. There is no
@@ -4636,9 +4660,15 @@ gate:
   structs object-only and role string-only, keeps the canonical writer
   unchanged, grows fixed-fingerprint entries/buckets fallibly with unique keys
   under the unchanged 65,536 ceiling, and requires small-record high-water plus
-  equal-structure long/short-value allocation evidence. Remediation, its full
-  gate, fresh cycle-5 reviews, remote workflows, `main` integration, and
-  delivery remain pending.
+  equal-structure long/short-value allocation evidence. Exact remediation
+  `1f96c4b`, tree `b320f55`, passed the complete exact-1.94.1 local gate without
+  fallback. Focused 24 native and 64 CLI process tests with 16 differentials,
+  Python 135/8 skips, pinned fx, targets, docs 85/147/626/81, dependency/diff/
+  inventory/no-added-unsafe, release, allocation, and native near-cap evidence
+  are green. Its 3,985,216-byte release binary has SHA-256
+  `c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`.
+  Fresh cycle-5 reviews, remote workflows, `main` integration, and delivery
+  remain pending.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.

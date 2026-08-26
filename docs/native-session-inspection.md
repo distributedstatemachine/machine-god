@@ -23,7 +23,12 @@ fallback. Formal cycle 4 rejected exact candidate
 `99bf524033c6212a05c22e7417ea6f93c202104f`. All three tracks reported
 `0/0/1/0`; the deduplicated `0/0/2/0` union is an ordinary-versus-streamed
 wire-form mismatch and eager approximately 8.9 MB duplicate-tracker
-reservation. Remediation, its complete gate, fresh cycle-5 reviews, remote
+reservation. Exact remediation
+`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
+`b320f55219ebc808790138dfd293d32e83da77c3`, implements the replacement
+contract and passed its complete local gate under exact Rust/Cargo 1.94.1
+without fallback. Focused evidence is green at 24 native inspection and 64 CLI
+process tests, including 16 differentials. Fresh cycle-5 reviews, remote
 workflows, `main` integration, and delivery remain pending. Its sole first
 consumer is the strict
 [`session` CLI contract](session-cli.md).
@@ -179,6 +184,12 @@ allocations and 8,913,715/14/8,913,347 bytes. The complete exact-remediation
 gate is green: required Rust, Python 135/8 skips, pinned fx, WASI/FreeBSD, docs
 85/147/626/81, dependency policy/audit, diff/inventory/no-added-unsafe, release-
 hash, the 18/18 session matrix, and direct/native near-cap probes all passed.
-Those results belong to the rejected cycle-4 candidate and do not satisfy the
-replacement contract above. Remediation, its complete gate, and fresh cycle-5
-review remain pending.
+Those results belong to the rejected cycle-4 candidate. Exact replacement
+`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
+`b320f55219ebc808790138dfd293d32e83da77c3`, passes 24 focused native tests and
+the complete exact-1.94.1 local gate without fallback. Its allocator evidence
+reports `12/2/7` allocations and `819/14/645` bytes for empty, short-text, and
+long-text records; `14/2/8` and `1,427/14/1,059` for short/long JSON; and
+`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys, in total/current/maximum
+order. The direct native near-cap probe passed 1/1. Full evidence is retained in
+the review ledger. Fresh cycle-5 review remains pending.

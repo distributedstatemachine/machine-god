@@ -7,9 +7,12 @@ verdict. Exact cycle-3 remediation source
 `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
 `14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, passed its complete replacement
 gate under exact Rust/Cargo 1.94.1 without fallback before documentation was
-composed into the rejected cycle-4 candidate. Cycle-4 remediation, its complete
-gate, three fresh cycle-5 reviews, remote delivery gates, integration, and
-delivery remain pending. This is not a review-green or delivered claim.
+composed into the rejected cycle-4 candidate. Exact cycle-4 remediation
+`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
+`b320f55219ebc808790138dfd293d32e83da77c3`, is composed and passed its
+complete local gate under exact Rust/Cargo 1.94.1 without fallback. Three fresh
+cycle-5 reviews, remote delivery gates, integration, and delivery remain
+pending. This is not a review-green or delivered claim.
 Historical rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
@@ -433,14 +436,61 @@ Replacement allocation evidence must bound empty/small-record allocator
 high-water use and compare long and short discarded values at equal structural
 shape. A near-cap input alone does not establish the small-record bound.
 
-Remediation source, its complete same-SHA gate, and three fresh cycle-5 reviews
-remain pending. Each cycle-5 report must end with exact blocker/high/medium/low
-counts. Any finding rejects the replacement and requires another complete gate
-plus three new agents on one exact SHA. No prior discovery, implementation,
-review, or remediation agent may approve its own work or be reused in a later
-review cycle. Only a deduplicated `0/0/0/0` candidate is formally green. No
-remote workflow, `main` integration, delivery, compatibility-promotion,
-product-performance, or fx-equivalence claim is made.
+## Cycle 4 remediation and complete local gate
+
+The isolated native remediation component is exact
+`65012426ee9e174c15ededac7c0c95f9f496b2cf`; independent CLI differential
+evidence is exact `225fee4af82c24ea226db185801a7fe397407593`. Feature-branch
+composition records CLI evidence at
+`7c191b8a742f820368dd8f25e4f7e6f3026a87e0`, cycle-4 documentation at
+`c73467ea74e563c2c89db38603bc6b9d8f11aaf1`, and native production/evidence at
+exact remediation `1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
+`b320f55219ebc808790138dfd293d32e83da77c3`.
+
+Focused evidence is green for 24 native inspection tests and 64 CLI process
+tests, including 16 differential cases.
+All four required commands passed on exact `1f96c4b` under Rust/Cargo 1.94.1
+without fallback:
+
+- `cargo +1.94.1 fmt --all -- --check`;
+- `cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings`;
+- `cargo +1.94.1 test --workspace`; and
+- `cargo +1.94.1 test --doc --workspace`.
+
+The complete Python suite passed 135 tests with eight expected macOS skips.
+Pinned-fx `b1774fb` regeneration is byte-stable. WASI and FreeBSD checks are
+green with only the established WASI `read_file` warning. Documentation
+integrity is 85 Markdown files, 147 fenced blocks, 626 parsed links, and 81
+unique repository targets with zero errors. Exact `cargo-deny` 0.20.2 passed
+with only three established duplicate-version warnings. Exact `cargo-audit`
+0.22.2 loaded 1,226 advisories, scanned 211 dependencies, and found zero
+vulnerabilities. The production normal/build graph is unchanged at 364
+normalized lines; `allocation-counter` remains dev-only. Diff, generated-
+inventory, and no-added-unsafe checks are green.
+
+The freshly built 3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`. Release-
+binary evidence passed 16 equivalence categories across 20 records, 12 grammar
+cases, missing-root/no-create, an exclusive held-lock wait of at least 500 ms,
+engine-over-default records, and the 8,650,857-byte near-cap record. The direct
+native near-cap probe passed 1/1.
+
+Isolated allocator evidence reports total/current/maximum allocations and bytes.
+Empty, short-text, and long-text records each report `12/2/7` allocations and
+`819/14/645` bytes. Short-JSON and long-JSON records each report `14/2/8` and
+`1,427/14/1,059`. The 5,000-key record reports `35/2/9` and
+`2,228,435/14/1,606,083`. Equal-structure short/long shapes therefore preserve
+allocation counts and high-water bytes independent of discarded payload length,
+while empty/small records no longer reserve the former maximum capacity.
+
+These results establish only the exact remediation's complete local gate.
+Three fresh cycle-5 reviews remain pending. Each report must end with exact
+blocker/high/medium/low counts. Any finding rejects the replacement and
+requires another complete gate plus three new agents on one exact SHA. No prior
+discovery, implementation, review, or remediation agent may approve its own
+work or be reused in a later review cycle. Only a deduplicated `0/0/0/0`
+candidate is formally green. No remote workflow, `main` integration, delivery,
+compatibility-promotion, product-performance, or fx-equivalence claim is made.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees

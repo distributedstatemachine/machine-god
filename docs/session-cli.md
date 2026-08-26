@@ -32,9 +32,16 @@ rejected exact candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
 `99bf524033c6212a05c22e7417ea6f93c202104f`. The three track counts are
 `0/0/1/0`, `0/0/1/0`, and `0/0/1/0`; the deduplicated `0/0/2/0` union is an
 ordinary-versus-streamed wire-form mismatch and eager approximately 8.9 MB
-duplicate-tracker reservation. Remediation, its complete gate, fresh cycle-5
-reviews, remote workflows, `main` integration, and delivery remain pending;
-this is not a review-green or delivered claim.
+duplicate-tracker reservation. Exact remediation
+`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
+`b320f55219ebc808790138dfd293d32e83da77c3`, implements the replacement
+contract and passed its complete local gate under exact Rust/Cargo 1.94.1
+without fallback. Focused evidence is green at 24 native inspection and 64 CLI
+process tests, including 16 differentials. The 3,985,216-byte release binary,
+SHA-256 `c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`,
+passed the release matrix recorded in the ledger. Fresh cycle-5 reviews, remote
+workflows, `main` integration, and delivery remain pending; this is not a
+review-green or delivered claim.
 No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
