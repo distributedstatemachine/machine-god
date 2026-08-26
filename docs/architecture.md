@@ -1,6 +1,40 @@
 # Architecture
 
-In-progress bounded slice 32 initially composed production and independent
+Current bounded slice 32 remains **IN PROGRESS**. Cycle 4 rejected exact
+`df72e084`, tree `99bf524`, with correctness/API, native effects, and
+performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is
+an ordinary/streamed wire-form mismatch and eager approximately 8.9 MB tracker
+allocation. Exact remediation `1f96c4bf`, tree `b320f552`, makes
+`StoredEnvelope`, `StoredRecord`, `StoredMessage`, `StoredToolCall`, and
+`StoredToolOutput` object-only and `Role` string-only, leaves the canonical
+writer unchanged, and grows fixed-fingerprint tracker entries/buckets fallibly
+with unique keys under the unchanged 65,536-node ceiling. Exact gate-record
+candidate `8f533cde`, tree `8215fb94`, passed the complete exact-1.94.1 local
+gate without fallback. Focused 24 native/64 CLI process/16 differential,
+Python 135/8 skips, byte-stable pinned fx `b1774fb`, WASI/FreeBSD with only the
+established `read_file` warning, documentation 85/147/626/81, `cargo-deny`
+0.20.2 with three established
+duplicate warnings, `cargo-audit` 0.22.2 over 211 dependencies/1,226 advisories
+with zero vulnerabilities, the unchanged 364-line production graph, and
+diff/inventory/no-added-unsafe evidence are green.
+
+The 3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
+passed 16 equivalence categories across 20 records, 12 grammar cases, missing/
+no-create, held-lock, engine-over-default, and 8,650,857-byte near-cap evidence;
+the native near-cap probe passed 1/1. Allocator total/current/maximum tuples are
+`12/2/7` and `819/14/645` bytes for empty/short/long text, `14/2/8` and
+`1,427/14/1,059` for short/long JSON, and `35/2/9` and
+`2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact `8f533cde` with
+correctness/API `0/0/0/1`, native effects `0/0/0/0`, and performance/resources
+`0/0/0/1`, deduplicated to one low stale cross-document-summary finding. This
+documentation remediation, three fresh cycle-6 reviews, remote workflows,
+`main` integration, and delivery remain pending. The slice is non-equivalent,
+unmeasured, and claim-ineligible; no product-performance or fx-equivalence
+claim is made. See the
+[`live ledger`](reviews/m03-session-cli-review-01.md).
+
+Historical initial slice-32 composition context: production and independent
 evidence through `852fec7`; focused composition-gate remediation advances the
 production precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`,
 tree `61bcf619fc9190a9a70ab3a9c643605c88ab1817`, while preserving the host boundary
@@ -24,8 +58,9 @@ precursor `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
 1.94.1 formatting, workspace warnings-denied Clippy, test, and doctest gate.
 Documentation integrity is 85/146/620/81 with zero errors. The commit carrying
 this gate record is the formal cycle-1 candidate once its exact same-SHA gate is
-reconfirmed. Formal adversarial product review, remote workflows, `main`
-integration, and delivery remain pending; no review-green claim is made.
+reconfirmed. At that superseded cycle-1 checkpoint, formal adversarial product
+review, remote workflows, `main` integration, and delivery were pending; no
+review-green claim was made.
 See the normative [`CLI`](session-cli.md) and
 [`native`](native-session-inspection.md) contracts.
 

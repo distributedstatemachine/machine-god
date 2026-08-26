@@ -1,6 +1,40 @@
 # Command-line interface
 
-In-progress slice 32 owns strict top-level `session <id> [--json]` under the
+Current bounded slice 32 remains **IN PROGRESS**. Cycle 4 rejected exact
+`df72e084`, tree `99bf524`, with correctness/API, native effects, and
+performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is
+the wire-form mismatch plus eager approximately 8.9 MB tracker allocation.
+Exact remediation `1f96c4bf`, tree `b320f552`, makes `StoredEnvelope`,
+`StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
+object-only and `Role` string-only, preserves the canonical writer, and grows
+fixed-fingerprint tracker storage fallibly with unique keys under the 65,536-
+node ceiling. Exact gate-record candidate `8f533cde`, tree `8215fb94`, passed
+the complete exact-1.94.1 local gate without fallback. Focused 24 native/64 CLI
+process/16 differential, Python 135/8 skips, byte-stable pinned fx `b1774fb`,
+WASI/FreeBSD with only the established `read_file` warning, docs 85/147/626/81,
+`cargo-deny` 0.20.2 with three established duplicate warnings, `cargo-audit`
+0.22.2 over 211 dependencies/1,226 advisories
+with zero vulnerabilities, the unchanged 364-line production graph, and
+diff/inventory/no-added-unsafe evidence are green.
+
+The 3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
+passed 16 equivalence categories across 20 records, 12 grammar cases, missing/
+no-create, held-lock, engine-over-default, and 8,650,857-byte near-cap evidence;
+the native near-cap probe passed 1/1. Allocator
+total/current/maximum tuples are `12/2/7` and `819/14/645` bytes for empty/
+short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
+`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact
+`8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
+performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
+summary finding. This docs remediation, three fresh cycle-6 reviews, remote
+workflows, `main` integration, and delivery remain pending. The slice remains
+non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
+equivalence claim is made. See the
+[`live ledger`](reviews/m03-session-cli-review-01.md).
+
+Historical slice-32 lineage through cycle 3: the slice owns strict top-level
+`session <id> [--json]` under the
 normative
 [`session` contract](session-cli.md). The command inspects one exact
 current-schema record through the separate
@@ -42,9 +76,9 @@ replacement gate is green on exact `af055ff3`/`14eafad` under Rust/Cargo 1.94.1
 without fallback. Python 135/8 skips, pinned-fx regeneration, WASI/FreeBSD,
 docs 85/147/626/81, dependency policy/audit, diff/inventory/no-added-unsafe,
 the 4,001,760-byte release hash, and its 18/18 session matrix are green; the
-ledger records the exact results. Three fresh cycle-4 reviews, remote workflows,
-`main` integration, and delivery remain pending.
-There is no matching bootstrap workload and no claim that the feature is green,
+ledger records the exact results. At that superseded checkpoint, cycle-4
+review, remote workflows, `main` integration, and delivery were pending. There
+was no matching bootstrap workload and no claim that the feature was green,
 delivered, performant, or equivalent. The delivered count remains thirty-one;
 evidence is in the
 [`live ledger`](reviews/m03-session-cli-review-01.md).

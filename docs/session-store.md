@@ -186,6 +186,40 @@ artifact.
 
 ## Specialized inspection summary
 
+Current bounded slice 32 remains **IN PROGRESS**. Cycle 4 rejected exact
+`df72e084`, tree `99bf524`, with correctness/API, native effects, and
+performance/resources each at `0/0/1/0`; its deduplicated `0/0/2/0` union is
+the ordinary/streamed wire-form mismatch and eager
+approximately 8.9 MB tracker allocation. Exact remediation `1f96c4bf`, tree
+`b320f552`, makes `StoredEnvelope`, `StoredRecord`, `StoredMessage`,
+`StoredToolCall`, and `StoredToolOutput` object-only and `Role` string-only,
+keeps the canonical writer unchanged, and grows fixed-fingerprint tracker
+storage fallibly with unique keys under the 65,536-node ceiling. Exact gate-
+record candidate `8f533cde`, tree `8215fb94`, passed the complete exact-1.94.1
+local gate without fallback: focused 24 native/64 CLI process/16 differential,
+Python 135/8 skips, byte-stable pinned fx `b1774fb`, WASI/FreeBSD with only the
+established `read_file` warning, docs 85/147/626/81, `cargo-deny` 0.20.2 with
+three established duplicate warnings,
+`cargo-audit` 0.22.2 over 211 dependencies/1,226 advisories with zero
+vulnerabilities, the unchanged 364-line production graph, and diff/inventory/
+no-added-unsafe evidence are green.
+
+The 3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
+passed 16 equivalence categories across 20 records, 12 grammar cases, missing/
+no-create, held-lock, engine-over-default, and 8,650,857-byte near-cap evidence;
+the native near-cap probe passed 1/1. Allocator
+total/current/maximum tuples are `12/2/7` and `819/14/645` bytes for empty/
+short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
+`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact
+`8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
+performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
+summary finding. This docs remediation, three fresh cycle-6 reviews, remote
+workflows, `main` integration, and delivery remain pending. The slice remains
+non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
+equivalence claim is made. Full evidence is in the
+[`live ledger`](reviews/m03-session-cli-review-01.md).
+
 The in-progress slice-32 native inspection boundary adds a crate-private
 summary operation beside ordinary `SessionStore::load`; it does not change the
 provider-neutral trait or the load behavior above. The synchronized replacement
@@ -197,11 +231,16 @@ are validated and discarded while streaming; only the returned session and
 incarnation ID strings survive as payload-sized allocations.
 
 The summary parser must accept and reject numbers exactly as canonical
-`serde_json::Number` parsing does. Typed schema fields remain unique. Metadata
+`serde_json::Number` parsing does. `StoredEnvelope`, `StoredRecord`,
+`StoredMessage`, `StoredToolCall`, and `StoredToolOutput` are object-only, while
+`Role` is string-only; the canonical writer is unchanged. Typed schema fields
+remain unique. Metadata
 and nested arbitrary JSON preserve the last-value-wins behavior above through a
 fixed-digest duplicate tracker whose entries and logical node accounting are
-strictly capped by the 65,536-node store limit; repeated keys replace the prior
-logical value and its node contribution. The 64-level arbitrary-JSON depth cap,
+strictly capped by the 65,536-node store limit. Entries and buckets grow
+fallibly with unique keys rather than eagerly reserving that ceiling; repeated
+keys replace the prior logical value and its node contribution. The 64-level
+arbitrary-JSON depth cap,
 8,651,165-byte record cap, identifier/counter/content-shape checks, and exact
 filename/ID binding remain store-owned constraints. They are not the engine's
 configurable message, transcript, or metadata limits.
@@ -214,7 +253,8 @@ block has six, and tool-call/result JSON has seven. The specialized inspector
 therefore accepts/rejects nested-array depths at 123/124, 120/121, 119/120, and
 119/120 respectively, including a value later shadowed by a duplicate key.
 
-Exact cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
+Historical review/gate lineage through cycle 3: exact cycle-2 candidate
+`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
 `72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected and does not satisfy
 this synchronized contract. Cycle-2 replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
@@ -235,8 +275,9 @@ including ten equivalence cases. The complete replacement gate is green on
 exact `af055ff3`/`14eafad` under Rust/Cargo 1.94.1 without fallback. Its
 18/18 release-session matrix includes those ten equivalence cases, held-lock
 behavior, and engine-over-default records; direct 8,650,857-byte near-cap and
-native near-cap/allocation probes each passed 1/1. Three fresh cycle-4 reviews
-remain pending; no review-green or delivered claim is made.
+native near-cap/allocation probes each passed 1/1. At that superseded
+checkpoint, cycle-4 review remained pending; no review-green or delivered claim
+was made.
 
 ## Save, compare-and-swap, and durability
 

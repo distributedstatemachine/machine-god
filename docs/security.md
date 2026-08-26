@@ -1,6 +1,40 @@
 # Security
 
-In-progress bounded slice 32 has rejected exact cycle-2 candidate
+Current bounded slice 32 remains **IN PROGRESS**. Cycle 4 rejected exact
+`df72e084`, tree `99bf524`, with correctness/API, native effects, and
+performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is
+the wire-form mismatch plus eager approximately 8.9 MB tracker allocation.
+Exact remediation `1f96c4bf`, tree `b320f552`, makes `StoredEnvelope`,
+`StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
+object-only and `Role` string-only, preserves canonical writer bytes, and grows
+fixed-fingerprint tracker entries/buckets fallibly with unique keys under the
+65,536-node ceiling. Exact gate-record candidate `8f533cde`, tree `8215fb94`,
+passed the complete exact-1.94.1 local gate without fallback: focused 24
+native/64 CLI process/16 differential, Python 135/8 skips, byte-stable pinned
+fx `b1774fb`, WASI/FreeBSD with only the established `read_file` warning, docs
+85/147/626/81, `cargo-deny` 0.20.2 with three established duplicate warnings,
+`cargo-audit` 0.22.2 over 211 dependencies/
+1,226 advisories with zero vulnerabilities, the unchanged 364-line production
+graph, and diff/inventory/no-added-unsafe evidence are green.
+
+The 3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
+passed 16 equivalence categories across 20 records, 12 grammar cases, missing/
+no-create, held-lock, engine-over-default, and 8,650,857-byte near-cap evidence;
+the native near-cap probe passed 1/1. Allocator
+total/current/maximum tuples are `12/2/7` and `819/14/645` bytes for empty/
+short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
+`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact
+`8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
+performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
+summary finding. This docs remediation, three fresh cycle-6 reviews, remote
+workflows, `main` integration, and delivery remain pending. The slice remains
+non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
+equivalence claim is made. See the
+[`live ledger`](reviews/m03-session-cli-review-01.md).
+
+Historical slice-32 review/gate lineage through cycle 3: the bounded slice
+rejected exact cycle-2 candidate
 `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
 `72a63c07e4a48356f87c918a85def12b5943dad3`. Correctness/API and native
 boundary/effects each reported `0/0/1/2`; performance/concurrency/resources
@@ -29,16 +63,18 @@ under Rust/Cargo 1.94.1 without fallback. Exact `cargo-deny` 0.20.2 passed all
 categories with three established duplicate warnings, and `cargo-audit` 0.22.2
 found zero vulnerabilities across 211 dependencies and 1,226 advisories.
 Production normal/build dependency topology remains 364 lines; diff, inventory,
-and no-added-unsafe checks are green. Three fresh cycle-4 reviews, remote
-workflows, `main` integration, and delivery remain pending.
+and no-added-unsafe checks are green. At that superseded checkpoint, cycle-4
+review, remote workflows, `main` integration, and delivery were pending.
 The slice adds no network, subprocess, credential, provider, permission,
 workspace, configuration, runtime, or engine authority. Its
 `session` facade captures only state environment inputs on first poll, opens
 only an existing validated machine-god hierarchy, and must inspect exactly one
 validated current-schema record through the synchronized one-pass fixed-4-KiB
 summary parser. Canonical `serde_json::Number` semantics, fixed-stack known
-tokens, only two retained ID strings, and a fixed-digest strictly node-capped
-last-value-wins duplicate tracker are required. While parsing values that may
+tokens, only two retained ID strings, object-only stored structs, string-only
+roles, and a fixed-digest strictly node-capped last-value-wins duplicate
+tracker are required. Tracker entries and buckets grow fallibly with unique
+keys rather than eagerly reserving the ceiling. While parsing values that may
 later be shadowed, the parser must also reproduce `serde_json`'s typed-parent-
 aware active-container limit before applying the store's final-tree depth and
 node limits. The CLI receives only bounded
@@ -54,9 +90,9 @@ boundary is in [`session-cli.md`](session-cli.md),
 categories fail closed to the CLI's `Unavailable` presentation. File, depth,
 node, schema, identifier, and counter constraints are store-owned rather than
 engine limits. Lock wait, filesystem latency, and `EINTR` retries remain
-unbounded in time and attempts. Formal cycle 3 is rejected, the complete
-remediation gate is green, and the feature is not delivered. No compatibility
-or performance claim is made.
+unbounded in time and attempts. Formal cycle 5 is rejected only for stale
+cross-document current summaries; the production remediation gate is green and
+the feature is not delivered. No compatibility or performance claim is made.
 
 Delivered bounded slice 31 adds no new network, subprocess, credential,
 provider, permission, workspace, or engine authority. Its native `sessions`

@@ -6,7 +6,48 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 32, strict top-level
+Current bounded Milestone 03 slice 32, strict top-level
+`session <id> [--json]`, remains **IN PROGRESS**. Formal cycle 4 rejected exact
+candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`: correctness/API, native effects,
+and performance/resources each reported `0/0/1/0`; the deduplicated `0/0/2/0`
+union is a wire-form mismatch plus eager approximately 8.9 MB tracker
+allocation. Exact remediation `1f96c4bf05f93a99b86f0ca549621e739953e520`,
+tree `b320f55219ebc808790138dfd293d32e83da77c3`, makes `StoredEnvelope`,
+`StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
+object-only and `Role` string-only, leaves the canonical writer unchanged, and
+grows fixed-fingerprint tracker entries/buckets fallibly with unique keys under
+the unchanged 65,536-node ceiling.
+
+Exact gate-record candidate `8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`,
+tree `8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`, passed the complete local gate
+under exact Rust/Cargo 1.94.1 without fallback: 24 focused native tests, 64 CLI
+process tests with 16 differentials, Python 135/8 skips, byte-stable pinned fx
+`b1774fb`, WASI/FreeBSD with only the established `read_file` warning,
+documentation 85/147/626/81, `cargo-deny` 0.20.2 with three established
+duplicate warnings, `cargo-audit` 0.22.2 over 211 dependencies/1,226 advisories
+with zero vulnerabilities, unchanged 364-line production graph, and green
+diff/inventory/no-added-unsafe checks. Its 3,985,216-byte release binary has
+SHA-256 `c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
+passed 16 equivalence categories across 20 records, 12 grammar cases, missing-
+root/no-create, held-lock wait of at least 500 ms, engine-over-default, and
+8,650,857-byte near-cap evidence; the native near-cap probe passed 1/1.
+Allocator total/current/maximum tuples are `12/2/7` allocations and
+`819/14/645` bytes for empty/short/long text, `14/2/8` and
+`1,427/14/1,059` for short/long JSON, and `35/2/9` and
+`2,228,435/14/1,606,083` for 5,000 keys.
+
+Formal cycle 5 rejected exact `8f533cde`: correctness/API reported `0/0/0/1`,
+native effects `0/0/0/0`, and performance/resources `0/0/0/1`; the
+deduplicated `0/0/0/1` is stale cross-document current summaries. This
+documentation remediation and three fresh cycle-6 reviews remain pending, as
+do remote workflows, `main` integration, and delivery. The slice remains non-
+equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
+equivalence claim is made. The authoritative record is the
+[`live ledger`](docs/reviews/m03-session-cli-review-01.md).
+
+Historical slice-32 lineage through cycle 3: bounded Milestone 03 slice 32,
+strict top-level
 `session <id> [--json]`, is **IN PROGRESS** from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
 `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
@@ -64,8 +105,9 @@ evidence. Composed remediation is exact
 6 for JSON content, and 7 for tool-call/result JSON. Exact accepted/rejected
 array-depth boundaries are 123/124, 120/121, 119/120, and 119/120. Focused
 evidence is now 58 CLI process tests, including ten store/CLI equivalence
-cases, and 22 native inspection tests. Dev-only `allocation-counter` 0.8.1 is
-isolated per child process; all five measured shapes report exactly
+cases, and 22 native inspection tests. Historical cycle-3 dev-only
+`allocation-counter` 0.8.1 evidence is isolated per child process; all five
+measured shapes report exactly
 `count_total=14`, `count_current=2`, `count_max=8`, `bytes_total=8913715`,
 `bytes_current=14`, and `bytes_max=8913347`. The complete replacement gate is
 green on that exact remediation under Rust/Cargo 1.94.1 without fallback.
@@ -82,9 +124,9 @@ graph is unchanged. Diff, inventory, and no-added-unsafe checks are green. The
 `d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d` and passed
 the 18/18 session matrix, including ten equivalence cases, held-lock behavior,
 and engine-over-default records. Direct 8,650,857-byte near-cap and native
-near-cap/allocation probes each passed 1/1. Three fresh cycle-4 reviews, remote
-workflows, `main` integration, and delivery remain pending. No review-green or
-delivered claim is made. No
+near-cap/allocation probes each passed 1/1. At that superseded checkpoint,
+cycle-4 review, remote workflows, `main` integration, and delivery were pending.
+No review-green or delivered claim was made. No
 compatibility, product-performance, or fx-equivalence claim is made; the
 delivered count remains thirty-one.
 

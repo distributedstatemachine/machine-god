@@ -1,13 +1,45 @@
 # Adversarial reviews
 
+Current bounded slice 32 remains **IN PROGRESS**. Cycle 4 rejected exact
+`df72e084`, tree `99bf524`, with correctness/API, native effects, and
+performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is
+the wire-form mismatch plus eager approximately 8.9 MB tracker allocation.
+Exact remediation `1f96c4bf`, tree `b320f552`, makes `StoredEnvelope`,
+`StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
+object-only and `Role` string-only, keeps the canonical writer unchanged, and
+grows fixed-fingerprint tracker storage fallibly with unique keys under the
+65,536-node ceiling. Exact gate-record candidate `8f533cde`, tree `8215fb94`,
+passed the complete exact-1.94.1 local gate without fallback: focused 24
+native/64 CLI process/16 differential, Python 135/8 skips, byte-stable pinned
+fx `b1774fb`, WASI/FreeBSD with only the established `read_file` warning, docs
+85/147/626/81, `cargo-deny` 0.20.2 with three established duplicate warnings,
+`cargo-audit` 0.22.2 over 211 dependencies/
+1,226 advisories with zero vulnerabilities, the unchanged 364-line production
+graph, and diff/inventory/no-added-unsafe evidence are green.
+
+The 3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
+passed 16 equivalence categories across 20 records, 12 grammar cases, missing/
+no-create, held-lock, engine-over-default, and 8,650,857-byte near-cap evidence;
+the native near-cap probe passed 1/1. Allocator
+total/current/maximum tuples are `12/2/7` and `819/14/645` bytes for empty/
+short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
+`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact
+`8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
+performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
+summary finding. This docs remediation and three fresh cycle-6 reviews remain
+pending, as do remote workflows, `main` integration, and delivery. The slice
+remains non-equivalent, unmeasured, and claim-ineligible; no product-
+performance or fx-equivalence claim is made.
+
 - [`m03-session-cli-review-01.md`](m03-session-cli-review-01.md) tracks the
   in-progress bounded slice-32 `session <id> [--json]` composition from exact
-  delivered base `6e687b6`. Production and independent evidence are composed
-  initially through `852fec7`, with focused remediation through production
-  precursor `c0c16a7`. Exact gate precursor `fa099f7`, tree
-  `64d6a72`, passed the complete required local and supplemental candidate
-  gates; the gate-record commit requires same-SHA reconfirmation before formal
-  cycle-1 review.
+  delivered base `6e687b6`. It retains the full rejected cycle-4, remediated
+  gate-record, and rejected cycle-5 evidence summarized above. Cross-document
+  documentation remediation and three fresh cycle-6 reviews remain pending.
+  Historical initial composition was `852fec7`, focused remediation advanced
+  through precursor `c0c16a7`, and gate precursor `fa099f7`, tree `64d6a72`,
+  passed its local and supplemental gates before formal cycle-1 review.
 
 - [`m03-sessions-cli-review-01.md`](m03-sessions-cli-review-01.md) tracks the
   delivered bounded slice-31 `sessions [--json]` candidate. Cycle 1 rejected

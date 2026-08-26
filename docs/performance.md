@@ -4,7 +4,43 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The in-progress slice-32 [`session` command](session-cli.md) has rejected exact
+Current bounded slice 32 remains **IN PROGRESS**. Cycle 4 rejected exact
+`df72e084`, tree `99bf524`, with correctness/API, native effects, and
+performance/resources each at `0/0/1/0`; its deduplicated `0/0/2/0` union is
+the ordinary/streamed wire-form mismatch and eager
+approximately 8.9 MB tracker allocation. Exact remediation `1f96c4bf`, tree
+`b320f552`, makes `StoredEnvelope`, `StoredRecord`, `StoredMessage`,
+`StoredToolCall`, and `StoredToolOutput` object-only and `Role` string-only,
+keeps the canonical writer unchanged, and grows fixed-fingerprint tracker
+storage fallibly with unique keys under the 65,536-node ceiling. Exact gate-
+record candidate `8f533cde`, tree `8215fb94`, passed the complete exact-1.94.1
+local gate without fallback: focused 24 native/64 CLI process/16 differential,
+Python 135/8 skips, byte-stable pinned fx `b1774fb`, WASI/FreeBSD with only the
+established `read_file` warning, docs 85/147/626/81, `cargo-deny` 0.20.2 with
+three established duplicate warnings,
+`cargo-audit` 0.22.2 over 211 dependencies/1,226 advisories with zero
+vulnerabilities, the unchanged 364-line production graph, and diff/inventory/
+no-added-unsafe evidence are green.
+
+The 3,985,216-byte release binary has SHA-256
+`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
+passed 16 equivalence categories across 20 records, 12 grammar cases, missing/
+no-create, held-lock, engine-over-default, and 8,650,857-byte near-cap evidence;
+the native near-cap probe passed 1/1. New allocator
+total/current/maximum tuples are `12/2/7` and `819/14/645` bytes for empty/
+short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
+`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. These are bounded
+regression results, not comparative measurements. Cycle 5 rejected exact
+`8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
+performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
+summary finding. This docs remediation, three fresh cycle-6 reviews, remote
+workflows, `main` integration, and delivery remain pending. The slice stays
+non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
+equivalence claim is made. See the
+[`live ledger`](reviews/m03-session-cli-review-01.md).
+
+Historical slice-32 review/gate lineage through cycle 3: the
+[`session` command](session-cli.md) rejected exact
 cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
 `72a63c07e4a48356f87c918a85def12b5943dad3`. Correctness/API reported
 `0/0/1/2`, native boundary/effects `0/0/1/2`, and performance/concurrency/
@@ -57,10 +93,10 @@ accepted/rejected array-depth boundaries are 123/124, 120/121, 119/120, and
 119/120. Focused evidence is now 58 CLI process tests with a ten-case
 equivalence subset and 22 native inspection tests.
 
-Real `allocation-counter` 0.8.1 instrumentation is dev-only and runs each
-shape in an isolated child process. Empty, near-cap, number-heavy, message-
-heavy, and key-heavy records each measure exactly 14 total allocations, 2
-current, 8 maximum, 8,913,715 total bytes, 14 current bytes, and 8,913,347
+Historical cycle-3 `allocation-counter` 0.8.1 instrumentation is dev-only and
+runs each shape in an isolated child process. Empty, near-cap, number-heavy,
+message-heavy, and key-heavy records each measure exactly 14 total allocations,
+2 current, 8 maximum, 8,913,715 total bytes, 14 current bytes, and 8,913,347
 maximum bytes. This is evidence that parser-owned allocation counts and high-
 water bytes are payload-shape-independent across those five cases, not a
 latency or comparative-performance claim. The dev-only dependency delta passed
@@ -78,9 +114,10 @@ The exact 4,001,760-byte release binary has SHA-256
 `d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d`. Its
 session matrix passed 18/18, including ten equivalence cases, held-lock
 behavior, and engine-over-default records. The direct 8,650,857-byte near-cap
-case passed 1/1, as did the native near-cap/allocation case. These remain
-regression/gate results, not comparative measurements. Three fresh cycle-4
-reviews, remote workflows, `main` integration, and delivery remain pending. The
+case passed 1/1, as did the native near-cap/allocation case. Those were
+regression/gate results, not comparative measurements. At that superseded
+checkpoint, cycle-4 review, remote workflows, `main` integration, and delivery
+were pending. The
 fixed bootstrap inventory has no `session-json` workload and is
 unchanged. This slice is deliberately non-equivalent, not measured, and claim-
 ineligible; no sample, comparison, threshold, compatibility promotion, product-
