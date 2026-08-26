@@ -16,7 +16,10 @@ use machine_god_core::{
     Message, Role, SessionIncarnationId, ToolCall, ToolCallId, ToolName, ToolOutput,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, MapAccess, Visitor, value::MapAccessDeserializer},
+};
 use serde_json::Value;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -54,7 +57,9 @@ const MAX_STORED_JSON_NODES: usize = 65_536;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SESSION_INSPECTION_READ_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const JSON_KEY_TRACKER_BUCKETS: usize = MAX_STORED_JSON_NODES;
+const JSON_KEY_TRACKER_INITIAL_BUCKETS: usize = 8;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const JSON_KEY_TRACKER_MAX_BUCKETS: usize = MAX_STORED_JSON_NODES * 2;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 /// `serde_json` starts with 128 remaining recursion slots and rejects a JSON
 /// container when entering it would reduce that counter to zero. The ordinary
@@ -1721,8 +1726,8 @@ struct JsonKeyTracker {
 impl JsonKeyTracker {
     fn new() -> Self {
         Self {
-            entries: Vec::with_capacity(MAX_STORED_JSON_NODES),
-            buckets: vec![None; JSON_KEY_TRACKER_BUCKETS],
+            entries: Vec::new(),
+            buckets: Vec::new(),
             next_scope: 0,
         }
     }
@@ -1744,8 +1749,12 @@ impl JsonKeyTracker {
         key: JsonKeyFingerprint,
         summary: JsonSummary,
     ) -> Result<JsonKeyInsert, InspectionParseError> {
-        let bucket = json_key_bucket(scope.id, &key.digest);
-        let mut cursor = self.buckets[bucket];
+        let mut cursor = if self.buckets.is_empty() {
+            None
+        } else {
+            let bucket = json_key_bucket(scope.id, &key.digest, self.buckets.len());
+            self.buckets[bucket]
+        };
         while let Some(index) = cursor {
             let entry = &mut self.entries[index];
             if entry.scope == scope.id && entry.key.digest == key.digest {
@@ -1760,6 +1769,8 @@ impl JsonKeyTracker {
         if self.entries.len() == MAX_STORED_JSON_NODES {
             return Ok(JsonKeyInsert::Full);
         }
+        self.reserve_for_new_entry()?;
+        let bucket = json_key_bucket(scope.id, &key.digest, self.buckets.len());
         let index = self.entries.len();
         self.entries.push(JsonKeyEntry {
             key,
@@ -1770,6 +1781,44 @@ impl JsonKeyTracker {
         });
         self.buckets[bucket] = Some(index);
         Ok(JsonKeyInsert::Inserted)
+    }
+
+    fn reserve_for_new_entry(&mut self) -> Result<(), InspectionParseError> {
+        self.entries
+            .try_reserve(1)
+            .map_err(|_| InspectionParseError::Unavailable)?;
+        let required_entries = self
+            .entries
+            .len()
+            .checked_add(1)
+            .ok_or(InspectionParseError::Corrupt)?;
+        let mut required_buckets = self.buckets.len().max(JSON_KEY_TRACKER_INITIAL_BUCKETS);
+        while required_entries > required_buckets.saturating_mul(3) / 4 {
+            required_buckets = required_buckets
+                .checked_mul(2)
+                .filter(|buckets| *buckets <= JSON_KEY_TRACKER_MAX_BUCKETS)
+                .ok_or(InspectionParseError::Corrupt)?;
+        }
+        if required_buckets != self.buckets.len() {
+            self.rehash(required_buckets)?;
+        }
+        Ok(())
+    }
+
+    fn rehash(&mut self, bucket_count: usize) -> Result<(), InspectionParseError> {
+        let mut buckets = Vec::new();
+        buckets
+            .try_reserve_exact(bucket_count)
+            .map_err(|_| InspectionParseError::Unavailable)?;
+        buckets.resize(bucket_count, None);
+        for (index, entry) in self.entries.iter_mut().enumerate() {
+            let bucket = json_key_bucket(entry.scope, &entry.key.digest, bucket_count);
+            entry.bucket = bucket;
+            entry.next = buckets[bucket];
+            buckets[bucket] = Some(index);
+        }
+        self.buckets = buckets;
+        Ok(())
     }
 
     fn finish_scope(
@@ -1807,12 +1856,12 @@ impl JsonKeyTracker {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn json_key_bucket(scope: u64, digest: &[u8; 32]) -> usize {
+fn json_key_bucket(scope: u64, digest: &[u8; 32], bucket_count: usize) -> usize {
+    debug_assert!(bucket_count.is_power_of_two());
     let mut prefix = [0_u8; 8];
     prefix.copy_from_slice(&digest[..8]);
     let hash = u64::from_le_bytes(prefix) ^ scope.rotate_left(17);
-    usize::try_from(hash % JSON_KEY_TRACKER_BUCKETS as u64)
-        .expect("JSON key bucket is always representable")
+    usize::try_from(hash % bucket_count as u64).expect("JSON key bucket is always representable")
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1921,11 +1970,12 @@ fn read_stored_record(
             return Ok(StoredRecordRead::ByteLimit);
         }
     }
-    let envelope: StoredEnvelope = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
+    let ObjectOnly(envelope): ObjectOnly<StoredEnvelope> =
+        serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
     if envelope.schema_version != FILE_SESSION_SCHEMA_VERSION {
         return Err(corrupt());
     }
-    let record = SessionRecord::from(envelope.record);
+    let record = SessionRecord::from(envelope.record.0);
     if record.revision == SessionRevision(0)
         || record.next_turn_sequence == 0
         || validate_record_json(&record).is_err()
@@ -2095,11 +2145,89 @@ impl Write for BoundedWriter {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ObjectOnly<T>(T);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'de, T> Deserialize<'de> for ObjectOnly<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ObjectOnlyVisitor<T>(std::marker::PhantomData<T>);
+
+        impl<'de, T> Visitor<'de> for ObjectOnlyVisitor<T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = ObjectOnly<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                T::deserialize(MapAccessDeserializer::new(map)).map(ObjectOnly)
+            }
+        }
+
+        deserializer.deserialize_map(ObjectOnlyVisitor(std::marker::PhantomData))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct StoredRole(Role);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'de> Deserialize<'de> for StoredRole {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct RoleVisitor;
+
+        impl Visitor<'_> for RoleVisitor {
+            type Value = StoredRole;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a stored role string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let role = match value {
+                    "system" => Role::System,
+                    "user" => Role::User,
+                    "assistant" => Role::Assistant,
+                    "tool" => Role::Tool,
+                    _ => {
+                        return Err(E::unknown_variant(
+                            value,
+                            &["system", "user", "assistant", "tool"],
+                        ));
+                    }
+                };
+                Ok(StoredRole(role))
+            }
+        }
+
+        deserializer.deserialize_str(RoleVisitor)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredEnvelope {
     schema_version: u32,
-    record: StoredRecord,
+    record: ObjectOnly<StoredRecord>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2110,7 +2238,7 @@ struct StoredRecord {
     incarnation_id: SessionIncarnationId,
     revision: SessionRevision,
     next_turn_sequence: u64,
-    messages: Vec<StoredMessage>,
+    messages: Vec<ObjectOnly<StoredMessage>>,
     metadata: BTreeMap<String, Value>,
 }
 
@@ -2118,7 +2246,7 @@ struct StoredRecord {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredMessage {
-    role: Role,
+    role: StoredRole,
     content: Vec<StoredContentBlock>,
 }
 
@@ -2133,11 +2261,11 @@ enum StoredContentBlock {
         value: Value,
     },
     ToolCall {
-        call: StoredToolCall,
+        call: ObjectOnly<StoredToolCall>,
     },
     ToolResult {
         call_id: ToolCallId,
-        output: StoredToolOutput,
+        output: ObjectOnly<StoredToolOutput>,
     },
 }
 
@@ -2166,7 +2294,11 @@ impl From<StoredRecord> for SessionRecord {
             incarnation_id: record.incarnation_id,
             revision: record.revision,
             next_turn_sequence: record.next_turn_sequence,
-            messages: record.messages.into_iter().map(Message::from).collect(),
+            messages: record
+                .messages
+                .into_iter()
+                .map(|message| Message::from(message.0))
+                .collect(),
             metadata: record.metadata,
         }
     }
@@ -2176,7 +2308,7 @@ impl From<StoredRecord> for SessionRecord {
 impl From<StoredMessage> for Message {
     fn from(message: StoredMessage) -> Self {
         Self {
-            role: message.role,
+            role: message.role.0,
             content: message
                 .content
                 .into_iter()
@@ -2192,14 +2324,19 @@ impl From<StoredContentBlock> for ContentBlock {
         match block {
             StoredContentBlock::Text { text } => Self::Text { text },
             StoredContentBlock::Json { value } => Self::Json { value },
-            StoredContentBlock::ToolCall { call } => Self::ToolCall {
+            StoredContentBlock::ToolCall {
+                call: ObjectOnly(call),
+            } => Self::ToolCall {
                 call: ToolCall {
                     id: call.id,
                     name: call.name,
                     arguments: call.arguments,
                 },
             },
-            StoredContentBlock::ToolResult { call_id, output } => Self::ToolResult {
+            StoredContentBlock::ToolResult {
+                call_id,
+                output: ObjectOnly(output),
+            } => Self::ToolResult {
                 call_id,
                 output: ToolOutput {
                     content: output.content,

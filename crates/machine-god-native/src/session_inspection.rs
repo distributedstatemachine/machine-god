@@ -1023,6 +1023,103 @@ mod tests {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn ordinary_and_streamed_decoders_reject_non_object_store_structs_and_non_string_roles() {
+        let temporary = TempDirectory::new("object-only-store-schema");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        save_record(
+            &store,
+            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+        );
+        let data = entry_with_suffix(temporary.path(), ".json");
+
+        let record = |messages| {
+            json!({
+                "id": "alpha",
+                "incarnation_id": "inc-alpha",
+                "revision": 1,
+                "next_turn_sequence": 1,
+                "messages": messages,
+                "metadata": {},
+            })
+        };
+        let envelope = |record| json!({"schema_version": 1, "record": record});
+        let empty_record = record(json!([]));
+        let cases = [
+            ("envelope sequence", json!([1, empty_record.clone()])),
+            (
+                "record sequence",
+                envelope(json!(["alpha", "inc-alpha", 1, 1, [], {}])),
+            ),
+            ("message sequence", envelope(record(json!([["user", []]])))),
+            (
+                "tool call sequence",
+                envelope(record(json!([{
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_call",
+                        "call": ["call-1", "read_file", {}],
+                    }],
+                }]))),
+            ),
+            (
+                "tool output sequence",
+                envelope(record(json!([{
+                    "role": "tool",
+                    "content": [{
+                        "type": "tool_result",
+                        "call_id": "call-1",
+                        "output": [{}, false],
+                    }],
+                }]))),
+            ),
+            (
+                "externally tagged role object",
+                envelope(record(json!([{"role": {"user": null}, "content": []}]))),
+            ),
+        ];
+
+        for (label, document) in cases {
+            let bytes = serde_json::to_vec(&document).unwrap();
+            fs::write(&data, &bytes).unwrap();
+
+            let ordinary = ready(store.load(id("alpha"))).unwrap_err();
+            let streamed = store.inspect_session_summary(id("alpha")).unwrap_err();
+
+            assert_eq!(ordinary.kind, SessionStoreErrorKind::Corrupt, "{label}");
+            assert_eq!(streamed.kind, SessionStoreErrorKind::Corrupt, "{label}");
+            assert_eq!(fs::read(&data).unwrap(), bytes, "{label}");
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn key_heavy_metadata_enforces_the_exact_json_node_ceiling() {
+        for (key_count, accepted) in [(65_536, true), (65_537, false)] {
+            let temporary = TempDirectory::new(&format!("key-node-limit-{key_count}"));
+            let store = FileSessionStore::open(temporary.path()).unwrap();
+            save_record(
+                &store,
+                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+            );
+            let metadata = (0..key_count)
+                .map(|index| format!("\"key-{index}\":null"))
+                .collect::<Vec<_>>()
+                .join(",");
+            replace_empty_metadata(temporary.path(), &format!("{{{metadata}}}"));
+
+            let ordinary = ready(store.load(id("alpha")));
+            let streamed = store.inspect_session_summary(id("alpha"));
+            assert_eq!(ordinary.is_ok(), accepted, "ordinary with {key_count} keys");
+            assert_eq!(streamed.is_ok(), accepted, "streamed with {key_count} keys");
+            if !accepted {
+                assert_eq!(ordinary.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+                assert_eq!(streamed.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     const ALLOCATION_CHILD_ROOT: &str = "MACHINE_GOD_SESSION_ALLOCATION_CHILD_ROOT";
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     const ALLOCATION_CHILD_LABEL: &str = "MACHINE_GOD_SESSION_ALLOCATION_CHILD_LABEL";
@@ -1119,7 +1216,12 @@ mod tests {
                 SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
             );
         });
-        let near_cap = measure_session_inspection_shape("near-cap", |store, _| {
+        let short_text = measure_session_inspection_shape("short-text", |store, _| {
+            let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+            record.messages.push(Message::text(Role::User, "x"));
+            save_record(store, record);
+        });
+        let long_text = measure_session_inspection_shape("long-text", |store, _| {
             let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
             record.messages.push(Message::text(
                 Role::User,
@@ -1127,24 +1229,17 @@ mod tests {
             ));
             save_record(store, record);
         });
-        let numbers = measure_session_inspection_shape("number-heavy", |store, root| {
-            save_record(
-                store,
-                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
-            );
-            let values = std::iter::repeat_n("17", 50_000)
-                .collect::<Vec<_>>()
-                .join(",");
-            replace_empty_metadata(root, &format!("{{\"numbers\":[{values}]}}"));
-        });
-        let messages = measure_session_inspection_shape("message-heavy", |store, _| {
+        let short_json = measure_session_inspection_shape("short-json", |store, _| {
             let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
-            record.messages = (0..5_000)
-                .map(|_| Message {
-                    role: Role::User,
-                    content: Vec::new(),
-                })
-                .collect();
+            record.metadata.insert("payload".to_owned(), json!("x"));
+            save_record(store, record);
+        });
+        let long_json = measure_session_inspection_shape("long-json", |store, _| {
+            let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+            record.metadata.insert(
+                "payload".to_owned(),
+                json!("x".repeat(crate::MAX_FILE_SESSION_BYTES - 512)),
+            );
             save_record(store, record);
         });
         let keys = measure_session_inspection_shape("key-heavy", |store, root| {
@@ -1161,20 +1256,26 @@ mod tests {
 
         for (label, measured) in [
             ("empty", empty),
-            ("near-cap", near_cap),
-            ("number-heavy", numbers),
-            ("message-heavy", messages),
+            ("short-text", short_text),
+            ("long-text", long_text),
+            ("short-json", short_json),
+            ("long-json", long_json),
             ("key-heavy", keys),
         ] {
             println!("{label}: {measured:?}");
         }
-        assert_eq!([near_cap, numbers, messages, keys], [empty; 4]);
-        assert!(empty.count_total <= 14);
-        assert!(empty.count_max <= 8);
-        assert!(empty.bytes_total <= 9_000_000);
-        assert!(empty.bytes_max <= 9_000_000);
-        assert_eq!(empty.count_current, 2);
-        assert_eq!(empty.bytes_current, 14);
+        assert_eq!(long_text, short_text);
+        assert_eq!(long_json, short_json);
+        assert!(empty.bytes_total <= 32 * 1_024);
+        assert!(empty.bytes_max <= 16 * 1_024);
+        assert!(short_json.bytes_max <= 32 * 1_024);
+        assert!(keys.bytes_total <= 4 * 1_024 * 1_024);
+        assert!(keys.bytes_max <= 2 * 1_024 * 1_024);
+        assert!(keys.bytes_max > short_json.bytes_max);
+        for measured in [empty, short_text, long_text, short_json, long_json, keys] {
+            assert_eq!(measured.count_current, 2);
+            assert_eq!(measured.bytes_current, 14);
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
