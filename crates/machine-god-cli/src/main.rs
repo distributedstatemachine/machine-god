@@ -2324,6 +2324,42 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct PartialThenBrokenWriter {
+        prefix: Vec<u8>,
+        prefix_limit: usize,
+        accepted_first_write: bool,
+    }
+
+    impl PartialThenBrokenWriter {
+        fn new(prefix_limit: usize) -> Self {
+            assert!(prefix_limit > 0);
+            Self {
+                prefix: Vec::new(),
+                prefix_limit,
+                accepted_first_write: false,
+            }
+        }
+    }
+
+    impl io::Write for PartialThenBrokenWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            if self.accepted_first_write {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed"));
+            }
+
+            let accepted = buffer.len().min(self.prefix_limit);
+            assert!(accepted > 0);
+            self.prefix.extend_from_slice(&buffer[..accepted]);
+            self.accepted_first_write = true;
+            Ok(accepted)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn parser_accepts_only_the_documented_grammar() {
         assert_eq!(parse_arguments([]), Ok(Command::Identity));
@@ -2621,6 +2657,36 @@ mod tests {
 
             assert_eq!(exit, 1);
             assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+            assert_eq!(host.calls.get(), 1);
+        }
+    }
+
+    #[test]
+    fn doctor_partial_stdout_failure_uses_fixed_output_diagnostic() {
+        let report = doctor_report([
+            check("configuration", DoctorCheckStatus::Ok, "loaded"),
+            check("credentials", DoctorCheckStatus::Warn, "missing"),
+            check("state", DoctorCheckStatus::Ok, "available"),
+            check("workspace", DoctorCheckStatus::Ok, "available"),
+        ]);
+        for json in [false, true] {
+            let complete = render_doctor(&report, json).expect("valid report renders");
+            let host = FakeDoctorHost::new(Ok(report));
+            let mut stdout = PartialThenBrokenWriter::new(7);
+            let mut stderr = Vec::new();
+            let arguments = if json {
+                vec![OsString::from("doctor"), OsString::from("--json")]
+            } else {
+                vec![OsString::from("doctor")]
+            };
+
+            let exit = run_with_doctor_host(arguments, &mut stdout, &mut stderr, &host);
+
+            assert_eq!(exit, 1);
+            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+            assert!(!stdout.prefix.is_empty());
+            assert!(stdout.prefix.len() < complete.len());
+            assert_eq!(stdout.prefix, complete.as_bytes()[..stdout.prefix.len()]);
             assert_eq!(host.calls.get(), 1);
         }
     }
