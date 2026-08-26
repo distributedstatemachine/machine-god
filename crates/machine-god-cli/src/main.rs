@@ -15,7 +15,7 @@ use std::thread::JoinHandle;
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
-use machine_god_core::{BoxFuture, SessionId};
+use machine_god_core::{BoxFuture, SessionId, SessionIncarnationId};
 #[cfg(not(target_family = "wasm"))]
 use machine_god_core::{CancellationToken, ModelCatalogProvider, ProviderError, ProviderErrorKind};
 use machine_god_core::{ModelCatalog, ModelCatalogAccess, PublicCatalogReason};
@@ -27,14 +27,16 @@ use machine_god_native::{
 };
 use machine_god_native::{
     MAX_LIST_SESSIONS, NativeCredentialSourceKind, NativeDoctorCheckStatus, NativeDoctorReport,
-    NativeProviderKind, NativeSessionList, NativeSessionListingError,
+    NativeProviderKind, NativeSessionInspection, NativeSessionInspectionError,
+    NativeSessionInspectionErrorKind, NativeSessionList, NativeSessionListingError,
     NativeSessionListingErrorKind, NativeStatus, NativeTransportKind, PermissionMode,
-    inspect_process_doctor, inspect_process_status, list_process_sessions, load_process_config,
+    inspect_process_doctor, inspect_process_session, inspect_process_status, list_process_sessions,
+    load_process_config,
 };
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | sessions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -42,6 +44,7 @@ const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
 const DOCTOR_CHECK_COUNT: usize = 4;
 const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
 const MAX_MODELS_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_SESSION_OUTPUT_BYTES: usize = 4096;
 const MAX_SESSIONS_OUTPUT_BYTES: usize = 16 * 1024;
 
 #[derive(Debug)]
@@ -105,6 +108,36 @@ impl std::fmt::Write for BoundedModelsOutput {
 }
 
 #[derive(Debug)]
+struct BoundedSessionOutput {
+    value: String,
+}
+
+impl BoundedSessionOutput {
+    fn new() -> Self {
+        Self {
+            value: String::with_capacity(512),
+        }
+    }
+
+    fn finish(self) -> String {
+        self.value
+    }
+}
+
+impl std::fmt::Write for BoundedSessionOutput {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        let Some(new_len) = self.value.len().checked_add(value.len()) else {
+            return Err(std::fmt::Error);
+        };
+        if new_len > MAX_SESSION_OUTPUT_BYTES {
+            return Err(std::fmt::Error);
+        }
+        self.value.push_str(value);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
 struct BoundedSessionsOutput {
     value: String,
 }
@@ -134,13 +167,14 @@ impl std::fmt::Write for BoundedSessionsOutput {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Command {
     Identity,
     Help,
     Doctor { json: bool },
     Models { json: bool },
     Permissions { json: bool },
+    Session { id: SessionId, json: bool },
     Sessions { json: bool },
     Status { json: bool },
 }
@@ -227,6 +261,97 @@ struct ProductionDoctorCommandHost;
 impl DoctorCommandHost for ProductionDoctorCommandHost {
     fn inspect_doctor(&self) -> Result<DoctorReportSnapshot, ()> {
         DoctorReportSnapshot::from_native(&inspect_process_doctor())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SessionSnapshot {
+    id: String,
+    incarnation_id: String,
+    revision: u64,
+    next_turn_sequence: u64,
+    message_count: usize,
+    metadata_entry_count: usize,
+}
+
+impl SessionSnapshot {
+    fn from_native(inspection: NativeSessionInspection) -> Result<Self, SessionOperationalFailure> {
+        let snapshot = Self {
+            id: inspection.session_id().as_str().to_owned(),
+            incarnation_id: inspection.incarnation_id().as_str().to_owned(),
+            revision: inspection.revision().0,
+            next_turn_sequence: inspection.next_turn_sequence(),
+            message_count: inspection.message_count(),
+            metadata_entry_count: inspection.metadata_entry_count(),
+        };
+        validate_session_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionOperationalFailure {
+    NotFound,
+    Corrupt,
+    ResourceLimit,
+    Unavailable,
+    Unsupported,
+}
+
+impl SessionOperationalFailure {
+    const fn category(self) -> &'static str {
+        match self {
+            Self::NotFound => "NotFound",
+            Self::Corrupt => "Corrupt",
+            Self::ResourceLimit => "ResourceLimit",
+            Self::Unavailable => "Unavailable",
+            Self::Unsupported => "Unsupported",
+        }
+    }
+}
+
+trait SessionCommandHost {
+    fn inspect_session(
+        &self,
+        id: SessionId,
+    ) -> BoxFuture<'static, Result<SessionSnapshot, SessionOperationalFailure>>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ProductionSessionCommandHost;
+
+impl SessionCommandHost for ProductionSessionCommandHost {
+    fn inspect_session(
+        &self,
+        id: SessionId,
+    ) -> BoxFuture<'static, Result<SessionSnapshot, SessionOperationalFailure>> {
+        Box::pin(async move {
+            let inspection = inspect_process_session(id)
+                .await
+                .map_err(classify_session_inspection_error)?;
+            SessionSnapshot::from_native(inspection)
+        })
+    }
+}
+
+fn classify_session_inspection_error(
+    error: NativeSessionInspectionError,
+) -> SessionOperationalFailure {
+    classify_session_inspection_error_kind(error.kind())
+}
+
+fn classify_session_inspection_error_kind(
+    kind: NativeSessionInspectionErrorKind,
+) -> SessionOperationalFailure {
+    match kind {
+        NativeSessionInspectionErrorKind::UnsupportedPlatform => {
+            SessionOperationalFailure::Unsupported
+        }
+        NativeSessionInspectionErrorKind::InvalidEnvironment
+        | NativeSessionInspectionErrorKind::UnsafeStateRoot
+        | NativeSessionInspectionErrorKind::Unavailable => SessionOperationalFailure::Unavailable,
+        NativeSessionInspectionErrorKind::NotFound => SessionOperationalFailure::NotFound,
+        NativeSessionInspectionErrorKind::Corrupt => SessionOperationalFailure::Corrupt,
     }
 }
 
@@ -949,6 +1074,7 @@ fn run(
         stderr,
         &ProductionModelsCommandHost,
         &ProductionDoctorCommandHost,
+        &ProductionSessionCommandHost,
         &ProductionSessionsCommandHost,
     )
 }
@@ -966,6 +1092,7 @@ fn run_with_models_host(
         stderr,
         models_host,
         &ProductionDoctorCommandHost,
+        &ProductionSessionCommandHost,
         &ProductionSessionsCommandHost,
     )
 }
@@ -983,6 +1110,25 @@ fn run_with_doctor_host(
         stderr,
         &ProductionModelsCommandHost,
         doctor_host,
+        &ProductionSessionCommandHost,
+        &ProductionSessionsCommandHost,
+    )
+}
+
+#[cfg(test)]
+fn run_with_session_host(
+    arguments: impl IntoIterator<Item = OsString>,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    session_host: &impl SessionCommandHost,
+) -> u8 {
+    run_with_hosts(
+        arguments,
+        stdout,
+        stderr,
+        &ProductionModelsCommandHost,
+        &ProductionDoctorCommandHost,
+        session_host,
         &ProductionSessionsCommandHost,
     )
 }
@@ -1000,6 +1146,7 @@ fn run_with_sessions_host(
         stderr,
         &ProductionModelsCommandHost,
         &ProductionDoctorCommandHost,
+        &ProductionSessionCommandHost,
         sessions_host,
     )
 }
@@ -1010,6 +1157,7 @@ fn run_with_hosts(
     stderr: &mut impl io::Write,
     models_host: &impl ModelsCommandHost,
     doctor_host: &impl DoctorCommandHost,
+    session_host: &impl SessionCommandHost,
     sessions_host: &impl SessionsCommandHost,
 ) -> u8 {
     let Ok(command) = parse_arguments(arguments) else {
@@ -1032,6 +1180,9 @@ fn run_with_hosts(
                 return 1;
             };
             permissions(loaded.config().permission_mode(), json)
+        }
+        Command::Session { id, json } => {
+            return run_session(session_host, id, json, stdout, stderr);
         }
         Command::Sessions { json } => {
             return run_sessions(sessions_host, json, stdout, stderr);
@@ -1082,6 +1233,24 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             };
             Command::Permissions { json }
         }
+        "session" => {
+            let Some(id) = arguments.next() else {
+                return Err(());
+            };
+            let Some(id) = id.to_str() else {
+                return Err(());
+            };
+            if matches!(id, "last" | "--id" | "--json") {
+                return Err(());
+            }
+            let id = SessionId::new(id.to_owned()).map_err(|_| ())?;
+            let json = match arguments.next() {
+                None => false,
+                Some(argument) if argument == "--json" => true,
+                Some(_) => return Err(()),
+            };
+            Command::Session { id, json }
+        }
         "sessions" => {
             let json = match arguments.next() {
                 None => false,
@@ -1127,6 +1296,7 @@ fn help() -> String {
             "  machine-god doctor [--json]\n",
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
+            "  machine-god session <id> [--json]\n",
             "  machine-god sessions [--json]\n",
             "  machine-god status [--json]\n",
             "\n",
@@ -1135,6 +1305,7 @@ fn help() -> String {
             "  doctor       Run local health and preflight checks\n",
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
+            "  session      Inspect one saved session\n",
             "  sessions     List saved sessions\n",
             "  status       Show configuration and runtime information\n",
             "\n",
@@ -1346,6 +1517,151 @@ fn write_json_models(output: &mut BoundedModelsOutput, catalog: &ModelCatalog) -
         write_json_string(output, model.id())?;
     }
     output.write_str("]}\n")
+}
+
+fn run_session(
+    host: &impl SessionCommandHost,
+    id: SessionId,
+    json: bool,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+) -> u8 {
+    let requested_id = id.as_str().to_owned();
+    let mut inspection = host.inspect_session(id);
+    let mut context = Context::from_waker(Waker::noop());
+    let result = match inspection.as_mut().poll(&mut context) {
+        Poll::Ready(result) => result,
+        Poll::Pending => Err(SessionOperationalFailure::Unavailable),
+    };
+    let snapshot = match result {
+        Ok(snapshot) if snapshot.id == requested_id => snapshot,
+        Ok(_) => {
+            return write_session_failure(
+                SessionOperationalFailure::ResourceLimit,
+                json,
+                stdout,
+                stderr,
+            );
+        }
+        Err(failure) => return write_session_failure(failure, json, stdout, stderr),
+    };
+    let output = match render_session(&snapshot, json) {
+        Ok(output) => output,
+        Err(failure) => return write_session_failure(failure, json, stdout, stderr),
+    };
+    if stdout.write_all(output.as_bytes()).is_err() {
+        let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
+        return 1;
+    }
+    0
+}
+
+fn write_session_failure(
+    failure: SessionOperationalFailure,
+    json: bool,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+) -> u8 {
+    let category = failure.category();
+    if json {
+        let mut output = BoundedSessionOutput::new();
+        let rendered = (|| {
+            output.write_str("{\"kind\":\"session\",\"error\":")?;
+            write_json_string(
+                &mut output,
+                &format!("could not inspect session: {category}"),
+            )?;
+            output.write_str(",\"code\":")?;
+            write_json_string(&mut output, category)?;
+            output.write_str("}\n")
+        })();
+        let output = if rendered.is_ok() {
+            output.finish()
+        } else {
+            concat!(
+                "{\"kind\":\"session\",\"error\":",
+                "\"could not inspect session: ResourceLimit\",",
+                "\"code\":\"ResourceLimit\"}\n",
+            )
+            .to_owned()
+        };
+        if stdout.write_all(output.as_bytes()).is_err() {
+            let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
+        }
+    } else {
+        let mut output = String::from("machine-god session: could not inspect session: ");
+        output.push_str(category);
+        output.push('\n');
+        if stderr.write_all(output.as_bytes()).is_err() {
+            let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
+        }
+    }
+    1
+}
+
+fn render_session(
+    snapshot: &SessionSnapshot,
+    json: bool,
+) -> Result<String, SessionOperationalFailure> {
+    validate_session_snapshot(snapshot)?;
+    let mut output = BoundedSessionOutput::new();
+    let rendered = if json {
+        write_json_session(&mut output, snapshot)
+    } else {
+        write_human_session(&mut output, snapshot)
+    };
+    rendered.map_err(|_| SessionOperationalFailure::ResourceLimit)?;
+    Ok(output.finish())
+}
+
+fn validate_session_snapshot(snapshot: &SessionSnapshot) -> Result<(), SessionOperationalFailure> {
+    if SessionId::new(snapshot.id.clone()).is_err()
+        || SessionIncarnationId::new(snapshot.incarnation_id.clone()).is_err()
+        || snapshot.revision == 0
+        || snapshot.next_turn_sequence == 0
+    {
+        return Err(SessionOperationalFailure::ResourceLimit);
+    }
+    Ok(())
+}
+
+fn write_human_session(
+    output: &mut BoundedSessionOutput,
+    snapshot: &SessionSnapshot,
+) -> std::fmt::Result {
+    writeln!(output, "[session] {}", snapshot.id)?;
+    writeln!(output, " - incarnation_id: {}", snapshot.incarnation_id)?;
+    writeln!(output, " - revision: {}", snapshot.revision)?;
+    writeln!(
+        output,
+        " - next_turn_sequence: {}",
+        snapshot.next_turn_sequence
+    )?;
+    writeln!(output, " - message_count: {}", snapshot.message_count)?;
+    writeln!(
+        output,
+        " - metadata_entry_count: {}",
+        snapshot.metadata_entry_count
+    )
+}
+
+fn write_json_session(
+    output: &mut BoundedSessionOutput,
+    snapshot: &SessionSnapshot,
+) -> std::fmt::Result {
+    output.write_str("{\"kind\":\"session\",\"id\":")?;
+    write_json_string(output, &snapshot.id)?;
+    output.write_str(",\"incarnation_id\":")?;
+    write_json_string(output, &snapshot.incarnation_id)?;
+    write!(
+        output,
+        ",\"revision\":{},\"next_turn_sequence\":{},\"message_count\":{},\"metadata_entry_count\":{}",
+        snapshot.revision,
+        snapshot.next_turn_sequence,
+        snapshot.message_count,
+        snapshot.metadata_entry_count,
+    )?;
+    output.write_str("}\n")
 }
 
 fn run_sessions(
@@ -1596,14 +1912,16 @@ fn write_json_string(output: &mut impl std::fmt::Write, value: &str) -> std::fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundedSessionsOutput, Command, DOCTOR_RENDER_FAILURE, DoctorCheckSnapshot,
-        DoctorCheckStatus, DoctorCommandHost, DoctorReportSnapshot, INVALID_ARGUMENTS,
-        MAX_DOCTOR_OUTPUT_BYTES, MAX_SESSIONS_OUTPUT_BYTES, ModelsCommandExecution,
-        ModelsCommandHost, ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode,
-        SessionsCommandHost, SessionsOperationalFailure, SessionsSnapshot,
+        BoundedSessionOutput, BoundedSessionsOutput, Command, DOCTOR_RENDER_FAILURE,
+        DoctorCheckSnapshot, DoctorCheckStatus, DoctorCommandHost, DoctorReportSnapshot,
+        INVALID_ARGUMENTS, MAX_DOCTOR_OUTPUT_BYTES, MAX_SESSION_OUTPUT_BYTES,
+        MAX_SESSIONS_OUTPUT_BYTES, ModelsCommandExecution, ModelsCommandHost,
+        ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode, SessionCommandHost,
+        SessionOperationalFailure, SessionSnapshot, SessionsCommandHost,
+        SessionsOperationalFailure, SessionsSnapshot, classify_session_inspection_error_kind,
         classify_session_listing_error_kind, help, json_permissions, parse_arguments, permissions,
-        push_json_string, render_doctor, render_sessions, run, run_with_doctor_host,
-        run_with_models_host, run_with_sessions_host,
+        push_json_string, render_doctor, render_session, render_sessions, run,
+        run_with_doctor_host, run_with_models_host, run_with_session_host, run_with_sessions_host,
     };
     #[cfg(not(target_family = "wasm"))]
     use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
@@ -1620,10 +1938,8 @@ mod tests {
     use machine_god_core::{CancellationToken, ModelCatalogProvider};
     #[cfg(not(target_family = "wasm"))]
     use machine_god_core::{ProviderError, ProviderErrorKind};
-    use machine_god_native::NativeSessionListingErrorKind;
-    use std::cell::Cell;
-    #[cfg(not(target_family = "wasm"))]
-    use std::cell::RefCell;
+    use machine_god_native::{NativeSessionInspectionErrorKind, NativeSessionListingErrorKind};
+    use std::cell::{Cell, RefCell};
     use std::ffi::OsString;
     use std::fmt::Write as _;
     #[cfg(unix)]
@@ -1685,6 +2001,49 @@ mod tests {
     }
 
     #[derive(Clone, Debug)]
+    struct FakeSessionHost {
+        result: Result<SessionSnapshot, SessionOperationalFailure>,
+        calls: Cell<usize>,
+        requested_ids: RefCell<Vec<String>>,
+        pending: bool,
+    }
+
+    impl FakeSessionHost {
+        fn ready(result: Result<SessionSnapshot, SessionOperationalFailure>) -> Self {
+            Self {
+                result,
+                calls: Cell::new(0),
+                requested_ids: RefCell::new(Vec::new()),
+                pending: false,
+            }
+        }
+
+        fn pending() -> Self {
+            Self {
+                result: Err(SessionOperationalFailure::Unavailable),
+                calls: Cell::new(0),
+                requested_ids: RefCell::new(Vec::new()),
+                pending: true,
+            }
+        }
+    }
+
+    impl SessionCommandHost for FakeSessionHost {
+        fn inspect_session(
+            &self,
+            id: machine_god_core::SessionId,
+        ) -> BoxFuture<'static, Result<SessionSnapshot, SessionOperationalFailure>> {
+            self.calls.set(self.calls.get() + 1);
+            self.requested_ids.borrow_mut().push(id.as_str().to_owned());
+            if self.pending {
+                Box::pin(std::future::pending())
+            } else {
+                Box::pin(std::future::ready(self.result.clone()))
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
     struct FakeSessionsHost {
         result: Result<SessionsSnapshot, SessionsOperationalFailure>,
         calls: Cell<usize>,
@@ -1729,6 +2088,17 @@ mod tests {
                 .map(|value| (*value).to_owned())
                 .collect(),
             truncated,
+        }
+    }
+
+    fn session_snapshot(id: &str) -> SessionSnapshot {
+        SessionSnapshot {
+            id: id.to_owned(),
+            incarnation_id: format!("incarnation-{id}"),
+            revision: 7,
+            next_turn_sequence: 4,
+            message_count: 3,
+            metadata_entry_count: 2,
         }
     }
 
@@ -2759,6 +3129,24 @@ mod tests {
             Ok(Command::Permissions { json: true })
         );
         assert_eq!(
+            parse_arguments([OsString::from("session"), OsString::from("alpha")]),
+            Ok(Command::Session {
+                id: machine_god_core::SessionId::new("alpha").unwrap(),
+                json: false,
+            })
+        );
+        assert_eq!(
+            parse_arguments([
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json"),
+            ]),
+            Ok(Command::Session {
+                id: machine_god_core::SessionId::new("alpha").unwrap(),
+                json: true,
+            })
+        );
+        assert_eq!(
             parse_arguments([OsString::from("sessions")]),
             Ok(Command::Sessions { json: false })
         );
@@ -2798,6 +3186,40 @@ mod tests {
                 OsString::from("--json"),
                 OsString::from("--json"),
             ],
+            vec![OsString::from("session")],
+            vec![OsString::from("session"), OsString::from("last")],
+            vec![OsString::from("session"), OsString::from("--id")],
+            vec![
+                OsString::from("session"),
+                OsString::from("--id"),
+                OsString::from("alpha"),
+            ],
+            vec![OsString::from("session"), OsString::from("--json")],
+            vec![
+                OsString::from("session"),
+                OsString::from("--json"),
+                OsString::from("alpha"),
+            ],
+            vec![
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json=true"),
+            ],
+            vec![
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json"),
+                OsString::from("--json"),
+            ],
+            vec![
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json"),
+                OsString::from("extra"),
+            ],
+            vec![OsString::from("session"), OsString::from("bad/session")],
+            vec![OsString::from("session"), OsString::from("café")],
+            vec![OsString::from("session"), OsString::from("a".repeat(129))],
             vec![OsString::from("sessions"), OsString::from("--json=true")],
             vec![
                 OsString::from("sessions"),
@@ -2837,25 +3259,33 @@ mod tests {
         let permissions_usage = output
             .find("  machine-god permissions [--json]\n")
             .expect("permissions usage");
+        let session_usage = output
+            .find("  machine-god session <id> [--json]\n")
+            .expect("session usage");
         let sessions_usage = output
             .find("  machine-god sessions [--json]\n")
             .expect("sessions usage");
         let status_usage = output
             .find("  machine-god status [--json]\n")
             .expect("status usage");
-        assert!(permissions_usage < sessions_usage);
+        assert!(permissions_usage < session_usage);
+        assert!(session_usage < sessions_usage);
         assert!(sessions_usage < status_usage);
 
         let permissions_command = output
             .find("  permissions  Show the permission mode and rules\n")
             .expect("permissions command");
+        let session_command = output
+            .find("  session      Inspect one saved session\n")
+            .expect("session command");
         let sessions_command = output
             .find("  sessions     List saved sessions\n")
             .expect("sessions command");
         let status_command = output
             .find("  status       Show configuration and runtime information\n")
             .expect("status command");
-        assert!(permissions_command < sessions_command);
+        assert!(permissions_command < session_command);
+        assert!(session_command < sessions_command);
         assert!(sessions_command < status_command);
     }
 
@@ -3457,6 +3887,373 @@ mod tests {
     }
 
     #[test]
+    fn session_human_output_is_exact_and_requests_the_validated_id_once() {
+        let host = FakeSessionHost::ready(Ok(session_snapshot("alpha")));
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with_session_host(
+            [OsString::from("session"), OsString::from("alpha")],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(
+            stdout,
+            concat!(
+                "[session] alpha\n",
+                " - incarnation_id: incarnation-alpha\n",
+                " - revision: 7\n",
+                " - next_turn_sequence: 4\n",
+                " - message_count: 3\n",
+                " - metadata_entry_count: 2\n",
+            )
+            .as_bytes()
+        );
+        assert!(stderr.is_empty());
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(&*host.requested_ids.borrow(), &["alpha"]);
+    }
+
+    #[test]
+    fn session_json_output_has_exact_shape_key_order_and_lf() {
+        let host = FakeSessionHost::ready(Ok(session_snapshot("alpha")));
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with_session_host(
+            [
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json"),
+            ],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(
+            stdout,
+            b"{\"kind\":\"session\",\"id\":\"alpha\",\"incarnation_id\":\"incarnation-alpha\",\"revision\":7,\"next_turn_sequence\":4,\"message_count\":3,\"metadata_entry_count\":2}\n"
+        );
+        assert!(stderr.is_empty());
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(&*host.requested_ids.borrow(), &["alpha"]);
+    }
+
+    #[test]
+    fn native_session_inspection_errors_collapse_to_the_frozen_cli_categories() {
+        for (kind, expected) in [
+            (
+                NativeSessionInspectionErrorKind::UnsupportedPlatform,
+                SessionOperationalFailure::Unsupported,
+            ),
+            (
+                NativeSessionInspectionErrorKind::InvalidEnvironment,
+                SessionOperationalFailure::Unavailable,
+            ),
+            (
+                NativeSessionInspectionErrorKind::UnsafeStateRoot,
+                SessionOperationalFailure::Unavailable,
+            ),
+            (
+                NativeSessionInspectionErrorKind::NotFound,
+                SessionOperationalFailure::NotFound,
+            ),
+            (
+                NativeSessionInspectionErrorKind::Corrupt,
+                SessionOperationalFailure::Corrupt,
+            ),
+            (
+                NativeSessionInspectionErrorKind::Unavailable,
+                SessionOperationalFailure::Unavailable,
+            ),
+        ] {
+            assert_eq!(classify_session_inspection_error_kind(kind), expected);
+        }
+    }
+
+    #[test]
+    fn session_failures_use_exact_human_and_json_channels() {
+        for failure in [
+            SessionOperationalFailure::NotFound,
+            SessionOperationalFailure::Corrupt,
+            SessionOperationalFailure::Unavailable,
+            SessionOperationalFailure::Unsupported,
+            SessionOperationalFailure::ResourceLimit,
+        ] {
+            let category = failure.category();
+            let host = FakeSessionHost::ready(Err(failure));
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let exit = run_with_session_host(
+                [OsString::from("session"), OsString::from("alpha")],
+                &mut stdout,
+                &mut stderr,
+                &host,
+            );
+            assert_eq!(exit, 1);
+            assert!(stdout.is_empty());
+            assert_eq!(
+                stderr,
+                format!("machine-god session: could not inspect session: {category}\n").as_bytes()
+            );
+            assert_eq!(host.calls.get(), 1);
+
+            let host = FakeSessionHost::ready(Err(failure));
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let exit = run_with_session_host(
+                [
+                    OsString::from("session"),
+                    OsString::from("alpha"),
+                    OsString::from("--json"),
+                ],
+                &mut stdout,
+                &mut stderr,
+                &host,
+            );
+            assert_eq!(exit, 1);
+            assert_eq!(
+                stdout,
+                format!(
+                    "{{\"kind\":\"session\",\"error\":\"could not inspect session: {category}\",\"code\":\"{category}\"}}\n"
+                )
+                .as_bytes()
+            );
+            assert!(stderr.is_empty());
+            assert_eq!(host.calls.get(), 1);
+        }
+    }
+
+    #[test]
+    fn pending_session_inspection_is_polled_once_and_maps_to_unavailable() {
+        let host = FakeSessionHost::pending();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with_session_host(
+            [OsString::from("session"), OsString::from("alpha")],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+
+        assert_eq!(exit, 1);
+        assert!(stdout.is_empty());
+        assert_eq!(
+            stderr,
+            b"machine-god session: could not inspect session: Unavailable\n"
+        );
+        assert_eq!(host.calls.get(), 1);
+    }
+
+    #[test]
+    fn invalid_session_arguments_are_rejected_before_host_effects() {
+        for arguments in [
+            vec![OsString::from("session")],
+            vec![OsString::from("session"), OsString::from("last")],
+            vec![OsString::from("session"), OsString::from("--id")],
+            vec![
+                OsString::from("session"),
+                OsString::from("--id"),
+                OsString::from("alpha"),
+            ],
+            vec![OsString::from("session"), OsString::from("--json")],
+            vec![
+                OsString::from("session"),
+                OsString::from("--json"),
+                OsString::from("alpha"),
+            ],
+            vec![
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json=true"),
+            ],
+            vec![
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json"),
+                OsString::from("extra"),
+            ],
+            vec![OsString::from("session"), OsString::from("bad/session")],
+        ] {
+            let host = FakeSessionHost::ready(Err(SessionOperationalFailure::Corrupt));
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let exit = run_with_session_host(arguments, &mut stdout, &mut stderr, &host);
+
+            assert_eq!(exit, 2);
+            assert!(stdout.is_empty());
+            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
+            assert_eq!(host.calls.get(), 0);
+            assert!(host.requested_ids.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn session_snapshot_invariants_fail_closed_as_resource_limit() {
+        let mut invalid_id = session_snapshot("alpha");
+        invalid_id.id = "bad/session".to_owned();
+        let mut invalid_incarnation = session_snapshot("alpha");
+        invalid_incarnation.incarnation_id = "bad incarnation".to_owned();
+        let mut zero_revision = session_snapshot("alpha");
+        zero_revision.revision = 0;
+        let mut zero_allocator = session_snapshot("alpha");
+        zero_allocator.next_turn_sequence = 0;
+        let wrong_id = session_snapshot("beta");
+
+        for snapshot in [
+            invalid_id,
+            invalid_incarnation,
+            zero_revision,
+            zero_allocator,
+            wrong_id,
+        ] {
+            for json in [false, true] {
+                let host = FakeSessionHost::ready(Ok(snapshot.clone()));
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                let arguments = if json {
+                    vec![
+                        OsString::from("session"),
+                        OsString::from("alpha"),
+                        OsString::from("--json"),
+                    ]
+                } else {
+                    vec![OsString::from("session"), OsString::from("alpha")]
+                };
+                let exit = run_with_session_host(arguments, &mut stdout, &mut stderr, &host);
+
+                assert_eq!(exit, 1);
+                if json {
+                    assert_eq!(
+                        stdout,
+                        b"{\"kind\":\"session\",\"error\":\"could not inspect session: ResourceLimit\",\"code\":\"ResourceLimit\"}\n"
+                    );
+                    assert!(stderr.is_empty());
+                } else {
+                    assert!(stdout.is_empty());
+                    assert_eq!(
+                        stderr,
+                        b"machine-god session: could not inspect session: ResourceLimit\n"
+                    );
+                }
+                assert_eq!(host.calls.get(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn maximal_session_snapshot_stays_within_the_output_cap() {
+        let snapshot = SessionSnapshot {
+            id: "a".repeat(128),
+            incarnation_id: "b".repeat(128),
+            revision: u64::MAX,
+            next_turn_sequence: u64::MAX,
+            message_count: usize::MAX,
+            metadata_entry_count: usize::MAX,
+        };
+
+        for json in [false, true] {
+            let output = render_session(&snapshot, json).expect("valid maximum snapshot renders");
+            assert!(output.len() <= MAX_SESSION_OUTPUT_BYTES);
+            assert!(output.ends_with('\n'));
+        }
+    }
+
+    #[test]
+    fn session_output_cap_is_inclusive() {
+        let mut output = BoundedSessionOutput::new();
+        output
+            .write_str(&"x".repeat(MAX_SESSION_OUTPUT_BYTES))
+            .expect("inclusive output limit is accepted");
+        assert_eq!(output.value.len(), MAX_SESSION_OUTPUT_BYTES);
+        assert!(output.write_char('x').is_err());
+    }
+
+    #[test]
+    fn session_broken_zero_progress_and_partial_stdout_use_output_diagnostic() {
+        for json in [false, true] {
+            let arguments = if json {
+                vec![
+                    OsString::from("session"),
+                    OsString::from("alpha"),
+                    OsString::from("--json"),
+                ]
+            } else {
+                vec![OsString::from("session"), OsString::from("alpha")]
+            };
+            let snapshot = session_snapshot("alpha");
+
+            let host = FakeSessionHost::ready(Ok(snapshot.clone()));
+            let mut stdout = BrokenWriter;
+            let mut stderr = Vec::new();
+            let exit = run_with_session_host(arguments.clone(), &mut stdout, &mut stderr, &host);
+            assert_eq!(exit, 1);
+            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+
+            let host = FakeSessionHost::ready(Ok(snapshot.clone()));
+            let mut stdout = ZeroProgressWriter::default();
+            let mut stderr = Vec::new();
+            let exit = run_with_session_host(arguments.clone(), &mut stdout, &mut stderr, &host);
+            assert_eq!(exit, 1);
+            assert!(stdout.captured.is_empty());
+            assert_eq!(stdout.calls, 1);
+            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+
+            let complete = render_session(&snapshot, json).expect("snapshot renders");
+            let host = FakeSessionHost::ready(Ok(snapshot));
+            let mut stdout = PartialThenBrokenWriter::new(5);
+            let mut stderr = Vec::new();
+            let exit = run_with_session_host(arguments, &mut stdout, &mut stderr, &host);
+            assert_eq!(exit, 1);
+            assert!(!stdout.prefix.is_empty());
+            assert_eq!(stdout.prefix, complete.as_bytes()[..stdout.prefix.len()]);
+            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+        }
+    }
+
+    #[test]
+    fn session_json_failure_write_errors_use_output_diagnostic() {
+        let host = FakeSessionHost::ready(Err(SessionOperationalFailure::Corrupt));
+        let mut stdout = BrokenWriter;
+        let mut stderr = Vec::new();
+        let exit = run_with_session_host(
+            [
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json"),
+            ],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+
+        assert_eq!(exit, 1);
+        assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+        assert_eq!(host.calls.get(), 1);
+    }
+
+    #[test]
+    fn session_human_failure_write_errors_use_output_diagnostic() {
+        let host = FakeSessionHost::ready(Err(SessionOperationalFailure::Corrupt));
+        let mut stdout = Vec::new();
+        let mut stderr = FirstWriteFailsThenCaptures::default();
+        let exit = run_with_session_host(
+            [OsString::from("session"), OsString::from("alpha")],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+
+        assert_eq!(exit, 1);
+        assert!(stdout.is_empty());
+        assert_eq!(stderr.captured, OUTPUT_FAILURE.as_bytes());
+        assert_eq!(host.calls.get(), 1);
+    }
+
+    #[test]
     fn sessions_human_output_is_exact_for_empty_populated_and_truncated_results() {
         let cases = [
             (
@@ -3877,6 +4674,18 @@ mod tests {
         );
         assert_eq!(
             parse_arguments([OsString::from("models"), OsString::from_vec(vec![0xff]),]),
+            Err(())
+        );
+        assert_eq!(
+            parse_arguments([OsString::from("session"), OsString::from_vec(vec![0xff]),]),
+            Err(())
+        );
+        assert_eq!(
+            parse_arguments([
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from_vec(vec![0xff]),
+            ]),
             Err(())
         );
         assert_eq!(
