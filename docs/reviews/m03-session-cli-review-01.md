@@ -1,15 +1,23 @@
 # Milestone 03 session CLI review ledger
 
-Status: formal cycle 8 is **GREEN** on exact reviewed candidate
+Status: bounded slice 32 is **DELIVERED**. Formal cycle 8 is **GREEN** on exact
+reviewed candidate
 `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
 `6439863a9b7fd1720156c790fedc4798256c2b6d`. Correctness/API, native/effects,
 and performance/resources each reported `0/0/0/0`; the deduplicated union is
 `0/0/0/0`. This documentation-only result seal is review-exempt: it records the
 reviews of `d724b61` / `6439863` and does not imply that its own commit was
-reviewed. Remote feature workflows, `main` integration, exact `main` workflows,
-and delivery remain pending. The delivered count remains 31. This is a review-
-green claim only for the exact reviewed candidate, not a delivered,
-product-performance, or fx-equivalence claim.
+reviewed. Exact review-exempt documentation seal
+`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
+`32965947722`, feature Benchmark evidence run `32965947723`, main CI run
+`32966531225`, and main Benchmark evidence run `32966531319`, all successfully
+for exact `b6db9a6`. Each benchmark run retained exactly two unexpired exact-SHA
+artifacts. The delivered count is 32. No product-performance or fx-equivalence
+claim is made. Zig builds only the pinned upstream fx comparison input; the
+product is Rust and is not written in or shipped as Zig. This final docs-only
+delivery-record commit is user-exempt from adversarial review. Its exact future
+workflow IDs cannot be self-recorded and will be reported at handoff.
 Historical rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
@@ -607,17 +615,22 @@ allocator total/current/maximum tuples remain:
 - 5,000 keys: `35/2/9` allocations and `2,228,435/14/1,606,083` bytes.
 
 No prior discovery, implementation, review, or remediation agent approved its
-own work or was reused for this review cycle. This documentation-only result
-seal is review-exempt and records the returned results for exact reviewed
-`d724b61` / `6439863`; the seal commit itself was not reviewed and makes no such
-claim. Remote feature workflows, `main` integration, exact `main` workflows,
-and delivery remain pending. The delivered count remains 31. Product-
-performance and fx-equivalence claims remain absent.
+own work or was reused for this review cycle. The review-exempt documentation
+seal records the returned results for exact reviewed `d724b61` / `6439863`;
+the seal itself was not reviewed and makes no such claim. Exact seal
+`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
+`32965947722` and Benchmark evidence run `32965947723`, was integrated on
+`main`, and passed main CI run `32966531225` and Benchmark evidence run
+`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark run
+retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered and
+the delivered count is 32. Product-performance and fx-equivalence claims remain
+absent.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees
-must never be deleted. After this slice is delivered, bounded development
-returns to completing the remaining Milestone 03 native tools rather than
+must never be deleted. With this slice delivered, bounded development returns
+to completing the remaining Milestone 03 native tools rather than
 expanding the CLI inspection surface.
 
 ## Delivery gate
@@ -627,4 +640,7 @@ without another product review. The sealed feature SHA must pass CI and
 benchmark-evidence workflows before `main` is fast-forwarded without force.
 The exact integrated `main` SHA must pass both workflows, and each benchmark
 run must retain exactly two unexpired exact-SHA artifacts. No package
-publication or GitHub release is authorized.
+publication or GitHub release is authorized. Seal `b6db9a6` completed this gate
+through the four successful runs recorded above. This final docs-only delivery
+record is user-exempt from adversarial review; because no commit can contain its
+own future workflow IDs, its exact workflow IDs will be reported at handoff.

@@ -1,6 +1,6 @@
 # Adversarial reviews
 
-Current bounded slice 32 remains **IN PROGRESS**. Cycle 4 rejected exact
+Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact
 `df72e084`, tree `99bf524`, with correctness/API, native effects, and
 performance/resources each at `0/0/1/0`; the deduplicated `0/0/2/0` union is
 the wire-form mismatch plus eager approximately 8.9 MB tracker allocation.
@@ -53,17 +53,29 @@ checks with the established `read_file` warning; performance confirmed the
 exact allocator tuples above and the corrected cap semantics. This
 documentation-only result seal is review-exempt: it records review of
 `d724b61` / `6439863` and does not imply that the seal commit itself was
-reviewed. Remote feature workflows, `main` integration, exact `main`
-workflows, and delivery remain pending; the delivered count remains 31. The
+reviewed. Review-exempt documentation seal
+`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
+`32965947722` and Benchmark evidence run `32965947723`, was integrated on
+`main`, and passed main CI run `32966531225` and Benchmark evidence run
+`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark
+run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered,
+and the delivered count is 32. No product-performance or fx-equivalence claim
+is made. Zig is used only to build the pinned upstream fx comparison input;
+`machine-god` remains a Rust product and is neither written in nor shipped as
+Zig. This final delivery-record commit is docs-only and user-exempt from
+adversarial review. A commit cannot contain its own future workflow IDs, so
+the exact workflow IDs for this record will be reported at handoff. The
 slice remains non-equivalent, unmeasured, and claim-ineligible; no product-
 performance or fx-equivalence claim is made.
 
 - [`m03-session-cli-review-01.md`](m03-session-cli-review-01.md) tracks the
-  in-progress bounded slice-32 `session <id> [--json]` composition from exact
+  delivered bounded slice-32 `session <id> [--json]` composition from exact
   delivered base `6e687b6`. It retains the full rejected cycle-4, remediated
   gate-record, rejected cycle-5 through cycle-7 evidence, and formal green
   cycle-8 result summarized above. The review-exempt result seal records the
-  reviewed `d724b61` / `6439863` candidate; remote delivery gates remain pending.
+  reviewed `d724b61` / `6439863` candidate. Exact seal `b6db9a6` completed the
+  feature and main delivery gates recorded above.
   Historical initial composition was `852fec7`, focused remediation advanced
   through precursor `c0c16a7`, and gate precursor `fa099f7`, tree `64d6a72`,
   passed its local and supplemental gates before formal cycle-1 review.

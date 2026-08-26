@@ -45,7 +45,7 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
 The thirty-second bounded slice, strict top-level
-`session <id> [--json]`, is **IN PROGRESS** from exact delivered base
+`session <id> [--json]`, is **DELIVERED** from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Its normative boundaries are
 [`session-cli.md`](session-cli.md) and
 [`native-session-inspection.md`](native-session-inspection.md), and its live
@@ -187,16 +187,25 @@ green WASI/FreeBSD checks with the established `read_file` warning. Performance
 confirmed the exact recorded allocator tuples and corrected separate cap
 semantics. This documentation-only result seal is review-exempt and records the
 reviews of `d724b61` / `6439863`; it does not imply that the seal commit was
-reviewed. Remote feature workflows, `main` integration, exact `main` workflows,
-and delivery remain pending; the delivered count remains thirty-one.
+reviewed. Review-exempt documentation seal
+`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
+`32965947722`, feature Benchmark evidence run `32965947723`, main CI run
+`32966531225`, and main Benchmark evidence run `32966531319`, all successfully
+for exact `b6db9a6`. The same exact SHA is integrated on `main`; each benchmark
+run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered
+and the delivered count is thirty-two. Zig builds only the pinned upstream fx
+comparison input; the product remains Rust and is not written in or shipped as
+Zig. This final delivery-record commit is docs-only and user-exempt from
+adversarial review. Because a commit cannot contain its own future workflow
+IDs, this record's exact workflow IDs will be reported at handoff.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
 The fixed benchmark workload is unchanged, and the production composition adds
 no dependency or unsafe Rust; only dev-only allocation instrumentation is new.
-No remote workflow, `main` integration, delivery,
-product-performance, or fx-equivalence claim exists yet. The delivered count
-remains thirty-one.
+No new product-performance or fx-equivalence claim is made. The delivered count
+is thirty-two.
 
 The thirty-first bounded slice, strict top-level `sessions [--json]`, is
 **DELIVERED** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
@@ -3719,23 +3728,25 @@ production and resources were otherwise green. Formal cycle 8 is green on exact
 reviewed candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
 `6439863a9b7fd1720156c790fedc4798256c2b6d`: every track and the deduplicated
 union reported `0/0/0/0`. The review-exempt documentation result seal records
-that reviewed candidate and does not imply its own commit was reviewed. Remote
-feature workflows, `main` integration, exact `main` workflows, and delivery
-remain pending; the delivered count remains thirty-one.
+that reviewed candidate and does not imply its own commit was reviewed. Exact
+seal `b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed successful feature CI/
+benchmark runs `32965947722`/`32965947723` and main CI/benchmark runs
+`32966531225`/`32966531319`; each benchmark retained two unexpired exact-SHA
+artifacts. Slice 32 is delivered and the delivered count is thirty-two.
 
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
-workflows, a non-force fast-forward, and exact `main` workflows. Exact reviewed
-candidate `d724b61`, tree `6439863`, is review-green, but feature workflows,
-integration, exact `main` workflows, and delivery are not complete; the
-delivered count remains thirty-one. After slice 32 is
-delivered, the next bounded development slice returns to completing the
+workflows, integration, and exact `main` workflows. Exact reviewed candidate
+`d724b61`, tree `6439863`, is review-green; seal `b6db9a6`, tree `59dd628`,
+completed those delivery gates. With slice 32 delivered, the next bounded
+development slice returns to completing the
 remaining native tools rather than expanding the CLI inspection surface.
 Every review/remediation iteration must end with committed/integrated worktrees
 verified clean and safely removed; active or uncommitted worktrees are retained.
 
 ### Milestone 03 completion boundary
 
-The thirty-one delivered slices do not complete Milestone 03.
+The thirty-two delivered slices do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -4692,7 +4703,7 @@ gate:
   `32939742230`, feature benchmark `32939742231`, main CI `32940279028`, and
   main benchmark `32940279005`; `main` was fast-forwarded without force. The
   delivered count is thirty-one. Strict `session <id> [--json]` is the
-  in-progress bounded slice 32 from exact delivered base `6e687b6`. Exact
+  delivered bounded slice 32 from exact delivered base `6e687b6`. Exact
   cycle-2 candidate `1d09a0d`, tree `72a63c0`, passed its complete exact-
   1.94.1 local gate plus Python 135/8 skips, pinned-fx, WASI/FreeBSD, diff/no-
   unsafe, 85/146/626/81 docs-integrity, and release-matrix checks. Its
@@ -4764,11 +4775,13 @@ gate:
   `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
   `6439863a9b7fd1720156c790fedc4798256c2b6d`: all three tracks and the union
   reported `0/0/0/0`. The review-exempt documentation result seal records that
-  reviewed SHA/tree only. Remote feature workflows, `main` integration, exact
-  `main` workflows, and delivery remain pending; the delivered count remains 31.
-  It remains limited to six structural fields and makes no compatibility or
-  performance claim. After its delivery, bounded work returns to the remaining
-  native tools rather than further CLI inspection.
+  reviewed SHA/tree only. Exact seal `b6db9a6`, tree `59dd628`, passed feature
+  CI/benchmark runs `32965947722`/`32965947723` and main CI/benchmark runs
+  `32966531225`/`32966531319`; both benchmark runs retained two unexpired exact-
+  SHA artifacts. Slice 32 is delivered and the delivered count is 32. It
+  remains limited to six structural fields and makes no compatibility or
+  performance claim. With its delivery complete, bounded work returns to the
+  remaining native tools rather than further CLI inspection.
   `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but

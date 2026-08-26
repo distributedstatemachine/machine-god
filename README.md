@@ -7,7 +7,7 @@ reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
 Current bounded Milestone 03 slice 32, strict top-level
-`session <id> [--json]`, remains **IN PROGRESS**. Formal cycle 4 rejected exact
+`session <id> [--json]`, is **DELIVERED**. Formal cycle 4 rejected exact
 candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
 `99bf524033c6212a05c22e7417ea6f93c202104f`: correctness/API, native effects,
 and performance/resources each reported `0/0/1/0`; the deduplicated `0/0/2/0`
@@ -66,8 +66,19 @@ checks with the established `read_file` warning; performance confirmed the
 exact allocator tuples above and the corrected cap semantics. This
 documentation-only result seal is review-exempt: it records review of
 `d724b61` / `6439863` and does not imply that the seal commit itself was
-reviewed. Remote feature workflows, `main` integration, exact `main`
-workflows, and delivery remain pending; the delivered count remains 31. The
+reviewed. Review-exempt documentation seal
+`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
+`32965947722` and Benchmark evidence run `32965947723`, was integrated on
+`main`, and passed main CI run `32966531225` and Benchmark evidence run
+`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark
+run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered,
+and the delivered count is 32. No product-performance or fx-equivalence claim
+is made. Zig is used only to build the pinned upstream fx comparison input;
+`machine-god` remains a Rust product and is neither written in nor shipped as
+Zig. This final delivery-record commit is docs-only and user-exempt from
+adversarial review. A commit cannot contain its own future workflow IDs, so
+the exact workflow IDs for this record will be reported at handoff. The
 slice remains non-
 equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
 equivalence claim is made. The authoritative record is the

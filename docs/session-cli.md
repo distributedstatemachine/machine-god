@@ -1,7 +1,7 @@
 # Top-level session command
 
-Status: bounded Milestone 03 slice 32 remains in progress from exact delivered
-base `6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
+Status: bounded Milestone 03 slice 32 is **DELIVERED** from exact base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
 `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
 `72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
 gate but is rejected. Correctness/API reported `0/0/1/2`, native boundary/
@@ -74,10 +74,20 @@ checks with the established `read_file` warning; performance confirmed the
 exact allocator tuples recorded in the review ledger and the corrected cap
 semantics. This documentation-only result seal is review-exempt: it records
 review of `d724b61` / `6439863` and does not imply that the seal commit itself
-was reviewed. Remote feature workflows, `main` integration, exact `main`
-workflows, and delivery remain pending; the delivered count remains 31. The
-exact reviewed candidate is review-green, but the slice is not delivered. No
-product-performance or fx-equivalence claim is made. The live evidence record is the
+was reviewed. Review-exempt documentation seal
+`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
+`32965947722` and Benchmark evidence run `32965947723`, was integrated on
+`main`, and passed main CI run `32966531225` and Benchmark evidence run
+`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark
+run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered,
+and the delivered count is 32. No product-performance or fx-equivalence claim
+is made. Zig is used only to build the pinned upstream fx comparison input;
+`machine-god` remains a Rust product and is neither written in nor shipped as
+Zig. This final delivery-record commit is docs-only and user-exempt from
+adversarial review. A commit cannot contain its own future workflow IDs, so
+the exact workflow IDs for this record will be reported at handoff.
+The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
 This slice adds a strict, engine-free inspection of one current-schema

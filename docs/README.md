@@ -1,7 +1,7 @@
 # Documentation
 
-Current bounded Milestone 03 slice 32, strict `session <id> [--json]`, remains
-**IN PROGRESS**. Cycle 4 rejected exact `df72e084`, tree `99bf524`, with
+Current bounded Milestone 03 slice 32, strict `session <id> [--json]`, is
+**DELIVERED**. Cycle 4 rejected exact `df72e084`, tree `99bf524`, with
 correctness/API, native effects, and performance/resources each at `0/0/1/0`;
 its deduplicated `0/0/2/0` union is the ordinary/streamed wire-form mismatch
 plus eager approximately 8.9 MB
@@ -55,8 +55,19 @@ checks with the established `read_file` warning; performance confirmed the
 exact allocator tuples above and the corrected cap semantics. This
 documentation-only result seal is review-exempt: it records review of
 `d724b61` / `6439863` and does not imply that the seal commit itself was
-reviewed. Remote feature workflows, `main` integration, exact `main`
-workflows, and delivery remain pending; the delivered count remains 31. The
+reviewed. Review-exempt documentation seal
+`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
+`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
+`32965947722` and Benchmark evidence run `32965947723`, was integrated on
+`main`, and passed main CI run `32966531225` and Benchmark evidence run
+`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark
+run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered,
+and the delivered count is 32. No product-performance or fx-equivalence claim
+is made. Zig is used only to build the pinned upstream fx comparison input;
+`machine-god` remains a Rust product and is neither written in nor shipped as
+Zig. This final delivery-record commit is docs-only and user-exempt from
+adversarial review. A commit cannot contain its own future workflow IDs, so
+the exact workflow IDs for this record will be reported at handoff. The
 slice stays non-equivalent, unmeasured, and claim-ineligible; no
 product-performance or fx-equivalence claim is made. See the
 [`live ledger`](reviews/m03-session-cli-review-01.md).
@@ -66,7 +77,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Provider-neutral core API](core-api.md)
 - [Deterministic testkit](testkit.md)
 - [Command-line interface](cli.md)
-- [Cycle-8-review-green top-level `session` CLI contract](session-cli.md)
+- [Delivered top-level `session` CLI contract](session-cli.md)
 - [Delivered top-level `doctor` CLI contract](doctor-cli.md)
 - [Delivered top-level `models` CLI contract](models-cli.md)
 - [Delivered top-level `permissions` CLI contract](permissions-cli.md)
@@ -94,7 +105,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Native root selection and preparation](native-root-selection.md)
 - [Native by-ID session lifecycle](native-session-lifecycle.md)
 - [Native session listing](native-session-listing.md)
-- [Cycle-8-review-green native session inspection (delivery pending)](native-session-inspection.md)
+- [Delivered native session inspection](native-session-inspection.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)
