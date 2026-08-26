@@ -145,7 +145,21 @@ dependency policy/audit, unchanged production graph, diff/inventory/no-added-
 unsafe, release evidence, and the native near-cap probe are green. The
 3,985,216-byte release binary has SHA-256
 `c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`.
-Fresh cycle-5 reviews, remote workflows, `main` integration, and delivery
+Formal cycle 5 rejected exact candidate
+`8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
+`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`. Correctness/API reported
+`0/0/0/1`, native boundary/effects reported `0/0/0/0`, and performance/
+concurrency/resources reported `0/0/0/1`; the deduplicated union is
+`0/0/0/1`. The sole low is stale cross-document status: `README.md`,
+`docs/README.md`, `docs/architecture.md`, `docs/cli.md`,
+`docs/performance.md`, `docs/security.md`, `docs/session-store.md`, and
+`docs/reviews/README.md` still described cycle 4 as pending or retained its
+superseded approximately 8.9 MB allocation evidence as current. Production
+review was otherwise green. Independent correctness evidence ran 312 generated
+valid/boundary differentials and 1,200 randomized mutation differentials with
+zero mismatch; the native track was green; and the performance allocation and
+resource audit was green. Remediation synchronizes those maintained summaries.
+Fresh cycle-6 reviews, remote workflows, `main` integration, and delivery
 remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
@@ -3651,7 +3665,17 @@ release binary has SHA-256
 Allocator evidence gives equal `12/2/7` allocation counts and `819/14/645`
 bytes for empty/short/long text, equal `14/2/8` and `1,427/14/1,059` for
 short/long JSON, and `35/2/9` plus `2,228,435/14/1,606,083` for 5,000 keys, in
-total/current/maximum order. Three fresh cycle-5 reviews remain pending.
+total/current/maximum order. Formal cycle 5 rejected exact candidate
+`8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
+`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`: correctness/API reported
+`0/0/0/1`, native boundary/effects `0/0/0/0`, and performance/concurrency/
+resources `0/0/0/1`, deduplicated to `0/0/0/1`. The sole low is stale status
+across the maintained summary pages listed in the review ledger; production
+review was otherwise green. Independent correctness evidence completed 312
+generated valid/boundary and 1,200 randomized mutation differentials with zero
+mismatch, while the native and performance allocation/resource tracks were
+green. Cross-document status remediation, fresh cycle-6 review, remote
+workflows, `main` integration, and delivery remain pending.
 
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, a non-force fast-forward, and exact `main` workflows. There is no
@@ -4667,8 +4691,16 @@ gate:
   inventory/no-added-unsafe, release, allocation, and native near-cap evidence
   are green. Its 3,985,216-byte release binary has SHA-256
   `c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`.
-  Fresh cycle-5 reviews, remote workflows, `main` integration, and delivery
-  remain pending.
+  Formal cycle 5 rejected exact candidate `8f533cd`, tree `8215fb9`.
+  Correctness/API, native boundary/effects, and performance/concurrency/
+  resources reported `0/0/0/1`, `0/0/0/0`, and `0/0/0/1`, respectively,
+  deduplicated to `0/0/0/1`. The sole low is stale cycle/allocation status in
+  the maintained summary pages listed in the review ledger; production review
+  was otherwise green. Independent correctness evidence completed 312
+  generated valid/boundary and 1,200 randomized mutation differentials with
+  zero mismatch, and the native and performance allocation/resource tracks
+  were green. Cross-document status remediation, fresh cycle-6 reviews, remote
+  workflows, `main` integration, and delivery remain pending.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.

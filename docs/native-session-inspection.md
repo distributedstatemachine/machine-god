@@ -28,9 +28,17 @@ reservation. Exact remediation
 `b320f55219ebc808790138dfd293d32e83da77c3`, implements the replacement
 contract and passed its complete local gate under exact Rust/Cargo 1.94.1
 without fallback. Focused evidence is green at 24 native inspection and 64 CLI
-process tests, including 16 differentials. Fresh cycle-5 reviews, remote
-workflows, `main` integration, and delivery remain pending. Its sole first
-consumer is the strict
+process tests, including 16 differentials. Formal cycle 5 rejected exact
+candidate `8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
+`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`. Correctness/API, native boundary/
+effects, and performance/concurrency/resources reported `0/0/0/1`, `0/0/0/0`,
+and `0/0/0/1`, respectively, deduplicated to `0/0/0/1`. The sole low is stale
+cycle/allocation status in maintained summary pages, not a native production
+finding. Independent correctness evidence completed 312 generated valid/
+boundary and 1,200 randomized mutation differentials with zero mismatch; the
+native track and performance allocation/resource audit were green. Cross-
+document status remediation, fresh cycle-6 reviews, remote workflows, `main`
+integration, and delivery remain pending. Its sole first consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -192,4 +200,8 @@ reports `12/2/7` allocations and `819/14/645` bytes for empty, short-text, and
 long-text records; `14/2/8` and `1,427/14/1,059` for short/long JSON; and
 `35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys, in total/current/maximum
 order. The direct native near-cap probe passed 1/1. Full evidence is retained in
-the review ledger. Fresh cycle-5 review remains pending.
+the review ledger. Formal cycle 5 rejected exact candidate `8f533cd`, tree
+`8215fb9`, only because maintained summary pages were stale. The native track
+reported `0/0/0/0`; production review and the performance allocation/resource
+audit were otherwise green. Cross-document status remediation and fresh
+cycle-6 review remain pending.

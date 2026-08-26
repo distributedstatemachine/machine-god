@@ -1,18 +1,17 @@
 # Milestone 03 session CLI review ledger
 
-Status: formal cycle 4 rejected exact candidate
-`df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
-`99bf524033c6212a05c22e7417ea6f93c202104f`, with a deduplicated `0/0/2/0`
-verdict. Exact cycle-3 remediation source
-`af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
-`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, passed its complete replacement
-gate under exact Rust/Cargo 1.94.1 without fallback before documentation was
-composed into the rejected cycle-4 candidate. Exact cycle-4 remediation
+Status: formal cycle 5 rejected exact candidate
+`8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
+`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`, with a deduplicated `0/0/0/1`
+verdict. Exact cycle-4 remediation
 `1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
-`b320f55219ebc808790138dfd293d32e83da77c3`, is composed and passed its
-complete local gate under exact Rust/Cargo 1.94.1 without fallback. Three fresh
-cycle-5 reviews, remote delivery gates, integration, and delivery remain
-pending. This is not a review-green or delivered claim.
+`b320f55219ebc808790138dfd293d32e83da77c3`, passed its complete local gate
+under exact Rust/Cargo 1.94.1 without fallback before documentation was
+composed into the rejected cycle-5 candidate. The sole finding is stale
+cycle/allocation status across maintained summary pages; production review was
+otherwise green. Cross-document status remediation, fresh cycle-6 reviews,
+remote delivery gates, integration, and delivery remain pending. This is not a
+review-green or delivered claim.
 Historical rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
@@ -484,13 +483,48 @@ allocation counts and high-water bytes independent of discarded payload length,
 while empty/small records no longer reserve the former maximum capacity.
 
 These results establish only the exact remediation's complete local gate.
-Three fresh cycle-5 reviews remain pending. Each report must end with exact
-blocker/high/medium/low counts. Any finding rejects the replacement and
-requires another complete gate plus three new agents on one exact SHA. No prior
-discovery, implementation, review, or remediation agent may approve its own
-work or be reused in a later review cycle. Only a deduplicated `0/0/0/0`
-candidate is formally green. No remote workflow, `main` integration, delivery,
-compatibility-promotion, product-performance, or fx-equivalence claim is made.
+The formal cycle-5 rejection is recorded next. No remote workflow, `main`
+integration, delivery, compatibility-promotion, product-performance, or fx-
+equivalence claim is made.
+
+## Formal cycle 5 verdict
+
+Three fresh isolated agents reviewed exact candidate
+`8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
+`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`. Counts are blocker/high/medium/
+low:
+
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Rejected | `0/0/0/1` |
+| Native boundary/effects and portability | Green | `0/0/0/0` |
+| Performance/concurrency/resources and evidence | Rejected | `0/0/0/1` |
+
+The overlapping reports deduplicate to `0/0/0/1`:
+
+1. **Low — stale maintained summary pages.** `README.md`, `docs/README.md`,
+   `docs/architecture.md`, `docs/cli.md`, `docs/performance.md`,
+   `docs/security.md`, `docs/session-store.md`, and `docs/reviews/README.md`
+   still described fresh cycle-4 review as pending, described cycle 4 as the
+   latest rejection, or presented the superseded approximately 8.9 MB eager-
+   reservation evidence as the current allocation result.
+
+This is a cross-document status finding, not a production-behavior finding.
+Independent correctness evidence exercised 312 generated valid/boundary
+differentials and 1,200 randomized mutation differentials with zero mismatch.
+The native boundary/effects and portability track was green. The performance
+track's allocation and resource audit was also green apart from the overlapping
+stale-documentation finding.
+
+Any finding rejects the entire candidate, so `8f533cd` is not review-green.
+Remediation synchronizes the maintained summary pages while preserving the
+cycle-4 contract and complete-gate evidence above. The replacement must pass
+the complete local gate and three fresh cycle-6 reviews on one exact SHA. No
+prior discovery, implementation, review, or remediation agent may approve its
+own work or be reused in a later review cycle. Only a deduplicated `0/0/0/0`
+candidate is formally green. Remote workflows, `main` integration, delivery,
+compatibility-promotion, product-performance, and fx-equivalence claims remain
+pending or absent.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees

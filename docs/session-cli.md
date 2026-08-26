@@ -39,9 +39,17 @@ contract and passed its complete local gate under exact Rust/Cargo 1.94.1
 without fallback. Focused evidence is green at 24 native inspection and 64 CLI
 process tests, including 16 differentials. The 3,985,216-byte release binary,
 SHA-256 `c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`,
-passed the release matrix recorded in the ledger. Fresh cycle-5 reviews, remote
-workflows, `main` integration, and delivery remain pending; this is not a
-review-green or delivered claim.
+passed the release matrix recorded in the ledger. Formal cycle 5 then rejected
+exact candidate `8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
+`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`. Correctness/API reported
+`0/0/0/1`, native boundary/effects `0/0/0/0`, and performance/concurrency/
+resources `0/0/0/1`; the deduplicated union is `0/0/0/1`. The sole low is
+stale cycle/allocation status in maintained summary pages. Production review
+was otherwise green: 312 generated valid/boundary and 1,200 randomized mutation
+differentials had zero mismatch, the native track was green, and the
+performance allocation/resource audit was green. Cross-document status
+remediation, fresh cycle-6 reviews, remote workflows, `main` integration, and
+delivery remain pending; this is not a review-green or delivered claim.
 No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
