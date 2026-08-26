@@ -49,11 +49,13 @@ The thirty-third bounded slice, native `web_search`, is contract-frozen and
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334`. Its normative boundary is
 [`web-search.md`](web-search.md) and its live ledger is
 [`m03-web-search-review-01.md`](reviews/m03-web-search-review-01.md). Production,
-independent evidence, and documentation are owned in separate isolated
-worktrees and are in initial composition. No exact composed candidate or tree
-has completed the required local gate or three fresh adversarial reviews, so
-this slice is not green, integrated, or delivered; the delivered count remains
-thirty-two.
+independent evidence, and documentation were owned in separate isolated
+worktrees and compose through exact behavior precursor
+`3d2984000301e58762e0940504159aeb55b2389e`, tree
+`5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
+gate is green and formal cycle 1 remains pending on the kickoff commit that
+records that evidence. This slice is not yet review-green, integrated, or
+delivered; the delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive
@@ -3782,8 +3784,8 @@ workflows, integration, and exact `main` workflows. Exact reviewed candidate
 `d724b61`, tree `6439863`, is review-green; seal `b6db9a6`, tree `59dd628`,
 completed those delivery gates. With slice 32 delivered, bounded slice 33 has
 returned to the remaining native tools through the frozen `web_search`
-contract rather than expanding the CLI inspection surface. Its initial
-composition remains review-pending as recorded above.
+contract rather than expanding the CLI inspection surface. Its cycle-1 kickoff
+remains review-pending as recorded above.
 Every review/remediation iteration must end with committed/integrated worktrees
 verified clean and safely removed; active or uncommitted worktrees are retained.
 

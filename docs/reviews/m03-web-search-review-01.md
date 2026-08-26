@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — INITIAL COMPOSITION; REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 1 KICKOFF; REVIEW PENDING**
 
 ## Base and boundary
 
@@ -15,12 +15,20 @@ Status: **IN PROGRESS — INITIAL COMPOSITION; REVIEW PENDING**
   `b1774fbf6c7602b503026f96f6e960e946c692ef`](https://github.com/vercel-labs/fx/commit/b1774fbf6c7602b503026f96f6e960e946c692ef).
 
 This is the live ledger for bounded slice 33. The contract is frozen and the
-production, independent-evidence, and maintained-documentation components are
-being developed with non-overlapping ownership. No exact composed behavior
-candidate, tree, complete local-gate result, formal review verdict, feature
-workflow, integration, `main` workflow, or delivery result exists at this
-checkpoint. The delivered count therefore remains thirty-two and Milestone 03
-remains in progress.
+production, independent-evidence, and maintained-documentation components were
+developed with non-overlapping ownership. Exact production component
+`8ca0bb67166e16383b1a3c956c6140cf1d1eecba`, independent-evidence component
+`beb0e2a88ca155ca0a0a692507eaeb77a5ca2f76`, and documentation component
+`a8884aea0040ab42623c55972056136b68de5676` compose through exact behavior
+precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
+`5222c3e009e9fe440097a86fd46889d1bb2e1434`.
+
+The exact formal cycle-1 candidate is the commit containing this kickoff
+paragraph. Reviewers receive its full SHA and tree out of band, and the later
+result seal records both values without claiming that the review-exempt seal
+itself was reviewed. No formal verdict, feature workflow, integration, `main`
+workflow, or delivery result exists at this checkpoint. The delivered count
+therefore remains thirty-two and Milestone 03 remains in progress.
 
 ## Frozen candidate boundary
 
@@ -71,10 +79,23 @@ cargo +1.94.1 test --workspace
 cargo +1.94.1 test --doc --workspace
 ```
 
-Pinned-fx regeneration, repo-wide Python, documentation integrity, dependency,
-target/feature, diff/inventory/no-added-unsafe, locked-release, and applicable
-release-binary smoke checks remain required by the integration plan. These
-commands have not yet been recorded as passing for a composed slice-33 SHA.
+On exact behavior precursor `3d2984000301e58762e0940504159aeb55b2389e`, the
+focused `web_search`, engine, dedicated-codec, and reference-host selection ran
+25 tests with zero failures. The four required commands above passed under
+exact Rust and Cargo 1.94.1 without fallback. The all-feature workspace run,
+including the feature-gated web-search tests, also passed. Repository-wide
+Python ran 135 tests with eight expected platform skips and zero failures.
+
+Pinned-fx regeneration against exact `b1774fbf6c7602b503026f96f6e960e946c692ef`
+was byte-stable. FreeBSD no-default and WASI all-feature native-library checks
+passed with only the established unrelated WASI `read_file` dead-code warning.
+All 87 maintained Markdown files had zero missing repository-relative targets;
+the base diff and metadata checks are clean, Cargo manifests and `Cargo.lock`
+are unchanged, and no unsafe Rust construct was added. A freshly built locked
+release CLI is 3,985,216 bytes with SHA-256
+`bd7c89147f458001cc927c19b76ac75cb09ed5dca5396efc34d3933bde62a3dc` and
+passes version/help smoke. The exact kickoff candidate must repeat the four
+required Rust commands before its formal verdict is collected.
 
 The isolated documentation component passed `git diff --check`, a repository-
 relative Markdown target check over every changed page, exact-1.94.1
@@ -85,8 +106,9 @@ or delivery claim.
 
 ## Formal review cycles
 
-No formal review cycle has started. After the complete exact-SHA local gate,
-three fresh isolated read-only tracks must review the same candidate:
+Formal cycle 1 is opening on the exact kickoff commit. After that immutable SHA
+repeats the four required Rust commands, three fresh isolated read-only tracks
+must review the same candidate:
 
 1. correctness, API, strict schema, result semantics, and compatibility;
 2. native network, authorization, cancellation/drop, redaction, and platform

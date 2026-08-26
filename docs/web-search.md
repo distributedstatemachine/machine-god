@@ -4,9 +4,12 @@ Status: **IN PROGRESS** as bounded Milestone 03 slice 33. The contract is
 frozen from exact delivered base
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334` and pinned fx observation
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Production, independent evidence,
-and this documentation are being composed in separate worktrees. No exact
-composed candidate has completed the required local gate or fresh adversarial
-review yet, so the slice is not green, integrated, or delivered. The live
+and this documentation compose through behavior precursor
+`3d2984000301e58762e0940504159aeb55b2389e`, tree
+`5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
+gate is green and formal cycle 1 remains pending on the kickoff commit that
+records that evidence. The slice is not yet review-green, integrated, or
+delivered. The live
 status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 

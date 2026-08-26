@@ -7,10 +7,13 @@ Its frozen strict input is required `query` plus optional mutually exclusive
 configured AI Gateway `NetworkTarget`; one allowed execution makes at most one
 required Perplexity worker request through the shared injected transport, and a
 separate bounded native codec admits its one provider-executed call/result.
-Production, independent evidence, and these docs are in initial composition.
-No composed exact SHA has passed the complete gate or fresh review, so the
-slice is not green, integrated, or delivered and the delivered count remains
-32. The fixed resource/platform/deferred boundary is the
+Production, independent evidence, and these docs compose through behavior
+precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
+`5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
+gate is green and formal cycle 1 is pending on the kickoff commit that records
+that evidence. The slice is not yet review-green, integrated, or delivered and
+the delivered count remains 32. The fixed resource/platform/deferred boundary
+is the
 [`native web search contract`](web-search.md), and status is tracked in its
 [`live review ledger`](reviews/m03-web-search-review-01.md). The slice is
 unmeasured and makes no product-performance or fx-equivalence claim.

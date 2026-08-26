@@ -397,8 +397,10 @@ only. It reuses the already validated configured model and credential source,
 advertises only required Perplexity search, and makes no retry or fallback.
 The dedicated provider-executed decoder sits above this byte transport; the
 HTTP layer neither parses provider tool records nor changes the ordinary outer
-generation codec. The slice is in initial composition and is not yet green or
-delivered.
+generation codec. Composed behavior precursor
+`3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
+local gate; formal cycle 1 remains pending, so the slice is not yet review-green
+or delivered.
 
 ## Deferred scope
 
