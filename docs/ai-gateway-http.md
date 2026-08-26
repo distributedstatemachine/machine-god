@@ -409,8 +409,9 @@ shared-transport starvation and decoder-allocation findings. Source remediation
 from exact isolated components `096b11c4` and `ca0b990a` releases the outer
 stream at validated finish,
 incrementally retains one bounded SSE record, and injects explicit fallible
-deadline authority. Replacement evidence and fresh review remain pending, so
-the slice is not yet review-green or delivered.
+deadline authority. Exact composed precursor `e662fa8`, tree `6c0ace9`, passes
+the complete local gate; fresh cycle-2 review remains pending, so the slice is
+not yet review-green or delivered.
 
 ## Deferred scope
 

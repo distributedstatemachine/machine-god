@@ -30,8 +30,10 @@ before nested search,
 custom transports bind their actual canonical permission target, every public
 tool constructor is bounded, the deadline is an explicit fallible authority,
 portable contracts are ungated, and the decoder retains one bounded record and
-at most ten deduplication entries. Replacement evidence and a complete exact-
-SHA gate are in progress; no replacement candidate has completed fresh review.
+at most ten deduplication entries. Exact composed remediation precursor
+`e662fa8047c5ca321d622b9b5920166804a35c27`, tree
+`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes the complete local gate;
+no replacement candidate has completed fresh review.
 The candidate is not green, integrated, or delivered, the delivered count
 remains 32, and no performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,

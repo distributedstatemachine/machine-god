@@ -13,8 +13,9 @@ precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
 gate is green. Formal cycle 1 rejected exact candidate `89c5ec95`, tree
 `8d91a55`, with a deduplicated `0/2/5/2` blocker/high/medium/low finding union.
 Source remediation is composed from exact isolated components `096b11c4` and
-`ca0b990a`; replacement evidence, the exact-SHA gate, and fresh reviews remain
-in progress. The slice is
+`ca0b990a`. Exact composed remediation precursor `e662fa8047c5ca321d622b9b5920166804a35c27`,
+tree `6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes the complete local gate;
+fresh cycle-2 reviews are pending. The slice is
 not yet review-green, integrated, or delivered and
 the delivered count remains 32. The fixed resource/platform/deferred boundary
 is the

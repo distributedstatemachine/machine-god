@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 1 REJECTED; REMEDIATION IN PROGRESS**
+Status: **IN PROGRESS — CYCLE 2 REVIEW PENDING**
 
 ## Base and boundary
 
@@ -163,8 +163,31 @@ remain below 16 KiB; and ten sources of 512-byte title plus 2,048-byte URL, a
 4,096-byte query, and fixed JSON overhead remain below 48 KiB. Replacement
 evidence must exercise exact/+1 for every reachable boundary and retain an
 explicit proof for these unreachable aggregate/request/output caps rather than
-claiming impossible fixtures. The complete same-SHA gate and cycle-2 reviews
-remain pending.
+claiming impossible fixtures.
+
+Exact composed remediation precursor
+`e662fa8047c5ca321d622b9b5920166804a35c27`, tree
+`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes all replacement evidence
+under exact Rust and Cargo 1.94.1 without fallback. The focused remediation
+matrix ran 88 Rust tests with zero failures. The four required commands passed;
+default-feature and all-feature workspace tests passed; repository-wide Python
+ran 136 tests with eight expected platform skips; FreeBSD no-default and WASI
+all-feature checks passed with only the established unrelated WASI `read_file`
+warning; and pinned-fx regeneration against exact `b1774fbf` was byte-stable.
+All 87 maintained Markdown files had zero missing repository-relative targets.
+Cargo manifests and `Cargo.lock` are unchanged, the base diff is clean, and no
+unsafe Rust construct was added. The freshly built locked release binary is
+3,985,216 bytes with SHA-256
+`ef8751d1a50c933b42657d9b1abecb013426abc4bd8c95c89990862371b7c5b9` and
+passes exact version/help smoke. Web search has no CLI command, so its
+user-visible behavior is exercised through the composed release-equivalent
+native host integration rather than a new binary grammar.
+
+The formal cycle-2 candidate is the commit containing this kickoff paragraph.
+Reviewers receive its exact SHA and tree out of band; the result seal will
+record both values without claiming the later review-exempt documentation-only
+seal was reviewed. Correctness/API, native lifecycle/effects, and performance/
+resources must each report `0/0/0/0` before feature workflows may begin.
 
 ## Worktree lifecycle
 

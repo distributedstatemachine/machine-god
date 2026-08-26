@@ -67,9 +67,12 @@ execution, bind custom transports to their exact permission target, require an
 explicit fallible deadline authority, bound every public tool constructor,
 export portable contracts without HTTP/WASM gates, incrementally retain one
 bounded SSE record, cap deduplication state, and redact source debug output.
-Replacement evidence and the complete exact-SHA gate are in progress. This
-slice is not yet review-green, integrated, or delivered; the delivered count
-remains thirty-two.
+Exact composed remediation precursor
+`e662fa8047c5ca321d622b9b5920166804a35c27`, tree
+`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes replacement evidence and
+the complete exact-1.94.1 local gate without fallback. Fresh cycle-2 reviews
+are pending. This slice is not yet review-green, integrated, or delivered; the
+delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive

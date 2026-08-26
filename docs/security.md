@@ -5,8 +5,8 @@ green or delivered. Its composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
 local gate. Formal cycle 1 rejected exact `89c5ec95`, tree `8d91a55`. Source
 remediation is composed from exact isolated components `096b11c4` and
-`ca0b990a`; replacement evidence, the exact-SHA gate, and fresh reviews remain
-in progress. It remains a local
+`ca0b990a`. Exact composed precursor `e662fa8`, tree `6c0ace9`, passes the
+complete local gate; fresh cycle-2 reviews remain pending. It remains a local
 authority-bearing tool: strict
 effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares

@@ -8,9 +8,10 @@ identity-preserving clones, and rootless `web_fetch` owns no descriptor.
 The cycle-1-remediated slice-33 candidate inserts Gateway-backed, workspace-rootless
 `web_search` after `web_fetch` and before `write_file`, producing fourteen
 alphabetical tools while leaving the descriptor-backed set and clone count
-unchanged. Source remediation is composed, but no replacement exact candidate
-has passed the complete gate or formal review, so this paragraph does not
-promote that candidate catalog to delivered status. See
+unchanged. Exact composed remediation precursor `e662fa8`, tree `6c0ace9`,
+passes the complete local gate but no replacement exact candidate has passed
+formal review, so this paragraph does not promote that candidate catalog to
+delivered status. See
 [`web-search.md`](web-search.md) and the
 [`slice-33 ledger`](reviews/m03-web-search-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal

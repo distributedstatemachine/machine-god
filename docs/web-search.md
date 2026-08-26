@@ -13,8 +13,10 @@ gate was green. Formal cycle 1 rejected exact candidate
 `8d91a556f786169d42406e91e8ad2f476b7c6cf4`, with a deduplicated `0/2/5/2`
 finding union. Source remediation is composed from exact isolated lifecycle
 component `096b11c4` and portability/bounds component `ca0b990a`; replacement
-evidence and the complete same-SHA gate remain in progress. The slice is not
-yet review-green,
+evidence and the complete same-SHA gate pass on exact composed precursor
+`e662fa8047c5ca321d622b9b5920166804a35c27`, tree
+`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`. Fresh cycle-2 reviews are pending.
+The slice is not yet review-green,
 integrated, or delivered. The live
 status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).

@@ -32,8 +32,9 @@ records. This keeps provider-specific wire identity and network authority in
 invariants. Slice 33's exact-1.94.1 local gate is green on composed behavior
 precursor `3d2984000301e58762e0940504159aeb55b2389e`. Formal cycle 1 rejected
 exact `89c5ec95`, tree `8d91a55`. Source remediation is composed from exact
-isolated components `096b11c4` and `ca0b990a`, while replacement evidence, the exact-SHA gate, and
-fresh review remain in progress, so the slice
+isolated components `096b11c4` and `ca0b990a`. Exact composed precursor
+`e662fa8`, tree `6c0ace9`, passes the complete local gate, while fresh cycle-2
+review remains pending, so the slice
 has no review-green, delivery, performance, or fx-equivalence claim.
 
 ```rust,no_run

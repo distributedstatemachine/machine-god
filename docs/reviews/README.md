@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Current bounded slice 33, native `web_search`, is **IN PROGRESS — CYCLE 1
-REJECTED; REMEDIATION IN PROGRESS** from exact delivered base `4ba9f5a`. Its frozen
+Current bounded slice 33, native `web_search`, is **IN PROGRESS — CYCLE 2
+REVIEW PENDING** from exact delivered base `4ba9f5a`. Its frozen
 local-tool contract performs exact Gateway-network preflight, then at most one
 approved required Perplexity worker request through the shared transport and a
 dedicated bounded native provider-executed decoder. Composed behavior precursor
@@ -9,8 +9,9 @@ dedicated bounded native provider-executed decoder. Composed behavior precursor
 cycle 1 rejected exact `89c5ec95`, tree `8d91a55`; the three tracks reported
 `0/1/3/2`, `0/2/3/1`, and `0/0/3/0`, deduplicated to `0/2/5/2` in
 blocker/high/medium/low order. Source remediation is composed from exact
-isolated components `096b11c4` and `ca0b990a`; replacement evidence, the complete exact-SHA gate,
-and fresh reviews remain pending. No feature workflow, integration, or `main`
+isolated components `096b11c4` and `ca0b990a`. Exact composed precursor
+`e662fa8`, tree `6c0ace9`, passes the complete local gate; fresh cycle-2 reviews
+remain pending. No feature workflow, integration, or `main`
 workflow exists. The delivered count remains
 32. Review scope, fixed resources, deferrals, and the per-iteration committed/
 integrated/clean worktree-removal invariant are tracked in
