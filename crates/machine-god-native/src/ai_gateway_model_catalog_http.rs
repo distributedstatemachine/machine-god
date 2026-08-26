@@ -2230,7 +2230,7 @@ mod tests {
             ));
             match std::fs::create_dir(&candidate) {
                 Ok(()) => break candidate,
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(error) => panic!("create DNS test directory: {error}"),
             }
         };
