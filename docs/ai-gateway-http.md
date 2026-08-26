@@ -265,10 +265,11 @@ environment endpoint input.
 
 The CLI enables only `ai-gateway-model-catalog-http`. Its resolved native
 feature graph contains the shared bearer/TLS and catalog HTTP dependencies plus
-the native Hickory resolver and Hickory's transitive protocol, network, and Moka
-cache dependencies. The narrow catalog feature activates one direct optional
-`hickory-resolver` edge with only its Tokio integration in addition to the
-workspace's system-configuration support. Reqwest's built-in `hickory-dns`
+Hickory's system-configuration support and its transitive protocol, network,
+and Moka cache dependencies. The narrow catalog feature activates direct
+optional `hickory-proto`, `hickory-resolver`, and `sha2` edges; the resolver dependency
+is retained only for bounded platform-configuration parsing and no longer
+enables its Tokio resolver integration. Reqwest's built-in `hickory-dns`
 feature is disabled. The graph does not activate generation-only direct `bytes`
 or `web-fetch-http`, and it still omits Tokio's signal backend. The CLI
 dependency, not native catalog HTTP, requests Tokio signal handling. Existing
@@ -286,14 +287,16 @@ automatic decompression, proxies, cookies, and retries are disabled. Only 200
 bodies are read; non-200 bodies are discarded.
 
 The catalog client explicitly installs a machine-god `reqwest::dns::Resolve`
-adapter over Hickory. It never selects Reqwest's built-in Hickory adapter,
+adapter with private bounded DNS exchange. It never selects Reqwest's built-in
+Hickory adapter,
 default GAI resolver, or non-abortable blocking `getaddrinfo` worker: client
 construction explicitly disables Reqwest's built-in Hickory selection before
 installing the custom resolver, including if dependency feature unification
 enables that alternative. Production transport construction synchronously
-snapshots platform DNS configuration exactly once, before any catalog request
-or deadline exists and without a Tokio runtime. Numeric-loopback test
-construction performs no DNS discovery. The adapter retains only the validated
+snapshots platform DNS configuration and one fallible 32-byte query-ID key
+exactly once, before any catalog request or deadline exists and without a Tokio
+runtime. Numeric-loopback test construction performs no DNS discovery. The
+adapter retains only the validated
 snapshot or a fixed unavailable state; it has no configuration loader to call
 while a request is being polled.
 
@@ -309,20 +312,36 @@ during construction, then post-validate the returned snapshot. Platform APIs
 may allocate their returned values before machine-god can reject them; retained
 state is nevertheless bounded to 32 nameservers, 32 search domains, 8 KiB of
 aggregate DNS-name bytes, 64 server connections, and bounded resolver options.
+Case-randomization and nonempty avoided-local-port sets are unsupported and
+fail closed rather than silently losing configured behavior. The snapshot
+retains configured UDP and TCP endpoints, trust-negative flags, request
+timeout, attempts, concurrent batch width, TCP-on-error choice, and recursion
+choice. Query-ID entropy failure is retained as a fixed unavailable state.
 
-Every lookup constructs a fresh Tokio resolver from that bounded immutable
-snapshot on the currently active runtime. It never rereads DNS configuration,
-never reads a hosts file, uses no cross-runtime resolver cache, and forces the
-response cache to zero entries. The Reqwest hostname is normalized to exactly
-one terminal dot before Hickory sees it, making the production lookup an
-absolute FQDN and preventing configured domain or search suffix queries. This
-prevents runtime-backed resolver handles from being retained across sequential
-current-thread runtimes. Unavailable or invalid platform DNS configuration
-fails closed as the fixed redacted catalog `Transport` failure; there is no
-Google or other public-resolver fallback.
-Dropping or cancelling a pending catalog request drops that request's lookup
-future, resolver-owned asynchronous work, response/request ownership, and
-active-request permit. Numeric-loopback test requests bypass DNS as before.
+Every lookup uses only that immutable snapshot and construction-time key on the
+currently active runtime. A keyed `AtomicU32` sequence derives each 16-bit ID
+with bounded SHA-256 work; request polling calls no entropy source and spawns no
+resolver task. A and AAAA proceed concurrently without detachment, while each
+family tries configured nameservers in bounded concurrent batches and attempt
+order. Each server exchange owns one absolute configured timeout. UDP uses a
+Tokio socket with OS ephemeral-port selection; a validated truncated response
+replays once over configured TCP, configured TCP-only servers work directly,
+and TCP-on-error is honored when configured. Responses are capped at 4 KiB and
+strictly validate ID, opcode, class, absolute question, section counts, exact
+wire exhaustion, response code, and at most 32 stable first-seen addresses.
+CNAMEs are checked for conflicts and cycles and may continue across responses
+for at most seven aggregate links. Trusted empty NXDOMAIN responses stop that
+family's server search; an address from the other family may still succeed.
+
+The Reqwest hostname is normalized to exactly one terminal dot before exchange,
+making the production lookup an absolute FQDN and preventing configured domain
+or search suffix queries. No runtime-backed resolver handle or cache is retained
+across sequential current-thread runtimes. Unavailable configuration, entropy,
+or DNS fails closed as the fixed redacted catalog `Transport` failure; there is
+no Google or other public-resolver fallback. Dropping or cancelling a pending
+catalog request drops its sockets, lookup future, response/request ownership,
+timers, and active-request permit. Numeric-loopback test requests bypass DNS as
+before.
 
 Default catalog limits are 30 seconds for connect, 30 seconds per attempt, and
 8 active requests; explicit concurrency is restricted to 1–32. The provider
@@ -347,11 +366,14 @@ the same absolute-deadline timer and wakes at that deadline. Deterministic
 tests inject a permanently pending Reqwest resolver and paused Tokio time to
 prove cancellation and deadline completion, lookup-future drop, permit
 restoration, and sequential current-thread runtime teardown without production
-DNS or test sleeps. A local UDP DNS fixture proves the retained snapshot creates
-a fresh resolver successfully on each of two sequential current-thread
-runtimes. Separate eager-once, oversized-snapshot, unavailable-snapshot, and
-generic-Unix bounded-file tests prove that request polling never loads platform
-configuration and that failures remain fixed, redacted, and permit-safe.
+DNS or test sleeps. A local UDP DNS fixture proves the retained snapshot works
+on each of two sequential current-thread runtimes. A second local fixture proves
+strict UDP truncation, TCP replay, concurrent A/AAAA, and bounded cross-response
+CNAME continuation. Separate deterministic-ID, injected entropy-failure/no-
+packet, malformed-wire, eager-once, oversized-snapshot, unavailable-snapshot,
+and generic-Unix bounded-file tests prove that request polling never loads
+platform configuration or entropy and that failures remain fixed, redacted,
+and permit-safe.
 
 ## Deferred scope
 

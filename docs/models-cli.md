@@ -31,8 +31,9 @@ eager snapshot remediation is `d9922ef1`, and per-runtime absolute-name/custom-
 resolver hardening is `e5248b10`. Focused provider/parser, credential, HTTP,
 private resolver, CLI unit, CLI integration, and manifest evidence is now
 17/17, 6/6, 16/16, 6/6, 18/18, 23/23, and 4/4. Catalog HTTP directly activates
-only the async Hickory resolver needed for this lifecycle plus its transitive
-protocol/network/cache graph; it still omits generation-only direct `bytes`,
+direct `hickory-proto`, `hickory-resolver`, and `sha2` edges; Hickory resolver
+remains only for bounded system-configuration parsing and its Tokio integration
+is disabled. The catalog still omits generation-only direct `bytes`,
 `web-fetch-http`, and Tokio's signal backend. The complete cycle-3 replacement
 gate passed for exact behavior candidate
 `2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
@@ -41,6 +42,13 @@ Three fresh cycle-3 reviews and remote CI remain pending; no candidate is
 review-green. The pinned comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
+
+The current isolated DNS remediation replaces Hickory's request-polled resolver
+with private bounded UDP/TCP exchange. It snapshots one fallible query-ID key at
+transport construction, derives IDs deterministically from an atomic sequence,
+and invokes no entropy source or detached resolver task during request polling.
+It raises private resolver source evidence from 6 to 14 tests. This behavior
+record by itself makes no replacement-gate or review outcome claim.
 
 The slice adds one read-only top-level command:
 
@@ -271,8 +279,9 @@ so a conforming request future cannot remain pending past the shared catalog
 deadline.
 
 The production resolver retains only an immutable validated configuration
-snapshot or a fixed unavailable state. Request polling cannot rediscover or
-reread system configuration. Generic Unix other than Apple and Android accepts
+snapshot, construction-time query-ID sequence, or fixed unavailable states.
+Request polling cannot rediscover system configuration or entropy. Generic Unix
+other than Apple and Android accepts
 the ordinary `/etc/resolv.conf` symlink only when pre-open, opened-descriptor,
 and final metadata are regular and at most 64 KiB; nonblocking close-on-exec
 reading retains at most one additional overflow byte and has finite read and
@@ -281,15 +290,23 @@ API during construction and then reject a snapshot over 32 nameservers, 32
 search domains, 8 KiB of DNS names, 64 server connections, or the fixed option
 bounds. Those platform APIs may allocate their result before post-validation.
 
-Each Reqwest resolution creates a fresh Hickory Tokio resolver from the bounded
-snapshot on the active runtime. Its response cache is disabled and its hosts-
-file mode is `Never`, so this pure bounded construction does not perform a
-second synchronous file read or retain runtime-backed connection handles for a
-later current-thread runtime. Lookup I/O and resolver tasks remain owned by the
-active request/runtime and are dropped on cancellation, deadline, request drop,
-or runtime teardown. Reqwest's hostname is normalized to one terminal dot
-before lookup, so Hickory treats the production host as an absolute FQDN and
-does not try configured search suffixes. Client construction explicitly
+Each Reqwest resolution runs private bounded Tokio UDP/TCP exchange from the
+snapshot. A construction-keyed `AtomicU32` sequence derives 16-bit query IDs
+with bounded SHA-256 work; request polling calls no entropy source and spawns no
+resolver task. A and AAAA run concurrently without detachment. Each family
+tries configured nameservers in bounded concurrent batches and attempt order,
+with one absolute configured timeout per server exchange. Configured TCP-only,
+TCP-on-error, recursion, and trusted-negative behavior is retained; unsupported
+case-randomization or avoided-local-port sets fail closed. UDP truncation can
+replay only over configured TCP. Each response is at most 4 KiB, exhaustively
+decoded, and validates its ID, opcode, class, absolute question, response code,
+section counts, CNAME chain/cycle bound, and at most 32 stable first-seen
+addresses. A CNAME chain may continue across responses but never exceeds seven
+links. Lookup sockets and timers remain owned by the active request/runtime and
+drop on cancellation, deadline, request drop, or runtime teardown. Reqwest's
+hostname is normalized to one terminal dot before lookup, so the production
+host is an absolute FQDN and configured search suffixes are never queried.
+Client construction explicitly
 disables Reqwest's built-in Hickory selection before installing the custom
 resolver, including under dependency feature unification. There is no default
 GAI, Google, or other public-resolver fallback. Snapshot failure is exposed

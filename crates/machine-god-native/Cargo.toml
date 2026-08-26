@@ -15,13 +15,14 @@ ai-gateway-http = [
     "web-fetch-http",
 ]
 ai-gateway-model-catalog-http = [
+    "dep:hickory-proto",
     "dep:hickory-resolver",
     "dep:hyper",
     "dep:reqwest",
     "dep:rustls",
+    "dep:sha2",
     "dep:tokio",
     "dep:webpki-root-certs",
-    "hickory-resolver/tokio",
 ]
 web-fetch-http = [
     "dep:hickory-proto",

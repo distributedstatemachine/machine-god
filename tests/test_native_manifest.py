@@ -15,10 +15,12 @@ SHA2_WEB_FETCH_ONLY_NATIVE_CFG = (
     'not(any(target_os = "linux", target_os = "macos"))))'
 )
 MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
+    "hickory-proto",
     "hickory-resolver",
     "hyper",
     "reqwest",
     "rustls",
+    "sha2",
     "tokio",
     "webpki-root-certs",
 }
@@ -52,6 +54,14 @@ class NativeManifestTests(unittest.TestCase):
         self.assertIn("web-fetch-http", features["ai-gateway-http"])
         self.assertEqual(
             [entry for entry in features["web-fetch-http"] if "sha2" in entry],
+            ["dep:sha2"],
+        )
+        self.assertEqual(
+            [
+                entry
+                for entry in features["ai-gateway-model-catalog-http"]
+                if "sha2" in entry
+            ],
             ["dep:sha2"],
         )
 
@@ -170,8 +180,7 @@ class NativeManifestTests(unittest.TestCase):
             {
                 f"dep:{dependency}"
                 for dependency in MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES
-            }
-            | {"hickory-resolver/tokio"},
+            },
         )
         self.assertNotIn(
             "reqwest/hickory-dns", features["ai-gateway-model-catalog-http"]
@@ -220,7 +229,7 @@ class NativeManifestTests(unittest.TestCase):
             MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES, direct_dependencies
         )
         self.assertIn("hickory-resolver", direct_dependencies)
-        self.assertNotIn("hickory-proto", direct_dependencies)
+        self.assertIn("hickory-proto", direct_dependencies)
 
         completed = subprocess.run(
             cargo_tree_command,
