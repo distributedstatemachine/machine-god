@@ -1,15 +1,16 @@
 # Milestone 03 session CLI review ledger
 
-Status: formal cycle 3 rejected exact candidate
-`9282b4044c5fb5a249598d23d098562c96850c99`, tree
-`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`, with a deduplicated `0/0/1/1`
+Status: formal cycle 4 rejected exact candidate
+`df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`, with a deduplicated `0/0/2/0`
 verdict. Exact cycle-3 remediation source
 `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
-`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, is composed and passed its
-complete replacement gate under exact Rust/Cargo 1.94.1 without fallback.
-Three fresh cycle-4 reviews, remote delivery gates, integration, and delivery
-remain pending. This is not a review-green or delivered claim. Historical
-rejected candidates and verdicts remain recorded below.
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, passed its complete replacement
+gate under exact Rust/Cargo 1.94.1 without fallback before documentation was
+composed into the rejected cycle-4 candidate. Cycle-4 remediation, its complete
+gate, three fresh cycle-5 reviews, remote delivery gates, integration, and
+delivery remain pending. This is not a review-green or delivered claim.
+Historical rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
 composition was `852fec7`; focused composition-gate remediation advances the
@@ -383,15 +384,63 @@ records. The direct 8,650,857-byte near-cap case passed 1/1. The native near-
 cap/allocation case also passed 1/1 and retained the five-shape exact allocation
 tuple above.
 
-These checks establish the complete exact-remediation local gate only. Three
-fresh formal cycle-4 reviews remain pending. Each cycle-4 report must end with
-exact blocker/high/medium/low counts. Any finding rejects the remediation and
-requires another complete gate plus three new agents on one replacement exact
-SHA. No prior discovery, implementation, review, or remediation agent may
-approve its own work or be
-reused in a later review cycle. Only a deduplicated `0/0/0/0` candidate is
-formally green. No remote workflow, `main` integration, delivery,
-compatibility-promotion, product-performance, or fx-equivalence claim is made.
+These checks establish the complete exact-remediation local gate only. They do
+not override the formal cycle-4 rejection recorded next.
+
+## Formal cycle 4 verdict
+
+Three fresh isolated agents reviewed exact candidate
+`df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`. Counts are blocker/high/medium/
+low:
+
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Rejected | `0/0/1/0` |
+| Native boundary/effects and portability | Rejected | `0/0/1/0` |
+| Performance/concurrency/resources and evidence | Rejected | `0/0/1/0` |
+
+The overlapping reports deduplicate to `0/0/2/0`:
+
+1. **Medium — ordinary-versus-streamed wire-form mismatch.** Ordinary
+   serde-derived storage deserialization accepted positional sequences for
+   `StoredEnvelope`, `StoredRecord`, `StoredMessage`, `StoredToolCall`, and
+   `StoredToolOutput`, plus an externally tagged unit-variant map for `Role`.
+   The streamed inspection parser required the canonical object forms and role
+   string, so it reported `Corrupt` for records accepted by the ordinary store.
+2. **Medium — eager duplicate-tracker reservation.** Every inspection reserved
+   approximately 8.9 MB for the duplicate tracker up front, including empty
+   and small records. The five allocation shapes therefore demonstrated a
+   fixed large allocation, not auxiliary memory proportional to the unique keys
+   actually encountered.
+
+Any finding rejects the entire candidate, so `df72e084` is not review-green.
+
+## Cycle 4 remediation contract
+
+The durable ordinary-store schema becomes explicitly object-only for
+`StoredEnvelope`, `StoredRecord`, `StoredMessage`, `StoredToolCall`, and
+`StoredToolOutput`, and string-only for `Role`. The canonical writer is
+unchanged. Ordinary loading/listing and streamed inspection must reject each of
+the five positional struct sequences and the externally tagged unit-role map
+consistently.
+
+The fixed-fingerprint duplicate tracker retains its strict 65,536-node ceiling,
+but entries and buckets must grow fallibly in proportion to unique keys
+actually encountered rather than reserving maximum capacity for every
+inspection.
+Replacement allocation evidence must bound empty/small-record allocator
+high-water use and compare long and short discarded values at equal structural
+shape. A near-cap input alone does not establish the small-record bound.
+
+Remediation source, its complete same-SHA gate, and three fresh cycle-5 reviews
+remain pending. Each cycle-5 report must end with exact blocker/high/medium/low
+counts. Any finding rejects the replacement and requires another complete gate
+plus three new agents on one exact SHA. No prior discovery, implementation,
+review, or remediation agent may approve its own work or be reused in a later
+review cycle. Only a deduplicated `0/0/0/0` candidate is formally green. No
+remote workflow, `main` integration, delivery, compatibility-promotion,
+product-performance, or fx-equivalence claim is made.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees

@@ -67,8 +67,13 @@ projection but requires a specialized one-pass summary operation rather than
 `FileSessionStore::load` or a full `SessionRecord`. It uses at most 4 KiB per
 read, fixed-stack known-token scratch, canonical `serde_json::Number`
 semantics, payload-sized ownership only for the two returned IDs, and a fixed-
-digest strictly 65,536-node-capped duplicate tracker that reproduces ordinary
-last-value-wins metadata/nested-JSON semantics. The 8,651,165-byte file,
+digest strictly 65,536-node-capped duplicate tracker that grows entries and
+buckets fallibly in proportion to unique keys and reproduces ordinary last-
+value-wins metadata/nested-JSON semantics. The ordinary store schema is
+object-only for its envelope, record, message, tool-call, and tool-output
+structs and string-only for role; ordinary loading/listing and streamed
+inspection reject the six noncanonical sequence/map forms consistently while
+the canonical writer stays unchanged. The 8,651,165-byte file,
 depth-64, node, schema, identifier, counter, and content-shape constraints are
 store-owned, not engine limits. Lock wait, filesystem latency, and `EINTR`
 retries remain unbounded in wall-clock time and attempt count.
@@ -121,8 +126,18 @@ dependencies against 1,226 advisories with zero vulnerabilities. The production
 normal/build graph remains 364 lines. The 4,001,760-byte release binary has
 SHA-256 `d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d` and
 passed the 18/18 session matrix. Direct and native near-cap probes each passed
-1/1. Fresh cycle-4 reviews, remote workflows, `main` integration, and delivery
-remain pending.
+1/1. Formal cycle 4 rejected exact candidate
+`df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`. Correctness/API, native boundary/
+effects, and performance/concurrency/resources each reported `0/0/1/0`; the
+deduplicated `0/0/2/0` union is an ordinary-versus-streamed wire-form mismatch
+and eager approximately 8.9 MB duplicate-tracker reservation. The replacement
+must make the five stored structs object-only and `Role` string-only, grow
+fixed-fingerprint tracker entries/buckets fallibly in proportion to unique
+keys under the unchanged 65,536 ceiling, bound small-record allocator high-
+water use, and compare long/short discarded values at equal structure.
+Remediation, its complete gate, fresh cycle-5 reviews, remote workflows,
+`main` integration, and delivery remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
@@ -3472,9 +3487,11 @@ The thirty-second slice is in progress from exact delivered base
 replacement was composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`,
 tree `86971aca0f78e637de55d2a79eda64e88bff8734`; formal cycle 3 rejected exact
 candidate `9282b4044c5fb5a249598d23d098562c96850c99`, tree
-`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`. Current remediation is composed
+`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`. Cycle-3 remediation was composed
 at exact `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
-`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`. The slice adds only strict
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`; formal cycle 4 rejected exact
+candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`. The slice adds only strict
 `session <id>` and `session <id> --json`. The ID is parsed through the core
 portable contract before effects, while exact tokens `last`, `--id`, and
 `--json` are reserved in ID position. Every upstream-style selector, reordered
@@ -3494,7 +3511,13 @@ inspect the exact current-schema record in one forward pass through a fixed
 full `SessionRecord`. Known tokens use fixed-stack scratch; only the two
 returned IDs retain payload-sized strings. Canonical `serde_json::Number`
 parsing and a fixed-digest strictly node-capped duplicate tracker must match
-ordinary last-value-wins metadata/nested-JSON semantics. Parse-time recursion
+ordinary last-value-wins metadata/nested-JSON semantics. Tracker entries and
+buckets must grow fallibly in proportion to unique keys under the unchanged
+65,536 ceiling. The ordinary-store schema is object-only for its envelope,
+record, message, tool-call, and tool-output structs and string-only for role;
+ordinary loading/listing and streamed inspection must reject all six
+noncanonical sequence/map forms consistently while the canonical writer stays
+unchanged. Parse-time recursion
 must independently reproduce `serde_json` 1.0.151's 127-active-container
 budget, including typed parent contexts of 3 for metadata, 6 for JSON content,
 and 7 for tool-call/result JSON. These file-byte,
@@ -3593,8 +3616,18 @@ The exact 4,001,760-byte release binary has SHA-256
 `d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d`. Its
 session matrix passed 18/18, including ten equivalence cases, held-lock
 behavior, and engine-over-default records. The direct 8,650,857-byte near-cap
-case and native near-cap/allocation case each passed 1/1. Three fresh cycle-4
-reviews remain pending.
+case and native near-cap/allocation case each passed 1/1. Formal cycle 4
+rejected exact candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`. The three track counts are
+`0/0/1/0`, `0/0/1/0`, and `0/0/1/0`; the deduplicated union is `0/0/2/0`.
+Ordinary serde accepted positional sequences for five stored structs and an
+externally tagged unit-role map that streamed inspection rejected. The
+duplicate tracker also eagerly reserved approximately 8.9 MB even for empty
+records. The replacement must enforce object-only stored structs and a string-
+only role consistently, fallibly grow fixed-fingerprint entries/buckets in
+proportion to unique keys under the unchanged ceiling, bound empty/small-record
+allocator high-water use, and compare long and short values at equal structure.
+Remediation, its complete gate, and three fresh cycle-5 reviews remain pending.
 
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, a non-force fast-forward, and exact `main` workflows. There is no
@@ -4594,8 +4627,18 @@ gate:
   fallback: required Rust, Python 135/8, pinned fx, WASI/FreeBSD, docs
   85/147/626/81, dependency policy/license/audit, unchanged 364-line production
   graph, diff/inventory/no-added-unsafe, exact release hash, 18/18 session
-  matrix, and both 1/1 near-cap probes passed. Fresh cycle-4 reviews, remote
-  workflows, `main` integration, and delivery remain pending.
+  matrix, and both 1/1 near-cap probes passed. Formal cycle 4 rejected exact
+  candidate `df72e084`, tree `99bf524`: all three tracks reported `0/0/1/0`,
+  deduplicated to `0/0/2/0`. Ordinary serde accepted five positional stored-
+  struct sequences plus an externally tagged unit-role map that the streamed
+  parser rejected, while the duplicate tracker eagerly reserved approximately
+  8.9 MB even for an empty record. The replacement contract makes the five
+  structs object-only and role string-only, keeps the canonical writer
+  unchanged, grows fixed-fingerprint entries/buckets fallibly with unique keys
+  under the unchanged 65,536 ceiling, and requires small-record high-water plus
+  equal-structure long/short-value allocation evidence. Remediation, its full
+  gate, fresh cycle-5 reviews, remote workflows, `main` integration, and
+  delivery remain pending.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.

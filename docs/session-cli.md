@@ -27,9 +27,14 @@ CLI process tests, including ten equivalence cases, and 22 native inspection
 tests. The complete replacement gate is green on exact `af055ff3`/`14eafad`
 under Rust/Cargo 1.94.1 without fallback, including the Python, pinned-fx,
 target, documentation, dependency, diff/inventory/no-added-unsafe, release-
-hash, and 18/18 release-session matrix recorded in the ledger. Three fresh
-cycle-4 reviews, remote workflows, `main` integration, and delivery remain
-pending; this is not a review-green or delivered claim.
+hash, and 18/18 release-session matrix recorded in the ledger. Formal cycle 4
+rejected exact candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`. The three track counts are
+`0/0/1/0`, `0/0/1/0`, and `0/0/1/0`; the deduplicated `0/0/2/0` union is an
+ordinary-versus-streamed wire-form mismatch and eager approximately 8.9 MB
+duplicate-tracker reservation. Remediation, its complete gate, fresh cycle-5
+reviews, remote workflows, `main` integration, and delivery remain pending;
+this is not a review-green or delivered claim.
 No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
@@ -100,7 +105,12 @@ current-schema, file-byte, aggregate-JSON-depth, aggregate-JSON-node,
 identifier, counter, number, duplicate-key, and content-shape constraints. It
 must use canonical `serde_json::Number` acceptance and the same last-value-wins
 semantics as ordinary deserialization for duplicate keys in metadata and
-nested arbitrary JSON. Inspection does not invoke an engine and therefore does
+nested arbitrary JSON. The durable schema is object-only for `StoredEnvelope`,
+`StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`, and
+string-only for `Role`; ordinary loading/listing and streamed inspection must
+reject all six noncanonical sequence/map representations consistently. The
+canonical writer remains unchanged. Inspection does not invoke an engine and
+therefore does
 not prove or enforce its configurable limits, including the default 4,096-
 message, 8 MiB serialized-transcript, or 256 KiB serialized-metadata limits. A
 store-valid historical record written under different engine limits remains
@@ -160,8 +170,10 @@ message/metadata structural validation remain authoritative. Known field,
 variant, and role tokens are recognized with fixed-stack scratch space. Only
 the returned session and incarnation ID strings are retained as payload-sized
 owned strings. Metadata and nested JSON object keys are represented during the
-pass by fixed-size digests in a strictly node-capped tracker; repeated keys
-replace the prior logical value and node contribution so the result matches
+pass by fixed-size digests in a strictly node-capped tracker. Its entries and
+buckets grow fallibly in proportion to unique keys actually encountered rather
+than reserving the complete 65,536-node capacity for every inspection; repeated
+keys replace the prior logical value and node contribution so the result matches
 ordinary last-value-wins deserialization. No transcript string, metadata key,
 or arbitrary JSON scalar is retained after validation. Before those final-tree
 limits, parsing also reproduces `serde_json` 1.0.151's 127 simultaneously
@@ -170,6 +182,11 @@ JSON content block, and seven for tool-call/result JSON. Exact nested-array
 accept/reject boundaries are consequently 123/124, 120/121, 119/120, and
 119/120, including values later shadowed by duplicate keys. Corrupt or future
 records are not skipped, repaired, migrated, or rewritten.
+
+Allocation evidence for the replacement must bound small-record allocator
+high-water use and compare long and short discarded values at equal structural
+shape. A file near the byte ceiling is not, by itself, evidence that empty or
+small records avoid eager maximum-capacity reservation.
 
 The command creates no state root and does not create, repair, rewrite,
 migrate, reset, or delete a record. Inspecting a present canonical record may

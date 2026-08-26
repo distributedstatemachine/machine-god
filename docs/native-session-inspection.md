@@ -18,8 +18,14 @@ rejected exact candidate `9282b404`, tree `6d41f7ee`, with track counts
 medium context-free recursion-budget mismatch and low self-counted allocation
 evidence. Exact remediation `af055ff3`, tree `14eafad`, is composed; its
 complete replacement gate is green under exact Rust/Cargo 1.94.1 without
-fallback. Three fresh cycle-4 reviews, remote workflows, `main` integration,
-and delivery remain pending. Its sole first consumer is the strict
+fallback. Formal cycle 4 rejected exact candidate
+`df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
+`99bf524033c6212a05c22e7417ea6f93c202104f`. All three tracks reported
+`0/0/1/0`; the deduplicated `0/0/2/0` union is an ordinary-versus-streamed
+wire-form mismatch and eager approximately 8.9 MB duplicate-tracker
+reservation. Remediation, its complete gate, fresh cycle-5 reviews, remote
+workflows, `main` integration, and delivery remain pending. Its sole first
+consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -100,11 +106,18 @@ discarded as they stream. Only the validated session ID and incarnation ID are
 retained as payload-sized strings; the remaining result fields are scalars.
 
 The parser must match ordinary strict deserialization, not approximate its
-wire grammar. Typed envelope and record fields remain unique and closed.
+wire grammar. The durable schema is object-only for `StoredEnvelope`,
+`StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`, and
+string-only for `Role`. Ordinary loading/listing and streamed inspection reject
+all six noncanonical positional-sequence or externally tagged unit-role map
+forms consistently; the canonical writer remains unchanged. Typed envelope
+and record fields remain unique and closed.
 Numbers use canonical `serde_json::Number` acceptance before positive `u64`
 conversion where required. Metadata and nested arbitrary JSON use ordinary
 last-value-wins duplicate-key semantics. A fixed-digest tracker records object
-key identity and each key's current logical node contribution; a repeated key
+key identity and each key's current logical node contribution. Its entries and
+buckets grow fallibly in proportion to unique keys encountered rather than
+reserving the full 65,536-node capacity for every inspection; a repeated key
 replaces its prior contribution. Tracker entries and aggregate arbitrary-JSON
 work are strictly capped by the store's 65,536-node limit, and container depth
 is capped at 64. Independently, parsing matches `serde_json` 1.0.151's 127-
@@ -154,7 +167,11 @@ duplicate metadata/nested keys with last-value-wins counts, fixed resource
 ceilings, lock-sidecar permissions, invalid and unsafe roots, corrupt/
 oversized/wrong-ID/nonregular/symlink records, retained-root replacement,
 redaction, and all category mappings. CLI and release-binary evidence is owned
-separately. Cycle-3 remediation focused evidence is green at 22 native tests
+separately. Replacement allocation evidence must bound allocator high-water
+use for an empty or small record and compare long versus short discarded values
+at equal structural shape; a near-cap file alone does not prove the absence of
+eager maximum-capacity reservation. Cycle-3 remediation focused evidence is
+green at 22 native tests
 and 58 CLI process tests, including ten exact ordinary-store/listing/session
 equivalence cases. Real dev-only allocation instrumentation runs five shapes in
 separate child processes; all five have exact totals/current/max of 14/2/8
@@ -162,4 +179,6 @@ allocations and 8,913,715/14/8,913,347 bytes. The complete exact-remediation
 gate is green: required Rust, Python 135/8 skips, pinned fx, WASI/FreeBSD, docs
 85/147/626/81, dependency policy/audit, diff/inventory/no-added-unsafe, release-
 hash, the 18/18 session matrix, and direct/native near-cap probes all passed.
-The formal cycle-4 review outcome remains pending.
+Those results belong to the rejected cycle-4 candidate and do not satisfy the
+replacement contract above. Remediation, its complete gate, and fresh cycle-5
+review remain pending.
