@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 3 REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 3 REJECTED; REMEDIATION PENDING**
 
 ## Base and boundary
 
@@ -259,6 +259,41 @@ read-only tracks must independently cover correctness/API/protocol,
 native effects/lifecycle/platform behavior, and performance/resources. No
 feature workflow may begin unless every track and the deduplicated union report
 `0/0/0/0`.
+
+Formal cycle 3 reviewed exact candidate
+`aef6abed174760195e712b2701e241b656733621`, tree
+`5abcef3de31898e158e6c4872ee9b4131863d1b7`. Correctness/API/protocol reported
+`1/0/1/0`, native effects/lifecycle/platform reported `0/0/0/2`, and
+performance/resources reported `0/0/1/1`. The deduplicated union is `1/0/2/2`,
+so cycle 3 is rejected.
+
+The blocker confirms that raw `result` is the correct language-model-v4 field
+but the inner local fixture is not a valid v4 Perplexity exchange. Official raw
+calls carry stringified JSON `input`; raw results also carry `toolName` and
+`isError`; and successful Perplexity results are strict `{id, results}` objects
+whose entries require `title`, `url`, and `snippet`, with optional `date` and
+`lastUpdated`. The current decoder instead requires object input, ignores result
+tool identity/error state, and admits only `{results:[{title,url}]}`. It also
+rejects the permitted initial `stream-start` envelope. Remediation must retain
+raw `result` and SDK-layer `output` rejection while replacing the manufactured
+sequence with a bounded official-shape fixture and strict projection.
+
+One medium finding shows that a fully processed finish and `[DONE]` record does
+not end the transport loop until the byte stream yields EOF. A logically
+complete stream that remains pending therefore retains both the tool semaphore
+and shared HTTP capacity until timeout. Remediation must stop after the
+processed terminal chunk, while continuing to validate every same-chunk record,
+and drop the stream immediately. The other medium shows that syntactically
+numeric hexadecimal labels above `u64` overflow into `NotIpv4`, allowing URL-
+invalid hosts such as `public.0x10000000000000000`; numeric syntax and range
+failure must remain distinguishable.
+
+The product low is URI-port grammar: `:+443` passes Rust's integer parser even
+though a URL port is digits-only. Citation validation must require nonempty
+ASCII digits before parsing. The documentation low is stale cycle-2-pending
+status across maintained summary pages. All five deduplicated findings are
+confirmed. After remediation, the complete gate and three fresh isolated
+product reviews repeat on one new immutable candidate.
 
 ## Worktree lifecycle
 
