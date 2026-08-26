@@ -60,10 +60,13 @@ process facade captured unrelated configuration state, captured `HOME` before
 XDG-state precedence made it necessary, and the maintained review status was
 stale. The replacement now uses a state-only first-poll reader with lazy `HOME`
 fallback, carries exact injected-reader regressions, updates the maintained
-status, and has passed the complete replacement local gate. It awaits three
-fresh exact-SHA cycle-2 reviews. No formal green, workflow, integration,
-delivery, product-performance, or fx-equivalence claim exists yet. The
-delivered count remains thirty.
+status, and passed the complete replacement local gate. Exact candidate
+`a52765250bf7b0e6a7224ae95cf5a4ab046ffa75`, tree
+`0249dd0b97197fa37ab64d2c1baa3b818717211a`, then passed three fresh exact-SHA
+cycle-2 reviews at `0/0/0/0` each and is formally green. Feature workflows,
+integration, and `main` workflows remain pending; no delivery, product-
+performance, or fx-equivalence claim exists yet. The delivered count remains
+thirty.
 
 The thirtieth bounded slice, strict top-level `doctor [--json]`, is
 **DELIVERED** from exact delivered base
@@ -3309,9 +3312,12 @@ was rejected by cycle 1 with `0/0/0/3` deduplicated findings. Two accepted lows
 require state-only process environment capture with lazy `HOME` fallback; the
 third was this stale candidate summary. The replacement implements the narrow
 reader and exact request-sequence tests, updates the maintained summaries, and
-has passed the complete replacement local gate. Three fresh exact-SHA cycle-2
-reviews are pending. No formal-green, workflow, integration, or delivery claim
-exists yet. The delivered count remains thirty and M03 remains in progress.
+passed the complete replacement local gate. Exact candidate
+`a52765250bf7b0e6a7224ae95cf5a4ab046ffa75`, tree
+`0249dd0b97197fa37ab64d2c1baa3b818717211a`, passed three fresh exact-SHA
+cycle-2 tracks at `0/0/0/0` each and is formally green. Feature workflows,
+integration, and `main` workflows remain pending, so no delivery claim exists
+yet. The delivered count remains thirty and M03 remains in progress.
 
 The command exposes the delivered bounded native session-ID scan through a new
 engine-free native process facade. It selects only the machine-god state
@@ -4310,8 +4316,9 @@ gate:
   from exact base `feaf9fa`. Exact candidate `9448738`, tree `e5342f7`, passed
   its complete local gate but cycle 1 rejected it with `0/0/0/3` deduplicated
   findings. The replacement remediation and complete local gate are green;
-  three fresh exact-SHA reviews are pending, so no formal green or delivery
-  claim exists yet. `models [--json]` is
+  exact candidate `a527652`, tree `0249dd0`, passed three fresh exact-SHA
+  reviews at `0/0/0/0` each. Feature workflows, integration, and `main`
+  workflows remain pending, so no delivery claim exists yet. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

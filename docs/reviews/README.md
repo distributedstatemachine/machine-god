@@ -2,9 +2,9 @@
 
 - [`m03-sessions-cli-review-01.md`](m03-sessions-cli-review-01.md) tracks the
   in-progress bounded slice-31 `sessions [--json]` candidate. Cycle 1 rejected
-  exact candidate `9448738` with `0/0/0/3` deduplicated findings. Its locally
-  green replacement awaits three fresh exact-SHA cycle-2 reviews; no formal
-  green or delivery claim exists yet.
+  exact candidate `9448738` with `0/0/0/3` deduplicated findings. Exact
+  replacement `a527652`, tree `0249dd0`, passed three fresh cycle-2 reviews at
+  `0/0/0/0` each; feature delivery gates remain pending.
 
 Each feature and milestone receives fresh correctness/API, security/abuse, and
 performance/concurrency reviews. Store reports as `mNN-feature-review-NN.md` and

@@ -14,9 +14,9 @@ before output and capped at 16 KiB. The pinned `sessions-json` workload becomes
 implemented but remains non-equivalent, not measured, and claim-ineligible.
 The [`live review ledger`](reviews/m03-sessions-cli-review-01.md) records exact
 candidate `9448738` and its rejected `0/0/0/3` cycle-1 verdict; remediation is
-composed and locally green, and three fresh exact-SHA cycle-2 reviews are
-pending. The delivered count remains thirty and no formal green or delivery
-claim exists yet.
+composed in exact candidate `a527652`, tree `0249dd0`, which passed three fresh
+exact-SHA cycle-2 reviews at `0/0/0/0` each. Feature delivery gates remain
+pending; the delivered count remains thirty and no delivery claim exists yet.
 
 The `machine-god` binary is the thin native reference host for the embeddable
 engine. This page defines the exact implemented Milestone 03 config/status and

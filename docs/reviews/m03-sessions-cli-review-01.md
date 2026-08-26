@@ -1,19 +1,17 @@
 # Milestone 03 sessions CLI review ledger
 
-Status: cycle 1 rejected; the locally green cycle-2 replacement is assembled
-and awaiting three fresh reviews. Bounded slice 31 starts from exact base
-`feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. No formal green or delivery verdict
-exists yet.
+Status: formally green after cycle 2; delivery gates are pending. Bounded slice
+31 starts from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
 
 ## Frozen boundary
 
-The reviewed unit will be strict top-level `sessions [--json]`, its engine-free
+The reviewed unit was strict top-level `sessions [--json]`, its engine-free
 native process-listing facade, independent native and release-binary evidence,
 the claim-ineligible benchmark classification change, and the maintained
 documentation. The normative contract is
 [`docs/sessions-cli.md`](../sessions-cli.md).
 
-Implementation is split into isolated, non-overlapping worktrees:
+Implementation was split into isolated, non-overlapping worktrees:
 
 | Component | Owned files |
 | --- | --- |
@@ -91,22 +89,36 @@ CLI WASI checks; and a freshly built release-binary seeded/missing-root smoke.
 The known WASI-only `read_file.rs` dead-code warning predates and is unrelated
 to this slice.
 
-This commit is submitted as the cycle-2 behavior candidate. Its immutable SHA
-and tree are supplied to all three reviewers by the coordinator and will be
-appended in the review-exempt verdict seal, because a commit cannot contain its
-own hash. No green inference is made from the local gate.
+Exact replacement candidate
+`a52765250bf7b0e6a7224ae95cf5a4ab046ffa75`, tree
+`0249dd0b97197fa37ab64d2c1baa3b818717211a`, then received three new isolated,
+read-only, same-SHA reviews. None of the discovery, implementation, cycle-1, or
+remediation agents was reused:
 
-Three new adversarial agents must review the replacement exact SHA on these
-tracks:
+| Track | Blocker | High | Medium | Low | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| CLI correctness/API/fx boundary | 0 | 0 | 0 | 0 | GREEN |
+| Native state/persistence/portability | 0 | 0 | 0 | 0 | GREEN |
+| Performance/resource/evidence | 0 | 0 | 0 | 0 | GREEN |
+| Deduplicated union | 0 | 0 | 0 | 0 | GREEN |
+
+The CLI track reran 11 focused unit, 10 process integration, three environment
+request-order, and one first-poll test. The native track reran facade 12/12,
+process 9/9, scan 18/18, all-feature Clippy, WASI, and FreeBSD checks. The
+performance/evidence track reran facade 12/12, CLI sessions 11/11, and benchmark
+schema/mutation 3/3. All confirmed the cycle-1 findings are closed and reported
+no new finding. Candidate `a527652` is therefore formally **GREEN**.
+
+The reviewed tracks were:
 
 1. CLI correctness, API contract, and pinned-fx compatibility boundaries;
 2. native state-root, persistence, error, and portability behavior; and
 3. performance, resource, concurrency, benchmark, and delivery evidence.
 
-Any finding rejects that exact candidate. Findings, remediation commits,
-replacement gates, fresh review verdicts, and exact trees will continue to be
-appended here until all three tracks report zero blocker, high, medium, and low
-findings.
+The documentation-only verdict seal records these already-returned reports and
+is review-exempt. It changes no behavior. Formal green does not establish
+delivery: the sealed exact SHA must still pass both feature workflows, then be
+fast-forwarded to `main`, whose exact SHA must pass both workflows.
 
 ## Delivery gate
 
