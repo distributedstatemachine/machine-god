@@ -86,8 +86,13 @@ signal/output-lifecycle remediation is integrated at exact `aa60db1`, tree
 complete exact-1.94.1 replacement gate without fallback. Three fresh formal
 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings. Their
 deduplicated union is zero, so the behavior candidate is **GREEN**. Exact
-feature-SHA CI and benchmark evidence, non-force integration, exact `main`
-workflows, and delivery remain pending.
+review seal `2064084`, tree `33818a4`, passed feature benchmark run
+`32923421739`; feature CI `32923421679` failed solely on one Linux test-helper
+Clippy diagnostic, and no integration occurred. Exact test-only cycle-6
+replacement candidate `831d38c8`, tree `a92acc14`, passed the complete
+replacement gate and three fresh formal reviews with zero findings. Replacement
+feature workflows, non-force integration, exact `main` workflows, and delivery
+remain pending.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also
@@ -273,8 +278,8 @@ final LF and no identity prefix:
 The complete success output is built under an inclusive 64 KiB cap before its
 first stdout write. Exact failure shapes, codes, channels, credential/fallback
 behavior, and resource bounds are normative in
-[`models-cli.md`](models-cli.md). This replacement-gated implementation is
-review-green but not yet CI-green, integrated, or delivered.
+[`models-cli.md`](models-cli.md). This exact cycle-6 replacement is review-green
+but not yet replacement-CI-green, integrated, or delivered.
 
 The native command keeps its Ctrl-C listener and, on Unix, SIGTERM listener
 actively driven through rendering and every synchronous success or failure

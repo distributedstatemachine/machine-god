@@ -1,7 +1,8 @@
 # Top-level `models` CLI contract
 
-Status: cycle-5 review **GREEN**, but not yet CI-green, integrated, or delivered
-as the twenty-ninth bounded Milestone 03 slice. Exact cycle-2 behavior candidate
+Status: cycle-6 replacement review **GREEN**, but not yet replacement-CI-green,
+integrated, or delivered as the twenty-ninth bounded Milestone 03 slice. Exact
+cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
 gate but three fresh tracks rejected it with a deduplicated union of one high,
@@ -58,10 +59,21 @@ replacement gate without fallback. Three fresh formal cycle-5 correctness/API/
 compatibility, lifecycle/network/portability, and performance/concurrency/
 resources reviews each reported 0 blocker, 0 high, 0 medium, and 0 low
 findings. Their deduplicated union is zero, so the exact behavior candidate is
-formally **GREEN**. The pinned comparison input remains fx commit
+formally **GREEN**. Review-exempt seal
+`20640843f49faf3de1b208bc6e8ee49ff0ff9c94`, tree
+`33818a48d3ef4f000789d10574ee2024de95cb29`, passed feature benchmark-
+evidence run `32923421739` for pinned-upstream and bootstrap jobs, but feature
+CI `32923421679` failed solely because exact-1.94.1 Quality Linux Clippy
+rejected one test-helper `needless_continue`; no integration occurred. The
+one-line test-only remediation is exact cycle-6 replacement candidate
+`831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
+`a92acc141cab42061614a2e6f0f9d1f240325e2f`. It passed the complete replacement
+gate and three fresh formal reviews at 0 blocker, 0 high, 0 medium, and 0 low in
+every track, so the replacement is **REVIEW-GREEN**. The pinned comparison input
+remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
-compatibility-promotion, feature-workflow, integration, `main`-workflow, or
-delivery claim.
+compatibility-promotion, replacement-feature-workflow, integration, `main`-
+workflow, or delivery claim.
 
 The cycle-4 DNS remediation replaces Hickory's request-polled resolver with
 private bounded UDP/TCP exchange. It snapshots one fallible query-ID key at
@@ -72,8 +84,11 @@ source evidence is 14/14 and manifest evidence is 5/5. The complete cycle-4
 gate passed, but formal cycle 4 rejected that exact candidate. The topology and
 signal/output-lifecycle remediations compose exact replacement-gated cycle-5
 candidate `27c75f4`, tree `5e40b24`. Its three fresh formal reviews are green
-with a zero-finding union. Exact feature-SHA CI and benchmark evidence, non-force
-fast-forward integration, and exact `main` workflows remain pending.
+with a zero-finding union. The first review seal's benchmark passed and its CI
+failed solely on the test-only Linux lint described above. Exact cycle-6
+replacement `831d38c8`, tree `a92acc14`, passed its complete gate and three
+fresh zero-finding reviews. Replacement feature-SHA CI and benchmark evidence,
+non-force fast-forward integration, and exact `main` workflows remain pending.
 
 The slice adds one read-only top-level command:
 

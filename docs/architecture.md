@@ -61,8 +61,13 @@ reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings, so their
 deduplicated union is zero and the behavior candidate is **GREEN**, as recorded
 in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
-Exact feature-SHA workflows, non-force integration, exact `main` workflows, and
-delivery remain pending.
+Review-exempt seal `2064084`, tree `33818a4`, passed feature benchmark run
+`32923421739`, but feature CI `32923421679` failed solely on one exact-1.94.1
+Linux test-helper Clippy diagnostic; no integration occurred. Exact test-only
+cycle-6 replacement candidate `831d38c8`, tree `a92acc14`, passed its complete
+replacement gate and three fresh formal reviews with zero findings in every
+track. Replacement feature workflows, non-force integration, exact `main`
+workflows, and delivery remain pending.
 
 ```text
 machine-god-cli

@@ -129,8 +129,9 @@ performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
 The twenty-ninth bounded slice is contract-frozen, locally implemented, and
-formally **REVIEW-GREEN** in cycle 5; it is not yet CI-green, integrated to
-`main`, or delivered. Its cycle-4 raw overlap-deduplicated union was 0 blocker,
+formally **REVIEW-GREEN** in replacement cycle 6; it is not yet replacement-
+CI-green, integrated to `main`, or delivered. Its cycle-4 raw overlap-
+deduplicated union was 0 blocker,
 0 high, 1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
 1 medium, and 1 low remained unresolved at verdict collection. Topology
 documentation remediation is exact `268d35a`; signal/output-lifecycle
@@ -140,9 +141,18 @@ tree `278fa365e24504452f8d111a7b08bc49e2aed164`. Exact cycle-5 candidate
 `5e40b24259d76196d573f752258c9a764b53f990`, passed the complete replacement
 gate under exact Rust and Cargo 1.94.1 without fallback. Three fresh formal
 cycle-5 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings;
-the deduplicated union is zero. Exact feature-SHA CI and benchmark evidence,
-non-force fast-forward integration, exact `main` workflows, and delivery remain
-pending.
+the deduplicated union is zero. Review-exempt seal
+`20640843f49faf3de1b208bc6e8ee49ff0ff9c94`, tree
+`33818a48d3ef4f000789d10574ee2024de95cb29`, passed feature benchmark-
+evidence run `32923421739`, but feature CI `32923421679` failed solely because
+exact-1.94.1 Quality Linux Clippy rejected one test-helper `needless_continue`;
+no integration occurred. Exact one-line test-only remediation and cycle-6
+replacement candidate `831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
+`a92acc141cab42061614a2e6f0f9d1f240325e2f`, passed the complete replacement
+gate. Three fresh formal cycle-6 tracks each reported 0 blocker, 0 high,
+0 medium, and 0 low; the deduplicated union is zero. Replacement exact feature-
+SHA CI and benchmark evidence, non-force fast-forward integration, exact
+`main` workflows, and delivery remain pending.
 Its
 exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
@@ -213,8 +223,13 @@ are integrated. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
 complete exact-1.94.1 replacement gate without fallback. Three fresh formal
 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
 deduplicated union is zero and the behavior candidate is **GREEN**. Exact
-feature-SHA workflows, non-force integration, exact `main` workflows, and
-delivery remain pending. No product-performance, size-improvement,
+review seal `2064084`, tree `33818a4`, passed feature benchmark run
+`32923421739`, while feature CI `32923421679` failed solely on the test-only
+Linux `needless_continue` lint. Exact test-only cycle-6 replacement `831d38c8`,
+tree `a92acc14`, passed the complete replacement gate and three fresh formal
+reviews with a zero-finding union. Replacement feature workflows, non-force
+integration, exact `main` workflows, and delivery remain pending. No product-
+performance, size-improvement,
 compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
@@ -3048,9 +3063,44 @@ Three fresh formal cycle-5 reviews bound that exact candidate and each reported
   and the bounded signal tests.
 
 The deduplicated union is zero, so exact candidate `27c75f4`, tree `5e40b24`,
-is formally **GREEN**. Exact feature workflows, fast-forward integration, and
-exact `main` workflows remain pending; the slice is not yet CI-green,
-integrated, or delivered. These checks make no product-performance, speed,
+is formally **GREEN**. At that approval checkpoint, exact feature workflows,
+fast-forward integration, and exact `main` workflows remained pending; the
+slice had not reached CI-green, integrated, or delivered status. These checks
+make no product-performance, speed,
+latency, memory, binary-size-improvement, catalog-equivalence, or fx-equivalence
+claim.
+
+Review-exempt cycle-5 green seal
+`20640843f49faf3de1b208bc6e8ee49ff0ff9c94`, tree
+`33818a48d3ef4f000789d10574ee2024de95cb29`, was pushed to the feature branch.
+Feature benchmark-evidence run `32923421739` passed both the pinned-upstream
+and bootstrap jobs. Feature CI `32923421679` was not green: its sole failure
+was exact-Rust-1.94.1 Quality Linux Clippy rejecting `needless_continue` at the
+preexisting native catalog-DNS test helper's old line 2233. No integration to
+`main` occurred. Exact one-line test-only remediation
+`831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
+`a92acc141cab42061614a2e6f0f9d1f240325e2f`, replaces that redundant control-
+flow spelling without changing product source or behavior.
+
+That exact cycle-6 replacement candidate passed the complete local gate under
+exact Rust and Cargo 1.94.1. All four required workspace commands are green,
+with 976 non-documentation Rust tests and two doctests. Private resolver
+evidence is 14/14, and the sequential repository Python suite is green at 135
+tests with eight expected macOS skips. Documentation integrity, dependency
+policy, and vulnerability audit are green. Exact Linux warnings-denied lint
+proof is green; the optional foreign catalog-HTTP cross-build retains only the
+known `aws-lc-sys` missing-C-sysroot boundary before product Rust. A fresh
+release-product comparison is normalized-identical to the cycle-5 reviewed
+product and passes six release-binary black boxes, the live 228-model public
+catalog case, and the signal regressions.
+
+Three fresh formal cycle-6 correctness/API/compatibility, lifecycle/network/
+portability, and performance/concurrency/resources tracks bound exact candidate
+`831d38c8`, tree `a92acc14`. Each reported 0 blocker, 0 high, 0 medium, and
+0 low findings; the deduplicated union is zero. The replacement is formally
+**REVIEW-GREEN**. Exact replacement feature CI and benchmark-evidence workflows,
+non-force fast-forward integration, exact `main` workflows, and delivery remain
+pending. This replacement evidence makes no product-performance, speed,
 latency, memory, binary-size-improvement, catalog-equivalence, or fx-equivalence
 claim.
 
@@ -3119,8 +3169,8 @@ workflows. Benchmark evidence is delivery evidence only.
 
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices and locally implemented, cycle-5 review-green
-twenty-ninth slice do not complete Milestone 03.
+The twenty-eight delivered slices and locally implemented, cycle-6 replacement-
+review-green twenty-ninth slice do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -4096,9 +4146,15 @@ gate:
   regression evidence green. Three fresh formal cycle-5 correctness/API/
   compatibility, lifecycle/network/portability, and performance/concurrency/
   resources reviews each reported 0 blocker, 0 high, 0 medium, and 0 low
-  findings; the deduplicated union is zero. This combined item remains unchecked
-  while feature workflows, non-force fast-forward, exact `main` gates, and the
-  rest of the M03 CLI inventory are pending.
+  findings; the deduplicated union is zero. Review seal `2064084`, tree
+  `33818a4`, passed feature benchmark run `32923421739`, but feature CI
+  `32923421679` failed solely on exact-1.94.1 Quality Linux's test-only
+  `needless_continue` diagnostic, so no integration occurred. Exact test-only
+  cycle-6 replacement `831d38c8`, tree `a92acc14`, passed the complete
+  replacement gate and three fresh reviews at 0 blocker, 0 high, 0 medium, and
+  0 low in every track. This combined item remains unchecked while replacement
+  feature workflows, non-force fast-forward, exact `main` gates, and the rest
+  of the M03 CLI inventory are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

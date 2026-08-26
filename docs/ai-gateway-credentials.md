@@ -24,9 +24,13 @@ integrated at exact `aa60db1`, tree `278fa365`, without changing credential
 selection. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
 complete exact-1.94.1 replacement gate without fallback. Three fresh formal
 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
-deduplicated union is zero and the behavior candidate is **GREEN**. Exact
-feature-SHA workflows, non-force integration, exact `main` workflows, and
-delivery remain pending.
+deduplicated union is zero and the behavior candidate is **GREEN**. Its pushed
+review seal passed feature benchmark run `32923421739`, but feature CI
+`32923421679` failed solely on one Linux test-helper Clippy diagnostic; no
+integration occurred. Exact test-only cycle-6 replacement candidate `831d38c8`,
+tree `a92acc14`, passed the complete replacement gate and three fresh formal
+reviews with a zero-finding union. Replacement feature workflows, non-force
+integration, exact `main` workflows, and delivery remain pending.
 Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 

@@ -131,7 +131,13 @@ complete exact-1.94.1 replacement gate without fallback. Three fresh formal
 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
 deduplicated union is zero and the behavior candidate is **GREEN**. Exact
 feature-SHA workflows, non-force integration, exact `main` workflows, and
-delivery remain pending. See [`models-cli.md`](models-cli.md).
+delivery remained pending. First pushed review seal `2064084`, tree `33818a4`,
+passed feature benchmark run `32923421739`, while feature CI `32923421679`
+failed solely on one Linux test-helper Clippy diagnostic; no integration
+occurred. Exact test-only cycle-6 replacement candidate `831d38c8`, tree
+`a92acc14`, passed the complete replacement gate and three fresh formal reviews
+with zero findings. Replacement workflows, integration, and delivery remain
+pending. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 

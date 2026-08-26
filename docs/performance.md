@@ -38,8 +38,13 @@ integrated at exact `aa60db1`, tree `278fa365`. Exact cycle-5 candidate
 without fallback. Three fresh formal reviews each reported 0 blocker, 0 high,
 0 medium, and 0 low findings; the deduplicated union is zero and the behavior
 candidate is **GREEN**. Exact feature-SHA workflow artifacts and a later claim-
-eligible M07 comparison remain required before any speed, latency, memory,
-size-improvement, or fx-equivalence statement.
+eligible M07 comparison remain required. Review seal `2064084`, tree `33818a4`,
+passed feature benchmark-evidence run `32923421739`, while CI `32923421679`
+failed solely on a test-only Linux Clippy diagnostic. Exact test-only cycle-6
+replacement candidate `831d38c8`, tree `a92acc14`, passed the complete local
+gate and three zero-finding formal reviews. This is regression and delivery-
+pipeline evidence only; it makes no speed, latency, memory, binary-size-
+improvement, catalog-equivalence, product-performance, or fx-equivalence claim.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence

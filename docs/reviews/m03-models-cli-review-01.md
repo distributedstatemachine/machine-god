@@ -1,8 +1,7 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: cycle-5 review **GREEN** for bounded slice 29, but not yet CI-green,
-integrated, or delivered. Exact
-cycle-1 candidate
+Status: cycle-6 replacement review **GREEN** for bounded slice 29, but not yet
+replacement-CI-green, integrated, or delivered. Exact cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
 was rejected by three fresh product-review tracks with a deduplicated union of
@@ -52,9 +51,17 @@ cycle-5 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings.
 Their deduplicated union is zero, so the behavior candidate is formally
 **GREEN**. Review-exempt submission seal
 `31ce2f0a6493b3507dfcd1ee47d978ac5fc8a386`, tree
-`51aa5941877c65140a4bda058f4b909ec513a785`, changed documentation only. Exact
-feature-SHA CI and benchmark evidence, non-force fast-forward integration,
-exact `main` workflows, and delivery remain pending.
+`51aa5941877c65140a4bda058f4b909ec513a785`, changed documentation only.
+Review-exempt green seal `20640843f49faf3de1b208bc6e8ee49ff0ff9c94`,
+tree `33818a48d3ef4f000789d10574ee2024de95cb29`, passed exact feature benchmark-
+evidence run `32923421739`, but feature CI `32923421679` failed solely because
+exact-1.94.1 Quality Linux Clippy rejected one test-helper `needless_continue`.
+No integration occurred. Exact one-line test-only remediation and cycle-6
+replacement candidate `831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
+`a92acc141cab42061614a2e6f0f9d1f240325e2f`, passed the complete replacement
+gate and three fresh formal reviews with zero findings in every track.
+Replacement feature-SHA CI and benchmark evidence, non-force fast-forward
+integration, exact `main` workflows, and delivery remain pending.
 The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
@@ -87,6 +94,8 @@ The locally composed lineage is:
 | signal/output-lifecycle remediation | `aa60db15d016cf97674459a4af66318a18b762ac` / `278fa365e24504452f8d111a7b08bc49e2aed164` | cycle-4 medium remediation integrated; later composed in replacement-gated cycle-5 candidate |
 | cycle-5 replacement gate and reviewed behavior | `27c75f4365af92759686402574d310ada596a923` / `5e40b24259d76196d573f752258c9a764b53f990` | complete exact-1.94.1 replacement gate and three fresh formal reviews green; zero findings in every track |
 | review-exempt cycle-5 submission seal | `31ce2f0a6493b3507dfcd1ee47d978ac5fc8a386` / `51aa5941877c65140a4bda058f4b909ec513a785` | recorded the immutable candidate and complete local gate before verdict collection; documentation only |
+| review-exempt cycle-5 green seal and first feature attempt | `20640843f49faf3de1b208bc6e8ee49ff0ff9c94` / `33818a48d3ef4f000789d10574ee2024de95cb29` | benchmark-evidence `32923421739` green; CI `32923421679` failed solely on exact-1.94.1 Quality Linux's test-only `needless_continue`; no integration |
+| cycle-6 Linux-lint remediation and reviewed replacement | `831d38c8da72b849704ef3ab508588a9d0499c5f` / `a92acc141cab42061614a2e6f0f9d1f240325e2f` | one-line test-only control-flow spelling fix; complete exact-1.94.1 gate and three fresh cycle-6 reviews green; zero findings in every track; replacement push pending |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -110,9 +119,13 @@ review-exempt documentation fix `268d35a` then corrected the remaining
 AI Gateway topology low. Exact `aa60db1`, tree `278fa365`, integrates the
 signal/output-lifecycle medium remediation. Exact cycle-5 candidate `27c75f4`,
 tree `5e40b24`, passed the complete replacement gate and all three fresh formal
-cycle-5 reviews with a zero-finding union. This ledger does not claim feature
-CI, benchmark workflow success, integration, delivery, performance,
-compatibility promotion, or fx equivalence.
+cycle-5 reviews with a zero-finding union. Green seal `2064084`, tree `33818a4`,
+passed feature benchmark-evidence `32923421739`; feature CI `32923421679`
+failed solely on its test-only Linux lint. Exact test-only replacement
+`831d38c8`, tree `a92acc14`, passes the complete replacement gate and three
+fresh zero-finding cycle-6 reviews. This ledger does not claim replacement
+feature workflow success, integration, delivery, performance, compatibility
+promotion, or fx equivalence.
 
 A local feature-topology refinement adds native
 `ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
@@ -172,7 +185,10 @@ rejected exact replacement-gated cycle-4 candidate `57d2ac2`, tree `d30bb656`.
 The topology low is fixed at `268d35a`; exact `aa60db1`, tree `278fa365`,
 integrates the lifecycle remediation. Exact replacement-gated cycle-5 candidate
 `27c75f4`, tree `5e40b24`, is green in all three fresh formal reviews with a
-zero-finding union. Feature CI, integration, and exact `main` CI remain pending.
+zero-finding union. Its first feature benchmark passed and its first feature CI
+failed solely on test-only Linux lint. Exact replacement `831d38c8`, tree
+`a92acc14`, is green in all three fresh cycle-6 reviews. Replacement feature CI,
+integration, and exact `main` CI remain pending.
 
 ## Exact cycle-2 replacement gate
 
@@ -460,6 +476,7 @@ a documentation-only statement.
 | 3 | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | 0 blocker, 0 high, 0 medium, 2 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 1 medium, 3 low after deduplication | **REJECTED** |
 | 4 | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | 0 blocker, 0 high, 0 medium, 2 low | 0 blocker, 0 high, 1 medium, 0 low | 0 blocker, 0 high, 0 medium, 1 low | raw candidate: 0 blocker, 0 high, 1 medium, 2 low after overlap deduplication; unresolved at verdict collection after prior sealed dispositions: 0 blocker, 0 high, 1 medium, 1 low | **REJECTED** |
 | 5 | `27c75f4365af92759686402574d310ada596a923` / `5e40b24259d76196d573f752258c9a764b53f990` | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 0 medium, 0 low after deduplication | **GREEN** |
+| 6 | `831d38c8da72b849704ef3ab508588a9d0499c5f` / `a92acc141cab42061614a2e6f0f9d1f240325e2f` | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 0 medium, 0 low after deduplication | **GREEN** |
 
 ### Cycle 1 rejected findings and remediation
 
@@ -779,11 +796,77 @@ Three fresh isolated product-review tracks bound exact behavior candidate
    manifest/resolved-tree 5/5, and the bounded signal regressions.
 
 The overlap-deduplicated union is therefore 0 blocker, 0 high, 0 medium, and
-0 low. No finding remains to remediate. This is review approval only: exact
+0 low. No finding remained to remediate. At that approval checkpoint, exact
 feature-SHA CI and benchmark-evidence workflows, non-force fast-forward to
-`main`, exact `main` CI and benchmark-evidence workflows, and delivery remain
+`main`, exact `main` CI and benchmark-evidence workflows, and delivery were
 pending. The cycle makes no speed, latency, memory, binary-size-improvement,
 catalog-equivalence, product-performance, or fx-equivalence claim.
+
+## First feature attempt and exact cycle-6 replacement gate
+
+Review-exempt documentation-only green seal
+`20640843f49faf3de1b208bc6e8ee49ff0ff9c94`, tree
+`33818a48d3ef4f000789d10574ee2024de95cb29`, was pushed to the feature branch.
+Benchmark-evidence run `32923421739` is **GREEN**: both the pinned-upstream and
+bootstrap jobs passed for that exact SHA. Feature CI `32923421679` is **NOT
+GREEN**: its sole failure was Quality Linux's exact-Rust-1.94.1 Clippy step,
+which reported `needless_continue` at the native catalog-DNS test helper's old
+line 2233. This was a test-only lint failure. The feature branch was not
+integrated to `main`.
+
+Exact remediation `831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
+`a92acc141cab42061614a2e6f0f9d1f240325e2f`, changes only
+`cfg(test)` code in `ai_gateway_model_catalog_http.rs`: the `AlreadyExists`
+match arm falls through the loop body rather than spelling the redundant
+`continue`. Product source, public API, behavior, manifests, workflows,
+benchmark workloads, and generated compatibility data are unchanged.
+
+The exact cycle-6 replacement candidate passed the complete local gate under
+exact Rust and Cargo 1.94.1:
+
+- formatting, workspace all-target/all-feature warnings-denied Clippy,
+  workspace tests, and workspace doctests passed, with 976 non-documentation
+  Rust tests and two doctests;
+- private resolver evidence passed 14/14, including the repaired helper path;
+- the sequential Python suite passed all 135 tests with eight expected macOS
+  skips;
+- documentation integrity, dependency policy, and vulnerability audit passed;
+- exact Linux warnings-denied lint proof passed. Optional catalog-HTTP foreign
+  cross-compilation retains the known `aws-lc-sys` missing-C-sysroot boundary
+  before product Rust rather than establishing a later foreign product build;
+- the freshly built release product is normalized-identical to the cycle-5
+  reviewed product; and
+- six release-binary black-box cases, the live public catalog returning 228
+  models without a state write, and the signal regressions passed.
+
+These are correctness, boundedness, portability, regression, and delivery-
+pipeline checks. They make no speed, latency, memory, binary-size-improvement,
+catalog-equivalence, product-performance, or fx-equivalence claim.
+
+## Formal cycle 6 — GREEN
+
+Three fresh isolated product-review tracks bound exact replacement candidate
+`831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
+`a92acc141cab42061614a2e6f0f9d1f240325e2f`. Each reported 0 blocker, 0 high,
+0 medium, and 0 low findings:
+
+1. **Correctness/API/compatibility — GREEN.** The test-only control-flow
+   spelling preserves the reviewed product behavior and complete result
+   contract.
+2. **Lifecycle/network/portability — GREEN.** The replacement preserves the
+   bounded resolver, signal, cancellation, runtime, and target behavior while
+   satisfying exact Linux warnings-denied lint.
+3. **Performance/concurrency/resources — GREEN.** The replacement adds no
+   product path, allocation, timer, task, dependency, or output change and
+   retains the cycle-5 resource bounds.
+
+The overlap-deduplicated union is 0 blocker, 0 high, 0 medium, and 0 low. No
+finding remains to remediate, so exact candidate `831d38c8`, tree `a92acc14`,
+is formally **REVIEW-GREEN**. The subsequent documentation-only green seal is
+exempt from another adversarial cycle under the user's instruction. Exact
+replacement feature CI and benchmark-evidence workflows, non-force fast-forward
+to `main`, exact `main` CI and benchmark-evidence workflows, and delivery remain
+pending.
 
 ## Remote and integration boundary
 

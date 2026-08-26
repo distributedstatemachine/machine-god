@@ -46,9 +46,17 @@ replacement gate without fallback. Three fresh formal cycle-5 correctness/API/
 compatibility, lifecycle/network/portability, and performance/concurrency/
 resources reviews each reported 0 blocker, 0 high, 0 medium, and 0 low
 findings. The deduplicated union is zero, so the behavior candidate is formally
-**GREEN**. Exact feature-SHA CI and benchmark evidence, non-force fast-forward
-integration, and exact `main` workflows remain pending; the slice is not yet
-CI-green, integrated, or delivered.
+**GREEN**. Review-exempt seal `20640843f49faf3de1b208bc6e8ee49ff0ff9c94`,
+tree `33818a48d3ef4f000789d10574ee2024de95cb29`, passed feature benchmark-
+evidence run `32923421739`, but feature CI `32923421679` failed solely because
+exact-1.94.1 Quality Linux Clippy rejected one test-helper `needless_continue`;
+no integration occurred. Exact test-only replacement candidate
+`831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
+`a92acc141cab42061614a2e6f0f9d1f240325e2f`, passed the complete replacement
+gate and three fresh formal cycle-6 reviews at 0 blocker, 0 high, 0 medium, and
+0 low in every track. The slice is **REVIEW-GREEN**; replacement feature
+workflows, non-force fast-forward integration, exact `main` workflows, and
+delivery remain pending.
 The CLI selects a dedicated `ai-gateway-model-catalog-http` feature that omits
 `web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a
