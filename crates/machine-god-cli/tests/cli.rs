@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -26,12 +27,14 @@ const HELP: &str = concat!(
     "Usage:\n",
     "  machine-god\n",
     "  machine-god help\n",
+    "  machine-god doctor [--json]\n",
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
     "  machine-god status [--json]\n",
     "\n",
     "Commands:\n",
     "  help         Show this help\n",
+    "  doctor       Run local health and preflight checks\n",
     "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
     "  status       Show configuration and runtime information\n",
@@ -42,10 +45,11 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | models [--json] | permissions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | status [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
+const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -106,6 +110,24 @@ fn run_without_roots(arguments: &[&str]) -> Output {
         .env_remove("HOME")
         .env_remove("XDG_CONFIG_HOME")
         .env_remove("XDG_STATE_HOME")
+        .output()
+        .unwrap()
+}
+
+fn doctor_command(config: &OsStr, state: &OsStr) -> Command {
+    let mut command = machine_god();
+    command
+        .env_remove("HOME")
+        .env("XDG_CONFIG_HOME", config)
+        .env("XDG_STATE_HOME", state)
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY");
+    command
+}
+
+fn run_doctor(arguments: &[&str], config: &OsStr, state: &OsStr) -> Output {
+    doctor_command(config, state)
+        .args(arguments)
         .output()
         .unwrap()
 }
@@ -188,6 +210,11 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["--json", "status"][..],
         &["--json", "models"][..],
         &["--json", "permissions"][..],
+        &["--json", "doctor"][..],
+        &["doctor", "--json=true"][..],
+        &["doctor", "extra"][..],
+        &["doctor", "--json", "extra"][..],
+        &["doctor", "--json", "--json"][..],
         &["models", "--json=true"][..],
         &["models", "extra"][..],
         &["models", "--json", "extra"][..],
@@ -205,6 +232,321 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         assert!(output.stdout.is_empty());
         assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
     }
+}
+
+fn expected_doctor_output(
+    config: (&str, &str),
+    credential: (&str, &str),
+    state: (&str, &str),
+) -> (String, String) {
+    let platform = if cfg!(any(target_os = "linux", target_os = "macos")) {
+        ("ok", "native host platform is supported")
+    } else {
+        ("fail", "native host platform is unsupported")
+    };
+    let checks = [
+        ("config", config.0, config.1),
+        ("credential", credential.0, credential.1),
+        ("state", state.0, state.1),
+        ("platform", platform.0, platform.1),
+    ];
+    let count = |status: &str| {
+        checks
+            .iter()
+            .filter(|(_, actual, _)| *actual == status)
+            .count()
+    };
+    let (ok_count, warn_count, fail_count) = (count("ok"), count("warn"), count("fail"));
+
+    let mut human = format!("[doctor] ok={ok_count} warn={warn_count} fail={fail_count}\n");
+    let mut json = format!(
+        "{{\"kind\":\"doctor\",\"ok_count\":{ok_count},\"warn_count\":{warn_count},\"fail_count\":{fail_count},\"checks\":["
+    );
+    for (index, (name, status, detail)) in checks.into_iter().enumerate() {
+        writeln!(human, "[{status}] {name}: {detail}").expect("writing to a String cannot fail");
+        if index != 0 {
+            json.push(',');
+        }
+        write!(
+            json,
+            "{{\"name\":\"{name}\",\"status\":\"{status}\",\"detail\":\"{detail}\"}}"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    json.push_str("]}\n");
+    (human, json)
+}
+
+fn assert_doctor_success(output: &Output, expected: &str) {
+    assert_success(output, expected);
+    assert!(output.stdout.len() <= MAX_DOCTOR_OUTPUT_BYTES);
+    assert_eq!(output.stdout.last(), Some(&b'\n'));
+}
+
+fn assert_output_omits(output: &Output, forbidden: &[&str]) {
+    for bytes in [&output.stdout, &output.stderr] {
+        let text = String::from_utf8_lossy(bytes);
+        for value in forbidden {
+            assert!(
+                !text.contains(value),
+                "doctor output leaked forbidden value {value:?}: {text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn doctor_missing_inputs_are_exact_counted_and_do_not_create_roots() {
+    let temporary = TestDirectory::new("doctor-missing");
+    let config_root = temporary.path().join("missing-config-PATH_MARKER");
+    let state_root = temporary.path().join("missing-state-PATH_MARKER");
+    let (human, json) = expected_doctor_output(
+        (
+            "warn",
+            "configuration file is missing; using built-in defaults",
+        ),
+        ("fail", "no AI Gateway credential is configured"),
+        ("warn", "state directory is not initialized"),
+    );
+
+    let human_output = run_doctor(&["doctor"], config_root.as_os_str(), state_root.as_os_str());
+    assert_doctor_success(&human_output, &human);
+    let json_output = run_doctor(
+        &["doctor", "--json"],
+        config_root.as_os_str(),
+        state_root.as_os_str(),
+    );
+    assert_doctor_success(&json_output, &json);
+    assert_eq!(json.matches("\"name\":").count(), 4);
+    assert_eq!(json.matches("\"status\":\"ok\"").count(), 1);
+    assert_eq!(json.matches("\"status\":\"warn\"").count(), 2);
+    assert_eq!(json.matches("\"status\":\"fail\"").count(), 1);
+    assert_output_omits(&human_output, &["PATH_MARKER"]);
+    assert_output_omits(&json_output, &["PATH_MARKER"]);
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn doctor_reads_each_strict_schema_without_rewrite_and_reports_oidc_precedence() {
+    let schemas: [(&str, &[u8]); 3] = [
+        ("v1", br#"{"schema_version":1,"permission_mode":"ask"}"#),
+        (
+            "v2",
+            br#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_DOCTOR_V2_SECRET"}"#,
+        ),
+        (
+            "v3",
+            br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_DOCTOR_V3_SECRET","credential_source":"environment"}"#,
+        ),
+    ];
+    let (human, json) = expected_doctor_output(
+        ("ok", "configuration file is valid"),
+        ("ok", "VERCEL_OIDC_TOKEN is configured"),
+        ("ok", "state directory is ready"),
+    );
+
+    for (schema, contents) in schemas {
+        let temporary = TestDirectory::new(&format!("doctor-schema-{schema}"));
+        let config_root = temporary.path().join("config");
+        let state_root = temporary.path().join("state");
+        let path = write_config(&config_root, contents);
+        fs::create_dir_all(state_root.join("machine-god")).unwrap();
+
+        let human_output = doctor_command(config_root.as_os_str(), state_root.as_os_str())
+            .arg("doctor")
+            .env("VERCEL_OIDC_TOKEN", "doctor-oidc_NEVER_REAL")
+            .env("AI_GATEWAY_API_KEY", "doctor-api-key_NEVER_REAL")
+            .output()
+            .unwrap();
+        assert_doctor_success(&human_output, &human);
+
+        let json_output = doctor_command(config_root.as_os_str(), state_root.as_os_str())
+            .args(["doctor", "--json"])
+            .env("VERCEL_OIDC_TOKEN", "doctor-oidc_NEVER_REAL")
+            .env("AI_GATEWAY_API_KEY", "doctor-api-key_NEVER_REAL")
+            .output()
+            .unwrap();
+        assert_doctor_success(&json_output, &json);
+        assert_output_omits(
+            &json_output,
+            &[
+                "doctor-oidc_NEVER_REAL",
+                "doctor-api-key_NEVER_REAL",
+                "CLI_DOCTOR_V2_SECRET",
+                "CLI_DOCTOR_V3_SECRET",
+            ],
+        );
+        assert_eq!(fs::read(&path).unwrap(), contents);
+    }
+}
+
+#[test]
+fn doctor_api_key_and_invalid_selected_credential_are_redacted() {
+    let temporary = TestDirectory::new("doctor-credentials");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+    let common_config = (
+        "warn",
+        "configuration file is missing; using built-in defaults",
+    );
+    let common_state = ("warn", "state directory is not initialized");
+
+    let (_, api_json) = expected_doctor_output(
+        common_config,
+        ("ok", "AI_GATEWAY_API_KEY is configured"),
+        common_state,
+    );
+    let api_output = doctor_command(config_root.as_os_str(), state_root.as_os_str())
+        .args(["doctor", "--json"])
+        .env("AI_GATEWAY_API_KEY", "doctor-api-key_NEVER_REAL")
+        .output()
+        .unwrap();
+    assert_doctor_success(&api_output, &api_json);
+    assert_output_omits(&api_output, &["doctor-api-key_NEVER_REAL"]);
+
+    let invalid_secret = "DOCTOR_INVALID_SELECTED_SECRET with space";
+    let (_, invalid_json) = expected_doctor_output(
+        common_config,
+        ("fail", "AI Gateway bearer token is invalid"),
+        common_state,
+    );
+    let invalid_output = doctor_command(config_root.as_os_str(), state_root.as_os_str())
+        .args(["doctor", "--json"])
+        .env("VERCEL_OIDC_TOKEN", invalid_secret)
+        .env("AI_GATEWAY_API_KEY", "valid-lower-source_NEVER_REAL")
+        .output()
+        .unwrap();
+    assert_doctor_success(&invalid_output, &invalid_json);
+    assert_output_omits(
+        &invalid_output,
+        &[invalid_secret, "valid-lower-source_NEVER_REAL"],
+    );
+
+    let oversized_secret = "x".repeat(4097);
+    let oversized_output = doctor_command(config_root.as_os_str(), state_root.as_os_str())
+        .args(["doctor", "--json"])
+        .env("VERCEL_OIDC_TOKEN", &oversized_secret)
+        .output()
+        .unwrap();
+    assert_doctor_success(&oversized_output, &invalid_json);
+    assert_output_omits(&oversized_output, &[&oversized_secret]);
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn doctor_config_failures_are_report_data_and_never_reflect_inputs() {
+    let mut oversized = vec![b'x'; MAX_CONFIG_BYTES + 1];
+    let marker = b"CLI_DOCTOR_OVERSIZE_SECRET";
+    oversized[..marker.len()].copy_from_slice(marker);
+    let cases = [
+        (
+            "malformed",
+            b"CLI_DOCTOR_MALFORMED_SECRET:not-json".to_vec(),
+            "native configuration format is invalid",
+            "CLI_DOCTOR_MALFORMED_SECRET",
+        ),
+        (
+            "unsupported",
+            br#"{"schema_version":7,"future":"CLI_DOCTOR_VERSION_SECRET"}"#.to_vec(),
+            "native configuration schema version is unsupported",
+            "CLI_DOCTOR_VERSION_SECRET",
+        ),
+        (
+            "oversized",
+            oversized,
+            "native configuration file is too large",
+            "CLI_DOCTOR_OVERSIZE_SECRET",
+        ),
+    ];
+
+    for (case, contents, detail, secret) in cases {
+        let temporary = TestDirectory::new(&format!("doctor-invalid-config-{case}"));
+        let config_root = temporary.path().join("config-PATH_SECRET");
+        let state_root = temporary.path().join("missing-state");
+        let path = write_config(&config_root, &contents);
+        let (_, expected) = expected_doctor_output(
+            ("fail", detail),
+            ("fail", "no AI Gateway credential is configured"),
+            ("warn", "state directory is not initialized"),
+        );
+
+        let output = run_doctor(
+            &["doctor", "--json"],
+            config_root.as_os_str(),
+            state_root.as_os_str(),
+        );
+        assert_doctor_success(&output, &expected);
+        assert_output_omits(&output, &[secret, "PATH_SECRET"]);
+        assert_eq!(fs::read(path).unwrap(), contents);
+        assert!(!state_root.exists());
+    }
+}
+
+#[test]
+fn doctor_wrong_file_types_and_invalid_locations_are_exact_and_read_only() {
+    let temporary = TestDirectory::new("doctor-wrong-types");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("state");
+    let config_path = config_path(&config_root);
+    let state_path = state_root.join("machine-god");
+    fs::create_dir_all(&config_path).unwrap();
+    fs::create_dir_all(&state_root).unwrap();
+    fs::write(&state_path, b"CLI_DOCTOR_STATE_SECRET").unwrap();
+    let (expected, _) = expected_doctor_output(
+        ("fail", "native configuration path is not a regular file"),
+        ("fail", "no AI Gateway credential is configured"),
+        ("fail", "state path is not a directory"),
+    );
+
+    let output = run_doctor(&["doctor"], config_root.as_os_str(), state_root.as_os_str());
+    assert_doctor_success(&output, &expected);
+    assert_output_omits(&output, &["CLI_DOCTOR_STATE_SECRET"]);
+    assert!(config_path.is_dir());
+    assert_eq!(fs::read(state_path).unwrap(), b"CLI_DOCTOR_STATE_SECRET");
+
+    let home = temporary.path().join("fallback-home");
+    let (_, invalid_json) = expected_doctor_output(
+        ("fail", "native configuration environment is invalid"),
+        ("fail", "no AI Gateway credential is configured"),
+        ("fail", "state directory environment is invalid"),
+    );
+    let invalid = machine_god()
+        .args(["doctor", "--json"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", "relative-config-PATH_SECRET")
+        .env("XDG_STATE_HOME", "relative-state-PATH_SECRET")
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY")
+        .output()
+        .unwrap();
+    assert_doctor_success(&invalid, &invalid_json);
+    assert_output_omits(&invalid, &["PATH_SECRET"]);
+    assert!(!home.exists());
+}
+
+#[test]
+fn invalid_doctor_grammar_precedes_inspection_and_writes() {
+    let temporary = TestDirectory::new("doctor-argument-precedence");
+    let config_root = temporary.path().join("config");
+    let state_root = temporary.path().join("missing-state");
+    let contents = b"CLI_DOCTOR_ARGUMENT_SECRET:not-json";
+    let path = write_config(&config_root, contents);
+
+    for arguments in [
+        &["doctor", "extra"][..],
+        &["doctor", "--json=true"][..],
+        &["doctor", "--json", "extra"][..],
+        &["doctor", "--json", "--json"][..],
+    ] {
+        let output = run_doctor(arguments, config_root.as_os_str(), state_root.as_os_str());
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+    assert_eq!(fs::read(path).unwrap(), contents);
+    assert!(!state_root.exists());
 }
 
 #[test]
@@ -705,6 +1047,63 @@ fn non_unicode_config_environment_is_a_fixed_redacted_failure() {
 
 #[cfg(unix)]
 #[test]
+fn doctor_non_unicode_credential_and_roots_are_fixed_redacted_failures() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let temporary = TestDirectory::new("doctor-non-unicode-environment");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+    let credential_secret = OsString::from_vec(b"CLI_DOCTOR_CREDENTIAL_SECRET-\xff".to_vec());
+    let (_, credential_json) = expected_doctor_output(
+        (
+            "warn",
+            "configuration file is missing; using built-in defaults",
+        ),
+        ("fail", "AI Gateway credential environment is invalid"),
+        ("warn", "state directory is not initialized"),
+    );
+    let credential_output = doctor_command(config_root.as_os_str(), state_root.as_os_str())
+        .args(["doctor", "--json"])
+        .env("VERCEL_OIDC_TOKEN", credential_secret)
+        .env("AI_GATEWAY_API_KEY", "valid-lower-source_NEVER_REAL")
+        .output()
+        .unwrap();
+    assert_doctor_success(&credential_output, &credential_json);
+    assert_output_omits(
+        &credential_output,
+        &[
+            "CLI_DOCTOR_CREDENTIAL_SECRET",
+            "valid-lower-source_NEVER_REAL",
+        ],
+    );
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
+
+    let mut invalid_root_bytes = temporary.path().as_os_str().as_encoded_bytes().to_vec();
+    invalid_root_bytes.extend_from_slice(b"/CLI_DOCTOR_ROOT_SECRET-");
+    invalid_root_bytes.push(0xff);
+    let invalid_root = OsString::from_vec(invalid_root_bytes);
+    let (_, roots_json) = expected_doctor_output(
+        ("fail", "native configuration environment is invalid"),
+        ("fail", "no AI Gateway credential is configured"),
+        ("fail", "state directory environment is invalid"),
+    );
+    let roots_output = machine_god()
+        .args(["doctor", "--json"])
+        .env("HOME", temporary.path().join("fallback-home"))
+        .env("XDG_CONFIG_HOME", &invalid_root)
+        .env("XDG_STATE_HOME", &invalid_root)
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY")
+        .output()
+        .unwrap();
+    assert_doctor_success(&roots_output, &roots_json);
+    assert_output_omits(&roots_output, &["CLI_DOCTOR_ROOT_SECRET"]);
+    assert!(!temporary.path().join("fallback-home").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn unreadable_permission_config_is_redacted_when_modes_are_enforced() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -735,13 +1134,15 @@ fn unreadable_permission_config_is_redacted_when_modes_are_enforced() {
 fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
     use std::os::unix::ffi::OsStringExt;
 
-    let output = machine_god()
-        .arg(OsString::from_vec(vec![0xff]))
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-    assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    for arguments in [
+        vec![OsString::from_vec(vec![0xff])],
+        vec![OsString::from("doctor"), OsString::from_vec(vec![0xff])],
+    ] {
+        let output = machine_god().args(arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
 }
 
 #[cfg(unix)]
