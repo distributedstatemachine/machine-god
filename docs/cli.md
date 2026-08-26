@@ -76,10 +76,15 @@ remediation is composed at `d9922ef` and `e5248b1`. Exact cycle-3 candidate
 `2cecc921`, tree `8c0d235`, passed its complete gate but formal review rejected
 it with a deduplicated union of one medium and three low findings. Documentation,
 private bounded-DNS, and Android fail-closed remediation is composed at
-`f80bd056`, `b6cf4cb`, and `bd47461`. Exact cycle-4 candidate `57d2ac2`, tree
-`d30bb656`, passed the complete exact-1.94.1 replacement gate and is submitted
-to three fresh formal reviews. Their results, feature/main integration, and
-delivery remain pending. No candidate is review-green.
+`f80bd056`, `b6cf4cb`, and `bd47461`. Formal cycle 4 rejected exact candidate
+`57d2ac2`, tree `d30bb656`, after its complete exact-1.94.1 replacement gate.
+Its raw overlap-deduplicated union was 0 blocker, 0 high, 1 medium, and 2 low;
+after prior sealed dispositions, 0 blocker, 0 high, 1 medium, and 1 low remained
+unresolved at verdict collection. Topology documentation is fixed at `268d35a`;
+signal/output-lifecycle remediation is integrated at exact `aa60db1`, tree
+`278fa365`. The complete cycle-5 replacement gate, three fresh formal reviews,
+feature/main integration, and delivery remain pending. No candidate is review-
+green.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also

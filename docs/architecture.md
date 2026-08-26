@@ -49,11 +49,15 @@ per-runtime absolute-name resolver remediation is composed at `d9922ef` and
 complete replacement gate but formal review rejected it with one medium and
 three low findings after deduplication. Documentation, private bounded-DNS, and
 Android fail-closed remediations are composed at `f80bd056`, `b6cf4cb`, and
-`bd47461`. Exact cycle-4 candidate `57d2ac2`, tree `d30bb656`, passed the
-complete exact-1.94.1 replacement gate and is submitted to three fresh formal
-reviews recorded in
-[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). Their
-results remain pending.
+`bd47461`. Formal cycle 4 rejected exact candidate `57d2ac2`, tree `d30bb656`,
+after its complete exact-1.94.1 replacement gate. The raw overlap-deduplicated
+union was 0 blocker, 0 high, 1 medium, and 2 low; after prior sealed
+dispositions, 0 blocker, 0 high, 1 medium, and 1 low remained unresolved at
+verdict collection. Topology documentation is fixed at `268d35a`; the signal/
+output-lifecycle remediation is integrated at exact `aa60db1`, tree
+`278fa365`. The complete cycle-5 replacement gate and three fresh formal
+reviews remain pending, as recorded in
+[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 ```text
 machine-god-cli

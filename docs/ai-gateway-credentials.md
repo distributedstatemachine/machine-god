@@ -14,11 +14,15 @@ pre-review cycle-3 gate attempt was rejected for request-time DNS configuration;
 eager snapshot remediation does not change credential selection. The complete
 cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`, but formal
 review rejected it for one native DNS lifecycle finding and three documentation
-findings, none of which changed credential selection. Exact cycle-4 candidate
-`57d2ac2`, tree `d30bb656`, includes the bounded-DNS, documentation, and Android
-fail-closed remediations, passed the complete exact-1.94.1 replacement gate,
-and is submitted to three fresh formal reviews. Their results, integration, and
-delivery remain pending.
+findings, none of which changed credential selection. Formal cycle 4 rejected
+exact candidate `57d2ac2`, tree `d30bb656`, after its complete exact-1.94.1
+replacement gate. Its raw overlap-deduplicated union was 0 blocker, 0 high,
+1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
+1 medium, and 1 low remained unresolved at verdict collection. Topology
+documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
+integrated at exact `aa60db1`, tree `278fa365`, without changing credential
+selection. The complete cycle-5 replacement gate, three fresh formal reviews,
+integration, and delivery remain pending.
 Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 

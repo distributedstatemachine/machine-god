@@ -41,8 +41,11 @@ correctness documentation findings and the overlapping portions of the
 performance topology finding. The unresolved union at collection was therefore
 0 blocker, 0 high, 1 medium, and 1 low. Review-exempt documentation fix
 `268d35a447d6ceb29b37b0c5f789ad589e4792e4` then corrected that remaining
-AI Gateway topology low. The signal/output-backpressure medium remains pending;
-no candidate is review-green.
+AI Gateway topology low. Exact signal/output-backpressure remediation
+`aa60db15d016cf97674459a4af66318a18b762ac`, tree
+`278fa365e24504452f8d111a7b08bc49e2aed164`, is now integrated, but has not yet
+passed the complete cycle-5 replacement gate or three fresh formal reviews. No
+candidate is review-green.
 The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
@@ -72,6 +75,7 @@ The locally composed lineage is:
 | cycle-4 replacement gate and maintained status | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | complete exact-1.94.1 replacement gate green; formal cycle-4 review rejected the exact candidate |
 | review-exempt cycle-4 submission seal | `fd404d456b242cc10ceb797d74b2da79b2ba283e` / `49192c44d67b928358a5729635e7a0a638b2c7d9` | corrected the two correctness documentation lows and overlapping topology summaries before verdict collection; no behavior change |
 | review-exempt AI Gateway topology correction | `268d35a447d6ceb29b37b0c5f789ad589e4792e4` / `1f21f1dc955df71a703f36c8ce2e31ed67288edb` | corrected the performance track's remaining `docs/ai-gateway.md` topology low; no behavior change |
+| signal/output-lifecycle remediation | `aa60db15d016cf97674459a4af66318a18b762ac` / `278fa365e24504452f8d111a7b08bc49e2aed164` | cycle-4 medium remediation integrated; complete cycle-5 replacement gate and three fresh formal reviews pending |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -92,9 +96,11 @@ Three fresh formal cycle-4 reviews rejected that exact candidate. Review-exempt
 submission seal `fd404d4` had already corrected both correctness documentation
 lows and the overlapping topology summaries before verdict collection. Exact
 review-exempt documentation fix `268d35a` then corrected the remaining
-AI Gateway topology low. The lifecycle medium remains pending. This ledger
-does not claim a green adversarial result, feature CI, benchmark, integration,
-delivery, performance, compatibility promotion, or fx equivalence.
+AI Gateway topology low. Exact `aa60db1`, tree `278fa365`, integrates the
+signal/output-lifecycle medium remediation. The complete cycle-5 replacement
+gate and three fresh formal reviews remain pending. This ledger does not claim
+a green adversarial result, feature CI, benchmark, integration, delivery,
+performance, compatibility promotion, or fx equivalence.
 
 A local feature-topology refinement adds native
 `ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
@@ -151,8 +157,10 @@ candidate. Exact cycle-3 candidate `2cecc921` passed its replacement gate and
 its reviews rejected it. Preflight rejected the first cycle-4 precursor before
 the complete gate; it was not a formal review. Three fresh formal reviews
 rejected exact replacement-gated cycle-4 candidate `57d2ac2`, tree `d30bb656`.
-The lifecycle remediation, replacement gate, fresh review cycle, feature CI,
-integration, and exact `main` CI remain pending.
+The topology low is fixed at `268d35a`; exact `aa60db1`, tree `278fa365`,
+integrates the lifecycle remediation. The complete cycle-5 replacement gate,
+three fresh formal reviews, feature CI, integration, and exact `main` CI remain
+pending.
 
 ## Exact cycle-2 replacement gate
 
@@ -689,10 +697,14 @@ union at verdict collection was 0 blocker, 0 high, 1 medium, and 1 low.
 Review-exempt documentation fix
 `268d35a447d6ceb29b37b0c5f789ad589e4792e4`, tree
 `1f21f1dc955df71a703f36c8ce2e31ed67288edb`, now corrects that remaining
-AI Gateway topology low without changing behavior. The signal/output-
-backpressure medium remains pending. Cycle 4 stays **REJECTED**; a behavior
-remediation, complete replacement gate, and three entirely fresh formal tracks
-are required before any green, workflow, integration, or delivery claim.
+AI Gateway topology low without changing behavior. Exact signal/output-
+backpressure remediation `aa60db15d016cf97674459a4af66318a18b762ac`, tree
+`278fa365e24504452f8d111a7b08bc49e2aed164`, keeps Unix signal ownership alive
+through bounded output, gives later observed signals prompt terminal authority,
+and retains deterministic backpressure evidence. Cycle 4 stays **REJECTED**.
+That remediation has not yet passed the complete cycle-5 replacement gate or
+three entirely fresh formal tracks; those remain required before any green,
+workflow, integration, or delivery claim.
 
 ## Remote and integration boundary
 

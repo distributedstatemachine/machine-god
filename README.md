@@ -31,10 +31,17 @@ passed the complete replacement gate under exact Rust and Cargo 1.94.1 but was
 rejected with a deduplicated 0 blocker, 0 high, 1 medium, and 3 low findings.
 Documentation and private bounded-DNS remediation is composed at `f80bd056`
 and `b6cf4cb`; Android fail-closed platform-loader remediation is `bd47461`.
-Exact cycle-4 candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`,
-tree `d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete
-exact-1.94.1 replacement gate and is submitted to three fresh formal reviews.
-Their results remain pending. This is not a green or delivered slice.
+Formal cycle 4 rejected exact candidate
+`57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
+`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, after its complete exact-1.94.1
+replacement gate. The raw overlap-deduplicated union was 0 blocker, 0 high,
+1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
+1 medium, and 1 low remained unresolved at verdict collection. Topology
+documentation is fixed at `268d35a`, and signal/output-lifecycle remediation
+is integrated at exact `aa60db15d016cf97674459a4af66318a18b762ac`, tree
+`278fa365e24504452f8d111a7b08bc49e2aed164`. A complete replacement gate and
+three fresh formal cycle-5 reviews remain pending. This is not a green or
+delivered slice.
 The CLI selects a dedicated `ai-gateway-model-catalog-http` feature that omits
 `web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a

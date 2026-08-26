@@ -129,8 +129,14 @@ performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
 The twenty-ninth bounded slice is contract-frozen, locally implemented, and
-**SUBMITTED** to formal cycle-4 review; it is not review-green, integrated to
-`main`, or delivered.
+**REJECTED** in formal cycle 4; it is not review-green, integrated to `main`, or
+delivered. Its cycle-4 raw overlap-deduplicated union was 0 blocker, 0 high,
+1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
+1 medium, and 1 low remained unresolved at verdict collection. Topology
+documentation remediation is exact `268d35a`; signal/output-lifecycle
+remediation is integrated at exact `aa60db15d016cf97674459a4af66318a18b762ac`,
+tree `278fa365e24504452f8d111a7b08bc49e2aed164`. The complete cycle-5
+replacement gate and three fresh formal reviews remain pending.
 Its
 exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
@@ -192,10 +198,14 @@ target was unavailable locally, and the foreign Linux HTTP build retained its
 existing `aws-lc-sys` C-sysroot blocker before product Rust. Exact cycle-4
 behavior candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
 `d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
-gate under exact Rust and Cargo 1.94.1 and is submitted to three fresh formal
-cycle-4 reviews. Their results remain pending. No candidate is review-green,
-and no product-performance, compatibility-promotion, or fx-equivalence claim
-is made.
+gate under exact Rust and Cargo 1.94.1, but three fresh formal reviews rejected
+it. Its raw overlap-deduplicated union was 0 blocker, 0 high, 1 medium, and
+2 low; after prior sealed dispositions, 0 blocker, 0 high, 1 medium, and 1 low
+remained unresolved at verdict collection. Exact topology documentation fix
+`268d35a` and signal/output-lifecycle remediation `aa60db1`, tree `278fa365`,
+are integrated. The complete cycle-5 replacement gate and three fresh formal
+reviews remain pending. No candidate is review-green, and no product-
+performance, compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2876,7 +2886,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Cycle-4-submitted bounded slice 29: top-level `models`
+### Cycle-4-rejected, cycle-5-pre-gate bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -2972,10 +2982,18 @@ and six fresh release-binary black-box cases. The 3,818,944-byte locked release
 has SHA-256
 `caf993ea44007431f16b5a0b7383865e4bead46337e2e9c711a8a9174812bd7c`,
 resolves 139 normal packages, and returned 228 live public models without a
-state write. The exact candidate is **SUBMITTED** to three fresh formal cycle-4
-reviews. Their results, exact feature workflows, fast-forward integration, and
-exact `main` workflows remain pending; no candidate is review-green and this
-makes no product-performance claim.
+state write. Three fresh formal cycle-4 reviews **REJECTED** the exact
+candidate. The raw overlap-deduplicated union was 0 blocker, 0 high, 1 medium,
+and 2 low; after prior sealed dispositions, 0 blocker, 0 high, 1 medium, and
+1 low remained unresolved at verdict collection. Exact documentation fix
+`268d35a447d6ceb29b37b0c5f789ad589e4792e4` closes the remaining topology low.
+Exact signal/output-lifecycle remediation
+`aa60db15d016cf97674459a4af66318a18b762ac`, tree
+`278fa365e24504452f8d111a7b08bc49e2aed164`, closes the medium in locally
+integrated behavior. The complete cycle-5 replacement gate, three fresh formal
+reviews, exact feature workflows, fast-forward integration, and exact `main`
+workflows remain pending; no candidate is review-green and this makes no
+product-performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -3042,8 +3060,8 @@ workflows. Benchmark evidence is delivery evidence only.
 
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices and locally implemented, cycle-4-submitted
-twenty-ninth slice do not complete Milestone 03.
+The twenty-eight delivered slices and locally implemented, cycle-4-rejected,
+cycle-5-pre-gate twenty-ninth slice do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -4007,9 +4025,14 @@ gate:
   passed the complete exact-1.94.1 replacement gate: focused 6/17/6/16/14/18/
   23/5, 972 non-doc Rust tests, two doctests, Python 135, pinned-fx and docs
   integrity, dependency/audit, portability, diff, and release-binary evidence
-  are green. It is submitted to three fresh formal cycle-4 review tracks. This
-  combined item remains unchecked while their results, feature workflows,
-  non-force fast-forward, and exact `main` gates are pending.
+  are green. Three fresh formal cycle-4 reviews rejected it. The raw overlap-
+  deduplicated union was 0 blocker, 0 high, 1 medium, and 2 low; after prior
+  sealed dispositions, 0 blocker, 0 high, 1 medium, and 1 low remained
+  unresolved at verdict collection. Exact topology fix `268d35a` and exact
+  signal/output-lifecycle remediation `aa60db1`, tree `278fa365`, are locally
+  integrated. This combined item remains unchecked while the complete cycle-5
+  replacement gate, three fresh formal reviews, feature workflows, non-force
+  fast-forward, and exact `main` gates are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

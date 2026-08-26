@@ -119,9 +119,14 @@ native DNS-config lifecycle issue; remediation at `d9922ef` and `e5248b1` also
 does not expand core authority. Exact cycle-3 candidate `2cecc921`, tree
 `8c0d235`, passed its complete gate but formal review rejected it. Documentation,
 private bounded-DNS, and Android fail-closed remediation at `f80bd056`,
-`b6cf4cb`, and `bd47461` also leaves core authority unchanged. Exact cycle-4
-candidate `57d2ac2`, tree `d30bb656`, passed the complete exact-1.94.1
-replacement gate and is submitted to three fresh formal reviews. Their results
+`b6cf4cb`, and `bd47461` also leaves core authority unchanged. Formal cycle 4
+rejected exact candidate `57d2ac2`, tree `d30bb656`, after its complete exact-
+1.94.1 replacement gate. Its raw overlap-deduplicated union was 0 blocker,
+0 high, 1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
+1 medium, and 1 low remained unresolved at verdict collection. Topology
+documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
+integrated at exact `aa60db1`, tree `278fa365`, without expanding core
+authority. The complete cycle-5 replacement gate, three fresh formal reviews,
 and integration/delivery remain pending. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler

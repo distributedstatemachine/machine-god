@@ -1,6 +1,6 @@
 # Top-level `models` CLI contract
 
-Status: replacement-gated cycle-4 submission, not yet review-green or delivered
+Status: cycle-4-rejected and cycle-5-pre-gate, not yet review-green or delivered
 as the twenty-ninth bounded Milestone 03 slice. Exact cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
@@ -42,11 +42,17 @@ Three fresh cycle-3 reviews rejected it with a deduplicated union of 0 blocker,
 0 high, 1 medium, and 3 low findings. Documentation and private bounded-DNS
 remediation is composed at `f80bd056` and `b6cf4cb`. A read-only preflight then
 found an Android platform-loader panic path before the complete cycle-4 gate;
-exact fail-closed remediation is `bd47461`. Exact cycle-4 candidate
-`57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
-`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
-gate under exact Rust and Cargo 1.94.1 and is submitted to three fresh formal
-reviews. Their results and remote CI remain pending; no candidate is review-
+exact fail-closed remediation is `bd47461`. Formal cycle 4 rejected exact
+candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
+`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, after its complete replacement
+gate under exact Rust and Cargo 1.94.1. The raw overlap-deduplicated union was
+0 blocker, 0 high, 1 medium, and 2 low; after prior sealed dispositions,
+0 blocker, 0 high, 1 medium, and 1 low remained unresolved at verdict
+collection. Documentation topology remediation is exact `268d35a`; signal and
+output-lifecycle remediation is integrated at exact
+`aa60db15d016cf97674459a4af66318a18b762ac`, tree
+`278fa365e24504452f8d111a7b08bc49e2aed164`. The complete cycle-5 replacement
+gate and three fresh formal reviews remain pending; no candidate is review-
 green. The pinned comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
@@ -57,7 +63,9 @@ transport construction, derives IDs deterministically from an atomic sequence,
 and invokes no entropy source or detached resolver task during request polling.
 Android fails closed before any DNS or platform-loader call. Private resolver
 source evidence is 14/14 and manifest evidence is 5/5. The complete cycle-4
-gate is green, but the pending formal reviews establish no review outcome yet.
+gate passed, but formal cycle 4 rejected that exact candidate. The topology and
+signal/output-lifecycle remediations above have not yet passed the complete
+cycle-5 replacement gate or three fresh formal reviews.
 
 The slice adds one read-only top-level command:
 
