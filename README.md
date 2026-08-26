@@ -27,8 +27,9 @@ Cycle 2's accepted `0/1/1/1` union was remediated through exact precursor
 `366cef9`, tree `40c05cb`. Formal cycle 3 rejected exact candidate `aef6abe`,
 tree `5abcef3`, with a deduplicated `1/0/2/2`; its protocol, terminal-release,
 numeric-host, port-grammar, and documentation remediations are composed from
-exact isolated components `5d45dca` and `454f8fd`; the complete replacement
-gate and fresh review remain pending.
+exact isolated components `5d45dca` and `454f8fd`. Exact composed precursor
+`b834205`, tree `f3557a5`, passes the complete replacement gate; formal cycle 4
+is pending.
 Slice 33 is not yet review-green, integrated, or delivered; the
 delivered count remains 32. It is unmeasured and makes no product-performance
 or fx-equivalence claim. See the [`web_search` contract](docs/web-search.md) and

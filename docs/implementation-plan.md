@@ -87,9 +87,10 @@ replacement gate without fallback. Formal cycle 3 rejected exact candidate
 `5abcef3de31898e158e6c4872ee9b4131863d1b7`, with a deduplicated `1/0/2/2`.
 Protocol-shape, terminal-release, numeric-host overflow, port grammar, and
 documentation remediation is composed from exact isolated components
-`5d45dca` and `454f8fd`; the complete replacement gate and fresh review remain
-pending. This slice is not yet review-green, integrated, or delivered; the
-delivered count remains thirty-two.
+`5d45dca` and `454f8fd`. Exact composed precursor `b834205`, tree `f3557a5`,
+passes the complete replacement gate; formal cycle 4 is pending. This slice is
+not yet review-green, integrated, or delivered; the delivered count remains
+thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive
@@ -3889,8 +3890,9 @@ gate:
   production/test/documentation composition. Cycle 2 rejected exact candidate
   `399f5f7` with a reported `1/1/1/1` union. Formal cycle 3 rejected exact
   candidate `aef6abe`, tree `5abcef3`, with a deduplicated `1/0/2/2`; remediation
-  is composed from exact isolated components `5d45dca` and `454f8fd`, while the
-  complete replacement gate and fresh review remain pending.
+  is composed from exact isolated components `5d45dca` and `454f8fd`. Exact
+  precursor `b834205`, tree `f3557a5`, passes the complete gate; formal cycle 4
+  is pending.
   It is not yet review-green, integrated, or delivered, so this combined item
   remains unchecked and the remaining tools stay pending. The delivered
   seventeenth slice supplies only `file_info`; production

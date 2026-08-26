@@ -316,8 +316,36 @@ The first broader all-feature workspace run correctly rejected one stale
 reference-host integration fixture that still emitted the pre-remediation
 provider exchange. The fixture now uses stringified call input, matching raw
 tool identity, official result ID, and required source snippet. Its focused
-capacity-one host test passes under exact Rust 1.94.1; the complete all-feature
-run repeats before review kickoff.
+capacity-one host test and the complete all-feature rerun pass under exact Rust
+1.94.1 before review kickoff.
+
+Exact composed cycle-3 remediation precursor
+`b834205494ce8363938aa1e6bf847e576bd6acbb`, tree
+`f3557a56613fdf20e25d320437673629cde108cd`, passes the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. The 15-test dedicated
+codec, 20-test native tool, two focused cross-layer integration regressions,
+and complete default/all-feature workspaces are green. All four required
+commands passed. Repository-wide Python ran 136 tests with eight expected
+platform skips. FreeBSD no-default and WASI all-feature library checks passed
+with only the established unrelated WASI `read_file` dead-code warning. Pinned-
+fx compatibility regeneration against exact `b1774fbf` is byte-stable.
+
+All 87 maintained Markdown files expose 661 parsed links and 500 repository-
+relative targets with zero missing targets. Cargo manifests and `Cargo.lock`
+are unchanged from the delivered base, the base diff is clean, and no unsafe
+Rust construct was added. The freshly built locked release binary is 3,985,216
+bytes with SHA-256
+`ef8751d1a50c933b42657d9b1abecb013426abc4bd8c95c89990862371b7c5b9`; exact
+version, help, doctor, and sessions smoke passes without creating the isolated
+missing roots. The remediation worktrees were verified clean and integrated,
+then removed and pruned; only the primary worktree remains.
+
+The formal cycle-4 candidate is the commit containing this kickoff paragraph.
+Reviewers receive its exact SHA and tree out of band. Three fresh isolated
+read-only tracks must independently cover correctness/API/protocol, native
+effects/lifecycle/platform behavior, and performance/resources. No feature
+workflow may begin unless every track and the deduplicated union report
+`0/0/0/0`.
 
 ## Worktree lifecycle
 

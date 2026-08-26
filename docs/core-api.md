@@ -37,8 +37,9 @@ isolated components `096b11c4` and `ca0b990a`. Exact composed precursor
 remediation `366cef9`, tree `40c05cb`, also passed its complete gate. Formal
 cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`, with a deduplicated
 `1/0/2/2`. Exact isolated components `5d45dca` and `454f8fd` compose its
-remediation; the complete replacement gate and fresh review remain pending, so the slice
-has no review-green, delivery, performance, or fx-equivalence claim.
+remediation. Exact precursor `b834205`, tree `f3557a5`, passes the complete
+replacement gate; formal cycle 4 is pending, so the slice has no review-green,
+delivery, performance, or fx-equivalence claim.
 
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};

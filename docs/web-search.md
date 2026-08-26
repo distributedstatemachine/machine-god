@@ -26,8 +26,9 @@ gate. Formal cycle 3 rejected exact candidate
 `aef6abed174760195e712b2701e241b656733621`, tree
 `5abcef3de31898e158e6c4872ee9b4131863d1b7`, with a deduplicated `1/0/2/2`;
 exact isolated components `5d45dca` and `454f8fd` compose its remediation. The
-complete replacement gate and fresh review remain pending. The slice is not yet
-review-green, integrated, or delivered. The live status is recorded in the
+exact composed precursor `b834205`, tree `f3557a5`, passes the complete
+replacement gate; formal cycle 4 is pending. The slice is not yet review-green,
+integrated, or delivered. The live status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 
 ## Boundary
