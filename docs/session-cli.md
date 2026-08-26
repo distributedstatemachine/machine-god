@@ -12,11 +12,18 @@ regeneration, WASI/FreeBSD target, diff/no-unsafe, and exact-tree release-matrix
 checks are also green. The full workspace gate passed on exact precursor
 `fa099f75277f7ae23a3ac220e66356c45223d1a5`,
 tree `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, under exact Rust/Cargo 1.94.1;
-documentation integrity is 85/146/620/81 with zero errors. The commit carrying
-this gate record is the formal cycle-1 candidate once its exact same-SHA gate is
-reconfirmed. Formal adversarial product review, remote workflows, `main`
-integration, and delivery remain pending; no review-green claim exists. No
-compatibility or performance claim exists. The live evidence record is the
+documentation integrity is 85/146/620/81 with zero errors. Exact cycle-1
+candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected by formal review. Correctness/API reported `0/0/0/0`,
+native boundary/effects reported `0/0/0/1`, and performance/concurrency/
+resources reported `0/0/1/2`, in blocker/high/medium/low order. One native low
+duplicates the performance track's engine-limit-documentation low, so the
+deduplicated union is `0/0/1/2`. Remediation, its replacement local gate, and a
+three-fresh-review cycle remain pending, as do remote workflows, `main`
+integration, and delivery. This documentation correction does not claim that
+production remediation exists or that review is green. No compatibility or
+performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
 This slice adds a strict, engine-free inspection of one current-schema
@@ -55,7 +62,7 @@ The closed, redacted presentation categories are:
 | --- | --- |
 | `NotFound` | The selected machine-god root or exact record does not exist. |
 | `Corrupt` | The exact canonical record failed the native record contract. |
-| `Unavailable` | State selection, root safety, or bounded persistence work failed. |
+| `Unavailable` | State selection, root safety, or persistence access failed. |
 | `Unsupported` | The target has no supported native inspection implementation. |
 | `ResourceLimit` | A returned invariant or complete-output ceiling failed. |
 
@@ -81,11 +88,16 @@ Successful inspection returns exactly these fields:
 
 The native store must already have proved that the stored ID equals the
 requested ID, both identifiers satisfy the core bound, `revision >= 1`,
-`next_turn_sequence >= 1`, and the full record satisfies its current-schema,
-byte, depth, node, message, and metadata limits. The inspection facade projects
-only the six fields above. It does not return or clone message bodies, tool
-arguments/results, reasoning, metadata keys, or metadata values into the CLI
-snapshot.
+`next_turn_sequence >= 1`, and the full record satisfies the store-owned
+current-schema, file-byte, aggregate-JSON-depth, aggregate-JSON-node,
+identifier, counter, and content-shape constraints. Loading for inspection does
+not invoke an engine and therefore does not prove or enforce its configurable
+limits, including the default 4,096-message, 8 MiB serialized-transcript, or
+256 KiB serialized-metadata limits. A store-valid historical record written
+under different engine limits remains inspectable even when it exceeds those
+current defaults. The inspection facade projects only the six fields above.
+It does not return or clone message bodies, tool arguments/results, reasoning,
+metadata keys, or metadata values into the CLI snapshot.
 
 Human success is exactly this shape and order:
 
@@ -142,10 +154,14 @@ no-root/no-record mutation, not strictly no-write. A missing root or record
 creates no sidecar.
 
 All state selection, descriptor work, record loading, and projection occur on
-the thread polling the future. There is no detached task, thread, timer, Tokio
-runtime, configuration read, credential discovery, engine, provider,
-permission handler, prompt, workspace access, network access, terminal replay,
-resume, migration, recovery, or `.fx` access.
+the thread polling the future. The retained summary and successful transferred
+bytes/work are capped by the store and output ceilings, but this is not a
+latency or attempt bound. Exclusive sidecar-lock acquisition, filesystem
+latency, and retries after `EINTR` have no wall-clock or attempt ceiling and
+synchronously block the polling and CLI thread. There is no detached task,
+thread, timer, Tokio runtime, configuration read, credential discovery, engine,
+provider, permission handler, prompt, workspace access, network access,
+terminal replay, resume, migration, recovery, or `.fx` access.
 
 ## Deliberate pinned-fx differences
 

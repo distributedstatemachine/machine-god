@@ -23,13 +23,17 @@ WASI/FreeBSD target, diff/no-unsafe, and exact-tree release-matrix checks are
 also green. The full workspace exact gate passed on exact precursor
 `fa099f75277f7ae23a3ac220e66356c45223d1a5`,
 tree `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, under exact Rust/Cargo 1.94.1;
-documentation integrity is 85/146/620/81 with zero errors. The commit carrying
-this gate record is the formal cycle-1 candidate once its exact same-SHA gate is
-reconfirmed. Formal adversarial product review, remote workflows, `main`
-integration, and delivery remain pending. There is no matching bootstrap
-workload and no claim that the candidate is green or the
-feature is delivered, performant, or equivalent. The delivered count remains
-thirty-one; evidence is in the
+documentation integrity is 85/146/620/81 with zero errors. Exact cycle-1
+candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected. Track counts are correctness/API `0/0/0/0`, native
+boundary/effects `0/0/0/1`, and performance/concurrency/resources `0/0/1/2`;
+one low overlaps and the deduplicated union is `0/0/1/2`. Documentation
+remediation is recorded, while production remediation, the replacement gate,
+three fresh reviews, remote workflows, `main` integration, and delivery remain
+pending. There is no matching bootstrap workload and no claim that the
+candidate is green or the feature is delivered, performant, or equivalent. The
+delivered count remains thirty-one; evidence is in the
 [`live ledger`](reviews/m03-session-cli-review-01.md).
 
 Delivered slice 31 adds a strict top-level `sessions [--json]`

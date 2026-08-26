@@ -22,7 +22,10 @@ Every feature uses `agent/mNN-feature-slug`, isolated subagent worktrees, local
 checks, three fresh adversarial reviewers, a pushed feature branch, remote CI for
 the exact SHA, and a fast-forward push to `main`. Confirmed review findings are
 fixed and rereviewed until none remain. Rejected findings are documented under
-`docs/reviews/`. CI executes third-party actions by reviewed immutable commit,
+`docs/reviews/`. Every iteration ends by verifying that its changes are
+committed, integrated where required, and clean before safely removing its
+isolated worktrees. Active or uncommitted worktrees must never be removed. CI
+executes third-party actions by reviewed immutable commit,
 keeps checkout credentials disabled, and grants the workflow read-only contents
 permission. Python `test_*.py` files are discovered repo-wide in deterministic
 order, excluding generated and checkout state under `.bench`, `.git`, and
@@ -78,10 +81,20 @@ exact-tree release binary passed human/JSON success, invalid grammar before
 effects, missing-root JSON `NotFound`/no-create, record immutability, private-
 lock, and unrelated-root checks. Documentation integrity covers 85 Markdown
 files, 146 fenced blocks, 620 parsed links, and 81 unique repository targets
-with zero errors. The commit
-carrying this gate record is the formal cycle-1 candidate once its exact same-
-SHA gate is reconfirmed. Formal adversarial product review, remote workflows,
-`main` integration, and delivery remain pending; no review-green claim is made.
+with zero errors. Exact cycle-1 candidate
+`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected by formal review. Correctness/API reported `0/0/0/0`,
+native boundary/effects reported `0/0/0/1`, and performance/concurrency/
+resources reported `0/0/1/2`, in blocker/high/medium/low order. One native low
+duplicates the performance engine-limit-documentation low, so the deduplicated
+union is `0/0/1/2`. The medium finding is complete raw-JSON and owned-record
+materialization for a six-field summary. The unique lows are the inaccurate
+engine-limit-validation contract and the undisclosed unbounded exclusive-lock,
+filesystem-latency, and `EINTR`-retry behavior. The corrected documentation
+does not claim production remediation exists or review is green. Remediation,
+its complete replacement gate, three fresh replacement reviews, remote
+workflows, `main` integration, and delivery remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
@@ -1157,8 +1170,10 @@ update saves with checked revision assignment. Permanent per-session advisory
 lock sidecars coordinate cooperating processes. Bounded no-follow regular-file
 reads and `0600` exclusive temporary writes, file sync, same-directory atomic
 rename, and directory sync fail closed without repairing corrupt or nonregular
-artifacts. Its futures are inert until polled but execute bounded synchronous
-I/O, locking, and sync calls on the first polling thread. The exact contract is
+artifacts. Its futures are inert until polled and execute synchronously on the
+first polling thread. Retained data and successful transfer work are capped,
+but exclusive lock wait, filesystem latency, and `EINTR` retries have no wall-
+clock or attempt bound. The exact contract is
 in [`session-store.md`](session-store.md). Its exact feature,
 documentation-seal, and `main` checks are green, with evidence in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
@@ -3436,25 +3451,34 @@ environment or filesystem access. The normative contracts are
 tracked in
 [`m03-session-cli-review-01.md`](reviews/m03-session-cli-review-01.md).
 
-Native captures only `XDG_STATE_HOME` and lazy-fallback `HOME` on first
-poll, opens the already-existing validated machine-god hierarchy, loads the
-exact current-schema record once, and projects only ID, incarnation ID, positive
+Native captures only `XDG_STATE_HOME` and lazy-fallback `HOME` on first poll,
+opens the already-existing validated machine-god hierarchy, loads the exact
+current-schema record once, and projects only ID, incarnation ID, positive
 revision, positive next turn sequence, message count, and top-level metadata-
-entry count. Missing hierarchy or record is no-create `NotFound`. Existing
-record loads may create only the file store's permanent private `0600` lock
-sidecar. No transcript, metadata key/value, engine, provider, credential,
-configuration, permission, workspace, network, runtime, resume, replay,
-migration, recovery, or `.fx` authority crosses this boundary.
+entry count. A successful inspection proves the store's file-byte, aggregate
+JSON depth/node, identifier, counter, and content-shape constraints. It does
+not invoke engine validation and therefore does not enforce the engine's
+configurable/default 4,096-message, 8 MiB serialized-transcript, or 256 KiB
+serialized-metadata limits; a store-valid historical or differently configured
+record over those limits remains inspectable. Missing hierarchy or record is
+no-create `NotFound`. Existing record loads may create only the file store's
+permanent private `0600` lock sidecar. No transcript, metadata key/value,
+engine, provider, credential, configuration, permission, workspace, network,
+runtime, resume, replay, migration, recovery, or `.fx` authority crosses this
+boundary.
 
 Human output has one header and five fixed structural rows. Compact JSON fixes
 key order
 `kind,id,incarnation_id,revision,next_turn_sequence,message_count,metadata_entry_count`.
 Both modes end in one LF, are completely assembled before writing, and fit
-under an inclusive 4,096-byte cap. Closed presentation failures are `NotFound`,
-`Corrupt`, `Unavailable`, `Unsupported`, and `ResourceLimit`; no external
-detail is reflected. There is no matching bootstrap `session-json` workload,
-so the fixed inventory and its classifications remain unchanged. The feature
-is intentionally non-equivalent, not measured, and claim-ineligible.
+under an inclusive 4,096-byte cap. Successful transferred bytes/work and the
+retained summary are finite, but exclusive sidecar-lock wait, filesystem
+latency, and retries after `EINTR` have no wall-clock or attempt ceiling and
+synchronously block the polling and CLI thread. Closed presentation failures
+are `NotFound`, `Corrupt`, `Unavailable`, `Unsupported`, and `ResourceLimit`;
+no external detail is reflected. There is no matching bootstrap `session-json`
+workload, so the fixed inventory and its classifications remain unchanged. The
+feature is intentionally non-equivalent, not measured, and claim-ineligible.
 
 Native production/focused evidence, CLI production/unit evidence, and
 independent process/workflow evidence were built in isolated, non-overlapping
@@ -3478,15 +3502,24 @@ integrity is green over 85 Markdown files, 146 fenced blocks, 620 parsed links,
 and 81 unique repository targets with zero errors. The complete Python suite,
 exact pinned-fx regeneration, WASI/FreeBSD target checks, diff/no-unsafe checks,
 and exact-tree release matrix described in the review ledger are also green.
-The commit carrying this gate record is the formal cycle-1 candidate once its
-exact same-SHA gate is reconfirmed. Three fresh adversarial product reviewers must then inspect that
-same exact SHA across correctness/API, native boundary/effects, and performance/
-concurrency/resources. Any finding rejects the candidate and requires
-remediation, the complete replacement gate, and three new reviewers. Only a
-deduplicated `0/0/0/0` exact SHA may proceed through feature workflows, a non-
-force fast-forward, and exact `main` workflows. There is no claim that the
-candidate is green or that integration, workflows, or delivery are complete;
-the delivered count remains thirty-one.
+Exact cycle-1 candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`,
+tree `4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA
+local gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
+effects reported `0/0/0/1`, and performance/concurrency/resources reported
+`0/0/1/2`, in blocker/high/medium/low order. The native low duplicates the
+performance engine-limit-documentation low, so the deduplicated union is
+`0/0/1/2`. Performance's medium finding is that the candidate reads complete
+raw JSON and materializes a full owned `SessionRecord` for a six-field summary.
+The other performance low is the unbounded-lock/filesystem/`EINTR` latency
+documentation overclaim. This documentation commit corrects the two normative
+low themes but does not provide or claim the production optimization. Production
+remediation, the complete replacement gate, and three new reviewers remain
+pending. Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
+workflows, a non-force fast-forward, and exact `main` workflows. There is no
+claim that the candidate is green or that integration, workflows, or delivery
+are complete; the delivered count remains thirty-one. After slice 32 is
+delivered, the next bounded development slice returns to completing the
+remaining native tools rather than expanding the CLI inspection surface.
 
 ### Milestone 03 completion boundary
 
@@ -4455,12 +4488,21 @@ gate:
   under exact 1.94.1. Exact gate precursor `fa099f7`, tree `64d6a72`, passed the
   complete required local exact-1.94.1 gate and documentation integrity with
   zero errors. Its 135-test Python, exact pinned-fx regeneration, WASI/FreeBSD,
-  diff/no-unsafe, and exact-tree release-matrix checks are also green. The gate-
-  record commit requires exact same-SHA reconfirmation before formal cycle-1
-  review. Formal adversarial product review, remote workflows, `main`
-  integration, and delivery remain pending.
-  It is limited to six structural fields from one exact machine-god record and
-  makes no compatibility or performance claim. `models [--json]` is
+  diff/no-unsafe, and exact-tree release-matrix checks are also green. Exact
+  cycle-1 candidate `5381d4b`, tree `4435bde`, passed its exact same-SHA local
+  gate but is rejected: correctness/API reported `0/0/0/0`, native boundary/
+  effects reported `0/0/0/1`, and performance/concurrency/resources reported
+  `0/0/1/2`, in blocker/high/medium/low order. The native low duplicates the
+  performance engine-limit-documentation low, yielding a deduplicated
+  `0/0/1/2` union. Full raw-JSON/owned-record materialization is the medium;
+  engine-limit-validation and unbounded lock/filesystem/`EINTR` latency
+  documentation are the unique lows. Documentation remediation is in progress;
+  production remediation, its replacement local gate, three fresh reviews,
+  remote workflows, `main` integration, and delivery remain pending. It is
+  limited to six structural fields from one exact machine-god record and makes
+  no compatibility or performance claim. After its delivery, bounded work
+  returns to the remaining native tools rather than further CLI inspection.
+  `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

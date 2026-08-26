@@ -34,11 +34,18 @@ human/JSON success, invalid grammar before effects, missing-root JSON
 `NotFound`/no-create, record immutability, the private lock, and unrelated-root
 isolation. Documentation integrity is green across 85 Markdown files, 146
 fenced blocks, 620 parsed links, and 81 unique repository targets with zero
-errors. The commit
-carrying this gate record is the formal cycle-1 candidate once its exact same-
-SHA gate is reconfirmed. Formal three-track adversarial product review, remote
-workflows, `main` integration, and delivery remain pending; no review-green or
-delivered claim is made. No
+errors. Exact cycle-1 candidate
+`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
+effects `0/0/0/1`, and performance/concurrency/resources `0/0/1/2`, in
+blocker/high/medium/low order. One low overlaps, so the deduplicated union is
+`0/0/1/2`. Full raw-JSON/owned-record materialization is the medium;
+engine-limit-validation and unbounded lock/filesystem/`EINTR` latency
+documentation are the unique lows. Documentation remediation does not claim
+production remediation or green review. A replacement local gate, three fresh
+reviews, remote workflows, `main` integration, and delivery remain pending. No
+review-green or delivered claim is made. No
 compatibility, product-performance, or fx-equivalence claim is made; the
 delivered count remains thirty-one.
 

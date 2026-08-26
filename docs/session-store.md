@@ -185,9 +185,11 @@ artifact.
 
 ## Save, compare-and-swap, and durability
 
-Calling `save` likewise produces an inert future. Its first poll performs the
-bounded serialization, locking, filesystem writes, and synchronization
-synchronously on that executor thread.
+Calling `save` likewise produces an inert future. Its first poll performs
+resource-capped serialization and successful transfer work, plus locking,
+filesystem writes, and synchronization, synchronously on that executor thread.
+Exclusive lock wait, filesystem latency, and `EINTR` retries have no wall-clock
+or attempt bound.
 
 Each session has one permanent regular no-follow lock sidecar. Saves hold its
 exclusive advisory lock across comparison, write, rename, and directory sync.

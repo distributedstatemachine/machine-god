@@ -13,10 +13,16 @@ exact-tree release-matrix checks are also green. Exact precursor
 `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
 formatting, workspace warnings-denied Clippy, test, and doctest gate under exact
 Rust/Cargo 1.94.1. Documentation integrity is 85/146/620/81 with zero errors.
-The commit carrying this gate record is the formal cycle-1 candidate once its
-exact same-SHA gate is reconfirmed. Formal adversarial product review, remote
-workflows, `main` integration, and delivery remain pending; there is no claim that review
-is green or the feature is delivered. Its sole first consumer is the strict
+Exact cycle-1 candidate `5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected by formal review. Correctness/API reported `0/0/0/0`,
+native boundary/effects reported `0/0/0/1`, and performance/concurrency/
+resources reported `0/0/1/2`, in blocker/high/medium/low order. The native low
+duplicates one performance low, yielding a deduplicated `0/0/1/2` union.
+Remediation, a complete replacement gate, three fresh replacement reviews,
+remote workflows, `main` integration, and delivery remain pending. These
+documentation corrections do not claim that production remediation exists or
+that review is green. Its sole first consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -33,9 +39,11 @@ inspect_process_session(id)
   -> Future<Result<NativeSessionInspection, NativeSessionInspectionError>>
 ```
 
-Both constructors are inert. The first poll performs the synchronous bounded
-native work. Linux and macOS are supported. Other targets return fixed
-`UnsupportedPlatform` without state selection or filesystem access.
+Both constructors are inert. The first poll performs the synchronous native
+work. Successful data transfer and retained values have finite ceilings, but
+the operation has no wall-clock or attempt bound. Linux and macOS are
+supported. Other targets return fixed `UnsupportedPlatform` without state
+selection or filesystem access.
 
 `NativeSessionInspection` owns validated `SessionId` and
 `SessionIncarnationId` values plus `SessionRevision`, `next_turn_sequence`,
@@ -54,7 +62,7 @@ The closed native error kinds are:
 | `UnsafeStateRoot` | Existing state hierarchy violates ownership/mode/ACL/no-follow policy. |
 | `NotFound` | Selected root hierarchy or exact record is absent. |
 | `Corrupt` | Exact record fails current durable validation. |
-| `Unavailable` | Other bounded persistence access failed or was ambiguous. |
+| `Unavailable` | Other persistence access failed or was ambiguous. |
 
 Each kind has a stable snake-case name. Error `Debug` shows only the kind;
 `Display` is fixed and redacted. The error retains no path, environment value,
@@ -86,12 +94,24 @@ pending store future is an `Unavailable` failure; production load is currently
 synchronous on poll.
 
 `Ok(None)` becomes `NotFound`. A loaded record is accepted only after the store
-has validated exact ID binding, schema, digest, record/file limits, positive
-revision, positive next turn sequence, and all message/metadata structure. The
-facade then moves the two IDs from the record, copies the scalar values, counts
-the top-level message vector and metadata map, and drops the remaining record
-without exporting it. Projection performs no serialization and adds no
-independent scan or aggregate limit.
+has validated exact ID binding, schema, digest, file-byte and aggregate JSON
+depth/node ceilings, positive revision, positive next turn sequence, identifier
+bounds, and deserialized content shape. This store path does not invoke the
+engine's configurable validation and therefore does not enforce the default
+4,096-message, 8 MiB serialized-transcript, or 256 KiB serialized-metadata
+limits. A store-valid historical or differently configured record over those
+engine limits remains inspectable. The facade then moves the two IDs from the
+record, copies the scalar values, counts the top-level message vector and
+metadata map, and drops the remaining record without exporting it. Projection
+performs no serialization and adds no independent scan or aggregate limit.
+
+The rejected cycle-1 implementation first reads the complete capped record
+bytes, deserializes the complete envelope, and materializes an owned
+`SessionRecord` before discarding all but six summary fields. Output and final
+snapshot retention are bounded, but those properties do not make the internal
+load summary-oriented. Formal performance review classed that unnecessary raw
+JSON and owned-record materialization as a medium finding. Production
+remediation is pending and is not claimed by this documentation commit.
 
 Store `NotFound` maps to `NotFound`, `Corrupt` maps to `Corrupt`, and every
 other store category maps to `Unavailable`. Root categories remain distinct in
@@ -109,10 +129,13 @@ state is consulted.
 
 The retained root descriptor prevents path replacement from redirecting an
 in-flight load. Existing record-lock serialization, no-follow data/lock checks,
-bounded interruption handling, exact read cap, strict decoding, and concurrent
-replacement semantics remain those of `FileSessionStore`. Inspection is one
-point-in-time durable snapshot; a later writer may advance the record after the
-load linearization point.
+exact read cap, strict decoding, and concurrent replacement semantics remain
+those of `FileSessionStore`. The retained summary and successful transferred
+bytes/work have finite ceilings, but exclusive sidecar-lock acquisition,
+filesystem latency, and retries after `EINTR` have no wall-clock or attempt
+bound. They execute synchronously and may block the polling and CLI thread.
+Inspection is one point-in-time durable snapshot; a later writer may advance
+the record after the load linearization point.
 
 Focused evidence must cover inert construction, state capture, supported and
 unsupported targets, missing hierarchy/record, exact projection of a nonempty

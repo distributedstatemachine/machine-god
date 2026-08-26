@@ -8,19 +8,23 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::pin::Pin;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::process::{Child, Stdio};
 use std::process::{Command, Output};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::task::{Context, Poll, Wake, Waker};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_core::{
     Message, Role, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use machine_god_native::FileSessionStore;
+use machine_god_native::{FileSessionStore, MAX_FILE_SESSION_BYTES};
 
 const IDENTITY: &str = "machine-god 0.1.0 (engine API 1)\n";
 const PERMISSIONS: &str = concat!(
@@ -104,6 +108,74 @@ impl Drop for TestDirectory {
             && error.kind() != std::io::ErrorKind::NotFound
         {
             eprintln!("failed to remove {}: {error}", self.0.display());
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ScopedChild {
+    child: Option<Child>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ScopedChild {
+    fn spawn(command: &mut Command) -> Self {
+        Self {
+            child: Some(command.spawn().unwrap()),
+        }
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("child remains owned")
+    }
+
+    fn assert_running_for(&mut self, duration: Duration) {
+        let deadline = Instant::now() + duration;
+        loop {
+            assert!(
+                self.child_mut().try_wait().unwrap().is_none(),
+                "child exited before the observation interval elapsed"
+            );
+            if Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn close_stdin_with(&mut self, bytes: &[u8]) {
+        let mut stdin = self.child_mut().stdin.take().expect("child stdin is piped");
+        std::io::Write::write_all(&mut stdin, bytes).unwrap();
+    }
+
+    fn wait_with_output(mut self, timeout: Duration) -> Output {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.child_mut().try_wait().unwrap().is_some() {
+                return self
+                    .child
+                    .take()
+                    .expect("child remains owned")
+                    .wait_with_output()
+                    .unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "child did not exit within {timeout:?}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for ScopedChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take()
+            && !matches!(child.try_wait(), Ok(Some(_)))
+        {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
@@ -270,6 +342,68 @@ fn save_session_summary(
         expected_revision = Some(assigned);
     }
     session_artifacts(&root)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn seed_session_over_engine_defaults(state_base: &Path) -> (PathBuf, Vec<u8>) {
+    let id = "over-engine-defaults";
+    let incarnation_id = "incarnation-over-engine-defaults";
+    let (record_path, _) = save_session_summary(state_base, id, incarnation_id, 1, 1, 0, 0);
+    let limits = machine_god_core::EngineLimits::default();
+    let message_count = limits.max_transcript_messages.get() + 1;
+    let metadata_value_bytes = limits.max_session_metadata_bytes.get() + 1;
+    assert_eq!(message_count, 4_097);
+    assert!(metadata_value_bytes > 256 * 1_024);
+
+    let mut record = String::with_capacity(metadata_value_bytes + message_count * 32);
+    write!(
+        record,
+        concat!(
+            "{{\"schema_version\":1,\"record\":{{",
+            "\"id\":\"{id}\",\"incarnation_id\":\"{incarnation_id}\",",
+            "\"revision\":11,\"next_turn_sequence\":8,\"messages\":[",
+        ),
+        id = id,
+        incarnation_id = incarnation_id,
+    )
+    .expect("writing to a String cannot fail");
+    for index in 0..message_count {
+        if index != 0 {
+            record.push(',');
+        }
+        record.push_str("{\"role\":\"user\",\"content\":[]}");
+    }
+    record.push_str("],\"metadata\":{\"oversized\":\"");
+    record.extend(std::iter::repeat_n('m', metadata_value_bytes));
+    record.push_str("\"}}}");
+
+    let bytes = record.into_bytes();
+    assert!(bytes.len() < MAX_FILE_SESSION_BYTES);
+    fs::write(&record_path, &bytes).unwrap();
+    (record_path, bytes)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn wait_for_lock_holder_ready(child: &mut ScopedChild, ready_path: &Path, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if fs::read(ready_path).is_ok_and(|contents| contents == b"ready\n") {
+            assert!(
+                child.child_mut().try_wait().unwrap().is_none(),
+                "lock holder exited after signaling readiness"
+            );
+            return;
+        }
+        assert!(
+            child.child_mut().try_wait().unwrap().is_none(),
+            "lock holder exited before signaling readiness"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "lock holder did not become ready within {timeout:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -950,6 +1084,115 @@ fn session_exact_outputs_use_xdg_state_and_create_only_the_private_lock() {
     );
     assert!(!home_lock.exists());
     assert_eq!(fs::read(config_path).unwrap(), config_contents);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_waits_for_the_store_lock_and_succeeds_after_release() {
+    const LOCK_HOLDER: &str = concat!(
+        "import fcntl, os, sys\n",
+        "lock = open(sys.argv[1], 'r+b', buffering=0)\n",
+        "fcntl.flock(lock.fileno(), fcntl.LOCK_EX)\n",
+        "with open(sys.argv[2], 'x', encoding='utf-8') as signal:\n",
+        "    signal.write('ready\\n')\n",
+        "    signal.flush()\n",
+        "    os.fsync(signal.fileno())\n",
+        "print('ready', flush=True)\n",
+        "sys.stdin.buffer.read(1)\n",
+        "fcntl.flock(lock.fileno(), fcntl.LOCK_UN)\n",
+    );
+
+    let temporary = TestDirectory::new("session-lock-wait");
+    let config_root = temporary.path().join("missing-config");
+    let state_base = temporary.path().join("state");
+    let (record_path, lock_path) =
+        save_session_summary(&state_base, "alpha", "incarnation-alpha", 1, 1, 0, 0);
+    let record_before = fs::read(&record_path).unwrap();
+    let ready_path = temporary.path().join("lock-holder-ready");
+
+    let mut holder_command = Command::new("python3");
+    holder_command
+        .args(["-c", LOCK_HOLDER])
+        .arg(&lock_path)
+        .arg(&ready_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut holder = ScopedChild::spawn(&mut holder_command);
+    wait_for_lock_holder_ready(&mut holder, &ready_path, Duration::from_secs(10));
+
+    let mut inspect_command = session_command(config_root.as_os_str(), state_base.as_os_str());
+    inspect_command
+        .args(["session", "alpha"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut inspection = ScopedChild::spawn(&mut inspect_command);
+    inspection.assert_running_for(Duration::from_millis(500));
+
+    holder.close_stdin_with(b"release\n");
+    let holder_output = holder.wait_with_output(Duration::from_secs(10));
+    assert!(holder_output.status.success());
+    assert_eq!(holder_output.stdout, b"ready\n");
+    assert!(holder_output.stderr.is_empty());
+
+    let output = inspection.wait_with_output(Duration::from_secs(10));
+    assert_success(
+        &output,
+        concat!(
+            "[session] alpha\n",
+            " - incarnation_id: incarnation-alpha\n",
+            " - revision: 1\n",
+            " - next_turn_sequence: 1\n",
+            " - message_count: 0\n",
+            " - metadata_entry_count: 0\n",
+        ),
+    );
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
+    assert!(!config_root.exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_inspects_store_valid_records_over_engine_defaults_without_rewrite() {
+    let temporary = TestDirectory::new("session-over-engine-defaults");
+    let config_root = temporary.path().join("missing-config");
+    let state_base = temporary.path().join("state");
+    let (record_path, record_before) = seed_session_over_engine_defaults(&state_base);
+
+    let human = session_command(config_root.as_os_str(), state_base.as_os_str())
+        .args(["session", "over-engine-defaults"])
+        .output()
+        .unwrap();
+    assert_success(
+        &human,
+        concat!(
+            "[session] over-engine-defaults\n",
+            " - incarnation_id: incarnation-over-engine-defaults\n",
+            " - revision: 11\n",
+            " - next_turn_sequence: 8\n",
+            " - message_count: 4097\n",
+            " - metadata_entry_count: 1\n",
+        ),
+    );
+    assert!(human.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
+    assert_eq!(fs::read(&record_path).unwrap(), record_before);
+
+    let json = session_command(config_root.as_os_str(), state_base.as_os_str())
+        .args(["session", "over-engine-defaults", "--json"])
+        .output()
+        .unwrap();
+    assert_success(
+        &json,
+        concat!(
+            "{\"kind\":\"session\",\"id\":\"over-engine-defaults\",",
+            "\"incarnation_id\":\"incarnation-over-engine-defaults\",",
+            "\"revision\":11,\"next_turn_sequence\":8,",
+            "\"message_count\":4097,\"metadata_entry_count\":1}\n",
+        ),
+    );
+    assert!(json.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
+    assert!(!config_root.exists());
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -2,8 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use machine_god_core::{BoxFuture, SessionId, SessionIncarnationId, SessionRevision};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 use machine_god_core::{SessionRecord, SessionStore, SessionStoreError, SessionStoreErrorKind};
+#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+use machine_god_core::{SessionStoreError, SessionStoreErrorKind};
 
 use crate::NativeEnvironment;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -59,7 +61,7 @@ impl NativeSessionInspection {
         self.metadata_entry_count
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
     fn from_record(record: SessionRecord) -> Self {
         let message_count = record.messages.len();
         let metadata_entry_count = record.metadata.len();
@@ -70,6 +72,18 @@ impl NativeSessionInspection {
             next_turn_sequence: record.next_turn_sequence,
             message_count,
             metadata_entry_count,
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn from_file_summary(summary: crate::session_store::FileSessionInspection) -> Self {
+        Self {
+            session_id: summary.session_id,
+            incarnation_id: summary.incarnation_id,
+            revision: summary.revision,
+            next_turn_sequence: summary.next_turn_sequence,
+            message_count: summary.message_count,
+            metadata_entry_count: summary.metadata_entry_count,
         }
     }
 }
@@ -223,11 +237,15 @@ fn inspect_native_session_polled(
         let store = crate::root_selection::open_existing_session_store(environment)
             .map_err(map_root_error)?
             .ok_or_else(not_found)?;
-        inspect_session_from_store(&store, id)
+        let summary = store
+            .inspect_session_summary(id)
+            .map_err(map_store_error)?
+            .ok_or_else(not_found)?;
+        Ok(NativeSessionInspection::from_file_summary(summary))
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 fn inspect_session_from_store<S>(
     store: &S,
     id: SessionId,
@@ -312,8 +330,8 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use machine_god_core::{
-        BoxFuture, Message, Role, SessionRecord, SessionStore, SessionStoreError,
-        SessionStoreErrorKind,
+        BoxFuture, ContentBlock, Message, Role, SessionRecord, SessionStore, SessionStoreError,
+        SessionStoreErrorKind, ToolCall, ToolCallId, ToolName, ToolOutput,
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use serde_json::json;
@@ -688,6 +706,147 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
+    fn near_file_cap_transcript_streams_through_fixed_read_requests() {
+        let temporary = TempDirectory::new("near-cap-stream");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        let payload = "x".repeat(crate::MAX_FILE_SESSION_BYTES - 512);
+        let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+        record.messages.push(Message::text(Role::User, payload));
+        save_record(&store, record);
+        let data = entry_with_suffix(temporary.path(), ".json");
+        let file_bytes = usize::try_from(fs::metadata(&data).unwrap().len()).unwrap();
+        assert!(file_bytes > crate::MAX_FILE_SESSION_BYTES - 1_024);
+
+        let summary = store.inspect_session_summary(id("alpha")).unwrap().unwrap();
+
+        assert_eq!(summary.message_count, 1);
+        assert_eq!(summary.bytes_read, file_bytes);
+        assert!(summary.max_read_request <= 4 * 1_024);
+        assert_eq!(fs::metadata(data).unwrap().len(), file_bytes as u64);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn inspection_ignores_engine_message_and_metadata_size_configuration() {
+        let temporary = TempDirectory::new("historical-large-record");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+        record.messages = (0..5_000)
+            .map(|_| Message {
+                role: Role::User,
+                content: Vec::new(),
+            })
+            .collect();
+        record
+            .metadata
+            .insert("large".to_owned(), json!("m".repeat(300 * 1_024)));
+        record.metadata.insert("second".to_owned(), json!(true));
+        save_record(&store, record);
+
+        let summary = store.inspect_session_summary(id("alpha")).unwrap().unwrap();
+
+        assert_eq!(summary.message_count, 5_000);
+        assert_eq!(summary.metadata_entry_count, 2);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn every_current_content_block_shape_is_stream_validated() {
+        let temporary = TempDirectory::new("content-schema");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+        record.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Text {
+                    text: "private-🌍".to_owned(),
+                },
+                ContentBlock::Json {
+                    value: json!({"array": [null, true, 17, "value"]}),
+                },
+                ContentBlock::ToolCall {
+                    call: ToolCall {
+                        id: ToolCallId::new("call-1").unwrap(),
+                        name: ToolName::new("read_file").unwrap(),
+                        arguments: json!({"path": "private.txt"}),
+                    },
+                },
+                ContentBlock::ToolResult {
+                    call_id: ToolCallId::new("call-1").unwrap(),
+                    output: ToolOutput {
+                        content: json!({"ok": true}),
+                        is_error: false,
+                    },
+                },
+            ],
+        });
+        save_record(&store, record);
+
+        let summary = store.inspect_session_summary(id("alpha")).unwrap().unwrap();
+
+        assert_eq!(summary.message_count, 1);
+        assert_eq!(summary.metadata_entry_count, 0);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn aggregate_json_node_overflow_is_rejected_during_streaming() {
+        let temporary = TempDirectory::new("json-node-overflow");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        save_record(
+            &store,
+            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+        );
+        let data = entry_with_suffix(temporary.path(), ".json");
+        let persisted = String::from_utf8(fs::read(&data).unwrap()).unwrap();
+        let nodes = std::iter::repeat_n("null", 65_536)
+            .collect::<Vec<_>>()
+            .join(",");
+        let corrupt = persisted.replacen(
+            "\"metadata\":{}",
+            &format!("\"metadata\":{{\"overflow\":[{nodes}]}}"),
+            1,
+        );
+        assert_ne!(corrupt, persisted);
+        fs::write(&data, corrupt).unwrap();
+
+        let error = store.inspect_session_summary(id("alpha")).unwrap_err();
+
+        assert_eq!(error.kind, SessionStoreErrorKind::Corrupt);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn envelope_types_unknowns_duplicates_and_metadata_duplicates_are_corrupt() {
+        let temporary = TempDirectory::new("strict-summary-schema");
+        let store = FileSessionStore::open(temporary.path()).unwrap();
+        save_record(
+            &store,
+            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+        );
+        let data = entry_with_suffix(temporary.path(), ".json");
+        let persisted = String::from_utf8(fs::read(&data).unwrap()).unwrap();
+        let record_json =
+            serde_json::to_string(&ready(store.load(id("alpha"))).unwrap().unwrap()).unwrap();
+        let cases = [
+            persisted.replacen("\"schema_version\":1", "\"schema_version\":\"1\"", 1),
+            format!(
+                "{},\"unknown\":true}}",
+                persisted.strip_suffix('}').unwrap()
+            ),
+            format!("{{\"schema_version\":1,\"schema_version\":1,\"record\":{record_json}}}"),
+            persisted.replacen("\"metadata\":{}", "\"metadata\":{\"same\":1,\"same\":2}", 1),
+        ];
+
+        for contents in cases {
+            fs::write(&data, contents).unwrap();
+            let error = store.inspect_session_summary(id("alpha")).unwrap_err();
+            assert_eq!(error.kind, SessionStoreErrorKind::Corrupt);
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
     fn missing_hierarchy_and_record_are_not_found_and_create_nothing() {
         let temporary = TempDirectory::new("missing");
         let missing_base = temporary.path().join("absent");
@@ -840,9 +999,9 @@ mod tests {
         let replacement = SessionRecord::empty(id("alpha"), incarnation("replacement-life"));
         save_record(&replacement_store, replacement);
 
-        let inspection = inspect_session_from_store(&store, id("alpha")).unwrap();
-        assert_eq!(inspection.incarnation_id().as_str(), "original-life");
-        assert_eq!(inspection.metadata_entry_count(), 1);
+        let summary = store.inspect_session_summary(id("alpha")).unwrap().unwrap();
+        assert_eq!(summary.incarnation_id.as_str(), "original-life");
+        assert_eq!(summary.metadata_entry_count, 1);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

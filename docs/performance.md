@@ -9,17 +9,37 @@ independent evidence initially composed through `852fec7` and focused
 composition-gate remediation composed through `c0c16a7`. Exact gate precursor
 `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
 `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
-exact-1.94.1 gate. The commit carrying this gate record is the formal cycle-1
-candidate once its exact same-SHA gate is reconfirmed. Formal adversarial
-product review, remote workflows, `main` integration, and delivery remain
-pending. Python, pinned-fx regeneration, target, diff/no-unsafe, and exact-tree
-release-matrix checks are green but provide no performance result. The slice
-retains the frozen resource bounds and loads one
-exact record under the existing 8,651,165-byte, JSON-depth-64, and JSON-node-
-65,536 store ceilings. It projects six bounded structural fields and assembles
-complete output under an inclusive 4,096-byte ceiling. The fixed bootstrap
-inventory has no `session-json` workload and is unchanged. This slice is
-deliberately non-equivalent, not measured, and claim-ineligible; no sample, comparison,
+exact-1.94.1 gate. Exact cycle-1 candidate
+`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
+effects reported `0/0/0/1`, and performance/concurrency/resources reported
+`0/0/1/2`, in blocker/high/medium/low order. The native low duplicates the
+performance track's engine-limit-documentation low; the deduplicated union is
+`0/0/1/2`. The performance medium found that the six-field summary loads the
+full raw JSON and materializes an owned `SessionRecord`. Its two lows found the
+engine-limit-validation overclaim and the missing disclosure that lock wait,
+filesystem latency, and `EINTR` retries are unbounded. Remediation, a complete
+replacement gate, and three fresh replacement reviews are pending. This
+documentation correction neither supplies the production optimization nor
+makes review green; remote workflows, `main` integration, and delivery also
+remain pending.
+
+Python, pinned-fx regeneration, target, diff/no-unsafe, and exact-tree release-
+matrix checks are green but provide no performance result. A successful load
+accepts at most 8,651,165 file bytes and enforces aggregate JSON depth 64 and
+65,536 nodes before projecting six bounded structural fields and assembling
+complete output under an inclusive 4,096-byte ceiling. Those store and output
+ceilings do not enforce the engine's configurable/default message,
+serialized-transcript, or serialized-metadata limits; store-valid historical
+or differently configured records over those limits remain inspectable. The
+rejected implementation reads the complete capped record and materializes the
+complete owned record before projection. Retained summary and successful
+transferred bytes/work are finite, but exclusive sidecar-lock wait, filesystem
+latency, and `EINTR` retries have no wall-clock or attempt bound and
+synchronously block the polling and CLI thread. The fixed bootstrap inventory
+has no `session-json` workload and is unchanged. This slice is deliberately
+non-equivalent, not measured, and claim-ineligible; no sample, comparison,
 threshold, compatibility promotion, product-performance result, or fx-
 equivalence claim exists. The composition adds no dependency or unsafe Rust.
 

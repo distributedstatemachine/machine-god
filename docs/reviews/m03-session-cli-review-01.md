@@ -1,8 +1,12 @@
 # Milestone 03 session CLI review ledger
 
-Status: complete local gate suite green on an exact precursor; gate-record same-
-SHA reconfirmation and adversarial product review pending. Bounded slice
-32 starts from exact delivered base
+Status: exact cycle-1 candidate
+`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected by formal review. Documentation remediation is recorded
+here; production remediation, its complete replacement gate, three fresh
+replacement reviews, remote delivery gates, and integration remain pending.
+Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
 composition was `852fec7`; focused composition-gate remediation advances the
 production precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`,
@@ -81,9 +85,11 @@ The fixed benchmark inventory and generated compatibility records are
 unchanged. This slice remains deliberately non-equivalent, unmeasured, and
 claim-ineligible. The composition adds no dependency or unsafe Rust.
 
-This exact precursor has not undergone formal adversarial product review and is
-not review-green or delivered. Remote workflows, `main` integration, and
-delivery remain pending. The delivered count stays thirty-one.
+Exact precursor `fa099f7` is superseded as a submission by exact cycle-1
+candidate `5381d4b`. That candidate has undergone formal adversarial product
+review and is rejected, not review-green or delivered. Remote workflows,
+`main` integration, and delivery remain pending. The delivered count stays
+thirty-one.
 
 ## Complete local gate evidence
 
@@ -118,15 +124,59 @@ Compatibility regeneration is evidence integrity only. It does not promote
 this deliberately non-equivalent, unmeasured, claim-ineligible command or make
 a performance or compatibility claim.
 
-This documentation-only record changes the exact commit and tree after those
-precursor results. The commit carrying this gate record is the formal cycle-1
-candidate once its exact same-SHA gate is reconfirmed. That reconfirmation does
-not itself approve review findings or delivery.
+This documentation-only record changed the exact commit and tree after those
+precursor results. Exact candidate
+`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, then passed the exact same-SHA
+gate before formal review. That gate result did not itself approve review
+findings or delivery.
 
-## Required adversarial product review
+## Formal cycle 1 verdict
 
-After the gate-record commit's exact same-SHA reconfirmation, three fresh
-isolated read-only agents review the same exact commit and tree:
+Three fresh isolated agents reviewed exact candidate `5381d4b`, tree
+`4435bde`, across the required tracks. Counts are blocker/high/medium/low:
+
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Green | `0/0/0/0` |
+| Native boundary/effects and portability | Rejected | `0/0/0/1` |
+| Performance/concurrency/resources and evidence | Rejected | `0/0/1/2` |
+
+The findings are:
+
+1. **Medium — full-record materialization.** The six-field summary reads the
+   complete raw record JSON, deserializes the complete envelope, and owns a
+   complete `SessionRecord` before dropping transcript and metadata content.
+   Bounded final retention does not make that load summary-oriented.
+2. **Low — engine-limit contract overclaim.** The store proves its own current-
+   schema, file-byte, aggregate JSON depth/node, identifier, counter, and
+   content-shape constraints. It does not run the engine's configurable/default
+   4,096-message, 8 MiB serialized-transcript, or 256 KiB serialized-metadata
+   validation. Store-valid historical or differently configured records over
+   those engine limits remain inspectable. The native track's sole low and one
+   performance low are this same finding.
+3. **Low — latency/attempt overclaim.** Retained summary and successful
+   transferred bytes/work have finite ceilings, but exclusive sidecar-lock
+   acquisition, filesystem latency, and retries after `EINTR` have no wall-
+   clock or attempt bound and synchronously block the polling and CLI thread.
+
+The performance track reported these three findings: one medium and two lows.
+The native track additionally reported the same engine-limit low. There are
+therefore three unique findings, and deduplicating the overlapping native/
+performance low yields `0/0/1/2`. Any finding rejects the exact candidate, so
+`5381d4b` is rejected.
+
+This documentation commit corrects the two normative low themes but neither
+implements nor claims the production optimization. Production remediation,
+the complete replacement exact-SHA local gate, and a new three-agent review
+cycle are pending. No remote workflow, `main` integration, delivery,
+performance, compatibility-promotion, or fx-equivalence claim is made.
+
+## Required replacement adversarial product review
+
+After production and documentation remediation are composed and the replacement
+commit passes its exact same-SHA local gate, three fresh isolated read-only
+agents must review that replacement exact commit and tree:
 
 1. correctness/API, including CLI grammar, output/error behavior, and the
    pinned-fx boundary;

@@ -9,9 +9,14 @@ effect matrix are green. Exact precursor
 `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
 `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
 gate under exact Rust/Cargo 1.94.1; documentation integrity is 85/146/620/81
-with zero errors. The commit carrying this gate record is the formal cycle-1
-candidate once its exact same-SHA gate is reconfirmed. Formal adversarial
-product review, remote workflows, `main`
+with zero errors. Exact cycle-1 candidate
+`5381d4b4dda2b609f256ec7237e0c4435b40a165`, tree
+`4435bdeac6ffc1df5d5c8f68515082cd167dfc61`, passed its exact same-SHA local
+gate but is rejected. Correctness/API reported `0/0/0/0`, native boundary/
+effects reported `0/0/0/1`, and performance/concurrency/resources reported
+`0/0/1/2`, with one overlapping low and deduplicated union `0/0/1/2`.
+Documentation remediation does not claim production remediation or green
+review. The replacement gate, three fresh reviews, remote workflows, `main`
 integration, and delivery remain pending. It adds no network, subprocess,
 credential, provider, permission, workspace, configuration,
 runtime, or engine authority. Its
@@ -28,8 +33,8 @@ boundary is in [`session-cli.md`](session-cli.md),
 [`native-session-inspection.md`](native-session-inspection.md), and the
 [`live ledger`](reviews/m03-session-cli-review-01.md). Non-exhaustive native
 categories fail closed to the CLI's `Unavailable` presentation. The composition
-adds no dependency or unsafe Rust; review is not yet green, and the feature is
-not delivered. No compatibility or performance claim is made.
+adds no dependency or unsafe Rust; review is rejected, and the feature is not
+delivered. No compatibility or performance claim is made.
 
 Delivered bounded slice 31 adds no new network, subprocess, credential,
 provider, permission, workspace, or engine authority. Its native `sessions`
@@ -1045,11 +1050,11 @@ defined only by the separate fifteenth slice and is not part of ordinary
 reset-specific atomic current-record replacement.
 
 Load and save futures are inert until first poll and spawn no task, thread,
-timer, or runtime work. First poll performs bounded synchronous filesystem I/O,
+timer, or runtime work. First poll performs synchronous filesystem I/O,
 advisory locking, file sync, and directory sync inline. Retained data and
-successful transfer work are bounded. Advisory locking, byte transfers, and
-`fsync` retry `EINTR`; other interrupted operations use the fixed error
-taxonomy. Retry attempts and wall-clock duration are not bounded. Those calls
+successful transfer work are bounded. Exclusive locking, filesystem latency,
+and `EINTR` retries have no attempt or wall-clock bound; other interrupted
+operations use the fixed error taxonomy. Those calls
 can block the polling executor thread, and dropping the future cannot interrupt
 a synchronous call already in progress. Fixed errors never reflect session
 IDs, hashes, roots, child paths,
@@ -1063,7 +1068,8 @@ given to its engine. Lifecycle and session-store observations do not reopen a
 path or select another state root. Construction performs no entropy read or
 session I/O. Create, resume, replay, and reset are futures with no effect before
 first poll and detach no work; first-poll store operations retain the existing
-bounded synchronous-I/O and advisory-lock behavior.
+resource ceilings and synchronous, potentially unbounded-latency advisory-lock
+behavior.
 
 Exact shared-store identity is validated, not trusted. A lifecycle constructor
 given a different concrete store allocation from the one configured in its
