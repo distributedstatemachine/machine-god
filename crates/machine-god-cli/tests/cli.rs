@@ -425,6 +425,31 @@ fn seed_manual_current_schema_record_parts(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn assert_alternate_session_shape_is_rejected(id: &str, contents: &str, forbidden: &str) {
+    let temporary = TestDirectory::new(id);
+    let state_base = temporary.path().join("state");
+    let config_root = temporary.path().join("missing-config");
+    let (record_path, lock_path) =
+        save_session_summary(&state_base, id, &format!("incarnation-{id}"), 1, 1, 0, 0);
+    fs::write(&record_path, contents).unwrap();
+    let record_before = fs::read(&record_path).unwrap();
+    let lock_before = fs::read(&lock_path).unwrap();
+
+    let session = run_session_bounded(config_root.as_os_str(), state_base.as_os_str(), id);
+    assert_session_error(&session, true, "Corrupt");
+    assert_output_omits(&session, &[forbidden]);
+    assert_eq!(fs::read(&record_path).unwrap(), record_before);
+    assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
+
+    let sessions = run_sessions_bounded(config_root.as_os_str(), state_base.as_os_str());
+    assert_sessions_error(&sessions, true, "Corrupt");
+    assert_output_omits(&sessions, &[forbidden]);
+    assert_eq!(fs::read(&record_path).unwrap(), record_before);
+    assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
+    assert!(!config_root.exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn assert_store_accepts_and_lists(
     store: &FileSessionStore,
     state_base: &Path,
@@ -1387,6 +1412,72 @@ fn session_inspects_store_valid_records_over_engine_defaults_without_rewrite() {
     assert!(json.stdout.len() <= MAX_SESSION_OUTPUT_BYTES);
     assert_eq!(fs::read(record_path).unwrap(), record_before);
     assert!(!config_root.exists());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_a_positional_envelope_without_rewrite() {
+    let id = "positional-envelope";
+    let secret = "CLI_POSITIONAL_ENVELOPE_SECRET";
+    let contents = format!(
+        r#"[1,{{"id":"{id}","incarnation_id":"incarnation-{id}","revision":9,"next_turn_sequence":6,"messages":[],"metadata":{{"secret":"{secret}"}}}}]"#,
+    );
+    assert_alternate_session_shape_is_rejected(id, &contents, secret);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_a_positional_record_without_rewrite() {
+    let id = "positional-record";
+    let secret = "CLI_POSITIONAL_RECORD_SECRET";
+    let contents = format!(
+        r#"{{"schema_version":1,"record":["{id}","incarnation-{id}",9,6,[],{{"secret":"{secret}"}}]}}"#,
+    );
+    assert_alternate_session_shape_is_rejected(id, &contents, secret);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_a_positional_message_without_rewrite() {
+    let id = "positional-message";
+    let secret = "CLI_POSITIONAL_MESSAGE_SECRET";
+    let contents = format!(
+        r#"{{"schema_version":1,"record":{{"id":"{id}","incarnation_id":"incarnation-{id}","revision":9,"next_turn_sequence":6,"messages":[["user",[]]],"metadata":{{"secret":"{secret}"}}}}}}"#,
+    );
+    assert_alternate_session_shape_is_rejected(id, &contents, secret);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_a_positional_tool_call_without_rewrite() {
+    let id = "positional-tool-call";
+    let secret = "CLI_POSITIONAL_TOOL_CALL_SECRET";
+    let contents = format!(
+        r#"{{"schema_version":1,"record":{{"id":"{id}","incarnation_id":"incarnation-{id}","revision":9,"next_turn_sequence":6,"messages":[{{"role":"assistant","content":[{{"type":"tool_call","call":["call-1","read_file",{{"secret":"{secret}"}}]}}]}}],"metadata":{{}}}}}}"#,
+    );
+    assert_alternate_session_shape_is_rejected(id, &contents, secret);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_a_positional_tool_output_without_rewrite() {
+    let id = "positional-tool-output";
+    let secret = "CLI_POSITIONAL_TOOL_OUTPUT_SECRET";
+    let contents = format!(
+        r#"{{"schema_version":1,"record":{{"id":"{id}","incarnation_id":"incarnation-{id}","revision":9,"next_turn_sequence":6,"messages":[{{"role":"tool","content":[{{"type":"tool_result","call_id":"call-1","output":[{{"secret":"{secret}"}},false]}}]}}],"metadata":{{}}}}}}"#,
+    );
+    assert_alternate_session_shape_is_rejected(id, &contents, secret);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_rejects_an_externally_tagged_role_without_rewrite() {
+    let id = "externally-tagged-role";
+    let secret = "CLI_EXTERNALLY_TAGGED_ROLE_SECRET";
+    let contents = format!(
+        r#"{{"schema_version":1,"record":{{"id":"{id}","incarnation_id":"incarnation-{id}","revision":9,"next_turn_sequence":6,"messages":[{{"role":{{"user":null}},"content":[]}}],"metadata":{{"secret":"{secret}"}}}}}}"#,
+    );
+    assert_alternate_session_shape_is_rejected(id, &contents, secret);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
