@@ -166,6 +166,13 @@ fn poll_ready<F: Future>(future: F) -> F::Output {
     }
 }
 
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build web-search test runtime")
+}
+
 fn call(name: &str, arguments: Value) -> ToolCall {
     ToolCall {
         id: ToolCallId::new("web-search-call").unwrap(),
@@ -185,6 +192,10 @@ fn context() -> ToolContext {
 
 fn tool(transport: FakeTransport) -> WebSearchTool {
     WebSearchTool::with_transport(gateway_target(), Arc::new(transport)).unwrap()
+}
+
+fn bounded_tool(transport: FakeTransport, limits: WebSearchLimits) -> WebSearchTool {
+    WebSearchTool::with_bounded_transport(gateway_target(), Arc::new(transport), limits).unwrap()
 }
 
 fn execute(
@@ -379,6 +390,32 @@ fn query_and_domain_bounds_are_rejected_before_transport() {
 }
 
 #[test]
+fn source_and_response_constructors_accept_exact_limits_and_reject_one_excess() {
+    let prefix = "https://example.com/";
+    let exact_url = format!(
+        "{prefix}{}",
+        "x".repeat(MAX_WEB_SEARCH_SOURCE_URL_BYTES - prefix.len())
+    );
+    let source = WebSearchSource::new(
+        "t".repeat(MAX_WEB_SEARCH_SOURCE_TITLE_BYTES),
+        exact_url.clone(),
+    )
+    .unwrap();
+    assert_eq!(source.title().len(), MAX_WEB_SEARCH_SOURCE_TITLE_BYTES);
+    assert_eq!(source.url().len(), MAX_WEB_SEARCH_SOURCE_URL_BYTES);
+    assert!(
+        WebSearchSource::new(
+            "t".repeat(MAX_WEB_SEARCH_SOURCE_TITLE_BYTES + 1),
+            "https://example.com".to_owned(),
+        )
+        .is_err()
+    );
+    assert!(WebSearchSource::new("title".to_owned(), format!("{exact_url}x")).is_err());
+    assert!(WebSearchResponse::new(vec![source.clone(); MAX_WEB_SEARCH_SOURCES], false).is_ok());
+    assert!(WebSearchResponse::new(vec![source; MAX_WEB_SEARCH_SOURCES + 1], false).is_err());
+}
+
+#[test]
 fn execute_requires_the_exact_prepared_form_and_passes_only_canonical_values() {
     let transport = FakeTransport::new(Mode::Success);
     let tool = tool(transport.clone());
@@ -432,8 +469,8 @@ fn execute_requires_the_exact_prepared_form_and_passes_only_canonical_values() {
 #[test]
 fn pre_cancel_same_poll_cancel_and_drop_are_owned_without_leaks() {
     let pending = FakeTransport::new(Mode::Pending);
-    let tool = tool(pending.clone());
-    let unpolled = tool.execute(
+    let pending_tool = tool(pending.clone());
+    let unpolled = pending_tool.execute(
         context(),
         json!({ "query": "latest Rust release" }),
         CancellationToken::new(),
@@ -444,7 +481,12 @@ fn pre_cancel_same_poll_cancel_and_drop_are_owned_without_leaks() {
 
     let cancelled = CancellationToken::new();
     assert!(cancelled.cancel());
-    let error = execute(&tool, json!({ "query": "latest Rust release" }), cancelled).unwrap_err();
+    let error = execute(
+        &pending_tool,
+        json!({ "query": "latest Rust release" }),
+        cancelled,
+    )
+    .unwrap_err();
     assert_eq!(error.kind, ToolErrorKind::Cancelled);
     assert_eq!(pending.calls(), 0);
 
@@ -460,7 +502,7 @@ fn pre_cancel_same_poll_cancel_and_drop_are_owned_without_leaks() {
     assert_eq!(racing.polls(), 1);
     assert_eq!(racing.drops(), 1);
 
-    let mut execution = Box::pin(tool.execute(
+    let mut execution = Box::pin(pending_tool.execute(
         context(),
         json!({ "query": "latest Rust release" }),
         CancellationToken::new(),
@@ -495,4 +537,71 @@ fn transport_errors_are_fixed_and_never_reflect_query_or_remote_diagnostics() {
         assert!(!rendered.contains(PRIVATE_QUERY));
         assert!(!rendered.contains("PRIVATE_QUERY_SENTINEL"));
     }
+}
+
+#[test]
+fn bounded_execution_without_a_tokio_runtime_fails_before_transport() {
+    let transport = FakeTransport::new(Mode::Pending);
+    let tool = bounded_tool(transport.clone(), WebSearchLimits::default());
+    let error = execute(
+        &tool,
+        json!({ "query": "latest Rust release" }),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Unavailable);
+    assert_eq!(transport.calls(), 0);
+}
+
+#[test]
+fn bounded_timeout_covers_transport_and_releases_the_owned_future() {
+    let transport = FakeTransport::new(Mode::Pending);
+    let limits = WebSearchLimits::new(Duration::from_millis(10), 1).unwrap();
+    let tool = bounded_tool(transport.clone(), limits);
+    let error = runtime()
+        .block_on(tool.execute(
+            context(),
+            json!({ "query": "latest Rust release" }),
+            CancellationToken::new(),
+        ))
+        .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Unavailable);
+    assert_eq!(transport.calls(), 1);
+    assert_eq!(transport.drops(), 1);
+}
+
+#[test]
+fn bounded_capacity_queues_without_dispatch_and_cancel_releases_every_future() {
+    runtime().block_on(async {
+        let transport = FakeTransport::new(Mode::Pending);
+        let limits = WebSearchLimits::new(Duration::from_secs(5), 1).unwrap();
+        let tool = bounded_tool(transport.clone(), limits);
+        let mut first = Box::pin(tool.execute(
+            context(),
+            json!({ "query": "first bounded query" }),
+            CancellationToken::new(),
+        ));
+        assert!(poll_once(first.as_mut()).is_pending());
+        assert_eq!(transport.calls(), 1);
+
+        let second_cancellation = CancellationToken::new();
+        let mut second = Box::pin(tool.execute(
+            context(),
+            json!({ "query": "second bounded query" }),
+            second_cancellation.clone(),
+        ));
+        assert!(poll_once(second.as_mut()).is_pending());
+        assert_eq!(transport.calls(), 1);
+        assert!(second_cancellation.cancel());
+        let Poll::Ready(Err(error)) = poll_once(second.as_mut()) else {
+            panic!("queued cancellation must settle on the next poll")
+        };
+        assert_eq!(error.kind, ToolErrorKind::Cancelled);
+        assert_eq!(transport.calls(), 1);
+
+        drop(first);
+        assert_eq!(transport.drops(), 1);
+        drop(second);
+        assert_eq!(transport.drops(), 1);
+    });
 }

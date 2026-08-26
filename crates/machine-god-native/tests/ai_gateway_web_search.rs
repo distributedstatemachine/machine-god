@@ -11,7 +11,8 @@ use machine_god_core::{
 use machine_god_native::{
     AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
     AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest,
-    AiGatewayWebSearchTransport, WebSearchTool,
+    AiGatewayWebSearchTransport, MAX_WEB_SEARCH_RESPONSE_BYTES,
+    MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES, MAX_WEB_SEARCH_RESPONSE_RECORDS, WebSearchTool,
 };
 use serde_json::{Value, json};
 
@@ -107,7 +108,8 @@ fn call_event(id: &str, name: &str, provider_executed: bool) -> Value {
     })
 }
 
-fn result_event(id: &str, result: Value) -> Value {
+fn result_event(id: &str, result: impl Into<Value>) -> Value {
+    let result = result.into();
     json!({
         "type": "tool-result",
         "toolCallId": id,
@@ -290,4 +292,74 @@ fn dedicated_codec_rejects_malformed_or_unsafe_results_without_reflection() {
         assert!(!rendered.contains("private"));
         assert!(!rendered.contains("127.0.0.1"));
     }
+}
+
+#[test]
+fn dedicated_codec_accepts_crlf_and_a_terminal_record_without_a_blank_line() {
+    let crlf = String::from_utf8(sse(&valid_events()))
+        .unwrap()
+        .replace('\n', "\r\n")
+        .into_bytes();
+    assert!(execute(crlf).1.is_ok());
+
+    let mut no_done = sse(&valid_events());
+    let done = b"data: [DONE]\n\n";
+    let done_start = no_done.len() - done.len();
+    assert_eq!(&no_done[done_start..], done);
+    no_done.truncate(done_start);
+    assert_eq!(no_done.pop(), Some(b'\n'));
+    assert!(execute(no_done).1.is_ok());
+}
+
+#[test]
+fn dedicated_codec_deduplicates_in_order_and_marks_only_unique_overflow_truncated() {
+    let mut results = vec![json!({
+        "title": "first",
+        "url": "https://source0.example.org/path"
+    })];
+    results.push(json!({
+        "title": "duplicate title is ignored",
+        "url": "https://source0.example.org/path"
+    }));
+    for index in 1..=10 {
+        results.push(json!({
+            "title": format!("source {index}"),
+            "url": format!("https://source{index}.example.org/path")
+        }));
+    }
+    let events = vec![
+        call_event("provider-search-1", "perplexity_search", true),
+        result_event("provider-search-1", json!({ "results": results })),
+        finish_event("stop"),
+    ];
+    let output = execute(sse(&events)).1.unwrap();
+    assert_eq!(output.content["sources"].as_array().unwrap().len(), 10);
+    assert_eq!(output.content["sources"][0]["title"], "first");
+    assert_eq!(output.content["truncated"], true);
+}
+
+#[test]
+fn dedicated_codec_enforces_stream_record_count_and_strict_json_bounds() {
+    let oversized = vec![b'x'; MAX_WEB_SEARCH_RESPONSE_BYTES + 1];
+    assert!(execute(oversized).1.is_err());
+
+    let oversized_record = format!(
+        "data: {{\"type\":\"response-metadata\",\"padding\":\"{}\"}}\n\n",
+        "x".repeat(MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES)
+    )
+    .into_bytes();
+    assert!(execute(oversized_record).1.is_err());
+
+    let mut too_many_records = Vec::new();
+    for _ in 0..=MAX_WEB_SEARCH_RESPONSE_RECORDS {
+        too_many_records.extend_from_slice(b"data: {\"type\":\"response-metadata\"}\n\n");
+    }
+    assert!(execute(too_many_records).1.is_err());
+
+    let duplicate_key = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"provider-search-1\",",
+        "\"toolName\":\"perplexity_search\",\"input\":{},",
+        "\"providerExecuted\":true,\"providerExecuted\":true}\n\n"
+    );
+    assert!(execute(duplicate_key.as_bytes().to_vec()).1.is_err());
 }

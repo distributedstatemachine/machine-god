@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::future::{Future, poll_fn};
+use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -663,7 +664,7 @@ impl Tool for WebSearchTool {
 }
 
 fn canonical_request(arguments: Value) -> Result<(WebSearchRequest, Value), ToolError> {
-    if serialized_size(&arguments)? > MAX_WEB_SEARCH_REQUEST_BYTES {
+    if !serialized_value_fits(&arguments, MAX_WEB_SEARCH_REQUEST_BYTES) {
         return Err(invalid_arguments_error());
     }
     let arguments: WebSearchArguments =
@@ -739,25 +740,35 @@ fn valid_domain(domain: &str) -> bool {
     {
         return false;
     }
-    let labels = domain.split('.').collect::<Vec<_>>();
-    if labels.len() < 2 {
+    let mut labels = domain.split('.');
+    let Some(first) = labels.next() else {
+        return false;
+    };
+    if !valid_domain_label(first) {
         return false;
     }
-    labels.into_iter().all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            && label
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphanumeric)
-            && label
-                .as_bytes()
-                .last()
-                .is_some_and(u8::is_ascii_alphanumeric)
-    })
+    let mut label_count = 1_usize;
+    let valid = labels.all(|label| {
+        label_count += 1;
+        valid_domain_label(label)
+    });
+    valid && label_count >= 2
+}
+
+fn valid_domain_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 63
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && label
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && label
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
 }
 
 fn validate_target(target: &NetworkTarget) -> Result<(), WebSearchConfigError> {
@@ -810,7 +821,7 @@ fn render_response(
         "sources": response.sources(),
         "truncated": response.truncated(),
     }));
-    if serialized_size(&tool_output)? > MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES {
+    if !serialized_value_fits(&tool_output, MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES) {
         return Err(result_too_large_error());
     }
     Ok(tool_output)
@@ -869,17 +880,31 @@ fn has_dns_suffix(domain: &str, suffix: &str) -> bool {
             .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
-fn serialized_size(value: &impl Serialize) -> Result<usize, ToolError> {
-    serde_json::to_vec(value)
-        .map(|bytes| bytes.len())
-        .map_err(|_| {
-            ToolError::new(
-                ToolErrorKind::Execution,
-                "web_search_encoding",
-                "web_search result encoding failed",
-                false,
-            )
-        })
+fn serialized_value_fits(value: &(impl Serialize + ?Sized), limit: usize) -> bool {
+    let mut writer = JsonByteCounter { written: 0, limit };
+    serde_json::to_writer(&mut writer, value).is_ok()
+}
+
+struct JsonByteCounter {
+    written: usize,
+    limit: usize,
+}
+
+impl io::Write for JsonByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let Some(written) = self.written.checked_add(bytes.len()) else {
+            return Err(io::Error::other("serialized JSON byte count overflowed"));
+        };
+        if written > self.limit {
+            return Err(io::Error::other("serialized JSON exceeded its byte limit"));
+        }
+        self.written = written;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn transport_error(kind: WebSearchTransportErrorKind) -> WebSearchTransportError {

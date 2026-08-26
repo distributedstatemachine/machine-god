@@ -155,6 +155,7 @@ fn decode_sse_response(
     let mut nodes = 0_usize;
 
     for raw_record in normalized.split("\n\n") {
+        let raw_record = raw_record.strip_suffix('\n').unwrap_or(raw_record);
         check_cancelled(cancellation)?;
         if raw_record.is_empty() {
             continue;
