@@ -268,6 +268,18 @@ behavior, and resource bounds are normative in
 [`models-cli.md`](models-cli.md). This replacement-gated, review-pending
 implementation is not yet a green or delivered slice.
 
+The native command keeps its Ctrl-C listener and, on Unix, SIGTERM listener
+actively driven through rendering and every synchronous success or failure
+write. A first signal during provider work keeps the documented graceful
+cancellation result. A later observed signal, or the first signal after the
+provider becomes terminal, exits promptly with 130 for Ctrl-C or 143 for Unix
+SIGTERM even when output is backpressured. Normal output joins the bounded
+signal guardian after a final runtime-driver drain and signal recheck, so a
+queued delivery cannot lose to fast output completion. Exceptional closure of
+an installed signal stream fails stop with exit 1 before output because
+Tokio's process handler cannot safely be left installed without a driven
+listener.
+
 ## Permissions output
 
 `machine-god permissions` writes four lines with a final LF:

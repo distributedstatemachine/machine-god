@@ -554,19 +554,46 @@ call; fallback creates new per-call waiters against the unchanged deadline.
 Machine-god spawns no catalog worker, producer, retry/backoff, or detached task.
 Reqwest/Hyper connection dispatch and its bounded connection timers remain
 owned by the host runtime. The CLI keeps that current-thread runtime driven
-through request completion and teardown.
+through request completion and teardown. One plain signal-guardian thread is
+created before signal registration, waits without signal authority during the
+request, and is joined on every normal output path.
 Cancellation/drop cannot recall bytes already sent or prove what the peer
 received.
 
 The CLI registers Ctrl-C cancellation on every supported native target and
-SIGTERM cancellation on Unix. Signal registration or wait failure maps to the
-closed `Unavailable` presentation; closure of the SIGTERM stream is a wait
-failure. Both parent-owned listener futures are created and polled once before
-the provider future is created. One parent-owned poll loop checks the listeners
-before the provider and rechecks them after a ready provider poll, so a ready
-signal or wait failure wins that poll. A received signal cancels and drops the
-provider future before the command returns. Listener futures are dropped before
-rendering; no signal task is spawned or detached.
+SIGTERM cancellation on Unix. Persistent listeners are registered before the
+provider future is created. Registration attempts are independent: any
+registration failure maps to the closed `Unavailable` presentation, every
+successfully installed listener remains monitored through that diagnostic, and
+a signal whose handler was not installed retains its operating-system default.
+One parent-owned poll loop checks the listeners before the provider and
+rechecks them after a ready provider poll, so a ready signal or wait failure
+wins that poll. A first received signal cancels and drops the provider future
+before producing the existing `Cancelled` failure.
+
+After provider termination, the CLI moves the same runtime and persistent
+listeners to the already-created guardian. The guardian polls signals before
+sending a ready handshake; rendering or a synchronous stdout/stderr write does
+not begin until that handshake. A delivery already broadcast to a listener is
+therefore observed before output; a handler notification that the runtime
+driver has not broadcast yet stays covered by the guardian. The first observed
+signal after provider termination, or any later observed delivery after
+graceful provider cancellation, terminates the process promptly with exit 130
+for Ctrl-C or, on Unix, 143 for SIGTERM. The operating system and Tokio may
+coalesce repeated identical signals, so "later" means a later delivery
+observed by the persistent stream. This terminal path does not join a writer
+that may be blocked by output backpressure. Normal completion cancels the
+guardian wait, performs one bounded timer-backed runtime-driver drain, rechecks
+the listeners before accepting the stop, and joins the plain thread. A delivery
+retained before that final drain therefore cannot lose to fast output
+completion. No signal or catalog work is detached.
+
+Closure of an installed signal stream is different from registration failure.
+Because Tokio's installed process handler remains in place after listener
+drop, a closed stream cannot safely protect a potentially blocking diagnostic
+write. The command therefore cancels and drops the provider, then fails stop
+with exit 1 before rendering or writing output. It does not emit the ordinary
+`Unavailable` representation on this exceptional wait-failure path.
 
 ## Intentional pinned-fx differences and deferred scope
 

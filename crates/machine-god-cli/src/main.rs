@@ -7,15 +7,19 @@ use std::io;
 use std::path::Path;
 use std::process::ExitCode;
 #[cfg(not(target_family = "wasm"))]
-use std::task::Poll;
+use std::sync::mpsc;
+#[cfg(not(target_family = "wasm"))]
+use std::task::{Context, Poll};
+#[cfg(not(target_family = "wasm"))]
+use std::thread::JoinHandle;
 
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
+#[cfg(all(not(target_family = "wasm"), not(any(unix, windows))))]
+use machine_god_core::BoxFuture;
 #[cfg(not(target_family = "wasm"))]
-use machine_god_core::{
-    BoxFuture, CancellationToken, ModelCatalogProvider, ProviderError, ProviderErrorKind,
-};
+use machine_god_core::{CancellationToken, ModelCatalogProvider, ProviderError, ProviderErrorKind};
 use machine_god_core::{ModelCatalog, ModelCatalogAccess, PublicCatalogReason};
 #[cfg(not(target_family = "wasm"))]
 use machine_god_native::{
@@ -115,8 +119,39 @@ impl ModelsOperationalFailure {
     }
 }
 
+struct ModelsCommandExecution {
+    result: Result<ModelCatalog, ModelsOperationalFailure>,
+    #[cfg(not(target_family = "wasm"))]
+    _output_signal_guard: Option<ModelsOutputSignalGuard>,
+}
+
+impl ModelsCommandExecution {
+    fn without_signal_guard(result: Result<ModelCatalog, ModelsOperationalFailure>) -> Self {
+        Self {
+            result,
+            #[cfg(not(target_family = "wasm"))]
+            _output_signal_guard: None,
+        }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn with_signal_guard(
+        result: Result<ModelCatalog, ModelsOperationalFailure>,
+        output_signal_guard: ModelsOutputSignalGuard,
+    ) -> Self {
+        Self {
+            result,
+            _output_signal_guard: Some(output_signal_guard),
+        }
+    }
+
+    fn result(&self) -> &Result<ModelCatalog, ModelsOperationalFailure> {
+        &self.result
+    }
+}
+
 trait ModelsCommandHost {
-    fn list_models(&self) -> Result<ModelCatalog, ModelsOperationalFailure>;
+    fn list_models(&self) -> ModelsCommandExecution;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -130,10 +165,7 @@ trait ModelsCompositionEffects {
 
     fn discover_credential(&self) -> Result<Self::Credential, ModelsOperationalFailure>;
 
-    fn create_transport_and_list(
-        &self,
-        credential: Self::Credential,
-    ) -> Result<ModelCatalog, ModelsOperationalFailure>;
+    fn create_transport_and_list(&self, credential: Self::Credential) -> ModelsCommandExecution;
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -161,10 +193,7 @@ impl ModelsCompositionEffects for ProcessModelsCompositionEffects {
             .map_err(|_| ModelsOperationalFailure::Unavailable)
     }
 
-    fn create_transport_and_list(
-        &self,
-        credential: Self::Credential,
-    ) -> Result<ModelCatalog, ModelsOperationalFailure> {
+    fn create_transport_and_list(&self, credential: Self::Credential) -> ModelsCommandExecution {
         let (access_mode, bearer_token) = match credential {
             DiscoveredAiGatewayCatalogCredential::PublicOnly => {
                 (AiGatewayModelCatalogAccessMode::PublicOnly, None)
@@ -174,32 +203,31 @@ impl ModelsCompositionEffects for ProcessModelsCompositionEffects {
                 Some(credential.into_bearer_token()),
             ),
         };
-        let transport = AiGatewayModelCatalogHttpTransport::new(bearer_token)
-            .map_err(|_| ModelsOperationalFailure::Unavailable)?;
+        let Ok(transport) = AiGatewayModelCatalogHttpTransport::new(bearer_token) else {
+            return ModelsCommandExecution::without_signal_guard(Err(
+                ModelsOperationalFailure::Unavailable,
+            ));
+        };
         let transport: Arc<dyn AiGatewayModelCatalogTransport> = Arc::new(transport);
         let provider = AiGatewayModelCatalogProvider::new(access_mode, transport);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .map_err(|_| ModelsOperationalFailure::Unavailable)?;
-        runtime
-            .block_on(list_models_with_signals(&provider))
-            .map_err(|error| classify_provider_error(&error))
+        list_models_with_signals(&provider)
     }
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn list_models_with_effects(
-    effects: &impl ModelsCompositionEffects,
-) -> Result<ModelCatalog, ModelsOperationalFailure> {
-    effects.load_and_validate_config()?;
-    let credential = effects.discover_credential()?;
+fn list_models_with_effects(effects: &impl ModelsCompositionEffects) -> ModelsCommandExecution {
+    if let Err(failure) = effects.load_and_validate_config() {
+        return ModelsCommandExecution::without_signal_guard(Err(failure));
+    }
+    let credential = match effects.discover_credential() {
+        Ok(credential) => credential,
+        Err(failure) => return ModelsCommandExecution::without_signal_guard(Err(failure)),
+    };
     effects.create_transport_and_list(credential)
 }
 
 impl ModelsCommandHost for ProductionModelsCommandHost {
-    fn list_models(&self) -> Result<ModelCatalog, ModelsOperationalFailure> {
+    fn list_models(&self) -> ModelsCommandExecution {
         #[cfg(not(target_family = "wasm"))]
         {
             list_models_with_effects(&ProcessModelsCompositionEffects)
@@ -207,16 +235,40 @@ impl ModelsCommandHost for ProductionModelsCommandHost {
 
         #[cfg(target_family = "wasm")]
         {
-            let loaded =
-                load_process_config().map_err(|_| ModelsOperationalFailure::Unavailable)?;
+            let Ok(loaded) = load_process_config() else {
+                return ModelsCommandExecution::without_signal_guard(Err(
+                    ModelsOperationalFailure::Unavailable,
+                ));
+            };
             let config = loaded.config();
             if config.provider() != NativeProviderKind::VercelAiGateway
                 || config.transport() != NativeTransportKind::AiGatewayHttp
                 || config.credential_source() != NativeCredentialSourceKind::Environment
             {
-                return Err(ModelsOperationalFailure::Unavailable);
+                return ModelsCommandExecution::without_signal_guard(Err(
+                    ModelsOperationalFailure::Unavailable,
+                ));
             }
-            Err(ModelsOperationalFailure::Unavailable)
+            ModelsCommandExecution::without_signal_guard(Err(ModelsOperationalFailure::Unavailable))
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModelsSignalKind {
+    Interrupt,
+    #[cfg(unix)]
+    Terminate,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl ModelsSignalKind {
+    const fn exit_code(self) -> i32 {
+        match self {
+            Self::Interrupt => 130,
+            #[cfg(unix)]
+            Self::Terminate => 143,
         }
     }
 }
@@ -224,126 +276,404 @@ impl ModelsCommandHost for ProductionModelsCommandHost {
 #[cfg(not(target_family = "wasm"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ModelsSignalEvent {
-    Received,
+    Received(ModelsSignalKind),
     WaitFailed,
 }
 
 #[cfg(not(target_family = "wasm"))]
-trait ModelsSignalSource {
-    fn register_interrupt(
-        &mut self,
-    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError>;
+trait ModelsSignalSource: Send + 'static {
+    fn registration_failed(&self) -> bool;
+
+    fn poll_interrupt(&mut self, context: &mut Context<'_>) -> Poll<ModelsSignalEvent>;
 
     #[cfg(unix)]
-    fn register_terminate(
-        &mut self,
-    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError>;
+    fn poll_terminate(&mut self, context: &mut Context<'_>) -> Poll<ModelsSignalEvent>;
 }
 
 #[cfg(not(target_family = "wasm"))]
-#[derive(Clone, Copy, Debug, Default)]
-struct TokioModelsSignalSource;
+struct TokioModelsSignalSource {
+    #[cfg(unix)]
+    interrupt: Option<tokio::signal::unix::Signal>,
+    #[cfg(unix)]
+    terminate: Option<tokio::signal::unix::Signal>,
+    #[cfg(windows)]
+    interrupt: Option<tokio::signal::windows::CtrlC>,
+    #[cfg(not(any(unix, windows)))]
+    interrupt: BoxFuture<'static, ModelsSignalEvent>,
+    registration_failed: bool,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl TokioModelsSignalSource {
+    fn register() -> Self {
+        #[cfg(unix)]
+        {
+            let interrupt =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).ok();
+            let terminate =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+            let registration_failed = interrupt.is_none() || terminate.is_none();
+            Self {
+                interrupt,
+                terminate,
+                registration_failed,
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            let interrupt = tokio::signal::windows::ctrl_c().ok();
+            let registration_failed = interrupt.is_none();
+            Self {
+                interrupt,
+                registration_failed,
+            }
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            Self {
+                interrupt: ctrl_c_signal_event(),
+                registration_failed: false,
+            }
+        }
+    }
+}
+
+#[cfg(all(not(target_family = "wasm"), not(any(unix, windows))))]
+fn ctrl_c_signal_event() -> BoxFuture<'static, ModelsSignalEvent> {
+    Box::pin(async {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => ModelsSignalEvent::Received(ModelsSignalKind::Interrupt),
+            Err(_) => ModelsSignalEvent::WaitFailed,
+        }
+    })
+}
 
 #[cfg(not(target_family = "wasm"))]
 impl ModelsSignalSource for TokioModelsSignalSource {
-    fn register_interrupt(
-        &mut self,
-    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
-        Ok(Box::pin(async {
-            match tokio::signal::ctrl_c().await {
-                Ok(()) => ModelsSignalEvent::Received,
-                Err(_) => ModelsSignalEvent::WaitFailed,
+    fn registration_failed(&self) -> bool {
+        self.registration_failed
+    }
+
+    fn poll_interrupt(&mut self, context: &mut Context<'_>) -> Poll<ModelsSignalEvent> {
+        #[cfg(unix)]
+        {
+            match self.interrupt.as_mut() {
+                Some(interrupt) => interrupt.poll_recv(context).map(|received| match received {
+                    Some(()) => ModelsSignalEvent::Received(ModelsSignalKind::Interrupt),
+                    None => ModelsSignalEvent::WaitFailed,
+                }),
+                None => Poll::Pending,
             }
-        }))
+        }
+
+        #[cfg(windows)]
+        {
+            match self.interrupt.as_mut() {
+                Some(interrupt) => interrupt.poll_recv(context).map(|received| match received {
+                    Some(()) => ModelsSignalEvent::Received(ModelsSignalKind::Interrupt),
+                    None => ModelsSignalEvent::WaitFailed,
+                }),
+                None => Poll::Pending,
+            }
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            let event = self.interrupt.as_mut().poll(context);
+            if matches!(event, Poll::Ready(ModelsSignalEvent::Received(_))) {
+                self.interrupt = ctrl_c_signal_event();
+            }
+            event
+        }
     }
 
     #[cfg(unix)]
-    fn register_terminate(
-        &mut self,
-    ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .map_err(|_| signal_unavailable_error())?;
-        Ok(Box::pin(async move {
-            terminate_signal_event(terminate.recv().await)
-        }))
+    fn poll_terminate(&mut self, context: &mut Context<'_>) -> Poll<ModelsSignalEvent> {
+        match self.terminate.as_mut() {
+            Some(terminate) => terminate.poll_recv(context).map(|received| match received {
+                Some(()) => ModelsSignalEvent::Received(ModelsSignalKind::Terminate),
+                None => ModelsSignalEvent::WaitFailed,
+            }),
+            None => Poll::Pending,
+        }
     }
 }
 
-#[cfg(all(not(target_family = "wasm"), unix))]
+#[cfg(all(test, not(target_family = "wasm"), unix))]
 const fn terminate_signal_event(received: Option<()>) -> ModelsSignalEvent {
     match received {
-        Some(()) => ModelsSignalEvent::Received,
+        Some(()) => ModelsSignalEvent::Received(ModelsSignalKind::Terminate),
         None => ModelsSignalEvent::WaitFailed,
     }
 }
 
 #[cfg(not(target_family = "wasm"))]
-async fn list_models_with_signals(
-    provider: &dyn ModelCatalogProvider,
-) -> Result<ModelCatalog, ProviderError> {
-    list_models_with_signal_source(provider, &mut TokioModelsSignalSource).await
+struct ModelsSignalPhase<S> {
+    result: Result<ModelCatalog, ProviderError>,
+    signals: S,
+    wait_failed: bool,
 }
 
 #[cfg(not(target_family = "wasm"))]
-async fn list_models_with_signal_source(
-    provider: &dyn ModelCatalogProvider,
-    signals: &mut impl ModelsSignalSource,
-) -> Result<ModelCatalog, ProviderError> {
-    let cancellation = CancellationToken::new();
-    let mut interrupt = signals.register_interrupt()?;
-    #[cfg(unix)]
-    let mut terminate = signals.register_terminate()?;
+fn list_models_with_signals(provider: &dyn ModelCatalogProvider) -> ModelsCommandExecution {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+    else {
+        return ModelsCommandExecution::without_signal_guard(Err(
+            ModelsOperationalFailure::Unavailable,
+        ));
+    };
+    let Ok(pending_guardian) = PendingModelsSignalGuardian::spawn() else {
+        return ModelsCommandExecution::without_signal_guard(Err(
+            ModelsOperationalFailure::Unavailable,
+        ));
+    };
+    let signals = {
+        let _entered = runtime.enter();
+        TokioModelsSignalSource::register()
+    };
+    let phase = runtime.block_on(list_models_with_signal_source(provider, signals));
+    let result = phase
+        .result
+        .map_err(|error| classify_provider_error(&error));
+    let output_signal_guard = pending_guardian.activate(runtime, phase.signals, phase.wait_failed);
+    ModelsCommandExecution::with_signal_guard(result, output_signal_guard)
+}
 
-    let initial_signal = poll_fn(|context| {
-        if let Poll::Ready(event) = interrupt.as_mut().poll(context) {
-            return Poll::Ready(Some(event));
-        }
-        #[cfg(unix)]
-        if let Poll::Ready(event) = terminate.as_mut().poll(context) {
-            return Poll::Ready(Some(event));
-        }
-        Poll::Ready(None)
+#[cfg(not(target_family = "wasm"))]
+async fn list_models_with_signal_source<S: ModelsSignalSource>(
+    provider: &dyn ModelCatalogProvider,
+    mut signals: S,
+) -> ModelsSignalPhase<S> {
+    let cancellation = CancellationToken::new();
+
+    if signals.registration_failed() {
+        return ModelsSignalPhase {
+            result: Err(signal_unavailable_error()),
+            signals,
+            wait_failed: false,
+        };
+    }
+
+    let initial_signal = poll_fn(|context| match poll_models_signal(&mut signals, context) {
+        Poll::Ready(event) => Poll::Ready(Some(event)),
+        Poll::Pending => Poll::Ready(None),
     })
     .await;
     if let Some(event) = initial_signal {
         cancellation.cancel();
-        return Err(signal_event_error(event));
+        return ModelsSignalPhase {
+            result: Err(signal_event_error(event)),
+            signals,
+            wait_failed: event == ModelsSignalEvent::WaitFailed,
+        };
     }
 
     let mut provider_future = provider.list_models(cancellation.clone());
-    poll_fn(|context| {
-        if let Poll::Ready(event) = interrupt.as_mut().poll(context) {
+    let (result, wait_failed) = poll_fn(|context| {
+        if let Poll::Ready(event) = poll_models_signal(&mut signals, context) {
             cancellation.cancel();
-            return Poll::Ready(Err(signal_event_error(event)));
-        }
-        #[cfg(unix)]
-        if let Poll::Ready(event) = terminate.as_mut().poll(context) {
-            cancellation.cancel();
-            return Poll::Ready(Err(signal_event_error(event)));
+            return Poll::Ready((
+                Err(signal_event_error(event)),
+                event == ModelsSignalEvent::WaitFailed,
+            ));
         }
         let provider_result = match provider_future.as_mut().poll(context) {
             Poll::Ready(result) => result,
             Poll::Pending => return Poll::Pending,
         };
-        if let Poll::Ready(event) = interrupt.as_mut().poll(context) {
+        if let Poll::Ready(event) = poll_models_signal(&mut signals, context) {
             cancellation.cancel();
-            return Poll::Ready(Err(signal_event_error(event)));
+            return Poll::Ready((
+                Err(signal_event_error(event)),
+                event == ModelsSignalEvent::WaitFailed,
+            ));
         }
-        #[cfg(unix)]
-        if let Poll::Ready(event) = terminate.as_mut().poll(context) {
-            cancellation.cancel();
-            return Poll::Ready(Err(signal_event_error(event)));
-        }
-        Poll::Ready(provider_result)
+        Poll::Ready((provider_result, false))
     })
-    .await
+    .await;
+    drop(provider_future);
+    ModelsSignalPhase {
+        result,
+        signals,
+        wait_failed,
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn poll_models_signal(
+    signals: &mut impl ModelsSignalSource,
+    context: &mut Context<'_>,
+) -> Poll<ModelsSignalEvent> {
+    if let Poll::Ready(event) = signals.poll_interrupt(context) {
+        return Poll::Ready(event);
+    }
+    #[cfg(unix)]
+    if let Poll::Ready(event) = signals.poll_terminate(context) {
+        return Poll::Ready(event);
+    }
+    Poll::Pending
+}
+
+#[cfg(not(target_family = "wasm"))]
+struct ModelsSignalGuardianActivation {
+    runtime: tokio::runtime::Runtime,
+    signals: TokioModelsSignalSource,
+    stop: CancellationToken,
+    ready: mpsc::SyncSender<()>,
+    wait_failed: bool,
+}
+
+#[cfg(not(target_family = "wasm"))]
+struct PendingModelsSignalGuardian {
+    sender: Option<mpsc::SyncSender<ModelsSignalGuardianActivation>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl PendingModelsSignalGuardian {
+    fn spawn() -> Result<Self, ()> {
+        let (sender, receiver) = mpsc::sync_channel(0);
+        let worker = std::thread::Builder::new()
+            .name("machine-god-models-signals".to_owned())
+            .spawn(move || run_models_signal_guardian(&receiver))
+            .map_err(|_| ())?;
+        Ok(Self {
+            sender: Some(sender),
+            worker: Some(worker),
+        })
+    }
+
+    fn activate(
+        mut self,
+        runtime: tokio::runtime::Runtime,
+        signals: TokioModelsSignalSource,
+        wait_failed: bool,
+    ) -> ModelsOutputSignalGuard {
+        let stop = CancellationToken::new();
+        let (ready, ready_receiver) = mpsc::sync_channel(0);
+        let activation = ModelsSignalGuardianActivation {
+            runtime,
+            signals,
+            stop: stop.clone(),
+            ready,
+            wait_failed,
+        };
+        let Some(sender) = self.sender.take() else {
+            signal_control_failed();
+        };
+        if sender.send(activation).is_err() || ready_receiver.recv().is_err() {
+            signal_control_failed();
+        }
+        ModelsOutputSignalGuard {
+            stop,
+            worker: self.worker.take(),
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Drop for PendingModelsSignalGuardian {
+    fn drop(&mut self) {
+        self.sender.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+struct ModelsOutputSignalGuard {
+    stop: CancellationToken,
+    worker: Option<JoinHandle<()>>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Drop for ModelsOutputSignalGuard {
+    fn drop(&mut self) {
+        self.stop.cancel();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_models_signal_guardian(receiver: &mpsc::Receiver<ModelsSignalGuardianActivation>) {
+    let Ok(activation) = receiver.recv() else {
+        return;
+    };
+    if activation.wait_failed {
+        signal_control_failed();
+    }
+    let ModelsSignalGuardianActivation {
+        runtime,
+        mut signals,
+        stop,
+        ready,
+        wait_failed: _,
+    } = activation;
+    let mut stopped = Box::pin(stop.cancelled());
+    let mut ready = Some(ready);
+    let mut stop_drain: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+    let event = runtime.block_on(poll_fn(|context| {
+        if let Poll::Ready(event) = poll_models_signal(&mut signals, context) {
+            return Poll::Ready(Some(event));
+        }
+        if let Some(ready) = ready.take()
+            && ready.send(()).is_err()
+        {
+            return Poll::Ready(None);
+        }
+        if let Some(drain) = stop_drain.as_mut() {
+            return drain.as_mut().poll(context).map(|()| None);
+        }
+        if stopped.as_mut().poll(context).is_ready() {
+            #[cfg(all(test, unix))]
+            pause_models_signal_guardian_after_stop_for_test();
+            let mut drain = Box::pin(tokio::time::sleep(std::time::Duration::from_millis(1)));
+            let poll = drain.as_mut().poll(context).map(|()| None);
+            stop_drain = Some(drain);
+            return poll;
+        }
+        Poll::Pending
+    }));
+    match event {
+        Some(ModelsSignalEvent::Received(kind)) => std::process::exit(kind.exit_code()),
+        Some(ModelsSignalEvent::WaitFailed) => signal_control_failed(),
+        None => {}
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm"), unix))]
+fn pause_models_signal_guardian_after_stop_for_test() {
+    use std::io::{Read, Write};
+
+    if std::env::var_os("MACHINE_GOD_MODELS_SIGNAL_OUTPUT_CHILD").as_deref()
+        != Some(std::ffi::OsStr::new("stop-drain"))
+    {
+        return;
+    }
+    let mut stderr = io::stderr().lock();
+    stderr.write_all(b"GUARDIAN_STOP_READY\n").unwrap();
+    stderr.flush().unwrap();
+    let mut release = [0_u8];
+    io::stdin().read_exact(&mut release).unwrap();
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn signal_control_failed() -> ! {
+    std::process::exit(1)
 }
 
 #[cfg(not(target_family = "wasm"))]
 fn signal_event_error(event: ModelsSignalEvent) -> ProviderError {
     match event {
-        ModelsSignalEvent::Received => ProviderError::new(
+        ModelsSignalEvent::Received(_) => ProviderError::new(
             ProviderErrorKind::Cancelled,
             "Cancelled",
             "model catalog request was cancelled",
@@ -508,12 +838,13 @@ fn run_models(
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
 ) -> u8 {
-    let catalog = match host.list_models() {
+    let execution = host.list_models();
+    let catalog = match execution.result() {
         Ok(catalog) => catalog,
-        Err(failure) => return write_models_failure(failure, json, stdout, stderr),
+        Err(failure) => return write_models_failure(*failure, json, stdout, stderr),
     };
 
-    let output = match render_models(&catalog, json) {
+    let output = match render_models(catalog, json) {
         Ok(output) => output,
         Err(failure) => return write_models_failure(failure, json, stdout, stderr),
     };
@@ -729,16 +1060,17 @@ fn write_json_string(output: &mut impl std::fmt::Write, value: &str) -> std::fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        Command, INVALID_ARGUMENTS, ModelsCommandHost, ModelsOperationalFailure, OUTPUT_FAILURE,
-        PermissionMode, json_permissions, parse_arguments, permissions, push_json_string, run,
-        run_with_models_host,
+        Command, INVALID_ARGUMENTS, ModelsCommandExecution, ModelsCommandHost,
+        ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode, json_permissions,
+        parse_arguments, permissions, push_json_string, run, run_with_models_host,
     };
     #[cfg(not(target_family = "wasm"))]
     use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
     #[cfg(unix)]
     use super::{
-        ModelsSignalEvent, ModelsSignalSource, list_models_with_signal_source,
-        signal_unavailable_error, terminate_signal_event,
+        ModelsSignalEvent, ModelsSignalKind, ModelsSignalSource, PendingModelsSignalGuardian,
+        TokioModelsSignalSource, list_models_with_signal_source, list_models_with_signals,
+        run_models, terminate_signal_event,
     };
     use machine_god_core::{AvailableModel, ModelCatalog, ModelCatalogAccess, PublicCatalogReason};
     #[cfg(unix)]
@@ -753,11 +1085,15 @@ mod tests {
     use std::future::Future;
     use std::io;
     #[cfg(unix)]
+    use std::io::Write as _;
+    #[cfg(unix)]
     use std::pin::Pin;
     #[cfg(unix)]
     use std::sync::{Arc, Mutex};
     #[cfg(unix)]
     use std::task::{Context, Poll};
+    #[cfg(unix)]
+    use std::time::Duration;
 
     #[derive(Clone, Debug)]
     struct FakeModelsHost {
@@ -775,9 +1111,9 @@ mod tests {
     }
 
     impl ModelsCommandHost for FakeModelsHost {
-        fn list_models(&self) -> Result<ModelCatalog, ModelsOperationalFailure> {
+        fn list_models(&self) -> ModelsCommandExecution {
             self.calls.set(self.calls.get() + 1);
-            self.result.clone()
+            ModelsCommandExecution::without_signal_guard(self.result.clone())
         }
     }
 
@@ -814,14 +1150,11 @@ mod tests {
             self.credential_result
         }
 
-        fn create_transport_and_list(
-            &self,
-            (): Self::Credential,
-        ) -> Result<ModelCatalog, ModelsOperationalFailure> {
+        fn create_transport_and_list(&self, (): Self::Credential) -> ModelsCommandExecution {
             self.trace
                 .borrow_mut()
                 .push(CompositionEffect::CreateTransportAndList);
-            self.catalog_result.clone()
+            ModelsCommandExecution::without_signal_guard(self.catalog_result.clone())
         }
     }
 
@@ -884,11 +1217,9 @@ mod tests {
     #[cfg(unix)]
     struct FakeModelsSignalSource {
         trace: Arc<Mutex<Vec<SignalTrace>>>,
-        interrupt: Option<ScriptedSignal>,
-        #[cfg(unix)]
-        terminate: Option<ScriptedSignal>,
+        interrupt: ScriptedSignalFuture,
+        terminate: ScriptedSignalFuture,
         fail_interrupt_registration: bool,
-        #[cfg(unix)]
         fail_terminate_registration: bool,
     }
 
@@ -896,69 +1227,47 @@ mod tests {
     impl FakeModelsSignalSource {
         fn new(trace: Arc<Mutex<Vec<SignalTrace>>>, interrupt: ScriptedSignal) -> Self {
             Self {
+                interrupt: ScriptedSignalFuture {
+                    trace: Arc::clone(&trace),
+                    poll_event: SignalTrace::PollInterrupt,
+                    drop_event: SignalTrace::DropInterrupt,
+                    script: interrupt,
+                    polls: 0,
+                },
+                terminate: ScriptedSignalFuture {
+                    trace: Arc::clone(&trace),
+                    poll_event: SignalTrace::PollTerminate,
+                    drop_event: SignalTrace::DropTerminate,
+                    script: ScriptedSignal::Pending,
+                    polls: 0,
+                },
                 trace,
-                interrupt: Some(interrupt),
-                #[cfg(unix)]
-                terminate: Some(ScriptedSignal::Pending),
                 fail_interrupt_registration: false,
-                #[cfg(unix)]
                 fail_terminate_registration: false,
             }
-        }
-
-        fn signal_future(
-            &self,
-            script: ScriptedSignal,
-            poll_event: SignalTrace,
-            drop_event: SignalTrace,
-        ) -> BoxFuture<'static, ModelsSignalEvent> {
-            Box::pin(ScriptedSignalFuture {
-                trace: Arc::clone(&self.trace),
-                poll_event,
-                drop_event,
-                script,
-                polls: 0,
-            })
         }
     }
 
     #[cfg(unix)]
     impl ModelsSignalSource for FakeModelsSignalSource {
-        fn register_interrupt(
-            &mut self,
-        ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
+        fn registration_failed(&self) -> bool {
             self.trace
                 .lock()
                 .unwrap()
                 .push(SignalTrace::RegisterInterrupt);
-            if self.fail_interrupt_registration {
-                return Err(signal_unavailable_error());
-            }
-            let script = self.interrupt.take().expect("interrupt registered once");
-            Ok(self.signal_future(
-                script,
-                SignalTrace::PollInterrupt,
-                SignalTrace::DropInterrupt,
-            ))
-        }
-
-        #[cfg(unix)]
-        fn register_terminate(
-            &mut self,
-        ) -> Result<BoxFuture<'static, ModelsSignalEvent>, ProviderError> {
             self.trace
                 .lock()
                 .unwrap()
                 .push(SignalTrace::RegisterTerminate);
-            if self.fail_terminate_registration {
-                return Err(signal_unavailable_error());
-            }
-            let script = self.terminate.take().expect("terminate registered once");
-            Ok(self.signal_future(
-                script,
-                SignalTrace::PollTerminate,
-                SignalTrace::DropTerminate,
-            ))
+            self.fail_interrupt_registration || self.fail_terminate_registration
+        }
+
+        fn poll_interrupt(&mut self, context: &mut Context<'_>) -> Poll<ModelsSignalEvent> {
+            Pin::new(&mut self.interrupt).poll(context)
+        }
+
+        fn poll_terminate(&mut self, context: &mut Context<'_>) -> Poll<ModelsSignalEvent> {
+            Pin::new(&mut self.terminate).poll(context)
         }
     }
 
@@ -1073,12 +1382,13 @@ mod tests {
     #[cfg(unix)]
     fn run_signal_coordination(
         provider: &FakeSignalProvider,
-        signals: &mut FakeModelsSignalSource,
+        signals: FakeModelsSignalSource,
     ) -> Result<ModelCatalog, ProviderError> {
-        tokio::runtime::Builder::new_current_thread()
+        let phase = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("test runtime")
-            .block_on(list_models_with_signal_source(provider, signals))
+            .block_on(list_models_with_signal_source(provider, signals));
+        phase.result
     }
 
     #[cfg(unix)]
@@ -1103,7 +1413,7 @@ mod tests {
     #[test]
     fn models_composition_orders_each_effect_once_and_short_circuits_failures() {
         let success = composition_effects(Ok(()), Ok(()));
-        assert!(list_models_with_effects(&success).is_ok());
+        assert!(list_models_with_effects(&success).result().is_ok());
         assert_eq!(
             *success.trace.borrow(),
             [
@@ -1118,8 +1428,8 @@ mod tests {
             Err(ModelsOperationalFailure::Unavailable),
         );
         assert_eq!(
-            list_models_with_effects(&config_failure),
-            Err(ModelsOperationalFailure::Unavailable)
+            list_models_with_effects(&config_failure).result(),
+            &Err(ModelsOperationalFailure::Unavailable)
         );
         assert_eq!(
             *config_failure.trace.borrow(),
@@ -1129,8 +1439,8 @@ mod tests {
         let credential_failure =
             composition_effects(Ok(()), Err(ModelsOperationalFailure::Unavailable));
         assert_eq!(
-            list_models_with_effects(&credential_failure),
-            Err(ModelsOperationalFailure::Unavailable)
+            list_models_with_effects(&credential_failure).result(),
+            &Err(ModelsOperationalFailure::Unavailable)
         );
         assert_eq!(
             *credential_failure.trace.borrow(),
@@ -1152,9 +1462,9 @@ mod tests {
                 ModelCatalogAccess::Authenticated,
             ))),
         );
-        let mut signals = FakeModelsSignalSource::new(Arc::clone(&trace), ScriptedSignal::Pending);
+        let signals = FakeModelsSignalSource::new(Arc::clone(&trace), ScriptedSignal::Pending);
 
-        assert!(run_signal_coordination(&provider, &mut signals).is_ok());
+        assert!(run_signal_coordination(&provider, signals).is_ok());
         assert_eq!(
             coordination_trace(&trace),
             [
@@ -1209,15 +1519,15 @@ mod tests {
                 ModelCatalogAccess::Authenticated,
             ))),
         );
-        let mut signals = FakeModelsSignalSource::new(
+        let signals = FakeModelsSignalSource::new(
             Arc::clone(&trace),
             ScriptedSignal::ReadyOnPoll {
                 poll: 3,
-                event: ModelsSignalEvent::Received,
+                event: ModelsSignalEvent::Received(ModelsSignalKind::Interrupt),
             },
         );
 
-        let error = run_signal_coordination(&provider, &mut signals).unwrap_err();
+        let error = run_signal_coordination(&provider, signals).unwrap_err();
 
         assert_eq!(error.kind, ProviderErrorKind::Cancelled);
         assert_eq!(error.code, "Cancelled");
@@ -1254,7 +1564,7 @@ mod tests {
         registration_signals.fail_terminate_registration = true;
 
         let registration_error =
-            run_signal_coordination(&registration_provider, &mut registration_signals).unwrap_err();
+            run_signal_coordination(&registration_provider, registration_signals).unwrap_err();
         assert_eq!(registration_error.kind, ProviderErrorKind::Unavailable);
         assert_eq!(registration_error.code, "SignalUnavailable");
         assert_eq!(
@@ -1279,12 +1589,12 @@ mod tests {
         );
         let mut wait_signals =
             FakeModelsSignalSource::new(Arc::clone(&wait_trace), ScriptedSignal::Pending);
-        wait_signals.terminate = Some(ScriptedSignal::ReadyOnPoll {
+        wait_signals.terminate.script = ScriptedSignal::ReadyOnPoll {
             poll: 3,
             event: ModelsSignalEvent::WaitFailed,
-        });
+        };
 
-        let wait_error = run_signal_coordination(&wait_provider, &mut wait_signals).unwrap_err();
+        let wait_error = run_signal_coordination(&wait_provider, wait_signals).unwrap_err();
         assert_eq!(wait_error.kind, ProviderErrorKind::Unavailable);
         assert_eq!(wait_error.code, "SignalUnavailable");
         assert_eq!(
@@ -1308,9 +1618,366 @@ mod tests {
         );
         assert_eq!(
             terminate_signal_event(Some(())),
-            ModelsSignalEvent::Received
+            ModelsSignalEvent::Received(ModelsSignalKind::Terminate)
         );
         assert_eq!(terminate_signal_event(None), ModelsSignalEvent::WaitFailed);
+    }
+
+    #[cfg(unix)]
+    struct SignalOutputChildProvider;
+
+    #[cfg(unix)]
+    struct SignalOutputChildFuture {
+        cancellation: CancellationToken,
+        announced: bool,
+    }
+
+    #[cfg(unix)]
+    impl Future for SignalOutputChildFuture {
+        type Output = Result<ModelCatalog, ProviderError>;
+
+        fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            if !self.announced {
+                self.announced = true;
+                let mut stderr = io::stderr().lock();
+                stderr.write_all(b"PROVIDER_READY\n").unwrap();
+                stderr.flush().unwrap();
+            }
+            Poll::Pending
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for SignalOutputChildFuture {
+        fn drop(&mut self) {
+            let marker = if self.cancellation.is_cancelled() {
+                b"PROVIDER_DROPPED_CANCELLED\n".as_slice()
+            } else {
+                b"PROVIDER_DROPPED_WITHOUT_CANCELLATION\n".as_slice()
+            };
+            let mut stderr = io::stderr().lock();
+            let _ = stderr.write_all(marker);
+            let _ = stderr.flush();
+        }
+    }
+
+    #[cfg(unix)]
+    impl ModelCatalogProvider for SignalOutputChildProvider {
+        fn name(&self) -> &'static str {
+            "signal-output-child"
+        }
+
+        fn list_models(
+            &self,
+            cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<ModelCatalog, ProviderError>> {
+            Box::pin(SignalOutputChildFuture {
+                cancellation,
+                announced: false,
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    struct SignalOutputReadyChildProvider;
+
+    #[cfg(unix)]
+    impl ModelCatalogProvider for SignalOutputReadyChildProvider {
+        fn name(&self) -> &'static str {
+            "signal-output-ready-child"
+        }
+
+        fn list_models(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<ModelCatalog, ProviderError>> {
+            Box::pin(async { Ok(catalog(&[], ModelCatalogAccess::Authenticated)) })
+        }
+    }
+
+    #[cfg(unix)]
+    struct SingleExecutionHost {
+        execution: RefCell<Option<ModelsCommandExecution>>,
+    }
+
+    #[cfg(unix)]
+    impl ModelsCommandHost for SingleExecutionHost {
+        fn list_models(&self) -> ModelsCommandExecution {
+            self.execution
+                .borrow_mut()
+                .take()
+                .expect("child execution is consumed once")
+        }
+    }
+
+    #[cfg(unix)]
+    struct OutputStartWriter {
+        stdout: io::Stdout,
+        announced: bool,
+    }
+
+    #[cfg(unix)]
+    impl io::Write for OutputStartWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            if !self.announced {
+                self.announced = true;
+                let mut stderr = io::stderr().lock();
+                stderr.write_all(b"OUTPUT_START\n")?;
+                stderr.flush()?;
+            }
+            self.stdout.write(buffer)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.stdout.flush()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn models_signal_output_subprocess_child() {
+        let Some(mode) = std::env::var_os("MACHINE_GOD_MODELS_SIGNAL_OUTPUT_CHILD") else {
+            return;
+        };
+        if mode == "wait-failed" {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
+            let pending_guardian = PendingModelsSignalGuardian::spawn().unwrap();
+            let signals = {
+                let _entered = runtime.enter();
+                TokioModelsSignalSource::register()
+            };
+            let _guard = pending_guardian.activate(runtime, signals, true);
+            panic!("wait-failed guardian activation must terminate the process");
+        }
+
+        let execution = if mode == "stop-drain" {
+            list_models_with_signals(&SignalOutputReadyChildProvider)
+        } else {
+            list_models_with_signals(&SignalOutputChildProvider)
+        };
+        let host = SingleExecutionHost {
+            execution: RefCell::new(Some(execution)),
+        };
+        let mut stdout = OutputStartWriter {
+            stdout: io::stdout(),
+            announced: false,
+        };
+        let mut stderr = io::stderr();
+        let code = run_models(&host, true, &mut stdout, &mut stderr);
+        std::process::exit(i32::from(code));
+    }
+
+    #[cfg(unix)]
+    fn send_process_signal(process_id: u32, signal: &str) {
+        let status = std::process::Command::new("/bin/kill")
+            .args([signal, &process_id.to_string()])
+            .status()
+            .expect("invoke /bin/kill");
+        assert!(status.success(), "failed to send {signal} to {process_id}");
+    }
+
+    #[cfg(unix)]
+    fn wait_for_child_marker(
+        receiver: &std::sync::mpsc::Receiver<String>,
+        expected: &str,
+        process_id: u32,
+    ) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let line = match receiver.recv_timeout(remaining) {
+                Ok(line) => line,
+                Err(error) => {
+                    send_process_signal(process_id, "-KILL");
+                    panic!("child did not emit {expected:?}: {error}");
+                }
+            };
+            if line == expected {
+                return;
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn assert_saturated_output_terminates_on(second_signal: &str, expected_exit: i32) {
+        use std::io::{BufRead, Write};
+        use std::os::unix::net::UnixStream;
+        use std::process::Stdio;
+
+        let (unread_stdout, child_stdout) = UnixStream::pair().expect("stdout socket pair");
+        let mut filler = child_stdout.try_clone().expect("clone stdout sender");
+        let child_stdout = std::os::fd::OwnedFd::from(child_stdout);
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::models_signal_output_subprocess_child",
+                "--nocapture",
+            ])
+            .env("MACHINE_GOD_MODELS_SIGNAL_OUTPUT_CHILD", "1")
+            .stdout(Stdio::from(child_stdout))
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn signal-output child");
+        let process_id = child.id();
+        let child_stderr = child.stderr.take().expect("child stderr");
+        let (marker_sender, marker_receiver) = std::sync::mpsc::channel();
+        let marker_worker = std::thread::spawn(move || {
+            for line in io::BufReader::new(child_stderr).lines() {
+                match line {
+                    Ok(line) => {
+                        if marker_sender.send(line).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        wait_for_child_marker(&marker_receiver, "PROVIDER_READY", process_id);
+        filler.set_nonblocking(true).unwrap();
+        let block = [b'x'; 8 * 1024];
+        let mut filled_bytes = 0_usize;
+        loop {
+            match filler.write(&block) {
+                Ok(0) => panic!("stdout socket stopped accepting bytes without saturation"),
+                Ok(count) => filled_bytes += count,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("failed to saturate stdout socket: {error}"),
+            }
+        }
+        assert!(filled_bytes > 0);
+        filler.set_nonblocking(false).unwrap();
+
+        send_process_signal(process_id, "-INT");
+        wait_for_child_marker(&marker_receiver, "PROVIDER_DROPPED_CANCELLED", process_id);
+        wait_for_child_marker(&marker_receiver, "OUTPUT_START", process_id);
+        send_process_signal(process_id, second_signal);
+
+        let (status_sender, status_receiver) = std::sync::mpsc::sync_channel(0);
+        let wait_worker = std::thread::spawn(move || {
+            let _ = status_sender.send(child.wait());
+        });
+        let status = match status_receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(status)) => status,
+            Ok(Err(error)) => panic!("failed to wait for signal-output child: {error}"),
+            Err(error) => {
+                send_process_signal(process_id, "-KILL");
+                let _ = status_receiver.recv_timeout(Duration::from_secs(2));
+                panic!("signal-output child required SIGKILL cleanup: {error}");
+            }
+        };
+        wait_worker.join().unwrap();
+        marker_worker.join().unwrap();
+        drop(filler);
+        drop(unread_stdout);
+        assert_eq!(status.code(), Some(expected_exit));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repeated_signal_terminates_while_models_json_output_is_backpressured() {
+        assert_saturated_output_terminates_on("-INT", 130);
+        assert_saturated_output_terminates_on("-TERM", 143);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fast_output_stop_drain_observes_signal_before_guardian_shutdown() {
+        use std::io::{BufRead, Write};
+        use std::process::Stdio;
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::models_signal_output_subprocess_child",
+                "--nocapture",
+            ])
+            .env("MACHINE_GOD_MODELS_SIGNAL_OUTPUT_CHILD", "stop-drain")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn signal stop-drain child");
+        let process_id = child.id();
+        let child_stderr = child.stderr.take().expect("child stderr");
+        let (marker_sender, marker_receiver) = std::sync::mpsc::channel();
+        let marker_worker = std::thread::spawn(move || {
+            for line in io::BufReader::new(child_stderr).lines() {
+                match line {
+                    Ok(line) => {
+                        if marker_sender.send(line).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        wait_for_child_marker(&marker_receiver, "GUARDIAN_STOP_READY", process_id);
+        send_process_signal(process_id, "-INT");
+        child
+            .stdin
+            .take()
+            .expect("child stdin")
+            .write_all(b"x")
+            .expect("release guardian stop drain");
+
+        let (status_sender, status_receiver) = std::sync::mpsc::sync_channel(0);
+        let wait_worker = std::thread::spawn(move || {
+            let _ = status_sender.send(child.wait());
+        });
+        let status = match status_receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(status)) => status,
+            Ok(Err(error)) => panic!("failed to wait for signal stop-drain child: {error}"),
+            Err(error) => {
+                send_process_signal(process_id, "-KILL");
+                let _ = status_receiver.recv_timeout(Duration::from_secs(2));
+                panic!("signal stop-drain child required SIGKILL cleanup: {error}");
+            }
+        };
+        wait_worker.join().unwrap();
+        marker_worker.join().unwrap();
+        assert_eq!(status.code(), Some(130));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signal_wait_failure_fail_stops_before_output() {
+        use std::process::Stdio;
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::models_signal_output_subprocess_child",
+                "--nocapture",
+            ])
+            .env("MACHINE_GOD_MODELS_SIGNAL_OUTPUT_CHILD", "wait-failed")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn signal wait-failure child");
+        let process_id = child.id();
+        let (status_sender, status_receiver) = std::sync::mpsc::sync_channel(0);
+        let wait_worker = std::thread::spawn(move || {
+            let _ = status_sender.send(child.wait());
+        });
+        let status = match status_receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(status)) => status,
+            Ok(Err(error)) => panic!("failed to wait for wait-failure child: {error}"),
+            Err(error) => {
+                send_process_signal(process_id, "-KILL");
+                let _ = status_receiver.recv_timeout(Duration::from_secs(2));
+                panic!("wait-failure child required SIGKILL cleanup: {error}");
+            }
+        };
+        wait_worker.join().unwrap();
+        assert_eq!(status.code(), Some(1));
     }
 
     #[derive(Debug, Default)]
