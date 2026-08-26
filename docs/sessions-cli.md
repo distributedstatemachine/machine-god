@@ -89,8 +89,10 @@ valid IDs in either format. A violated result invariant or output cap fails as
 
 On Linux and macOS the first poll selects nonempty `XDG_STATE_HOME`, otherwise
 nonempty `HOME` plus `.local/state`, and then the fixed `machine-god` namespace.
-A selected invalid nonempty XDG value fails without falling back to `HOME`.
-No configured state environment fails redacted as `Unavailable`.
+The process facade requests `XDG_STATE_HOME` first and requests `HOME` only when
+that value is missing or empty; it never requests `XDG_CONFIG_HOME`. A selected
+invalid or non-Unicode nonempty XDG value fails without requesting or falling
+back to `HOME`. No configured state environment fails redacted as `Unavailable`.
 
 The native facade walks an existing selected state root descriptor-relatively
 without following fixed suffix symlinks. It applies the same effective-user,

@@ -1,4 +1,6 @@
 use std::error::Error;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 
 use machine_god_core::{BoxFuture, SessionId};
@@ -142,10 +144,55 @@ pub fn list_native_sessions(
 #[must_use]
 pub fn list_process_sessions()
 -> BoxFuture<'static, Result<NativeSessionList, NativeSessionListingError>> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        list_process_sessions_with_reader(ProcessEnvironmentReader)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     Box::pin(async move {
-        let environment = NativeEnvironment::from_process();
+        let environment = NativeEnvironment::new(None, None, None);
         list_native_sessions_polled(&environment)
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+trait EnvironmentReader {
+    fn read(&mut self, name: &'static str) -> Option<OsString>;
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ProcessEnvironmentReader;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl EnvironmentReader for ProcessEnvironmentReader {
+    fn read(&mut self, name: &'static str) -> Option<OsString> {
+        std::env::var_os(name)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn list_process_sessions_with_reader<R>(
+    mut reader: R,
+) -> BoxFuture<'static, Result<NativeSessionList, NativeSessionListingError>>
+where
+    R: EnvironmentReader + Send + 'static,
+{
+    Box::pin(async move {
+        let environment = capture_state_environment(&mut reader);
+        list_native_sessions_polled(&environment)
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn capture_state_environment(reader: &mut impl EnvironmentReader) -> NativeEnvironment {
+    let xdg_state_home = reader.read("XDG_STATE_HOME");
+    let home = if xdg_state_home.as_deref().is_none_or(OsStr::is_empty) {
+        reader.read("HOME")
+    } else {
+        None
+    };
+    NativeEnvironment::new(None, xdg_state_home, home)
 }
 
 fn list_native_sessions_polled(
@@ -222,6 +269,8 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::sync::atomic::{AtomicU64, Ordering};
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use std::sync::{Arc, Mutex};
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::{fs, os::unix::fs::PermissionsExt};
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -230,6 +279,40 @@ mod tests {
     use machine_god_core::{SessionIncarnationId, SessionRecord, SessionStore};
 
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    struct RecordingEnvironmentReader {
+        xdg_state_home: Option<OsString>,
+        home: Option<OsString>,
+        requests: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl RecordingEnvironmentReader {
+        fn new(xdg_state_home: Option<OsString>, home: Option<OsString>) -> Self {
+            Self {
+                xdg_state_home,
+                home,
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn request_log(&self) -> Arc<Mutex<Vec<&'static str>>> {
+            Arc::clone(&self.requests)
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl EnvironmentReader for RecordingEnvironmentReader {
+        fn read(&mut self, name: &'static str) -> Option<OsString> {
+            self.requests.lock().unwrap().push(name);
+            match name {
+                "XDG_STATE_HOME" => self.xdg_state_home.take(),
+                "HOME" => self.home.take(),
+                unexpected => panic!("unexpected environment request: {unexpected}"),
+            }
+        }
+    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -313,6 +396,80 @@ mod tests {
             assert_eq!(error.to_string(), message);
             assert!(!format!("{error:?}").contains('/'));
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn process_capture_does_not_request_config_or_home_for_nonempty_xdg() {
+        for xdg_state_home in [OsString::from("/state"), OsString::from("relative-state")] {
+            let mut reader = RecordingEnvironmentReader::new(
+                Some(xdg_state_home.clone()),
+                Some(OsString::from("/home-must-not-be-requested")),
+            );
+
+            let captured = capture_state_environment(&mut reader);
+
+            assert_eq!(*reader.requests.lock().unwrap(), ["XDG_STATE_HOME"]);
+            assert_eq!(
+                captured,
+                NativeEnvironment::new(None, Some(xdg_state_home), None)
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn process_capture_requests_home_only_for_empty_or_missing_xdg() {
+        for xdg_state_home in [None, Some(OsString::new())] {
+            let home = OsString::from("/fallback-home");
+            let mut reader =
+                RecordingEnvironmentReader::new(xdg_state_home.clone(), Some(home.clone()));
+
+            let captured = capture_state_environment(&mut reader);
+
+            assert_eq!(*reader.requests.lock().unwrap(), ["XDG_STATE_HOME", "HOME"]);
+            assert_eq!(
+                captured,
+                NativeEnvironment::new(None, xdg_state_home, Some(home))
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn process_capture_does_not_request_home_for_non_unicode_xdg() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let xdg_state_home = OsString::from_vec(b"/state-\xff".to_vec());
+        let mut reader = RecordingEnvironmentReader::new(
+            Some(xdg_state_home.clone()),
+            Some(OsString::from("/home-must-not-be-requested")),
+        );
+
+        let captured = capture_state_environment(&mut reader);
+
+        assert_eq!(*reader.requests.lock().unwrap(), ["XDG_STATE_HOME"]);
+        assert_eq!(
+            captured,
+            NativeEnvironment::new(None, Some(xdg_state_home), None)
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn process_environment_is_not_requested_until_first_poll() {
+        let reader = RecordingEnvironmentReader::new(None, None);
+        let requests = reader.request_log();
+
+        let future = list_process_sessions_with_reader(reader);
+        assert!(requests.lock().unwrap().is_empty());
+
+        let error = block_on(future).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeSessionListingErrorKind::InvalidEnvironment
+        );
+        assert_eq!(*requests.lock().unwrap(), ["XDG_STATE_HOME", "HOME"]);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -43,18 +43,27 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 
 The thirty-first bounded slice, strict top-level `sessions [--json]`, is **IN
 PROGRESS** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
-Its normative boundary is [`sessions-cli.md`](sessions-cli.md), and its pre-
+Its normative boundary is [`sessions-cli.md`](sessions-cli.md), and its live
 review ledger is
 [`m03-sessions-cli-review-01.md`](reviews/m03-sessions-cli-review-01.md).
-Native process composition, CLI production, and independent evidence are
-assigned to isolated non-overlapping worktrees while documentation and
-integration remain coordinator-owned. The command will expose only the existing
+Native process composition, CLI production, and independent evidence were
+implemented in isolated non-overlapping worktrees while documentation and
+integration remained coordinator-owned. The command exposes only the existing
 bounded sorted session IDs and truncation bit through a safe no-create state-
 root facade; it will not invent fx's workspace, summary, newest-first, or
 pagination semantics. `sessions-json` becomes implemented but remains non-
-equivalent, not measured, and claim-ineligible. No candidate, green, workflow,
-integration, delivery, product-performance, or fx-equivalence claim exists yet.
-The delivered count remains thirty.
+equivalent, not measured, and claim-ineligible. Exact candidate
+`9448738908e014c9273960d9e7dd0790e0525848`, tree
+`e5342f79207af6cc41da71a280d8ca9ef3952756`, passed its complete local gate but
+was rejected by fresh review cycle 1 with a deduplicated `0/0/0/3` verdict: the
+process facade captured unrelated configuration state, captured `HOME` before
+XDG-state precedence made it necessary, and the maintained review status was
+stale. The replacement now uses a state-only first-poll reader with lazy `HOME`
+fallback, carries exact injected-reader regressions, updates the maintained
+status, and has passed the complete replacement local gate. It awaits three
+fresh exact-SHA cycle-2 reviews. No formal green, workflow, integration,
+delivery, product-performance, or fx-equivalence claim exists yet. The
+delivered count remains thirty.
 
 The thirtieth bounded slice, strict top-level `doctor [--json]`, is
 **DELIVERED** from exact delivered base
@@ -3292,10 +3301,16 @@ The thirty-first slice is contract-frozen from exact delivered base
 `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`. It adds only strict
 `sessions [--json]`; every extension, reordered/repeated flag, extra or non-
 Unicode argument is rejected before environment or persistence effects. The
-normative boundary is [`sessions-cli.md`](sessions-cli.md), and the pre-review
-ledger is
-[`m03-sessions-cli-review-01.md`](reviews/m03-sessions-cli-review-01.md). No
-behavior-candidate, formal-green, workflow, integration, or delivery claim
+normative boundary is [`sessions-cli.md`](sessions-cli.md), and the live ledger
+is [`m03-sessions-cli-review-01.md`](reviews/m03-sessions-cli-review-01.md).
+Exact candidate `9448738908e014c9273960d9e7dd0790e0525848`, tree
+`e5342f79207af6cc41da71a280d8ca9ef3952756`, passed the complete local gate and
+was rejected by cycle 1 with `0/0/0/3` deduplicated findings. Two accepted lows
+require state-only process environment capture with lazy `HOME` fallback; the
+third was this stale candidate summary. The replacement implements the narrow
+reader and exact request-sequence tests, updates the maintained summaries, and
+has passed the complete replacement local gate. Three fresh exact-SHA cycle-2
+reviews are pending. No formal-green, workflow, integration, or delivery claim
 exists yet. The delivered count remains thirty and M03 remains in progress.
 
 The command exposes the delivered bounded native session-ID scan through a new
@@ -4292,8 +4307,11 @@ gate:
   ordered read-only checks and no authority-bearing repair behavior. The
   delivered count is thirty, and this combined item stays
   unchecked. Strict `sessions [--json]` is the in-progress bounded slice 31
-  from exact base `feaf9fa`; no behavior-candidate or delivery claim exists
-  yet. `models [--json]` is
+  from exact base `feaf9fa`. Exact candidate `9448738`, tree `e5342f7`, passed
+  its complete local gate but cycle 1 rejected it with `0/0/0/3` deduplicated
+  findings. The replacement remediation and complete local gate are green;
+  three fresh exact-SHA reviews are pending, so no formal green or delivery
+  claim exists yet. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

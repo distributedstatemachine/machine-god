@@ -12,8 +12,11 @@ records may cause the already-documented private `0600` lock sidecar to be
 created during validation. Human and compact JSON representations are built
 before output and capped at 16 KiB. The pinned `sessions-json` workload becomes
 implemented but remains non-equivalent, not measured, and claim-ineligible.
-The [`live review ledger`](reviews/m03-sessions-cli-review-01.md) is pre-review;
-the delivered count remains thirty and no green or delivery claim exists yet.
+The [`live review ledger`](reviews/m03-sessions-cli-review-01.md) records exact
+candidate `9448738` and its rejected `0/0/0/3` cycle-1 verdict; remediation is
+composed and locally green, and three fresh exact-SHA cycle-2 reviews are
+pending. The delivered count remains thirty and no formal green or delivery
+claim exists yet.
 
 The `machine-god` binary is the thin native reference host for the embeddable
 engine. This page defines the exact implemented Milestone 03 config/status and

@@ -16,10 +16,12 @@ command does not construct a workspace, engine, provider, credential, network
 transport, or runtime. Validation of an existing record retains the native
 library's documented ability to create a private `0600` lock sidecar. The
 [`sessions` contract](docs/sessions-cli.md) is frozen, and the
-[`live review ledger`](docs/reviews/m03-sessions-cli-review-01.md) remains pre-
-review. No delivery, compatibility, product-performance, or fx-equivalence
-claim is made yet. The delivered count remains thirty and M03 remains in
-progress.
+[`live review ledger`](docs/reviews/m03-sessions-cli-review-01.md) records exact
+candidate `9448738` and its rejected `0/0/0/3` cycle-1 verdict; remediation is
+now composed and locally green, and three fresh exact-SHA cycle-2 reviews are
+pending. No formal green, delivery, compatibility, product-performance, or fx-
+equivalence claim is made yet. The delivered count remains thirty and M03
+remains in progress.
 
 Bounded Milestone 03 slice 30, strict top-level `doctor [--json]`, is
 **DELIVERED** from exact delivered base

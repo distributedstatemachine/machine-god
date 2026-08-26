@@ -9,10 +9,11 @@ observation; invalid, unsafe, inaccessible, symlink, and wrong-kind roots fail
 with fixed redacted categories. The bounded store scan continues to validate
 canonical records under per-ID advisory locks, so it may create a missing
 private `0600` lock sidecar for an existing candidate; it does not create,
-repair, rewrite, migrate, or delete records. The full contract and current pre-
-review status are in [`sessions-cli.md`](sessions-cli.md) and the
-[`live ledger`](reviews/m03-sessions-cli-review-01.md). No green or delivery
-claim exists yet.
+repair, rewrite, migrate, or delete records. The full contract and current
+cycle-2 submission status are in [`sessions-cli.md`](sessions-cli.md) and the
+[`live ledger`](reviews/m03-sessions-cli-review-01.md). Exact candidate
+`9448738` is rejected; its locally green replacement awaits three fresh exact-
+SHA reviews, so no formal green or delivery claim exists yet.
 
 Bounded slice 30 is **DELIVERED** from exact base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Strict top-level
