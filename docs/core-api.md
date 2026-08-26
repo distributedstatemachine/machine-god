@@ -117,8 +117,12 @@ native-only remediation at `9cf8c74`, `8187b12`, and `499af85` do not expand
 core authority. Pre-review gate attempt `c011398` was rejected for a concrete
 native DNS-config lifecycle issue; remediation at `d9922ef` and `e5248b1` also
 does not expand core authority. Exact cycle-3 candidate `2cecc921`, tree
-`8c0d235`, passed its complete gate; adversarial review and integration/delivery
-remain pending. See [`models-cli.md`](models-cli.md).
+`8c0d235`, passed its complete gate but formal review rejected it. Documentation,
+private bounded-DNS, and Android fail-closed remediation at `f80bd056`,
+`b6cf4cb`, and `bd47461` also leaves core authority unchanged. Exact cycle-4
+candidate `57d2ac2`, tree `d30bb656`, passed the complete exact-1.94.1
+replacement gate and is submitted to three fresh formal reviews. Their results
+and integration/delivery remain pending. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 

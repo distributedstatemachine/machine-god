@@ -1,6 +1,6 @@
 # Top-level `models` CLI contract
 
-Status: replacement-gated cycle-3 submission, not yet review-green or delivered
+Status: replacement-gated cycle-4 submission, not yet review-green or delivered
 as the twenty-ninth bounded Milestone 03 slice. Exact cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
@@ -28,8 +28,8 @@ at `499af85`. Pre-review gate attempt `c01139811685ae73031ed6f6cbd771e4ff636714`
 tree `4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected because synchronous
 platform DNS discovery still occurred inside timed request polling. Bounded
 eager snapshot remediation is `d9922ef1`, and per-runtime absolute-name/custom-
-resolver hardening is `e5248b10`. Focused provider/parser, credential, HTTP,
-private resolver, CLI unit, CLI integration, and manifest evidence is now
+resolver hardening is `e5248b10`. Cycle-3 focused provider/parser, credential,
+HTTP, private resolver, CLI unit, CLI integration, and manifest evidence was
 17/17, 6/6, 16/16, 6/6, 18/18, 23/23, and 4/4. Catalog HTTP directly activates
 direct `hickory-proto`, `hickory-resolver`, and `sha2` edges; Hickory resolver
 remains only for bounded system-configuration parsing and its Tokio integration
@@ -38,17 +38,26 @@ is disabled. The catalog still omits generation-only direct `bytes`,
 gate passed for exact behavior candidate
 `2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
 `8c0d235355582d92aaed6fcca7c1862982494e20`, under exact Rust and Cargo 1.94.1.
-Three fresh cycle-3 reviews and remote CI remain pending; no candidate is
-review-green. The pinned comparison input remains fx commit
+Three fresh cycle-3 reviews rejected it with a deduplicated union of 0 blocker,
+0 high, 1 medium, and 3 low findings. Documentation and private bounded-DNS
+remediation is composed at `f80bd056` and `b6cf4cb`. A read-only preflight then
+found an Android platform-loader panic path before the complete cycle-4 gate;
+exact fail-closed remediation is `bd47461`. Exact cycle-4 candidate
+`57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
+`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 and is submitted to three fresh formal
+reviews. Their results and remote CI remain pending; no candidate is review-
+green. The pinned comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
 
-The current isolated DNS remediation replaces Hickory's request-polled resolver
-with private bounded UDP/TCP exchange. It snapshots one fallible query-ID key at
+The cycle-4 DNS remediation replaces Hickory's request-polled resolver with
+private bounded UDP/TCP exchange. It snapshots one fallible query-ID key at
 transport construction, derives IDs deterministically from an atomic sequence,
 and invokes no entropy source or detached resolver task during request polling.
-It raises private resolver source evidence from 6 to 14 tests. This behavior
-record by itself makes no replacement-gate or review outcome claim.
+Android fails closed before any DNS or platform-loader call. Private resolver
+source evidence is 14/14 and manifest evidence is 5/5. The complete cycle-4
+gate is green, but the pending formal reviews establish no review outcome yet.
 
 The slice adds one read-only top-level command:
 

@@ -128,8 +128,9 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
-The twenty-ninth bounded slice is contract-frozen, locally implemented, cycle-3
-rejected, and locally remediated; it is not integrated to `main` or delivered.
+The twenty-ninth bounded slice is contract-frozen, locally implemented, and
+**SUBMITTED** to formal cycle-4 review; it is not review-green, integrated to
+`main`, or delivered.
 Its
 exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
@@ -179,7 +180,8 @@ query-ID entropy. A read-only preflight before the complete cycle-4 gate then
 found 0 blocker, 1 high, 0 medium, and 0 low on that exact remediation: Android
 catalog construction still called Hickory `read_system_conf`, whose
 uninitialized `ndk_context` panic would abort the release process. This was not
-a formal cycle-4 review, and cycle 4 remains unsubmitted. Exact remediation
+a formal cycle-4 review, and cycle 4 remained unsubmitted at that checkpoint.
+Exact remediation
 `bd4746197736004f3a02c4c910c569444e4653e7`, tree
 `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, makes Android fail closed through
 the existing redacted unavailable result without calling a DNS or platform
@@ -187,10 +189,13 @@ loader; Apple/Windows and generic-Unix loading are unchanged. Focused exact-
 toolchain checks are green for private resolver 14/14, manifest 5/5,
 formatting, and warnings-denied native Clippy. The Android standard-library
 target was unavailable locally, and the foreign Linux HTTP build retained its
-existing `aws-lc-sys` C-sysroot blocker before product Rust. The complete
-cycle-4 replacement gate and three fresh formal cycle-4 reviews remain pending.
-No candidate is review-green, and no product-performance, compatibility-
-promotion, or fx-equivalence claim is made.
+existing `aws-lc-sys` C-sysroot blocker before product Rust. Exact cycle-4
+behavior candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
+`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 and is submitted to three fresh formal
+cycle-4 reviews. Their results remain pending. No candidate is review-green,
+and no product-performance, compatibility-promotion, or fx-equivalence claim
+is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2871,7 +2876,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Cycle-3-rejected bounded slice 29: top-level `models`
+### Cycle-4-submitted bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -2943,7 +2948,8 @@ time entropy. A read-only preflight before the complete cycle-4 gate found
 0 blocker, 1 high, 0 medium, and 0 low on that exact remediation. Android
 catalog construction could still invoke Hickory `read_system_conf`; without an
 initialized `ndk_context`, that loader panics and the release profile aborts.
-This was not a formal cycle-4 review, so cycle 4 remains unsubmitted. Exact
+This was not a formal cycle-4 review, so cycle 4 remained unsubmitted at that
+checkpoint. Exact
 remediation `bd4746197736004f3a02c4c910c569444e4653e7`, tree
 `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, makes Android catalog DNS fail
 closed and redacted without a DNS or platform-loader call while leaving Apple/
@@ -2951,10 +2957,25 @@ Windows and generic-Unix loading unchanged. Exact focused resolver 14/14,
 manifest 5/5, formatting, and warnings-denied native Clippy checks are green.
 The Android standard-library target was unavailable locally, and foreign Linux
 HTTP compilation retained the existing `aws-lc-sys` C-sysroot blocker before
-product Rust. The complete cycle-4 replacement gate, three fresh formal cycle-4
-reviews, exact feature workflows, fast-forward integration, and exact `main`
-workflows remain pending; no candidate is review-green and this makes no
-product-performance claim.
+product Rust. Exact cycle-4 behavior candidate
+`57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
+`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback. Focused evidence is
+green at core 6/6, provider/parser 17/17, credential 6/6, HTTP 16/16, private
+resolver 14/14, CLI unit 18/18, CLI integration 23/23, and manifest 5/5. The
+complete gate passed formatting, warnings-denied workspace Clippy, 972 non-doc
+Rust tests, two doctests, the first sequential 135-test Python run with eight
+expected macOS skips, byte-stable pinned-fx regeneration, documentation
+integrity 78/127/567/410/0, dependency policy/audit with zero vulnerabilities,
+the honest host/WASI/foreign-target matrix, the exact 33-file +9,890/-209 diff,
+and six fresh release-binary black-box cases. The 3,818,944-byte locked release
+has SHA-256
+`caf993ea44007431f16b5a0b7383865e4bead46337e2e9c711a8a9174812bd7c`,
+resolves 139 normal packages, and returned 228 live public models without a
+state write. The exact candidate is **SUBMITTED** to three fresh formal cycle-4
+reviews. Their results, exact feature workflows, fast-forward integration, and
+exact `main` workflows remain pending; no candidate is review-green and this
+makes no product-performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -3021,8 +3042,8 @@ workflows. Benchmark evidence is delivery evidence only.
 
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices and locally implemented in-progress twenty-ninth slice do
-not complete Milestone 03.
+The twenty-eight delivered slices and locally implemented, cycle-4-submitted
+twenty-ninth slice do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -3974,16 +3995,21 @@ gate:
   read-only preflight before the complete cycle-4 gate found 0 blocker, 1 high,
   0 medium, and 0 low on `b6cf4cb`: Android's Hickory system loader can panic
   without initialized NDK context and abort the release process. This was not a
-  formal cycle-4 review; cycle 4 remains unsubmitted. Exact remediation
+  formal cycle-4 review; cycle 4 remained unsubmitted at that checkpoint.
+  Exact remediation
   `bd4746197736004f3a02c4c910c569444e4653e7`, tree `b8d8bb1`, makes Android
   fail closed and redacted without DNS/platform-loader access while leaving
   Apple/Windows and generic Unix unchanged. Focused exact resolver 14/14,
   manifest 5/5, formatting, and warnings-denied native Clippy checks are green;
   the Android standard-library target was unavailable locally and foreign
   Linux HTTP compilation retained the existing `aws-lc-sys` C-sysroot blocker
-  before product Rust. This combined item remains unchecked while the complete
-  cycle-4 replacement gate, three fresh formal cycle-4 review tracks, feature
-  workflows, non-force fast-forward, and exact `main` gates are pending.
+  before product Rust. Exact cycle-4 candidate `57d2ac2`, tree `d30bb656`,
+  passed the complete exact-1.94.1 replacement gate: focused 6/17/6/16/14/18/
+  23/5, 972 non-doc Rust tests, two doctests, Python 135, pinned-fx and docs
+  integrity, dependency/audit, portability, diff, and release-binary evidence
+  are green. It is submitted to three fresh formal cycle-4 review tracks. This
+  combined item remains unchecked while their results, feature workflows,
+  non-force fast-forward, and exact `main` gates are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

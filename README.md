@@ -27,17 +27,25 @@ attempt `c011398`, tree `4ac4e5b`, was rejected when dependency inspection found
 synchronous system-DNS discovery inside request polling. Bounded eager snapshot,
 per-runtime resolver, and absolute-name remediation is composed at `d9922ef`
 and `e5248b1`. Exact cycle-3 behavior candidate `2cecc921`, tree `8c0d235`,
-passed the complete replacement gate under exact Rust and Cargo 1.94.1; three
-fresh cycle-3 reviews remain pending. This is not a green or delivered slice.
+passed the complete replacement gate under exact Rust and Cargo 1.94.1 but was
+rejected with a deduplicated 0 blocker, 0 high, 1 medium, and 3 low findings.
+Documentation and private bounded-DNS remediation is composed at `f80bd056`
+and `b6cf4cb`; Android fail-closed platform-loader remediation is `bd47461`.
+Exact cycle-4 candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`,
+tree `d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete
+exact-1.94.1 replacement gate and is submitted to three fresh formal reviews.
+Their results remain pending. This is not a green or delivered slice.
 The CLI selects a dedicated `ai-gateway-model-catalog-http` feature that omits
 `web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a
-system-config-only async Hickory resolver and its protocol/network/cache graph
-so default blocking GAI cannot outlive runtime teardown. Signal handling is
-requested only by the CLI dependency; the existing `ai-gateway-http` umbrella
-continues to include direct `bytes`, catalog HTTP, and web fetch. This topology
-change remains pending the same complete gate and review and makes no
-performance or fx-equivalence claim. The twenty-eighth top-level
+private bounded async DNS exchange; Hickory resolver remains only for bounded
+platform configuration parsing, with no request-polled resolver task or
+entropy. Android catalog DNS fails closed before the platform loader. Signal
+handling is requested only by the CLI dependency; the existing
+`ai-gateway-http` umbrella continues to include direct `bytes`, catalog HTTP,
+and web fetch. The cycle-4 gate and its 3,818,944-byte release SHA are retained
+as regression evidence only and make no performance or fx-equivalence claim.
+The twenty-eighth top-level
 `permissions [--json]` slice is **DELIVERED** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; it is read-only, ask-only, and
 owns no persistent rules or runtime grant state. Exact cycle-5 reviewed

@@ -12,8 +12,13 @@ gate but was rejected by cycle-2 review; none of its findings changed credential
 selection. Parser and HTTP lifecycle remediation is locally composed. The
 pre-review cycle-3 gate attempt was rejected for request-time DNS configuration;
 eager snapshot remediation does not change credential selection. The complete
-cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`; adversarial
-review, integration, and delivery remain pending.
+cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`, but formal
+review rejected it for one native DNS lifecycle finding and three documentation
+findings, none of which changed credential selection. Exact cycle-4 candidate
+`57d2ac2`, tree `d30bb656`, includes the bounded-DNS, documentation, and Android
+fail-closed remediations, passed the complete exact-1.94.1 replacement gate,
+and is submitted to three fresh formal reviews. Their results, integration, and
+delivery remain pending.
 Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
@@ -41,8 +46,10 @@ all(
 
 The narrower catalog feature exposes the shared bearer/error and credential
 surface and directly enables the catalog transport's dedicated asynchronous
-system-configuration DNS implementation together with the protocol/cache
-dependencies resolved by that implementation. Exact package topology is
+system-configuration DNS implementation together with the protocol and bounded
+configuration dependencies resolved by that implementation. Hickory resolver
+parses platform configuration only; private Tokio UDP/TCP and direct Hickory
+protocol decoding own DNS network effects. Exact package topology is
 enforced by the native HTTP/manifest evidence rather than frozen in this
 credential contract. The catalog feature does not enable generation transport
 exports, `web-fetch-http`, generation-only direct `bytes`, or workspace-wide

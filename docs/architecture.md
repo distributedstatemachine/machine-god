@@ -46,8 +46,14 @@ runtime, and fail-closed resolver remediation is composed at `9cf8c74`,
 was rejected by its DNS-config lifecycle audit. Eager bounded snapshot and
 per-runtime absolute-name resolver remediation is composed at `d9922ef` and
 `e5248b1`. Exact cycle-3 candidate `2cecc921`, tree `8c0d235`, passed its
-complete replacement gate. Three fresh cycle-3 reviews remain pending in
-[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
+complete replacement gate but formal review rejected it with one medium and
+three low findings after deduplication. Documentation, private bounded-DNS, and
+Android fail-closed remediations are composed at `f80bd056`, `b6cf4cb`, and
+`bd47461`. Exact cycle-4 candidate `57d2ac2`, tree `d30bb656`, passed the
+complete exact-1.94.1 replacement gate and is submitted to three fresh formal
+reviews recorded in
+[`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md). Their
+results remain pending.
 
 ```text
 machine-god-cli
@@ -66,8 +72,10 @@ machine-god-native catalog HTTP GET + TLS + attempt-local timer/permit
 The thin CLI enables native's dedicated non-WASM
 `ai-gateway-model-catalog-http` feature. That feature owns the shared bearer,
 TLS, and catalog HTTP boundary together with its dedicated asynchronous system-
-configuration DNS implementation and the protocol/cache dependencies resolved
-by that implementation. Exact package topology is enforced by the native
+configuration DNS implementation and the protocol/configuration dependencies
+resolved by that implementation. Hickory resolver parses bounded platform
+configuration only; private Tokio UDP/TCP owns DNS network effects and uses
+direct Hickory protocol decoding. Exact package topology is enforced by the native
 manifest evidence rather than frozen in this architecture summary. The catalog
 feature omits `web-fetch-http` and generation-only direct `bytes`. The workspace
 Tokio surface omits signal handling; only the native CLI dependency requests

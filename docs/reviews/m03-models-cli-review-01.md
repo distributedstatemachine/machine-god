@@ -1,6 +1,6 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: cycle-3-rejected and preflight-remediated bounded slice 29. Exact
+Status: cycle-4-submitted bounded slice 29, not review-green or delivered. Exact
 cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
@@ -24,11 +24,15 @@ complete cycle-4 replacement gate found 0 blocker, 1 high, 0 medium, and 0 low
 on exact remediation `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`: Android
 catalog construction called Hickory `read_system_conf`, whose uninitialized
 `ndk_context` panic would abort the release process. The preflight was not a
-formal cycle-4 review; cycle 4 remains unsubmitted. Exact remediation
+formal cycle-4 review; cycle 4 remained unsubmitted at that checkpoint. Exact
+remediation
 `bd4746197736004f3a02c4c910c569444e4653e7`, tree
-`b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, is locally composed. The complete
-cycle-4 replacement gate and three fresh formal cycle-4 reviews remain pending.
-No candidate is review-green. The frozen behavior contract is
+`b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, is locally composed. Exact
+cycle-4 behavior candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`,
+tree `d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 and is **SUBMITTED** to three fresh formal
+cycle-4 reviews. Their results remain pending. No candidate is review-green.
+The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -52,8 +56,9 @@ The locally composed lineage is:
 | custom absolute-name resolver pinning | `e5248b103c5df67b733006da8210ada05d366345` / `d194034189082b1d71ae9cc69c38060ae6e8c886` | pre-review gate hardening; private resolver 6/6 and HTTP integration 16/16 green |
 | cycle-3 gate record and maintained status | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | exact replacement-gated cycle-3 behavior candidate; formal reviews rejected it |
 | stale topology and checklist documentation remediation | `f80bd0560e49306ce56093ea667aa45a22b2c6dd` / `d6d3f354fa1eca6221d482567f9128ac6f73a3bc` | cycle-3 remediation for all three low findings |
-| private bounded DNS and construction-time entropy remediation | `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d` / `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a` | cycle-3 medium remediation; focused resolver 14/14, HTTP 16/16, and manifest 4/4 green; complete cycle-4 gate pending |
-| Android fail-closed catalog DNS remediation | `bd4746197736004f3a02c4c910c569444e4653e7` / `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3` | preflight high remediation; Android bypasses the panicking platform loader; exact focused resolver 14/14, manifest 5/5, formatting, and native Clippy green; complete cycle-4 gate pending |
+| private bounded DNS and construction-time entropy remediation | `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d` / `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a` | cycle-3 medium remediation; focused resolver 14/14, HTTP 16/16, and manifest 4/4 green; later composed in replacement-gated cycle-4 candidate |
+| Android fail-closed catalog DNS remediation | `bd4746197736004f3a02c4c910c569444e4653e7` / `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3` | preflight high remediation; Android bypasses the panicking platform loader; exact focused resolver 14/14, manifest 5/5, formatting, and native Clippy green; later composed in replacement-gated cycle-4 candidate |
+| cycle-4 replacement gate and maintained status | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | complete exact-1.94.1 replacement gate green; submitted to three fresh formal cycle-4 reviews; results pending |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -68,11 +73,11 @@ immutable candidate and is exempt from redundant adversarial review under the
 user's instruction. Cycle-3 review rejected the behavior candidate. Exact
 documentation remediation `f80bd056` and native remediation `b6cf4cb` formed
 the first cycle-4 precursor. Read-only preflight rejected that precursor before
-its complete replacement gate; exact Android remediation `bd47461` is the
-current precursor. This ledger does not claim a complete cycle-4 gate, cycle-4
-candidate, formal cycle-4 review, green adversarial result, feature CI,
-benchmark, integration, delivery, performance, compatibility promotion, or fx
-equivalence.
+its complete replacement gate; exact Android remediation `bd47461` is composed
+in replacement-gated cycle-4 behavior candidate `57d2ac2`, tree `d30bb656`.
+That candidate is submitted to three fresh formal cycle-4 reviews. This ledger
+does not claim their results, a green adversarial result, feature CI, benchmark,
+integration, delivery, performance, compatibility promotion, or fx equivalence.
 
 A local feature-topology refinement adds native
 `ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
@@ -106,18 +111,11 @@ makes Android retain the existing fixed redacted unavailable state without
 calling any DNS or platform loader. Apple/Windows keep their platform snapshot
 API, and generic Unix keeps its bounded file parser.
 
-Current preflight-remediation evidence under exact Rust and Cargo 1.94.1 is
-green for formatting, native all-target/all-feature warnings-denied Clippy,
-private resolver 14/14, and parsed-manifest/resolved-tree 5/5. The current five-
-target resolved tree contains the intended catalog edges and excludes them on
-WASI. The Android standard-library target was unavailable locally, so no
-Android Rust compilation is claimed. The foreign Linux HTTP build retained the
-existing `aws-lc-sys` C-sysroot blocker before product Rust, so exact remote
-Linux CI remains authoritative. These focused results do not establish the
-complete cycle-4 replacement gate. The complete cycle-2 target matrix had
-previously confirmed that native default, catalog-only, compatibility-umbrella,
-and all-feature checks compile, and that native and CLI WASI Preview 1 checks
-compile with only the established native `read_file` dead-code warning.
+Exact cycle-4 candidate `57d2ac2` passed the complete replacement gate under
+exact Rust and Cargo 1.94.1. Focused core 6/6, provider/parser 17/17, credential
+6/6, loopback HTTP 16/16, private resolver 14/14, CLI unit 18/18, CLI integration
+23/23, and parsed-manifest/resolved-tree 5/5 suites are green. The complete
+target evidence and its honest foreign-C boundary are recorded below.
 
 On rejected cycle-2 candidate `2ea9d94`, the resolved CLI package-name inventory
 drops from 137 on exact precursor
@@ -132,9 +130,10 @@ not a speed, memory, binary-size improvement, product-performance, or delivery
 claim. That cycle-2 replacement gate is green but its reviews rejected the
 candidate. Exact cycle-3 candidate `2cecc921` passed its replacement gate and
 its reviews rejected it. Preflight rejected the first cycle-4 precursor before
-the complete gate; it was not a formal review and cycle 4 remains unsubmitted.
-The complete cycle-4 gate, cycle-4 candidate, three fresh formal cycle-4
-reviews, feature CI, integration, and exact `main` CI remain pending.
+the complete gate; it was not a formal review. Exact replacement-gated cycle-4
+candidate `57d2ac2`, tree `d30bb656`, is now submitted to three fresh formal
+reviews. Their results, feature CI, integration, and exact `main` CI remain
+pending.
 
 ## Exact cycle-2 replacement gate
 
@@ -420,7 +419,7 @@ a documentation-only statement.
 | 1 | `6277aa3dc26f9c485707c667f63525a2138f316b` / `b5e2445ed90df000255b51c2c989d71965db1d77` | 0 blocker, 0 high, 0 medium, 4 low | 0 blocker, 0 high, 2 medium, 1 low | 0 blocker, 0 high, 2 medium, 3 low | 0 blocker, 0 high, 2 medium, 6 low after deduplication | **REJECTED** |
 | 2 | `2ea9d94374c4dd18f43255af785ee31088126c56` / `3a948b2950d870a9cabe479bc6c3889dd5a13a3b` | 0 blocker, 0 high, 0 medium, 1 low | 0 blocker, 1 high, 1 medium, 0 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 1 high, 1 medium, 1 low after deduplication | **REJECTED** |
 | 3 | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | 0 blocker, 0 high, 0 medium, 2 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 1 medium, 3 low after deduplication | **REJECTED** |
-| 4 | pending / pending | pending | pending | pending | pending | **NOT SUBMITTED** |
+| 4 | `57d2ac2a3cc562763739f49642e6fdd172f036e8` / `d30bb656dfe52e15858df9d4e52a301cb61da8ce` | pending | pending | pending | pending | **SUBMITTED** |
 
 ### Cycle 1 rejected findings and remediation
 
@@ -542,10 +541,8 @@ exact remediation `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`, tree
 process before the fixed provider timer, cancellation, or redacted error map
 can respond.
 
-This inspection was not one of the three formal cycle-4 review tracks. The
-cycle-4 row in the candidate register therefore remains **NOT SUBMITTED**, and
-the preflight counts do not replace or alter the preserved formal cycle-3
-counts.
+This inspection was not one of the three formal cycle-4 review tracks and the
+preflight counts do not replace or alter the preserved formal cycle-3 counts.
 
 Exact remediation `bd4746197736004f3a02c4c910c569444e4653e7`, tree
 `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, gives Android a separate
@@ -559,9 +556,54 @@ unavailable locally, so no Android compile result is claimed. Foreign Linux
 HTTP compilation retained the existing `aws-lc-sys` C-sysroot blocker before
 product Rust, so exact remote Linux CI remains authoritative.
 
-The current SHA is still only a pre-gate remediation precursor. The complete
-cycle-4 replacement gate, immutable cycle-4 candidate, and three fresh formal
-cycle-4 reviews remain pending.
+## Exact cycle-4 replacement gate and submission
+
+Exact behavior candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
+`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, passed the complete replacement
+local gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- formatting, workspace all-target/all-feature warnings-denied Clippy, 972
+  non-documentation Rust tests, and both workspace doctests passed;
+- focused core 6/6, provider/parser 17/17, credential 6/6, loopback HTTP 16/16,
+  private resolver 14/14, CLI unit 18/18, CLI integration 23/23, and manifest
+  5/5 suites passed;
+- all 135 Python tests passed on the first sequential run with eight expected
+  macOS skips, and regeneration against pinned fx
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` was byte-stable;
+- documentation integrity covered 78 Markdown files, 127 balanced fence
+  blocks, 567 inline links, and 410 repository-relative targets with zero
+  missing targets;
+- `cargo-deny 0.19.9` passed with only the allowed duplicate warnings.
+  `cargo-audit 0.22.2 --no-fetch` loaded 1,226 advisories, scanned 210
+  dependencies, and found zero vulnerabilities. An initial mistaken
+  `cargo audit audit --no-fetch` invocation was corrected immediately to the
+  valid command and is not represented as a product failure;
+- host default, narrow catalog, broad HTTP, all-feature, and CLI checks passed.
+  WASI native default, catalog, and CLI checks passed with the established
+  `read_file` warning, while Linux and FreeBSD no-feature checks passed;
+- catalog HTTP cross-compilation for Linux and FreeBSD stopped in `aws-lc-sys`
+  because the macOS host lacks the foreign C standard-library/sysroot headers,
+  before product Rust. Exact remote Linux CI remains authoritative;
+- resolved target trees for macOS, Linux, FreeBSD, Windows, Android, and WASI
+  have the intended direct edges, and the Android fail-closed source invariant
+  is green;
+- the exact delivered-base diff covers 33 files at +9,890/-209, passes
+  `git diff --check`, adds no unsafe Rust, and leaves workflows, benchmark
+  workloads, and generated compatibility data unchanged; and
+- a fresh locked 3,818,944-byte `target/release/machine-god` with SHA-256
+  `caf993ea44007431f16b5a0b7383865e4bead46337e2e9c711a8a9174812bd7c`
+  resolved 139 normal packages and passed six black-box identity/version/help,
+  invalid-argument, invalid-credential, and live-public cases. The live public
+  catalog returned 228 models and created no configuration or state write.
+
+These are correctness, boundedness, portability, and regression checks. They
+make no speed, memory, binary-size-improvement, catalog-equivalence, product-
+performance, or fx-equivalence claim. Exact candidate `57d2ac2`, tree
+`d30bb656`, is **SUBMITTED** to three fresh formal cycle-4 reviewers. Their
+results remain pending, so no review-green, workflow, integration, or delivery
+claim is made. This following documentation-only submission seal changes no
+behavior and is exempt from redundant adversarial review under the user's
+instruction.
 
 ## Remote and integration boundary
 

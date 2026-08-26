@@ -73,9 +73,13 @@ one medium, and one low finding. Parser and HTTP lifecycle remediation is
 composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate attempt
 `c011398`, tree `4ac4e5b`, was rejected by its DNS-config lifecycle audit;
 remediation is composed at `d9922ef` and `e5248b1`. Exact cycle-3 candidate
-`2cecc921`, tree `8c0d235`, passed its complete gate. Three fresh cycle-3
-reviews, feature/main integration, and delivery remain pending. No candidate
-is review-green.
+`2cecc921`, tree `8c0d235`, passed its complete gate but formal review rejected
+it with a deduplicated union of one medium and three low findings. Documentation,
+private bounded-DNS, and Android fail-closed remediation is composed at
+`f80bd056`, `b6cf4cb`, and `bd47461`. Exact cycle-4 candidate `57d2ac2`, tree
+`d30bb656`, passed the complete exact-1.94.1 replacement gate and is submitted
+to three fresh formal reviews. Their results, feature/main integration, and
+delivery remain pending. No candidate is review-green.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also

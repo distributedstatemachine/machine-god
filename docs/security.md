@@ -29,18 +29,26 @@ at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate attempt `c011398`, tree
 `4ac4e5b`, was rejected because system-DNS discovery still ran synchronously
 inside request polling. Bounded eager snapshot and per-runtime absolute-name
 resolver remediation is composed at `d9922ef` and `e5248b1`. The complete
-cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`. Three fresh
-cycle-3 reviews, integration, and delivery remain pending; no candidate is
-review-green. The ledger is
+cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`, but formal
+review rejected it with one medium and three low findings after deduplication.
+Documentation and private bounded-DNS remediation is composed at `f80bd056`
+and `b6cf4cb`; Android fail-closed platform-loader remediation is `bd47461`.
+Exact cycle-4 candidate `57d2ac2`, tree `d30bb656`, passed the complete exact-
+1.94.1 replacement gate and is submitted to three fresh formal reviews. Their
+results, integration, and delivery remain pending; no candidate is review-
+green. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 Catalog HTTP now has a dedicated non-WASM
 `ai-gateway-model-catalog-http` feature. The CLI enables only this narrower
 surface, so listing models does not activate `web-fetch-http`, direct generation
 `bytes`, or Tokio's signal backend. It does activate a system-config-only async
-Hickory resolver and its transitive protocol/network/cache graph; unavailable
-system resolver configuration fails closed, with neither public fallback nor
-default blocking GAI. Signal handling is activated only by the CLI dependency.
+DNS boundary: Hickory resolver parses bounded platform configuration only,
+while private Tokio UDP/TCP and direct Hickory protocol decoding own network
+resolution. Request polling invokes neither entropy nor a resolver task;
+Android fails closed before its platform loader. Unavailable system resolver
+configuration fails closed, with neither public fallback nor default blocking
+GAI. Signal handling is activated only by the CLI dependency.
 Shared bearer validation, credential discovery, pinned TLS roots, and catalog
 GET exports are available under either native HTTP feature; the generation
 transport and reference host remain `ai-gateway-http`-only. The existing broader

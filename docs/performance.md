@@ -24,20 +24,27 @@ low finding. Parser and HTTP lifecycle remediation is composed at `9cf8c74`,
 was rejected because synchronous system-DNS snapshot work remained inside the
 timed request poll. Eager bounded snapshot and zero-cache per-runtime resolver
 remediation is composed at `d9922ef` and `e5248b1`. The complete cycle-3 gate,
-exact candidate `2cecc921`, tree `8c0d235`, is green. Three fresh cycle-3
-reviews, exact-SHA workflow artifacts, and a later claim-eligible M07 comparison
-remain required before any speed, latency, memory, or fx-equivalence statement.
+exact candidate `2cecc921`, tree `8c0d235`, was green, but formal review rejected
+the candidate with one medium and three low findings after deduplication.
+Documentation, private bounded-DNS, and Android fail-closed remediation is
+composed at `f80bd056`, `b6cf4cb`, and `bd47461`. Exact cycle-4 candidate
+`57d2ac2`, tree `d30bb656`, passed the complete exact-1.94.1 replacement gate
+and is submitted to three fresh formal reviews. Their results, exact-SHA
+workflow artifacts, and a later claim-eligible M07 comparison remain required
+before any speed, latency, memory, or fx-equivalence statement.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence
 requires the catalog's direct HTTP/TLS/runtime dependencies while excluding
 generation-only direct `bytes`, `web-fetch-http`, and Tokio's signal backend.
-Cycle-2 remediation adds a direct async Hickory resolver and its transitive
-protocol/network/cache graph so blocking GAI cannot outlive runtime teardown.
-The broader `ai-gateway-http` feature still adds direct `bytes` and web fetch,
-while the CLI alone requests Tokio signal handling for its Ctrl-C/SIGTERM
-composition. Release size and hash are regression evidence only and do not
-establish a performance improvement.
+Current remediation keeps Hickory resolver only for bounded platform-
+configuration parsing and uses private bounded Tokio UDP/TCP plus direct
+Hickory protocol decoding for network resolution, so no Hickory resolver task
+or request-polled entropy can outlive runtime teardown. Android fails closed
+before platform loading. The broader `ai-gateway-http` feature still adds
+direct `bytes` and web fetch, while the CLI alone requests Tokio signal handling
+for its Ctrl-C/SIGTERM composition. Release size and hash are regression
+evidence only and do not establish a performance improvement.
 
 Initial workloads cover startup, help/status/session commands, session replay,
 file indexing, deterministic streaming, parallel read-only tools, cancellation,

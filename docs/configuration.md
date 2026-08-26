@@ -57,8 +57,12 @@ findings did not change configuration behavior; parser and HTTP lifecycle
 remediation is composed at `9cf8c74`, `8187b12`, and `499af85`. Pre-review gate
 attempt `c011398` was rejected by request-time DNS configuration discovery;
 bounded eager snapshot remediation is composed at `d9922ef` and `e5248b1`.
-Exact cycle-3 candidate `2cecc921`, tree `8c0d235`, passed its complete gate;
-fresh cycle-3 review, integration, and delivery remain pending.
+Exact cycle-3 candidate `2cecc921`, tree `8c0d235`, passed its complete gate but
+formal review rejected it. Exact cycle-4 candidate `57d2ac2`, tree `d30bb656`,
+includes documentation, private bounded-DNS, and Android fail-closed
+remediation, passed the complete exact-1.94.1 replacement gate, and is submitted
+to three fresh formal reviews. Their results, integration, and delivery remain
+pending.
 The historical configuration green status above does not make this new
 composition green.
 
