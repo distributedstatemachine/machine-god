@@ -30,6 +30,7 @@ mod config;
 mod copy_file;
 mod create_folder;
 mod delete_file;
+mod doctor;
 mod edit_file;
 mod file_info;
 mod glob_files;
@@ -141,6 +142,11 @@ pub use delete_file::{
     DELETE_FILE_TOOL_NAME, DeleteFileTool, DeleteFileToolOpenError, DeleteFileToolOpenErrorKind,
     MAX_DELETE_FILE_PATH_BYTES, MAX_DELETE_FILE_PATH_COMPONENTS,
     MAX_DELETE_FILE_SERIALIZED_ARGUMENT_BYTES, MAX_DELETE_FILE_SERIALIZED_RESULT_BYTES,
+};
+pub use doctor::{
+    NATIVE_DOCTOR_CHECK_COUNT, NativeDoctorCheck, NativeDoctorCheckStatus,
+    NativeDoctorCredentialStatus, NativeDoctorReport, inspect_native_doctor,
+    inspect_process_doctor,
 };
 pub use edit_file::{
     EDIT_FILE_TOOL_NAME, EditFileTool, EditFileToolOpenError, EditFileToolOpenErrorKind,
