@@ -64,11 +64,14 @@ machine-god-native catalog HTTP GET + TLS + attempt-local timer/permit
 ```
 
 The thin CLI enables native's dedicated non-WASM
-`ai-gateway-model-catalog-http` feature. That feature owns only the shared
-bearer/TLS and catalog HTTP dependency boundary and omits `web-fetch-http`,
-Hickory DNS, Moka, and generation-only direct `bytes`. The workspace Tokio
-surface omits signal handling; only the native CLI dependency requests Tokio's
-signal feature. Existing `ai-gateway-http` consumers retain their prior
+`ai-gateway-model-catalog-http` feature. That feature owns the shared bearer,
+TLS, and catalog HTTP boundary together with its dedicated asynchronous system-
+configuration DNS implementation and the protocol/cache dependencies resolved
+by that implementation. Exact package topology is enforced by the native
+manifest evidence rather than frozen in this architecture summary. The catalog
+feature omits `web-fetch-http` and generation-only direct `bytes`. The workspace
+Tokio surface omits signal handling; only the native CLI dependency requests
+Tokio's signal feature. Existing `ai-gateway-http` consumers retain their prior
 generation/reference-host surface because that feature adds direct `bytes` and
 includes both the catalog feature and `web-fetch-http`. Generation transport
 and reference-host exports remain behind `ai-gateway-http`; provider-neutral

@@ -40,9 +40,15 @@ all(
 ```
 
 The narrower catalog feature exposes the shared bearer/error and credential
-surface without enabling generation transport exports, `web-fetch-http`,
-Hickory DNS, or Moka. The existing `ai-gateway-http` feature includes the
-catalog and web-fetch features and preserves its prior public behavior.
+surface and directly enables the catalog transport's dedicated asynchronous
+system-configuration DNS implementation together with the protocol/cache
+dependencies resolved by that implementation. Exact package topology is
+enforced by the native HTTP/manifest evidence rather than frozen in this
+credential contract. The catalog feature does not enable generation transport
+exports, `web-fetch-http`, generation-only direct `bytes`, or workspace-wide
+Tokio signal handling; the native CLI requests signal handling separately. The
+existing `ai-gateway-http` feature includes the catalog and web-fetch features
+and preserves its prior public behavior.
 
 The public construction and discovery surface is:
 

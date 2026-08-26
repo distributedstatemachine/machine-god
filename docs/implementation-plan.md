@@ -3911,10 +3911,16 @@ gate:
   slash-command categories `general`, `session`, `model`, `security`, and
   `workspace`. Observable compatibility is scenario-based; command names may
   remain intentional differences when documented. `models [--json]` has its
-  bounded slice-29 contract and local implementation, but this combined item
-  remains unchecked after rejected cycle 1 until the complete replacement
-  local gate, fresh cycle-2 review, feature workflows, fast-forward, and exact-
-  `main` gates are complete.
+  bounded slice-29 contract and local implementation. Exact cycle-2 candidate
+  `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
+  was rejected. Pre-review gate attempt
+  `c01139811685ae73031ed6f6cbd771e4ff636714` was also rejected and remediated.
+  Exact cycle-3 candidate `2cecc921e48396e81ab6f434007a7ec8e3e890b5`
+  passed the complete replacement gate, but formal cycle-3 review rejected that
+  SHA; its consolidated finding union is being recorded separately. This
+  combined item remains unchecked while the next complete replacement gate,
+  three fresh review tracks, feature workflows, non-force fast-forward, and
+  exact `main` gates are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass
