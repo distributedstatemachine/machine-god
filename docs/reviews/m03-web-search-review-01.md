@@ -383,6 +383,17 @@ also passed in its clean isolated worktree. Maintained behavior documentation is
 composed with the component in the current remediation. The complete replacement
 gate and one new immutable review candidate remain pending.
 
+The first broader all-feature workspace run correctly rejected one remaining
+capacity-one reference-host fixture that still emitted the pre-remediation
+finish envelope. Exact isolated fixture component
+`9f6c4745c789b63987ae42333cda7ab89b0515da`, tree
+`e4d2ae78c0d367b6027c3140095b1363949a3a95`, aligns that nested worker finish
+with the same official bounded shape. Its focused capacity-one regression passed
+1/1, the dedicated codec passed 16/16, web-search engine integration passed 2/2,
+and the complete all-feature workspace then passed under exact Rust 1.94.1. The
+component worktree was clean after commit. The composed replacement gate restarts
+on the new exact remediation commit before review kickoff.
+
 ## Worktree lifecycle
 
 Every implementation or review/remediation iteration ends by verifying that
