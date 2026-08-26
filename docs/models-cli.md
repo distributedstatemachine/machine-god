@@ -285,10 +285,14 @@ other than Apple and Android accepts
 the ordinary `/etc/resolv.conf` symlink only when pre-open, opened-descriptor,
 and final metadata are regular and at most 64 KiB; nonblocking close-on-exec
 reading retains at most one additional overflow byte and has finite read and
-interruption bounds. Apple, Windows, and Android use their synchronous platform
-API during construction and then reject a snapshot over 32 nameservers, 32
-search domains, 8 KiB of DNS names, 64 server connections, or the fixed option
-bounds. Those platform APIs may allocate their result before post-validation.
+interruption bounds. Apple and Windows use their synchronous platform API
+during construction and then reject a snapshot over 32 nameservers, 32 search
+domains, 8 KiB of DNS names, 64 server connections, or the fixed option bounds.
+Those platform APIs may allocate their result before post-validation. Android
+does not call Hickory's platform API because it requires initialized NDK process
+context and may panic when that context is absent. Android instead retains a
+fixed unavailable configuration state, so the production catalog hostname
+fails closed through the redacted `Transport` result without a DNS request.
 
 Each Reqwest resolution runs private bounded Tokio UDP/TCP exchange from the
 snapshot. A construction-keyed `AtomicU32` sequence derives 16-bit query IDs

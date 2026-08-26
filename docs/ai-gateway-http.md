@@ -306,12 +306,17 @@ descriptor after open to be a regular file no larger than 64 KiB. It opens with
 `O_CLOEXEC | O_NONBLOCK`, retains at most 64 KiB plus one overflow byte, permits
 at most 16 interrupted reads and a finite byte-proportional read-call count,
 and repeats the descriptor type/size check at EOF. Directories, special files,
-growth past the cap, unavailable files, and malformed input fail closed. Apple,
-Windows, and Android use Hickory's synchronous platform configuration API only
-during construction, then post-validate the returned snapshot. Platform APIs
-may allocate their returned values before machine-god can reject them; retained
-state is nevertheless bounded to 32 nameservers, 32 search domains, 8 KiB of
-aggregate DNS-name bytes, 64 server connections, and bounded resolver options.
+growth past the cap, unavailable files, and malformed input fail closed. Apple
+and Windows use Hickory's synchronous platform configuration API only during
+construction, then post-validate the returned snapshot. Those platform APIs may
+allocate their returned values before machine-god can reject them. Android does
+not call Hickory's platform API because it requires initialized NDK process
+context and may panic when that context is absent. Android instead retains a
+fixed unavailable configuration state at construction, so production catalog
+hostname resolution fails closed through the redacted catalog `Transport`
+failure without sending a DNS request. Retained successful snapshots are
+nevertheless bounded to 32 nameservers, 32 search domains, 8 KiB of aggregate
+DNS-name bytes, 64 server connections, and bounded resolver options.
 Case-randomization and nonempty avoided-local-port sets are unsupported and
 fail closed rather than silently losing configured behavior. The snapshot
 retains configured UDP and TCP endpoints, trust-negative flags, request

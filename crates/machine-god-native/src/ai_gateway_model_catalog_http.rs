@@ -1160,12 +1160,22 @@ fn load_system_resolver_snapshot()
     Ok(ParsedSystemResolverSnapshot { config, options })
 }
 
-#[cfg(any(target_os = "android", target_os = "windows", target_vendor = "apple"))]
+#[cfg(any(target_os = "windows", target_vendor = "apple"))]
 fn load_system_resolver_snapshot()
 -> Result<ParsedSystemResolverSnapshot, SystemResolverConfigurationUnavailable> {
     let (config, options) = hickory_resolver::system_conf::read_system_conf()
         .map_err(|_| SystemResolverConfigurationUnavailable)?;
     Ok(ParsedSystemResolverSnapshot { config, options })
+}
+
+#[cfg(target_os = "android")]
+fn load_system_resolver_snapshot()
+-> Result<ParsedSystemResolverSnapshot, SystemResolverConfigurationUnavailable> {
+    // Hickory's Android loader requires initialized NDK process context and
+    // panics when that global context is absent. A release panic aborts this
+    // process, so catalog DNS stays unavailable until a non-panicking native
+    // configuration boundary is explicitly provided.
+    Err(SystemResolverConfigurationUnavailable)
 }
 
 #[cfg(not(any(

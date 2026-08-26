@@ -7,6 +7,13 @@ import unittest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_MANIFEST = REPOSITORY_ROOT / "Cargo.toml"
 NATIVE_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-native" / "Cargo.toml"
+MODEL_CATALOG_HTTP_SOURCE = (
+    REPOSITORY_ROOT
+    / "crates"
+    / "machine-god-native"
+    / "src"
+    / "ai_gateway_model_catalog_http.rs"
+)
 CLI_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-cli" / "Cargo.toml"
 NON_WASM_CFG = 'cfg(not(target_family = "wasm"))'
 SHA2_DEFAULT_NATIVE_CFG = 'cfg(any(target_os = "linux", target_os = "macos"))'
@@ -248,6 +255,38 @@ class NativeManifestTests(unittest.TestCase):
             resolved_dependencies,
         )
         self.assertNotIn("signal-hook-registry", resolved_dependencies)
+
+    def test_model_catalog_android_dns_fails_closed_without_platform_api(self) -> None:
+        source = MODEL_CATALOG_HTTP_SOURCE.read_text(encoding="utf-8")
+        android_cfg = '#[cfg(target_os = "android")]\n'
+        apple_windows_cfg = (
+            '#[cfg(any(target_os = "windows", target_vendor = "apple"))]\n'
+        )
+        generic_unix_cfg = (
+            '#[cfg(all(unix, not(any(target_os = "android", '
+            'target_vendor = "apple"))))]\n'
+        )
+        loader_signature = "fn load_system_resolver_snapshot()\n"
+
+        self.assertEqual(source.count(generic_unix_cfg + loader_signature), 1)
+        self.assertEqual(source.count(android_cfg + loader_signature), 1)
+        self.assertEqual(source.count(apple_windows_cfg + loader_signature), 1)
+
+        android_branch = source.split(
+            android_cfg + loader_signature, maxsplit=1
+        )[1].split(
+            "\n#[cfg(", maxsplit=1
+        )[0]
+        self.assertIn(
+            "Err(SystemResolverConfigurationUnavailable)",
+            android_branch,
+        )
+        self.assertNotIn("read_system_conf", android_branch)
+
+        apple_windows_branch = source.split(
+            apple_windows_cfg + loader_signature, maxsplit=1
+        )[1].split("\n#[cfg(", maxsplit=1)[0]
+        self.assertIn("read_system_conf", apple_windows_branch)
 
 
 if __name__ == "__main__":
