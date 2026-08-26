@@ -2324,6 +2324,24 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct ZeroProgressWriter {
+        captured: Vec<u8>,
+        calls: usize,
+    }
+
+    impl io::Write for ZeroProgressWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            assert!(!buffer.is_empty());
+            self.calls += 1;
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[derive(Debug)]
     struct PartialThenBrokenWriter {
         prefix: Vec<u8>,
@@ -2657,6 +2675,34 @@ mod tests {
 
             assert_eq!(exit, 1);
             assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+            assert_eq!(host.calls.get(), 1);
+        }
+    }
+
+    #[test]
+    fn doctor_zero_progress_stdout_uses_fixed_output_diagnostic() {
+        let report = doctor_report([
+            check("configuration", DoctorCheckStatus::Ok, "loaded"),
+            check("credentials", DoctorCheckStatus::Warn, "missing"),
+            check("state", DoctorCheckStatus::Ok, "available"),
+            check("workspace", DoctorCheckStatus::Ok, "available"),
+        ]);
+        for json in [false, true] {
+            let host = FakeDoctorHost::new(Ok(report));
+            let mut stdout = ZeroProgressWriter::default();
+            let mut stderr = Vec::new();
+            let arguments = if json {
+                vec![OsString::from("doctor"), OsString::from("--json")]
+            } else {
+                vec![OsString::from("doctor")]
+            };
+
+            let exit = run_with_doctor_host(arguments, &mut stdout, &mut stderr, &host);
+
+            assert_eq!(exit, 1);
+            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+            assert!(stdout.captured.is_empty());
+            assert_eq!(stdout.calls, 1);
             assert_eq!(host.calls.get(), 1);
         }
     }
