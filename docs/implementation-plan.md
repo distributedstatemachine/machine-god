@@ -158,8 +158,13 @@ superseded approximately 8.9 MB allocation evidence as current. Production
 review was otherwise green. Independent correctness evidence ran 312 generated
 valid/boundary differentials and 1,200 randomized mutation differentials with
 zero mismatch; the native track was green; and the performance allocation and
-resource audit was green. Remediation synchronizes those maintained summaries.
-Fresh cycle-6 reviews, remote workflows, `main` integration, and delivery
+resource audit was green. That cross-document remediation is composed in exact
+cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
+and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
+is solely that the candidate described its own committed remediation as
+pending. There is no additional production, API, native, or performance finding.
+Fresh cycle-7 reviews, remote workflows, `main` integration, and delivery
 remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
@@ -3674,7 +3679,12 @@ across the maintained summary pages listed in the review ledger; production
 review was otherwise green. Independent correctness evidence completed 312
 generated valid/boundary and 1,200 randomized mutation differentials with zero
 mismatch, while the native and performance allocation/resource tracks were
-green. Cross-document status remediation, fresh cycle-6 review, remote
+green. Cross-document status remediation is composed in exact cycle-6 candidate
+`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
+and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
+is solely the self-pending remediation wording. There is no additional
+production, API, native, or performance finding. Fresh cycle-7 review, remote
 workflows, `main` integration, and delivery remain pending.
 
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
@@ -4699,8 +4709,13 @@ gate:
   was otherwise green. Independent correctness evidence completed 312
   generated valid/boundary and 1,200 randomized mutation differentials with
   zero mismatch, and the native and performance allocation/resource tracks
-  were green. Cross-document status remediation, fresh cycle-6 reviews, remote
-  workflows, `main` integration, and delivery remain pending.
+  were green. Cross-document status remediation is composed in exact cycle-6
+  candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+  `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
+  and performance/resources each reported `0/0/0/1`; the deduplicated
+  `0/0/0/1` is solely the self-pending remediation wording. No additional
+  production, API, native, or performance finding exists. Fresh cycle-7 reviews,
+  remote workflows, `main` integration, and delivery remain pending.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.

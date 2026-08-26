@@ -214,7 +214,13 @@ short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
 `35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact
 `8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
 performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
-summary finding. This docs remediation, three fresh cycle-6 reviews, remote
+summary finding. That documentation remediation is already composed in exact
+cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
+correctness/API, native effects, and performance/resources each reported
+`0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
+committed remediation as pending. There is no additional production, API,
+native, or performance finding. Three fresh cycle-7 reviews, remote
 workflows, `main` integration, and delivery remain pending. The slice remains
 non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
 equivalence claim is made. Full evidence is in the

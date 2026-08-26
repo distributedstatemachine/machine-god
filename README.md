@@ -39,9 +39,15 @@ Allocator total/current/maximum tuples are `12/2/7` allocations and
 
 Formal cycle 5 rejected exact `8f533cde`: correctness/API reported `0/0/0/1`,
 native effects `0/0/0/0`, and performance/resources `0/0/0/1`; the
-deduplicated `0/0/0/1` is stale cross-document current summaries. This
-documentation remediation and three fresh cycle-6 reviews remain pending, as
-do remote workflows, `main` integration, and delivery. The slice remains non-
+deduplicated `0/0/0/1` is stale cross-document current summaries. That
+documentation remediation is already composed in exact cycle-6 candidate
+`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
+correctness/API, native effects, and performance/resources each reported
+`0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
+committed remediation as pending. There is no additional production, API,
+native, or performance finding. Three fresh cycle-7 reviews, remote workflows,
+`main` integration, and delivery remain pending. The slice remains non-
 equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
 equivalence claim is made. The authoritative record is the
 [`live ledger`](docs/reviews/m03-session-cli-review-01.md).

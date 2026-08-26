@@ -48,8 +48,14 @@ stale cycle/allocation status in maintained summary pages. Production review
 was otherwise green: 312 generated valid/boundary and 1,200 randomized mutation
 differentials had zero mismatch, the native track was green, and the
 performance allocation/resource audit was green. Cross-document status
-remediation, fresh cycle-6 reviews, remote workflows, `main` integration, and
-delivery remain pending; this is not a review-green or delivered claim.
+remediation is composed in exact cycle-6 candidate
+`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
+and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
+is solely that the candidate's pages described their own committed remediation
+as pending. There was no additional production, API, native, or performance finding.
+Fresh cycle-7 reviews, remote workflows, `main` integration, and delivery
+remain pending; this is not a review-green or delivered claim.
 No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 

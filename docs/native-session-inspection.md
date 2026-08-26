@@ -37,8 +37,14 @@ cycle/allocation status in maintained summary pages, not a native production
 finding. Independent correctness evidence completed 312 generated valid/
 boundary and 1,200 randomized mutation differentials with zero mismatch; the
 native track and performance allocation/resource audit were green. Cross-
-document status remediation, fresh cycle-6 reviews, remote workflows, `main`
-integration, and delivery remain pending. Its sole first consumer is the strict
+document status remediation is composed in exact cycle-6 candidate
+`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
+and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
+is solely that the candidate's pages described their own committed remediation
+as pending. There was no additional production, API, native, or performance finding.
+Fresh cycle-7 reviews, remote workflows, `main` integration, and delivery
+remain pending. Its sole first consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -203,5 +209,8 @@ order. The direct native near-cap probe passed 1/1. Full evidence is retained in
 the review ledger. Formal cycle 5 rejected exact candidate `8f533cd`, tree
 `8215fb9`, only because maintained summary pages were stale. The native track
 reported `0/0/0/0`; production review and the performance allocation/resource
-audit were otherwise green. Cross-document status remediation and fresh
-cycle-6 review remain pending.
+audit were otherwise green. Cross-document remediation is composed in exact
+cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. All three cycle-6 tracks reported
+`0/0/0/1`, deduplicated to the sole self-pending wording low; no additional
+production finding exists. Fresh cycle-7 review remains pending.

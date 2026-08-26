@@ -1,17 +1,14 @@
 # Milestone 03 session CLI review ledger
 
-Status: formal cycle 5 rejected exact candidate
-`8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
-`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`, with a deduplicated `0/0/0/1`
-verdict. Exact cycle-4 remediation
-`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
-`b320f55219ebc808790138dfd293d32e83da77c3`, passed its complete local gate
-under exact Rust/Cargo 1.94.1 without fallback before documentation was
-composed into the rejected cycle-5 candidate. The sole finding is stale
-cycle/allocation status across maintained summary pages; production review was
-otherwise green. Cross-document status remediation, fresh cycle-6 reviews,
-remote delivery gates, integration, and delivery remain pending. This is not a
-review-green or delivered claim.
+Status: formal cycle 6 rejected exact candidate
+`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
+and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
+is the sole self-pending remediation wording finding. That exact candidate is
+itself the committed cross-document remediation for cycle 5; there is no
+additional production/API/native/performance finding. Three fresh cycle-7
+reviews, remote delivery gates, integration, and delivery remain pending. This
+is not a review-green or delivered claim.
 Historical rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
@@ -517,14 +514,41 @@ track's allocation and resource audit was also green apart from the overlapping
 stale-documentation finding.
 
 Any finding rejects the entire candidate, so `8f533cd` is not review-green.
-Remediation synchronizes the maintained summary pages while preserving the
-cycle-4 contract and complete-gate evidence above. The replacement must pass
-the complete local gate and three fresh cycle-6 reviews on one exact SHA. No
-prior discovery, implementation, review, or remediation agent may approve its
-own work or be reused in a later review cycle. Only a deduplicated `0/0/0/0`
-candidate is formally green. Remote workflows, `main` integration, delivery,
-compatibility-promotion, product-performance, and fx-equivalence claims remain
-pending or absent.
+Cross-document remediation synchronizes the maintained summary pages while
+preserving the cycle-4 contract and complete-gate evidence above. It is
+composed in exact candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`,
+tree `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`, assessed next.
+
+## Formal cycle 6 verdict
+
+Three fresh isolated agents reviewed exact candidate
+`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Counts are blocker/high/medium/
+low:
+
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Rejected | `0/0/0/1` |
+| Native boundary/effects and portability | Rejected | `0/0/0/1` |
+| Performance/concurrency/resources and evidence | Rejected | `0/0/0/1` |
+
+The overlapping reports deduplicate to `0/0/0/1`:
+
+1. **Low — self-pending remediation wording.** Candidate `5332d6a` is the
+   committed cross-document status remediation, but its maintained current
+   pages still mislabeled that remediation and cycle-6 review as future work.
+   Only fresh cycle-7 review, remote workflows, `main` integration, and
+   delivery should remain pending.
+
+There is no additional production, API, native, performance, resource, or
+compatibility finding. Any finding rejects the entire candidate, so `5332d6a`
+is not review-green. The wording remediation is present in this replacement;
+three fresh cycle-7 reviews on one exact SHA remain pending. No prior discovery,
+implementation, review, or remediation agent may approve its own work or be
+reused in a later review cycle. Only a deduplicated `0/0/0/0` candidate is
+formally green. Remote workflows, `main` integration, delivery, compatibility-
+promotion, product-performance, and fx-equivalence claims remain pending or
+absent.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees

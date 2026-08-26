@@ -28,9 +28,16 @@ short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
 
 Cycle 5 rejected exact `8f533cde`: correctness/API `0/0/0/1`, native effects
 `0/0/0/0`, and performance/resources `0/0/0/1`, deduplicated to one low stale
-cross-document-summary finding. This documentation remediation, three fresh
-cycle-6 reviews, remote workflows, `main` integration, and delivery remain
-pending. The slice stays non-equivalent, unmeasured, and claim-ineligible; no
+cross-document-summary finding. That documentation remediation is already
+composed in exact cycle-6 candidate
+`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
+correctness/API, native effects, and performance/resources each reported
+`0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
+committed remediation as pending. There is no additional production, API,
+native, or performance finding. Three fresh cycle-7 reviews, remote workflows,
+`main` integration, and delivery remain pending. The slice
+stays non-equivalent, unmeasured, and claim-ineligible; no
 product-performance or fx-equivalence claim is made. See the
 [`live ledger`](reviews/m03-session-cli-review-01.md).
 
@@ -39,7 +46,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Provider-neutral core API](core-api.md)
 - [Deterministic testkit](testkit.md)
 - [Command-line interface](cli.md)
-- [Cycle-5-rejected top-level `session` CLI contract](session-cli.md)
+- [Cycle-6-rejected top-level `session` CLI contract](session-cli.md)
 - [Delivered top-level `doctor` CLI contract](doctor-cli.md)
 - [Delivered top-level `models` CLI contract](models-cli.md)
 - [Delivered top-level `permissions` CLI contract](permissions-cli.md)
@@ -67,7 +74,7 @@ product-performance or fx-equivalence claim is made. See the
 - [Native root selection and preparation](native-root-selection.md)
 - [Native by-ID session lifecycle](native-session-lifecycle.md)
 - [Native session listing](native-session-listing.md)
-- [Cycle-5-rejected native session inspection (cycle 6 pending)](native-session-inspection.md)
+- [Cycle-6-rejected native session inspection (cycle 7 pending)](native-session-inspection.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)

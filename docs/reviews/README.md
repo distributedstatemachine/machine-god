@@ -27,16 +27,22 @@ short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
 `35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact
 `8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
 performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
-summary finding. This docs remediation and three fresh cycle-6 reviews remain
-pending, as do remote workflows, `main` integration, and delivery. The slice
+summary finding. That documentation remediation is already composed in exact
+cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
+`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
+correctness/API, native effects, and performance/resources each reported
+`0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
+committed remediation as pending. There is no additional production, API,
+native, or performance finding. Three fresh cycle-7 reviews remain pending,
+as do remote workflows, `main` integration, and delivery. The slice
 remains non-equivalent, unmeasured, and claim-ineligible; no product-
 performance or fx-equivalence claim is made.
 
 - [`m03-session-cli-review-01.md`](m03-session-cli-review-01.md) tracks the
   in-progress bounded slice-32 `session <id> [--json]` composition from exact
   delivered base `6e687b6`. It retains the full rejected cycle-4, remediated
-  gate-record, and rejected cycle-5 evidence summarized above. Cross-document
-  documentation remediation and three fresh cycle-6 reviews remain pending.
+  gate-record, rejected cycle-5 evidence, and composed/rejected cycle-6 status
+  summarized above. Three fresh cycle-7 reviews remain pending.
   Historical initial composition was `852fec7`, focused remediation advanced
   through precursor `c0c16a7`, and gate precursor `fa099f7`, tree `64d6a72`,
   passed its local and supplemental gates before formal cycle-1 review.
