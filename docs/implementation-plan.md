@@ -81,8 +81,21 @@ links, and 81 unique repository targets with zero errors. The 4,001,712-byte
 release binary had SHA-256
 `e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb`.
 Those results do not approve the rejected candidate. The synchronized
-replacement has no exact composed SHA; its complete gate, three fresh reviews,
-remote workflows, `main` integration, and delivery remain pending.
+replacement source is composed at exact
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
+exact-1.94.1 local gate without fallback. Focused 56 CLI unit, 54 CLI process,
+and 21 native inspection tests are green. Python passed 135 with eight expected
+skips; pinned-fx regeneration is byte-stable; WASI/FreeBSD checks are green
+with only the established WASI `read_file` warning; documentation integrity is
+85/147/626/81 with zero errors; and there is no manifest, lockfile, dependency,
+benchmark, inventory, or unsafe-Rust delta. The 4,001,760-byte release binary
+has SHA-256
+`483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc` and its
+full matrix is green, including six process differentials, an 8,650,857-byte
+near-cap record, 4,097-message and 262,145-byte-metadata engine-over-default
+records, and a held-lock wait of at least 500 ms. Formal cycle 3, remote
+workflows, `main` integration, and delivery remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
@@ -3427,8 +3440,9 @@ force fast-forward, and exact `main` workflows.
 The thirty-second slice is in progress from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
 `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
-`72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected; the synchronized
-replacement contract awaits its exact composed SHA. The slice adds only strict
+`72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected. The synchronized
+replacement is composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`,
+tree `86971aca0f78e637de55d2a79eda64e88bff8734`. The slice adds only strict
 `session <id>` and `session <id> --json`. The ID is parsed through the core
 portable contract before effects, while exact tokens `last`, `--id`, and
 `--json` are reserved in ID position. Every upstream-style selector, reordered
@@ -3476,10 +3490,10 @@ Native production/focused evidence, CLI production/unit evidence, and
 independent process/workflow evidence were built in isolated, non-overlapping
 worktrees and composed as `10a5333`, `412d63b`, and `55f37fc`. Composition
 makes non-exhaustive native categories fail closed to `Unavailable` and aligns
-help bytes to `Inspect a saved session`. Focused exact-1.94.1 evidence is green
-for 12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
-tests, and native/CLI all-target/all-feature warnings-denied Clippy. Focused
-composition-gate remediation is exact
+help bytes to `Inspect a saved session`. The initial focused exact-1.94.1
+evidence was green for 12 native inspection tests, 56 CLI unit tests, 46
+independent CLI process tests, and native/CLI all-target/all-feature warnings-
+denied Clippy. Focused composition-gate remediation was exact
 `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
 `61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused, Python, pinned-fx,
 WASI/FreeBSD, documentation, diff/no-unsafe, and complete exact-tree release-
@@ -3496,9 +3510,24 @@ Formal cycle 2 rejected it: correctness/API reported `0/0/1/2`, native
 boundary/effects `0/0/1/2`, and performance/concurrency/resources `0/0/1/1`.
 The deduplicated union has two medium themes (canonical-number mismatch and
 residual payload-proportional allocations) and two low themes (duplicate-key
-mismatch and stale maintained docs). The synchronized contract above awaits an
-exact composed replacement SHA, complete replacement gate, and three new
-reviewers. Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
+mismatch and stale maintained docs).
+
+Exact cycle-2 remediation source
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, passed the complete required local
+gate under exact Rust/Cargo 1.94.1 without fallback. Focused evidence is green
+for 56 CLI unit, 54 CLI process, and 21 native inspection tests. Python is green
+at 135 with eight expected skips; pinned-fx `b1774fb` regeneration is byte-
+stable; WASI/FreeBSD checks are green with only the established WASI
+`read_file` warning; and documentation integrity is 85/147/626/81 with zero
+errors. The exact replacement adds no manifest, lockfile, dependency,
+benchmark, inventory, or unsafe-Rust delta. Its 4,001,760-byte release binary
+has SHA-256
+`483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc` and its
+matrix is green, including six process differentials, an 8,650,857-byte near-
+cap record, 4,097-message and 262,145-byte-metadata engine-over-default records,
+and an exclusive held-lock wait of at least 500 ms. Formal cycle 3 is pending.
+Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, a non-force fast-forward, and exact `main` workflows. There is no
 claim that the candidate is green or that integration, workflows, or delivery
 are complete; the delivered count remains thirty-one. After slice 32 is
@@ -4476,8 +4505,12 @@ gate:
   replacement requires one-pass fixed-4-KiB streaming, canonical
   `serde_json::Number` semantics, fixed-stack known tokens, only two retained
   ID strings, and a fixed-digest strictly node-capped last-value-wins duplicate
-  tracker. Its exact composed SHA, complete replacement gate, three fresh
-  reviews, remote workflows, `main` integration, and delivery remain pending.
+  tracker. Exact remediation source `f4dbe3d`, tree `86971ac`, passed the
+  complete required exact-1.94.1 local gate without fallback. Focused 56 CLI
+  unit, 54 CLI process, and 21 native tests; Python 135/8 skips; byte-stable
+  pinned fx; WASI/FreeBSD; docs 85/147/626/81; no-delta; and the 4,001,760-byte
+  release SHA/matrix are green. Formal cycle 3, remote workflows, `main`
+  integration, and delivery remain pending.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.

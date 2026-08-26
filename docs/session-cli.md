@@ -9,9 +9,14 @@ effects `0/0/1/2`, and performance/concurrency/resources `0/0/1/1`, in
 blocker/high/medium/low order. The deduplicated findings are two medium themes
 (canonical-number mismatch and residual payload-proportional allocations) and
 two low themes (duplicate-key mismatch and stale maintained documentation).
-The contract below is the synchronized replacement contract, not a description
-of a green candidate: its exact composed SHA, complete gate, three fresh
-reviews, remote workflows, `main` integration, and delivery remain pending.
+The contract below is the synchronized replacement contract. Replacement source
+is composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
+exact-1.94.1 local gate without fallback. Formal cycle 3, remote workflows,
+`main` integration, and delivery remain pending; this is not a review-green or
+delivered claim. Focused evidence is green at 56 CLI unit, 54 CLI process, and
+21 native inspection tests; the full Python, pinned-fx, target, documentation,
+no-delta, release-hash, and release-matrix record is in the review ledger.
 No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 

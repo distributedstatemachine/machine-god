@@ -37,10 +37,22 @@ Its 4,001,712-byte release binary had SHA-256
 `e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb` and
 passed the documented human/JSON, grammar-before-effects, `NotFound`/no-create,
 immutability, private-lock, and root-isolation matrix. Those results do not
-approve the rejected parser. The synchronized replacement has no exact composed
-SHA yet; its complete replacement gate, three fresh reviews, remote workflows,
-`main` integration, and delivery remain pending. No review-green or delivered
-claim is made. No
+approve the rejected parser. The synchronized replacement source is now
+composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and its complete required local
+gate is green under exact Rust/Cargo 1.94.1 without fallback. Focused evidence
+is 56 CLI unit, 54 CLI process, and 21 native inspection tests. Python is green
+at 135 tests with eight expected skips; pinned fx `b1774fb` regeneration is
+byte-stable; WASI/FreeBSD checks are green with only the established WASI
+`read_file` warning; and documentation integrity is 85/147/626/81 with zero
+errors. There is no manifest, lockfile, dependency, benchmark, inventory, or
+unsafe-Rust delta. The 4,001,760-byte release binary has SHA-256
+`483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc` and
+passes the complete matrix, including six process differentials, an
+8,650,857-byte near-cap record, 4,097-message and 262,145-byte-metadata records
+over engine defaults, and a held-lock wait of at least 500 ms. Formal cycle 3,
+remote workflows, `main` integration, and delivery remain pending. No review-
+green or delivered claim is made. No
 compatibility, product-performance, or fx-equivalence claim is made; the
 delivered count remains thirty-one.
 

@@ -33,9 +33,22 @@ serialized-metadata limits. Exclusive sidecar-lock wait, filesystem latency,
 and `EINTR` retries remain unbounded in wall-clock time and attempt count and
 synchronously block the polling and CLI thread.
 
-The synchronized replacement has no exact composed SHA yet. Its complete gate,
-three fresh reviews, remote workflows, `main` integration, and delivery remain
-pending. The fixed bootstrap inventory has no `session-json` workload and is
+Replacement source is composed at exact
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
+exact-1.94.1 local gate without fallback. Focused evidence is green at 56 CLI
+unit, 54 CLI process, and 21 native inspection tests. Python passed 135 with
+eight expected skips; pinned-fx regeneration is byte-stable; WASI/FreeBSD and
+85/147/626/81 documentation checks are green; and no manifest, lockfile,
+dependency, benchmark, inventory, or unsafe-Rust delta exists. The 4,001,760-
+byte release binary has SHA-256
+`483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc`.
+Its green matrix includes six process differentials, an 8,650,857-byte near-cap
+record, 4,097-message and 262,145-byte-metadata engine-over-default records, and
+a held-lock wait of at least 500 ms. These are bounded regression and gate
+results, not a comparative performance result. Formal cycle 3, remote
+workflows, `main` integration, and delivery remain pending. The fixed bootstrap
+inventory has no `session-json` workload and is
 unchanged. This slice is deliberately non-equivalent, not measured, and claim-
 ineligible; no sample, comparison, threshold, compatibility promotion, product-
 performance result, or fx-equivalence claim exists.

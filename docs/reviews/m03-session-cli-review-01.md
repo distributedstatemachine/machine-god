@@ -1,12 +1,12 @@
 # Milestone 03 session CLI review ledger
 
-Status: exact cycle-2 candidate
-`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
-`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete exact same-SHA
-local gate but is rejected by formal review. This ledger records the
-synchronized replacement contract; its exact composed SHA, complete replacement
-gate, three fresh replacement reviews, remote delivery gates, and integration
-remain pending.
+Status: exact cycle-2 remediation source
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, is composed and passed its complete
+exact same-SHA local gate under Rust/Cargo 1.94.1 without fallback. Formal cycle
+3, remote delivery gates, integration, and delivery remain pending. This is not
+a review-green or delivered claim. Historical rejected candidates and verdicts
+remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
 composition was `852fec7`; focused composition-gate remediation advances the
@@ -256,16 +256,52 @@ limits. Likewise, finite parser memory and transferred bytes do not bound
 exclusive lock wait, filesystem latency, or `EINTR` retries; those have no
 wall-clock or attempt ceiling and synchronously block the polling thread.
 
-This is the synchronized current contract awaiting its exact composed SHA,
-complete same-SHA replacement gate, and three fresh adversarial reviews. It is
-not a claim that the current source already satisfies the contract, that review
-is green, or that the slice is delivered.
+This synchronized contract is composed at exact source
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the exact same-SHA gate
+recorded below. It is not a claim that formal cycle 3 is green or that the slice
+is delivered.
 
-## Required replacement adversarial product review
+## Cycle 2 remediation gate record
 
-After production and documentation remediation are composed and the replacement
-commit passes its exact same-SHA local gate, three fresh isolated read-only
-agents must review that replacement exact commit and tree:
+Exact replacement source `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, passed all four required commands
+under exact Rust/Cargo 1.94.1 without fallback: workspace formatting, workspace
+all-target/all-feature warnings-denied Clippy, workspace tests, and workspace
+doctests.
+
+Focused exact-SHA evidence is green for 56 CLI unit tests, 54 independent CLI
+process tests, and 21 native inspection tests. The complete Python discovery
+suite passed 135 tests with eight expected macOS skips. Compatibility
+regeneration is byte-stable against pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Native WASI default/all-feature,
+CLI WASI, and native FreeBSD checks passed; the only target diagnostic is the
+established WASI `read_file` warning. Documentation integrity covered 85
+Markdown files, 147 fenced blocks, 626 parsed links, and 81 unique repository
+targets with zero errors.
+
+The replacement introduces no Cargo manifest, lockfile, dependency, benchmark,
+generated inventory, or unsafe-Rust delta. The fixed benchmark workload and
+classification inventory remain unchanged.
+
+The freshly built 4,001,760-byte exact-tree release binary has SHA-256
+`483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc`. Its
+complete release matrix is green, including the established human/JSON,
+grammar-before-effects, no-create, record-immutability, private-lock, and root-
+isolation cases plus six process differentials, an 8,650,857-byte near-cap
+record, a 4,097-message record over the engine default, a 262,145-byte metadata
+record over the engine default, and an exclusive held-lock wait of at least
+500 ms.
+
+These checks establish the exact replacement local gate only. Formal cycle 3
+must still bind three fresh reviewers to this exact source/tree. No formal-
+review outcome, remote workflow, `main` integration, delivery, compatibility
+promotion, product-performance, or fx-equivalence claim is made.
+
+## Required formal cycle 3 adversarial product review
+
+Three fresh isolated read-only agents must now review exact replacement source
+`f4dbe3d`, tree `86971ac`:
 
 1. correctness/API, including CLI grammar, output/error behavior, and the
    pinned-fx boundary;

@@ -9,8 +9,15 @@ residual payload-proportional allocation, duplicate-key mismatch, and stale
 maintained documentation. Its complete exact-1.94.1 pre-remediation gate,
 Python 135/8-skip suite, pinned-fx/target/diff/no-unsafe checks, 85/146/626/81
 documentation check, and release effect matrix were green, but do not approve
-the rejected candidate. The synchronized replacement gate, three fresh
-reviews, remote workflows, `main` integration, and delivery remain pending.
+the rejected candidate. Replacement source is composed at exact
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and its complete required exact-
+1.94.1 local gate is green without fallback. Focused 56 CLI unit, 54 CLI
+process, and 21 native inspection tests are green. Python 135/8 skips, byte-
+stable pinned-fx, WASI/FreeBSD, 85/147/626/81 documentation, no-delta, and
+release-matrix checks are green; WASI retains only the established `read_file`
+warning. Formal cycle 3, remote workflows, `main` integration, and delivery
+remain pending.
 The slice adds no network, subprocess, credential, provider, permission,
 workspace, configuration, runtime, or engine authority. Its
 `session` facade captures only state environment inputs on first poll, opens

@@ -208,9 +208,13 @@ configurable message, transcript, or metadata limits.
 
 Exact cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
 `72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected and does not satisfy
-this synchronized contract. The replacement exact SHA, complete local gate,
-and fresh review cycle are pending; this subsection does not claim the
-specialized path is green or delivered.
+this synchronized contract. Replacement source is composed at exact
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed its complete required
+exact-1.94.1 local gate without fallback. Native inspection evidence is green
+at 21 tests, including near-cap, engine-over-default, process-differential, and
+held-lock cases. Formal cycle 3 remains pending; this subsection does not claim
+the specialized path is review-green or delivered.
 
 ## Save, compare-and-swap, and durability
 

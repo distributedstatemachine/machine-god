@@ -22,8 +22,13 @@ themes plus duplicate-key and stale-documentation low themes. The synchronized
 native replacement uses one-pass fixed-4-KiB streaming, canonical
 `serde_json::Number` semantics, fixed-stack known tokens, two retained ID
 strings, and a fixed-digest strictly node-capped last-value-wins duplicate
-tracker. It has no exact composed SHA yet; its complete gate, three fresh
-reviews, remote workflows, `main` integration, and delivery remain pending.
+tracker. Replacement source is composed at exact
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
+exact-1.94.1 local gate without fallback. Focused evidence is 56 CLI unit, 54
+CLI process, and 21 native inspection tests; the complete supplemental gate and
+release matrix are recorded in the live ledger. Formal cycle 3, remote
+workflows, `main` integration, and delivery remain pending.
 There is no matching bootstrap workload and no claim that the feature is green,
 delivered, performant, or equivalent. The delivered count remains thirty-one;
 evidence is in the

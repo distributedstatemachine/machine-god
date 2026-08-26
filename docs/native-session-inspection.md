@@ -8,9 +8,13 @@ gate but is rejected. The three formal verdicts were `0/0/1/2`, `0/0/1/2`, and
 `0/0/1/1`; the deduplicated findings are canonical-number mismatch, residual
 payload-proportional allocations, duplicate-key mismatch, and stale maintained
 documentation. This page now states the synchronized replacement contract.
-Its exact composed SHA, complete replacement gate, three fresh reviews, remote
-workflows, `main` integration, and delivery remain pending. Its sole first
-consumer is the strict
+Replacement source is composed at exact
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
+exact-1.94.1 local gate without fallback. Formal cycle 3, remote workflows,
+`main` integration, and delivery remain pending. Focused evidence is green at
+21 native inspection, 56 CLI unit, and 54 CLI process tests; complete gate
+evidence is recorded in the live ledger. Its sole first consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -139,4 +143,5 @@ duplicate metadata/nested keys with last-value-wins counts, fixed resource
 ceilings, lock-sidecar permissions, invalid and unsafe roots, corrupt/
 oversized/wrong-ID/nonregular/symlink records, retained-root replacement,
 redaction, and all category mappings. CLI and release-binary evidence is owned
-separately. These requirements are pending on the replacement exact SHA.
+separately. These requirements are green on the composed replacement SHA; the
+formal cycle-3 review outcome remains pending.

@@ -33,7 +33,7 @@
 - [Native root selection and preparation](native-root-selection.md)
 - [Native by-ID session lifecycle](native-session-lifecycle.md)
 - [Native session listing](native-session-listing.md)
-- [In-progress native session inspection](native-session-inspection.md)
+- [Locally gated native session inspection (review pending)](native-session-inspection.md)
 - [Compatibility](compatibility.md)
 - [Performance](performance.md)
 - [Security](security.md)
