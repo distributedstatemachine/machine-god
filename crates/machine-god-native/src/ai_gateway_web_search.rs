@@ -20,6 +20,9 @@ const PROVIDER_TOOL_NAME: &str = "perplexity_search";
 const PROVIDER_TOOL_ID: &str = "gateway.perplexity_search";
 const MAX_OUTPUT_TOKENS: u32 = 4_096;
 const MAX_PROVIDER_RESULTS: usize = 10;
+const MAX_PROVIDER_TOOL_INPUT_BYTES: usize = MAX_WEB_SEARCH_REQUEST_BYTES;
+const MAX_PROVIDER_TOOL_INPUT_JSON_NODES: usize = 256;
+const MAX_PROVIDER_RESULT_ID_BYTES: usize = 512;
 
 /// One-shot Perplexity search worker over an existing authenticated Gateway transport.
 pub struct AiGatewayWebSearchTransport {
@@ -88,7 +91,14 @@ impl WebSearchTransport for AiGatewayWebSearchTransport {
                 };
                 let chunk = chunk.map_err(|error| map_provider_error(&error))?;
                 decoder.push(&chunk, &cancellation)?;
+                if decoder.is_done() {
+                    break;
+                }
             }
+            // A complete protocol terminator makes later source polls irrelevant.
+            // Releasing the source here also releases any transport-owned permit
+            // before result projection begins.
+            drop(stream);
             check_cancelled(&cancellation)?;
             decoder.finish(&cancellation)
         })
@@ -143,6 +153,10 @@ struct SseDecoder {
 }
 
 impl SseDecoder {
+    fn is_done(&self) -> bool {
+        self.state.done
+    }
+
     fn push(
         &mut self,
         chunk: &[u8],
@@ -263,6 +277,7 @@ struct ResponseState {
     result: Option<Value>,
     finished: bool,
     done: bool,
+    saw_event: bool,
 }
 
 impl ResponseState {
@@ -274,6 +289,17 @@ impl ResponseState {
             .remove("type")
             .and_then(|value| value.as_str().map(str::to_owned))
             .ok_or_else(protocol_error)?;
+        if event_type == "stream-start" {
+            if self.saw_event
+                || object.len() != 1
+                || !object.get("warnings").is_some_and(Value::is_array)
+            {
+                return Err(protocol_error());
+            }
+            self.saw_event = true;
+            return Ok(());
+        }
+        self.saw_event = true;
         match event_type.as_str() {
             "response-metadata" if self.call_id.is_none() => Ok(()),
             "tool-call" => self.consume_call(&object),
@@ -294,7 +320,7 @@ impl ResponseState {
         if id.is_empty()
             || required_string(object, "toolName")? != PROVIDER_TOOL_NAME
             || object.get("providerExecuted").and_then(Value::as_bool) != Some(true)
-            || !object.get("input").is_some_and(Value::is_object)
+            || !valid_provider_tool_input(object.get("input"))
         {
             return Err(protocol_error());
         }
@@ -313,8 +339,12 @@ impl ResponseState {
             return Err(protocol_error());
         };
         if required_string(&object, "toolCallId")? != expected_id
+            || required_string(&object, "toolName")? != PROVIDER_TOOL_NAME
             || object
                 .get("preliminary")
+                .is_some_and(|value| value != &Value::Bool(false))
+            || object
+                .get("isError")
                 .is_some_and(|value| value != &Value::Bool(false))
         {
             return Err(protocol_error());
@@ -351,7 +381,15 @@ fn decode_provider_result(result: Value) -> Result<WebSearchResponse, WebSearchT
     let Value::Object(mut object) = result else {
         return Err(protocol_error());
     };
-    if object.len() != 1 {
+    if object.len() != 2 {
+        return Err(protocol_error());
+    }
+    let id = object
+        .remove("id")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(protocol_error)?;
+    if id.is_empty() || id.len() > MAX_PROVIDER_RESULT_ID_BYTES || id.chars().any(char::is_control)
+    {
         return Err(protocol_error());
     }
     let Value::Array(values) = object.remove("results").ok_or_else(protocol_error)? else {
@@ -363,7 +401,7 @@ fn decode_provider_result(result: Value) -> Result<WebSearchResponse, WebSearchT
         let Value::Object(mut source) = value else {
             return Err(protocol_error());
         };
-        if source.len() != 2 {
+        if !(3..=5).contains(&source.len()) {
             return Err(protocol_error());
         }
         let title = source
@@ -374,6 +412,15 @@ fn decode_provider_result(result: Value) -> Result<WebSearchResponse, WebSearchT
             .remove("url")
             .and_then(|value| value.as_str().map(str::to_owned))
             .ok_or_else(protocol_error)?;
+        if !source
+            .remove("snippet")
+            .is_some_and(|value| value.is_string())
+            || !optional_string(&mut source, "date")
+            || !optional_string(&mut source, "lastUpdated")
+            || !source.is_empty()
+        {
+            return Err(protocol_error());
+        }
         let candidate = WebSearchSource::new(title, url)?;
         if sources
             .iter()
@@ -388,6 +435,19 @@ fn decode_provider_result(result: Value) -> Result<WebSearchResponse, WebSearchT
         }
     }
     WebSearchResponse::new(sources, truncated)
+}
+
+fn valid_provider_tool_input(input: Option<&Value>) -> bool {
+    let Some(input) = input.and_then(Value::as_str) else {
+        return false;
+    };
+    input.len() <= MAX_PROVIDER_TOOL_INPUT_BYTES
+        && parse_strict_json(input, MAX_PROVIDER_TOOL_INPUT_JSON_NODES)
+            .is_ok_and(|value| value.is_object())
+}
+
+fn optional_string(object: &mut serde_json::Map<String, Value>, name: &str) -> bool {
+    object.remove(name).is_none_or(|value| value.is_string())
 }
 
 fn required_string<'a>(

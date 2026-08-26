@@ -33,8 +33,11 @@ invariants. Slice 33's exact-1.94.1 local gate is green on composed behavior
 precursor `3d2984000301e58762e0940504159aeb55b2389e`. Formal cycle 1 rejected
 exact `89c5ec95`, tree `8d91a55`. Source remediation is composed from exact
 isolated components `096b11c4` and `ca0b990a`. Exact composed precursor
-`e662fa8`, tree `6c0ace9`, passes the complete local gate, while fresh cycle-2
-review remains pending, so the slice
+`e662fa8`, tree `6c0ace9`, passes the complete local gate. Exact cycle-2
+remediation `366cef9`, tree `40c05cb`, also passed its complete gate. Formal
+cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`, with a deduplicated
+`1/0/2/2`. Exact isolated components `5d45dca` and `454f8fd` compose its
+remediation; the complete replacement gate and fresh review remain pending, so the slice
 has no review-green, delivery, performance, or fx-equivalence claim.
 
 ```rust,no_run

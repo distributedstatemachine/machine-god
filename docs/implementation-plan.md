@@ -82,9 +82,14 @@ aliases, a reachable escaping-sensitive serialized-output boundary, and stale
 host-composition wording. Exact composed remediation precursor
 `366cef966d7dcf1b11101a37d4493099e6f421a7`, tree
 `40c05cb2999c641bc7ccbdc369fc6d9251b989b7`, passes the complete exact-1.94.1
-replacement gate without fallback; formal cycle 3 is pending on its immutable
-kickoff candidate. This slice is not yet review-green, integrated, or delivered;
-the delivered count remains thirty-two.
+replacement gate without fallback. Formal cycle 3 rejected exact candidate
+`aef6abed174760195e712b2701e241b656733621`, tree
+`5abcef3de31898e158e6c4872ee9b4131863d1b7`, with a deduplicated `1/0/2/2`.
+Protocol-shape, terminal-release, numeric-host overflow, port grammar, and
+documentation remediation is composed from exact isolated components
+`5d45dca` and `454f8fd`; the complete replacement gate and fresh review remain
+pending. This slice is not yet review-green, integrated, or delivered; the
+delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive
@@ -3882,7 +3887,10 @@ gate:
   a dedicated native provider-executed decoder over the shared transport, the
   exact resource/platform/deferred boundary in `web-search.md`, and initial
   production/test/documentation composition. Cycle 2 rejected exact candidate
-  `399f5f7` with a `1/1/1/1` union; remediation and fresh review remain pending.
+  `399f5f7` with a reported `1/1/1/1` union. Formal cycle 3 rejected exact
+  candidate `aef6abe`, tree `5abcef3`, with a deduplicated `1/0/2/2`; remediation
+  is composed from exact isolated components `5d45dca` and `454f8fd`, while the
+  complete replacement gate and fresh review remain pending.
   It is not yet review-green, integrated, or delivered, so this combined item
   remains unchecked and the remaining tools stay pending. The delivered
   seventeenth slice supplies only `file_info`; production

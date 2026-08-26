@@ -22,8 +22,13 @@ tree `8d91a556f786169d42406e91e8ad2f476b7c6cf4`, with a deduplicated
 `0/2/5/2` blocker/high/medium/low finding union. Source remediation is composed
 from exact isolated components `096b11c4` and `ca0b990a`. Exact composed
 remediation precursor `e662fa8047c5ca321d622b9b5920166804a35c27`, tree
-`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes the complete local gate;
-fresh cycle-2 reviews are pending.
+`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes the complete local gate.
+Cycle 2's accepted `0/1/1/1` union was remediated through exact precursor
+`366cef9`, tree `40c05cb`. Formal cycle 3 rejected exact candidate `aef6abe`,
+tree `5abcef3`, with a deduplicated `1/0/2/2`; its protocol, terminal-release,
+numeric-host, port-grammar, and documentation remediations are composed from
+exact isolated components `5d45dca` and `454f8fd`; the complete replacement
+gate and fresh review remain pending.
 Slice 33 is not yet review-green, integrated, or delivered; the
 delivered count remains 32. It is unmeasured and makes no product-performance
 or fx-equivalence claim. See the [`web_search` contract](docs/web-search.md) and

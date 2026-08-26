@@ -13,6 +13,12 @@ strict and continues to reject such response records. Its remediated terminal
 lifecycle drops the validated outer byte stream before queued usage/stop
 delivery, so shared capacity is available for the local tool round.
 
+The inner raw-v4 codec separately validates the stringified provider-call input
+and official Perplexity `{id,results}` success schema, projects only bounded
+title/URL citations, and drops the worker stream after fully processing
+`[DONE]` rather than waiting for transport EOF. Nonprojected ID, snippet, and
+date fields remain native and are discarded.
+
 The slice-33 topology is:
 
 ```text
@@ -40,7 +46,10 @@ transport seam. The accepted `0/1/1/1` union still rejects the candidate;
 current remediation rejects noncanonical URL-standard IPv4 aliases and proves
 the escaping-sensitive serialized-output boundary. Exact remediation precursor
 `366cef966d7dcf1b11101a37d4493099e6f421a7`, tree `40c05cb`, passes the complete
-replacement gate; formal cycle 3 is pending.
+replacement gate. Formal cycle 3 rejected exact candidate `aef6abe`, tree
+`5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca`
+and `454f8fd` compose its remediation; the complete replacement gate and fresh
+review remain pending.
 The candidate is not green, integrated, or delivered, the delivered count
 remains 32, and no performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,

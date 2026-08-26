@@ -51,6 +51,25 @@ const NONCANONICAL_URL_IPV4_HOSTS: &[(&str, &str)] = &[
     ("4294967295", "255.255.255.255"),
 ];
 
+fn overflowing_url_ipv4_hosts() -> Vec<String> {
+    vec![
+        "1.18446744073709551616".to_owned(),
+        "1.02000000000000000000000".to_owned(),
+        "1.0x10000000000000000".to_owned(),
+        format!("1.{}", "9".repeat(63)),
+        format!("1.0{}", "7".repeat(62)),
+        format!("1.0x{}", "f".repeat(61)),
+        format!("1.0X{}", "F".repeat(61)),
+    ]
+}
+
+fn overflow_like_dns_hosts() -> [String; 2] {
+    [
+        format!("search.{}x", "9".repeat(62)),
+        format!("search.0x{}g", "f".repeat(60)),
+    ]
+}
+
 fn gateway_target() -> NetworkTarget {
     production_gateway_target()
 }
@@ -571,6 +590,116 @@ fn url_standard_ipv4_spellings_have_one_exact_target_identity() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn overflowing_url_ipv4_numbers_fail_closed_without_reclassifying_dns() {
+    let transport = FakeTransport::new(Mode::Pending);
+    let tool = tool(transport.clone());
+    let overflowing = overflowing_url_ipv4_hosts();
+    assert_eq!(
+        overflowing
+            .iter()
+            .filter(|host| host.rsplit('.').next().unwrap().len() == 63)
+            .count(),
+        4,
+        "long-number fixtures must exercise the exact DNS-label ceiling"
+    );
+    for host in &overflowing {
+        assert!(host.len() <= MAX_WEB_SEARCH_DOMAIN_BYTES);
+        assert!(
+            reqwest::Url::parse(&format!("https://{host}/")).is_err(),
+            "URL parser did not classify overflowing numeric host {host:?} as invalid"
+        );
+        let target = NetworkTarget {
+            scheme: "https".to_owned(),
+            host: host.clone(),
+            port: None,
+        };
+        for result in [
+            WebSearchTool::with_transport(
+                target.clone(),
+                Arc::new(FakeTransport::new(Mode::Pending)),
+                never_deadline(),
+            ),
+            WebSearchTool::with_bounded_transport(
+                target,
+                Arc::new(FakeTransport::new(Mode::Pending)),
+                never_deadline(),
+                WebSearchLimits::default(),
+            ),
+        ] {
+            assert_eq!(
+                result.unwrap_err().kind(),
+                WebSearchConfigErrorKind::InvalidTarget,
+                "constructor accepted overflowing URL IPv4 host {host:?}"
+            );
+        }
+        for arguments in [
+            json!({ "query": "bounded query", "allowed_domains": [host] }),
+            json!({ "query": "bounded query", "blocked_domains": [host] }),
+        ] {
+            let error = tool
+                .prepare(call(WEB_SEARCH_TOOL_NAME, arguments))
+                .unwrap_err();
+            assert_eq!(
+                error.kind,
+                ToolErrorKind::InvalidInput,
+                "accepted overflowing URL IPv4 host as a DNS filter: {host:?}"
+            );
+        }
+        for authority in [host.clone(), format!("{host}:8443")] {
+            assert!(
+                WebSearchSource::new("title".to_owned(), format!("https://{authority}/result"))
+                    .is_err(),
+                "accepted overflowing URL IPv4 host as a citation: {authority:?}"
+            );
+        }
+    }
+
+    for host in overflow_like_dns_hosts() {
+        let parsed = reqwest::Url::parse(&format!("https://{host}/")).unwrap();
+        assert_eq!(parsed.host_str(), Some(host.as_str()));
+        let target = NetworkTarget {
+            scheme: "https".to_owned(),
+            host: host.clone(),
+            port: None,
+        };
+        assert!(
+            WebSearchTool::with_transport(
+                target.clone(),
+                Arc::new(FakeTransport::new(Mode::Pending)),
+                never_deadline(),
+            )
+            .is_ok(),
+            "default constructor rejected ordinary DNS host {host:?}"
+        );
+        assert!(
+            WebSearchTool::with_bounded_transport(
+                target,
+                Arc::new(FakeTransport::new(Mode::Pending)),
+                never_deadline(),
+                WebSearchLimits::default(),
+            )
+            .is_ok(),
+            "bounded constructor rejected ordinary DNS host {host:?}"
+        );
+        for arguments in [
+            json!({ "query": "bounded query", "allowed_domains": [&host] }),
+            json!({ "query": "bounded query", "blocked_domains": [&host] }),
+        ] {
+            assert!(
+                tool.prepare(call(WEB_SEARCH_TOOL_NAME, arguments)).is_ok(),
+                "rejected ordinary DNS filter {host:?}"
+            );
+        }
+        assert!(
+            WebSearchSource::new("title".to_owned(), format!("https://{host}/result")).is_ok(),
+            "rejected ordinary DNS citation {host:?}"
+        );
+    }
+    assert_eq!(transport.calls(), 0);
+}
+
+#[test]
 fn prepare_requires_exact_shape_and_canonicalizes_for_one_gateway_capability() {
     let transport = FakeTransport::new(Mode::Pending);
     let tool = tool(transport.clone());
@@ -821,6 +950,44 @@ fn citation_urls_reject_url_ipv4_alias_matrix_without_rejecting_dns() {
         assert!(
             WebSearchSource::new("title".to_owned(), url.to_owned()).is_ok(),
             "rejected ordinary DNS citation {url:?}"
+        );
+    }
+}
+
+#[test]
+fn citation_ports_require_nonzero_ascii_u16_decimal_syntax() {
+    for port in ["1", "443", "00443", "8443", "65535"] {
+        assert!(
+            WebSearchSource::new(
+                "title".to_owned(),
+                format!("https://www.rust-lang.org:{port}/result"),
+            )
+            .is_ok(),
+            "rejected valid citation port {port:?}"
+        );
+    }
+
+    for port in [
+        "",
+        "0",
+        "00000",
+        "+443",
+        "-1",
+        "65536",
+        "443x",
+        " 443",
+        "٤٤٣",
+        "４４３",
+    ] {
+        let error = WebSearchSource::new(
+            "title".to_owned(),
+            format!("https://www.rust-lang.org:{port}/result"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            WebSearchTransportErrorKind::InvalidResponse,
+            "accepted invalid citation port {port:?}"
         );
     }
 }

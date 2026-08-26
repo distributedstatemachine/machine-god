@@ -798,6 +798,13 @@ enum UrlIpv4Host {
     Invalid,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UrlIpv4Number {
+    NotNumber,
+    Value(u64),
+    Overflow,
+}
+
 /// Classifies the numeric host spellings interpreted as IPv4 by the URL
 /// Standard. This keeps permission targets and exposed citation hosts from
 /// disagreeing with URL parsers over decimal shorthand, octal, or hexadecimal
@@ -809,7 +816,7 @@ fn url_ipv4_host(host: &str) -> UrlIpv4Host {
         .rsplit('.')
         .next()
         .unwrap_or_default();
-    if parse_url_ipv4_number(final_part).is_none()
+    if matches!(parse_url_ipv4_number(final_part), UrlIpv4Number::NotNumber)
         && !final_part.bytes().all(|byte| byte.is_ascii_digit())
     {
         return UrlIpv4Host::NotIpv4;
@@ -822,8 +829,11 @@ fn url_ipv4_host(host: &str) -> UrlIpv4Host {
         let Some(slot) = numbers.get_mut(count) else {
             return UrlIpv4Host::Invalid;
         };
-        let Some(number) = parse_url_ipv4_number(part) else {
-            return UrlIpv4Host::Invalid;
+        let number = match parse_url_ipv4_number(part) {
+            UrlIpv4Number::Value(number) => number,
+            UrlIpv4Number::NotNumber | UrlIpv4Number::Overflow => {
+                return UrlIpv4Host::Invalid;
+            }
         };
         *slot = number;
         count += 1;
@@ -851,9 +861,9 @@ fn url_ipv4_host(host: &str) -> UrlIpv4Host {
     UrlIpv4Host::Address(std::net::Ipv4Addr::from(address))
 }
 
-fn parse_url_ipv4_number(part: &str) -> Option<u64> {
+fn parse_url_ipv4_number(part: &str) -> UrlIpv4Number {
     if part.is_empty() {
-        return None;
+        return UrlIpv4Number::NotNumber;
     }
     let (digits, radix) =
         if let Some(digits) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
@@ -864,20 +874,36 @@ fn parse_url_ipv4_number(part: &str) -> Option<u64> {
             (part, 10_u64)
         };
     if digits.is_empty() {
-        return Some(0);
+        return UrlIpv4Number::Value(0);
     }
-    digits.bytes().try_fold(0_u64, |number, byte| {
+    let mut number = 0_u64;
+    let mut overflowed = false;
+    for byte in digits.bytes() {
         let digit = match byte {
             b'0'..=b'9' => u64::from(byte - b'0'),
             b'a'..=b'f' => u64::from(byte - b'a' + 10),
             b'A'..=b'F' => u64::from(byte - b'A' + 10),
-            _ => return None,
+            _ => return UrlIpv4Number::NotNumber,
         };
-        (digit < radix)
-            .then_some(number)
-            .and_then(|number| number.checked_mul(radix))
-            .and_then(|number| number.checked_add(digit))
-    })
+        if digit >= radix {
+            return UrlIpv4Number::NotNumber;
+        }
+        if !overflowed {
+            if let Some(value) = number
+                .checked_mul(radix)
+                .and_then(|value| value.checked_add(digit))
+            {
+                number = value;
+            } else {
+                overflowed = true;
+            }
+        }
+    }
+    if overflowed {
+        UrlIpv4Number::Overflow
+    } else {
+        UrlIpv4Number::Value(number)
+    }
 }
 
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
@@ -920,7 +946,10 @@ fn safe_citation_url(url: &str) -> bool {
         return false;
     }
     let host = if let Some((host, port)) = authority.rsplit_once(':') {
-        if port.is_empty() || port.parse::<u16>().ok().filter(|port| *port != 0).is_none() {
+        if port.is_empty()
+            || !port.bytes().all(|byte| byte.is_ascii_digit())
+            || port.parse::<u16>().ok().filter(|port| *port != 0).is_none()
+        {
             return false;
         }
         host

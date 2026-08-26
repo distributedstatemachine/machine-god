@@ -22,8 +22,12 @@ finding union; primary-source adjudication rejects its layer-confused blocker,
 leaving an accepted `0/1/1/1`. Exact remediation precursor
 `366cef966d7dcf1b11101a37d4493099e6f421a7`, tree
 `40c05cb2999c641bc7ccbdc369fc6d9251b989b7`, passes the complete replacement
-gate and formal cycle 3 is pending. The slice is not yet review-green,
-integrated, or delivered. The live status is recorded in the
+gate. Formal cycle 3 rejected exact candidate
+`aef6abed174760195e712b2701e241b656733621`, tree
+`5abcef3de31898e158e6c4872ee9b4131863d1b7`, with a deduplicated `1/0/2/2`;
+exact isolated components `5d45dca` and `454f8fd` compose its remediation. The
+complete replacement gate and fresh review remain pending. The slice is not yet
+review-green, integrated, or delivered. The live status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 
 ## Boundary
@@ -53,7 +57,9 @@ first-seen deduplication occurs before those canonical arguments reach policy
 or execution. This slice adds no IDNA conversion, wildcard, scheme, path,
 port, user-info, or domain-pattern language. Domain filters also reject literal
 IP addresses and every URL-standard numeric IPv4 spelling, including shortened
-decimal, leading-zero/octal, and hexadecimal forms.
+decimal, leading-zero/octal, and hexadecimal forms. Numeric syntax is detected
+without a machine-integer escape: an overflowing numeric-terminal label remains
+invalid rather than falling back to DNS-name acceptance.
 
 ## Permission and exact execution agreement
 
@@ -121,17 +127,26 @@ duplicated, reordered, malformed, ambiguous, or conflicting identities and
 results fail closed. An incomplete, provider-error, content-filtered, missing,
 or contradictory finish also fails closed.
 
-The raw language-model-v4 `tool-result` carries one strict `result` object
-containing only a `results` array. Vercel AI's higher-level SDK maps that raw
-field to its public `fullStream.output`; that mapped field is not part of this
-injected transport seam and is rejected here. Each result is one strict object
-containing only string `title` and `url` members. Unknown,
-missing, duplicate, or mistyped members fail closed. The decoder retains at
-most ten sources in wire order. Each source has only a bounded title and
-absolute HTTP(S) URL; titles retain at most 512 UTF-8 bytes and URLs at most
-2,048 bytes. Unsafe, malformed, credential-bearing, noncanonical numeric-IPv4,
-or non-HTTP(S) URLs are not exposed. Stable first-seen URL deduplication
-preserves the provider order. Zero valid sources is a successful empty result.
+The decoder accepts one optional initial exact `stream-start` warnings envelope
+and the bounded response metadata used by the raw v4 stream. A `tool-call` input
+is a string containing one strict JSON object, at most 16 KiB and 256 nodes; it
+is validated and discarded. The raw language-model-v4 `tool-result` must repeat
+the exact tool name, must not report an error, and carries one strict `result`
+object. Vercel AI's higher-level SDK maps that raw field to public
+`fullStream.output`; that mapped field is not part of this injected transport
+seam and is rejected here.
+
+The Perplexity success result is exactly `{id,results}`. `id` is a nonempty,
+control-free string of at most 512 UTF-8 bytes. Each result contains required
+string `title`, `url`, and `snippet`, plus optional string `date` and
+`lastUpdated`; snippet and date values are validated then discarded under the
+existing record/node ceilings. Unknown, missing, duplicate, or mistyped members
+fail closed. The decoder retains at most ten title/URL sources in wire order.
+Titles retain at most 512 UTF-8 bytes and absolute HTTP(S) URLs at most 2,048
+bytes. Unsafe, malformed, credential-bearing, noncanonical numeric-IPv4, or
+non-HTTP(S) URLs are not exposed. A citation port is nonempty ASCII digits and a
+nonzero `u16`; sign prefixes are invalid. Stable first-seen URL deduplication
+preserves provider order. Zero valid sources is a successful empty result.
 Observing an additional valid unique source after ten retains the first ten and
 sets `truncated`; an over-bound individual source or malformed result is not
 silently skipped.
@@ -183,6 +198,8 @@ The slice fixes these independent ceilings:
 | one SSE record | 64 KiB |
 | SSE records | 256 |
 | decoded JSON nodes | 16,384 |
+| parsed provider-call input | 16 KiB / 256 nodes |
+| provider result ID | 512 bytes |
 | serialized `ToolOutput` | 48 KiB |
 | total deadline, including capacity wait | 30 seconds |
 | default concurrent executions | 4 |
@@ -212,6 +229,12 @@ depth beneath stricter count/per-item/query limits. The serialized-output
 ceiling is independently reachable because JSON escaping can expand otherwise
 valid query, title, and URL bytes; deterministic evidence admits exactly 48 KiB
 and rejects the first serialized byte beyond it.
+
+Once one chunk has fully processed the valid finish and `[DONE]` record, the
+adapter does not wait for transport EOF: it validates any remaining bytes from
+that same chunk, drops the byte stream, and projects the result. Trailing or
+partial post-terminal records still fail closed. This releases both the shared
+HTTP permit and the local tool permit at logical completion.
 
 The SSE codec meters all 256 KiB of raw input but incrementally normalizes and
 retains at most one 64 KiB record before strict JSON decoding. It does not keep

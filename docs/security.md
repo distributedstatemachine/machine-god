@@ -11,8 +11,10 @@ complete local gate. Formal cycle 2 reported `1/1/1/1` on exact `399f5f7`, tree
 envelope blocker, leaving an accepted `0/1/1/1` union. Remediation of numeric
 IPv4 aliases, the reachable output boundary, and stale composition wording is
 composed in exact precursor `366cef9`, tree `40c05cb`, which passes the complete
-replacement gate. Formal cycle 3 is pending. It remains a local
-authority-bearing tool: strict
+replacement gate. Formal cycle 3 rejected exact candidate `aef6abe`, tree
+`5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated components `5d45dca`
+and `454f8fd` compose its remediation; the complete replacement gate and fresh
+review remain pending. It remains a local authority-bearing tool: strict
 effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares
 `Capability::Network` for the exact configured AI Gateway scheme/host/port,
@@ -25,11 +27,14 @@ The production adapter makes at most one required Perplexity request through
 the existing bearer-bearing transport. Its separate strict codec requires one
 expected `providerExecuted: true` call and one matching final result; malformed,
 duplicate, missing, reordered, ambiguous, preliminary-only, provider-error, or
-incomplete state fails closed. Titles and absolute HTTP(S) URLs are independently
-bounded; unsafe, credential-bearing, or malformed URLs are not exposed. Every
-success marks the ordered sources as untrusted reference material. Fixed errors
-and debug output reflect no credentials, endpoint, query, filter, request,
-response, title, URL, or dependency diagnostic.
+incomplete state fails closed. The call's bounded stringified input and the
+official Perplexity success result are strictly decoded; result ID, snippet, and
+date fields are validated then discarded. Titles and absolute HTTP(S) URLs are
+independently bounded; unsafe, credential-bearing, malformed, or URL-invalid
+numeric hosts and ports are not exposed. Every success marks the ordered sources
+as untrusted reference material. Fixed errors and debug output reflect no
+credentials, endpoint, query, filter, request, response, title, URL, or
+dependency diagnostic.
 
 The 30-second deadline begins before the bounded concurrency wait, cancellation
 is checked at each effect boundary, and drop owns no detached task or thread.

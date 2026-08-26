@@ -295,6 +295,22 @@ status across maintained summary pages. All five deduplicated findings are
 confirmed. After remediation, the complete gate and three fresh isolated
 product reviews repeat on one new immutable candidate.
 
+Exact isolated protocol/lifecycle remediation component
+`5d45dca2f98793304c064941e0d8b0e951d1daa8`, tree
+`1385952859ed1fa5697ffe6e67226c9f7b174c5a`, aligns the raw-v4 call/result
+exchange with the official Perplexity result schema, validates and discards
+nonprojected bounded fields, accepts the optional initial stream envelope, and
+drops the inner byte stream as soon as a complete terminal chunk is validated.
+Exact isolated URL-validation component
+`454f8fdc504bbca9195e03ff2567e33439c8a77b`, tree
+`ce0e2086c2440bbfbfed16935b4fc175544e19e9`, distinguishes numeric overflow
+from DNS syntax and requires nonempty unsigned ASCII-decimal citation ports in
+`1..=65535`. Both components, the cross-component signed-port codec regression,
+and maintained behavior documentation are composed in the current remediation.
+The combined focused exact-1.94.1 suites run 15 dedicated codec and 20 native
+web-search tests with zero failures. The complete replacement gate and a fresh
+immutable review candidate remain pending.
+
 ## Worktree lifecycle
 
 Every implementation or review/remediation iteration ends by verifying that

@@ -9,9 +9,10 @@ claim-ineligible. It changes no benchmark workload or recorded comparison. Its
 fixed ceilings are regression and denial-of-service boundaries, not performance
 results: 4,096 query bytes, 16 domains and 4,096 aggregate domain bytes, ten
 sources, 512 title bytes, 2,048 URL bytes, 16 KiB request, 256 KiB response,
-64 KiB record, 256 records, 16,384 JSON nodes, 48 KiB serialized output, a
-30-second total deadline beginning before capacity wait, default concurrency
-four, and hard concurrency sixteen.
+64 KiB record, 256 records, 16,384 JSON nodes, a separately parsed 16 KiB/256-
+node provider-call input, a 512-byte provider-result ID, 48 KiB serialized
+output, a 30-second total deadline beginning before capacity wait, default
+concurrency four, and hard concurrency sixteen.
 
 One approved execution makes at most one Perplexity worker request with no
 retry, fallback, cache, page fetch, progress stream, or detached work. The
@@ -22,7 +23,11 @@ exact-1.94.1 local gate is green. Formal cycle 1 rejected exact `89c5ec95`, tree
 `8d91a55`, with three performance-track medium findings and a deduplicated
 `0/2/5/2` union. Source remediation is composed from exact isolated components
 `096b11c4` and `ca0b990a`. Exact composed precursor `e662fa8`, tree `6c0ace9`,
-passes the complete local gate; fresh cycle-2 review remains pending. No
+passes the complete local gate. Exact cycle-2 remediation `366cef9`, tree
+`40c05cb`, passed its complete gate, but formal cycle 3 rejected exact candidate
+`aef6abe`, tree `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated
+components `5d45dca` and `454f8fd` compose its remediation; the complete
+replacement gate and fresh review remain pending. No
 latency, throughput, allocation
 improvement, binary-size improvement, compatibility promotion, or
 fx-equivalence claim follows. The

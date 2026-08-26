@@ -315,9 +315,12 @@ a capacity-one shared transport can therefore run the nested worker request.
 No provider-executed value crosses the provider-neutral `ModelProvider`
 boundary. The inner result becomes a bounded local `ToolOutput` and returns to
 the ordinary core tool round. Cycle-1 source remediation is composed, and exact
-precursor `e662fa8`, tree `6c0ace9`, passes the complete local gate. Fresh
-cycle-2 review remains pending; the slice makes no compatibility or performance
-claim.
+precursor `e662fa8`, tree `6c0ace9`, passes the complete local gate. Exact
+cycle-2 remediation `366cef9`, tree `40c05cb`, also passed its complete gate.
+Formal cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`, with a
+deduplicated `1/0/2/2`. Exact isolated components `5d45dca` and `454f8fd`
+compose its remediation; the complete replacement gate and fresh review remain
+pending, and the slice makes no compatibility or performance claim.
 
 ## Deferred scope
 
