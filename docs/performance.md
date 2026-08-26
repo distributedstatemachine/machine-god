@@ -33,7 +33,7 @@ serialized-metadata limits. Exclusive sidecar-lock wait, filesystem latency,
 and `EINTR` retries remain unbounded in wall-clock time and attempt count and
 synchronously block the polling and CLI thread.
 
-Replacement source is composed at exact
+Cycle-2 replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
 exact-1.94.1 local gate without fallback. Focused evidence is green at 56 CLI
@@ -46,9 +46,42 @@ byte release binary has SHA-256
 Its green matrix includes six process differentials, an 8,650,857-byte near-cap
 record, 4,097-message and 262,145-byte-metadata engine-over-default records, and
 a held-lock wait of at least 500 ms. These are bounded regression and gate
-results, not a comparative performance result. Formal cycle 3, remote
-workflows, `main` integration, and delivery remain pending. The fixed bootstrap
-inventory has no `session-json` workload and is
+results, not a comparative performance result. Formal cycle 3 rejected exact
+candidate `9282b404`, tree `6d41f7ee`. Correctness/API and native effects each
+reported `0/0/1/0`; performance/resources reported `0/0/1/1`. The deduplicated
+`0/0/1/1` union is a medium context-free recursion-budget mismatch plus low
+self-counted allocation evidence. Exact composed remediation `af055ff3`, tree
+`14eafad`, implements `serde_json` 1.0.151-equivalent 127-active-container
+accounting with metadata/JSON-content/tool parent contexts of 3/6/7. Its exact
+accepted/rejected array-depth boundaries are 123/124, 120/121, 119/120, and
+119/120. Focused evidence is now 58 CLI process tests with a ten-case
+equivalence subset and 22 native inspection tests.
+
+Real `allocation-counter` 0.8.1 instrumentation is dev-only and runs each
+shape in an isolated child process. Empty, near-cap, number-heavy, message-
+heavy, and key-heavy records each measure exactly 14 total allocations, 2
+current, 8 maximum, 8,913,715 total bytes, 14 current bytes, and 8,913,347
+maximum bytes. This is evidence that parser-owned allocation counts and high-
+water bytes are payload-shape-independent across those five cases, not a
+latency or comparative-performance claim. The dev-only dependency delta passed
+policy, license, and audit checks. The complete replacement gate is green on
+exact `af055ff3`/`14eafad` under Rust/Cargo 1.94.1 without fallback. Python
+passed 135 tests with eight expected skips; pinned fx is byte-stable;
+WASI/FreeBSD retain only the established warning; docs are 85/147/626/81 with
+zero errors; and diff/inventory/no-added-unsafe checks are green. Exact
+`cargo-deny` 0.20.2 passed all categories with three established duplicate
+warnings. Exact `cargo-audit` 0.22.2 loaded 1,226 advisories, scanned 211
+dependencies, and found zero vulnerabilities. The 364-line production normal/
+build dependency graph is unchanged.
+
+The exact 4,001,760-byte release binary has SHA-256
+`d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d`. Its
+session matrix passed 18/18, including ten equivalence cases, held-lock
+behavior, and engine-over-default records. The direct 8,650,857-byte near-cap
+case passed 1/1, as did the native near-cap/allocation case. These remain
+regression/gate results, not comparative measurements. Three fresh cycle-4
+reviews, remote workflows, `main` integration, and delivery remain pending. The
+fixed bootstrap inventory has no `session-json` workload and is
 unchanged. This slice is deliberately non-equivalent, not measured, and claim-
 ineligible; no sample, comparison, threshold, compatibility promotion, product-
 performance result, or fx-equivalence claim exists.

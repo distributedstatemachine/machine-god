@@ -37,7 +37,7 @@ Its 4,001,712-byte release binary had SHA-256
 `e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb` and
 passed the documented human/JSON, grammar-before-effects, `NotFound`/no-create,
 immutability, private-lock, and root-isolation matrix. Those results do not
-approve the rejected parser. The synchronized replacement source is now
+approve the rejected parser. The cycle-2 synchronized replacement source was
 composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and its complete required local
 gate is green under exact Rust/Cargo 1.94.1 without fallback. Focused evidence
@@ -50,9 +50,41 @@ unsafe-Rust delta. The 4,001,760-byte release binary has SHA-256
 `483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc` and
 passes the complete matrix, including six process differentials, an
 8,650,857-byte near-cap record, 4,097-message and 262,145-byte-metadata records
-over engine defaults, and a held-lock wait of at least 500 ms. Formal cycle 3,
-remote workflows, `main` integration, and delivery remain pending. No review-
-green or delivered claim is made. No
+over engine defaults, and a held-lock wait of at least 500 ms. Formal cycle 3
+then rejected exact candidate
+`9282b4044c5fb5a249598d23d098562c96850c99`, tree
+`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`: correctness/API and native
+boundary/effects each reported `0/0/1/0`, while performance/concurrency/
+resources reported `0/0/1/1`. The deduplicated `0/0/1/1` findings are a medium
+context-free recursion-budget mismatch and low self-counted allocation
+evidence. Composed remediation is exact
+`af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`. It matches `serde_json` 1.0.151's
+127-active-container accounting with typed parent contexts of 3 for metadata,
+6 for JSON content, and 7 for tool-call/result JSON. Exact accepted/rejected
+array-depth boundaries are 123/124, 120/121, 119/120, and 119/120. Focused
+evidence is now 58 CLI process tests, including ten store/CLI equivalence
+cases, and 22 native inspection tests. Dev-only `allocation-counter` 0.8.1 is
+isolated per child process; all five measured shapes report exactly
+`count_total=14`, `count_current=2`, `count_max=8`, `bytes_total=8913715`,
+`bytes_current=14`, and `bytes_max=8913347`. The complete replacement gate is
+green on that exact remediation under Rust/Cargo 1.94.1 without fallback.
+Python passed 135 tests with eight expected skips; pinned-fx `b1774fb`
+regeneration is byte-stable; WASI/FreeBSD checks retain only the established
+WASI `read_file` warning; and documentation integrity is 85/147/626/81 with
+zero errors. Exact
+`cargo-deny` 0.20.2 passed all categories with three established duplicate
+warnings; `cargo-audit` 0.22.2 loaded 1,226 advisories, checked 211
+dependencies, and found zero vulnerabilities. `allocation-counter` 0.8.1 is a
+dev-only MIT/Apache crates.io dependency; the 364-line production normal/build
+graph is unchanged. Diff, inventory, and no-added-unsafe checks are green. The
+4,001,760-byte release binary has SHA-256
+`d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d` and passed
+the 18/18 session matrix, including ten equivalence cases, held-lock behavior,
+and engine-over-default records. Direct 8,650,857-byte near-cap and native
+near-cap/allocation probes each passed 1/1. Three fresh cycle-4 reviews, remote
+workflows, `main` integration, and delivery remain pending. No review-green or
+delivered claim is made. No
 compatibility, product-performance, or fx-equivalence claim is made; the
 delivered count remains thirty-one.
 

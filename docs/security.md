@@ -9,15 +9,28 @@ residual payload-proportional allocation, duplicate-key mismatch, and stale
 maintained documentation. Its complete exact-1.94.1 pre-remediation gate,
 Python 135/8-skip suite, pinned-fx/target/diff/no-unsafe checks, 85/146/626/81
 documentation check, and release effect matrix were green, but do not approve
-the rejected candidate. Replacement source is composed at exact
+the rejected candidate. Cycle-2 replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and its complete required exact-
 1.94.1 local gate is green without fallback. Focused 56 CLI unit, 54 CLI
 process, and 21 native inspection tests are green. Python 135/8 skips, byte-
 stable pinned-fx, WASI/FreeBSD, 85/147/626/81 documentation, no-delta, and
 release-matrix checks are green; WASI retains only the established `read_file`
-warning. Formal cycle 3, remote workflows, `main` integration, and delivery
-remain pending.
+warning. Formal cycle 3 rejected exact candidate `9282b404`, tree `6d41f7ee`,
+with track counts `0/0/1/0`, `0/0/1/0`, and `0/0/1/1`. The deduplicated
+`0/0/1/1` findings are a medium context-free recursion-budget mismatch and low
+self-counted allocation evidence. Exact remediation `af055ff3`, tree
+`14eafad`, uses `serde_json` 1.0.151-equivalent 127-active-container accounting
+with 3/6/7 typed parent contexts and exact 123/124, 120/121, 119/120, and
+119/120 nested-array boundaries. Its real allocator instrumentation is a dev-
+only dependency isolated in child processes; policy, license, and audit checks
+are green. The complete replacement gate is green on exact `af055ff3`/`14eafad`
+under Rust/Cargo 1.94.1 without fallback. Exact `cargo-deny` 0.20.2 passed all
+categories with three established duplicate warnings, and `cargo-audit` 0.22.2
+found zero vulnerabilities across 211 dependencies and 1,226 advisories.
+Production normal/build dependency topology remains 364 lines; diff, inventory,
+and no-added-unsafe checks are green. Three fresh cycle-4 reviews, remote
+workflows, `main` integration, and delivery remain pending.
 The slice adds no network, subprocess, credential, provider, permission,
 workspace, configuration, runtime, or engine authority. Its
 `session` facade captures only state environment inputs on first poll, opens
@@ -25,7 +38,10 @@ only an existing validated machine-god hierarchy, and must inspect exactly one
 validated current-schema record through the synchronized one-pass fixed-4-KiB
 summary parser. Canonical `serde_json::Number` semantics, fixed-stack known
 tokens, only two retained ID strings, and a fixed-digest strictly node-capped
-last-value-wins duplicate tracker are required. The CLI receives only bounded
+last-value-wins duplicate tracker are required. While parsing values that may
+later be shadowed, the parser must also reproduce `serde_json`'s typed-parent-
+aware active-container limit before applying the store's final-tree depth and
+node limits. The CLI receives only bounded
 structural fields; message bodies, tool content, reasoning, metadata keys, and
 metadata values are dropped inside native. Missing hierarchy or record is `NotFound`
 without creation. Present inspections retain only the store's documented ability to
@@ -38,8 +54,9 @@ boundary is in [`session-cli.md`](session-cli.md),
 categories fail closed to the CLI's `Unavailable` presentation. File, depth,
 node, schema, identifier, and counter constraints are store-owned rather than
 engine limits. Lock wait, filesystem latency, and `EINTR` retries remain
-unbounded in time and attempts. Review is rejected, and the feature is not
-delivered. No compatibility or performance claim is made.
+unbounded in time and attempts. Formal cycle 3 is rejected, the complete
+remediation gate is green, and the feature is not delivered. No compatibility
+or performance claim is made.
 
 Delivered bounded slice 31 adds no new network, subprocess, credential,
 provider, permission, workspace, or engine authority. Its native `sessions`

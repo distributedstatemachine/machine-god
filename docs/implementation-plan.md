@@ -80,8 +80,8 @@ Documentation integrity was 85 Markdown files, 146 fenced blocks, 626 parsed
 links, and 81 unique repository targets with zero errors. The 4,001,712-byte
 release binary had SHA-256
 `e975e8a16f750188de25d8cf0eac02975643edf6730d6b3ad87d442b76ce27bb`.
-Those results do not approve the rejected candidate. The synchronized
-replacement source is composed at exact
+Those results do not approve the rejected candidate. The cycle-2 synchronized
+replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
 exact-1.94.1 local gate without fallback. Focused 56 CLI unit, 54 CLI process,
@@ -94,13 +94,41 @@ has SHA-256
 `483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc` and its
 full matrix is green, including six process differentials, an 8,650,857-byte
 near-cap record, 4,097-message and 262,145-byte-metadata engine-over-default
-records, and a held-lock wait of at least 500 ms. Formal cycle 3, remote
-workflows, `main` integration, and delivery remain pending.
+records, and a held-lock wait of at least 500 ms. At that checkpoint, the next
+formal review, remote workflows, `main` integration, and delivery were pending.
+Formal cycle 3 rejected exact candidate
+`9282b4044c5fb5a249598d23d098562c96850c99`, tree
+`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`. Correctness/API and native
+boundary/effects each reported `0/0/1/0`; performance/concurrency/resources
+reported `0/0/1/1`. The deduplicated `0/0/1/1` union is a medium context-free
+recursion-budget mismatch and low self-counted allocation evidence. Exact
+cycle-3 remediation `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, is composed. It reproduces
+`serde_json` 1.0.151's 127-active-container budget with typed parent contexts
+3/6/7 and exact nested-array accept/reject boundaries 123/124, 120/121,
+119/120, and 119/120. Focused evidence is now 58 CLI process tests with ten
+equivalence cases and 22 native inspection tests. Dev-only
+`allocation-counter` 0.8.1 runs five shapes in isolated child processes; each
+reports exact allocation counts 14/2/8 and byte counts
+8,913,715/14/8,913,347 for total/current/maximum. The manifest/lock delta is
+dev-only. The complete replacement gate is green on that exact remediation
+under Rust/Cargo 1.94.1 without fallback. Python 135/8 skips, byte-stable
+pinned fx, WASI/FreeBSD with only the established warning, documentation
+85/147/626/81, dependency policy/license/audit, diff/inventory/no-added-unsafe,
+and the release matrix are green. Exact `cargo-deny` 0.20.2 has only three
+established duplicate warnings; exact `cargo-audit` 0.22.2 scanned 211
+dependencies against 1,226 advisories with zero vulnerabilities. The production
+normal/build graph remains 364 lines. The 4,001,760-byte release binary has
+SHA-256 `d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d` and
+passed the 18/18 session matrix. Direct and native near-cap probes each passed
+1/1. Fresh cycle-4 reviews, remote workflows, `main` integration, and delivery
+remain pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
-The fixed benchmark workload is unchanged, and the composition adds no
-dependency or unsafe Rust. No remote workflow, `main` integration, delivery,
+The fixed benchmark workload is unchanged, and the production composition adds
+no dependency or unsafe Rust; only dev-only allocation instrumentation is new.
+No remote workflow, `main` integration, delivery,
 product-performance, or fx-equivalence claim exists yet. The delivered count
 remains thirty-one.
 
@@ -3440,9 +3468,13 @@ force fast-forward, and exact `main` workflows.
 The thirty-second slice is in progress from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
 `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
-`72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected. The synchronized
-replacement is composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`,
-tree `86971aca0f78e637de55d2a79eda64e88bff8734`. The slice adds only strict
+`72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected. Its cycle-2
+replacement was composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`,
+tree `86971aca0f78e637de55d2a79eda64e88bff8734`; formal cycle 3 rejected exact
+candidate `9282b4044c5fb5a249598d23d098562c96850c99`, tree
+`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`. Current remediation is composed
+at exact `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`. The slice adds only strict
 `session <id>` and `session <id> --json`. The ID is parsed through the core
 portable contract before effects, while exact tokens `last`, `--id`, and
 `--json` are reserved in ID position. Every upstream-style selector, reordered
@@ -3462,7 +3494,10 @@ inspect the exact current-schema record in one forward pass through a fixed
 full `SessionRecord`. Known tokens use fixed-stack scratch; only the two
 returned IDs retain payload-sized strings. Canonical `serde_json::Number`
 parsing and a fixed-digest strictly node-capped duplicate tracker must match
-ordinary last-value-wins metadata/nested-JSON semantics. These file-byte,
+ordinary last-value-wins metadata/nested-JSON semantics. Parse-time recursion
+must independently reproduce `serde_json` 1.0.151's 127-active-container
+budget, including typed parent contexts of 3 for metadata, 6 for JSON content,
+and 7 for tool-call/result JSON. These file-byte,
 aggregate JSON depth/node, identifier, counter, and content-shape constraints
 are store-owned. Inspection does not invoke engine validation and does not
 enforce its configurable/default 4,096-message, 8 MiB serialized-transcript, or
@@ -3526,13 +3561,49 @@ has SHA-256
 `483eb60f707cadfe4b0dd10cfb65617e576488546d908f2f6811b0bfc55773cc` and its
 matrix is green, including six process differentials, an 8,650,857-byte near-
 cap record, 4,097-message and 262,145-byte-metadata engine-over-default records,
-and an exclusive held-lock wait of at least 500 ms. Formal cycle 3 is pending.
+and an exclusive held-lock wait of at least 500 ms. Formal cycle 3 rejected
+exact candidate `9282b404`, tree `6d41f7ee`: correctness/API and native
+boundary/effects each reported `0/0/1/0`, while performance/concurrency/
+resources reported `0/0/1/1`. The deduplicated `0/0/1/1` findings are a medium
+context-free recursion-budget mismatch and low self-counted allocation
+evidence.
+
+Exact remediation source `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, implements the parent-aware 127-
+container budget above. Exact ordinary-store/listing/session equivalence cases
+accept/reject nested arrays at 123/124 for metadata, 120/121 for JSON content,
+and 119/120 for tool-call and tool-result JSON. Focused evidence is green at 58
+CLI process tests, including ten equivalence cases, and 22 native inspection
+tests. Dev-only `allocation-counter` 0.8.1 instrumentation runs each of five
+shapes in its own child process. Every shape reports exact allocation
+total/current/maximum counts 14/2/8 and byte counts
+8,913,715/14/8,913,347. The manifest and lockfile change solely for that dev
+dependency. The complete replacement gate is green on exact `af055ff3`/
+`14eafad` under Rust/Cargo 1.94.1 without fallback. Python passed 135 with eight
+expected skips; pinned-fx `b1774fb` regeneration is byte-stable; WASI/FreeBSD
+checks passed with only the established WASI `read_file` warning; and
+documentation integrity is 85/147/626/81 with zero errors. Exact `cargo-deny`
+0.20.2 passed all categories with three established duplicate warnings. Exact
+`cargo-audit` 0.22.2 loaded 1,226 advisories, scanned 211 dependencies, and
+found zero vulnerabilities. Crates.io `allocation-counter` 0.8.1 is dev-only
+MIT/Apache, while the production normal/build dependency graph remains
+unchanged at 364 lines. Diff, inventory, and no-added-unsafe checks are green.
+
+The exact 4,001,760-byte release binary has SHA-256
+`d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d`. Its
+session matrix passed 18/18, including ten equivalence cases, held-lock
+behavior, and engine-over-default records. The direct 8,650,857-byte near-cap
+case and native near-cap/allocation case each passed 1/1. Three fresh cycle-4
+reviews remain pending.
+
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, a non-force fast-forward, and exact `main` workflows. There is no
 claim that the candidate is green or that integration, workflows, or delivery
 are complete; the delivered count remains thirty-one. After slice 32 is
 delivered, the next bounded development slice returns to completing the
 remaining native tools rather than expanding the CLI inspection surface.
+Every review/remediation iteration must end with committed/integrated worktrees
+verified clean and safely removed; active or uncommitted worktrees are retained.
 
 ### Milestone 03 completion boundary
 
@@ -4509,8 +4580,22 @@ gate:
   complete required exact-1.94.1 local gate without fallback. Focused 56 CLI
   unit, 54 CLI process, and 21 native tests; Python 135/8 skips; byte-stable
   pinned fx; WASI/FreeBSD; docs 85/147/626/81; no-delta; and the 4,001,760-byte
-  release SHA/matrix are green. Formal cycle 3, remote workflows, `main`
-  integration, and delivery remain pending.
+  release SHA/matrix are green. Formal cycle 3 rejected exact candidate
+  `9282b404`, tree `6d41f7ee`: track counts `0/0/1/0`, `0/0/1/0`, and
+  `0/0/1/1` deduplicate to a medium context-free recursion-budget mismatch and
+  low self-counted allocation evidence. Exact remediation `af055ff3`, tree
+  `14eafad`, implements `serde_json` 1.0.151-equivalent 127-active-container
+  accounting with typed parent contexts 3/6/7 and exact nested-array boundaries
+  123/124, 120/121, 119/120, and 119/120. Focused evidence is 58 CLI process
+  tests with ten equivalence cases and 22 native inspection tests. Real dev-
+  only allocator instrumentation is child-process-isolated; five shapes all
+  report exact allocation counts 14/2/8 and byte counts
+  8,913,715/14/8,913,347. The complete exact-remediation gate is green without
+  fallback: required Rust, Python 135/8, pinned fx, WASI/FreeBSD, docs
+  85/147/626/81, dependency policy/license/audit, unchanged 364-line production
+  graph, diff/inventory/no-added-unsafe, exact release hash, 18/18 session
+  matrix, and both 1/1 near-cap probes passed. Fresh cycle-4 reviews, remote
+  workflows, `main` integration, and delivery remain pending.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.

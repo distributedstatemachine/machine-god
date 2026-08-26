@@ -8,13 +8,18 @@ gate but is rejected. The three formal verdicts were `0/0/1/2`, `0/0/1/2`, and
 `0/0/1/1`; the deduplicated findings are canonical-number mismatch, residual
 payload-proportional allocations, duplicate-key mismatch, and stale maintained
 documentation. This page now states the synchronized replacement contract.
-Replacement source is composed at exact
+Cycle-2 replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
-exact-1.94.1 local gate without fallback. Formal cycle 3, remote workflows,
-`main` integration, and delivery remain pending. Focused evidence is green at
-21 native inspection, 56 CLI unit, and 54 CLI process tests; complete gate
-evidence is recorded in the live ledger. Its sole first consumer is the strict
+exact-1.94.1 local gate without fallback. Its focused evidence was green at 21
+native inspection, 56 CLI unit, and 54 CLI process tests. Formal cycle 3 then
+rejected exact candidate `9282b404`, tree `6d41f7ee`, with track counts
+`0/0/1/0`, `0/0/1/0`, and `0/0/1/1`. The deduplicated `0/0/1/1` union is a
+medium context-free recursion-budget mismatch and low self-counted allocation
+evidence. Exact remediation `af055ff3`, tree `14eafad`, is composed; its
+complete replacement gate is green under exact Rust/Cargo 1.94.1 without
+fallback. Three fresh cycle-4 reviews, remote workflows, `main` integration,
+and delivery remain pending. Its sole first consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -102,8 +107,14 @@ last-value-wins duplicate-key semantics. A fixed-digest tracker records object
 key identity and each key's current logical node contribution; a repeated key
 replaces its prior contribution. Tracker entries and aggregate arbitrary-JSON
 work are strictly capped by the store's 65,536-node limit, and container depth
-is capped at 64. This preserves final deserialized-tree node/count semantics
-without retaining key text or values. Exact filename/ID binding, schema,
+is capped at 64. Independently, parsing matches `serde_json` 1.0.151's 127-
+active-container recursion accounting even for values later shadowed by a
+duplicate key. Typed parents consume three slots before metadata JSON, six
+before JSON content, and seven before tool-call or tool-result JSON. Exact
+nested-array accept/reject boundaries are therefore 123/124, 120/121,
+119/120, and 119/120. This preserves parse acceptance plus final deserialized-
+tree node/count semantics without retaining key text or values. Exact filename/
+ID binding, schema,
 8,651,165-byte file ceiling, identifier bounds, positive revision and
 allocator, and content shape remain authoritative.
 
@@ -143,5 +154,12 @@ duplicate metadata/nested keys with last-value-wins counts, fixed resource
 ceilings, lock-sidecar permissions, invalid and unsafe roots, corrupt/
 oversized/wrong-ID/nonregular/symlink records, retained-root replacement,
 redaction, and all category mappings. CLI and release-binary evidence is owned
-separately. These requirements are green on the composed replacement SHA; the
-formal cycle-3 review outcome remains pending.
+separately. Cycle-3 remediation focused evidence is green at 22 native tests
+and 58 CLI process tests, including ten exact ordinary-store/listing/session
+equivalence cases. Real dev-only allocation instrumentation runs five shapes in
+separate child processes; all five have exact totals/current/max of 14/2/8
+allocations and 8,913,715/14/8,913,347 bytes. The complete exact-remediation
+gate is green: required Rust, Python 135/8 skips, pinned fx, WASI/FreeBSD, docs
+85/147/626/81, dependency policy/audit, diff/inventory/no-added-unsafe, release-
+hash, the 18/18 session matrix, and direct/native near-cap probes all passed.
+The formal cycle-4 review outcome remains pending.

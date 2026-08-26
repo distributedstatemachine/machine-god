@@ -9,14 +9,27 @@ effects `0/0/1/2`, and performance/concurrency/resources `0/0/1/1`, in
 blocker/high/medium/low order. The deduplicated findings are two medium themes
 (canonical-number mismatch and residual payload-proportional allocations) and
 two low themes (duplicate-key mismatch and stale maintained documentation).
-The contract below is the synchronized replacement contract. Replacement source
-is composed at exact `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
+The contract below is the synchronized replacement contract. Cycle-2
+replacement source was composed at exact
+`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
-exact-1.94.1 local gate without fallback. Formal cycle 3, remote workflows,
-`main` integration, and delivery remain pending; this is not a review-green or
-delivered claim. Focused evidence is green at 56 CLI unit, 54 CLI process, and
-21 native inspection tests; the full Python, pinned-fx, target, documentation,
-no-delta, release-hash, and release-matrix record is in the review ledger.
+exact-1.94.1 local gate without fallback. Its focused evidence was green at 56
+CLI unit, 54 CLI process, and 21 native inspection tests; the full Python,
+pinned-fx, target, documentation, no-delta, release-hash, and release-matrix
+record is in the review ledger. Formal cycle 3 rejected exact candidate
+`9282b404`, tree `6d41f7ee`, with track counts `0/0/1/0`, `0/0/1/0`, and
+`0/0/1/1`, deduplicated to one medium context-free recursion-budget mismatch
+and one low self-counted allocation-evidence finding. Exact remediation
+`af055ff3`, tree `14eafad`, uses `serde_json` 1.0.151-equivalent 127-active-
+container accounting with typed parent counts 3/6/7 and exact nested-array
+boundaries 123/124, 120/121, 119/120, and 119/120. Focused evidence is now 58
+CLI process tests, including ten equivalence cases, and 22 native inspection
+tests. The complete replacement gate is green on exact `af055ff3`/`14eafad`
+under Rust/Cargo 1.94.1 without fallback, including the Python, pinned-fx,
+target, documentation, dependency, diff/inventory/no-added-unsafe, release-
+hash, and 18/18 release-session matrix recorded in the ledger. Three fresh
+cycle-4 reviews, remote workflows, `main` integration, and delivery remain
+pending; this is not a review-green or delivered claim.
 No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
@@ -150,7 +163,12 @@ owned strings. Metadata and nested JSON object keys are represented during the
 pass by fixed-size digests in a strictly node-capped tracker; repeated keys
 replace the prior logical value and node contribution so the result matches
 ordinary last-value-wins deserialization. No transcript string, metadata key,
-or arbitrary JSON scalar is retained after validation. Corrupt or future
+or arbitrary JSON scalar is retained after validation. Before those final-tree
+limits, parsing also reproduces `serde_json` 1.0.151's 127 simultaneously
+active container budget, including three typed parents for metadata, six for a
+JSON content block, and seven for tool-call/result JSON. Exact nested-array
+accept/reject boundaries are consequently 123/124, 120/121, 119/120, and
+119/120, including values later shadowed by duplicate keys. Corrupt or future
 records are not skipped, repaired, migrated, or rewritten.
 
 The command creates no state root and does not create, repair, rewrite,

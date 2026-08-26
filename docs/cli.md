@@ -22,13 +22,28 @@ themes plus duplicate-key and stale-documentation low themes. The synchronized
 native replacement uses one-pass fixed-4-KiB streaming, canonical
 `serde_json::Number` semantics, fixed-stack known tokens, two retained ID
 strings, and a fixed-digest strictly node-capped last-value-wins duplicate
-tracker. Replacement source is composed at exact
+tracker. Cycle-2 replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
 exact-1.94.1 local gate without fallback. Focused evidence is 56 CLI unit, 54
 CLI process, and 21 native inspection tests; the complete supplemental gate and
-release matrix are recorded in the live ledger. Formal cycle 3, remote
-workflows, `main` integration, and delivery remain pending.
+release matrix are recorded in the live ledger. Formal cycle 3 rejected exact
+candidate `9282b404`, tree `6d41f7ee`: the three tracks reported `0/0/1/0`,
+`0/0/1/0`, and `0/0/1/1`, deduplicated to a medium context-free recursion-
+budget mismatch and low self-counted allocation evidence. Exact remediation
+`af055ff3`, tree `14eafad`, now matches `serde_json` 1.0.151's 127-active-
+container budget with 3/6/7 typed parent contexts. Exact nested-array
+accept/reject boundaries are 123/124 for metadata, 120/121 for JSON content,
+and 119/120 for both tool-call and tool-result JSON. Focused evidence is 58 CLI
+process tests, including ten equivalence cases, and 22 native inspection tests.
+The dev-only real allocation counter is isolated per child process; all five
+shapes have the exact allocation tuple recorded in the ledger. The complete
+replacement gate is green on exact `af055ff3`/`14eafad` under Rust/Cargo 1.94.1
+without fallback. Python 135/8 skips, pinned-fx regeneration, WASI/FreeBSD,
+docs 85/147/626/81, dependency policy/audit, diff/inventory/no-added-unsafe,
+the 4,001,760-byte release hash, and its 18/18 session matrix are green; the
+ledger records the exact results. Three fresh cycle-4 reviews, remote workflows,
+`main` integration, and delivery remain pending.
 There is no matching bootstrap workload and no claim that the feature is green,
 delivered, performant, or equivalent. The delivered count remains thirty-one;
 evidence is in the

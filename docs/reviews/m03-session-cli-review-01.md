@@ -1,12 +1,15 @@
 # Milestone 03 session CLI review ledger
 
-Status: exact cycle-2 remediation source
-`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
-`86971aca0f78e637de55d2a79eda64e88bff8734`, is composed and passed its complete
-exact same-SHA local gate under Rust/Cargo 1.94.1 without fallback. Formal cycle
-3, remote delivery gates, integration, and delivery remain pending. This is not
-a review-green or delivered claim. Historical rejected candidates and verdicts
-remain recorded below.
+Status: formal cycle 3 rejected exact candidate
+`9282b4044c5fb5a249598d23d098562c96850c99`, tree
+`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`, with a deduplicated `0/0/1/1`
+verdict. Exact cycle-3 remediation source
+`af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, is composed and passed its
+complete replacement gate under exact Rust/Cargo 1.94.1 without fallback.
+Three fresh cycle-4 reviews, remote delivery gates, integration, and delivery
+remain pending. This is not a review-green or delivered claim. Historical
+rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
 composition was `852fec7`; focused composition-gate remediation advances the
@@ -246,7 +249,11 @@ contract as follows:
   arbitrary JSON scalars after validation; and
 - use fixed-size key digests in a strictly node-capped duplicate tracker so
   metadata and nested arbitrary JSON match ordinary last-value-wins semantics,
-  including replacement of a repeated key's prior logical node contribution.
+  including replacement of a repeated key's prior logical node contribution;
+  and
+- reproduce `serde_json` 1.0.151's parse-time 127-active-container recursion
+  budget including typed parent containers, independently of the final-tree
+  depth limit.
 
 The 8,651,165-byte file ceiling, depth-64 and final-tree 65,536-node aggregate
 JSON ceilings, identifier/counter/content-shape rules, and duplicate tracking
@@ -256,11 +263,12 @@ limits. Likewise, finite parser memory and transferred bytes do not bound
 exclusive lock wait, filesystem latency, or `EINTR` retries; those have no
 wall-clock or attempt ceiling and synchronously block the polling thread.
 
-This synchronized contract is composed at exact source
+The cycle-2 synchronized contract was composed at exact source
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the exact same-SHA gate
-recorded below. It is not a claim that formal cycle 3 is green or that the slice
-is delivered.
+recorded below. Formal cycle 3 nevertheless rejected the exact tree because its
+recursion accounting and allocation evidence did not satisfy the refined
+contract above. It is not delivered.
 
 ## Cycle 2 remediation gate record
 
@@ -293,29 +301,97 @@ record, a 4,097-message record over the engine default, a 262,145-byte metadata
 record over the engine default, and an exclusive held-lock wait of at least
 500 ms.
 
-These checks establish the exact replacement local gate only. Formal cycle 3
-must still bind three fresh reviewers to this exact source/tree. No formal-
-review outcome, remote workflow, `main` integration, delivery, compatibility
-promotion, product-performance, or fx-equivalence claim is made.
+These checks establish the exact cycle-2 replacement local gate only. They do
+not override the formal cycle-3 rejection recorded next.
 
-## Required formal cycle 3 adversarial product review
+## Formal cycle 3 verdict
 
-Three fresh isolated read-only agents must now review exact replacement source
-`f4dbe3d`, tree `86971ac`:
+Three fresh isolated agents reviewed exact candidate
+`9282b4044c5fb5a249598d23d098562c96850c99`, tree
+`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`. Counts are blocker/high/medium/
+low:
 
-1. correctness/API, including CLI grammar, output/error behavior, and the
-   pinned-fx boundary;
-2. native boundary/effects, including state roots, persistence, races, errors,
-   and portability; and
-3. performance/concurrency/resources, including benchmark classification and
-   evidence completeness.
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Rejected | `0/0/1/0` |
+| Native boundary/effects and portability | Rejected | `0/0/1/0` |
+| Performance/concurrency/resources and evidence | Rejected | `0/0/1/1` |
 
-Every report must end with exact counts for blocker, high, medium, and low
-findings. Any finding rejects the entire candidate. Remediation must be
-composed, the complete replacement gate rerun, and three new agents must review
-the replacement exact SHA. No prior discovery, implementation, review, or
-remediation agent may approve its own work or be reused in a later review
-cycle. Only a deduplicated `0/0/0/0` candidate is formally green.
+The overlapping reports deduplicate to `0/0/1/1`:
+
+1. **Medium — context-free recursion-budget mismatch.** The streamed parser's
+   arbitrary-JSON recursion budget did not include the typed envelope, record,
+   message, content, call, or output containers already active at that parse
+   site. It could therefore accept a deeply nested value that ordinary
+   `serde_json` deserialization rejects before last-value-wins shadowing and
+   final-tree depth accounting.
+2. **Low — self-counted allocation evidence.** The prior evidence asserted
+   bounded parser-owned structures from counters maintained by the parser
+   itself. It did not observe allocations through the real allocator and could
+   not independently establish payload-shape-independent allocation behavior.
+
+Any finding rejects the entire candidate, so `9282b404` is not review-green.
+
+## Cycle 3 remediation
+
+Exact remediation `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, reproduces `serde_json` 1.0.151's
+127 simultaneously active array/object limit. Typed contexts consume three
+parent containers before metadata JSON, six before a JSON content value, and
+seven before tool-call arguments or tool-result content. Exact ordinary-store,
+listing, and inspection equivalence evidence accepts/rejects nested-array
+depths at 123/124 for metadata, 120/121 for JSON content, 119/120 for tool-call
+arguments, and 119/120 for tool-result content, including a deeply nested value
+later shadowed by a duplicate key.
+
+Focused evidence is now 58 CLI process tests, including ten equivalence cases,
+and 22 native inspection tests. Real `allocation-counter` 0.8.1 instrumentation
+is a dev-only native-crate dependency and runs each measured shape in its own
+child process. Empty, near-cap, number-heavy, message-heavy, and key-heavy
+records all report exactly `count_total=14`, `count_current=2`, `count_max=8`,
+`bytes_total=8913715`, `bytes_current=14`, and `bytes_max=8913347`. The Cargo
+manifest and lockfile delta is solely this dev dependency; dependency policy,
+license, and vulnerability-audit checks are green. Production dependencies,
+benchmark workloads, generated compatibility inventory, and unsafe Rust are
+unchanged.
+
+## Cycle 3 remediation gate record
+
+Exact remediation `af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, passed all four required commands
+under exact Rust/Cargo 1.94.1 without fallback. The complete Python discovery
+suite passed 135 tests with eight expected macOS skips. Compatibility
+regeneration is byte-stable against pinned fx `b1774fb`. Native WASI default/
+all-feature, CLI WASI, and native FreeBSD checks passed with only the
+established WASI `read_file` warning. Documentation integrity covered 85
+Markdown files, 147 fenced blocks, 626 parsed links, and 81 unique repository
+targets with zero errors.
+
+Exact `cargo-deny` 0.20.2 passed every category with the three established
+duplicate-version warnings. Exact `cargo-audit` 0.22.2 loaded 1,226 advisories,
+scanned 211 dependencies, and found zero vulnerabilities. The sole manifest/
+lock delta is crates.io `allocation-counter` 0.8.1 as an MIT/Apache dev-only
+dependency. The production normal/build graph remains unchanged at 364 lines.
+Diff, generated-inventory, and no-added-unsafe checks are green; benchmark
+workloads and generated compatibility bytes are unchanged.
+
+The freshly built 4,001,760-byte exact-tree release binary has SHA-256
+`d296174898938f632351bebb38449533c7db03bb3659392bea3743a02ee1619d`. Its
+release-session matrix passed 18/18, including ten exact ordinary-store/
+listing/session equivalence cases, held-lock behavior, and engine-over-default
+records. The direct 8,650,857-byte near-cap case passed 1/1. The native near-
+cap/allocation case also passed 1/1 and retained the five-shape exact allocation
+tuple above.
+
+These checks establish the complete exact-remediation local gate only. Three
+fresh formal cycle-4 reviews remain pending. Each cycle-4 report must end with
+exact blocker/high/medium/low counts. Any finding rejects the remediation and
+requires another complete gate plus three new agents on one replacement exact
+SHA. No prior discovery, implementation, review, or remediation agent may
+approve its own work or be
+reused in a later review cycle. Only a deduplicated `0/0/0/0` candidate is
+formally green. No remote workflow, `main` integration, delivery,
+compatibility-promotion, product-performance, or fx-equivalence claim is made.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees

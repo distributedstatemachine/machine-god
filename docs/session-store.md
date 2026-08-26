@@ -206,15 +206,37 @@ logical value and its node contribution. The 64-level arbitrary-JSON depth cap,
 filename/ID binding remain store-owned constraints. They are not the engine's
 configurable message, transcript, or metadata limits.
 
+Parse-time recursion is a separate ordinary-load compatibility boundary from
+the final-tree depth limit. `serde_json` 1.0.151 admits at most 127
+simultaneously active arrays or objects, including typed envelope parents.
+Before arbitrary JSON begins, metadata has three active parents, a JSON content
+block has six, and tool-call/result JSON has seven. The specialized inspector
+therefore accepts/rejects nested-array depths at 123/124, 120/121, 119/120, and
+119/120 respectively, including a value later shadowed by a duplicate key.
+
 Exact cycle-2 candidate `1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
 `72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected and does not satisfy
-this synchronized contract. Replacement source is composed at exact
+this synchronized contract. Cycle-2 replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed its complete required
 exact-1.94.1 local gate without fallback. Native inspection evidence is green
 at 21 tests, including near-cap, engine-over-default, process-differential, and
-held-lock cases. Formal cycle 3 remains pending; this subsection does not claim
-the specialized path is review-green or delivered.
+held-lock cases. Formal cycle 3 then rejected exact candidate
+`9282b4044c5fb5a249598d23d098562c96850c99`, tree
+`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`. Correctness/API and native
+effects each reported `0/0/1/0`; performance/resources reported `0/0/1/1`.
+The deduplicated `0/0/1/1` findings were context-free recursion accounting and
+self-counted allocation evidence. Exact remediation source
+`af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
+`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, implements the parent-aware budget
+above and adds real dev-only allocation instrumentation isolated per child
+process. Focused evidence is 22 native inspection and 58 CLI process tests,
+including ten equivalence cases. The complete replacement gate is green on
+exact `af055ff3`/`14eafad` under Rust/Cargo 1.94.1 without fallback. Its
+18/18 release-session matrix includes those ten equivalence cases, held-lock
+behavior, and engine-over-default records; direct 8,650,857-byte near-cap and
+native near-cap/allocation probes each passed 1/1. Three fresh cycle-4 reviews
+remain pending; no review-green or delivered claim is made.
 
 ## Save, compare-and-swap, and durability
 
