@@ -3207,11 +3207,20 @@ complete local gate but was rejected by one medium and two deduplicated low
 product-review findings: real process inspection order, partial-write evidence,
 and complete native classification/build-mode evidence. Isolated remediations
 `04444d9`, `3de641f`, and `1e5bf28` are composed and their focused exact-1.94.1
-gate is green. The exact replacement candidate, complete replacement gate,
-three entirely fresh adversarial tracks, feature workflows, non-force
-integration, exact `main` workflows, and delivery remain pending. Cycle-1
-reviewers cannot approve the replacement. The delivered-slice count stays
+gate was green before cycle-2 composition. Cycle-1 reviewers did not approve
+that replacement. Feature workflows, non-force integration, exact `main`
+workflows, and delivery remain pending, so the delivered-slice count stays
 twenty-nine.
+
+Exact cycle-2 candidate `408e6ff` then passed its complete replacement gate.
+Two fresh reviewers were zero-finding, but the performance/resource reviewer
+reported one low evidence gap: no test fixed the `Ok(0)`/`WriteZero` stdout
+boundary. That finding rejected the entire candidate. Isolated remediation
+`5a125b6` covers both human and JSON zero-progress writes, and the composed
+cycle-3 focused exact-1.94.1 gate is green at 9/9 doctor CLI unit tests plus
+warnings-denied Clippy. The exact cycle-3 candidate, its complete gate, and
+three new same-SHA reviews remain pending; neither prior reviewer set can
+approve it.
 
 Parsing completes before effects. Accepted forms are exactly `doctor` and
 `doctor --json`; every other, repeated, extra, reordered, or non-Unicode

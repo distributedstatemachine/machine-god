@@ -8,8 +8,9 @@ Status: **IN PROGRESS**
   `f82ce46736f7bac4154da508e3b768d0b9248e15`.
 - Feature branch: `agent/m03-doctor-cli`.
 - Normative contract: [`doctor-cli.md`](../doctor-cli.md).
-- Replacement candidate SHA: **PENDING**. Cycle-1 candidate
-  `761bf0bce9faf7b9a40189dc837e38dc2d8e1a82` is rejected.
+- Cycle-3 replacement candidate SHA: **PENDING**. Cycle-1 candidate
+  `761bf0bce9faf7b9a40189dc837e38dc2d8e1a82` and cycle-2 candidate
+  `408e6ff54aa53d94965657107da8046945811244` are rejected.
 - Pinned comparison reference: `vercel-labs/fx` commit
   `b1774fbf6c7602b503026f96f6e960e946c692ef`.
 
@@ -20,8 +21,9 @@ process, runtime, session, workspace, model, repair, migration, or mutation
 behavior. It also excludes compatibility promotion and every product-
 performance or fx-equivalence claim.
 
-The slice is not reviewed, workflow-green, integrated, or delivered. The
-delivered count remains twenty-nine and Milestone 03 remains in progress.
+The slice is not zero-finding approved, workflow-green, integrated, or
+delivered. The delivered count remains twenty-nine and Milestone 03 remains in
+progress.
 
 ## Component ownership
 
@@ -78,9 +80,10 @@ a freshly built release-binary matrix are also required. The release smoke uses
 isolated missing XDG roots, removes both credential variables, compares human
 and JSON check/count content, and proves no root was created.
 
-No check is recorded as passed yet. If exact `+1.94.1` is damaged locally, the
-only permitted fallback is `+stable` after both Rust and Cargo report release
-1.94.1 exactly, and the fallback must be recorded.
+Cycle-1 and cycle-2 complete gates passed before their candidates were rejected
+by review. The cycle-3 complete gate is pending. If exact `+1.94.1` is damaged
+locally, the only permitted fallback is `+stable` after both Rust and Cargo
+report release 1.94.1 exactly, and the fallback must be recorded.
 
 ## Formal review protocol
 
@@ -141,12 +144,40 @@ worktrees:
   that accept a nonempty prefix and then fail still exit 1 with the exact fixed
   output diagnostic.
 
-The composed focused replacement gate is green: native doctor unit and
+The composed cycle-2 focused gate was green: native doctor unit and
 integration suites pass 10/10 in both no-default and all-feature modes, CLI
 doctor unit tests pass 8/8, CLI doctor subprocess tests pass 7/7, formatting is
-clean, and focused warnings-denied Clippy passes. The complete replacement gate
-and three entirely fresh same-SHA reviews remain pending; cycle-1 reviewers are
-not reused.
+clean, and focused warnings-denied Clippy passes. Exact candidate
+`408e6ff54aa53d94965657107da8046945811244` then passed the complete
+replacement gate and proceeded to three entirely fresh same-SHA reviewers;
+cycle-1 reviewers were not reused.
+
+## Review cycle 2: rejected and remediated
+
+Exact cycle-2 candidate `408e6ff54aa53d94965657107da8046945811244`
+passed the complete Rust 1.94.1 gate, all 135 Python tests with eight
+host-specific skips, pinned compatibility regeneration, documentation and
+dependency-policy checks, installed WASI/FreeBSD/Linux compilation, and the
+fresh release-binary smoke. Three new reviewers inspected that same clean SHA:
+
+1. Correctness/API reported `blocker=0 high=0 medium=0 low=0` and **GREEN**.
+2. Configuration/credential/state lifecycle reported
+   `blocker=0 high=0 medium=0 low=0` and **GREEN**.
+3. Performance/resource/CLI evidence reported
+   `blocker=0 high=0 medium=0 low=1`: immediate-error and partial-prefix write
+   tests did not mutation-pin a zero-progress writer returning `Ok(0)`, whose
+   `WriteZero` handling distinguishes `write_all` from an incorrect one-shot
+   `write` implementation.
+
+Any finding rejects a candidate, so the two zero-finding reports do not approve
+cycle 2. Isolated remediation
+`5a125b6f904f6c84266bbdd6c341963d7c326ddd` adds a zero-progress writer and
+exercises both human and JSON commands. Each now proves exit 1, exact fixed
+output diagnostic, zero accepted bytes, one write attempt, and one host call.
+The composed cycle-3 focused gate is green: formatter, 9/9 doctor CLI unit
+tests, and warnings-denied all-target/all-feature CLI Clippy pass under exact
+Rust 1.94.1. The complete cycle-3 gate and three entirely fresh same-SHA
+reviews remain pending; neither prior review set can approve cycle 3.
 
 ## Pending evidence
 
@@ -155,17 +186,20 @@ not reused.
   `04444d9c236ff95d52e6c815ed76bb7e0c2a370a`.
 - CLI production/evidence lineage:
   `7b540ebe6afd0714603bc12b0945d9986a8ed604`, then partial-write evidence
-  `1e5bf28d2a8a29ea5278a177fd7ac75c0b2fc85b`.
+  `1e5bf28d2a8a29ea5278a177fd7ac75c0b2fc85b`, then zero-progress evidence
+  `5a125b6f904f6c84266bbdd6c341963d7c326ddd`.
 - Documentation/evidence component:
   `38ac2f50536692324b5c2b1080acecbe12c20a1a`.
 - Independent-evidence lineage:
   `761bf0bce9faf7b9a40189dc837e38dc2d8e1a82`, then remediation
   `3de641f975c235edd19e2fd365f275f85ea2a56b`.
-- Fully composed replacement candidate SHA/tree: **PENDING**.
+- Fully composed cycle-3 replacement candidate SHA/tree: **PENDING**.
 - Cycle-1 complete local gate: **GREEN, CANDIDATE REJECTED BY REVIEW**.
-- Replacement focused gate: **GREEN**; complete gate: **PENDING**.
+- Cycle-2 complete local gate: **GREEN, CANDIDATE REJECTED BY REVIEW**.
+- Cycle-3 focused gate: **GREEN**; complete gate: **PENDING**.
 - Formal review cycle 1: **REJECTED, REMEDIATED**.
-- Formal replacement review cycle: **PENDING**.
+- Formal review cycle 2: **REJECTED, REMEDIATED**.
+- Formal review cycle 3: **PENDING**.
 - Exact feature CI and benchmark-evidence workflows: **PENDING**.
 - Non-force `main` integration and exact `main` workflows: **PENDING**.
 
