@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 2 REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 2 REJECTED; REMEDIATION PENDING**
 
 ## Base and boundary
 
@@ -188,6 +188,37 @@ Reviewers receive its exact SHA and tree out of band; the result seal will
 record both values without claiming the later review-exempt documentation-only
 seal was reviewed. Correctness/API, native lifecycle/effects, and performance/
 resources must each report `0/0/0/0` before feature workflows may begin.
+
+Formal cycle 2 reviewed exact candidate
+`399f5f7a14c1473d9e737d44838549ba305746de`, tree
+`99a88a45fd6f0823b23fd879633784433194cf8d`, in three fresh isolated read-only
+tracks. Correctness/API reported `1/1/0/0`, native lifecycle/effects reported
+`0/0/0/1`, and performance/resources reported `0/0/1/0`. The deduplicated
+union is `1/1/1/1`, so cycle 2 is rejected.
+
+The blocker is a real-provider protocol mismatch: language-model stream v4
+places the provider result in `output`, with the observed Perplexity shape
+`{ id, results }`, while the dedicated decoder admits only the older local
+fixture's `result` field. Remediation must accept only the current bounded,
+strict output shape, validate the provider result identifier, and replace the
+manufactured legacy fixture with exact captured-shape evidence. This was
+cross-checked against the current Vercel AI stream mapping and the upstream
+Gateway/Perplexity reproduction in
+[`vercel/ai#12178`](https://github.com/vercel/ai/issues/12178).
+
+The high finding is that URL-standard numeric IPv4 spellings such as `127.1`,
+`0177.0.0.1`, and `0x7f.0.0.1` pass the DNS-name fallback after Rust's canonical
+`IpAddr` parser rejects them. Target, domain-filter, and citation validation
+must recognize and reject every noncanonical URL IPv4 number spelling. The
+medium finding corrects the earlier proof above: JSON escaping can expand
+otherwise bounded query, title, and URL fields enough to make the 48 KiB
+serialized-output ceiling reachable. Remediation must add exact and one-byte-
+over output evidence and correct the contract explanation. The low finding is
+the stale pending-composition label in the maintained reference-host page.
+
+All four findings are confirmed. Cycle 2 remains historical rejected evidence;
+after remediation and a complete exact gate, three fresh review tracks must
+evaluate one new immutable candidate and produce a `0/0/0/0` union.
 
 ## Worktree lifecycle
 

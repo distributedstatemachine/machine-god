@@ -569,7 +569,7 @@ review and delivery gates are in the
 arguments, provider, transport, permission handler, session, runtime,
 credential, root-selection, or CLI authority.
 
-## Pending slice-33 web-search composition
+## Slice-33 web-search composition
 
 The frozen slice-33 extension reuses the production host's already validated
 model, bearer-backed `Arc<dyn AiGatewayTransport>`, and canonical Gateway
@@ -591,9 +591,10 @@ The production adapter is present only under the existing non-WASM
 `ai-gateway-http` composition gate, and this reference host remains Linux/macOS-
 only. It adds no constructor environment lookup, configuration field,
 credential source, runtime, CLI ownership, provider-neutral core event, retry,
-fallback, live-provider test, or performance/equivalence claim. Initial
-production, independent-evidence, and documentation components remain to be
-composed into one exact local-gate and review candidate.
+fallback, live-provider test, or performance/equivalence claim. The production,
+independent-evidence, and documentation components are composed in the
+slice-33 candidate and remain subject to its exact local gate, fresh adversarial
+product review, and delivery workflow.
 
 ## Feature and platform boundary
 
