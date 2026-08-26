@@ -1,6 +1,6 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: replacement-gated cycle-3 submission for bounded slice 29. Exact
+Status: cycle-3-rejected and locally remediated bounded slice 29. Exact
 cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
@@ -17,8 +17,11 @@ configuration lifecycle finding before formal cycle-3 review. That finding is
 locally remediated. Exact cycle-3 behavior candidate
 `2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
 `8c0d235355582d92aaed6fcca7c1862982494e20`, passed its complete replacement
-gate under exact Rust and Cargo 1.94.1. Three fresh cycle-3 reviews remain
-pending. No candidate is review-green. The frozen behavior contract is
+gate under exact Rust and Cargo 1.94.1. Three fresh cycle-3 reviews rejected it
+with a deduplicated union of 0 blocker, 0 high, 1 medium, and 3 low findings.
+The cycle-3 findings are locally remediated, but the complete cycle-4
+replacement gate and three fresh cycle-4 reviews remain pending. No candidate
+is review-green. The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -40,7 +43,9 @@ The locally composed lineage is:
 | fail-closed system DNS configuration with no public fallback | `499af85d43738b0b138051ba4669ec27efd0ae1b` / `d96525945f34f067f969d34aa8a5712c40551c78` | cycle-2 remediation; source resolver regressions 2/2 and manifest 4/4 green |
 | eager bounded DNS snapshot and fresh resolver per runtime | `d9922ef1b0173c5da6f57aa39a5c7b1c69c55346` / `df03b97d40d9b927022a518eeba5099b33160662` | pre-review gate remediation; generic-Unix bounded input and sequential-runtime evidence green |
 | custom absolute-name resolver pinning | `e5248b103c5df67b733006da8210ada05d366345` / `d194034189082b1d71ae9cc69c38060ae6e8c886` | pre-review gate hardening; private resolver 6/6 and HTTP integration 16/16 green |
-| cycle-3 gate record and maintained status | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | exact replacement-gated cycle-3 behavior candidate; fresh reviews pending |
+| cycle-3 gate record and maintained status | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | exact replacement-gated cycle-3 behavior candidate; formal reviews rejected it |
+| stale topology and checklist documentation remediation | `f80bd0560e49306ce56093ea667aa45a22b2c6dd` / `d6d3f354fa1eca6221d482567f9128ac6f73a3bc` | cycle-3 remediation for all three low findings |
+| private bounded DNS and construction-time entropy remediation | `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d` / `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a` | cycle-3 medium remediation; focused resolver 14/14, HTTP 16/16, and manifest 4/4 green; complete cycle-4 gate pending |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -49,10 +54,13 @@ cycle-2 behavior candidate `2ea9d94`. Documentation-only submission seal
 and is exempt from redundant adversarial review under the user's instruction.
 The three cycle-2 remediation commits formed rejected pre-review gate attempt
 `c011398`; the two later remediation commits and gate record compose exact
-replacement-gated cycle-3 behavior candidate `2cecc921`. This prospective
-documentation-only submission seal records that immutable candidate and is
-exempt from redundant adversarial review under the user's instruction. This
-ledger does not claim a green adversarial result, feature CI, benchmark,
+replacement-gated cycle-3 behavior candidate `2cecc921`. Documentation-only
+submission seal `673773f2cf741497e39b1010e13b790af34af7f5` recorded that
+immutable candidate and is exempt from redundant adversarial review under the
+user's instruction. Cycle-3 review rejected the behavior candidate. Exact
+documentation remediation `f80bd056` and native remediation `b6cf4cb` compose
+the current cycle-4 precursor. This ledger does not claim a complete cycle-4
+gate, cycle-4 candidate, green adversarial result, feature CI, benchmark,
 integration, delivery, performance, compatibility promotion, or fx equivalence.
 
 A local feature-topology refinement adds native
@@ -60,24 +68,33 @@ A local feature-topology refinement adds native
 retains `ai-gateway-http` as the compatibility umbrella for catalog HTTP plus
 direct `bytes` and `web-fetch-http`. Cycle-1 remediation removes direct `bytes`
 and Tokio signal handling from native catalog HTTP; only the CLI requests the
-signal feature. Cycle-2 remediation adds one narrowly scoped direct Hickory
+signal feature. Cycle-2 remediation added one narrowly scoped direct Hickory
 resolver with Tokio integration because Reqwest's default GAI resolver can
-leave non-abortable blocking DNS work. Machine-god uses its own system-config-
-only adapter, disables Reqwest's built-in public-resolver fallback, and fails
-closed when system DNS configuration is unavailable. Pre-review gate
-remediation eagerly captures a bounded configuration snapshot, builds a fresh
-zero-cache/hosts-disabled resolver on each active runtime, and makes the fixed
-hostname absolute before lookup. No synchronous configuration or hosts-file
-work remains in request polling. Generation transport/reference-host exports
-remain broader-feature-only, while shared credential/bearer/TLS and catalog
-HTTP exports are available under either native HTTP feature.
+leave non-abortable blocking DNS work. Machine-god supplied its own system-
+config-only adapter, disabled Reqwest's built-in public-resolver fallback, and
+failed closed when system DNS configuration was unavailable. Pre-review gate
+remediation eagerly captured a bounded configuration snapshot, built a fresh
+zero-cache/hosts-disabled resolver on each active runtime, and made the fixed
+hostname absolute before lookup. That behavior formed rejected cycle-3
+candidate `2cecc921`.
 
-Current remediation-focused local evidence under exact Rust and Cargo 1.94.1 is
-green: the parsed-manifest/resolved-tree suite passes 4/4; provider/parser,
-credential, loopback HTTP, and private resolver lifecycle suites pass 17/17,
-6/6, 16/16, and 6/6. Native focused warnings-denied Clippy also passes. These
-focused results did not replace the complete cycle-3 gate recorded below. The
-complete cycle-2 target matrix had
+Cycle-3 remediation keeps Hickory resolver only for bounded platform-
+configuration parsing and removes its Tokio resolver integration. Private
+bounded Tokio UDP/TCP exchange owns DNS network behavior, with direct
+`hickory-proto` decoding and a construction-time fallible query-ID key.
+A keyed atomic sequence derives request IDs with bounded SHA-256 work. Request
+polling reads neither system configuration, hosts files, nor entropy and spawns
+no resolver task. Generation transport/reference-host exports remain broader-
+feature-only, while shared credential/bearer/TLS and catalog HTTP exports are
+available under either native HTTP feature.
+
+Current cycle-3-remediation-focused local evidence under exact Rust and Cargo
+1.94.1 is green: formatting, native all-target/all-feature warnings-denied
+Clippy, native all-feature tests and doctests, private resolver 14/14, loopback
+HTTP 16/16, and parsed-manifest/resolved-tree 4/4 pass. The current five-target
+resolved tree contains the intended catalog edges and excludes them on WASI.
+These focused results do not establish the complete cycle-4 replacement gate.
+The complete cycle-2 target matrix had
 previously confirmed that native default, catalog-
 only, compatibility-umbrella, and all-feature checks compile, and that native
 and CLI WASI Preview 1 checks compile with only the established native
@@ -94,8 +111,9 @@ separately built exact precursor is 3,635,520 bytes with SHA-256
 These package, size, and hash values are regression/topology evidence only,
 not a speed, memory, binary-size improvement, product-performance, or delivery
 claim. That cycle-2 replacement gate is green but its reviews rejected the
-candidate. Exact cycle-3 candidate `2cecc921` passed its replacement gate;
-three fresh cycle-3 reviews, feature CI, integration, and exact `main` CI remain
+candidate. Exact cycle-3 candidate `2cecc921` passed its replacement gate and
+its reviews rejected it. The complete cycle-4 gate, cycle-4 candidate, three
+fresh cycle-4 reviews, feature CI, integration, and exact `main` CI remain
 pending.
 
 ## Exact cycle-2 replacement gate
@@ -381,7 +399,8 @@ a documentation-only statement.
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `6277aa3dc26f9c485707c667f63525a2138f316b` / `b5e2445ed90df000255b51c2c989d71965db1d77` | 0 blocker, 0 high, 0 medium, 4 low | 0 blocker, 0 high, 2 medium, 1 low | 0 blocker, 0 high, 2 medium, 3 low | 0 blocker, 0 high, 2 medium, 6 low after deduplication | **REJECTED** |
 | 2 | `2ea9d94374c4dd18f43255af785ee31088126c56` / `3a948b2950d870a9cabe479bc6c3889dd5a13a3b` | 0 blocker, 0 high, 0 medium, 1 low | 0 blocker, 1 high, 1 medium, 0 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 1 high, 1 medium, 1 low after deduplication | **REJECTED** |
-| 3 | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | pending | pending | pending | pending | **SUBMITTED** |
+| 3 | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | 0 blocker, 0 high, 0 medium, 2 low | 0 blocker, 0 high, 1 medium, 1 low | 0 blocker, 0 high, 0 medium, 0 low | 0 blocker, 0 high, 1 medium, 3 low after deduplication | **REJECTED** |
+| 4 | pending / pending | pending | pending | pending | pending | **NOT SUBMITTED** |
 
 ### Cycle 1 rejected findings and remediation
 
@@ -454,9 +473,44 @@ Every cycle-1 finding remains remediated. Cycle 1 remains rejected history.
    arbitrary-number, node, and depth regressions are green.
 
 All cycle-2 findings are locally remediated. Exact cycle-3 candidate `2cecc921`,
-tree `8c0d235`, passed the complete replacement gate, but three fresh reviewers
-must still return a zero union on that candidate. Cycle 2 remains rejected
-history.
+tree `8c0d235`, passed the complete replacement gate and then was rejected by
+its three fresh reviews. Cycle 2 remains rejected history.
+
+### Cycle 3 rejected findings and remediation
+
+1. **Medium — request polling could invoke fallible Hickory entropy and abort.**
+   Hickory's network resolver lazily called `rand::rng()`/`SysRng` while the
+   first lookup future was polled. Entropy failure could panic, and the release
+   profile's aborting panic strategy would bypass the provider's timer,
+   cancellation, and fixed redacted error mapping. Native remediation
+   `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`, tree
+   `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a`, keeps Hickory only for bounded
+   configuration parsing and replaces its network resolver with private bounded
+   UDP/TCP exchange. A fallible 32-byte key is captured at construction and a
+   keyed atomic sequence derives IDs with bounded SHA-256 work. Entropy failure
+   is retained as fixed unavailable state; request polling invokes no entropy
+   source or detached resolver task. Deterministic private resolver evidence is
+   14/14, including entropy-failure/no-packet behavior and sequential runtimes.
+2. **Low — `docs/architecture.md` described obsolete catalog topology.** Exact
+   documentation remediation
+   `f80bd0560e49306ce56093ea667aa45a22b2c6dd`, tree
+   `d6d3f354fa1eca6221d482567f9128ac6f73a3bc`, now distinguishes the narrow
+   catalog's bounded DNS/configuration graph from the generation-only surface.
+3. **Low — `docs/ai-gateway-credentials.md` described obsolete catalog
+   topology.** The same exact documentation remediation records the current
+   provider-neutral credential boundary without falsely excluding the catalog's
+   DNS/configuration dependencies.
+4. **Low — the bottom M03 checklist stopped at rejected cycle 1.** The same
+   exact documentation remediation records rejected cycle 2, the rejected
+   pre-review attempt, the cycle-3 gate and rejection, and the next pending
+   replacement/review boundary. This ledger commits the exact raw cycle-3
+   counts and deduplicated union.
+
+All cycle-3 findings are locally remediated by exact commits `f80bd056` and
+`b6cf4cb`. Their composition is only a cycle-4 precursor: the complete cycle-4
+replacement gate, immutable cycle-4 candidate, and three fresh cycle-4 reviews
+remain pending. Cycle 3 remains rejected history, and no candidate is review-
+green.
 
 ## Remote and integration boundary
 

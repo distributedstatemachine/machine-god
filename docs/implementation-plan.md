@@ -128,7 +128,7 @@ twenty-eight and M03 remains in progress. This delivery makes no product-
 performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
-The twenty-ninth bounded slice is contract-frozen, locally implemented, cycle-2
+The twenty-ninth bounded slice is contract-frozen, locally implemented, cycle-3
 rejected, and locally remediated; it is not integrated to `main` or delivered.
 Its
 exact top-level `models [--json]` boundary is
@@ -161,9 +161,23 @@ snapshot and per-runtime absolute-name resolver remediation is composed at
 `d9922ef` and `e5248b1`; private resolver evidence is now 6/6. Exact cycle-3
 behavior candidate `2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
 `8c0d235355582d92aaed6fcca7c1862982494e20`, passed the complete replacement
-gate under exact Rust and Cargo 1.94.1. Three fresh cycle-3 reviews, feature/main
-integration, and delivery remain pending. No candidate is review-green, and no
-product-performance, compatibility-promotion, or fx-equivalence claim is made.
+gate under exact Rust and Cargo 1.94.1. Formal cycle-3 correctness/API reported
+0 blocker, 0 high, 0 medium, and 2 low findings; network/error lifecycle
+reported 0 blocker, 0 high, 1 medium, and 1 low; performance/concurrency was
+green at 0/0/0/0. The deduplicated union is 0 blocker, 0 high, 1 medium, and 3
+low, so the candidate is rejected. The medium is request-poll-time Hickory RNG
+whose entropy failure could panic and abort the release process. The three lows
+are stale catalog topology in `docs/architecture.md`, stale catalog topology in
+`docs/ai-gateway-credentials.md`, and stale slice status in the M03 checklist
+below. Exact documentation remediation
+`f80bd0560e49306ce56093ea667aa45a22b2c6dd`, tree
+`d6d3f354fa1eca6221d482567f9128ac6f73a3bc`, corrects all three lows. Exact
+native remediation `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`, tree
+`e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a`, replaces request-polled Hickory
+network resolution with custom bounded DNS and construction-time fallible
+query-ID entropy. The complete cycle-4 replacement gate and three fresh cycle-4
+reviews remain pending. No candidate is review-green, and no product-
+performance, compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2844,7 +2858,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Cycle-2-rejected bounded slice 29: top-level `models`
+### Cycle-3-rejected bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -2861,21 +2875,23 @@ credential), sourced independently from `219f6a71a766e9b833a98f236cfbc3aaff292cd
 The local feature-topology refinement adds the dedicated non-WASM
 `ai-gateway-model-catalog-http` gate and makes the CLI select it without
 activating direct generation `bytes`, `web-fetch-http`, or Tokio's signal
-backend. Catalog HTTP has a narrowly scoped direct async Hickory resolver and
-its protocol/network/cache graph so no non-abortable GAI lookup can outlive
-runtime teardown; only the CLI requests signal handling. Production
-construction eagerly retains one bounded validated system-DNS snapshot before
-the provider deadline exists. Generic Unix bounds `/etc/resolv.conf` to 64 KiB
-plus one overflow byte through nonblocking close-on-exec regular-file reads;
-Apple, Android, and Windows use their platform snapshot APIs and then apply the
-same structural bounds. Request polling performs no configuration or hosts-
-file read and creates one zero-cache Hickory resolver from that snapshot on the
-active runtime, so runtime-backed connection state is not reused across
-sequential current-thread runtimes. Reqwest's built-in Hickory path is
-explicitly disabled before the custom resolver is installed, and the lookup
-name is made an absolute single-dot FQDN so platform search suffixes are not
-queried. The existing `ai-gateway-http` feature still adds direct `bytes` and
-includes catalog HTTP plus `web-fetch-http`, so its delivered
+backend. Catalog HTTP uses Hickory only for bounded system-configuration
+parsing; private bounded Tokio UDP/TCP exchange owns DNS network behavior, so
+no non-abortable GAI lookup or Hickory resolver task can outlive runtime
+teardown. Only the CLI requests signal handling. Production construction
+eagerly retains one bounded validated system-DNS snapshot and one fallible
+32-byte query-ID key before the provider deadline exists. Generic Unix bounds
+`/etc/resolv.conf` to 64 KiB plus one overflow byte through nonblocking close-
+on-exec regular-file reads; Apple, Android, and Windows use their platform
+snapshot APIs and then apply the same structural bounds. Request polling
+performs no configuration, hosts-file, or entropy read and spawns no resolver
+task. A keyed atomic sequence derives IDs with bounded SHA-256 work, and the
+lookup uses only active-runtime-owned sockets and timers, so no runtime-backed
+state is reused across sequential current-thread runtimes. Reqwest's built-in
+Hickory path is explicitly disabled before the custom resolver is installed,
+and the lookup name is made an absolute single-dot FQDN so platform search
+suffixes are not queried. The existing `ai-gateway-http` feature still adds
+direct `bytes` and includes catalog HTTP plus `web-fetch-http`, so its delivered
 generation/reference-host behavior is preserved. Exact cycle-1
 candidate `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed the complete local gate and
@@ -2901,9 +2917,19 @@ per-runtime resolver hardening `e5248b1` raise private resolver evidence to 6.
 Exact cycle-3 behavior candidate
 `2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
 `8c0d235355582d92aaed6fcca7c1862982494e20`, passed its complete replacement
-gate. Fresh cycle-3 review, exact feature workflows, fast-forward integration,
-and exact `main` workflows remain pending; no candidate is review-green and
-this makes no product-performance claim.
+gate. Formal cycle-3 review rejected it: correctness/API reported 0/0/0/2,
+network/error lifecycle reported 0/0/1/1, and performance/concurrency reported
+0/0/0/0. The deduplicated union is 0 blocker, 0 high, 1 medium, and 3 low.
+Documentation remediation `f80bd0560e49306ce56093ea667aa45a22b2c6dd`, tree
+`d6d3f354fa1eca6221d482567f9128ac6f73a3bc`, corrects the three stale topology/
+status passages. Native remediation
+`b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`, tree
+`e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a`, eliminates Hickory's lazy
+request-poll RNG path through private bounded DNS and fallible construction-
+time entropy. The complete cycle-4 replacement gate, fresh cycle-4 review,
+exact feature workflows, fast-forward integration, and exact `main` workflows
+remain pending; no candidate is review-green and this makes no product-
+performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -3917,10 +3943,12 @@ gate:
   `c01139811685ae73031ed6f6cbd771e4ff636714` was also rejected and remediated.
   Exact cycle-3 candidate `2cecc921e48396e81ab6f434007a7ec8e3e890b5`
   passed the complete replacement gate, but formal cycle-3 review rejected that
-  SHA; its consolidated finding union is being recorded separately. This
-  combined item remains unchecked while the next complete replacement gate,
-  three fresh review tracks, feature workflows, non-force fast-forward, and
-  exact `main` gates are pending.
+  SHA with a deduplicated union of 0 blocker, 0 high, 1 medium, and 3 low
+  findings. Exact documentation remediation `f80bd056`, tree `d6d3f35`, and
+  custom bounded-DNS remediation `b6cf4cb`, tree `e72f7dd`, are composed. This
+  combined item remains unchecked while the complete cycle-4 replacement gate,
+  three fresh cycle-4 review tracks, feature workflows, non-force fast-forward,
+  and exact `main` gates are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass
