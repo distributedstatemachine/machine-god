@@ -11,6 +11,17 @@ run `32583585145`, feature benchmark-evidence run `32583585148`, main CI run
 Milestone 03 remains `IN PROGRESS`. Full lineage is recorded in the
 [`configured credential-source review`](reviews/m03-configured-credential-source-review-01.md).
 
+The in-progress slice-30 [`doctor` command](doctor-cli.md) reuses this loader
+read-only for its first of exactly four checks. A file-backed strict v1/v2/v3
+configuration is `ok`; a missing file or unavailable location that selects
+built-in defaults is `warn`; every existing `NativeConfigError` display string
+is a fixed redacted `fail` detail. Doctor emits no schema, permission mode,
+provider, transport, model, credential-source field, content, or path and never
+rewrites or creates configuration. The exact candidate, reviews, workflows,
+integration, and delivery are pending from base
+`f82ce46736f7bac4154da508e3b768d0b9248e15`; this changes no delivered count
+and makes no equivalence or performance claim.
+
 The native configuration loader is a bounded, synchronous, read-only
 `machine-god-native` authority. Core remains independent of the process
 environment and filesystem. `machine-god status` remains metadata-only and

@@ -1788,6 +1788,10 @@ class UpstreamHarnessTest(unittest.TestCase):
                 evidence["workloads"][2],
                 [machine_binary, "status", "--json"],
             ),
+            (
+                evidence["workloads"][3],
+                [machine_binary, "doctor", "--json"],
+            ),
         ):
             self.assertEqual(workload["equivalence"], "non-equivalent")
             self.assertIs(workload["claim_eligible"], False)
@@ -1817,6 +1821,22 @@ class UpstreamHarnessTest(unittest.TestCase):
             lambda data: data["workloads"][2]["implementations"][1].__setitem__(
                 "median_ns", 1
             ),
+            lambda data: data["workloads"][3].__setitem__(
+                "equivalence", "unimplemented"
+            ),
+            lambda data: data["workloads"][3].__setitem__("claim_eligible", True),
+            lambda data: data["workloads"][3]["implementations"][0].__setitem__(
+                "status", "measured"
+            ),
+            lambda data: data["workloads"][3]["implementations"][1].__setitem__(
+                "command", ["machine-god", "doctor"]
+            ),
+            lambda data: data["workloads"][3]["implementations"][1].__setitem__(
+                "status", "unimplemented"
+            ),
+            lambda data: data["workloads"][3]["implementations"][0].__setitem__(
+                "samples", []
+            ),
         )
         for mutate in mutations:
             with self.subTest(mutate=mutate):
@@ -1827,10 +1847,10 @@ class UpstreamHarnessTest(unittest.TestCase):
 
     def test_rejects_unimplemented_workload_schema_drift(self) -> None:
         mutations = (
-            lambda data: data["workloads"][3].__setitem__(
+            lambda data: data["workloads"][4].__setitem__(
                 "equivalence", "non-equivalent"
             ),
-            lambda data: data["workloads"][3].__setitem__("claim_eligible", True),
+            lambda data: data["workloads"][4].__setitem__("claim_eligible", True),
             lambda data: data["workloads"][4]["implementations"][0].__setitem__(
                 "command", ["fx", "session", "--json"]
             ),

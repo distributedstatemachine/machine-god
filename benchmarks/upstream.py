@@ -1398,13 +1398,17 @@ def validate_upstream_evidence(
             [fx_binary["path"], "status", "--json"],
             [machine_binary["path"], "status", "--json"],
         ),
+        "doctor-json": (
+            [fx_binary["path"], "doctor", "--json"],
+            [machine_binary["path"], "doctor", "--json"],
+        ),
     }
     expected_local_workloads = unavailable_workloads(
         Path(fx_binary["path"]), Path(machine_binary["path"])
     )
     if workloads[1:] != expected_local_workloads:
         raise ValueError("local workload inventory and narratives are not canonical")
-    for index, workload in enumerate(workloads[1:3], 1):
+    for index, workload in enumerate(workloads[1:4], 1):
         field = f"workloads[{index}]"
         if (
             workload.get("equivalence") != "non-equivalent"
@@ -1446,11 +1450,10 @@ def validate_upstream_evidence(
         require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
 
     unimplemented_commands = {
-        "doctor-json": [fx_binary["path"], "doctor", "--json"],
         "sessions-json": [fx_binary["path"], "sessions", "--json"],
         "background-json": [fx_binary["path"], "background", "--json"],
     }
-    for index, workload in enumerate(workloads[3:], 3):
+    for index, workload in enumerate(workloads[4:], 4):
         field = f"workloads[{index}]"
         if (
             workload.get("equivalence") != "unimplemented"
@@ -3333,13 +3336,17 @@ def unavailable_workloads(
                 "semantic equivalence with fx is not established"
             ),
         ),
-    )
-    unimplemented = (
         (
             "doctor-json",
             [str(fx_binary), "doctor", "--json"],
-            "machine-god has no local diagnostics command",
+            [str(machine_binary), "doctor", "--json"],
+            (
+                "machine-god reports four bounded local readiness checks with "
+                "intentional status, output, and exit-semantics differences from fx"
+            ),
         ),
+    )
+    unimplemented = (
         (
             "sessions-json",
             [str(fx_binary), "sessions", "--json"],

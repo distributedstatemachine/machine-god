@@ -41,6 +41,18 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
+The thirtieth bounded slice, strict top-level `doctor [--json]`, is **IN
+PROGRESS** from exact delivered base
+`f82ce46736f7bac4154da508e3b768d0b9248e15`. Its normative boundary is
+[`doctor-cli.md`](doctor-cli.md), and its live ledger is
+[`m03-doctor-cli-review-01.md`](reviews/m03-doctor-cli-review-01.md). The exact
+candidate SHA, complete local gate, three fresh reviews, feature workflows,
+non-force integration, exact `main` workflows, and delivery are pending. The
+delivered count remains twenty-nine. Against pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef`, `doctor-json` is implemented but
+non-equivalent, not measured, and claim-ineligible. This record makes no
+performance, compatibility-promotion, delivery, or fx-equivalence claim.
+
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
 with twenty-nine delivered bounded slices. The twenty-seventh `web_fetch`
@@ -3186,6 +3198,54 @@ and three fresh reviewers. Only a zero-finding exact candidate may proceed
 through feature exact-SHA workflows, a non-force fast-forward, and exact `main`
 workflows. Benchmark evidence is delivery evidence only.
 
+### In-progress bounded slice 30: top-level `doctor`
+
+The thirtieth slice is contract-frozen from exact delivered base
+`f82ce46736f7bac4154da508e3b768d0b9248e15` and is **IN PROGRESS**. It adds
+only strict `doctor [--json]`. The exact candidate SHA remains pending.
+Production, independent evidence, documentation, complete local checks, three
+fresh adversarial tracks, feature workflows, non-force integration, exact
+`main` workflows, and delivery remain pending. The delivered-slice count stays
+twenty-nine.
+
+Parsing completes before effects. Accepted forms are exactly `doctor` and
+`doctor --json`; every other, repeated, extra, reordered, or non-Unicode
+argument fails at exit 2. A valid invocation always reports exactly four checks
+in order: `config`, `credential`, `state`, `platform`. Each status is one of
+`ok`, `warn`, or `fail`. Missing configuration selects built-in defaults and is
+`warn`; strict file-backed configuration is `ok`; every existing fixed redacted
+configuration error is `fail`. A valid selected OIDC token or API key is `ok`;
+missing or invalid generation credentials are `fail`. A ready state directory
+is `ok`, missing state is `warn`, and every other state classification is
+`fail`. Linux/macOS are `ok`; other targets report platform `fail`.
+
+Human output is one `[doctor] ok=N warn=N fail=N` summary followed by four
+`[status] name: detail` lines. Compact JSON fixes top-level key order
+`kind,ok_count,warn_count,fail_count,checks` and check-object order
+`name,status,detail`. Each count is `0..=4`, their sum is exactly four, and they
+match the check list. Both outputs end in LF and are built before the first
+stdout write under an inclusive 4,096-byte cap. Closed detail strings expose no
+path or arbitrary external input. Any complete report, including diagnostic
+`fail` checks, exits 0. Render failure exits 1 with exact
+`machine-god doctor: could not render report\n`; stdout write failure exits 1
+with existing exact `machine-god: failed to write output\n`.
+
+The command is read-only and no-create. It inspects only strict configuration,
+the two fixed credential sources, selected state-directory metadata, and
+compile-time platform support. It performs no configuration rewrite or root
+preparation; constructs no engine, provider, transport, runtime, session, or
+workspace; selects no model; starts no process; and makes no network request.
+It outputs no network, process, runtime, session, workspace, model, or path
+state. Fixed failures disclose no secret or operating-system error.
+
+The bootstrap workload order remains `bootstrap-exit`, `help`, `status-json`,
+`doctor-json`, `sessions-json`, `background-json`. Doctor moves only from
+unimplemented to implemented/non-equivalent/not-measured/claim-ineligible.
+Sessions and background remain unimplemented. Pinned fx commit
+`b1774fbf6c7602b503026f96f6e960e946c692ef` has a different diagnostic
+inventory, schema, and exit boundary; this slice makes no semantic-equivalence
+or product-performance claim.
+
 ### Milestone 03 completion boundary
 
 The twenty-nine delivered slices do not complete Milestone 03.
@@ -4127,7 +4187,13 @@ gate:
   `sessions`, `resume`, `replay`, and `workspace`. M03 also owns the pinned
   slash-command categories `general`, `session`, `model`, `security`, and
   `workspace`. Observable compatibility is scenario-based; command names may
-  remain intentional differences when documented. `models [--json]` is
+  remain intentional differences when documented. Strict `doctor [--json]` is
+  contract-frozen as **IN PROGRESS** slice 30 from exact base `f82ce467`; its
+  candidate, local gate, three fresh reviews, feature workflows, integration,
+  exact `main` workflows, and delivery are pending. It adds exactly four
+  ordered read-only checks and no authority-bearing repair behavior. The
+  delivered count therefore remains twenty-nine, and this combined item stays
+  unchecked. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

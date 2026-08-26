@@ -140,7 +140,75 @@ jobs:
       - name: Release smoke test
         run: |
           cargo +"${RUST_TOOLCHAIN}" build --locked --release -p machine-god-cli
-          ./target/release/machine-god
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          binary = Path("target/release/machine-god").resolve()
+          root = Path(tempfile.mkdtemp(prefix="machine-god-doctor-", dir=os.environ["RUNNER_TEMP"]))
+          config_root = root / "missing-config"
+          state_root = root / "missing-state"
+          home = root / "missing-home"
+          environment = os.environ.copy()
+          environment.update(
+              {
+                  "XDG_CONFIG_HOME": str(config_root),
+                  "XDG_STATE_HOME": str(state_root),
+                  "HOME": str(home),
+              }
+          )
+          environment.pop("VERCEL_OIDC_TOKEN", None)
+          environment.pop("AI_GATEWAY_API_KEY", None)
+
+          def run(*arguments: str) -> subprocess.CompletedProcess[str]:
+              return subprocess.run(
+                  [str(binary), *arguments],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+                  env=environment,
+              )
+
+          human = run("doctor")
+          machine = run("doctor", "--json")
+          if human.returncode != 0 or machine.returncode != 0:
+              raise SystemExit(f"doctor smoke exits: human={human.returncode} json={machine.returncode}")
+          if human.stderr or machine.stderr:
+              raise SystemExit("doctor smoke wrote unexpected stderr")
+
+          expected_lines = [
+              "[doctor] ok=1 warn=2 fail=1",
+              "[warn] config: configuration file is missing; using built-in defaults",
+              "[fail] credential: no AI Gateway credential is configured",
+              "[warn] state: state directory is not initialized",
+              "[ok] platform: native host platform is supported",
+          ]
+          if human.stdout != "\n".join(expected_lines) + "\n":
+              raise SystemExit(f"unexpected human doctor output: {human.stdout!r}")
+          if len(human.stdout.encode()) > 4096:
+              raise SystemExit("doctor human output bound changed")
+
+          report = json.loads(machine.stdout)
+          if list(report) != ["kind", "ok_count", "warn_count", "fail_count", "checks"]:
+              raise SystemExit("doctor JSON top-level key order changed")
+          if report["kind"] != "doctor" or (report["ok_count"], report["warn_count"], report["fail_count"]) != (1, 2, 1):
+              raise SystemExit(f"unexpected doctor counts: {report!r}")
+          checks = report["checks"]
+          if len(checks) != 4 or sum(report[name] for name in ("ok_count", "warn_count", "fail_count")) != 4:
+              raise SystemExit("doctor count/check consistency failed")
+          for check, line in zip(checks, expected_lines[1:], strict=True):
+              if list(check) != ["name", "status", "detail"]:
+                  raise SystemExit("doctor JSON check key order changed")
+              if line != f"[{check['status']}] {check['name']}: {check['detail']}":
+                  raise SystemExit("doctor human/JSON check mismatch")
+          if not machine.stdout.endswith("\n") or len(machine.stdout.encode()) > 4096:
+              raise SystemExit("doctor JSON framing or output bound changed")
+          if any(path.exists() for path in (config_root, state_root, home)):
+              raise SystemExit("doctor created an isolated missing root")
+          PY
 
   security:
     name: Dependency policy and vulnerability audit

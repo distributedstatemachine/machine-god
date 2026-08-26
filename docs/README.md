@@ -5,6 +5,7 @@
 - [Provider-neutral core API](core-api.md)
 - [Deterministic testkit](testkit.md)
 - [Command-line interface](cli.md)
+- [In-progress top-level `doctor` CLI contract](doctor-cli.md)
 - [Delivered top-level `models` CLI contract](models-cli.md)
 - [Implemented top-level `permissions` CLI contract](permissions-cli.md)
 - [Native configuration and schema-v3 credential source](configuration.md)
@@ -57,3 +58,4 @@
 - [Milestone 03 native `web_fetch` review ledger](reviews/m03-web-fetch-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](reviews/m03-permissions-cli-review-01.md)
 - [Milestone 03 `models` CLI delivery review ledger](reviews/m03-models-cli-review-01.md)
+- [Milestone 03 `doctor` CLI live review ledger](reviews/m03-doctor-cli-review-01.md)

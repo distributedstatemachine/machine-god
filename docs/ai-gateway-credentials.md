@@ -41,6 +41,16 @@ own workflows will be reported at handoff rather than claimed here.
 Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 
+The in-progress slice-30 [`doctor` command](doctor-cli.md) projects this
+existing precedence into one fixed local readiness check without constructing
+a transport or making a request. Valid OIDC or API-key selection is `ok` and
+names only the non-secret fixed environment-variable name. Missing credentials
+are `fail`; a selected invalid environment value or bearer token fails closed
+without fallback and uses a fixed redacted detail. Credential bytes, lengths,
+fragments, arbitrary environment values, models, and paths are never emitted.
+The exact candidate, local gates, review, workflows, integration, and delivery
+remain pending from base `f82ce46736f7bac4154da508e3b768d0b9248e15`.
+
 The adapter discovers one Vercel AI Gateway bearer credential from an
 explicitly owned environment snapshot. It is separate from core, the CLI, and
 native configuration. Bearer-token bytes are fields in no schema. The

@@ -20,6 +20,18 @@ surface. The separate fourteenth composed
 no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
+Bounded slice 30 adds strict top-level `doctor [--json]` under the frozen
+[`doctor` contract](doctor-cli.md). The slice is **IN PROGRESS** from exact base
+`f82ce46736f7bac4154da508e3b768d0b9248e15`; its exact candidate, local gates,
+reviews, workflows, integration, and delivery are pending. It reports exactly
+four ordered read-only checks, builds either representation under an inclusive
+4,096-byte cap, and creates nothing. A check-level `fail` remains exit 0;
+invalid arguments exit 2, while render and output-write failures exit 1. The
+delivered count remains twenty-nine. Bootstrap `doctor-json` is implemented but
+non-equivalent, not measured, and claim-ineligible against pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef`; no performance or equivalence
+claim is made.
+
 The delivered twenty-eighth bounded slice adds top-level
 `permissions [--json]` under the frozen boundary in
 [`permissions-cli.md`](permissions-cli.md). It loads the existing strict native
@@ -217,6 +229,8 @@ machine-god --help
 machine-god -h
 machine-god --version
 machine-god -V
+machine-god doctor
+machine-god doctor --json
 machine-god models
 machine-god models --json
 machine-god permissions
@@ -243,12 +257,14 @@ Embeddable coding-agent engine
 Usage:
   machine-god
   machine-god help
+  machine-god doctor [--json]
   machine-god models [--json]
   machine-god permissions [--json]
   machine-god status [--json]
 
 Commands:
   help         Show this help
+  doctor       Run local health and preflight checks
   models       List available models
   permissions  Show the permission mode and rules
   status       Show configuration and runtime information
@@ -257,6 +273,32 @@ Options:
   -h, --help       Show this help
   -V, --version    Show version
 ```
+
+## Doctor output
+
+`machine-god doctor` writes one count summary followed by exactly four ordered
+check lines:
+
+```text
+[doctor] ok=N warn=N fail=N
+[<status>] config: <detail>
+[<status>] credential: <detail>
+[<status>] state: <detail>
+[<status>] platform: <detail>
+```
+
+`machine-god doctor --json` writes one compact object with fixed top-level key
+order `kind,ok_count,warn_count,fail_count,checks`; each check object uses
+`name,status,detail`. Statuses are only `ok`, `warn`, and `fail`; the three
+counts sum to four and match the array. Both forms end in LF and the complete
+output is capped at 4,096 bytes including that LF. Exact mappings and examples
+are in [`doctor-cli.md`](doctor-cli.md).
+
+Every complete report exits 0 even when a diagnostic is `fail`. Render failure
+exits 1 with `machine-god doctor: could not render report`; stdout write failure
+exits 1 with `machine-god: failed to write output`. The command is read-only,
+creates no missing root, and emits no path, runtime, session, workspace, or
+model state.
 
 ## Models output
 
@@ -441,7 +483,7 @@ this exact stderr with a final LF:
 
 ```text
 machine-god: invalid arguments
-Usage: machine-god [help | --help | -h | --version | -V | models [--json] | permissions [--json] | status [--json]]
+Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | status [--json]]
 ```
 
 An output-write failure exits 1 and uses this fixed diagnostic on stderr:

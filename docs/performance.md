@@ -4,6 +4,18 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
+The in-progress slice-30 [`doctor` command](doctor-cli.md) has explicit resource
+bounds but no performance result: exactly four closed checks and one complete
+human or compact JSON representation capped at 4,096 bytes including final LF.
+The bootstrap `doctor-json` record moves from unimplemented to implemented with
+both pinned-fx and machine-god commands `not-measured`, `equivalence: non-
+equivalent`, and `claim_eligible: false`. Workload order is unchanged;
+`sessions-json` and `background-json` remain unimplemented. The distinction is
+intentional because machine-god has a four-check readiness contract and
+different output/status/exit semantics. No sample, comparison, threshold,
+compatibility promotion, product-performance result, or fx-equivalence claim
+is introduced.
+
 The delivered twenty-ninth top-level
 [`models` implementation](models-cli.md) supplies resource and concurrency
 budgets, not a performance claim: one checked 30-second absolute provider deadline
@@ -239,15 +251,19 @@ The current `bootstrap-exit` workload is deliberately labeled
 machine-god bootstrap binary prints its identity. It checks the harness and
 captures launch samples, but it cannot support a product performance claim.
 
-Help and JSON status now exist in both binaries, but existence is not semantic
+Help, JSON status, and JSON doctor now exist in both binaries, but existence is not semantic
 equivalence. Schema 2 records the exact `fx help` / `machine-god help` and
 `fx status --json` / `machine-god status --json` commands with both
 implementations set to `not-measured`, no samples, `equivalence:
-non-equivalent`, and `claim_eligible: false`. The current machine-god status is
+non-equivalent`, and `claim_eligible: false`. It records `fx doctor --json` /
+`machine-god doctor --json` with that same non-equivalent, not-measured,
+claim-ineligible shape. The current machine-god status is
 only read-only native configuration/runtime metadata, and neither its behavior
-nor its output contract has been shown equivalent to fx. Doctor, `sessions-json`,
-and background-task workloads remain `unimplemented` for machine-god; their fx
-commands also remain unmeasured because an unpaired result is not a comparison.
+nor its output contract has been shown equivalent to fx. Machine-god doctor is
+the strict four-check read-only contract above, not a semantic match for fx.
+`sessions-json` and background-task workloads remain `unimplemented` for
+machine-god; their fx commands also remain unmeasured because an unpaired result
+is not a comparison.
 The validator fixes these distinct shapes and rejects commands, statuses,
 sample fields, or eligibility that drift from them. No M03 performance or
 compatibility claim is made. A later milestone must define matching semantics

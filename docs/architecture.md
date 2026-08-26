@@ -79,6 +79,21 @@ delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed
 here.
 
+Slice 30 is **IN PROGRESS** from exact base
+`f82ce46736f7bac4154da508e3b768d0b9248e15`. Its strict top-level
+[`doctor [--json]` boundary](doctor-cli.md) preserves the architecture split:
+native owns bounded read-only configuration, credential, state-metadata, and
+compile-time platform inspection together with authoritative classification,
+ordering, and counts; the thin CLI owns parsing, internal four-check snapshot
+validation, fixed rendering, the inclusive 4,096-byte output cap, channels,
+and exits. Core and
+the engine receive no new diagnostic, filesystem, environment, or platform
+authority. The command constructs no provider, transport, runtime, session, or
+workspace and emits no model or path state. Its exact candidate, review, CI,
+integration, and delivery remain pending, and the delivered count remains
+twenty-nine. The pinned-fx workload is implemented/non-equivalent/not-measured/
+claim-ineligible; no product-performance or fx-equivalence claim is made.
+
 ```text
 machine-god-cli
  parse + config + credential choice + Tokio + output
