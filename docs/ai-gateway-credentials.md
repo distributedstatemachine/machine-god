@@ -21,8 +21,10 @@ replacement gate. Its raw overlap-deduplicated union was 0 blocker, 0 high,
 1 medium, and 1 low remained unresolved at verdict collection. Topology
 documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
 integrated at exact `aa60db1`, tree `278fa365`, without changing credential
-selection. The complete cycle-5 replacement gate, three fresh formal reviews,
-integration, and delivery remain pending.
+selection. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
+complete exact-1.94.1 replacement gate without fallback and is submitted to
+three fresh formal reviews. Their results, integration, and delivery remain
+pending.
 Review details for the delivered generation behavior are in the
 [`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
 

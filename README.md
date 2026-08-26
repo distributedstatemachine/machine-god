@@ -39,9 +39,12 @@ replacement gate. The raw overlap-deduplicated union was 0 blocker, 0 high,
 1 medium, and 1 low remained unresolved at verdict collection. Topology
 documentation is fixed at `268d35a`, and signal/output-lifecycle remediation
 is integrated at exact `aa60db15d016cf97674459a4af66318a18b762ac`, tree
-`278fa365e24504452f8d111a7b08bc49e2aed164`. A complete replacement gate and
-three fresh formal cycle-5 reviews remain pending. This is not a green or
-delivered slice.
+`278fa365e24504452f8d111a7b08bc49e2aed164`. Exact cycle-5 behavior candidate
+`27c75f4365af92759686402574d310ada596a923`, tree
+`5e40b24259d76196d573f752258c9a764b53f990`, passed the complete exact-1.94.1
+replacement gate without fallback and is submitted to three fresh formal
+cycle-5 reviews. Their results remain pending. This is not a green or delivered
+slice.
 The CLI selects a dedicated `ai-gateway-model-catalog-http` feature that omits
 `web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a
@@ -50,8 +53,9 @@ platform configuration parsing, with no request-polled resolver task or
 entropy. Android catalog DNS fails closed before the platform loader. Signal
 handling is requested only by the CLI dependency; the existing
 `ai-gateway-http` umbrella continues to include direct `bytes`, catalog HTTP,
-and web fetch. The cycle-4 gate and its 3,818,944-byte release SHA are retained
-as regression evidence only and make no performance or fx-equivalence claim.
+and web fetch. The cycle-5 gate's 3,852,144-byte release binary and SHA are
+retained as regression evidence only and make no size-improvement, performance,
+or fx-equivalence claim.
 The twenty-eighth top-level
 `permissions [--json]` slice is **DELIVERED** from exact delivered base
 `8d8ecc7a37f866251d4047c01acdf1bbd485f4da`; it is read-only, ask-only, and

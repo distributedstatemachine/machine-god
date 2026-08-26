@@ -129,14 +129,17 @@ performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
 The twenty-ninth bounded slice is contract-frozen, locally implemented, and
-**REJECTED** in formal cycle 4; it is not review-green, integrated to `main`, or
-delivered. Its cycle-4 raw overlap-deduplicated union was 0 blocker, 0 high,
+**SUBMITTED** to formal cycle 5; it is not review-green, integrated to `main`,
+or delivered. Its cycle-4 raw overlap-deduplicated union was 0 blocker, 0 high,
 1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
 1 medium, and 1 low remained unresolved at verdict collection. Topology
 documentation remediation is exact `268d35a`; signal/output-lifecycle
 remediation is integrated at exact `aa60db15d016cf97674459a4af66318a18b762ac`,
-tree `278fa365e24504452f8d111a7b08bc49e2aed164`. The complete cycle-5
-replacement gate and three fresh formal reviews remain pending.
+tree `278fa365e24504452f8d111a7b08bc49e2aed164`. Exact cycle-5 candidate
+`27c75f4365af92759686402574d310ada596a923`, tree
+`5e40b24259d76196d573f752258c9a764b53f990`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback and is submitted to
+three fresh formal cycle-5 reviews. Their results remain pending.
 Its
 exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
@@ -203,9 +206,11 @@ it. Its raw overlap-deduplicated union was 0 blocker, 0 high, 1 medium, and
 2 low; after prior sealed dispositions, 0 blocker, 0 high, 1 medium, and 1 low
 remained unresolved at verdict collection. Exact topology documentation fix
 `268d35a` and signal/output-lifecycle remediation `aa60db1`, tree `278fa365`,
-are integrated. The complete cycle-5 replacement gate and three fresh formal
-reviews remain pending. No candidate is review-green, and no product-
-performance, compatibility-promotion, or fx-equivalence claim is made.
+are integrated. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
+complete exact-1.94.1 replacement gate without fallback and is submitted to
+three fresh formal reviews. Their results remain pending. No candidate is
+review-green, and no product-performance, size-improvement, compatibility-
+promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2886,7 +2891,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Cycle-4-rejected, cycle-5-pre-gate bounded slice 29: top-level `models`
+### Cycle-5-submitted bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -2990,10 +2995,46 @@ and 2 low; after prior sealed dispositions, 0 blocker, 0 high, 1 medium, and
 Exact signal/output-lifecycle remediation
 `aa60db15d016cf97674459a4af66318a18b762ac`, tree
 `278fa365e24504452f8d111a7b08bc49e2aed164`, closes the medium in locally
-integrated behavior. The complete cycle-5 replacement gate, three fresh formal
-reviews, exact feature workflows, fast-forward integration, and exact `main`
-workflows remain pending; no candidate is review-green and this makes no
-product-performance claim.
+integrated behavior. Exact cycle-5 behavior candidate
+`27c75f4365af92759686402574d310ada596a923`, tree
+`5e40b24259d76196d573f752258c9a764b53f990`, passed the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- focused core 6/6, provider/parser 17/17, credential 6/6, loopback HTTP 16/16,
+  private resolver 14/14, CLI unit 22/22, CLI integration 23/23, and parsed-
+  manifest/resolved-tree 5/5 suites passed;
+- formatting, warnings-denied workspace all-target/all-feature Clippy, 976
+  non-documentation Rust tests, and both workspace doctests passed;
+- the Python suite first encountered one fake-Git timing timeout; its focused
+  retry and complete sequential rerun passed all 135 tests with eight expected
+  macOS skips;
+- regeneration against pinned fx
+  `b1774fbf6c7602b503026f96f6e960e946c692ef` was byte-stable, and
+  documentation integrity covered 78 Markdown files, 127 fenced blocks, 567
+  inline links, and 410 repository-relative targets with zero errors;
+- `cargo-deny 0.19.9` passed with only the established duplicate warnings, and
+  `cargo-audit 0.22.2 --no-fetch` loaded 1,226 advisories, scanned 210
+  dependencies, and found zero vulnerabilities;
+- the host default, narrow catalog, broad HTTP, all-feature, and CLI checks,
+  WASI native default/catalog and CLI checks, and Linux/FreeBSD no-feature
+  checks passed. Resolved target trees for macOS, Linux, FreeBSD, Windows,
+  Android, and WASI have the intended direct edges;
+- catalog HTTP cross-compilation for Linux and FreeBSD stopped in `aws-lc-sys`
+  because the macOS host lacks the foreign C standard-library/sysroot headers,
+  before product Rust; exact remote Linux CI remains authoritative;
+- workflows, benchmark workloads, pinned-fx generator inputs, and generated
+  compatibility data are unchanged; and
+- a fresh locked 3,852,144-byte `target/release/machine-god` with SHA-256
+  `9babe527b1f5836b53e3aeaf932b24bb6a67b187bc4bbaba69a17d9d7c8eba4f`
+  resolved 139 normal packages and passed six black-box cases plus the release
+  signal regressions. The live public catalog returned 228 models without a
+  configuration or state write.
+
+The exact candidate is **SUBMITTED** to three fresh formal cycle-5 reviews.
+Their results, exact feature workflows, fast-forward integration, and exact
+`main` workflows remain pending; no candidate is review-green. These checks
+make no product-performance, speed, latency, memory, binary-size-improvement,
+catalog-equivalence, or fx-equivalence claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -3060,8 +3101,8 @@ workflows. Benchmark evidence is delivery evidence only.
 
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices and locally implemented, cycle-4-rejected,
-cycle-5-pre-gate twenty-ninth slice do not complete Milestone 03.
+The twenty-eight delivered slices and locally implemented, cycle-5-submitted
+twenty-ninth slice do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
 gate:
@@ -4030,9 +4071,13 @@ gate:
   sealed dispositions, 0 blocker, 0 high, 1 medium, and 1 low remained
   unresolved at verdict collection. Exact topology fix `268d35a` and exact
   signal/output-lifecycle remediation `aa60db1`, tree `278fa365`, are locally
-  integrated. This combined item remains unchecked while the complete cycle-5
-  replacement gate, three fresh formal reviews, feature workflows, non-force
-  fast-forward, and exact `main` gates are pending.
+  integrated. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
+  complete exact-1.94.1 replacement gate with focused 6/17/6/16/14/22/23/5,
+  976 non-doc Rust tests, two doctests, Python 135, pinned-fx and docs integrity,
+  dependency/audit, target-matrix, protected-input, release-binary, and signal-
+  regression evidence green. It is submitted to three fresh formal cycle-5
+  reviews. This combined item remains unchecked while those results, feature
+  workflows, non-force fast-forward, and exact `main` gates are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

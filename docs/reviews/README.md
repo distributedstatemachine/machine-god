@@ -38,4 +38,4 @@ record the exact reviewed commit, findings, resolutions, and rejected rationales
 - [Milestone 03 native `open_file` contract review](m03-open-file-review-01.md)
 - [Milestone 03 native `web_fetch` review ledger](m03-web-fetch-review-01.md)
 - [Milestone 03 `permissions` CLI review ledger](m03-permissions-cli-review-01.md)
-- [Milestone 03 `models` CLI cycle-4 rejection and remediation ledger](m03-models-cli-review-01.md)
+- [Milestone 03 `models` CLI cycle-5 submission ledger](m03-models-cli-review-01.md)

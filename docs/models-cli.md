@@ -1,7 +1,7 @@
 # Top-level `models` CLI contract
 
-Status: cycle-4-rejected and cycle-5-pre-gate, not yet review-green or delivered
-as the twenty-ninth bounded Milestone 03 slice. Exact cycle-2 behavior candidate
+Status: cycle-5-submitted, not yet review-green or delivered as the twenty-ninth
+bounded Milestone 03 slice. Exact cycle-2 behavior candidate
 `2ea9d94374c4dd18f43255af785ee31088126c56`, tree
 `3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
 gate but three fresh tracks rejected it with a deduplicated union of one high,
@@ -51,9 +51,12 @@ gate under exact Rust and Cargo 1.94.1. The raw overlap-deduplicated union was
 collection. Documentation topology remediation is exact `268d35a`; signal and
 output-lifecycle remediation is integrated at exact
 `aa60db15d016cf97674459a4af66318a18b762ac`, tree
-`278fa365e24504452f8d111a7b08bc49e2aed164`. The complete cycle-5 replacement
-gate and three fresh formal reviews remain pending; no candidate is review-
-green. The pinned comparison input remains fx commit
+`278fa365e24504452f8d111a7b08bc49e2aed164`. Exact cycle-5 candidate
+`27c75f4365af92759686402574d310ada596a923`, tree
+`5e40b24259d76196d573f752258c9a764b53f990`, passed the complete exact-1.94.1
+replacement gate without fallback and is **SUBMITTED** to three fresh formal
+reviews. Their results remain pending; no candidate is review-green. The pinned
+comparison input remains fx commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. This status makes no performance,
 compatibility-promotion, workflow, integration, or delivery claim.
 
@@ -64,8 +67,8 @@ and invokes no entropy source or detached resolver task during request polling.
 Android fails closed before any DNS or platform-loader call. Private resolver
 source evidence is 14/14 and manifest evidence is 5/5. The complete cycle-4
 gate passed, but formal cycle 4 rejected that exact candidate. The topology and
-signal/output-lifecycle remediations above have not yet passed the complete
-cycle-5 replacement gate or three fresh formal reviews.
+signal/output-lifecycle remediations compose exact replacement-gated cycle-5
+candidate `27c75f4`, tree `5e40b24`; its three fresh formal reviews are pending.
 
 The slice adds one read-only top-level command:
 

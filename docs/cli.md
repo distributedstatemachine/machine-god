@@ -82,9 +82,10 @@ Its raw overlap-deduplicated union was 0 blocker, 0 high, 1 medium, and 2 low;
 after prior sealed dispositions, 0 blocker, 0 high, 1 medium, and 1 low remained
 unresolved at verdict collection. Topology documentation is fixed at `268d35a`;
 signal/output-lifecycle remediation is integrated at exact `aa60db1`, tree
-`278fa365`. The complete cycle-5 replacement gate, three fresh formal reviews,
-feature/main integration, and delivery remain pending. No candidate is review-
-green.
+`278fa365`. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
+complete exact-1.94.1 replacement gate without fallback and is submitted to
+three fresh formal reviews. Their results, feature/main integration, and
+delivery remain pending. No candidate is review-green.
 
 The delivered by-ID native lifecycle and delivered sixteenth
 [`native session-listing extension`](native-session-listing.md) are also

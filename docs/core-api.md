@@ -126,8 +126,10 @@ rejected exact candidate `57d2ac2`, tree `d30bb656`, after its complete exact-
 1 medium, and 1 low remained unresolved at verdict collection. Topology
 documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
 integrated at exact `aa60db1`, tree `278fa365`, without expanding core
-authority. The complete cycle-5 replacement gate, three fresh formal reviews,
-and integration/delivery remain pending. See [`models-cli.md`](models-cli.md).
+authority. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
+complete exact-1.94.1 replacement gate without fallback and is submitted to
+three fresh formal reviews. Their results and integration/delivery remain
+pending. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 
