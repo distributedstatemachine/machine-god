@@ -194,17 +194,22 @@ Formal cycle 2 reviewed exact candidate
 `99a88a45fd6f0823b23fd879633784433194cf8d`, in three fresh isolated read-only
 tracks. Correctness/API reported `1/1/0/0`, native lifecycle/effects reported
 `0/0/0/1`, and performance/resources reported `0/0/1/0`. The deduplicated
-union is `1/1/1/1`, so cycle 2 is rejected.
+reported union is `1/1/1/1`. Finding adjudication below rejects the reported
+blocker and leaves a confirmed `0/1/1/1` union, so cycle 2 remains rejected.
 
-The blocker is a real-provider protocol mismatch: language-model stream v4
-places the provider result in `output`, with the observed Perplexity shape
-`{ id, results }`, while the dedicated decoder admits only the older local
-fixture's `result` field. Remediation must accept only the current bounded,
-strict output shape, validate the provider result identifier, and replace the
-manufactured legacy fixture with exact captured-shape evidence. This was
-cross-checked against the current Vercel AI stream mapping and the upstream
-Gateway/Perplexity reproduction in
-[`vercel/ai#12178`](https://github.com/vercel/ai/issues/12178).
+The reported blocker is rejected after primary-source adjudication. This
+adapter consumes the raw language-model-v4 transport stream. At current Vercel
+AI commit `ce6849a`, its normative
+[`LanguageModelV4ToolResult`](https://github.com/vercel/ai/blob/ce6849a1832e2b900bb700a7bcc24f7436eb9e5c/packages/provider/src/language-model/v4/language-model-v4-tool-result.ts)
+contains `result`, not `output`. The higher-level SDK
+[`stream-language-model-call`](https://github.com/vercel/ai/blob/ce6849a1832e2b900bb700a7bcc24f7436eb9e5c/packages/ai/src/generate-text/stream-language-model-call.ts#L690-L716)
+maps raw `chunk.result` to public `fullStream.output`. The reproduction in
+[`vercel/ai#12178`](https://github.com/vercel/ai/issues/12178) observes that
+higher-level mapped surface and was closed on 2026-08-26 after a server-side
+tool-loop change; it is not evidence that the raw field changed. Replacing raw
+`result` with SDK-layer `output` would create the protocol mismatch. Replacement
+evidence instead preserves raw `result` and explicitly rejects mapped `output`
+at this transport seam.
 
 The high finding is that URL-standard numeric IPv4 spellings such as `127.1`,
 `0177.0.0.1`, and `0x7f.0.0.1` pass the DNS-name fallback after Rust's canonical
@@ -216,9 +221,21 @@ serialized-output ceiling reachable. Remediation must add exact and one-byte-
 over output evidence and correct the contract explanation. The low finding is
 the stale pending-composition label in the maintained reference-host page.
 
-All four findings are confirmed. Cycle 2 remains historical rejected evidence;
+The high, medium, and low findings are confirmed. Cycle 2 remains historical
+rejected evidence;
 after remediation and a complete exact gate, three fresh review tracks must
 evaluate one new immutable candidate and produce a `0/0/0/0` union.
+
+Exact isolated protocol-evidence component
+`3ad8ec7c256e5fffaad22ef55c61d508d960839b` preserves the production raw
+`result` decoder byte-for-byte and adds the explicit raw-result/SDK-output layer
+regression. Exact isolated validation component
+`73441126dac5561dba5ddd39ae4da7de97c8f23b` adds dependency-free URL-Standard
+IPv4 classification for targets, filters, and citations plus public execution
+evidence at exactly 49,152 and 49,153 serialized output bytes. Both components
+and the maintained behavior corrections are composed in the current
+remediation; its exact local gate and replacement review candidate remain
+pending.
 
 ## Worktree lifecycle
 

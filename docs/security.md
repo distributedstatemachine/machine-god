@@ -6,7 +6,11 @@ green or delivered. Its composed behavior precursor
 local gate. Formal cycle 1 rejected exact `89c5ec95`, tree `8d91a55`. Source
 remediation is composed from exact isolated components `096b11c4` and
 `ca0b990a`. Exact composed precursor `e662fa8`, tree `6c0ace9`, passes the
-complete local gate; fresh cycle-2 reviews remain pending. It remains a local
+complete local gate. Formal cycle 2 reported `1/1/1/1` on exact `399f5f7`, tree
+`99a88a4`; primary-source adjudication rejects the layer-confused provider-
+envelope blocker, leaving an accepted `0/1/1/1` union. Remediation of numeric
+IPv4 aliases, the reachable output boundary, and stale composition wording is
+in progress. It remains a local
 authority-bearing tool: strict
 effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares

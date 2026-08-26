@@ -256,6 +256,30 @@ fn dedicated_codec_sends_one_required_provider_search_and_accepts_one_exact_resu
 }
 
 #[test]
+fn dedicated_codec_accepts_raw_v4_result_and_rejects_sdk_layer_output() {
+    // This transport consumes raw LanguageModelV4 stream chunks. The AI SDK maps raw
+    // `result` to high-level `output` later; accepting `output` here would conflate layers.
+    let raw_events = vec![
+        call_event("provider-search-1", "perplexity_search", true),
+        result_event("provider-search-1", json!({ "results": [] })),
+        finish_event("stop"),
+    ];
+    assert!(execute(sse(&raw_events)).1.is_ok());
+
+    let sdk_layer_events = vec![
+        call_event("provider-search-1", "perplexity_search", true),
+        json!({
+            "type": "tool-result",
+            "toolCallId": "provider-search-1",
+            "output": { "results": [] }
+        }),
+        finish_event("stop"),
+    ];
+    let error = execute(sse(&sdk_layer_events)).1.unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Execution);
+}
+
+#[test]
 fn gateway_worker_body_is_exact_for_no_filter_allow_filter_and_block_filter() {
     let cases = [
         (json!({"query": PRIVATE_QUERY}), None),

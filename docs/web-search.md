@@ -15,10 +15,11 @@ finding union. Source remediation is composed from exact isolated lifecycle
 component `096b11c4` and portability/bounds component `ca0b990a`; replacement
 evidence and the complete same-SHA gate pass on exact composed precursor
 `e662fa8047c5ca321d622b9b5920166804a35c27`, tree
-`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`. Fresh cycle-2 reviews are pending.
-The slice is not yet review-green,
-integrated, or delivered. The live
-status is recorded in the
+`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`. Formal cycle 2 rejected exact
+candidate `399f5f7a14c1473d9e737d44838549ba305746de`, tree
+`99a88a45fd6f0823b23fd879633784433194cf8d`, with a deduplicated `1/1/1/1`
+finding union. Remediation and fresh review remain pending. The slice is not
+yet review-green, integrated, or delivered. The live status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
 
 ## Boundary
@@ -46,7 +47,9 @@ and interior hyphens, and begin and end with an alphanumeric byte. One call
 retains at most 16 normalized domains and 4,096 aggregate domain bytes. Stable
 first-seen deduplication occurs before those canonical arguments reach policy
 or execution. This slice adds no IDNA conversion, wildcard, scheme, path,
-port, user-info, or domain-pattern language.
+port, user-info, or domain-pattern language. Domain filters also reject literal
+IP addresses and every URL-standard numeric IPv4 spelling, including shortened
+decimal, leading-zero/octal, and hexadecimal forms.
 
 ## Permission and exact execution agreement
 
@@ -56,10 +59,11 @@ exact configured AI Gateway scheme, host, and optional port. Production fixes
 that target to canonical `https://ai-gateway.vercel.sh`. A custom host must
 inject the canonical HTTP(S) `NetworkTarget` actually contacted by its opaque
 transport; malformed, noncanonical, credential-bearing, path-bearing, or
-default-port-spelling targets fail construction. The exact
-canonical arguments attached to `PreparedToolCall` are the arguments supplied
-to execution after approval. Execution reparses those arguments and rejects
-any noncanonical or capability-divergent value before consulting the
+default-port-spelling targets fail construction. A canonical literal IPv4
+target is allowed, but an equivalent URL-standard numeric alias is not. The
+exact canonical arguments attached to `PreparedToolCall` are the arguments
+supplied to execution after approval. Execution reparses those arguments and
+rejects any noncanonical or capability-divergent value before consulting the
 transport.
 
 The existing core engine therefore performs its ordinary critical-risk
@@ -113,17 +117,20 @@ duplicated, reordered, malformed, ambiguous, or conflicting identities and
 results fail closed. An incomplete, provider-error, content-filtered, missing,
 or contradictory finish also fails closed.
 
-The final provider result is one strict object containing a `results` array.
-Each result is one strict object containing only string `title` and `url`
-members. Unknown, missing, duplicate, or mistyped members fail closed. The
-decoder retains at most ten sources in wire order. Each source has only a
-bounded title and absolute HTTP(S) URL; titles retain at most 512 UTF-8 bytes
-and URLs at most 2,048 bytes. Unsafe, malformed, credential-bearing, or non-
-HTTP(S) URLs are not exposed. Stable first-seen URL deduplication preserves the
-provider order. Zero valid sources is a successful empty result. Observing an
-additional valid unique source after ten retains the first ten and sets
-`truncated`; an over-bound individual source or malformed result is not silently
-skipped.
+The raw language-model-v4 `tool-result` carries one strict `result` object
+containing only a `results` array. Vercel AI's higher-level SDK maps that raw
+field to its public `fullStream.output`; that mapped field is not part of this
+injected transport seam and is rejected here. Each result is one strict object
+containing only string `title` and `url` members. Unknown,
+missing, duplicate, or mistyped members fail closed. The decoder retains at
+most ten sources in wire order. Each source has only a bounded title and
+absolute HTTP(S) URL; titles retain at most 512 UTF-8 bytes and URLs at most
+2,048 bytes. Unsafe, malformed, credential-bearing, noncanonical numeric-IPv4,
+or non-HTTP(S) URLs are not exposed. Stable first-seen URL deduplication
+preserves the provider order. Zero valid sources is a successful empty result.
+Observing an additional valid unique source after ten retains the first ten and
+sets `truncated`; an over-bound individual source or malformed result is not
+silently skipped.
 
 The local tool returns fixed warning-bearing structured JSON. Object member
 serialization order is not part of the contract:
@@ -195,6 +202,12 @@ buffers on completion, error, cancellation, or drop. Exactly hitting a byte,
 record, node, source, or output limit is allowed; checked overflow or the first
 item beyond it fails or sets `truncated` only where the result contract states
 that behavior.
+
+The aggregate-domain and serialized worker-request ceilings are defense in
+depth beneath stricter count/per-item/query limits. The serialized-output
+ceiling is independently reachable because JSON escaping can expand otherwise
+valid query, title, and URL bytes; deterministic evidence admits exactly 48 KiB
+and rejects the first serialized byte beyond it.
 
 The SSE codec meters all 256 KiB of raw input but incrementally normalizes and
 retains at most one 64 KiB record before strict JSON decoding. It does not keep

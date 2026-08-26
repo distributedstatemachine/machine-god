@@ -33,7 +33,12 @@ portable contracts are ungated, and the decoder retains one bounded record and
 at most ten deduplication entries. Exact composed remediation precursor
 `e662fa8047c5ca321d622b9b5920166804a35c27`, tree
 `6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes the complete local gate;
-no replacement candidate has completed fresh review.
+cycle 2 reported a deduplicated `1/1/1/1` on exact candidate `399f5f7`, tree
+`99a88a4`. Primary-source adjudication rejects the purported blocker because
+raw language-model-v4 `result` is mapped to public SDK `output` above this
+transport seam. The accepted `0/1/1/1` union still rejects the candidate;
+current remediation rejects noncanonical URL-standard IPv4 aliases and proves
+the escaping-sensitive serialized-output boundary.
 The candidate is not green, integrated, or delivered, the delivered count
 remains 32, and no performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,

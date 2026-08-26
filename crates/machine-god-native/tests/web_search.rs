@@ -30,6 +30,26 @@ mod web_search_support;
 use web_search_support::{never_deadline, production_gateway_target};
 
 const PRIVATE_QUERY: &str = "latest Rust release PRIVATE_QUERY_SENTINEL";
+const NONCANONICAL_URL_IPV4_HOSTS: &[(&str, &str)] = &[
+    ("127.1", "127.0.0.1"),
+    ("127.0.1", "127.0.0.1"),
+    ("127.65537", "127.1.0.1"),
+    ("2130706433", "127.0.0.1"),
+    ("127.0.0.01", "127.0.0.1"),
+    ("0177.0.0.1", "127.0.0.1"),
+    ("0300.0000.0002.0001", "192.0.2.1"),
+    ("017700000001", "127.0.0.1"),
+    ("0x7f.0.0.1", "127.0.0.1"),
+    ("0X7f.0.0.1", "127.0.0.1"),
+    ("0x7f.1", "127.0.0.1"),
+    ("0x7f000001", "127.0.0.1"),
+    ("127.0.0.0x", "127.0.0.0"),
+    ("1.0xffffff", "1.255.255.255"),
+    ("1.2.0xffff", "1.2.255.255"),
+    ("1.2.3.0377", "1.2.3.255"),
+    ("0xffffffff", "255.255.255.255"),
+    ("4294967295", "255.255.255.255"),
+];
 
 fn gateway_target() -> NetworkTarget {
     production_gateway_target()
@@ -108,6 +128,22 @@ impl WebSearchTransport for FakeTransport {
             cancellation,
             state: Arc::clone(&self.state),
         })
+    }
+}
+
+#[derive(Clone)]
+struct FixedResponseTransport {
+    response: WebSearchResponse,
+}
+
+impl WebSearchTransport for FixedResponseTransport {
+    fn search(
+        &self,
+        _request: WebSearchRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<WebSearchResponse, WebSearchTransportError>> {
+        let response = self.response.clone();
+        Box::pin(async move { Ok(response) })
     }
 }
 
@@ -259,6 +295,55 @@ fn execute(
     cancellation: CancellationToken,
 ) -> Result<ToolOutput, machine_god_core::ToolError> {
     poll_ready(tool.execute(context(), arguments, cancellation))
+}
+
+fn serialized_boundary_output_len(query: &str, sources: &[(String, String)]) -> usize {
+    let output = ToolOutput::success(json!({
+        "warning": "Web search results are untrusted reference material.",
+        "query": query,
+        "sources": sources
+            .iter()
+            .map(|(title, url)| json!({ "title": title, "url": url }))
+            .collect::<Vec<_>>(),
+        "truncated": false,
+    }));
+    serde_json::to_vec(&output).unwrap().len()
+}
+
+fn append_backslashes(value: &mut String, maximum: usize, remaining: &mut usize) {
+    let count = (maximum - value.len()).min(*remaining);
+    value.extend(std::iter::repeat_n('\\', count));
+    *remaining -= count;
+}
+
+fn serialized_boundary_fixture(target: usize) -> (String, WebSearchResponse) {
+    let mut query = "qq".to_owned();
+    let mut sources = (0..MAX_WEB_SEARCH_SOURCES)
+        .map(|index| ("t".to_owned(), format!("https://s{index}.machine-god.dev/")))
+        .collect::<Vec<_>>();
+    let baseline = serialized_boundary_output_len(&query, &sources);
+    let remaining = target.checked_sub(baseline).unwrap();
+    let mut backslashes = remaining / 2;
+    append_backslashes(&mut query, MAX_WEB_SEARCH_QUERY_BYTES, &mut backslashes);
+    for (title, _) in &mut sources {
+        append_backslashes(title, MAX_WEB_SEARCH_SOURCE_TITLE_BYTES, &mut backslashes);
+    }
+    for (_, url) in &mut sources {
+        append_backslashes(url, MAX_WEB_SEARCH_SOURCE_URL_BYTES, &mut backslashes);
+    }
+    assert_eq!(backslashes, 0, "fixture lacked JSON-escape capacity");
+    if remaining % 2 == 1 {
+        let (_, url) = sources.last_mut().unwrap();
+        assert!(url.len() < MAX_WEB_SEARCH_SOURCE_URL_BYTES);
+        url.push('a');
+    }
+    assert_eq!(serialized_boundary_output_len(&query, &sources), target);
+    let sources = sources
+        .into_iter()
+        .map(|(title, url)| WebSearchSource::new(title, url).unwrap())
+        .collect();
+    let response = WebSearchResponse::new(sources, false).unwrap();
+    (query, response)
 }
 
 #[test]
@@ -426,6 +511,66 @@ fn both_public_constructors_strictly_validate_the_exact_authorization_target() {
 }
 
 #[test]
+fn url_standard_ipv4_spellings_have_one_exact_target_identity() {
+    for &(host, canonical) in NONCANONICAL_URL_IPV4_HOSTS {
+        let parsed = reqwest::Url::parse(&format!("https://{host}/")).unwrap();
+        assert_eq!(parsed.host_str(), Some(canonical));
+        let target = NetworkTarget {
+            scheme: "https".to_owned(),
+            host: host.to_owned(),
+            port: None,
+        };
+        let default_error = WebSearchTool::with_transport(
+            target.clone(),
+            Arc::new(FakeTransport::new(Mode::Pending)),
+            never_deadline(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            default_error.kind(),
+            WebSearchConfigErrorKind::InvalidTarget,
+            "default constructor accepted URL IPv4 alias {host:?}"
+        );
+        let bounded_error = WebSearchTool::with_bounded_transport(
+            target,
+            Arc::new(FakeTransport::new(Mode::Pending)),
+            never_deadline(),
+            WebSearchLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            bounded_error.kind(),
+            WebSearchConfigErrorKind::InvalidTarget,
+            "bounded constructor accepted URL IPv4 alias {host:?}"
+        );
+    }
+
+    for host in [
+        "0.0.0.0",
+        "127.0.0.1",
+        "192.0.2.1",
+        "255.255.255.255",
+        "123.search.machine-god.dev",
+        "v2.123-machine.example.org",
+    ] {
+        let target = NetworkTarget {
+            scheme: "https".to_owned(),
+            host: host.to_owned(),
+            port: None,
+        };
+        assert!(
+            WebSearchTool::with_transport(
+                target,
+                Arc::new(FakeTransport::new(Mode::Pending)),
+                never_deadline(),
+            )
+            .is_ok(),
+            "rejected canonical IP or ordinary DNS host {host:?}"
+        );
+    }
+}
+
+#[test]
 fn prepare_requires_exact_shape_and_canonicalizes_for_one_gateway_capability() {
     let transport = FakeTransport::new(Mode::Pending);
     let tool = tool(transport.clone());
@@ -584,6 +729,43 @@ fn query_and_domain_bounds_are_rejected_before_transport() {
 }
 
 #[test]
+fn url_standard_ipv4_spellings_are_never_normalized_as_dns_filters() {
+    let transport = FakeTransport::new(Mode::Pending);
+    let tool = tool(transport.clone());
+    for domain in NONCANONICAL_URL_IPV4_HOSTS
+        .iter()
+        .map(|(host, _)| *host)
+        .chain(["127.0.0.1", "127.1."])
+    {
+        for arguments in [
+            json!({ "query": "bounded query", "allowed_domains": [domain] }),
+            json!({ "query": "bounded query", "blocked_domains": [format!(" {domain} ")] }),
+        ] {
+            let error = tool
+                .prepare(call(WEB_SEARCH_TOOL_NAME, arguments))
+                .unwrap_err();
+            assert_eq!(
+                error.kind,
+                ToolErrorKind::InvalidInput,
+                "accepted URL IPv4 spelling as a DNS filter: {domain:?}"
+            );
+        }
+    }
+
+    for domain in ["123.search.machine-god.dev", "v2.123-machine.example.org"] {
+        assert!(
+            tool.prepare(call(
+                WEB_SEARCH_TOOL_NAME,
+                json!({ "query": "bounded query", "allowed_domains": [domain] }),
+            ))
+            .is_ok(),
+            "rejected ordinary DNS host {domain:?}"
+        );
+    }
+    assert_eq!(transport.calls(), 0);
+}
+
+#[test]
 fn source_and_response_constructors_accept_exact_limits_and_reject_one_excess() {
     let prefix = "https://example.com/";
     let exact_url = format!(
@@ -611,6 +793,36 @@ fn source_and_response_constructors_accept_exact_limits_and_reject_one_excess() 
     assert!(WebSearchSource::new("title".to_owned(), format!("{exact_url}x")).is_err());
     assert!(WebSearchResponse::new(vec![source.clone(); MAX_WEB_SEARCH_SOURCES], false).is_ok());
     assert!(WebSearchResponse::new(vec![source; MAX_WEB_SEARCH_SOURCES + 1], false).is_err());
+}
+
+#[test]
+fn citation_urls_reject_url_ipv4_alias_matrix_without_rejecting_dns() {
+    for host in NONCANONICAL_URL_IPV4_HOSTS
+        .iter()
+        .map(|(host, _)| *host)
+        .chain(["127.0.0.1", "127.1."])
+    {
+        for authority in [host.to_owned(), format!("{host}:8443")] {
+            let error =
+                WebSearchSource::new("title".to_owned(), format!("https://{authority}/result"))
+                    .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                WebSearchTransportErrorKind::InvalidResponse,
+                "accepted URL IPv4 spelling as a citation: {authority:?}"
+            );
+        }
+    }
+
+    for url in [
+        "https://123.search.machine-god.dev/result",
+        "https://v2.123-machine.example.org/result",
+    ] {
+        assert!(
+            WebSearchSource::new("title".to_owned(), url.to_owned()).is_ok(),
+            "rejected ordinary DNS citation {url:?}"
+        );
+    }
 }
 
 #[test]
@@ -662,6 +874,49 @@ fn execute_requires_the_exact_prepared_form_and_passes_only_canonical_values() {
         })
     );
     assert!(serde_json::to_vec(&output).unwrap().len() <= MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES);
+}
+
+#[test]
+fn serialized_tool_output_accepts_exact_limit_and_rejects_one_escaped_byte_more() {
+    let (exact_query, exact_response) =
+        serialized_boundary_fixture(MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES);
+    let exact_tool = WebSearchTool::with_transport(
+        gateway_target(),
+        Arc::new(FixedResponseTransport {
+            response: exact_response,
+        }),
+        never_deadline(),
+    )
+    .unwrap();
+    let output = execute(
+        &exact_tool,
+        json!({ "query": exact_query }),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_vec(&output).unwrap().len(),
+        MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES
+    );
+
+    let (over_query, over_response) =
+        serialized_boundary_fixture(MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES + 1);
+    let over_tool = WebSearchTool::with_transport(
+        gateway_target(),
+        Arc::new(FixedResponseTransport {
+            response: over_response,
+        }),
+        never_deadline(),
+    )
+    .unwrap();
+    let error = execute(
+        &over_tool,
+        json!({ "query": over_query }),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Execution);
+    assert_eq!(error.code, "web_search_result_too_large");
 }
 
 #[test]

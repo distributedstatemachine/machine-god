@@ -70,9 +70,17 @@ bounded SSE record, cap deduplication state, and redact source debug output.
 Exact composed remediation precursor
 `e662fa8047c5ca321d622b9b5920166804a35c27`, tree
 `6c0ace98ea9931af9d16cc9fb2ade969df477d3c`, passes replacement evidence and
-the complete exact-1.94.1 local gate without fallback. Fresh cycle-2 reviews
-are pending. This slice is not yet review-green, integrated, or delivered; the
-delivered count remains thirty-two.
+the complete exact-1.94.1 local gate without fallback. Formal cycle 2 rejected
+exact candidate `399f5f7a14c1473d9e737d44838549ba305746de`, tree
+`99a88a45fd6f0823b23fd879633784433194cf8d`: correctness/API reported
+`1/1/0/0`, native effects/lifecycle `0/0/0/1`, and performance/resources
+`0/0/1/0`, yielding a reported deduplicated `1/1/1/1`. Primary-source
+adjudication rejects the purported blocker: the raw language-model-v4 stream
+uses `result`, which the higher-level Vercel AI SDK maps to public `output`.
+The accepted union is `0/1/1/1`. Remediation covers URL-standard numeric IPv4
+aliases, a reachable escaping-sensitive serialized-output boundary, and stale
+host-composition wording. This slice is not yet review-green, integrated, or
+delivered; the delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive
@@ -91,10 +99,10 @@ aggregate domain bytes; ten sources; 512 title bytes; 2,048 URL bytes; 16 KiB
 request; 256 KiB SSE response; 64 KiB SSE record; 256 records; 16,384 JSON
 nodes; 48 KiB serialized output; one 30-second total deadline beginning before
 capacity wait; default concurrency four and hard concurrency sixteen. The
-4,096-byte aggregate-domain, 16 KiB worker-request, and 48 KiB output caps are
-defense in depth: stricter count/per-item/query/source limits make their exact
-boundaries unreachable. Evidence covers every reachable exact/+1 boundary and
-records why those three cannot be constructed through public input. The
+4,096-byte aggregate-domain and 16 KiB worker-request caps are defense in depth:
+stricter count/per-item/query limits make their exact boundaries unreachable.
+JSON escaping makes the 48 KiB serialized-output ceiling reachable; replacement
+evidence must admit the exact boundary and reject the first byte beyond it. The
 production adapter is non-WebAssembly behind `ai-gateway-http`, and current
 reference-host composition remains Linux/macOS-only. The candidate catalog has
 fourteen alphabetical tools: twelve descriptor-backed workspace tools plus
@@ -3869,8 +3877,9 @@ gate:
   `4ba9f5a` with one locally permissioned, required Perplexity worker request,
   a dedicated native provider-executed decoder over the shared transport, the
   exact resource/platform/deferred boundary in `web-search.md`, and initial
-  production/test/documentation composition. It is not yet an exact local-gate
-  candidate, review-green, integrated, or delivered, so this combined item
+  production/test/documentation composition. Cycle 2 rejected exact candidate
+  `399f5f7` with a `1/1/1/1` union; remediation and fresh review remain pending.
+  It is not yet review-green, integrated, or delivered, so this combined item
   remains unchecked and the remaining tools stay pending. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,

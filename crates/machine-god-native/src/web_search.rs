@@ -706,6 +706,7 @@ fn valid_domain(domain: &str) -> bool {
     if domain.is_empty()
         || domain.len() > MAX_WEB_SEARCH_DOMAIN_BYTES
         || !domain.is_ascii()
+        || !matches!(url_ipv4_host(domain), UrlIpv4Host::NotIpv4)
         || domain.parse::<std::net::IpAddr>().is_ok()
         || reserved_dns_name(domain)
     {
@@ -779,10 +780,104 @@ fn canonical_network_host(host: &str) -> bool {
     {
         return false;
     }
+    match url_ipv4_host(host) {
+        UrlIpv4Host::Address(address) => return address.to_string() == host,
+        UrlIpv4Host::Invalid => return false,
+        UrlIpv4Host::NotIpv4 => {}
+    }
     if let Ok(address) = host.parse::<std::net::IpAddr>() {
         return address.to_string() == host;
     }
     host.bytes().all(|byte| !byte.is_ascii_uppercase()) && valid_domain_syntax(host)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UrlIpv4Host {
+    NotIpv4,
+    Address(std::net::Ipv4Addr),
+    Invalid,
+}
+
+/// Classifies the numeric host spellings interpreted as IPv4 by the URL
+/// Standard. This keeps permission targets and exposed citation hosts from
+/// disagreeing with URL parsers over decimal shorthand, octal, or hexadecimal
+/// components without adding a second URL implementation dependency.
+fn url_ipv4_host(host: &str) -> UrlIpv4Host {
+    let final_part = host
+        .strip_suffix('.')
+        .unwrap_or(host)
+        .rsplit('.')
+        .next()
+        .unwrap_or_default();
+    if parse_url_ipv4_number(final_part).is_none()
+        && !final_part.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return UrlIpv4Host::NotIpv4;
+    }
+
+    let host = host.strip_suffix('.').unwrap_or(host);
+    let mut numbers = [0_u64; 4];
+    let mut count = 0_usize;
+    for part in host.split('.') {
+        let Some(slot) = numbers.get_mut(count) else {
+            return UrlIpv4Host::Invalid;
+        };
+        let Some(number) = parse_url_ipv4_number(part) else {
+            return UrlIpv4Host::Invalid;
+        };
+        *slot = number;
+        count += 1;
+    }
+    if count == 0
+        || numbers[..count.saturating_sub(1)]
+            .iter()
+            .any(|number| *number > u64::from(u8::MAX))
+    {
+        return UrlIpv4Host::Invalid;
+    }
+
+    let last_limit = 1_u64 << (8 * (5 - count));
+    let last = numbers[count - 1];
+    if last >= last_limit {
+        return UrlIpv4Host::Invalid;
+    }
+    let mut address = last;
+    for (index, number) in numbers[..count - 1].iter().copied().enumerate() {
+        address += number << (8 * (3 - index));
+    }
+    let Ok(address) = u32::try_from(address) else {
+        return UrlIpv4Host::Invalid;
+    };
+    UrlIpv4Host::Address(std::net::Ipv4Addr::from(address))
+}
+
+fn parse_url_ipv4_number(part: &str) -> Option<u64> {
+    if part.is_empty() {
+        return None;
+    }
+    let (digits, radix) =
+        if let Some(digits) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+            (digits, 16_u64)
+        } else if let Some(digits) = part.strip_prefix('0') {
+            (digits, 8_u64)
+        } else {
+            (part, 10_u64)
+        };
+    if digits.is_empty() {
+        return Some(0);
+    }
+    digits.bytes().try_fold(0_u64, |number, byte| {
+        let digit = match byte {
+            b'0'..=b'9' => u64::from(byte - b'0'),
+            b'a'..=b'f' => u64::from(byte - b'a' + 10),
+            b'A'..=b'F' => u64::from(byte - b'A' + 10),
+            _ => return None,
+        };
+        (digit < radix)
+            .then_some(number)
+            .and_then(|number| number.checked_mul(radix))
+            .and_then(|number| number.checked_add(digit))
+    })
 }
 
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
