@@ -314,8 +314,8 @@ fn web_search_round_responses() -> [Vec<u8>; 3] {
     .as_bytes()
     .to_vec();
     let nested_search = concat!(
-        "data: {\"type\":\"tool-call\",\"toolCallId\":\"provider-search\",\"toolName\":\"perplexity_search\",\"input\":{},\"providerExecuted\":true}\n\n",
-        "data: {\"type\":\"tool-result\",\"toolCallId\":\"provider-search\",\"result\":{\"results\":[{\"title\":\"Rust releases\",\"url\":\"https://www.rust-lang.org/tools/install\"}]}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"provider-search\",\"toolName\":\"perplexity_search\",\"input\":\"{}\",\"providerExecuted\":true}\n\n",
+        "data: {\"type\":\"tool-result\",\"toolCallId\":\"provider-search\",\"toolName\":\"perplexity_search\",\"result\":{\"id\":\"search-response\",\"results\":[{\"title\":\"Rust releases\",\"url\":\"https://www.rust-lang.org/tools/install\",\"snippet\":\"Current Rust release information\"}]}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n",
         "data: [DONE]\n\n"
     )

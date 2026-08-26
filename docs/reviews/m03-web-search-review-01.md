@@ -272,11 +272,12 @@ but the inner local fixture is not a valid v4 Perplexity exchange. Official raw
 calls carry stringified JSON `input`; raw results also carry `toolName` and
 `isError`; and successful Perplexity results are strict `{id, results}` objects
 whose entries require `title`, `url`, and `snippet`, with optional `date` and
-`lastUpdated`. The current decoder instead requires object input, ignores result
-tool identity/error state, and admits only `{results:[{title,url}]}`. It also
-rejects the permitted initial `stream-start` envelope. Remediation must retain
-raw `result` and SDK-layer `output` rejection while replacing the manufactured
-sequence with a bounded official-shape fixture and strict projection.
+`lastUpdated`. That candidate's decoder instead requires object input, ignores
+result tool identity/error state, and admits only `{results:[{title,url}]}`. It
+also rejects the permitted initial `stream-start` envelope. Remediation must
+retain raw `result` and SDK-layer `output` rejection while replacing the
+manufactured sequence with a bounded official-shape fixture and strict
+projection.
 
 One medium finding shows that a fully processed finish and `[DONE]` record does
 not end the transport loop until the byte stream yields EOF. A logically
@@ -310,6 +311,13 @@ and maintained behavior documentation are composed in the current remediation.
 The combined focused exact-1.94.1 suites run 15 dedicated codec and 20 native
 web-search tests with zero failures. The complete replacement gate and a fresh
 immutable review candidate remain pending.
+
+The first broader all-feature workspace run correctly rejected one stale
+reference-host integration fixture that still emitted the pre-remediation
+provider exchange. The fixture now uses stringified call input, matching raw
+tool identity, official result ID, and required source snippet. Its focused
+capacity-one host test passes under exact Rust 1.94.1; the complete all-feature
+run repeats before review kickoff.
 
 ## Worktree lifecycle
 

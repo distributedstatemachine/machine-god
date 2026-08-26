@@ -803,8 +803,8 @@ fn outer_scalar_tool_input_provider_execution_and_tool_results_are_rejected() {
     protocol_error(collect(bytes(scalar)));
 
     let executed = concat!(
-        "data: {\"type\":\"tool-call\",\"toolCallId\":\"call-1\",\"toolName\":\"web_search\",\"input\":{},\"providerExecuted\":true}\n\n",
-        "data: {\"type\":\"tool-result\",\"toolCallId\":\"call-1\",\"result\":{\"secret\":true}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"call-1\",\"toolName\":\"perplexity_search\",\"input\":\"{}\",\"providerExecuted\":true}\n\n",
+        "data: {\"type\":\"tool-result\",\"toolCallId\":\"call-1\",\"toolName\":\"perplexity_search\",\"result\":{\"id\":\"search-response\",\"results\":[{\"title\":\"title\",\"url\":\"https://example.com\",\"snippet\":\"snippet\"}]},\"isError\":false}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
     );
     protocol_error(collect(bytes(executed)));
