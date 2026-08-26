@@ -275,7 +275,9 @@ struct SessionSnapshot {
 }
 
 impl SessionSnapshot {
-    fn from_native(inspection: NativeSessionInspection) -> Result<Self, SessionOperationalFailure> {
+    fn from_native(
+        inspection: &NativeSessionInspection,
+    ) -> Result<Self, SessionOperationalFailure> {
         let snapshot = Self {
             id: inspection.session_id().as_str().to_owned(),
             incarnation_id: inspection.incarnation_id().as_str().to_owned(),
@@ -329,7 +331,7 @@ impl SessionCommandHost for ProductionSessionCommandHost {
             let inspection = inspect_process_session(id)
                 .await
                 .map_err(classify_session_inspection_error)?;
-            SessionSnapshot::from_native(inspection)
+            SessionSnapshot::from_native(&inspection)
         })
     }
 }
@@ -347,9 +349,6 @@ fn classify_session_inspection_error_kind(
         NativeSessionInspectionErrorKind::UnsupportedPlatform => {
             SessionOperationalFailure::Unsupported
         }
-        NativeSessionInspectionErrorKind::InvalidEnvironment
-        | NativeSessionInspectionErrorKind::UnsafeStateRoot
-        | NativeSessionInspectionErrorKind::Unavailable => SessionOperationalFailure::Unavailable,
         NativeSessionInspectionErrorKind::NotFound => SessionOperationalFailure::NotFound,
         NativeSessionInspectionErrorKind::Corrupt => SessionOperationalFailure::Corrupt,
         _ => SessionOperationalFailure::Unavailable,
@@ -1158,8 +1157,8 @@ fn run_with_hosts(
     stderr: &mut impl io::Write,
     models_host: &impl ModelsCommandHost,
     doctor_host: &impl DoctorCommandHost,
-    session_host: &impl SessionCommandHost,
-    sessions_host: &impl SessionsCommandHost,
+    inspection_host: &impl SessionCommandHost,
+    listing_host: &impl SessionsCommandHost,
 ) -> u8 {
     let Ok(command) = parse_arguments(arguments) else {
         let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
@@ -1183,10 +1182,10 @@ fn run_with_hosts(
             permissions(loaded.config().permission_mode(), json)
         }
         Command::Session { id, json } => {
-            return run_session(session_host, id, json, stdout, stderr);
+            return run_session(inspection_host, id, json, stdout, stderr);
         }
         Command::Sessions { json } => {
-            return run_sessions(sessions_host, json, stdout, stderr);
+            return run_sessions(listing_host, json, stdout, stderr);
         }
         Command::Status { json } => status(&inspect_process_status(), json),
     };
@@ -3130,24 +3129,6 @@ mod tests {
             Ok(Command::Permissions { json: true })
         );
         assert_eq!(
-            parse_arguments([OsString::from("session"), OsString::from("alpha")]),
-            Ok(Command::Session {
-                id: machine_god_core::SessionId::new("alpha").unwrap(),
-                json: false,
-            })
-        );
-        assert_eq!(
-            parse_arguments([
-                OsString::from("session"),
-                OsString::from("alpha"),
-                OsString::from("--json"),
-            ]),
-            Ok(Command::Session {
-                id: machine_god_core::SessionId::new("alpha").unwrap(),
-                json: true,
-            })
-        );
-        assert_eq!(
             parse_arguments([OsString::from("sessions")]),
             Ok(Command::Sessions { json: false })
         );
@@ -3187,6 +3168,45 @@ mod tests {
                 OsString::from("--json"),
                 OsString::from("--json"),
             ],
+            vec![OsString::from("sessions"), OsString::from("--json=true")],
+            vec![
+                OsString::from("sessions"),
+                OsString::from("--json"),
+                OsString::from("extra"),
+            ],
+            vec![OsString::from("status"), OsString::from("--json=true")],
+            vec![
+                OsString::from("status"),
+                OsString::from("--json"),
+                OsString::from("extra"),
+            ],
+        ] {
+            assert_eq!(parse_arguments(arguments), Err(()));
+        }
+    }
+
+    #[test]
+    fn session_parser_accepts_only_the_documented_grammar() {
+        assert_eq!(
+            parse_arguments([OsString::from("session"), OsString::from("alpha")]),
+            Ok(Command::Session {
+                id: machine_god_core::SessionId::new("alpha").unwrap(),
+                json: false,
+            })
+        );
+        assert_eq!(
+            parse_arguments([
+                OsString::from("session"),
+                OsString::from("alpha"),
+                OsString::from("--json"),
+            ]),
+            Ok(Command::Session {
+                id: machine_god_core::SessionId::new("alpha").unwrap(),
+                json: true,
+            })
+        );
+
+        for arguments in [
             vec![OsString::from("session")],
             vec![OsString::from("session"), OsString::from("last")],
             vec![OsString::from("session"), OsString::from("--id")],
@@ -3221,18 +3241,6 @@ mod tests {
             vec![OsString::from("session"), OsString::from("bad/session")],
             vec![OsString::from("session"), OsString::from("café")],
             vec![OsString::from("session"), OsString::from("a".repeat(129))],
-            vec![OsString::from("sessions"), OsString::from("--json=true")],
-            vec![
-                OsString::from("sessions"),
-                OsString::from("--json"),
-                OsString::from("extra"),
-            ],
-            vec![OsString::from("status"), OsString::from("--json=true")],
-            vec![
-                OsString::from("status"),
-                OsString::from("--json"),
-                OsString::from("extra"),
-            ],
         ] {
             assert_eq!(parse_arguments(arguments), Err(()));
         }
@@ -3260,34 +3268,34 @@ mod tests {
         let permissions_usage = output
             .find("  machine-god permissions [--json]\n")
             .expect("permissions usage");
-        let session_usage = output
+        let inspection_usage = output
             .find("  machine-god session <id> [--json]\n")
             .expect("session usage");
-        let sessions_usage = output
+        let listing_usage = output
             .find("  machine-god sessions [--json]\n")
             .expect("sessions usage");
         let status_usage = output
             .find("  machine-god status [--json]\n")
             .expect("status usage");
-        assert!(permissions_usage < session_usage);
-        assert!(session_usage < sessions_usage);
-        assert!(sessions_usage < status_usage);
+        assert!(permissions_usage < inspection_usage);
+        assert!(inspection_usage < listing_usage);
+        assert!(listing_usage < status_usage);
 
         let permissions_command = output
             .find("  permissions  Show the permission mode and rules\n")
             .expect("permissions command");
-        let session_command = output
+        let inspection_command = output
             .find("  session      Inspect a saved session\n")
             .expect("session command");
-        let sessions_command = output
+        let listing_command = output
             .find("  sessions     List saved sessions\n")
             .expect("sessions command");
         let status_command = output
             .find("  status       Show configuration and runtime information\n")
             .expect("status command");
-        assert!(permissions_command < session_command);
-        assert!(session_command < sessions_command);
-        assert!(sessions_command < status_command);
+        assert!(permissions_command < inspection_command);
+        assert!(inspection_command < listing_command);
+        assert!(listing_command < status_command);
     }
 
     #[test]
