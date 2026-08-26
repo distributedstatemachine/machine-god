@@ -2,12 +2,18 @@
 
 In-progress bounded slice 32 has production and independent evidence composed
 initially through `852fec7` and focused composition-gate remediation through
-current exact precursor `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+exact production precursor `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
 `61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused native/CLI warnings-denied
-Clippy and representative release-binary human, JSON, and `NotFound` smokes are
-green. The full exact workspace gate, formal adversarial product review, remote
-workflows, `main` integration, and delivery remain pending. It adds no network,
-subprocess, credential, provider, permission, workspace, configuration,
+Clippy, explicit no-unsafe scanning, target checks, and the exact-tree release
+effect matrix are green. Exact precursor
+`fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
+`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
+gate under exact Rust/Cargo 1.94.1; documentation integrity is 85/146/620/81
+with zero errors. The commit carrying this gate record is the formal cycle-1
+candidate once its exact same-SHA gate is reconfirmed. Formal adversarial
+product review, remote workflows, `main`
+integration, and delivery remain pending. It adds no network, subprocess,
+credential, provider, permission, workspace, configuration,
 runtime, or engine authority. Its
 `session` facade captures only state environment inputs on first poll, opens
 only an existing validated machine-god hierarchy, and loads exactly one
@@ -22,8 +28,8 @@ boundary is in [`session-cli.md`](session-cli.md),
 [`native-session-inspection.md`](native-session-inspection.md), and the
 [`live ledger`](reviews/m03-session-cli-review-01.md). Non-exhaustive native
 categories fail closed to the CLI's `Unavailable` presentation. The composition
-adds no dependency or unsafe Rust; the candidate is not yet green, and the
-feature is not delivered.
+adds no dependency or unsafe Rust; review is not yet green, and the feature is
+not delivered. No compatibility or performance claim is made.
 
 Delivered bounded slice 31 adds no new network, subprocess, credential,
 provider, permission, workspace, or engine authority. Its native `sessions`

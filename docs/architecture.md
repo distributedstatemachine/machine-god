@@ -2,8 +2,8 @@
 
 In-progress bounded slice 32 initially composed production and independent
 evidence through `852fec7`; focused composition-gate remediation advances the
-current precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`, while preserving the host boundary
+production precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`,
+tree `61bcf619fc9190a9a70ab3a9c643605c88ab1817`, while preserving the host boundary
 for strict `session <id> [--json]`. `machine-god-cli` owns grammar, core-ID
 parsing, bounded rendering, exit/channel behavior, and an injected host seam.
 `machine-god-native` owns state-only first-poll environment capture, existing-
@@ -17,10 +17,15 @@ The composition fix makes non-exhaustive native categories fail closed to
 `Unavailable` and aligns help bytes to `Inspect a saved session`. Focused
 exact-1.94.1 evidence is green for 12 native inspection tests, 56 CLI unit
 tests, 46 independent CLI process tests, and native/CLI warnings-denied Clippy.
-A release binary plus representative human, JSON, and `NotFound` smokes are
-green. The full exact workspace gate, formal adversarial product review, remote
-workflows, `main` integration, and delivery remain pending, so this precursor
-is not yet a green candidate.
+The complete Python, pinned-fx regeneration, WASI/FreeBSD target, diff/no-
+unsafe, and exact-tree release-matrix checks are also green. Exact gate
+precursor `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
+`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required exact-
+1.94.1 formatting, workspace warnings-denied Clippy, test, and doctest gate.
+Documentation integrity is 85/146/620/81 with zero errors. The commit carrying
+this gate record is the formal cycle-1 candidate once its exact same-SHA gate is
+reconfirmed. Formal adversarial product review, remote workflows, `main`
+integration, and delivery remain pending; no review-green claim is made.
 See the normative [`CLI`](session-cli.md) and
 [`native`](native-session-inspection.md) contracts.
 

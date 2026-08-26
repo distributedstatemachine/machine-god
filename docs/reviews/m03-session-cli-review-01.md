@@ -1,10 +1,11 @@
 # Milestone 03 session CLI review ledger
 
-Status: production and independent evidence composed; complete candidate gate
-and adversarial product review pending. Bounded slice 32 starts from exact
-delivered base `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
+Status: complete local gate suite green on an exact precursor; gate-record same-
+SHA reconfirmation and adversarial product review pending. Bounded slice
+32 starts from exact delivered base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
 composition was `852fec7`; focused composition-gate remediation advances the
-current precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`,
+production precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`,
 tree `61bcf619fc9190a9a70ab3a9c643605c88ab1817`.
 
 ## Frozen boundary
@@ -62,6 +63,11 @@ all-target/all-feature warnings-denied Clippy gate green and separates the
 session grammar evidence into its own unit test without changing the frozen
 command behavior.
 
+Exact gate precursor `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
+`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, composes production, independent
+evidence, and maintained documentation and passed the complete required local
+gate described below.
+
 Focused exact Rust/Cargo 1.94.1 evidence is green:
 
 - 12 native session-inspection tests;
@@ -69,22 +75,21 @@ Focused exact Rust/Cargo 1.94.1 evidence is green:
 - 46 independent CLI process tests.
 
 The focused native/CLI all-target/all-feature warnings-denied Clippy gate is
-green. A release binary was built, and representative exact human, JSON, and
-`NotFound` smoke cases are green.
+green. The complete gate evidence is recorded below.
 
 The fixed benchmark inventory and generated compatibility records are
 unchanged. This slice remains deliberately non-equivalent, unmeasured, and
 claim-ineligible. The composition adds no dependency or unsafe Rust.
 
-This is a precursor, not a green behavior candidate. The full exact workspace
-gate, its remaining release-binary matrix, formal adversarial product review,
-remote workflows, `main` integration, and delivery remain pending. The
-delivered count stays thirty-one.
+This exact precursor has not undergone formal adversarial product review and is
+not review-green or delivered. Remote workflows, `main` integration, and
+delivery remain pending. The delivered count stays thirty-one.
 
-## Candidate gate
+## Complete local gate evidence
 
-Before review, the exact composed behavior candidate must pass focused native
-and CLI tests followed by the complete exact Rust/Cargo 1.94.1 gate:
+Exact precursor `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
+`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed all four required commands
+under exact Rust/Cargo 1.94.1 without fallback:
 
 ```sh
 cargo +1.94.1 fmt --all -- --check
@@ -93,15 +98,35 @@ cargo +1.94.1 test --workspace
 cargo +1.94.1 test --doc --workspace
 ```
 
-The gate also includes the complete Python suite, exact pinned-fx compatibility
-regeneration, relevant target checks, documentation integrity, diff/unsafe
-checks, and fresh release-binary execution over success, missing/no-create,
-invalid-grammar-before-effects, and exact human/JSON output.
+Documentation integrity covered 85 Markdown files, 146 fenced blocks, 620
+parsed links, and 81 unique repository targets with zero errors. Supplemental
+gate evidence is also green:
+
+- the complete Python discovery suite passed 135 tests with eight expected
+  macOS skips;
+- pinned-fx compatibility regeneration passed at exact upstream
+  `b1774fbf6c7602b503026f96f6e960e946c692ef`;
+- native WASI no-default-feature and all-feature checks, the CLI WASI check,
+  and native FreeBSD no-default-feature check passed. The only diagnostic was
+  the documented pre-existing WASI `read_file` `dead_code` warning;
+- diff checks and an explicit unsafe-Rust scan passed; and
+- a freshly rebuilt exact-tree release binary passed success human and JSON,
+  invalid-grammar-before-effects, missing-root JSON `NotFound`/no-create,
+  record-immutability, private-lock, and unrelated-root checks.
+
+Compatibility regeneration is evidence integrity only. It does not promote
+this deliberately non-equivalent, unmeasured, claim-ineligible command or make
+a performance or compatibility claim.
+
+This documentation-only record changes the exact commit and tree after those
+precursor results. The commit carrying this gate record is the formal cycle-1
+candidate once its exact same-SHA gate is reconfirmed. That reconfirmation does
+not itself approve review findings or delivery.
 
 ## Required adversarial product review
 
-After the complete candidate gate, three fresh isolated read-only agents review
-the same exact commit and tree:
+After the gate-record commit's exact same-SHA reconfirmation, three fresh
+isolated read-only agents review the same exact commit and tree:
 
 1. correctness/API, including CLI grammar, output/error behavior, and the
    pinned-fx boundary;

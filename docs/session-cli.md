@@ -3,16 +3,20 @@
 Status: production and independent evidence composed for bounded Milestone 03
 slice 32 from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial composition was
-`852fec7`; focused composition-gate remediation advances the current precursor
-to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`852fec7`; focused composition-gate remediation is exact
+`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
 `61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused exact-1.94.1 evidence is
 green for 12 native inspection tests, 56 CLI unit tests, 46 independent CLI
-process tests, and native/CLI warnings-denied Clippy. A release binary plus
-representative human, JSON, and `NotFound` smokes are green. The full workspace
-gate, formal adversarial product review, remote workflows, `main` integration,
-and delivery remain pending; this is not yet a green candidate. No
-compatibility or performance claim exists. The
-live evidence record is the
+process tests, and native/CLI warnings-denied Clippy. Python, pinned-fx
+regeneration, WASI/FreeBSD target, diff/no-unsafe, and exact-tree release-matrix
+checks are also green. The full workspace gate passed on exact precursor
+`fa099f75277f7ae23a3ac220e66356c45223d1a5`,
+tree `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, under exact Rust/Cargo 1.94.1;
+documentation integrity is 85/146/620/81 with zero errors. The commit carrying
+this gate record is the formal cycle-1 candidate once its exact same-SHA gate is
+reconfirmed. Formal adversarial product review, remote workflows, `main`
+integration, and delivery remain pending; no review-green claim exists. No
+compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
 This slice adds a strict, engine-free inspection of one current-schema

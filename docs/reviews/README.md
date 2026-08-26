@@ -3,9 +3,11 @@
 - [`m03-session-cli-review-01.md`](m03-session-cli-review-01.md) tracks the
   in-progress bounded slice-32 `session <id> [--json]` composition from exact
   delivered base `6e687b6`. Production and independent evidence are composed
-  initially through `852fec7`, with focused remediation through current
-  precursor `c0c16a7`; the complete candidate gate and formal adversarial
-  product review remain pending.
+  initially through `852fec7`, with focused remediation through production
+  precursor `c0c16a7`. Exact gate precursor `fa099f7`, tree
+  `64d6a72`, passed the complete required local and supplemental candidate
+  gates; the gate-record commit requires same-SHA reconfirmation before formal
+  cycle-1 review.
 
 - [`m03-sessions-cli-review-01.md`](m03-sessions-cli-review-01.md) tracks the
   delivered bounded slice-31 `sessions [--json]` candidate. Cycle 1 rejected

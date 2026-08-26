@@ -2,7 +2,7 @@
 
 In-progress slice 32 composes strict top-level `session <id> [--json]`
 production and independent evidence. Initial composition was `852fec7`;
-focused composition-gate remediation advances the current precursor to exact
+focused composition-gate remediation is exact
 `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
 `61bcf619fc9190a9a70ab3a9c643605c88ab1817`, under the normative
 [`session` contract](session-cli.md). The command loads one exact
@@ -18,9 +18,14 @@ lock sidecar on a present record. Human/JSON output is assembled under 4,096
 bytes. Non-exhaustive native categories fail closed to `Unavailable`, and help
 bytes use `Inspect a saved session`. Focused exact-1.94.1 evidence is green for
 12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
-tests, and native/CLI warnings-denied Clippy. A release binary plus
-representative human, JSON, and `NotFound` smokes are green. The full workspace
-exact gate, formal adversarial product review, remote workflows, `main`
+tests, and native/CLI warnings-denied Clippy. Python, pinned-fx regeneration,
+WASI/FreeBSD target, diff/no-unsafe, and exact-tree release-matrix checks are
+also green. The full workspace exact gate passed on exact precursor
+`fa099f75277f7ae23a3ac220e66356c45223d1a5`,
+tree `64d6a72e66b6df78bc476dadd82ce3e911644b2d`, under exact Rust/Cargo 1.94.1;
+documentation integrity is 85/146/620/81 with zero errors. The commit carrying
+this gate record is the formal cycle-1 candidate once its exact same-SHA gate is
+reconfirmed. Formal adversarial product review, remote workflows, `main`
 integration, and delivery remain pending. There is no matching bootstrap
 workload and no claim that the candidate is green or the
 feature is delivered, performant, or equivalent. The delivered count remains

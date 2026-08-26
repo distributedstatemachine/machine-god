@@ -52,12 +52,16 @@ independent discovery agents audited the remaining M03 CLI and pinned-fx
 surfaces and agreed this summary-only exact-ID inspection is the smallest
 coherent next slice. Production and independent evidence components were
 initially composed through `852fec7`; focused composition-gate remediation
-advances the current precursor to exact
+advances the production precursor to exact
 `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. The command returns only validated
-ID, incarnation, revision, allocator, message-count, and top-level metadata-
-count fields from one current-schema machine-god record. It exposes no
-transcript or metadata content and constructs no workspace, engine, provider,
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Exact gate precursor
+`fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
+`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
+gate under exact Rust/Cargo 1.94.1: formatting, workspace all-target/all-feature
+warnings-denied Clippy, workspace tests, and workspace doctests. The command
+returns only validated ID, incarnation, revision, allocator, message-count,
+and top-level metadata-count fields from one current-schema machine-god record.
+It exposes no transcript or metadata content and constructs no workspace, engine, provider,
 credential, permission handler, network transport, or runtime. State capture
 is first-poll and state-only; missing roots/records are no-create `NotFound`,
 while a present load may create only the store's documented private `0600` lock
@@ -65,11 +69,20 @@ sidecar. Complete output is capped at 4,096 bytes. Composition fixed two seams:
 non-exhaustive native categories fail closed to `Unavailable`, and help bytes
 align to `Inspect a saved session`. Focused exact-1.94.1 evidence is green for
 12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
-tests, and native/CLI all-target/all-feature warnings-denied Clippy. A release
-binary and representative human, JSON, and `NotFound` smoke cases are also
-green. The full exact workspace gate, formal adversarial product review, remote
-workflows, `main` integration, and delivery remain pending; the precursor is not
-yet a green candidate. Pinned fx has broader
+tests, and native/CLI all-target/all-feature warnings-denied Clippy. The complete
+135-test Python suite passed with eight expected macOS skips; exact pinned-fx
+regeneration, native WASI no-default/all-feature, CLI WASI, native FreeBSD no-
+default, diff, and explicit no-unsafe checks are green. Only the documented
+pre-existing WASI `read_file` `dead_code` warning remains. A freshly rebuilt
+exact-tree release binary passed human/JSON success, invalid grammar before
+effects, missing-root JSON `NotFound`/no-create, record immutability, private-
+lock, and unrelated-root checks. Documentation integrity covers 85 Markdown
+files, 146 fenced blocks, 620 parsed links, and 81 unique repository targets
+with zero errors. The commit
+carrying this gate record is the formal cycle-1 candidate once its exact same-
+SHA gate is reconfirmed. Formal adversarial product review, remote workflows,
+`main` integration, and delivery remain pending; no review-green claim is made.
+Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
 The fixed benchmark workload is unchanged, and the composition adds no
@@ -3411,7 +3424,7 @@ force fast-forward, and exact `main` workflows.
 The thirty-second slice has production and independent evidence composed from
 exact delivered base `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
 composition was `852fec7`; focused composition-gate remediation advances the
-current precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+production precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
 `61bcf619fc9190a9a70ab3a9c643605c88ab1817`. It adds only strict
 `session <id>` and `session <id> --json`. The ID is parsed through the core
 portable contract before effects, while exact tokens `last`, `--id`, and
@@ -3452,15 +3465,23 @@ for 12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
 tests, and native/CLI all-target/all-feature warnings-denied Clippy. Focused
 composition-gate remediation is exact
 `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
-`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Its release binary and
-representative human, JSON, and `NotFound` smokes are green. The fixed benchmark
-inventory remains unchanged, and no new dependency or unsafe Rust is
-introduced.
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused, Python, pinned-fx,
+WASI/FreeBSD, documentation, diff/no-unsafe, and complete exact-tree release-
+binary gates are green. The fixed benchmark inventory remains unchanged, and
+no new dependency or unsafe Rust is introduced.
 
-The full exact workspace gate remains pending. After it passes, three fresh
-adversarial product reviewers must inspect the same exact SHA across
-correctness/API, native boundary/effects, and performance/concurrency/resources.
-Any finding rejects the candidate and requires
+Exact gate precursor `fa099f75277f7ae23a3ac220e66356c45223d1a5`, tree
+`64d6a72e66b6df78bc476dadd82ce3e911644b2d`, passed the complete required local
+gate under exact Rust/Cargo 1.94.1: formatting, workspace all-target/all-feature
+warnings-denied Clippy, workspace tests, and workspace doctests. Documentation
+integrity is green over 85 Markdown files, 146 fenced blocks, 620 parsed links,
+and 81 unique repository targets with zero errors. The complete Python suite,
+exact pinned-fx regeneration, WASI/FreeBSD target checks, diff/no-unsafe checks,
+and exact-tree release matrix described in the review ledger are also green.
+The commit carrying this gate record is the formal cycle-1 candidate once its
+exact same-SHA gate is reconfirmed. Three fresh adversarial product reviewers must then inspect that
+same exact SHA across correctness/API, native boundary/effects, and performance/
+concurrency/resources. Any finding rejects the candidate and requires
 remediation, the complete replacement gate, and three new reviewers. Only a
 deduplicated `0/0/0/0` exact SHA may proceed through feature workflows, a non-
 force fast-forward, and exact `main` workflows. There is no claim that the
@@ -4428,11 +4449,16 @@ gate:
   delivered count is thirty-one. Strict `session <id> [--json]` is the
   in-progress bounded slice 32 from exact delivered base `6e687b6`. Production
   and independent evidence were initially composed through `852fec7`, with
-  focused remediation through current precursor `c0c16a7`. Its 12 native, 56
+  focused remediation through production precursor `c0c16a7`. Its 12 native, 56
   CLI unit, and 46 independent CLI process tests, focused native/CLI Clippy,
   and representative release-binary human/JSON/`NotFound` smokes are green
-  under exact 1.94.1. Its full workspace gate, formal adversarial product
-  review, remote workflows, `main` integration, and delivery remain pending.
+  under exact 1.94.1. Exact gate precursor `fa099f7`, tree `64d6a72`, passed the
+  complete required local exact-1.94.1 gate and documentation integrity with
+  zero errors. Its 135-test Python, exact pinned-fx regeneration, WASI/FreeBSD,
+  diff/no-unsafe, and exact-tree release-matrix checks are also green. The gate-
+  record commit requires exact same-SHA reconfirmation before formal cycle-1
+  review. Formal adversarial product review, remote workflows, `main`
+  integration, and delivery remain pending.
   It is limited to six structural fields from one exact machine-god record and
   makes no compatibility or performance claim. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
