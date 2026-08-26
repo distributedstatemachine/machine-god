@@ -21,15 +21,18 @@ no invocation or output byte. Status does not call selection or preparation and
 remains metadata-only and no-create.
 
 Bounded slice 30 adds strict top-level `doctor [--json]` under the frozen
-[`doctor` contract](doctor-cli.md). The slice is **LOCALLY GREEN; WORKFLOWS
-PENDING** from exact base `f82ce46736f7bac4154da508e3b768d0b9248e15`.
+[`doctor` contract](doctor-cli.md). The slice is **DELIVERED** from exact base
+`f82ce46736f7bac4154da508e3b768d0b9248e15`.
 Exact candidate `15f8176`, tree `8278a77`, passed the complete exact-1.94.1
-local gate and three fresh review tracks at `0/0/0/0` each. Workflows,
-integration, and delivery remain pending. It reports exactly
+local gate and three fresh review tracks at `0/0/0/0` each. Review-exempt seal
+`345f812`, tree `8899849`, passed feature CI `32933464234`, feature benchmark-
+evidence `32933464047`, main CI `32933879888`, and main benchmark-evidence
+`32933879930`; `main` was fast-forwarded without force from the delivered base.
+It reports exactly
 four ordered read-only checks, builds either representation under an inclusive
 4,096-byte cap, and creates nothing. A check-level `fail` remains exit 0;
 invalid arguments exit 2, while render and output-write failures exit 1. The
-delivered count remains twenty-nine. Bootstrap `doctor-json` is implemented but
+delivered count is thirty. Bootstrap `doctor-json` is implemented but
 non-equivalent, not measured, and claim-ineligible against pinned fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`; no performance or equivalence
 claim is made.

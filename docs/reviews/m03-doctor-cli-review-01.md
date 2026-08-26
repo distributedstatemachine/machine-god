@@ -1,6 +1,6 @@
 # Milestone 03 `doctor` CLI review 01
 
-Status: **LOCALLY GREEN; WORKFLOWS PENDING**
+Status: **DELIVERED**
 
 ## Base and boundary
 
@@ -23,9 +23,9 @@ process, runtime, session, workspace, model, repair, migration, or mutation
 behavior. It also excludes compatibility promotion and every product-
 performance or fx-equivalence claim.
 
-The exact behavior candidate is zero-finding approved locally. It is not yet
-workflow-green, integrated, or delivered. The delivered count remains twenty-
-nine and Milestone 03 remains in progress.
+The exact behavior candidate is zero-finding approved and delivered through
+the review-exempt seal recorded below. The delivered count is thirty and
+Milestone 03 remains in progress.
 
 ## Component ownership
 
@@ -208,10 +208,11 @@ separate detached worktrees:
    `blocker=0 high=0 medium=0 low=0` and **GREEN**.
 
 The deduplicated union is zero. The behavior candidate is formally **GREEN**.
-The documentation-only review seal containing this record is exempt from a
-redundant adversarial cycle; exact feature workflows remain the next gate.
+The documentation-only review seal containing the locally green record was
+exempt from a redundant adversarial cycle; exact feature workflows were the
+next gate.
 
-## Pending evidence
+## Delivery evidence
 
 - Native production lineage:
   `667928de751ffff3f1fa58305ae5200b12ca5bdd`, then remediation
@@ -234,8 +235,21 @@ redundant adversarial cycle; exact feature workflows remain the next gate.
 - Formal review cycle 1: **REJECTED, REMEDIATED**.
 - Formal review cycle 2: **REJECTED, REMEDIATED**.
 - Formal review cycle 3: **GREEN, 0/0/0/0 IN ALL THREE TRACKS**.
-- Exact feature CI and benchmark-evidence workflows: **PENDING**.
-- Non-force `main` integration and exact `main` workflows: **PENDING**.
+- Documentation-only review seal:
+  `345f8125f3ffa029b7ad1df4cf3673428fcf023d`, tree
+  `889984990d700712978da933587a437bd13e2a71`.
+- Exact feature CI `32933464234` and benchmark-evidence `32933464047`:
+  **GREEN**.
+- Non-force `main` fast-forward from
+  `f82ce46736f7bac4154da508e3b768d0b9248e15`: **COMPLETE**.
+- Exact `main` CI `32933879888` and benchmark-evidence `32933879930`:
+  **GREEN**.
+- Both benchmark runs retain exactly two unexpired exact-SHA artifacts.
+- Delivered count: **THIRTY**; Milestone 03: **IN PROGRESS**.
+
+The final delivery-record commit containing this status is documentation-only
+and review-exempt. Its own exact feature and `main` workflows are reported at
+handoff rather than claimed by this record.
 
 The benchmark schema change is classification evidence only. It records no
 sample, comparison result, threshold, performance claim, compatibility

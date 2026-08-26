@@ -41,23 +41,29 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirtieth bounded slice, strict top-level `doctor [--json]`, is **LOCALLY
-GREEN; WORKFLOWS PENDING** from exact delivered base
+The thirtieth bounded slice, strict top-level `doctor [--json]`, is
+**DELIVERED** from exact delivered base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Its normative boundary is
 [`doctor-cli.md`](doctor-cli.md), and its live ledger is
 [`m03-doctor-cli-review-01.md`](reviews/m03-doctor-cli-review-01.md). Exact
 candidate `15f8176b9322ef989a8c3db01bd404b79d6469fb`, tree
 `8278a777dbfe375e126ce782f581182a73d1e25e`, passed the complete exact-1.94.1
 local gate and three fresh review tracks with `0/0/0/0` findings in each.
-Feature workflows, non-force integration, exact `main` workflows, and delivery
-are pending. The delivered count remains twenty-nine. Against pinned fx
+Review-exempt seal `345f8125f3ffa029b7ad1df4cf3673428fcf023d`, tree
+`889984990d700712978da933587a437bd13e2a71`, passed exact feature CI
+`32933464234`, feature benchmark-evidence `32933464047`, main CI `32933879888`,
+and main benchmark-evidence `32933879930`. `main` was fast-forwarded without
+force from the delivered base; each benchmark run retains two unexpired exact-
+SHA artifacts. The delivered count is thirty. Against pinned fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`, `doctor-json` is implemented but
 non-equivalent, not measured, and claim-ineligible. This record makes no
-performance, compatibility-promotion, delivery, or fx-equivalence claim.
+performance, compatibility-promotion, or fx-equivalence claim. The final
+delivery-record commit is documentation-only and review-exempt; its own exact
+feature and `main` workflows are reported at handoff rather than claimed here.
 
 Milestone 02 completion evidence is retained in the
 [milestone review](reviews/m02-milestone-review.md). Milestone 03 is in progress
-with twenty-nine delivered bounded slices. The twenty-seventh `web_fetch`
+with thirty delivered bounded slices. The twenty-seventh `web_fetch`
 slice is delivered on reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`. Exact feature CI `32874471757`,
@@ -2758,7 +2764,7 @@ nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
 Every production and explicitly injected/custom candidate host has thirteen
 alphabetical tools, while the descriptor-backed set remains twelve with one
 original plus eleven clones.
-M03 remains **IN PROGRESS** with twenty-nine delivered slices. The delivery
+M03 remains **IN PROGRESS** with thirty delivered slices. The delivery
 evidence makes no product-performance or fx-equivalence claim.
 
 ### Delivered bounded slice 28: top-level `permissions`
@@ -3200,20 +3206,17 @@ and three fresh reviewers. Only a zero-finding exact candidate may proceed
 through feature exact-SHA workflows, a non-force fast-forward, and exact `main`
 workflows. Benchmark evidence is delivery evidence only.
 
-### Locally green bounded slice 30: top-level `doctor`
+### Delivered bounded slice 30: top-level `doctor`
 
 The thirtieth slice is contract-frozen from exact delivered base
-`f82ce46736f7bac4154da508e3b768d0b9248e15` and is **LOCALLY GREEN; WORKFLOWS
-PENDING**. It adds
+`f82ce46736f7bac4154da508e3b768d0b9248e15` and is **DELIVERED**. It adds
 only strict `doctor [--json]`. Exact cycle-1 candidate `761bf0b` passed its
 complete local gate but was rejected by one medium and two deduplicated low
 product-review findings: real process inspection order, partial-write evidence,
 and complete native classification/build-mode evidence. Isolated remediations
 `04444d9`, `3de641f`, and `1e5bf28` are composed and their focused exact-1.94.1
 gate was green before cycle-2 composition. Cycle-1 reviewers did not approve
-that replacement. Feature workflows, non-force integration, exact `main`
-workflows, and delivery remain pending, so the delivered-slice count stays
-twenty-nine.
+that replacement.
 
 Exact cycle-2 candidate `408e6ff` then passed its complete replacement gate.
 Two fresh reviewers were zero-finding, but the performance/resource reviewer
@@ -3224,8 +3227,11 @@ candidate `15f8176`, tree `8278a77`, passed its complete exact-1.94.1
 replacement gate without fallback. Three new same-SHA review tracks each
 reported `0/0/0/0`, so the deduplicated union is zero and the behavior
 candidate is formally **GREEN**. Neither prior reviewer set was reused.
-Feature workflows, integration, exact `main` workflows, and delivery remain
-pending.
+Review-exempt seal `345f812`, tree `8899849`, passed feature CI `32933464234`,
+feature benchmark-evidence `32933464047`, main CI `32933879888`, and main
+benchmark-evidence `32933879930`. `main` was fast-forwarded without force from
+the delivered base; both benchmark runs retain exactly two unexpired exact-SHA
+artifacts. The delivered count is thirty and M03 remains in progress.
 
 Parsing completes before effects. Accepted forms are exactly `doctor` and
 `doctor --json`; every other, repeated, extra, reordered, or non-Unicode
@@ -4207,12 +4213,14 @@ gate:
   slash-command categories `general`, `session`, `model`, `security`, and
   `workspace`. Observable compatibility is scenario-based; command names may
   remain intentional differences when documented. Strict `doctor [--json]` is
-  locally green as slice 30 from exact base `f82ce467`. Exact candidate
+  delivered as slice 30 from exact base `f82ce467`. Exact candidate
   `15f8176`, tree `8278a77`, passed the complete exact-1.94.1 gate and three
-  fresh reviews at `0/0/0/0` each. Feature workflows, integration, exact
-  `main` workflows, and delivery are pending. It adds exactly four
+  fresh reviews at `0/0/0/0` each. Review-exempt seal `345f812`, tree
+  `8899849`, passed exact feature CI `32933464234`, feature benchmark-evidence
+  `32933464047`, main CI `32933879888`, and main benchmark-evidence
+  `32933879930`; `main` was fast-forwarded without force. It adds exactly four
   ordered read-only checks and no authority-bearing repair behavior. The
-  delivered count therefore remains twenty-nine, and this combined item stays
+  delivered count is thirty, and this combined item stays
   unchecked. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but

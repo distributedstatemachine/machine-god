@@ -1,6 +1,6 @@
 # Security
 
-Bounded slice 30 is **LOCALLY GREEN; WORKFLOWS PENDING** from exact base
+Bounded slice 30 is **DELIVERED** from exact base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Strict top-level
 [`doctor [--json]`](doctor-cli.md) performs exactly four ordered read-only
 configuration, credential, state-metadata, and compile-time platform checks.
@@ -12,8 +12,10 @@ fallback; unsupported platforms appear as a report `fail`. A diagnostic `fail`
 still exits 0 because it is data, while invalid arguments and render/write
 failures retain exits 2/1. Exact candidate `15f8176`, tree `8278a77`, passed
 the complete exact-1.94.1 local gate and three fresh adversarial tracks with
-zero findings. CI, integration, and delivery remain pending; the delivered
-count remains twenty-nine and no compatibility,
+zero findings. Review-exempt seal `345f812`, tree `8899849`, passed feature CI
+`32933464234`, feature benchmark-evidence `32933464047`, main CI `32933879888`,
+and main benchmark-evidence `32933879930`; `main` was fast-forwarded without
+force from the delivered base. The delivered count is thirty. No compatibility,
 performance, or fx-equivalence claim is made.
 
 The core has no ambient filesystem, process, environment, credential, or

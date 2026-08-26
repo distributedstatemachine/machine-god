@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 30, strict top-level `doctor [--json]`, is **LOCALLY
-GREEN; WORKFLOWS PENDING** from exact delivered base
+Bounded Milestone 03 slice 30, strict top-level `doctor [--json]`, is
+**DELIVERED** from exact delivered base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. It reports exactly four ordered
 read-only `config`, `credential`, `state`, and `platform` checks with fixed
 redacted details and compact human/JSON output capped at 4,096 bytes. Diagnostic
@@ -17,15 +17,20 @@ and exposes no network, process, runtime, session, workspace, model, or path
 state. Exact candidate `15f8176b9322ef989a8c3db01bd404b79d6469fb`, tree
 `8278a777dbfe375e126ce782f581182a73d1e25e`, passed the complete exact-1.94.1
 local gate and three fresh adversarial tracks with `0/0/0/0` findings in each.
-Feature workflows, integration, `main` workflows, and delivery remain pending,
-so the delivered count remains twenty-nine. See the [`doctor` contract](docs/doctor-cli.md) and
+Review-exempt seal `345f8125f3ffa029b7ad1df4cf3673428fcf023d`, tree
+`889984990d700712978da933587a437bd13e2a71`, passed exact feature CI
+`32933464234`, feature benchmark-evidence `32933464047`, main CI `32933879888`,
+and main benchmark-evidence `32933879930`. `main` was fast-forwarded without
+force from `f82ce46736f7bac4154da508e3b768d0b9248e15`; each benchmark run retains
+two unexpired exact-SHA artifacts. The delivered count is thirty. See the
+[`doctor` contract](docs/doctor-cli.md) and
 [`live review ledger`](docs/reviews/m03-doctor-cli-review-01.md). Against pinned
 fx `b1774fbf6c7602b503026f96f6e960e946c692ef`, `doctor-json` is implemented
 but intentionally non-equivalent, not measured, and claim-ineligible; no
 performance or fx-equivalence claim is made.
 
-Milestones 01 and 02 are complete, and Milestone 03 is in progress with
-twenty-nine delivered bounded slices. The twenty-ninth top-level
+Milestones 01 and 02 are complete, and Milestone 03 is in progress with thirty
+delivered bounded slices. The twenty-ninth top-level
 `models [--json]` slice is **DELIVERED** from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`; core, native, and CLI ownership
 and exact behavior are documented in the

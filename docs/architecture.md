@@ -21,7 +21,7 @@ tools, permission policy, and event delivery behind object-safe traits. Core
 uses standard futures and `futures-core::Stream`; it does not select or require
 an async executor.
 
-Milestone 03 has twenty-nine delivered bounded slices. Delivered slice
+Milestone 03 has thirty delivered bounded slices. Delivered slice
 twenty-nine adds top-level `models [--json]` through feature commit
 `e84ed2a46b1ac5fe7428414375609af562c65105`. Core owns only
 validated provider-neutral available-model/access/result values, the existing
@@ -79,7 +79,7 @@ delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed
 here.
 
-Slice 30 is **LOCALLY GREEN; WORKFLOWS PENDING** from exact base
+Slice 30 is **DELIVERED** from exact base
 `f82ce46736f7bac4154da508e3b768d0b9248e15`. Its strict top-level
 [`doctor [--json]` boundary](doctor-cli.md) preserves the architecture split:
 native owns bounded read-only configuration, credential, state-metadata, and
@@ -91,9 +91,12 @@ the engine receive no new diagnostic, filesystem, environment, or platform
 authority. The command constructs no provider, transport, runtime, session, or
 workspace and emits no model or path state. Exact candidate `15f8176`, tree
 `8278a77`, passed the complete exact-1.94.1 local gate and three fresh review
-tracks with zero findings. Feature CI, integration, exact `main` workflows, and
-delivery remain pending, and the delivered count remains twenty-nine. The
-pinned-fx workload is implemented/non-equivalent/not-measured/
+tracks with zero findings. Review-exempt seal `345f812`, tree `8899849`, passed
+feature CI `32933464234`, feature benchmark-evidence `32933464047`, main CI
+`32933879888`, and main benchmark-evidence `32933879930`; `main` was fast-
+forwarded without force from the delivered base, and each benchmark run retains
+two unexpired exact-SHA artifacts. The delivered count is thirty. The pinned-fx
+workload is implemented/non-equivalent/not-measured/
 claim-ineligible; no product-performance or fx-equivalence claim is made.
 
 ```text
