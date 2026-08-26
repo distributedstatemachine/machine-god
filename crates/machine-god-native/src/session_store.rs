@@ -56,7 +56,23 @@ const SESSION_INSPECTION_READ_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const JSON_KEY_TRACKER_BUCKETS: usize = MAX_STORED_JSON_NODES;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const MAX_STREAMED_JSON_PARSE_DEPTH: usize = 128;
+/// `serde_json` starts with 128 remaining recursion slots and rejects a JSON
+/// container when entering it would reduce that counter to zero. The ordinary
+/// store decoder therefore accepts at most 127 simultaneously active arrays or
+/// objects, including the typed envelope surrounding an arbitrary JSON value.
+const MAX_SERDE_JSON_ACTIVE_CONTAINERS: usize = 127;
+/// Active typed containers before a top-level metadata value is decoded:
+/// envelope object, record object, and metadata map.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const METADATA_JSON_PARENT_CONTAINERS: usize = 3;
+/// Active typed containers before a `json` content value is decoded: envelope,
+/// record, messages, message, content, and internally tagged content block.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const CONTENT_JSON_PARENT_CONTAINERS: usize = 6;
+/// A tool-call or tool-result payload has the same parents as `json` content
+/// plus its `call` or `output` object.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const TOOL_JSON_PARENT_CONTAINERS: usize = 7;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const JSON_KEY_VERIFICATION_DOMAIN: &[u8] = b"machine-god:json-key-verification:v1:";
 
@@ -165,8 +181,6 @@ pub(crate) struct FileSessionInspection {
     pub(crate) bytes_read: usize,
     #[cfg(test)]
     pub(crate) max_read_request: usize,
-    #[cfg(test)]
-    pub(crate) parser_allocation_events: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -753,12 +767,6 @@ fn read_session_inspection(
             .parse_envelope()
             .map_err(map_inspection_parse_error)?;
         parser.finish().map_err(map_inspection_parse_error)?;
-        #[cfg(test)]
-        let inspection = {
-            let mut inspection = inspection;
-            inspection.parser_allocation_events = parser.allocation_events;
-            inspection
-        };
         inspection
     };
     if &inspection.session_id != expected_id {
@@ -864,8 +872,6 @@ struct InspectionParser<'a, 'fd> {
     reader: &'a mut InspectionReader<'fd>,
     json_nodes: usize,
     json_keys: JsonKeyTracker,
-    #[cfg(test)]
-    allocation_events: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -875,8 +881,6 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             reader,
             json_nodes: 0,
             json_keys: JsonKeyTracker::new(),
-            #[cfg(test)]
-            allocation_events: 2,
         }
     }
 
@@ -982,8 +986,6 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             bytes_read: 0,
             #[cfg(test)]
             max_read_request: 0,
-            #[cfg(test)]
-            parser_allocation_events: 0,
         })
     }
 
@@ -1079,7 +1081,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
                 }
                 "value" => {
                     mark_field(&mut fields, 4)?;
-                    self.parse_and_account_embedded_json()?;
+                    self.parse_and_account_embedded_json(CONTENT_JSON_PARENT_CONTAINERS)?;
                 }
                 "call" => {
                     mark_field(&mut fields, 8)?;
@@ -1136,7 +1138,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
                 }
                 "arguments" => {
                     mark_field(&mut fields, 4)?;
-                    self.parse_and_account_embedded_json()?;
+                    self.parse_and_account_embedded_json(TOOL_JSON_PARENT_CONTAINERS)?;
                 }
                 _ => return Err(InspectionParseError::Corrupt),
             }
@@ -1164,7 +1166,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             match field.as_str() {
                 "content" => {
                     mark_field(&mut fields, 1)?;
-                    self.parse_and_account_embedded_json()?;
+                    self.parse_and_account_embedded_json(TOOL_JSON_PARENT_CONTAINERS)?;
                 }
                 "is_error" => {
                     mark_field(&mut fields, 2)?;
@@ -1194,7 +1196,8 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
         loop {
             let key = self.parse_string_digest()?;
             self.expect(b':')?;
-            let summary = self.parse_embedded_json(0)?;
+            let summary =
+                self.parse_embedded_json(json_container_budget(METADATA_JSON_PARENT_CONTAINERS))?;
             overflowed |= self.json_keys.upsert(scope, key, summary)?.is_full();
             if self.consume(b'}')? {
                 let values = self.json_keys.finish_scope(scope)?;
@@ -1213,8 +1216,11 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
 
     /// Validates one arbitrary JSON root and accounts only the final decoded
     /// value. Object duplicates therefore have serde's last-value-wins shape.
-    fn parse_and_account_embedded_json(&mut self) -> Result<(), InspectionParseError> {
-        let summary = self.parse_embedded_json(0)?;
+    fn parse_and_account_embedded_json(
+        &mut self,
+        parent_containers: usize,
+    ) -> Result<(), InspectionParseError> {
+        let summary = self.parse_embedded_json(json_container_budget(parent_containers))?;
         if summary.max_depth > MAX_STORED_JSON_DEPTH {
             return Err(InspectionParseError::Corrupt);
         }
@@ -1232,15 +1238,12 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
 
     fn parse_embedded_json(
         &mut self,
-        parse_depth: usize,
+        remaining_containers: usize,
     ) -> Result<JsonSummary, InspectionParseError> {
-        if parse_depth > MAX_STREAMED_JSON_PARSE_DEPTH {
-            return Err(InspectionParseError::Corrupt);
-        }
         self.skip_whitespace()?;
         match self.peek()?.ok_or(InspectionParseError::Corrupt)? {
-            b'{' => self.parse_json_object(parse_depth),
-            b'[' => self.parse_json_array(parse_depth),
+            b'{' => self.parse_json_object(consume_json_container(remaining_containers)?),
+            b'[' => self.parse_json_array(consume_json_container(remaining_containers)?),
             b'"' => {
                 self.skip_string()?;
                 Ok(JsonSummary::scalar())
@@ -1267,7 +1270,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
 
     fn parse_json_object(
         &mut self,
-        parse_depth: usize,
+        remaining_containers: usize,
     ) -> Result<JsonSummary, InspectionParseError> {
         self.expect(b'{')?;
         let scope = self.json_keys.begin_scope()?;
@@ -1278,7 +1281,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
         loop {
             let key = self.parse_string_digest()?;
             self.expect(b':')?;
-            let value = self.parse_embedded_json(parse_depth.saturating_add(1))?;
+            let value = self.parse_embedded_json(remaining_containers)?;
             overflowed |= self.json_keys.upsert(scope, key, value)?.is_full();
             if self.consume(b'}')? {
                 let values = self.json_keys.finish_scope(scope)?;
@@ -1294,7 +1297,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
 
     fn parse_json_array(
         &mut self,
-        parse_depth: usize,
+        remaining_containers: usize,
     ) -> Result<JsonSummary, InspectionParseError> {
         self.expect(b'[')?;
         let mut nodes = 0;
@@ -1303,7 +1306,7 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
             return Ok(JsonSummary::container(nodes, max_depth));
         }
         loop {
-            let value = self.parse_embedded_json(parse_depth.saturating_add(1))?;
+            let value = self.parse_embedded_json(remaining_containers)?;
             nodes = capped_json_nodes(nodes, value.nodes);
             max_depth = max_depth.max(value.max_depth);
             if self.consume(b']')? {
@@ -1363,19 +1366,11 @@ impl<'a, 'fd> InspectionParser<'a, 'fd> {
 
     fn parse_session_id(&mut self) -> Result<SessionId, InspectionParseError> {
         let value = self.parse_stack_string::<128>()?;
-        #[cfg(test)]
-        {
-            self.allocation_events += 1;
-        }
         SessionId::new(value.as_str()).map_err(|_| InspectionParseError::Corrupt)
     }
 
     fn parse_incarnation_id(&mut self) -> Result<SessionIncarnationId, InspectionParseError> {
         let value = self.parse_stack_string::<128>()?;
-        #[cfg(test)]
-        {
-            self.allocation_events += 1;
-        }
         SessionIncarnationId::new(value.as_str()).map_err(|_| InspectionParseError::Corrupt)
     }
 
@@ -1677,6 +1672,18 @@ impl JsonSummary {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn capped_json_nodes(left: usize, right: usize) -> usize {
     left.saturating_add(right).min(MAX_STORED_JSON_NODES + 1)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const fn json_container_budget(parent_containers: usize) -> usize {
+    MAX_SERDE_JSON_ACTIVE_CONTAINERS - parent_containers
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn consume_json_container(remaining: usize) -> Result<usize, InspectionParseError> {
+    remaining
+        .checked_sub(1)
+        .ok_or(InspectionParseError::Corrupt)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

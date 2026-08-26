@@ -326,7 +326,7 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::task::{Context, Poll, Wake, Waker};
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use std::{fs, io};
+    use std::{fs, io, process::Command};
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use machine_god_core::{
@@ -915,55 +915,266 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn parser_owned_allocations_are_payload_independent() {
-        fn inspect_shape(label: &str, record: SessionRecord) -> usize {
-            let temporary = TempDirectory::new(label);
-            let store = FileSessionStore::open(temporary.path()).unwrap();
-            save_record(&store, record);
-            store
-                .inspect_session_summary(id("alpha"))
-                .unwrap()
-                .unwrap()
-                .parser_allocation_events
+    fn streamed_recursion_limit_matches_authoritative_store_in_every_json_context() {
+        enum Location {
+            Metadata,
+            JsonContent,
+            ToolCallArguments,
+            ToolResultContent,
         }
 
-        let empty = inspect_shape(
-            "allocation-empty",
-            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
-        );
-        let mut messages = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
-        messages.messages = (0..5_000)
-            .map(|_| Message {
-                role: Role::User,
-                content: Vec::new(),
-            })
-            .collect();
-        let messages = inspect_shape("allocation-messages", messages);
-        let mut near_cap = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
-        near_cap.messages.push(Message::text(
-            Role::User,
-            "x".repeat(crate::MAX_FILE_SESSION_BYTES - 512),
-        ));
-        let near_cap = inspect_shape("allocation-near-cap", near_cap);
+        impl Location {
+            const fn label(&self) -> &'static str {
+                match self {
+                    Self::Metadata => "metadata",
+                    Self::JsonContent => "json-content",
+                    Self::ToolCallArguments => "tool-call-arguments",
+                    Self::ToolResultContent => "tool-result-content",
+                }
+            }
 
-        let temporary = TempDirectory::new("allocation-metadata-keys");
+            const fn first_rejected_array_depth(&self) -> usize {
+                match self {
+                    Self::Metadata => 124,
+                    Self::JsonContent => 121,
+                    Self::ToolCallArguments | Self::ToolResultContent => 120,
+                }
+            }
+
+            fn record(&self) -> SessionRecord {
+                const MARKER: &str = "PRIVATE_RECURSION_MARKER";
+                let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+                match self {
+                    Self::Metadata => {
+                        record.metadata.insert("root".to_owned(), json!(MARKER));
+                    }
+                    Self::JsonContent => record.messages.push(Message {
+                        role: Role::Assistant,
+                        content: vec![ContentBlock::Json {
+                            value: json!(MARKER),
+                        }],
+                    }),
+                    Self::ToolCallArguments => record.messages.push(Message {
+                        role: Role::Assistant,
+                        content: vec![ContentBlock::ToolCall {
+                            call: ToolCall {
+                                id: ToolCallId::new("call-1").unwrap(),
+                                name: ToolName::new("read_file").unwrap(),
+                                arguments: json!(MARKER),
+                            },
+                        }],
+                    }),
+                    Self::ToolResultContent => record.messages.push(Message {
+                        role: Role::Assistant,
+                        content: vec![ContentBlock::ToolResult {
+                            call_id: ToolCallId::new("call-1").unwrap(),
+                            output: ToolOutput {
+                                content: json!(MARKER),
+                                is_error: false,
+                            },
+                        }],
+                    }),
+                }
+                record
+            }
+        }
+
+        for location in [
+            Location::Metadata,
+            Location::JsonContent,
+            Location::ToolCallArguments,
+            Location::ToolResultContent,
+        ] {
+            let temporary = TempDirectory::new(location.label());
+            let store = FileSessionStore::open(temporary.path()).unwrap();
+            save_record(&store, location.record());
+            let data = entry_with_suffix(temporary.path(), ".json");
+            let persisted = String::from_utf8(fs::read(&data).unwrap()).unwrap();
+
+            let first_rejected = location.first_rejected_array_depth();
+            for (array_depth, accepted) in [(first_rejected - 1, true), (first_rejected, false)] {
+                let nested = format!("{}null{}", "[".repeat(array_depth), "]".repeat(array_depth));
+                let shadowed = format!(r#"{{"same":{nested},"same":null}}"#);
+                let replacement = persisted.replacen("\"PRIVATE_RECURSION_MARKER\"", &shadowed, 1);
+                assert_ne!(replacement, persisted);
+                assert!(!replacement.contains("PRIVATE_RECURSION_MARKER"));
+                fs::write(&data, replacement).unwrap();
+
+                let ordinary = ready(store.load(id("alpha")));
+                let streamed = store.inspect_session_summary(id("alpha"));
+                assert_eq!(
+                    ordinary.is_ok(),
+                    accepted,
+                    "ordinary {} at array depth {array_depth}",
+                    location.label()
+                );
+                assert_eq!(
+                    streamed.is_ok(),
+                    accepted,
+                    "streamed {} at array depth {array_depth}",
+                    location.label()
+                );
+                if !accepted {
+                    assert_eq!(ordinary.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+                    assert_eq!(streamed.unwrap_err().kind, SessionStoreErrorKind::Corrupt);
+                }
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    const ALLOCATION_CHILD_ROOT: &str = "MACHINE_GOD_SESSION_ALLOCATION_CHILD_ROOT";
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    const ALLOCATION_CHILD_LABEL: &str = "MACHINE_GOD_SESSION_ALLOCATION_CHILD_LABEL";
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    const ALLOCATION_RESULT_PREFIX: &str = "machine-god-session-allocation-v1:";
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn measure_session_inspection_in_child(
+        root: &Path,
+        label: &str,
+    ) -> allocation_counter::AllocationInfo {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session_inspection::tests::parser_owned_allocations_are_payload_independent",
+                "--nocapture",
+            ])
+            .env(ALLOCATION_CHILD_ROOT, root)
+            .env(ALLOCATION_CHILD_LABEL, label)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "allocation child {label} failed: stdout={:?} stderr={:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let line = stdout
+            .lines()
+            .find(|line| line.starts_with(ALLOCATION_RESULT_PREFIX))
+            .unwrap_or_else(|| panic!("allocation child {label} emitted no result: {stdout:?}"));
+        let mut fields = line[ALLOCATION_RESULT_PREFIX.len()..].split(':');
+        assert_eq!(fields.next(), Some(label));
+        let result = allocation_counter::AllocationInfo {
+            count_total: fields.next().unwrap().parse().unwrap(),
+            count_current: fields.next().unwrap().parse().unwrap(),
+            count_max: fields.next().unwrap().parse().unwrap(),
+            bytes_total: fields.next().unwrap().parse().unwrap(),
+            bytes_current: fields.next().unwrap().parse().unwrap(),
+            bytes_max: fields.next().unwrap().parse().unwrap(),
+        };
+        assert_eq!(fields.next(), None);
+        result
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn measure_session_inspection_shape(
+        label: &str,
+        prepare: impl FnOnce(&FileSessionStore, &Path),
+    ) -> allocation_counter::AllocationInfo {
+        let temporary = TempDirectory::new(label);
         let store = FileSessionStore::open(temporary.path()).unwrap();
-        save_record(
-            &store,
-            SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
-        );
-        let metadata = (0..5_000)
-            .map(|index| format!("\"key-{index}\":{{\"nested\":null}}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        replace_empty_metadata(temporary.path(), &format!("{{{metadata}}}"));
-        let metadata = store
-            .inspect_session_summary(id("alpha"))
-            .unwrap()
-            .unwrap()
-            .parser_allocation_events;
+        prepare(&store, temporary.path());
+        drop(store);
+        measure_session_inspection_in_child(temporary.path(), label)
+    }
 
-        assert_eq!([empty, messages, near_cap, metadata], [4; 4]);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn parser_owned_allocations_are_payload_independent() {
+        if let Some(root) = std::env::var_os(ALLOCATION_CHILD_ROOT) {
+            let label = std::env::var(ALLOCATION_CHILD_LABEL).unwrap();
+            let store = FileSessionStore::open(Path::new(&root)).unwrap();
+            let requested_id = id("alpha");
+            allocation_counter::measure(|| {});
+            let mut inspection = None;
+            let measured = allocation_counter::measure(|| {
+                inspection = Some(
+                    store
+                        .inspect_session_summary(requested_id.clone())
+                        .unwrap()
+                        .unwrap(),
+                );
+            });
+            let inspection = inspection.unwrap();
+            assert_eq!(inspection.session_id.as_str(), "alpha");
+            assert_eq!(inspection.incarnation_id.as_str(), "inc-alpha");
+            println!(
+                "{ALLOCATION_RESULT_PREFIX}{label}:{}:{}:{}:{}:{}:{}",
+                measured.count_total,
+                measured.count_current,
+                measured.count_max,
+                measured.bytes_total,
+                measured.bytes_current,
+                measured.bytes_max
+            );
+            return;
+        }
+
+        let empty = measure_session_inspection_shape("empty", |store, _| {
+            save_record(
+                store,
+                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+            );
+        });
+        let near_cap = measure_session_inspection_shape("near-cap", |store, _| {
+            let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+            record.messages.push(Message::text(
+                Role::User,
+                "x".repeat(crate::MAX_FILE_SESSION_BYTES - 512),
+            ));
+            save_record(store, record);
+        });
+        let numbers = measure_session_inspection_shape("number-heavy", |store, root| {
+            save_record(
+                store,
+                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+            );
+            let values = std::iter::repeat_n("17", 50_000)
+                .collect::<Vec<_>>()
+                .join(",");
+            replace_empty_metadata(root, &format!("{{\"numbers\":[{values}]}}"));
+        });
+        let messages = measure_session_inspection_shape("message-heavy", |store, _| {
+            let mut record = SessionRecord::empty(id("alpha"), incarnation("inc-alpha"));
+            record.messages = (0..5_000)
+                .map(|_| Message {
+                    role: Role::User,
+                    content: Vec::new(),
+                })
+                .collect();
+            save_record(store, record);
+        });
+        let keys = measure_session_inspection_shape("key-heavy", |store, root| {
+            save_record(
+                store,
+                SessionRecord::empty(id("alpha"), incarnation("inc-alpha")),
+            );
+            let metadata = (0..5_000)
+                .map(|index| format!("\"key-{index}\":{{\"nested\":null}}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            replace_empty_metadata(root, &format!("{{{metadata}}}"));
+        });
+
+        for (label, measured) in [
+            ("empty", empty),
+            ("near-cap", near_cap),
+            ("number-heavy", numbers),
+            ("message-heavy", messages),
+            ("key-heavy", keys),
+        ] {
+            println!("{label}: {measured:?}");
+        }
+        assert_eq!([near_cap, numbers, messages, keys], [empty; 4]);
+        assert!(empty.count_total <= 14);
+        assert!(empty.count_max <= 8);
+        assert!(empty.bytes_total <= 9_000_000);
+        assert!(empty.bytes_max <= 9_000_000);
+        assert_eq!(empty.count_current, 2);
+        assert_eq!(empty.bytes_current, 14);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

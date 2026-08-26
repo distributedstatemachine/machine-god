@@ -65,6 +65,7 @@ libc.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
+allocation-counter = "0.8.1"
 futures-executor = "0.3.31"
 futures-util = "0.3.31"
 machine-god-testkit = { version = "0.1.0", path = "../machine-god-testkit" }
