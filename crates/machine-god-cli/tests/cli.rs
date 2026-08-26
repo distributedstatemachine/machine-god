@@ -393,6 +393,16 @@ fn seed_manual_current_schema_record(
     id: &str,
     metadata: &str,
 ) -> (FileSessionStore, PathBuf, Vec<u8>) {
+    seed_manual_current_schema_record_parts(state_base, id, "[]", metadata)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn seed_manual_current_schema_record_parts(
+    state_base: &Path,
+    id: &str,
+    messages: &str,
+    metadata: &str,
+) -> (FileSessionStore, PathBuf, Vec<u8>) {
     let (record_path, _) =
         save_session_summary(state_base, id, &format!("incarnation-{id}"), 1, 1, 0, 0);
     let bytes = format!(
@@ -400,9 +410,10 @@ fn seed_manual_current_schema_record(
             "{{\"schema_version\":1,\"record\":{{",
             "\"id\":\"{id}\",\"incarnation_id\":\"incarnation-{id}\",",
             "\"revision\":9,\"next_turn_sequence\":6,",
-            "\"messages\":[],\"metadata\":{metadata}}}}}",
+            "\"messages\":{messages},\"metadata\":{metadata}}}}}",
         ),
         id = id,
+        messages = messages,
         metadata = metadata,
     )
     .into_bytes();
@@ -452,17 +463,95 @@ fn run_session_bounded(config: &OsStr, state: &OsStr, id: &str) -> Output {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_sessions_bounded(config: &OsStr, state: &OsStr) -> Output {
+    let mut command = sessions_command(config, state);
+    command
+        .args(["sessions", "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    ScopedChild::spawn(&mut command).wait_with_output(Duration::from_secs(10))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn expected_session_json(id: &str, metadata_entry_count: usize) -> String {
+    expected_session_json_with_counts(id, 0, metadata_entry_count)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn expected_session_json_with_counts(
+    id: &str,
+    message_count: usize,
+    metadata_entry_count: usize,
+) -> String {
     format!(
         concat!(
             "{{\"kind\":\"session\",\"id\":\"{id}\",",
             "\"incarnation_id\":\"incarnation-{id}\",",
             "\"revision\":9,\"next_turn_sequence\":6,",
-            "\"message_count\":0,\"metadata_entry_count\":{metadata_entry_count}}}\n",
+            "\"message_count\":{message_count},",
+            "\"metadata_entry_count\":{metadata_entry_count}}}\n",
         ),
         id = id,
+        message_count = message_count,
         metadata_entry_count = metadata_entry_count,
     )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn expected_single_session_listing_json(id: &str) -> String {
+    format!(
+        "{{\"kind\":\"sessions\",\"count\":1,\"truncated\":false,\"sessions\":[{{\"id\":\"{id}\"}}]}}\n"
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn shadowed_nested_arrays(depth: usize) -> String {
+    let mut shadowed = String::with_capacity(depth.saturating_mul(2).saturating_add(96));
+    shadowed.extend(std::iter::repeat_n('[', depth));
+    shadowed.push_str("\"CLI_RECURSION_SHADOWED_SECRET\"");
+    shadowed.extend(std::iter::repeat_n(']', depth));
+    format!(r#"{{"same":{shadowed},"s\u0061me":null}}"#)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn assert_session_recursion_process_case(
+    label: &str,
+    messages: &str,
+    metadata: &str,
+    message_count: usize,
+    metadata_entry_count: usize,
+    accepted: bool,
+) {
+    let temporary = TestDirectory::new(label);
+    let state_base = temporary.path().join("state");
+    let (store, record_path, record_before) =
+        seed_manual_current_schema_record_parts(&state_base, label, messages, metadata);
+
+    if accepted {
+        let record = assert_store_accepts_and_lists(&store, &state_base, label);
+        assert_eq!(record.messages.len(), message_count);
+        assert_eq!(record.metadata.len(), metadata_entry_count);
+        assert!(!format!("{record:?}").contains("CLI_RECURSION_SHADOWED_SECRET"));
+    } else {
+        assert_store_rejects_and_listing_agrees(&store, &state_base, label);
+    }
+
+    let config = OsStr::new("relative-config-must-not-be-read");
+    let session = run_session_bounded(config, state_base.as_os_str(), label);
+    let sessions = run_sessions_bounded(config, state_base.as_os_str());
+    if accepted {
+        assert_success(
+            &session,
+            &expected_session_json_with_counts(label, message_count, metadata_entry_count),
+        );
+        assert_success(&sessions, &expected_single_session_listing_json(label));
+    } else {
+        assert_session_error(&session, true, "Corrupt");
+        assert_sessions_error(&sessions, true, "Corrupt");
+    }
+    assert_output_omits(&session, &["CLI_RECURSION_SHADOWED_SECRET"]);
+    assert_output_omits(&sessions, &["CLI_RECURSION_SHADOWED_SECRET"]);
+    assert_eq!(fs::read(record_path).unwrap(), record_before);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1418,6 +1507,65 @@ fn session_store_equivalence_rejects_final_json_node_overflow() {
     assert_session_error(&output, true, "Corrupt");
     assert_output_omits(&output, &["CLI_SHADOWED_OLD_SECRET"]);
     assert_eq!(fs::read(record_path).unwrap(), record_before);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_matches_metadata_serde_recursion_boundary() {
+    for (depth, accepted) in [(123, true), (124, false)] {
+        let label = format!("recursion-metadata-{depth}");
+        let metadata = format!("{{\"payload\":{}}}", shadowed_nested_arrays(depth));
+        assert_session_recursion_process_case(&label, "[]", &metadata, 0, 1, accepted);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_matches_json_content_serde_recursion_boundary() {
+    for (depth, accepted) in [(120, true), (121, false)] {
+        let label = format!("recursion-json-content-{depth}");
+        let messages = format!(
+            "[{{\"role\":\"user\",\"content\":[{{\"type\":\"json\",\"value\":{}}}]}}]",
+            shadowed_nested_arrays(depth),
+        );
+        assert_session_recursion_process_case(&label, &messages, "{}", 1, 0, accepted);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_matches_tool_call_serde_recursion_boundary() {
+    for (depth, accepted) in [(119, true), (120, false)] {
+        let label = format!("recursion-tool-call-{depth}");
+        let messages = format!(
+            concat!(
+                "[{{\"role\":\"assistant\",\"content\":[",
+                "{{\"type\":\"tool_call\",\"call\":{{",
+                "\"id\":\"call-1\",\"name\":\"read_file\",\"arguments\":{}",
+                "}}}}]}}]",
+            ),
+            shadowed_nested_arrays(depth),
+        );
+        assert_session_recursion_process_case(&label, &messages, "{}", 1, 0, accepted);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn session_store_equivalence_matches_tool_result_serde_recursion_boundary() {
+    for (depth, accepted) in [(119, true), (120, false)] {
+        let label = format!("recursion-tool-result-{depth}");
+        let messages = format!(
+            concat!(
+                "[{{\"role\":\"tool\",\"content\":[",
+                "{{\"type\":\"tool_result\",\"call_id\":\"call-1\",\"output\":{{",
+                "\"content\":{},\"is_error\":false",
+                "}}}}]}}]",
+            ),
+            shadowed_nested_arrays(depth),
+        );
+        assert_session_recursion_process_case(&label, &messages, "{}", 1, 0, accepted);
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
