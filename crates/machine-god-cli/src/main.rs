@@ -844,6 +844,7 @@ fn run(
     )
 }
 
+#[cfg(test)]
 fn run_with_models_host(
     arguments: impl IntoIterator<Item = OsString>,
     stdout: &mut impl io::Write,
@@ -1009,19 +1010,13 @@ fn run_doctor(
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
 ) -> u8 {
-    let report = match host.inspect_doctor() {
-        Ok(report) => report,
-        Err(()) => {
-            let _ = stderr.write_all(DOCTOR_RENDER_FAILURE.as_bytes());
-            return 1;
-        }
+    let Ok(report) = host.inspect_doctor() else {
+        let _ = stderr.write_all(DOCTOR_RENDER_FAILURE.as_bytes());
+        return 1;
     };
-    let output = match render_doctor(&report, json) {
-        Ok(output) => output,
-        Err(()) => {
-            let _ = stderr.write_all(DOCTOR_RENDER_FAILURE.as_bytes());
-            return 1;
-        }
+    let Ok(output) = render_doctor(&report, json) else {
+        let _ = stderr.write_all(DOCTOR_RENDER_FAILURE.as_bytes());
+        return 1;
     };
     if stdout.write_all(output.as_bytes()).is_err() {
         let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
