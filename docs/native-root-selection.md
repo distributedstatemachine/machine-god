@@ -365,13 +365,16 @@ preparation, so prepared-root composition does not reopen a session path.
 
 The existing path constructors
 `NativeReferenceHost::compose_ai_gateway_http` and
-`NativeReferenceHost::compose_with_ai_gateway_transport` remain supported and
-unchanged: both require an existing absolute workspace and an existing absolute
-session root, create nothing, and continue assigning disjointness to their
-trusted caller. `FileSessionStore::open` likewise remains an explicit existing-
-root, no-create constructor. Safe creation is available only through
-`PreparedNativeRoots::prepare`; the new host constructors only consume the
-result.
+`NativeReferenceHost::compose_with_ai_gateway_transport` remain supported:
+both require an existing absolute workspace and an existing absolute session
+root, create nothing, and continue assigning disjointness to their trusted
+caller. Slice 33 additionally gives every composition path an explicit
+`WebSearchDeadline`; custom transport paths also receive the canonical
+`NetworkTarget` that core authorizes for search. These additions do not change
+root identity or creation semantics. `FileSessionStore::open` likewise remains
+an explicit existing-root, no-create constructor. Safe creation is available
+only through `PreparedNativeRoots::prepare`; the consuming host constructors
+only consume the result.
 
 ## Relationship to status, configuration, and CLI
 

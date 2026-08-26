@@ -11,8 +11,11 @@ Production, independent evidence, and these docs compose through behavior
 precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
 `5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
 gate is green. Formal cycle 1 rejected exact candidate `89c5ec95`, tree
-`8d91a55`, with a deduplicated `0/2/5/2` blocker/high/medium/low finding union;
-remediation is in progress. The slice is not yet review-green, integrated, or delivered and
+`8d91a55`, with a deduplicated `0/2/5/2` blocker/high/medium/low finding union.
+Source remediation is composed from exact isolated components `096b11c4` and
+`ca0b990a`; replacement evidence, the exact-SHA gate, and fresh reviews remain
+in progress. The slice is
+not yet review-green, integrated, or delivered and
 the delivered count remains 32. The fixed resource/platform/deferred boundary
 is the
 [`native web search contract`](web-search.md), and status is tracked in its

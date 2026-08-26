@@ -17,6 +17,10 @@ use machine_god_native::{
     load_native_config,
 };
 
+mod web_search_support;
+
+use web_search_support::{never_deadline, production_gateway_target};
+
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TemporaryDirectory {
@@ -95,7 +99,13 @@ fn reference_host_lifecycle_engine_and_public_store_share_one_exact_store() {
     let transport: Arc<dyn AiGatewayTransport> = Arc::new(InertTransport);
     let prompter: Arc<dyn PermissionPrompter> = Arc::new(InertPrompter);
     let host = NativeReferenceHost::compose_with_ai_gateway_transport(
-        loaded, transport, &workspace, &sessions, prompter,
+        loaded,
+        transport,
+        production_gateway_target(),
+        &workspace,
+        &sessions,
+        prompter,
+        never_deadline(),
     )
     .unwrap();
 

@@ -1395,10 +1395,15 @@ fn safe_unknown_events_and_late_framing_do_not_create_extra_output() {
 }
 
 #[test]
-fn json_data_event_after_finish_is_rejected() {
-    let body = concat!(
-        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n",
-        "data: {\"type\":\"text-delta\",\"delta\":\"late\"}\n\n"
+fn validated_finish_is_terminal_and_late_source_bytes_are_not_observed() {
+    assert_eq!(
+        collect(TransportStep::Bytes(vec![
+            ByteStep::Chunk(finish("stop").into_bytes()),
+            ByteStep::Chunk(b"data: {\"type\":\"text-delta\",\"delta\":\"late\"}\n\n".to_vec(),),
+        ]))
+        .unwrap(),
+        [ModelEvent::Stop {
+            reason: StopReason::Completed
+        }]
     );
-    protocol_error(collect(bytes(body)));
 }

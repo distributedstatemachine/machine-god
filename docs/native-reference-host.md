@@ -5,12 +5,13 @@ Milestone 03 remains **IN PROGRESS**.
 The delivered composition contains thirteen alphabetical tools: exactly twelve
 workspace-backed tools share one original retained descriptor plus eleven
 identity-preserving clones, and rootless `web_fetch` owns no descriptor.
-The review-pending slice-33 candidate inserts Gateway-backed, workspace-rootless
+The cycle-1-remediated slice-33 candidate inserts Gateway-backed, workspace-rootless
 `web_search` after `web_fetch` and before `write_file`, producing fourteen
 alphabetical tools while leaving the descriptor-backed set and clone count
-unchanged. No composed exact candidate has passed the complete gate or formal
-review, so this paragraph does not promote that candidate catalog to delivered
-status. See [`web-search.md`](web-search.md) and the
+unchanged. Source remediation is composed, but no replacement exact candidate
+has passed the complete gate or formal review, so this paragraph does not
+promote that candidate catalog to delivered status. See
+[`web-search.md`](web-search.md) and the
 [`slice-33 ledger`](reviews/m03-web-search-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
@@ -651,14 +652,17 @@ NativeReferenceHost::compose_ai_gateway_http(
     workspace_root: &Path,
     session_root: &Path,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 
 NativeReferenceHost::compose_with_ai_gateway_transport(
     loaded_config: LoadedNativeConfig,
     transport: Arc<dyn AiGatewayTransport>,
+    network_target: NetworkTarget,
     workspace_root: &Path,
     session_root: &Path,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 
 NativeReferenceHost::engine(&self) -> &Engine
@@ -678,13 +682,16 @@ NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
     credential_environment: AiGatewayCredentialEnvironment,
     prepared_roots: PreparedNativeRoots,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 
 NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots(
     loaded_config: LoadedNativeConfig,
     transport: Arc<dyn AiGatewayTransport>,
+    network_target: NetworkTarget,
     prepared_roots: PreparedNativeRoots,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 ```
 
@@ -720,15 +727,16 @@ this order:
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
 5. move that bearer token into production `AiGatewayHttpTransport`;
-6. construct `AiGatewayProvider` with the loaded configuration's projected
-   model;
+6. construct `AiGatewayProvider` and the dedicated web-search transport with
+   the loaded configuration's projected model, canonical fixed production
+   target, and explicit deadline authority;
 7. wrap the injected prompter in `AskPermissionHandler`; and
 8. build `Engine` with exactly `copy_file`, `create_folder`, `delete_file`,
    `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
-   `open_file`, `read_file`, `rename_file`, rootless `web_fetch`, and
-   `write_file`, default `EngineLimits`, and the default `NoopEventSink`;
-   core's catalog exposes those thirteen names in deterministic alphabetical
-   order.
+   `open_file`, `read_file`, `rename_file`, rootless `web_fetch`, Gateway-backed
+   rootless `web_search`, and `write_file`, default `EngineLimits`, and the
+   default `NoopEventSink`; core's catalog exposes those fourteen names in
+   deterministic alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
 credential discovery and bearer-token handoff. A selection, workspace, or
@@ -741,8 +749,9 @@ The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
 with one tool and eleven descriptor clones of the same opened directory object
 feed the other eleven workspace-backed tools. The candidate engine registers
-exactly the thirteen alphabetical tools listed above; rootless `web_fetch`
-receives no workspace descriptor. It discovers or registers no other tool.
+exactly the fourteen alphabetical tools listed above; rootless `web_fetch` and
+Gateway-backed `web_search` receive no workspace descriptor. It discovers or
+registers no other tool.
 This shared retained identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
 tool construction steps. It does not make the workspace a sandbox against the
@@ -763,8 +772,9 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same thirteen candidate
-tools including rootless `web_fetch`, retains one original descriptor plus
+the same provider and permission adapter, registers the same fourteen candidate
+tools including rootless `web_fetch` and Gateway-backed `web_search`, retains
+one original descriptor plus
 eleven clones for exactly twelve workspace-backed tools, and uses the same
 default engine limits and no-op sink. It deliberately
 performs no
@@ -777,6 +787,14 @@ returning only accepted response bytes or a redacted `ProviderError`. This path
 is intended for trusted custom hosts and deterministic tests; it is not a way
 to weaken the production transport's pinned policy while retaining a
 production-transport claim.
+
+The custom constructor also requires the exact canonical HTTP(S)
+`NetworkTarget` contacted by that opaque transport. This is the target exposed
+to core's web-search permission request; noncanonical or malformed targets fail
+construction. Both production and custom constructors require an explicit
+`Arc<dyn WebSearchDeadline>`. That fallible authority owns runtime/timer wakeup
+policy and must report `RuntimeRequired` rather than panic when it cannot drive
+the absolute deadline.
 
 `credential_source()` returns `None` for this constructor. That value means
 only that native credential discovery did not run. It does not assert that the

@@ -58,7 +58,6 @@ mod session_store;
 mod state_environment;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod web_search;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace;
@@ -255,6 +254,7 @@ pub use web_fetch::{
     WebFetchTransportErrorKind,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use web_search::WebSearchTool;
 pub use web_search::{
     MAX_WEB_SEARCH_DOMAIN_BYTES, MAX_WEB_SEARCH_DOMAIN_FILTERS, MAX_WEB_SEARCH_JSON_NODES,
     MAX_WEB_SEARCH_QUERY_BYTES, MAX_WEB_SEARCH_REQUEST_BYTES, MAX_WEB_SEARCH_RESPONSE_BYTES,
@@ -263,8 +263,8 @@ pub use web_search::{
     MAX_WEB_SEARCH_SOURCE_URL_BYTES, MAX_WEB_SEARCH_SOURCES, MAX_WEB_SEARCH_TOTAL_DOMAIN_BYTES,
     WEB_SEARCH_DEFAULT_MAX_ACTIVE_REQUESTS, WEB_SEARCH_DEFAULT_REQUEST_TIMEOUT,
     WEB_SEARCH_MAX_ACTIVE_REQUESTS, WEB_SEARCH_TOOL_NAME, WebSearchConfigError,
-    WebSearchConfigErrorKind, WebSearchLimits, WebSearchRequest, WebSearchResponse,
-    WebSearchSource, WebSearchTool, WebSearchTransport, WebSearchTransportError,
+    WebSearchConfigErrorKind, WebSearchDeadline, WebSearchLimits, WebSearchRequest,
+    WebSearchResponse, WebSearchSource, WebSearchTransport, WebSearchTransportError,
     WebSearchTransportErrorKind,
 };
 pub use write_file::{

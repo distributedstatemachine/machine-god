@@ -306,9 +306,16 @@ and a successful finish. Its 16 KiB request, 256 KiB response, 64 KiB record,
 capacity from `AiGatewayLimits`. The complete contract is
 [`web-search.md`](web-search.md).
 
+After the outer provider has validated its finish event, it immediately drops
+the owned byte-stream source before delivering any queued usage/stop event.
+That terminal ordering preserves same-chunk late-frame rejection while
+releasing a shared transport permit before core begins the local tool round;
+a capacity-one shared transport can therefore run the nested worker request.
+
 No provider-executed value crosses the provider-neutral `ModelProvider`
 boundary. The inner result becomes a bounded local `ToolOutput` and returns to
-the ordinary core tool round. This composition is still review-pending and
+the ordinary core tool round. Cycle-1 source remediation is composed, while
+replacement evidence, the complete gate, and fresh review remain pending; it
 makes no compatibility or performance claim.
 
 ## Deferred scope

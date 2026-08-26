@@ -58,8 +58,18 @@ gate is green. Formal cycle 1 rejected exact candidate
 `8d91a556f786169d42406e91e8ad2f476b7c6cf4`. Correctness/API reported
 `0/1/3/2`, native effects/lifecycle `0/2/3/1`, and performance/resources
 `0/0/3/0`; deduplication yields `0/2/5/2` in blocker/high/medium/low order.
-Remediation is in progress. This slice is not yet review-green, integrated, or
-delivered; the delivered count remains thirty-two.
+Exact isolated lifecycle remediation component
+`096b11c4ffed7b6b4e4419940d1cd50ef40b197f` and exact
+isolated portability/bounds remediation component
+`ca0b990a07c7e6659c10e91f86a2aa66ed4d3182` are composed in the current
+remediation. Together they release outer shared-transport capacity before nested tool
+execution, bind custom transports to their exact permission target, require an
+explicit fallible deadline authority, bound every public tool constructor,
+export portable contracts without HTTP/WASM gates, incrementally retain one
+bounded SSE record, cap deduplication state, and redact source debug output.
+Replacement evidence and the complete exact-SHA gate are in progress. This
+slice is not yet review-green, integrated, or delivered; the delivered count
+remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
 It accepts required `query` plus optional mutually exclusive
@@ -78,6 +88,10 @@ aggregate domain bytes; ten sources; 512 title bytes; 2,048 URL bytes; 16 KiB
 request; 256 KiB SSE response; 64 KiB SSE record; 256 records; 16,384 JSON
 nodes; 48 KiB serialized output; one 30-second total deadline beginning before
 capacity wait; default concurrency four and hard concurrency sixteen. The
+4,096-byte aggregate-domain, 16 KiB worker-request, and 48 KiB output caps are
+defense in depth: stricter count/per-item/query/source limits make their exact
+boundaries unreachable. Evidence covers every reachable exact/+1 boundary and
+records why those three cannot be constructed through public input. The
 production adapter is non-WebAssembly behind `ai-gateway-http`, and current
 reference-host composition remains Linux/macOS-only. The candidate catalog has
 fourteen alphabetical tools: twelve descriptor-backed workspace tools plus

@@ -2,10 +2,11 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, NetworkTarget, SessionId, SessionIncarnationId, Tool,
@@ -18,20 +19,20 @@ use machine_god_native::{
     MAX_WEB_SEARCH_SERIALIZED_RESULT_BYTES, MAX_WEB_SEARCH_SOURCE_TITLE_BYTES,
     MAX_WEB_SEARCH_SOURCE_URL_BYTES, MAX_WEB_SEARCH_SOURCES, MAX_WEB_SEARCH_TOTAL_DOMAIN_BYTES,
     WEB_SEARCH_DEFAULT_MAX_ACTIVE_REQUESTS, WEB_SEARCH_DEFAULT_REQUEST_TIMEOUT,
-    WEB_SEARCH_MAX_ACTIVE_REQUESTS, WEB_SEARCH_TOOL_NAME, WebSearchLimits, WebSearchRequest,
-    WebSearchResponse, WebSearchSource, WebSearchTool, WebSearchTransport, WebSearchTransportError,
-    WebSearchTransportErrorKind,
+    WEB_SEARCH_MAX_ACTIVE_REQUESTS, WEB_SEARCH_TOOL_NAME, WebSearchConfigErrorKind,
+    WebSearchDeadline, WebSearchLimits, WebSearchRequest, WebSearchResponse, WebSearchSource,
+    WebSearchTool, WebSearchTransport, WebSearchTransportError, WebSearchTransportErrorKind,
 };
 use serde_json::{Value, json};
+
+mod web_search_support;
+
+use web_search_support::{never_deadline, production_gateway_target};
 
 const PRIVATE_QUERY: &str = "latest Rust release PRIVATE_QUERY_SENTINEL";
 
 fn gateway_target() -> NetworkTarget {
-    NetworkTarget {
-        scheme: "https".to_owned(),
-        host: "ai-gateway.vercel.sh".to_owned(),
-        port: None,
-    }
+    production_gateway_target()
 }
 
 #[derive(Clone, Copy)]
@@ -139,6 +140,54 @@ impl Drop for FakeFuture {
     }
 }
 
+struct RuntimeRequiredDeadline;
+
+impl WebSearchDeadline for RuntimeRequiredDeadline {
+    fn wait_until(&self, _deadline: Instant) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
+        Box::pin(async {
+            Err(WebSearchTransportError::new(
+                WebSearchTransportErrorKind::RuntimeRequired,
+            ))
+        })
+    }
+}
+
+struct TestTokioDeadline;
+
+impl WebSearchDeadline for TestTokioDeadline {
+    fn wait_until(&self, deadline: Instant) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
+        Box::pin(async move {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+            Ok(())
+        })
+    }
+}
+
+struct SecondWaitExpires {
+    waits: AtomicUsize,
+}
+
+impl SecondWaitExpires {
+    fn new() -> Self {
+        Self {
+            waits: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl WebSearchDeadline for SecondWaitExpires {
+    fn wait_until(&self, _deadline: Instant) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
+        let expires = self.waits.fetch_add(1, Ordering::SeqCst) == 1;
+        Box::pin(async move {
+            if expires {
+                Ok(())
+            } else {
+                std::future::pending().await
+            }
+        })
+    }
+}
+
 fn success_response() -> Result<WebSearchResponse, WebSearchTransportError> {
     let source = WebSearchSource::new(
         "Rust releases".to_owned(),
@@ -191,11 +240,17 @@ fn context() -> ToolContext {
 }
 
 fn tool(transport: FakeTransport) -> WebSearchTool {
-    WebSearchTool::with_transport(gateway_target(), Arc::new(transport)).unwrap()
+    WebSearchTool::with_transport(gateway_target(), Arc::new(transport), never_deadline()).unwrap()
 }
 
 fn bounded_tool(transport: FakeTransport, limits: WebSearchLimits) -> WebSearchTool {
-    WebSearchTool::with_bounded_transport(gateway_target(), Arc::new(transport), limits).unwrap()
+    WebSearchTool::with_bounded_transport(
+        gateway_target(),
+        Arc::new(transport),
+        never_deadline(),
+        limits,
+    )
+    .unwrap()
 }
 
 fn execute(
@@ -255,6 +310,117 @@ fn exported_contract_limits_and_schema_are_exact() {
         assert_eq!(
             spec.input_schema["properties"][name]["maxItems"],
             MAX_WEB_SEARCH_DOMAIN_FILTERS
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn both_public_constructors_strictly_validate_the_exact_authorization_target() {
+    for target in [
+        NetworkTarget {
+            scheme: "ftp".to_owned(),
+            host: "search.machine-god.dev".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "HTTPS".to_owned(),
+            host: "search.machine-god.dev".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "gateway".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "Search.machine-god.dev".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "search.machine-god.dev.".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "user@search.machine-god.dev".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "search.machine-god.dev/path".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "[2001:db8::1]".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "search.machine-god.dev".to_owned(),
+            port: Some(0),
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "search.machine-god.dev".to_owned(),
+            port: Some(443),
+        },
+        NetworkTarget {
+            scheme: "http".to_owned(),
+            host: "search.machine-god.dev".to_owned(),
+            port: Some(80),
+        },
+    ] {
+        let default_error = WebSearchTool::with_transport(
+            target.clone(),
+            Arc::new(FakeTransport::new(Mode::Pending)),
+            never_deadline(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            default_error.kind(),
+            WebSearchConfigErrorKind::InvalidTarget
+        );
+        let bounded_error = WebSearchTool::with_bounded_transport(
+            target,
+            Arc::new(FakeTransport::new(Mode::Pending)),
+            never_deadline(),
+            WebSearchLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            bounded_error.kind(),
+            WebSearchConfigErrorKind::InvalidTarget
+        );
+    }
+
+    for target in [
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "search.machine-god.dev".to_owned(),
+            port: Some(8443),
+        },
+        NetworkTarget {
+            scheme: "http".to_owned(),
+            host: "192.0.2.1".to_owned(),
+            port: None,
+        },
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "2001:db8::1".to_owned(),
+            port: None,
+        },
+    ] {
+        assert!(
+            WebSearchTool::with_transport(
+                target,
+                Arc::new(FakeTransport::new(Mode::Pending)),
+                never_deadline(),
+            )
+            .is_ok()
         );
     }
 }
@@ -364,6 +530,34 @@ fn query_and_domain_bounds_are_rejected_before_transport() {
         .is_err()
     );
 
+    let maximum_domains = (0..MAX_WEB_SEARCH_DOMAIN_FILTERS)
+        .map(|index| {
+            format!(
+                "d{index:02}{}.{}.{}.{}",
+                "a".repeat(60),
+                "b".repeat(63),
+                "c".repeat(63),
+                "d".repeat(61)
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        maximum_domains
+            .iter()
+            .all(|domain| domain.len() == MAX_WEB_SEARCH_DOMAIN_BYTES)
+    );
+    assert_eq!(
+        maximum_domains.iter().map(String::len).sum::<usize>(),
+        MAX_WEB_SEARCH_DOMAIN_FILTERS * MAX_WEB_SEARCH_DOMAIN_BYTES
+    );
+    assert!(
+        tool.prepare(call(
+            WEB_SEARCH_TOOL_NAME,
+            json!({ "query": "bounded query", "allowed_domains": maximum_domains })
+        ))
+        .is_ok()
+    );
+
     for domain in [
         "localhost",
         "127.0.0.1",
@@ -401,6 +595,10 @@ fn source_and_response_constructors_accept_exact_limits_and_reject_one_excess() 
         exact_url.clone(),
     )
     .unwrap();
+    let debug = format!("{source:?}");
+    assert_eq!(debug, "WebSearchSource { .. }");
+    assert!(!debug.contains(&exact_url));
+    assert!(!debug.contains(&"t".repeat(MAX_WEB_SEARCH_SOURCE_TITLE_BYTES)));
     assert_eq!(source.title().len(), MAX_WEB_SEARCH_SOURCE_TITLE_BYTES);
     assert_eq!(source.url().len(), MAX_WEB_SEARCH_SOURCE_URL_BYTES);
     assert!(
@@ -540,24 +738,54 @@ fn transport_errors_are_fixed_and_never_reflect_query_or_remote_diagnostics() {
 }
 
 #[test]
-fn bounded_execution_without_a_tokio_runtime_fails_before_transport() {
-    let transport = FakeTransport::new(Mode::Pending);
-    let tool = bounded_tool(transport.clone(), WebSearchLimits::default());
-    let error = execute(
-        &tool,
-        json!({ "query": "latest Rust release" }),
-        CancellationToken::new(),
-    )
-    .unwrap_err();
-    assert_eq!(error.kind, ToolErrorKind::Unavailable);
-    assert_eq!(transport.calls(), 0);
+fn driverless_tokio_runtime_returns_typed_error_without_panicking_or_aborting() {
+    const CHILD: &str = "MACHINE_GOD_DRIVERLESS_WEB_SEARCH_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let transport = FakeTransport::new(Mode::Pending);
+        let tool = WebSearchTool::with_transport(
+            gateway_target(),
+            Arc::new(transport.clone()),
+            Arc::new(RuntimeRequiredDeadline),
+        )
+        .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build deliberately driverless runtime");
+        let error = runtime
+            .block_on(tool.execute(
+                context(),
+                json!({ "query": "latest Rust release" }),
+                CancellationToken::new(),
+            ))
+            .unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::Unavailable);
+        assert_eq!(transport.calls(), 0);
+        return;
+    }
+
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "driverless_tokio_runtime_returns_typed_error_without_panicking_or_aborting",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .status()
+        .expect("run isolated driverless-runtime regression");
+    assert!(status.success(), "driverless child exited with {status}");
 }
 
 #[test]
 fn bounded_timeout_covers_transport_and_releases_the_owned_future() {
     let transport = FakeTransport::new(Mode::Pending);
     let limits = WebSearchLimits::new(Duration::from_millis(10), 1).unwrap();
-    let tool = bounded_tool(transport.clone(), limits);
+    let tool = WebSearchTool::with_bounded_transport(
+        gateway_target(),
+        Arc::new(transport.clone()),
+        Arc::new(TestTokioDeadline),
+        limits,
+    )
+    .unwrap();
     let error = runtime()
         .block_on(tool.execute(
             context(),
@@ -567,6 +795,38 @@ fn bounded_timeout_covers_transport_and_releases_the_owned_future() {
         .unwrap_err();
     assert_eq!(error.kind, ToolErrorKind::Unavailable);
     assert_eq!(transport.calls(), 1);
+    assert_eq!(transport.drops(), 1);
+}
+
+#[test]
+fn queued_execution_times_out_without_transport_dispatch() {
+    let transport = FakeTransport::new(Mode::Pending);
+    let tool = WebSearchTool::with_bounded_transport(
+        gateway_target(),
+        Arc::new(transport.clone()),
+        Arc::new(SecondWaitExpires::new()),
+        WebSearchLimits::new(Duration::from_secs(5), 1).unwrap(),
+    )
+    .unwrap();
+    let mut first = Box::pin(tool.execute(
+        context(),
+        json!({ "query": "first queued timeout query" }),
+        CancellationToken::new(),
+    ));
+    assert!(poll_once(first.as_mut()).is_pending());
+    assert_eq!(transport.calls(), 1);
+
+    let mut second = Box::pin(tool.execute(
+        context(),
+        json!({ "query": "second queued timeout query" }),
+        CancellationToken::new(),
+    ));
+    let Poll::Ready(Err(error)) = poll_once(second.as_mut()) else {
+        panic!("second queued search must expire before dispatch")
+    };
+    assert_eq!(error.kind, ToolErrorKind::Unavailable);
+    assert_eq!(transport.calls(), 1);
+    drop(first);
     assert_eq!(transport.drops(), 1);
 }
 
@@ -604,4 +864,96 @@ fn bounded_capacity_queues_without_dispatch_and_cancel_releases_every_future() {
         drop(second);
         assert_eq!(transport.drops(), 1);
     });
+}
+
+fn assert_capacity_width(tool: &WebSearchTool, transport: &FakeTransport, width: usize) {
+    let mut executions = (0..=width)
+        .map(|index| {
+            Box::pin(tool.execute(
+                context(),
+                json!({ "query": format!("capacity query {index}") }),
+                CancellationToken::new(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    for execution in executions.iter_mut().take(width) {
+        assert!(poll_once(execution.as_mut()).is_pending());
+    }
+    assert_eq!(transport.calls(), width);
+    assert!(poll_once(executions[width].as_mut()).is_pending());
+    assert_eq!(transport.calls(), width);
+    drop(executions.remove(0));
+    assert_eq!(transport.drops(), 1);
+    assert!(poll_once(executions.last_mut().unwrap().as_mut()).is_pending());
+    assert_eq!(transport.calls(), width + 1);
+}
+
+#[test]
+fn every_public_constructor_enforces_default_four_or_explicit_hard_sixteen_width() {
+    let default_transport = FakeTransport::new(Mode::Pending);
+    let default_tool = tool(default_transport.clone());
+    assert_capacity_width(
+        &default_tool,
+        &default_transport,
+        WEB_SEARCH_DEFAULT_MAX_ACTIVE_REQUESTS,
+    );
+
+    let hard_transport = FakeTransport::new(Mode::Pending);
+    let hard_tool = bounded_tool(
+        hard_transport.clone(),
+        WebSearchLimits::new(Duration::from_secs(1), WEB_SEARCH_MAX_ACTIVE_REQUESTS).unwrap(),
+    );
+    assert_capacity_width(&hard_tool, &hard_transport, WEB_SEARCH_MAX_ACTIVE_REQUESTS);
+}
+
+#[test]
+fn capacity_one_permit_is_reused_after_success_error_and_drop() {
+    let limits = WebSearchLimits::new(Duration::from_secs(1), 1).unwrap();
+
+    let success = FakeTransport::new(Mode::Success);
+    let success_tool = bounded_tool(success.clone(), limits);
+    for query in ["first successful query", "second successful query"] {
+        execute(
+            &success_tool,
+            json!({ "query": query }),
+            CancellationToken::new(),
+        )
+        .unwrap();
+    }
+    assert_eq!(success.calls(), 2);
+    assert_eq!(success.drops(), 2);
+
+    let failing = FakeTransport::new(Mode::Error(WebSearchTransportErrorKind::Protocol));
+    let failing_tool = bounded_tool(failing.clone(), limits);
+    for query in ["first failing query", "second failing query"] {
+        assert!(
+            execute(
+                &failing_tool,
+                json!({ "query": query }),
+                CancellationToken::new(),
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(failing.calls(), 2);
+    assert_eq!(failing.drops(), 2);
+
+    let pending = FakeTransport::new(Mode::Pending);
+    let pending_tool = bounded_tool(pending.clone(), limits);
+    let mut first = Box::pin(pending_tool.execute(
+        context(),
+        json!({ "query": "first dropped query" }),
+        CancellationToken::new(),
+    ));
+    assert!(poll_once(first.as_mut()).is_pending());
+    assert_eq!(pending.calls(), 1);
+    drop(first);
+    assert_eq!(pending.drops(), 1);
+    let mut second = Box::pin(pending_tool.execute(
+        context(),
+        json!({ "query": "second after drop" }),
+        CancellationToken::new(),
+    ));
+    assert!(poll_once(second.as_mut()).is_pending());
+    assert_eq!(pending.calls(), 2);
 }

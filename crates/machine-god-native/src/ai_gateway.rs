@@ -1287,7 +1287,7 @@ struct StreamedToolInput {
 }
 
 struct GatewayEventStream {
-    source: AiGatewayByteStream,
+    source: Option<AiGatewayByteStream>,
     cancellation_token: CancellationToken,
     cancellation: Option<Pin<Box<machine_god_core::Cancelled>>>,
     limits: AiGatewayLimits,
@@ -1310,7 +1310,7 @@ impl GatewayEventStream {
         limits: AiGatewayLimits,
     ) -> Self {
         Self {
-            source,
+            source: Some(source),
             cancellation_token: cancellation.clone(),
             cancellation: None,
             limits,
@@ -1739,6 +1739,11 @@ impl GatewayEventStream {
         }
         self.pending.push_back(Ok(ModelEvent::Stop { reason }));
         self.finished = true;
+        // The terminal event has been fully validated, so no later source bytes
+        // can affect the provider event stream. Releasing the byte stream here
+        // also releases any transport-owned HTTP capacity before a nested tool
+        // starts from the queued Stop event.
+        drop(self.source.take());
         Ok(())
     }
 }
@@ -1775,7 +1780,12 @@ impl Stream for GatewayEventStream {
             }
             return Poll::Ready(Some(event));
         }
-        let source_result = this.source.as_mut().poll_next(context);
+        let Some(source) = this.source.as_mut() else {
+            this.clear_cancellation_waiter();
+            this.terminal = true;
+            return Poll::Ready(None);
+        };
+        let source_result = source.as_mut().poll_next(context);
         if source_result.is_ready() && this.cancellation_token.is_cancelled() {
             this.clear_cancellation_waiter();
             this.terminal = true;

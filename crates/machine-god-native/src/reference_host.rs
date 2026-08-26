@@ -11,7 +11,7 @@ use crate::{
     AiGatewayProvider, AiGatewayTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
     FileSessionStore, LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind,
     NativeSessionLifecycle, NativeTransportKind, PermissionMode, PermissionPrompter,
-    PreparedNativeRoots, WebFetchTool, WebSearchLimits, WebSearchTool,
+    PreparedNativeRoots, WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
     discover_ai_gateway_credential,
 };
 
@@ -118,6 +118,8 @@ impl NativeReferenceHost {
     /// poll the permission prompt, touch session records, or perform network I/O.
     /// The trusted host must select disjoint workspace and session roots; this
     /// constructor does not compare their identity or ancestor relationships.
+    /// The explicit deadline authority must be usable in the runtime that will
+    /// drive web-search calls.
     ///
     /// # Errors
     ///
@@ -129,6 +131,7 @@ impl NativeReferenceHost {
         workspace_root: &Path,
         session_root: &Path,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let workspace_tools = open_workspace_tools(workspace_root)?;
@@ -146,6 +149,8 @@ impl NativeReferenceHost {
         Self::finish_composition(
             loaded_config,
             Arc::new(transport),
+            production_ai_gateway_target(),
+            web_search_deadline,
             workspace_tools,
             session_store,
             permission_prompter,
@@ -159,7 +164,8 @@ impl NativeReferenceHost {
     /// This function consumes the workspace and state descriptors retained by
     /// [`PreparedNativeRoots`] and does not reopen either selected path. It does
     /// not create a runtime, poll the permission prompt, touch session records,
-    /// or perform network I/O.
+    /// or perform network I/O. The explicit deadline authority must be usable in
+    /// the runtime that will drive web-search calls.
     ///
     /// # Errors
     ///
@@ -170,6 +176,7 @@ impl NativeReferenceHost {
         credential_environment: AiGatewayCredentialEnvironment,
         prepared_roots: PreparedNativeRoots,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
@@ -186,6 +193,8 @@ impl NativeReferenceHost {
         Self::finish_composition(
             loaded_config,
             Arc::new(transport),
+            production_ai_gateway_target(),
+            web_search_deadline,
             workspace_tools,
             session_store,
             permission_prompter,
@@ -197,7 +206,10 @@ impl NativeReferenceHost {
     ///
     /// This path retains the same configuration, workspace, session-store, and
     /// permission selections as production composition, but performs no
-    /// credential discovery or HTTP transport construction.
+    /// credential discovery or HTTP transport construction. `network_target`
+    /// must be the canonical HTTP(S) endpoint contacted by `transport`; that
+    /// exact target is presented for web-search authorization. The explicit
+    /// deadline authority must be usable in the runtime that drives the tool.
     /// The trusted host must select disjoint workspace and session roots; this
     /// constructor does not compare their identity or ancestor relationships.
     ///
@@ -208,9 +220,11 @@ impl NativeReferenceHost {
     pub fn compose_with_ai_gateway_transport(
         loaded_config: LoadedNativeConfig,
         transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
         workspace_root: &Path,
         session_root: &Path,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let workspace_tools = open_workspace_tools(workspace_root)?;
@@ -219,6 +233,8 @@ impl NativeReferenceHost {
         Self::finish_composition(
             loaded_config,
             transport,
+            network_target,
+            web_search_deadline,
             workspace_tools,
             session_store,
             permission_prompter,
@@ -231,7 +247,10 @@ impl NativeReferenceHost {
     ///
     /// This path performs no credential discovery or HTTP transport
     /// construction and does not reopen either path represented by
-    /// [`PreparedNativeRoots`].
+    /// [`PreparedNativeRoots`]. `network_target` must be the canonical HTTP(S)
+    /// endpoint contacted by `transport`; that exact target is presented for
+    /// web-search authorization. The explicit deadline authority must be usable
+    /// in the runtime that drives the tool.
     ///
     /// # Errors
     ///
@@ -240,8 +259,10 @@ impl NativeReferenceHost {
     pub fn compose_with_ai_gateway_transport_and_prepared_roots(
         loaded_config: LoadedNativeConfig,
         transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
         prepared_roots: PreparedNativeRoots,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
@@ -249,6 +270,8 @@ impl NativeReferenceHost {
         Self::finish_composition(
             loaded_config,
             transport,
+            network_target,
+            web_search_deadline,
             workspace_tools,
             session_store,
             permission_prompter,
@@ -297,6 +320,8 @@ impl NativeReferenceHost {
     fn finish_composition(
         loaded_config: LoadedNativeConfig,
         transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
         workspace_tools: WorkspaceTools,
         session_store: FileSessionStore,
         permission_prompter: Arc<dyn PermissionPrompter>,
@@ -312,12 +337,9 @@ impl NativeReferenceHost {
                 },
             )?;
         let web_search = WebSearchTool::with_bounded_transport(
-            NetworkTarget {
-                scheme: "https".to_owned(),
-                host: "ai-gateway.vercel.sh".to_owned(),
-                port: None,
-            },
+            network_target,
             Arc::new(search_transport),
+            web_search_deadline,
             WebSearchLimits::default(),
         )
         .map_err(|_| {
@@ -369,6 +391,14 @@ impl NativeReferenceHost {
             loaded_config,
             credential_source,
         })
+    }
+}
+
+fn production_ai_gateway_target() -> NetworkTarget {
+    NetworkTarget {
+        scheme: "https".to_owned(),
+        host: "ai-gateway.vercel.sh".to_owned(),
+        port: None,
     }
 }
 

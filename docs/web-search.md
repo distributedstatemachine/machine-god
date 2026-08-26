@@ -3,14 +3,18 @@
 Status: **IN PROGRESS** as bounded Milestone 03 slice 33. The contract is
 frozen from exact delivered base
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334` and pinned fx observation
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. Production, independent evidence,
-and this documentation compose through behavior precursor
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. The original production,
+independent-evidence, and documentation components compose through behavior
+precursor
 `3d2984000301e58762e0940504159aeb55b2389e`, tree
 `5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
-gate is green. Formal cycle 1 rejected exact candidate
+gate was green. Formal cycle 1 rejected exact candidate
 `89c5ec95fb5353efcba34af6a44bc27d7b6027f7`, tree
 `8d91a556f786169d42406e91e8ad2f476b7c6cf4`, with a deduplicated `0/2/5/2`
-finding union; remediation is in progress. The slice is not yet review-green,
+finding union. Source remediation is composed from exact isolated lifecycle
+component `096b11c4` and portability/bounds component `ca0b990a`; replacement
+evidence and the complete same-SHA gate remain in progress. The slice is not
+yet review-green,
 integrated, or delivered. The live
 status is recorded in the
 [`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
@@ -46,7 +50,11 @@ port, user-info, or domain-pattern language.
 
 Preparation is synchronous, effect-free, and cancellation-bounded. It parses
 and normalizes the complete input, then prepares `Capability::Network` for the
-exact configured AI Gateway scheme, host, and optional port. The exact
+exact configured AI Gateway scheme, host, and optional port. Production fixes
+that target to canonical `https://ai-gateway.vercel.sh`. A custom host must
+inject the canonical HTTP(S) `NetworkTarget` actually contacted by its opaque
+transport; malformed, noncanonical, credential-bearing, path-bearing, or
+default-port-spelling targets fail construction. The exact
 canonical arguments attached to `PreparedToolCall` are the arguments supplied
 to execution after approval. Execution reparses those arguments and rejects
 any noncanonical or capability-divergent value before consulting the
@@ -92,6 +100,10 @@ or Parallel search route.
 The ordinary `AiGatewayProvider` remains the outer conversation codec and
 continues to reject provider-executed calls and response-side tool results.
 Web search uses a separate strict one-shot decoder over the shared transport.
+When the outer provider validates its finish event, it drops the owned byte
+stream before it exposes queued usage/stop events. The shared HTTP capacity is
+therefore released before core starts a nested local tool round, including when
+the transport capacity is one.
 It admits exactly one final `tool-call` whose name is `perplexity_search`, whose
 `providerExecuted` value is exactly `true`, and whose valid identity is followed
 by exactly one matching, final, non-preliminary `tool-result`. Missing,
@@ -132,6 +144,9 @@ or result-too-large categories. They do not reflect credentials, request
 bodies, response bodies, queries, domains, titles, URLs, endpoints, or upstream
 diagnostics.
 
+`Debug` for requests, source citations, responses, transports, tools, and
+errors is redacted; it does not reveal a provider title or URL.
+
 The warning literal is fixed exactly as shown. The query is the canonical raw
 query sent to the worker. The provider adapter retains the first ten admissible
 sources and sets `truncated: true` only after observing an eleventh admissible
@@ -160,21 +175,38 @@ The slice fixes these independent ceilings:
 | default concurrent executions | 4 |
 | hard configurable concurrency ceiling | 16 |
 
-The single absolute deadline begins before waiting for a concurrency permit and
-subordinates request construction, transport startup, streaming, decoding, and
-output construction. Cancellation is checked before every effect boundary and
-wins same-poll races. Futures are inert until polled, retain their owned
-transport future and stream, detach no task or thread, and release permits and
+Both public `WebSearchTool` constructors are bounded: `with_transport` applies
+the 30-second/four-active defaults, while `with_bounded_transport` accepts only
+validated limits up to the same timeout and hard concurrency ceiling. The
+caller injects a fallible `WebSearchDeadline` wakeup authority. It must remain
+inert until polled, detach no work, and return the fixed `RuntimeRequired`
+category if its timer driver is unavailable; tool code invokes no Tokio timer
+API and therefore has no driverless-runtime panic precondition.
+
+The single absolute deadline begins before parsing and waiting for a
+concurrency permit and subordinates request construction, transport startup,
+streaming, decoding, and output construction. Cancellation is checked before
+every effect boundary and wins same-poll races. Futures are inert until polled,
+retain their owned transport future and stream, detach no task or thread, and
+release permits and
 buffers on completion, error, cancellation, or drop. Exactly hitting a byte,
 record, node, source, or output limit is allowed; checked overflow or the first
 item beyond it fails or sets `truncated` only where the result contract states
 that behavior.
 
+The SSE codec meters all 256 KiB of raw input but incrementally normalizes and
+retains at most one 64 KiB record before strict JSON decoding. It does not keep
+a second whole-response CRLF-normalized copy. Source URL deduplication compares
+only against the at-most-ten retained sources; later results are still strictly
+validated without growing a post-cap set.
+
 ## Platform and feature scope
 
-The provider-neutral request/response values and injected transport seam are
-target-neutral and perform no I/O themselves. The concrete Gateway worker
-adapter is non-WebAssembly and gated by `ai-gateway-http`. Slice-33 reference-
+The request/response values, errors, limits, constants, and injected
+`WebSearchTransport` / `WebSearchDeadline` seams are target-neutral, available
+in no-feature and WebAssembly builds, and perform no I/O themselves. The
+concrete semaphore-owning `WebSearchTool` and Gateway worker adapter are
+non-WebAssembly and gated by `ai-gateway-http`. Slice-33 reference-
 host composition remains Linux/macOS-only because the current native host is
 Linux/macOS-only. It registers fourteen alphabetical tools: twelve share one
 retained workspace identity, while rootless `web_fetch` and Gateway-backed

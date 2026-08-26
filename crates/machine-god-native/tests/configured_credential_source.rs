@@ -10,6 +10,20 @@ use machine_god_native::{
     NativeEnvironment, NativeProviderKind, NativeTransportKind, PermissionMode, load_native_config,
 };
 
+#[cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
+mod web_search_support;
+
+#[cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
+use web_search_support::{never_deadline, production_gateway_target};
+
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TemporaryDirectory {
@@ -426,7 +440,7 @@ mod composition {
 
     use super::{
         AI_GATEWAY_DEFAULT_MODEL, ConfigOrigin, LoadedNativeConfig, OsString, TemporaryDirectory,
-        load, valid_v1, valid_v2, valid_v3,
+        load, never_deadline, production_gateway_target, valid_v1, valid_v2, valid_v3,
     };
 
     const OIDC_TOKEN: &str = "oidc-token_NEVER_REAL";
@@ -514,6 +528,7 @@ mod composition {
                 &workspace,
                 &sessions,
                 Arc::new(prompter.clone()),
+                never_deadline(),
             )
             .unwrap();
 
@@ -546,6 +561,7 @@ mod composition {
             &workspace,
             &sessions,
             Arc::new(prompter.clone()),
+            never_deadline(),
         )
         .unwrap_err();
 
@@ -574,6 +590,7 @@ mod composition {
                 &workspace,
                 &sessions,
                 Arc::new(prompter.clone()),
+                never_deadline(),
             )
             .unwrap();
 
@@ -606,9 +623,11 @@ mod composition {
             let host = NativeReferenceHost::compose_with_ai_gateway_transport(
                 loaded,
                 Arc::new(transport.clone()),
+                production_gateway_target(),
                 &workspace,
                 &sessions,
                 Arc::new(prompter.clone()),
+                never_deadline(),
             )
             .unwrap();
 

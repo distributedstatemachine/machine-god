@@ -27,6 +27,10 @@ use machine_god_native::{
 };
 use serde_json::Value;
 
+mod web_search_support;
+
+use web_search_support::{never_deadline, production_gateway_target};
+
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TemporaryDirectory {
@@ -254,8 +258,10 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
     let host = NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots(
         built_in_config(),
         Arc::new(transport.clone()),
+        production_gateway_target(),
         prepared,
         Arc::new(prompter.clone()),
+        never_deadline(),
     )
     .unwrap();
 
@@ -366,6 +372,7 @@ fn prepared_production_constructor_discovers_credentials_only_after_preparation(
             AiGatewayCredentialEnvironment::new(None, None),
             prepared,
             Arc::new(prompter.clone()),
+            never_deadline(),
         ),
     );
     assert_eq!(error.kind(), NativeReferenceHostBuildErrorKind::Credential);
@@ -381,6 +388,7 @@ fn prepared_production_constructor_discovers_credentials_only_after_preparation(
         AiGatewayCredentialEnvironment::new(Some(OsString::from(token)), None),
         prepared,
         Arc::new(prompter.clone()),
+        never_deadline(),
     )
     .unwrap();
     assert_eq!(
@@ -405,9 +413,11 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
     let host = NativeReferenceHost::compose_with_ai_gateway_transport(
         built_in_config(),
         Arc::new(transport.clone()),
+        production_gateway_target(),
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        never_deadline(),
     )
     .unwrap();
     assert!(transport.request_bodies().is_empty());
@@ -422,6 +432,7 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
         &missing_workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        never_deadline(),
     ));
     assert_eq!(
         workspace_error.kind(),
@@ -437,6 +448,7 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
         &workspace,
         &missing_sessions,
         Arc::new(prompter),
+        never_deadline(),
     ));
     assert_eq!(
         session_error.kind(),

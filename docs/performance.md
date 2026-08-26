@@ -20,7 +20,9 @@ outer `AiGatewayProvider` limits. Production and independent evidence compose
 through behavior precursor `3d2984000301e58762e0940504159aeb55b2389e`, whose
 exact-1.94.1 local gate is green. Formal cycle 1 rejected exact `89c5ec95`, tree
 `8d91a55`, with three performance-track medium findings and a deduplicated
-`0/2/5/2` union; remediation is in progress. No latency, throughput, allocation
+`0/2/5/2` union. Source remediation is composed from exact isolated components
+`096b11c4` and `ca0b990a`; replacement evidence, the exact-SHA gate, and fresh review remain in
+progress. No latency, throughput, allocation
 improvement, binary-size improvement, compatibility promotion, or
 fx-equivalence claim follows. The
 normative bounds are in [`web-search.md`](web-search.md) and status is in the

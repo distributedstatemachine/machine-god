@@ -2,8 +2,9 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
-use futures_util::stream;
+use futures_util::{future, stream};
 use machine_god_core::{
     BoxFuture, CancellationToken, NetworkTarget, ProviderError, SessionId, SessionIncarnationId,
     Tool, ToolCallId, ToolContext, ToolErrorKind, TurnId,
@@ -11,13 +12,23 @@ use machine_god_core::{
 use machine_god_native::{
     AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
     AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest,
-    AiGatewayWebSearchTransport, MAX_WEB_SEARCH_RESPONSE_BYTES,
-    MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES, MAX_WEB_SEARCH_RESPONSE_RECORDS, WebSearchTool,
+    AiGatewayWebSearchTransport, MAX_WEB_SEARCH_JSON_NODES, MAX_WEB_SEARCH_RESPONSE_BYTES,
+    MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES, MAX_WEB_SEARCH_RESPONSE_RECORDS,
+    MAX_WEB_SEARCH_SOURCE_TITLE_BYTES, MAX_WEB_SEARCH_SOURCE_URL_BYTES, WebSearchDeadline,
+    WebSearchTool, WebSearchTransportError,
 };
 use serde_json::{Value, json};
 
 const MODEL: &str = "test/search-worker-model";
 const PRIVATE_QUERY: &str = "latest Rust release PRIVATE_QUERY_SENTINEL";
+
+struct NeverDeadline;
+
+impl WebSearchDeadline for NeverDeadline {
+    fn wait_until(&self, _deadline: Instant) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
+        Box::pin(future::pending())
+    }
+}
 
 fn gateway_target() -> NetworkTarget {
     NetworkTarget {
@@ -140,24 +151,36 @@ fn valid_events() -> Vec<Value> {
     ]
 }
 
-fn execute(
+fn execute_with_arguments(
     response: Vec<u8>,
+    arguments: Value,
 ) -> (
     ScriptedTransport,
     Result<machine_god_core::ToolOutput, machine_god_core::ToolError>,
 ) {
     let transport = ScriptedTransport::new(response);
     let adapter = AiGatewayWebSearchTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
-    let tool = WebSearchTool::with_transport(gateway_target(), Arc::new(adapter)).unwrap();
-    let output = futures_executor::block_on(tool.execute(
-        context(),
+    let tool =
+        WebSearchTool::with_transport(gateway_target(), Arc::new(adapter), Arc::new(NeverDeadline))
+            .unwrap();
+    let output =
+        futures_executor::block_on(tool.execute(context(), arguments, CancellationToken::new()));
+    (transport, output)
+}
+
+fn execute(
+    response: Vec<u8>,
+) -> (
+    ScriptedTransport,
+    Result<machine_god_core::ToolOutput, machine_god_core::ToolError>,
+) {
+    execute_with_arguments(
+        response,
         json!({
             "query": PRIVATE_QUERY,
             "allowed_domains": ["rust-lang.org"]
         }),
-        CancellationToken::new(),
-    ));
-    (transport, output)
+    )
 }
 
 fn header<'a>(request: &'a CapturedRequest, name: &str) -> &'a str {
@@ -190,12 +213,33 @@ fn dedicated_codec_sends_one_required_provider_search_and_accepts_one_exact_resu
         "web-search-codec-session"
     );
     let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
-    let serialized = body.to_string();
-    assert!(serialized.contains(PRIVATE_QUERY));
-    assert!(serialized.contains("rust-lang.org"));
-    assert!(serialized.contains("perplexity_search"));
-    assert!(!serialized.contains("parallel_search"));
-    assert_eq!(body["maxOutputTokens"], 4_096);
+    assert_eq!(
+        body,
+        json!({
+            "prompt": [
+                {
+                    "role": "system",
+                    "content": "Research the user's query with the web_search tool and preserve sources for citation."
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": PRIVATE_QUERY}]
+                }
+            ],
+            "tools": [{
+                "type": "provider",
+                "id": "gateway.perplexity_search",
+                "name": "perplexity_search",
+                "args": {
+                    "maxResults": 10,
+                    "maxTokens": 4_096,
+                    "searchDomainFilter": ["rust-lang.org"]
+                }
+            }],
+            "toolChoice": {"type": "required"},
+            "maxOutputTokens": 4_096
+        })
+    );
 
     assert_eq!(
         output.content,
@@ -209,6 +253,65 @@ fn dedicated_codec_sends_one_required_provider_search_and_accepts_one_exact_resu
             "truncated": false
         })
     );
+}
+
+#[test]
+fn gateway_worker_body_is_exact_for_no_filter_allow_filter_and_block_filter() {
+    let cases = [
+        (json!({"query": PRIVATE_QUERY}), None),
+        (
+            json!({
+                "query": PRIVATE_QUERY,
+                "allowed_domains": ["rust-lang.org", "docs.rs"]
+            }),
+            Some(json!(["rust-lang.org", "docs.rs"])),
+        ),
+        (
+            json!({
+                "query": PRIVATE_QUERY,
+                "blocked_domains": ["example.com", "example.org"]
+            }),
+            Some(json!(["-example.com", "-example.org"])),
+        ),
+    ];
+
+    for (arguments, expected_filter) in cases {
+        let (transport, output) = execute_with_arguments(sse(&valid_events()), arguments);
+        output.unwrap();
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 1);
+        let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        let mut provider_args = json!({
+            "maxResults": 10,
+            "maxTokens": 4_096
+        });
+        if let Some(filter) = expected_filter {
+            provider_args["searchDomainFilter"] = filter;
+        }
+        assert_eq!(
+            body,
+            json!({
+                "prompt": [
+                    {
+                        "role": "system",
+                        "content": "Research the user's query with the web_search tool and preserve sources for citation."
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": PRIVATE_QUERY}]
+                    }
+                ],
+                "tools": [{
+                    "type": "provider",
+                    "id": "gateway.perplexity_search",
+                    "name": "perplexity_search",
+                    "args": provider_args
+                }],
+                "toolChoice": {"type": "required"},
+                "maxOutputTokens": 4_096
+            })
+        );
+    }
 }
 
 #[test]
@@ -362,4 +465,129 @@ fn dedicated_codec_enforces_stream_record_count_and_strict_json_bounds() {
         "\"providerExecuted\":true,\"providerExecuted\":true}\n\n"
     );
     assert!(execute(duplicate_key.as_bytes().to_vec()).1.is_err());
+}
+
+fn metadata_record_with_wire_len(wire_len: usize) -> Vec<u8> {
+    let empty = b"data: {\"padding\":\"\",\"type\":\"response-metadata\"}\n\n";
+    assert!(wire_len >= empty.len());
+    let mut record = b"data: {\"padding\":\"".to_vec();
+    record.extend(std::iter::repeat_n(b'x', wire_len - empty.len()));
+    record.extend_from_slice(b"\",\"type\":\"response-metadata\"}\n\n");
+    assert_eq!(record.len(), wire_len);
+    record
+}
+
+fn response_with_wire_len(wire_len: usize) -> Vec<u8> {
+    let tail = sse(&valid_events());
+    let mut response = Vec::with_capacity(wire_len);
+    while wire_len - response.len() - tail.len() > MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES + 2 {
+        response.extend(metadata_record_with_wire_len(
+            MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES + 2,
+        ));
+    }
+    let remaining = wire_len - response.len() - tail.len();
+    if remaining > 0 {
+        response.extend(metadata_record_with_wire_len(remaining));
+    }
+    response.extend(tail);
+    assert_eq!(response.len(), wire_len);
+    response
+}
+
+#[test]
+fn dedicated_codec_accepts_exact_stream_record_count_and_json_node_limits() {
+    assert!(
+        execute(response_with_wire_len(MAX_WEB_SEARCH_RESPONSE_BYTES))
+            .1
+            .is_ok()
+    );
+    assert!(
+        execute(response_with_wire_len(MAX_WEB_SEARCH_RESPONSE_BYTES + 1))
+            .1
+            .is_err()
+    );
+
+    let exact_record = metadata_record_with_wire_len(MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES + 2);
+    let mut exact_record_response = exact_record;
+    exact_record_response.extend(sse(&valid_events()));
+    assert!(execute(exact_record_response).1.is_ok());
+    let oversized_record = metadata_record_with_wire_len(MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES + 3);
+    let mut oversized_record_response = oversized_record;
+    oversized_record_response.extend(sse(&valid_events()));
+    assert!(execute(oversized_record_response).1.is_err());
+
+    let mut exact_records = Vec::new();
+    for _ in 0..(MAX_WEB_SEARCH_RESPONSE_RECORDS - 4) {
+        exact_records.extend_from_slice(b"data: {\"type\":\"response-metadata\"}\n\n");
+    }
+    exact_records.extend(sse(&valid_events()));
+    assert!(execute(exact_records.clone()).1.is_ok());
+    exact_records.splice(
+        0..0,
+        b"data: {\"type\":\"response-metadata\"}\n\n"
+            .iter()
+            .copied(),
+    );
+    assert!(execute(exact_records).1.is_err());
+
+    // Required call/result-with-one-source/finish records consume eighteen nodes. Metadata's
+    // object, type string, padding array, and elements consume the remainder.
+    let exact_padding = vec![json!(0); MAX_WEB_SEARCH_JSON_NODES - 21];
+    let mut exact_nodes = vec![json!({
+        "type": "response-metadata",
+        "padding": exact_padding
+    })];
+    exact_nodes.extend(valid_events());
+    assert!(execute(sse(&exact_nodes)).1.is_ok());
+
+    let oversized_padding = vec![json!(0); MAX_WEB_SEARCH_JSON_NODES - 20];
+    let mut oversized_nodes = vec![json!({
+        "type": "response-metadata",
+        "padding": oversized_padding
+    })];
+    oversized_nodes.extend(valid_events());
+    assert!(execute(sse(&oversized_nodes)).1.is_err());
+}
+
+#[test]
+fn dedicated_codec_accepts_exact_source_field_limits_and_rejects_one_byte_over() {
+    let url_prefix = "https://source.example.org/";
+    let exact_url = format!(
+        "{url_prefix}{}",
+        "u".repeat(MAX_WEB_SEARCH_SOURCE_URL_BYTES - url_prefix.len())
+    );
+    let exact_result = json!({
+        "results": [{
+            "title": "t".repeat(MAX_WEB_SEARCH_SOURCE_TITLE_BYTES),
+            "url": exact_url
+        }]
+    });
+    let exact_events = vec![
+        call_event("provider-search-1", "perplexity_search", true),
+        result_event("provider-search-1", exact_result),
+        finish_event("stop"),
+    ];
+    assert!(execute(sse(&exact_events)).1.is_ok());
+
+    for result in [
+        json!({
+            "results": [{
+                "title": "t".repeat(MAX_WEB_SEARCH_SOURCE_TITLE_BYTES + 1),
+                "url": "https://source.example.org/"
+            }]
+        }),
+        json!({
+            "results": [{
+                "title": "title",
+                "url": format!("{url_prefix}{}", "u".repeat(MAX_WEB_SEARCH_SOURCE_URL_BYTES + 1 - url_prefix.len()))
+            }]
+        }),
+    ] {
+        let events = vec![
+            call_event("provider-search-1", "perplexity_search", true),
+            result_event("provider-search-1", result),
+            finish_event("stop"),
+        ];
+        assert!(execute(sse(&events)).1.is_err());
+    }
 }

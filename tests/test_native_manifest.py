@@ -14,6 +14,16 @@ MODEL_CATALOG_HTTP_SOURCE = (
     / "src"
     / "ai_gateway_model_catalog_http.rs"
 )
+NATIVE_LIB_SOURCE = (
+    REPOSITORY_ROOT / "crates" / "machine-god-native" / "src" / "lib.rs"
+)
+WEB_SEARCH_SOURCE = (
+    REPOSITORY_ROOT
+    / "crates"
+    / "machine-god-native"
+    / "src"
+    / "web_search.rs"
+)
 CLI_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-cli" / "Cargo.toml"
 NON_WASM_CFG = 'cfg(not(target_family = "wasm"))'
 SHA2_DEFAULT_NATIVE_CFG = 'cfg(any(target_os = "linux", target_os = "macos"))'
@@ -287,6 +297,60 @@ class NativeManifestTests(unittest.TestCase):
             apple_windows_cfg + loader_signature, maxsplit=1
         )[1].split("\n#[cfg(", maxsplit=1)[0]
         self.assertIn("read_system_conf", apple_windows_branch)
+
+    def test_web_search_contract_is_target_neutral_and_http_tool_is_feature_scoped(self) -> None:
+        lib_source = NATIVE_LIB_SOURCE.read_text(encoding="utf-8")
+        web_search_source = WEB_SEARCH_SOURCE.read_text(encoding="utf-8")
+
+        self.assertEqual(lib_source.count("\nmod web_search;\n"), 1)
+        self.assertEqual(
+            lib_source.count(
+                '#[cfg(all(feature = "ai-gateway-http", '
+                'not(target_family = "wasm")))]\n'
+                "pub use web_search::WebSearchTool;"
+            ),
+            1,
+        )
+        self.assertIn("WebSearchDeadline, WebSearchLimits", lib_source)
+        self.assertIn("pub trait WebSearchTransport", web_search_source)
+        self.assertIn("pub trait WebSearchDeadline", web_search_source)
+        self.assertEqual(web_search_source.count("pub struct WebSearchTool"), 1)
+        self.assertNotIn("tokio::time", web_search_source)
+
+        def normal_dependencies(target: str) -> set[str]:
+            completed = subprocess.run(
+                [
+                    "cargo",
+                    "tree",
+                    "--locked",
+                    "-p",
+                    "machine-god-native",
+                    "--edges",
+                    "normal",
+                    "--prefix",
+                    "none",
+                    "--format",
+                    "{p}",
+                    "--no-default-features",
+                    "--target",
+                    target,
+                ],
+                cwd=REPOSITORY_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return {
+                line.split(maxsplit=1)[0]
+                for line in completed.stdout.splitlines()[1:]
+                if line
+            }
+
+        for target in ["x86_64-unknown-linux-gnu", "wasm32-wasip1"]:
+            dependencies = normal_dependencies(target)
+            self.assertNotIn("tokio", dependencies)
+            self.assertNotIn("reqwest", dependencies)
+            self.assertNotIn("hickory-resolver", dependencies)
 
 
 if __name__ == "__main__":

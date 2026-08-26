@@ -9,7 +9,9 @@ and local execution lifecycle. Only after approval does native issue one
 private required Perplexity worker request through the shared injected Gateway
 transport. A dedicated bounded native codec consumes the inner
 `providerExecuted: true` call/result; the ordinary `AiGatewayProvider` remains
-unchanged and continues to reject such response records.
+strict and continues to reject such response records. Its remediated terminal
+lifecycle drops the validated outer byte stream before queued usage/stop
+delivery, so shared capacity is available for the local tool round.
 
 The slice-33 topology is:
 
@@ -21,8 +23,15 @@ outer model -> local web_search ToolCall -> core preflight + Ask permission
             -> local ToolOutput -> ordinary core tool-result round
 ```
 
-Production and independent evidence are being composed in isolated worktrees;
-no exact composed candidate has completed the full local gate or fresh review.
+Cycle 1 rejected exact candidate `89c5ec95`, tree `8d91a55`, with a deduplicated
+`0/2/5/2` finding union. Source remediation is composed from exact isolated
+components `096b11c4` and `ca0b990a`: the outer stream releases shared capacity
+before nested search,
+custom transports bind their actual canonical permission target, every public
+tool constructor is bounded, the deadline is an explicit fallible authority,
+portable contracts are ungated, and the decoder retains one bounded record and
+at most ten deduplication entries. Replacement evidence and a complete exact-
+SHA gate are in progress; no replacement candidate has completed fresh review.
 The candidate is not green, integrated, or delivered, the delivered count
 remains 32, and no performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,

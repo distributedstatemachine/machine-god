@@ -19,7 +19,9 @@ behavior precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
 `5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
 gate is green. Formal cycle 1 rejected exact candidate `89c5ec95fb5353efcba34af6a44bc27d7b6027f7`,
 tree `8d91a556f786169d42406e91e8ad2f476b7c6cf4`, with a deduplicated
-`0/2/5/2` blocker/high/medium/low finding union. Remediation is in progress.
+`0/2/5/2` blocker/high/medium/low finding union. Source remediation is composed
+from exact isolated components `096b11c4` and `ca0b990a`; replacement evidence,
+the exact-SHA gate, and fresh reviews remain in progress.
 Slice 33 is not yet review-green, integrated, or delivered; the
 delivered count remains 32. It is unmeasured and makes no product-performance
 or fx-equivalence claim. See the [`web_search` contract](docs/web-search.md) and

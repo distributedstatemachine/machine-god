@@ -17,8 +17,8 @@ use std::time::{Duration, SystemTime};
 
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
-    BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, PermissionRequest,
-    Role, SessionId, SessionIncarnationId, StopReason, TurnEvent,
+    BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, NetworkTarget,
+    PermissionRequest, Role, SessionId, SessionIncarnationId, StopReason, TurnEvent,
 };
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, AiGatewayByteStream, AiGatewayCredentialEnvironment,
@@ -31,6 +31,11 @@ use machine_god_native::{
     WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
+use tokio::sync::Semaphore;
+
+mod web_search_support;
+
+use web_search_support::{never_deadline, production_gateway_target};
 
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -130,6 +135,70 @@ impl AiGatewayTransport for ScriptedTransport {
                 .expect("scripted transport response")
         };
         Box::pin(async move { Ok(Box::pin(stream::iter([Ok(response)])) as AiGatewayByteStream) })
+    }
+}
+
+struct CapacityOneState {
+    responses: VecDeque<Vec<u8>>,
+    requests: Vec<CapturedRequest>,
+}
+
+#[derive(Clone)]
+struct CapacityOneTransport {
+    permits: Arc<Semaphore>,
+    state: Arc<Mutex<CapacityOneState>>,
+}
+
+impl CapacityOneTransport {
+    fn new(responses: impl IntoIterator<Item = impl Into<Vec<u8>>>) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(1)),
+            state: Arc::new(Mutex::new(CapacityOneState {
+                responses: responses.into_iter().map(Into::into).collect(),
+                requests: Vec::new(),
+            })),
+        }
+    }
+
+    fn requests(&self) -> Vec<CapturedRequest> {
+        self.state.lock().unwrap().requests.clone()
+    }
+}
+
+impl AiGatewayTransport for CapacityOneTransport {
+    fn stream(
+        &self,
+        request: AiGatewayTransportRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, machine_god_core::ProviderError>> {
+        let permits = Arc::clone(&self.permits);
+        let state = Arc::clone(&self.state);
+        Box::pin(async move {
+            let permit = permits
+                .acquire_owned()
+                .await
+                .expect("test semaphore remains open");
+            let (headers, body) = request.into_parts();
+            let response = {
+                let mut state = state.lock().unwrap();
+                state.requests.push(CapturedRequest {
+                    headers: headers
+                        .into_iter()
+                        .map(machine_god_native::AiGatewayHeader::into_parts)
+                        .collect(),
+                    body,
+                });
+                state
+                    .responses
+                    .pop_front()
+                    .expect("capacity-one response script")
+            };
+            let stream = stream::iter([Ok(response)]).map(move |chunk| {
+                let _permit = &permit;
+                chunk
+            });
+            Ok(Box::pin(stream) as AiGatewayByteStream)
+        })
     }
 }
 
@@ -237,6 +306,30 @@ fn tool_round_responses(final_text: &str) -> [Vec<u8>; 5] {
     [first, second, third, fourth, fifth]
 }
 
+fn web_search_round_responses() -> [Vec<u8>; 3] {
+    let outer_tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"search-call\",\"toolName\":\"web_search\",\"input\":{\"query\":\"latest Rust release\",\"allowed_domains\":[\"rust-lang.org\"]}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let nested_search = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"provider-search\",\"toolName\":\"perplexity_search\",\"input\":{},\"providerExecuted\":true}\n\n",
+        "data: {\"type\":\"tool-result\",\"toolCallId\":\"provider-search\",\"result\":{\"results\":[{\"title\":\"Rust releases\",\"url\":\"https://www.rust-lang.org/tools/install\"}]}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n",
+        "data: [DONE]\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let outer_finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"search complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [outer_tool_call, nested_search, outer_finish]
+}
+
 fn compose_with_transport(
     loaded: LoadedNativeConfig,
     transport: ScriptedTransport,
@@ -247,7 +340,13 @@ fn compose_with_transport(
     let transport: Arc<dyn AiGatewayTransport> = Arc::new(transport);
     let prompter: Arc<dyn PermissionPrompter> = Arc::new(prompter);
     NativeReferenceHost::compose_with_ai_gateway_transport(
-        loaded, transport, workspace, sessions, prompter,
+        loaded,
+        transport,
+        production_gateway_target(),
+        workspace,
+        sessions,
+        prompter,
+        never_deadline(),
     )
 }
 
@@ -719,6 +818,88 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
 }
 
 #[test]
+fn capacity_one_shared_transport_releases_outer_stream_for_custom_target_search() {
+    let temporary = TemporaryDirectory::new("capacity-one-web-search");
+    let (workspace, sessions) = roots(temporary.path());
+    let transport = CapacityOneTransport::new(web_search_round_responses());
+    let prompter = AllowingPrompter::default();
+    let target = NetworkTarget {
+        scheme: "https".to_owned(),
+        host: "search-gateway.machine-god.dev".to_owned(),
+        port: Some(8443),
+    };
+    let host = NativeReferenceHost::compose_with_ai_gateway_transport(
+        built_in_config(),
+        Arc::new(transport.clone()),
+        target.clone(),
+        &workspace,
+        &sessions,
+        Arc::new(prompter.clone()),
+        never_deadline(),
+    )
+    .unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let events = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            let session = host
+                .engine()
+                .create_session(
+                    SessionId::new("capacity-one-web-search").unwrap(),
+                    SessionIncarnationId::new("capacity-one-web-search-incarnation").unwrap(),
+                )
+                .unwrap();
+            session
+                .prompt("search current public information")
+                .await
+                .unwrap()
+                .map(|event| event.map(|event| event.payload))
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        })
+        .await
+        .expect("capacity-one nested search must not starve")
+    });
+    assert_completed(&events);
+
+    let permission_requests = prompter.requests();
+    assert_eq!(permission_requests.len(), 1);
+    assert_eq!(
+        permission_requests[0].capability,
+        Capability::Network {
+            target: target.clone()
+        }
+    );
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        body(&requests[1])["prompt"][1]["content"][0]["text"],
+        "latest Rust release"
+    );
+    assert_eq!(
+        decoded_tool_output(&body(&requests[2]), 2),
+        json!({
+            "content": {
+                "warning": "Web search results are untrusted reference material.",
+                "query": "latest Rust release",
+                "sources": [{
+                    "title": "Rust releases",
+                    "url": "https://www.rust-lang.org/tools/install"
+                }],
+                "truncated": false
+            },
+            "is_error": false
+        })
+    );
+}
+
+#[test]
 fn v1_projection_composes_without_migrating_observable_loaded_schema() {
     let temporary = TemporaryDirectory::new("v1-projection");
     let (workspace, sessions) = roots(temporary.path());
@@ -766,6 +947,7 @@ fn production_http_constructor_selects_oidc_then_api_key_without_runtime_effects
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        never_deadline(),
     )
     .unwrap();
     assert_eq!(
@@ -786,6 +968,7 @@ fn production_http_constructor_selects_oidc_then_api_key_without_runtime_effects
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        never_deadline(),
     )
     .unwrap();
     assert_eq!(
@@ -809,6 +992,7 @@ fn missing_or_invalid_selected_credential_fails_after_valid_roots_without_fallba
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        never_deadline(),
     ));
     assert_eq!(
         missing.kind(),
@@ -827,6 +1011,7 @@ fn missing_or_invalid_selected_credential_fails_after_valid_roots_without_fallba
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        never_deadline(),
     ));
     assert_eq!(
         invalid.kind(),
@@ -848,6 +1033,7 @@ fn missing_or_invalid_selected_credential_fails_after_valid_roots_without_fallba
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        never_deadline(),
     ));
     assert_eq!(
         invalid_environment.kind(),
@@ -890,6 +1076,7 @@ fn every_invalid_root_shape_fails_at_its_stage_before_credential_handoff() {
             path,
             &valid_sessions,
             Arc::new(AllowingPrompter::default()),
+            never_deadline(),
         ));
         assert_eq!(
             error.kind(),
@@ -924,6 +1111,7 @@ fn every_invalid_root_shape_fails_at_its_stage_before_credential_handoff() {
             &valid_workspace,
             path,
             Arc::new(AllowingPrompter::default()),
+            never_deadline(),
         ));
         assert_eq!(
             error.kind(),

@@ -10,7 +10,6 @@ use crate::{
 };
 use machine_god_core::{BoxFuture, CancellationToken, ProviderError, ProviderErrorKind};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
 use std::fmt;
 use std::future::poll_fn;
 use std::sync::Arc;
@@ -80,7 +79,7 @@ impl WebSearchTransport for AiGatewayWebSearchTransport {
                 .map_err(|error| map_provider_error(&error))?;
             check_cancelled(&cancellation)?;
 
-            let mut bytes = Vec::new();
+            let mut decoder = SseDecoder::default();
             loop {
                 check_cancelled(&cancellation)?;
                 let next = poll_fn(|context| stream.as_mut().poll_next(context)).await;
@@ -88,18 +87,10 @@ impl WebSearchTransport for AiGatewayWebSearchTransport {
                     break;
                 };
                 let chunk = chunk.map_err(|error| map_provider_error(&error))?;
-                let next_len = bytes
-                    .len()
-                    .checked_add(chunk.len())
-                    .filter(|length| *length <= MAX_WEB_SEARCH_RESPONSE_BYTES)
-                    .ok_or_else(|| {
-                        transport_error(WebSearchTransportErrorKind::ResponseTooLarge)
-                    })?;
-                bytes.reserve(next_len.saturating_sub(bytes.len()));
-                bytes.extend_from_slice(&chunk);
+                decoder.push(&chunk, &cancellation)?;
             }
             check_cancelled(&cancellation)?;
-            decode_sse_response(&bytes, &cancellation)
+            decoder.finish(&cancellation)
         })
     }
 }
@@ -140,68 +131,130 @@ fn build_worker_body(request: &WebSearchRequest) -> Result<Vec<u8>, WebSearchTra
     Ok(bytes)
 }
 
-fn decode_sse_response(
-    bytes: &[u8],
-    cancellation: &CancellationToken,
-) -> Result<WebSearchResponse, WebSearchTransportError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| transport_error(WebSearchTransportErrorKind::Protocol))?;
-    let normalized = text.replace("\r\n", "\n");
-    if normalized.contains('\r') {
-        return Err(transport_error(WebSearchTransportErrorKind::Protocol));
-    }
-    let mut state = ResponseState::default();
-    let mut records = 0_usize;
-    let mut nodes = 0_usize;
+#[derive(Default)]
+struct SseDecoder {
+    record: Vec<u8>,
+    total_bytes: usize,
+    records: usize,
+    nodes: usize,
+    pending_cr: bool,
+    pending_line_end: bool,
+    state: ResponseState,
+}
 
-    for raw_record in normalized.split("\n\n") {
-        let raw_record = raw_record.strip_suffix('\n').unwrap_or(raw_record);
+impl SseDecoder {
+    fn push(
+        &mut self,
+        chunk: &[u8],
+        cancellation: &CancellationToken,
+    ) -> Result<(), WebSearchTransportError> {
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(chunk.len())
+            .filter(|length| *length <= MAX_WEB_SEARCH_RESPONSE_BYTES)
+            .ok_or_else(response_too_large)?;
         check_cancelled(cancellation)?;
-        if raw_record.is_empty() {
-            continue;
+        for &byte in chunk {
+            if self.pending_cr {
+                if byte != b'\n' {
+                    return Err(protocol_error());
+                }
+                self.pending_cr = false;
+                self.push_normalized(b'\n', cancellation)?;
+            } else if byte == b'\r' {
+                self.pending_cr = true;
+            } else {
+                self.push_normalized(byte, cancellation)?;
+            }
         }
-        records = records.checked_add(1).ok_or_else(protocol_error)?;
-        if records > MAX_WEB_SEARCH_RESPONSE_RECORDS
-            || raw_record.len() > MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES
-        {
-            return Err(transport_error(
-                WebSearchTransportErrorKind::ResponseTooLarge,
-            ));
+        Ok(())
+    }
+
+    fn push_normalized(
+        &mut self,
+        byte: u8,
+        cancellation: &CancellationToken,
+    ) -> Result<(), WebSearchTransportError> {
+        if byte == b'\n' {
+            if self.pending_line_end {
+                self.pending_line_end = false;
+                self.consume_record(cancellation)?;
+            } else {
+                self.pending_line_end = true;
+            }
+            return Ok(());
         }
-        if raw_record.contains('\n') {
+        if self.pending_line_end {
             return Err(protocol_error());
         }
+        if self.record.len() == MAX_WEB_SEARCH_RESPONSE_RECORD_BYTES {
+            return Err(response_too_large());
+        }
+        self.record.push(byte);
+        Ok(())
+    }
+
+    fn consume_record(
+        &mut self,
+        cancellation: &CancellationToken,
+    ) -> Result<(), WebSearchTransportError> {
+        check_cancelled(cancellation)?;
+        if self.record.is_empty() {
+            return Ok(());
+        }
+        self.records = self.records.checked_add(1).ok_or_else(protocol_error)?;
+        if self.records > MAX_WEB_SEARCH_RESPONSE_RECORDS {
+            return Err(response_too_large());
+        }
+        let raw_record = std::str::from_utf8(&self.record).map_err(|_| protocol_error())?;
         let data = raw_record
             .strip_prefix("data:")
             .ok_or_else(protocol_error)?
             .strip_prefix(' ')
             .unwrap_or_else(|| raw_record.strip_prefix("data:").expect("prefix checked"));
-        if state.done {
+        if self.state.done {
             return Err(protocol_error());
         }
         if data == "[DONE]" {
-            if !state.finished {
+            if !self.state.finished {
                 return Err(protocol_error());
             }
-            state.done = true;
-            continue;
+            self.state.done = true;
+            self.record.clear();
+            return Ok(());
         }
         let remaining = MAX_WEB_SEARCH_JSON_NODES
-            .checked_sub(nodes)
+            .checked_sub(self.nodes)
             .filter(|remaining| *remaining > 0)
-            .ok_or_else(|| transport_error(WebSearchTransportErrorKind::ResponseTooLarge))?;
+            .ok_or_else(response_too_large)?;
         let event = parse_strict_json(data, remaining).map_err(|_| protocol_error())?;
-        nodes = nodes
+        self.nodes = self
+            .nodes
             .checked_add(json_node_count(&event))
             .filter(|count| *count <= MAX_WEB_SEARCH_JSON_NODES)
-            .ok_or_else(|| transport_error(WebSearchTransportErrorKind::ResponseTooLarge))?;
-        state.consume(event)?;
+            .ok_or_else(response_too_large)?;
+        self.state.consume(event)?;
+        self.record.clear();
+        Ok(())
     }
 
-    if state.call_id.is_none() || state.result.is_none() || !state.finished {
-        return Err(protocol_error());
+    fn finish(
+        mut self,
+        cancellation: &CancellationToken,
+    ) -> Result<WebSearchResponse, WebSearchTransportError> {
+        check_cancelled(cancellation)?;
+        if self.pending_cr {
+            return Err(protocol_error());
+        }
+        if self.pending_line_end || !self.record.is_empty() {
+            self.pending_line_end = false;
+            self.consume_record(cancellation)?;
+        }
+        if self.state.call_id.is_none() || self.state.result.is_none() || !self.state.finished {
+            return Err(protocol_error());
+        }
+        decode_provider_result(self.state.result.expect("presence checked"))
     }
-    decode_provider_result(state.result.expect("presence checked"))
 }
 
 #[derive(Default)]
@@ -305,7 +358,6 @@ fn decode_provider_result(result: Value) -> Result<WebSearchResponse, WebSearchT
         return Err(protocol_error());
     };
     let mut sources = Vec::new();
-    let mut seen_urls = BTreeSet::new();
     let mut truncated = false;
     for value in values {
         let Value::Object(mut source) = value else {
@@ -323,7 +375,10 @@ fn decode_provider_result(result: Value) -> Result<WebSearchResponse, WebSearchT
             .and_then(|value| value.as_str().map(str::to_owned))
             .ok_or_else(protocol_error)?;
         let candidate = WebSearchSource::new(title, url)?;
-        if !seen_urls.insert(candidate.url().to_owned()) {
+        if sources
+            .iter()
+            .any(|source: &WebSearchSource| source.url() == candidate.url())
+        {
             continue;
         }
         if sources.len() < MAX_WEB_SEARCH_SOURCES {
@@ -386,6 +441,10 @@ fn map_provider_error(error: &ProviderError) -> WebSearchTransportError {
 
 fn protocol_error() -> WebSearchTransportError {
     transport_error(WebSearchTransportErrorKind::Protocol)
+}
+
+fn response_too_large() -> WebSearchTransportError {
+    transport_error(WebSearchTransportErrorKind::ResponseTooLarge)
 }
 
 fn transport_error(kind: WebSearchTransportErrorKind) -> WebSearchTransportError {

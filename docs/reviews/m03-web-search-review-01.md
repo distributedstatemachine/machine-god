@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 1 REJECTED; REMEDIATION PENDING**
+Status: **IN PROGRESS — CYCLE 1 REJECTED; REMEDIATION IN PROGRESS**
 
 ## Base and boundary
 
@@ -142,6 +142,29 @@ SSE incrementally with bounded retained state, stop post-cap dedup growth,
 redact source debug output, update maintained docs, and close the exact evidence
 matrix. The complete gate plus three fresh reviews repeat until the deduplicated
 union is `0/0/0/0`.
+
+Exact isolated lifecycle remediation component
+`096b11c4ffed7b6b4e4419940d1cd50ef40b197f` is composed in the current
+remediation. It
+drops the validated outer Gateway source before queued terminal delivery and
+threads explicit `NetworkTarget` / `WebSearchDeadline` authorities through all
+host paths. Exact isolated portability/bounds remediation component
+`ca0b990a07c7e6659c10e91f86a2aa66ed4d3182` is also composed. It
+makes portable values and traits available without HTTP/WASM gates, makes both
+public concrete-tool constructors bounded, strictly validates canonical
+targets, replaces hidden Tokio timing with a fallible injected deadline,
+incrementally frames one bounded SSE record, caps retained deduplication state,
+and redacts source debug output.
+
+Three advertised defense-in-depth ceilings cannot be reached under stricter
+public limits: 16 domains of at most 253 bytes total at most 4,048 bytes; the
+4,096-byte query plus at most 4,048 filter bytes and fixed worker projection
+remain below 16 KiB; and ten sources of 512-byte title plus 2,048-byte URL, a
+4,096-byte query, and fixed JSON overhead remain below 48 KiB. Replacement
+evidence must exercise exact/+1 for every reachable boundary and retain an
+explicit proof for these unreachable aggregate/request/output caps rather than
+claiming impossible fixtures. The complete same-SHA gate and cycle-2 reviews
+remain pending.
 
 ## Worktree lifecycle
 

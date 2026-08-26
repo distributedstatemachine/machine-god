@@ -391,6 +391,11 @@ header, cancellation, and no-replay guarantees. Web search adds separate
 smaller codec-owned request/stream/record/node/deadline/concurrency ceilings;
 the HTTP transport's own limits continue to apply independently.
 
+The ordinary outer provider drops its validated terminal response stream
+before delivering queued usage/stop events to core. Consequently the shared
+HTTP semaphore permit is returned before a resulting local `web_search` round
+starts, including when a custom transport's total capacity is one.
+
 `AiGatewayWebSearchTransport` is non-WebAssembly and available only with
 `ai-gateway-http`. The current production reference host remains Linux/macOS-
 only. It reuses the already validated configured model and credential source,
@@ -400,8 +405,12 @@ HTTP layer neither parses provider tool records nor changes the ordinary outer
 generation codec. Composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
 local gate. Formal cycle 1 rejected exact `89c5ec95`, tree `8d91a55`, including
-shared-transport starvation and decoder-allocation findings; remediation is in
-progress, so the slice is not yet review-green or delivered.
+shared-transport starvation and decoder-allocation findings. Source remediation
+from exact isolated components `096b11c4` and `ca0b990a` releases the outer
+stream at validated finish,
+incrementally retains one bounded SSE record, and injects explicit fallible
+deadline authority. Replacement evidence and fresh review remain pending, so
+the slice is not yet review-green or delivered.
 
 ## Deferred scope
 

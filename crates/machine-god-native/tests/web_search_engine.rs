@@ -19,13 +19,21 @@ use machine_god_testkit::{
 };
 use serde_json::json;
 
+mod web_search_support;
+
+use web_search_support::{never_deadline, production_gateway_target};
+
 const PRIVATE_QUERY: &str = "latest Rust release PRIVATE_QUERY_SENTINEL";
 
 fn gateway_target() -> NetworkTarget {
+    production_gateway_target()
+}
+
+fn custom_gateway_target() -> NetworkTarget {
     NetworkTarget {
         scheme: "https".to_owned(),
-        host: "ai-gateway.vercel.sh".to_owned(),
-        port: None,
+        host: "search-gateway.machine-god.dev".to_owned(),
+        port: Some(8443),
     }
 }
 
@@ -127,15 +135,10 @@ fn second_request_tool_output(provider: &ScriptedModelProvider) -> (Message, Too
     (message.clone(), output.clone())
 }
 
-fn assert_exact_capability(policy: &ScriptedPermissionHandler) {
+fn assert_exact_capability(policy: &ScriptedPermissionHandler, target: NetworkTarget) {
     let requests = policy.requests();
     assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0].capability,
-        Capability::Network {
-            target: gateway_target()
-        }
-    );
+    assert_eq!(requests[0].capability, Capability::Network { target });
 }
 
 #[test]
@@ -151,13 +154,20 @@ fn denial_requests_only_the_configured_gateway_capability_and_never_searches() {
         .provider(provider.clone())
         .session_store(store.clone())
         .permission_handler(policy.clone())
-        .tool(WebSearchTool::with_transport(gateway_target(), Arc::new(transport.clone())).unwrap())
+        .tool(
+            WebSearchTool::with_transport(
+                gateway_target(),
+                Arc::new(transport.clone()),
+                never_deadline(),
+            )
+            .unwrap(),
+        )
         .build()
         .unwrap();
 
     let (session_id, events) = collect(&engine, "web-search-denied");
 
-    assert_exact_capability(&policy);
+    assert_exact_capability(&policy, gateway_target());
     assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
     assert!(events.iter().all(|event| !matches!(
         event.payload,
@@ -186,17 +196,25 @@ fn allow_precedes_one_canonical_search_and_persists_the_bounded_tool_output() {
             scope: PermissionGrantScope::Once,
         })]);
     let transport = FakeTransport::default();
+    let target = custom_gateway_target();
     let engine = Engine::builder()
         .provider(provider.clone())
         .session_store(store.clone())
         .permission_handler(policy.clone())
-        .tool(WebSearchTool::with_transport(gateway_target(), Arc::new(transport.clone())).unwrap())
+        .tool(
+            WebSearchTool::with_transport(
+                target.clone(),
+                Arc::new(transport.clone()),
+                never_deadline(),
+            )
+            .unwrap(),
+        )
         .build()
         .unwrap();
 
     let (session_id, events) = collect(&engine, "web-search-allowed");
 
-    assert_exact_capability(&policy);
+    assert_exact_capability(&policy, target);
     let resolved = events
         .iter()
         .position(|event| matches!(event.payload, TurnEvent::PermissionResolved { .. }))
