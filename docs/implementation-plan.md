@@ -53,8 +53,12 @@ independent evidence, and documentation were owned in separate isolated
 worktrees and compose through exact behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e`, tree
 `5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
-gate is green and formal cycle 1 remains pending on the kickoff commit that
-records that evidence. This slice is not yet review-green, integrated, or
+gate is green. Formal cycle 1 rejected exact candidate
+`89c5ec95fb5353efcba34af6a44bc27d7b6027f7`, tree
+`8d91a556f786169d42406e91e8ad2f476b7c6cf4`. Correctness/API reported
+`0/1/3/2`, native effects/lifecycle `0/2/3/1`, and performance/resources
+`0/0/3/0`; deduplication yields `0/2/5/2` in blocker/high/medium/low order.
+Remediation is in progress. This slice is not yet review-green, integrated, or
 delivered; the delivered count remains thirty-two.
 
 The frozen tool is locally executed through core's existing strict tool loop.
@@ -3784,8 +3788,8 @@ workflows, integration, and exact `main` workflows. Exact reviewed candidate
 `d724b61`, tree `6439863`, is review-green; seal `b6db9a6`, tree `59dd628`,
 completed those delivery gates. With slice 32 delivered, bounded slice 33 has
 returned to the remaining native tools through the frozen `web_search`
-contract rather than expanding the CLI inspection surface. Its cycle-1 kickoff
-remains review-pending as recorded above.
+contract rather than expanding the CLI inspection surface. Its cycle-1
+remediation remains pending as recorded above.
 Every review/remediation iteration must end with committed/integrated worktrees
 verified clean and safely removed; active or uncommitted worktrees are retained.
 

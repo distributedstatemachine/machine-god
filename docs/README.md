@@ -10,8 +10,9 @@ separate bounded native codec admits its one provider-executed call/result.
 Production, independent evidence, and these docs compose through behavior
 precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
 `5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
-gate is green and formal cycle 1 is pending on the kickoff commit that records
-that evidence. The slice is not yet review-green, integrated, or delivered and
+gate is green. Formal cycle 1 rejected exact candidate `89c5ec95`, tree
+`8d91a55`, with a deduplicated `0/2/5/2` blocker/high/medium/low finding union;
+remediation is in progress. The slice is not yet review-green, integrated, or delivered and
 the delivered count remains 32. The fixed resource/platform/deferred boundary
 is the
 [`native web search contract`](web-search.md), and status is tracked in its

@@ -399,8 +399,9 @@ The dedicated provider-executed decoder sits above this byte transport; the
 HTTP layer neither parses provider tool records nor changes the ordinary outer
 generation codec. Composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
-local gate; formal cycle 1 remains pending, so the slice is not yet review-green
-or delivered.
+local gate. Formal cycle 1 rejected exact `89c5ec95`, tree `8d91a55`, including
+shared-transport starvation and decoder-allocation findings; remediation is in
+progress, so the slice is not yet review-green or delivered.
 
 ## Deferred scope
 

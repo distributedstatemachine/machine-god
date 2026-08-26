@@ -1,6 +1,6 @@
 # Milestone 03 native `web_search` review 01
 
-Status: **IN PROGRESS — CYCLE 1 KICKOFF; REVIEW PENDING**
+Status: **IN PROGRESS — CYCLE 1 REJECTED; REMEDIATION PENDING**
 
 ## Base and boundary
 
@@ -94,8 +94,10 @@ the base diff and metadata checks are clean, Cargo manifests and `Cargo.lock`
 are unchanged, and no unsafe Rust construct was added. A freshly built locked
 release CLI is 3,985,216 bytes with SHA-256
 `bd7c89147f458001cc927c19b76ac75cb09ed5dca5396efc34d3933bde62a3dc` and
-passes version/help smoke. The exact kickoff candidate must repeat the four
-required Rust commands before its formal verdict is collected.
+passes version/help smoke. Exact kickoff candidate
+`89c5ec95fb5353efcba34af6a44bc27d7b6027f7`, tree
+`8d91a556f786169d42406e91e8ad2f476b7c6cf4`, repeated all four required Rust
+commands successfully before its formal verdict was collected.
 
 The isolated documentation component passed `git diff --check`, a repository-
 relative Markdown target check over every changed page, exact-1.94.1
@@ -106,9 +108,10 @@ or delivery claim.
 
 ## Formal review cycles
 
-Formal cycle 1 is opening on the exact kickoff commit. After that immutable SHA
-repeats the four required Rust commands, three fresh isolated read-only tracks
-must review the same candidate:
+Formal cycle 1 reviewed exact candidate
+`89c5ec95fb5353efcba34af6a44bc27d7b6027f7`, tree
+`8d91a556f786169d42406e91e8ad2f476b7c6cf4`, in three fresh isolated read-only
+tracks:
 
 1. correctness, API, strict schema, result semantics, and compatibility;
 2. native network, authorization, cancellation/drop, redaction, and platform
@@ -116,9 +119,29 @@ must review the same candidate:
 3. performance, concurrency, allocation, resource ceilings, and dependency/
    target topology.
 
-Any finding rejects that exact candidate. Confirmed findings are remediated and
-the complete gate plus three fresh reviews repeat until the deduplicated union
-is `0/0/0/0` in blocker/high/medium/low order.
+Correctness/API reported `0/1/3/2`, native network/effects/lifecycle reported
+`0/2/3/1`, and performance/concurrency/resources reported `0/0/3/0`. The
+deduplicated union is `0/2/5/2` in blocker/high/medium/low order, so cycle 1 is
+rejected.
+
+The two high findings are shared-HTTP-capacity starvation when an outer
+tool-calling stream retains its permit during nested search, and authorization
+of the fixed Vercel target for an opaque custom transport that may contact a
+different endpoint. The five medium themes are the public unbounded
+constructor, misplaced native/HTTP feature gates around the target-neutral
+seam, the driverless-Tokio abort precondition, payload-proportional decoder
+copies plus post-cap dedup growth, and missing exact request/resource/
+concurrency/topology evidence. The two low themes are provider source data in
+`WebSearchSource` debug output and stale custom-host catalog documentation.
+
+Every finding is confirmed. Remediation must bind target to transport,
+strictly validate that target, release the outer source before tool execution,
+make every public tool constructor bounded, split target-neutral contracts from
+native HTTP/Tokio machinery, reject driverless runtimes without panic, frame
+SSE incrementally with bounded retained state, stop post-cap dedup growth,
+redact source debug output, update maintained docs, and close the exact evidence
+matrix. The complete gate plus three fresh reviews repeat until the deduplicated
+union is `0/0/0/0`.
 
 ## Worktree lifecycle
 

@@ -1,13 +1,15 @@
 # Adversarial reviews
 
 Current bounded slice 33, native `web_search`, is **IN PROGRESS — CYCLE 1
-KICKOFF; REVIEW PENDING** from exact delivered base `4ba9f5a`. Its frozen
+REJECTED; REMEDIATION PENDING** from exact delivered base `4ba9f5a`. Its frozen
 local-tool contract performs exact Gateway-network preflight, then at most one
 approved required Perplexity worker request through the shared transport and a
 dedicated bounded native provider-executed decoder. Composed behavior precursor
 `3d298400`, tree `5222c3e`, passed the complete exact-1.94.1 local gate. Formal
-cycle 1 is pending on the kickoff commit that records that evidence; no feature
-workflow, integration, or `main` workflow exists. The delivered count remains
+cycle 1 rejected exact `89c5ec95`, tree `8d91a55`; the three tracks reported
+`0/1/3/2`, `0/2/3/1`, and `0/0/3/0`, deduplicated to `0/2/5/2` in
+blocker/high/medium/low order. Remediation is pending; no feature workflow,
+integration, or `main` workflow exists. The delivered count remains
 32. Review scope, fixed resources, deferrals, and the per-iteration committed/
 integrated/clean worktree-removal invariant are tracked in
 [`m03-web-search-review-01.md`](m03-web-search-review-01.md). No performance or

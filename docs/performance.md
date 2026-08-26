@@ -18,8 +18,9 @@ retry, fallback, cache, page fetch, progress stream, or detached work. The
 private decoder and transport limits apply independently of core engine and
 outer `AiGatewayProvider` limits. Production and independent evidence compose
 through behavior precursor `3d2984000301e58762e0940504159aeb55b2389e`, whose
-exact-1.94.1 local gate is green. Formal cycle 1 remains pending on the kickoff
-commit that records that evidence. No latency, throughput, allocation
+exact-1.94.1 local gate is green. Formal cycle 1 rejected exact `89c5ec95`, tree
+`8d91a55`, with three performance-track medium findings and a deduplicated
+`0/2/5/2` union; remediation is in progress. No latency, throughput, allocation
 improvement, binary-size improvement, compatibility promotion, or
 fx-equivalence claim follows. The
 normative bounds are in [`web-search.md`](web-search.md) and status is in the

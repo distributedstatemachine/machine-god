@@ -30,9 +30,9 @@ ordinary AI Gateway `ModelProvider` continues to reject provider-executed
 records. This keeps provider-specific wire identity and network authority in
 `machine-god-native` while preserving core's provider-neutral local-tool
 invariants. Slice 33's exact-1.94.1 local gate is green on composed behavior
-precursor `3d2984000301e58762e0940504159aeb55b2389e`; formal review remains
-pending, so it has no review-green, delivery, performance, or fx-equivalence
-claim.
+precursor `3d2984000301e58762e0940504159aeb55b2389e`. Formal cycle 1 rejected
+exact `89c5ec95`, tree `8d91a55`, and remediation is in progress, so the slice
+has no review-green, delivery, performance, or fx-equivalence claim.
 
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};

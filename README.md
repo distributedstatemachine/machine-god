@@ -17,8 +17,10 @@ core and the ordinary outer AI Gateway provider keep their existing local-tool
 contract. Production, independent evidence, and documentation compose through
 behavior precursor `3d2984000301e58762e0940504159aeb55b2389e`, tree
 `5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
-gate is green and formal cycle 1 is pending on the kickoff commit that records
-that evidence. Slice 33 is not yet review-green, integrated, or delivered; the
+gate is green. Formal cycle 1 rejected exact candidate `89c5ec95fb5353efcba34af6a44bc27d7b6027f7`,
+tree `8d91a556f786169d42406e91e8ad2f476b7c6cf4`, with a deduplicated
+`0/2/5/2` blocker/high/medium/low finding union. Remediation is in progress.
+Slice 33 is not yet review-green, integrated, or delivered; the
 delivered count remains 32. It is unmeasured and makes no product-performance
 or fx-equivalence claim. See the [`web_search` contract](docs/web-search.md) and
 [`live review ledger`](docs/reviews/m03-web-search-review-01.md).

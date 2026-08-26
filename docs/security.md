@@ -3,8 +3,9 @@
 Bounded slice 33, native `web_search`, is **IN PROGRESS** and not yet review-
 green or delivered. Its composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
-local gate; formal cycle 1 remains pending. It remains a local authority-bearing
-tool: strict effect-free
+local gate. Formal cycle 1 rejected exact `89c5ec95`, tree `8d91a55`, and
+remediation is in progress. It remains a local authority-bearing tool: strict
+effect-free
 preflight normalizes the query and mutually exclusive DNS filters, prepares
 `Capability::Network` for the exact configured AI Gateway scheme/host/port,
 and supplies the same canonical arguments to execution. Core's existing
@@ -30,7 +31,7 @@ caps are normative in [`web-search.md`](web-search.md). The ordinary outer
 tool results, and provider-specific identity remains native rather than core.
 Production is non-WASM; current host composition is Linux/macOS-only. The
 candidate has no retry, fallback, cache, artifact, page fetch, live-provider
-test, compatibility, or performance claim. Formal review remains pending in the
+test, compatibility, or performance claim. Remediation and rereview remain in the
 [`slice-33 ledger`](reviews/m03-web-search-review-01.md).
 
 Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact
