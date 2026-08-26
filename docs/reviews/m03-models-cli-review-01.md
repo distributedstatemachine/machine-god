@@ -1,6 +1,6 @@
 # Milestone 03 `models` CLI review ledger
 
-Status: cycle-3-rejected and locally remediated bounded slice 29. Exact
+Status: cycle-3-rejected and preflight-remediated bounded slice 29. Exact
 cycle-1 candidate
 `6277aa3dc26f9c485707c667f63525a2138f316b`, tree
 `b5e2445ed90df000255b51c2c989d71965db1d77`, passed its complete local gate and
@@ -19,9 +19,16 @@ locally remediated. Exact cycle-3 behavior candidate
 `8c0d235355582d92aaed6fcca7c1862982494e20`, passed its complete replacement
 gate under exact Rust and Cargo 1.94.1. Three fresh cycle-3 reviews rejected it
 with a deduplicated union of 0 blocker, 0 high, 1 medium, and 3 low findings.
-The cycle-3 findings are locally remediated, but the complete cycle-4
-replacement gate and three fresh cycle-4 reviews remain pending. No candidate
-is review-green. The frozen behavior contract is
+The cycle-3 findings are locally remediated. A read-only preflight before the
+complete cycle-4 replacement gate found 0 blocker, 1 high, 0 medium, and 0 low
+on exact remediation `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`: Android
+catalog construction called Hickory `read_system_conf`, whose uninitialized
+`ndk_context` panic would abort the release process. The preflight was not a
+formal cycle-4 review; cycle 4 remains unsubmitted. Exact remediation
+`bd4746197736004f3a02c4c910c569444e4653e7`, tree
+`b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, is locally composed. The complete
+cycle-4 replacement gate and three fresh formal cycle-4 reviews remain pending.
+No candidate is review-green. The frozen behavior contract is
 [`models-cli.md`](../models-cli.md); work started from exact delivered base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. The pinned comparison input is fx
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -46,6 +53,7 @@ The locally composed lineage is:
 | cycle-3 gate record and maintained status | `2cecc921e48396e81ab6f434007a7ec8e3e890b5` / `8c0d235355582d92aaed6fcca7c1862982494e20` | exact replacement-gated cycle-3 behavior candidate; formal reviews rejected it |
 | stale topology and checklist documentation remediation | `f80bd0560e49306ce56093ea667aa45a22b2c6dd` / `d6d3f354fa1eca6221d482567f9128ac6f73a3bc` | cycle-3 remediation for all three low findings |
 | private bounded DNS and construction-time entropy remediation | `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d` / `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a` | cycle-3 medium remediation; focused resolver 14/14, HTTP 16/16, and manifest 4/4 green; complete cycle-4 gate pending |
+| Android fail-closed catalog DNS remediation | `bd4746197736004f3a02c4c910c569444e4653e7` / `b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3` | preflight high remediation; Android bypasses the panicking platform loader; exact focused resolver 14/14, manifest 5/5, formatting, and native Clippy green; complete cycle-4 gate pending |
 
 The first five component commits composed rejected cycle-1 candidate `6277aa3`.
 The three cycle-1 remediation commits and cycle-1 record compose rejected
@@ -58,10 +66,13 @@ replacement-gated cycle-3 behavior candidate `2cecc921`. Documentation-only
 submission seal `673773f2cf741497e39b1010e13b790af34af7f5` recorded that
 immutable candidate and is exempt from redundant adversarial review under the
 user's instruction. Cycle-3 review rejected the behavior candidate. Exact
-documentation remediation `f80bd056` and native remediation `b6cf4cb` compose
-the current cycle-4 precursor. This ledger does not claim a complete cycle-4
-gate, cycle-4 candidate, green adversarial result, feature CI, benchmark,
-integration, delivery, performance, compatibility promotion, or fx equivalence.
+documentation remediation `f80bd056` and native remediation `b6cf4cb` formed
+the first cycle-4 precursor. Read-only preflight rejected that precursor before
+its complete replacement gate; exact Android remediation `bd47461` is the
+current precursor. This ledger does not claim a complete cycle-4 gate, cycle-4
+candidate, formal cycle-4 review, green adversarial result, feature CI,
+benchmark, integration, delivery, performance, compatibility promotion, or fx
+equivalence.
 
 A local feature-topology refinement adds native
 `ai-gateway-model-catalog-http`, makes the CLI enable only that feature, and
@@ -88,17 +99,25 @@ no resolver task. Generation transport/reference-host exports remain broader-
 feature-only, while shared credential/bearer/TLS and catalog HTTP exports are
 available under either native HTTP feature.
 
-Current cycle-3-remediation-focused local evidence under exact Rust and Cargo
-1.94.1 is green: formatting, native all-target/all-feature warnings-denied
-Clippy, native all-feature tests and doctests, private resolver 14/14, loopback
-HTTP 16/16, and parsed-manifest/resolved-tree 4/4 pass. The current five-target
-resolved tree contains the intended catalog edges and excludes them on WASI.
-These focused results do not establish the complete cycle-4 replacement gate.
-The complete cycle-2 target matrix had
-previously confirmed that native default, catalog-
-only, compatibility-umbrella, and all-feature checks compile, and that native
-and CLI WASI Preview 1 checks compile with only the established native
-`read_file` dead-code warning.
+Read-only preflight found that the Android configuration branch still entered
+Hickory `read_system_conf`, whose Android loader panics without initialized
+global NDK context. Exact remediation `bd4746197736004f3a02c4c910c569444e4653e7`
+makes Android retain the existing fixed redacted unavailable state without
+calling any DNS or platform loader. Apple/Windows keep their platform snapshot
+API, and generic Unix keeps its bounded file parser.
+
+Current preflight-remediation evidence under exact Rust and Cargo 1.94.1 is
+green for formatting, native all-target/all-feature warnings-denied Clippy,
+private resolver 14/14, and parsed-manifest/resolved-tree 5/5. The current five-
+target resolved tree contains the intended catalog edges and excludes them on
+WASI. The Android standard-library target was unavailable locally, so no
+Android Rust compilation is claimed. The foreign Linux HTTP build retained the
+existing `aws-lc-sys` C-sysroot blocker before product Rust, so exact remote
+Linux CI remains authoritative. These focused results do not establish the
+complete cycle-4 replacement gate. The complete cycle-2 target matrix had
+previously confirmed that native default, catalog-only, compatibility-umbrella,
+and all-feature checks compile, and that native and CLI WASI Preview 1 checks
+compile with only the established native `read_file` dead-code warning.
 
 On rejected cycle-2 candidate `2ea9d94`, the resolved CLI package-name inventory
 drops from 137 on exact precursor
@@ -112,9 +131,10 @@ These package, size, and hash values are regression/topology evidence only,
 not a speed, memory, binary-size improvement, product-performance, or delivery
 claim. That cycle-2 replacement gate is green but its reviews rejected the
 candidate. Exact cycle-3 candidate `2cecc921` passed its replacement gate and
-its reviews rejected it. The complete cycle-4 gate, cycle-4 candidate, three
-fresh cycle-4 reviews, feature CI, integration, and exact `main` CI remain
-pending.
+its reviews rejected it. Preflight rejected the first cycle-4 precursor before
+the complete gate; it was not a formal review and cycle 4 remains unsubmitted.
+The complete cycle-4 gate, cycle-4 candidate, three fresh formal cycle-4
+reviews, feature CI, integration, and exact `main` CI remain pending.
 
 ## Exact cycle-2 replacement gate
 
@@ -507,10 +527,41 @@ its three fresh reviews. Cycle 2 remains rejected history.
    counts and deduplicated union.
 
 All cycle-3 findings are locally remediated by exact commits `f80bd056` and
-`b6cf4cb`. Their composition is only a cycle-4 precursor: the complete cycle-4
-replacement gate, immutable cycle-4 candidate, and three fresh cycle-4 reviews
-remain pending. Cycle 3 remains rejected history, and no candidate is review-
-green.
+`b6cf4cb`. Their composition was only the first cycle-4 precursor and did not
+pass the next preflight. Cycle 3 remains rejected history, and no candidate is
+review-green.
+
+## Rejected cycle-4 preflight before replacement gate
+
+A read-only preflight before the complete cycle-4 replacement gate inspected
+exact remediation `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`, tree
+`e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a`, and reported 0 blocker, 1 high,
+0 medium, and 0 low. Android catalog construction still called Hickory
+`read_system_conf`. Hickory's Android loader requires initialized global
+`ndk_context`; without it the call panics, and the release profile aborts the
+process before the fixed provider timer, cancellation, or redacted error map
+can respond.
+
+This inspection was not one of the three formal cycle-4 review tracks. The
+cycle-4 row in the candidate register therefore remains **NOT SUBMITTED**, and
+the preflight counts do not replace or alter the preserved formal cycle-3
+counts.
+
+Exact remediation `bd4746197736004f3a02c4c910c569444e4653e7`, tree
+`b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, gives Android a separate
+fail-closed branch that returns the existing fixed redacted unavailable result
+without a DNS or platform-loader call. Apple and Windows retain Hickory's
+platform snapshot API; generic Unix retains its bounded configuration-file
+path and parser. Exact Rust and Cargo 1.94.1 focused checks are green for
+private resolver 14/14, parsed manifest 5/5, formatting, and native all-target/
+all-feature warnings-denied Clippy. The Android standard-library target was
+unavailable locally, so no Android compile result is claimed. Foreign Linux
+HTTP compilation retained the existing `aws-lc-sys` C-sysroot blocker before
+product Rust, so exact remote Linux CI remains authoritative.
+
+The current SHA is still only a pre-gate remediation precursor. The complete
+cycle-4 replacement gate, immutable cycle-4 candidate, and three fresh formal
+cycle-4 reviews remain pending.
 
 ## Remote and integration boundary
 

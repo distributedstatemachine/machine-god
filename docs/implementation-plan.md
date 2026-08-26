@@ -175,9 +175,22 @@ below. Exact documentation remediation
 native remediation `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`, tree
 `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a`, replaces request-polled Hickory
 network resolution with custom bounded DNS and construction-time fallible
-query-ID entropy. The complete cycle-4 replacement gate and three fresh cycle-4
-reviews remain pending. No candidate is review-green, and no product-
-performance, compatibility-promotion, or fx-equivalence claim is made.
+query-ID entropy. A read-only preflight before the complete cycle-4 gate then
+found 0 blocker, 1 high, 0 medium, and 0 low on that exact remediation: Android
+catalog construction still called Hickory `read_system_conf`, whose
+uninitialized `ndk_context` panic would abort the release process. This was not
+a formal cycle-4 review, and cycle 4 remains unsubmitted. Exact remediation
+`bd4746197736004f3a02c4c910c569444e4653e7`, tree
+`b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, makes Android fail closed through
+the existing redacted unavailable result without calling a DNS or platform
+loader; Apple/Windows and generic-Unix loading are unchanged. Focused exact-
+toolchain checks are green for private resolver 14/14, manifest 5/5,
+formatting, and warnings-denied native Clippy. The Android standard-library
+target was unavailable locally, and the foreign Linux HTTP build retained its
+existing `aws-lc-sys` C-sysroot blocker before product Rust. The complete
+cycle-4 replacement gate and three fresh formal cycle-4 reviews remain pending.
+No candidate is review-green, and no product-performance, compatibility-
+promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2926,10 +2939,22 @@ status passages. Native remediation
 `b6cf4cbc01ba2470b7aef77b96d5793ad95f6b0d`, tree
 `e72f7dd6b4f3306faee5d0d3fc8483c63f4fd24a`, eliminates Hickory's lazy
 request-poll RNG path through private bounded DNS and fallible construction-
-time entropy. The complete cycle-4 replacement gate, fresh cycle-4 review,
-exact feature workflows, fast-forward integration, and exact `main` workflows
-remain pending; no candidate is review-green and this makes no product-
-performance claim.
+time entropy. A read-only preflight before the complete cycle-4 gate found
+0 blocker, 1 high, 0 medium, and 0 low on that exact remediation. Android
+catalog construction could still invoke Hickory `read_system_conf`; without an
+initialized `ndk_context`, that loader panics and the release profile aborts.
+This was not a formal cycle-4 review, so cycle 4 remains unsubmitted. Exact
+remediation `bd4746197736004f3a02c4c910c569444e4653e7`, tree
+`b8d8bb1ebda0c78a7f4ba353fbe2cc03d83f64f3`, makes Android catalog DNS fail
+closed and redacted without a DNS or platform-loader call while leaving Apple/
+Windows and generic-Unix loading unchanged. Exact focused resolver 14/14,
+manifest 5/5, formatting, and warnings-denied native Clippy checks are green.
+The Android standard-library target was unavailable locally, and foreign Linux
+HTTP compilation retained the existing `aws-lc-sys` C-sysroot blocker before
+product Rust. The complete cycle-4 replacement gate, three fresh formal cycle-4
+reviews, exact feature workflows, fast-forward integration, and exact `main`
+workflows remain pending; no candidate is review-green and this makes no
+product-performance claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -3945,10 +3970,20 @@ gate:
   passed the complete replacement gate, but formal cycle-3 review rejected that
   SHA with a deduplicated union of 0 blocker, 0 high, 1 medium, and 3 low
   findings. Exact documentation remediation `f80bd056`, tree `d6d3f35`, and
-  custom bounded-DNS remediation `b6cf4cb`, tree `e72f7dd`, are composed. This
-  combined item remains unchecked while the complete cycle-4 replacement gate,
-  three fresh cycle-4 review tracks, feature workflows, non-force fast-forward,
-  and exact `main` gates are pending.
+  custom bounded-DNS remediation `b6cf4cb`, tree `e72f7dd`, are composed. A
+  read-only preflight before the complete cycle-4 gate found 0 blocker, 1 high,
+  0 medium, and 0 low on `b6cf4cb`: Android's Hickory system loader can panic
+  without initialized NDK context and abort the release process. This was not a
+  formal cycle-4 review; cycle 4 remains unsubmitted. Exact remediation
+  `bd4746197736004f3a02c4c910c569444e4653e7`, tree `b8d8bb1`, makes Android
+  fail closed and redacted without DNS/platform-loader access while leaving
+  Apple/Windows and generic Unix unchanged. Focused exact resolver 14/14,
+  manifest 5/5, formatting, and warnings-denied native Clippy checks are green;
+  the Android standard-library target was unavailable locally and foreign
+  Linux HTTP compilation retained the existing `aws-lc-sys` C-sysroot blocker
+  before product Rust. This combined item remains unchecked while the complete
+  cycle-4 replacement gate, three fresh formal cycle-4 review tracks, feature
+  workflows, non-force fast-forward, and exact `main` gates are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass
