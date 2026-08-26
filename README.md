@@ -42,9 +42,13 @@ is integrated at exact `aa60db15d016cf97674459a4af66318a18b762ac`, tree
 `278fa365e24504452f8d111a7b08bc49e2aed164`. Exact cycle-5 behavior candidate
 `27c75f4365af92759686402574d310ada596a923`, tree
 `5e40b24259d76196d573f752258c9a764b53f990`, passed the complete exact-1.94.1
-replacement gate without fallback and is submitted to three fresh formal
-cycle-5 reviews. Their results remain pending. This is not a green or delivered
-slice.
+replacement gate without fallback. Three fresh formal cycle-5 correctness/API/
+compatibility, lifecycle/network/portability, and performance/concurrency/
+resources reviews each reported 0 blocker, 0 high, 0 medium, and 0 low
+findings. The deduplicated union is zero, so the behavior candidate is formally
+**GREEN**. Exact feature-SHA CI and benchmark evidence, non-force fast-forward
+integration, and exact `main` workflows remain pending; the slice is not yet
+CI-green, integrated, or delivered.
 The CLI selects a dedicated `ai-gateway-model-catalog-http` feature that omits
 `web-fetch-http`,
 generation-only direct `bytes`, and Tokio's signal backend. It now includes a

@@ -129,17 +129,20 @@ performance or fx-equivalence claim. The final delivery-record commit is
 documentation-only and review-exempt; its own exact feature and `main`
 workflows will be reported at handoff rather than claimed here.
 The twenty-ninth bounded slice is contract-frozen, locally implemented, and
-**SUBMITTED** to formal cycle 5; it is not review-green, integrated to `main`,
-or delivered. Its cycle-4 raw overlap-deduplicated union was 0 blocker, 0 high,
-1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
+formally **REVIEW-GREEN** in cycle 5; it is not yet CI-green, integrated to
+`main`, or delivered. Its cycle-4 raw overlap-deduplicated union was 0 blocker,
+0 high, 1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
 1 medium, and 1 low remained unresolved at verdict collection. Topology
 documentation remediation is exact `268d35a`; signal/output-lifecycle
 remediation is integrated at exact `aa60db15d016cf97674459a4af66318a18b762ac`,
 tree `278fa365e24504452f8d111a7b08bc49e2aed164`. Exact cycle-5 candidate
 `27c75f4365af92759686402574d310ada596a923`, tree
 `5e40b24259d76196d573f752258c9a764b53f990`, passed the complete replacement
-gate under exact Rust and Cargo 1.94.1 without fallback and is submitted to
-three fresh formal cycle-5 reviews. Their results remain pending.
+gate under exact Rust and Cargo 1.94.1 without fallback. Three fresh formal
+cycle-5 reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings;
+the deduplicated union is zero. Exact feature-SHA CI and benchmark evidence,
+non-force fast-forward integration, exact `main` workflows, and delivery remain
+pending.
 Its
 exact top-level `models [--json]` boundary is
 [`models-cli.md`](models-cli.md), and its review ledger is
@@ -207,10 +210,12 @@ it. Its raw overlap-deduplicated union was 0 blocker, 0 high, 1 medium, and
 remained unresolved at verdict collection. Exact topology documentation fix
 `268d35a` and signal/output-lifecycle remediation `aa60db1`, tree `278fa365`,
 are integrated. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
-complete exact-1.94.1 replacement gate without fallback and is submitted to
-three fresh formal reviews. Their results remain pending. No candidate is
-review-green, and no product-performance, size-improvement, compatibility-
-promotion, or fx-equivalence claim is made.
+complete exact-1.94.1 replacement gate without fallback. Three fresh formal
+reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
+deduplicated union is zero and the behavior candidate is **GREEN**. Exact
+feature-SHA workflows, non-force integration, exact `main` workflows, and
+delivery remain pending. No product-performance, size-improvement,
+compatibility-promotion, or fx-equivalence claim is made.
 The retained
 `web_fetch` review lineage begins with pre-review
 gate record
@@ -2891,7 +2896,7 @@ performance, compatibility-promotion, or fx-equivalence claim. The final
 delivery-record commit is documentation-only and review-exempt; its own exact
 feature and `main` workflows will be reported at handoff rather than claimed here.
 
-### Cycle-5-submitted bounded slice 29: top-level `models`
+### Review-green bounded slice 29: top-level `models`
 
 The twenty-ninth slice adds only `models [--json]` from exact base
 `1de3b7eddf6a4d9046d48098defecf6bfa336442`. Its normative behavior and output
@@ -3030,11 +3035,24 @@ gate under exact Rust and Cargo 1.94.1 without fallback:
   signal regressions. The live public catalog returned 228 models without a
   configuration or state write.
 
-The exact candidate is **SUBMITTED** to three fresh formal cycle-5 reviews.
-Their results, exact feature workflows, fast-forward integration, and exact
-`main` workflows remain pending; no candidate is review-green. These checks
-make no product-performance, speed, latency, memory, binary-size-improvement,
-catalog-equivalence, or fx-equivalence claim.
+Three fresh formal cycle-5 reviews bound that exact candidate and each reported
+0 blocker, 0 high, 0 medium, and 0 low findings:
+
+- correctness/API/compatibility exercised 90 focused checks, doctests, release-
+  binary behavior, WASI, and pinned-fx regeneration evidence;
+- lifecycle/network/portability exercised private DNS 14/14, loopback HTTP
+  16/16, all three signal regressions in debug and release, WASI, and FreeBSD;
+  and
+- performance/concurrency/resources exercised CLI unit 22/22, provider/parser
+  17/17, loopback HTTP 16/16, private DNS 14/14, manifest/resolved-tree 5/5,
+  and the bounded signal tests.
+
+The deduplicated union is zero, so exact candidate `27c75f4`, tree `5e40b24`,
+is formally **GREEN**. Exact feature workflows, fast-forward integration, and
+exact `main` workflows remain pending; the slice is not yet CI-green,
+integrated, or delivered. These checks make no product-performance, speed,
+latency, memory, binary-size-improvement, catalog-equivalence, or fx-equivalence
+claim.
 
 Parsing is strict and completes before effects. Repeated `--json`, every extra
 or unknown argument, and non-Unicode input fail at exit 2. A valid command loads
@@ -3101,7 +3119,7 @@ workflows. Benchmark evidence is delivery evidence only.
 
 ### Milestone 03 completion boundary
 
-The twenty-eight delivered slices and locally implemented, cycle-5-submitted
+The twenty-eight delivered slices and locally implemented, cycle-5 review-green
 twenty-ninth slice do not complete Milestone 03.
 The following checklist is the frozen M03 boundary; changing ownership requires
 an explicit plan change in a reviewed commit rather than silently deferring a
@@ -4075,9 +4093,12 @@ gate:
   complete exact-1.94.1 replacement gate with focused 6/17/6/16/14/22/23/5,
   976 non-doc Rust tests, two doctests, Python 135, pinned-fx and docs integrity,
   dependency/audit, target-matrix, protected-input, release-binary, and signal-
-  regression evidence green. It is submitted to three fresh formal cycle-5
-  reviews. This combined item remains unchecked while those results, feature
-  workflows, non-force fast-forward, and exact `main` gates are pending.
+  regression evidence green. Three fresh formal cycle-5 correctness/API/
+  compatibility, lifecycle/network/portability, and performance/concurrency/
+  resources reviews each reported 0 blocker, 0 high, 0 medium, and 0 low
+  findings; the deduplicated union is zero. This combined item remains unchecked
+  while feature workflows, non-force fast-forward, exact `main` gates, and the
+  rest of the M03 CLI inventory are pending.
 - [ ] Retain deterministic end-to-end evidence for the composed host with fake
   provider/prompt/network boundaries, exercise user-visible behavior through a
   freshly built release binary, resolve three fresh adversarial reviews, pass

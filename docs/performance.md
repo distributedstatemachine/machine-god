@@ -35,10 +35,11 @@ replacement gate. The raw overlap-deduplicated union was 0 blocker, 0 high,
 documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
 integrated at exact `aa60db1`, tree `278fa365`. Exact cycle-5 candidate
 `27c75f4`, tree `5e40b24`, passed the complete exact-1.94.1 replacement gate
-without fallback and is submitted to three fresh formal reviews. Their results,
-exact-SHA workflow artifacts, and a later claim-eligible M07 comparison remain
-required before any speed, latency, memory, size-improvement, or fx-equivalence
-statement.
+without fallback. Three fresh formal reviews each reported 0 blocker, 0 high,
+0 medium, and 0 low findings; the deduplicated union is zero and the behavior
+candidate is **GREEN**. Exact feature-SHA workflow artifacts and a later claim-
+eligible M07 comparison remain required before any speed, latency, memory,
+size-improvement, or fx-equivalence statement.
 
 The CLI now selects the dedicated `ai-gateway-model-catalog-http` feature
 rather than the broader `ai-gateway-http` feature. Resolved topology evidence

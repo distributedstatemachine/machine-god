@@ -56,10 +56,13 @@ dispositions, 0 blocker, 0 high, 1 medium, and 1 low remained unresolved at
 verdict collection. Topology documentation is fixed at `268d35a`; the signal/
 output-lifecycle remediation is integrated at exact `aa60db1`, tree
 `278fa365`. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
-complete exact-1.94.1 replacement gate without fallback and is submitted to
-three fresh formal reviews, as recorded in
+complete exact-1.94.1 replacement gate without fallback. Three fresh formal
+reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings, so their
+deduplicated union is zero and the behavior candidate is **GREEN**, as recorded
+in
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
-Their results remain pending.
+Exact feature-SHA workflows, non-force integration, exact `main` workflows, and
+delivery remain pending.
 
 ```text
 machine-god-cli

@@ -127,9 +127,11 @@ rejected exact candidate `57d2ac2`, tree `d30bb656`, after its complete exact-
 documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
 integrated at exact `aa60db1`, tree `278fa365`, without expanding core
 authority. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
-complete exact-1.94.1 replacement gate without fallback and is submitted to
-three fresh formal reviews. Their results and integration/delivery remain
-pending. See [`models-cli.md`](models-cli.md).
+complete exact-1.94.1 replacement gate without fallback. Three fresh formal
+reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
+deduplicated union is zero and the behavior candidate is **GREEN**. Exact
+feature-SHA workflows, non-force integration, exact `main` workflows, and
+delivery remain pending. See [`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 

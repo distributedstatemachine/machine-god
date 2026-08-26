@@ -66,10 +66,12 @@ unresolved at verdict collection. Topology documentation is fixed at `268d35a`,
 and signal/output-lifecycle remediation is integrated at exact `aa60db1`, tree
 `278fa365`, without changing configuration behavior. Exact cycle-5 candidate
 `27c75f4`, tree `5e40b24`, passed the complete exact-1.94.1 replacement gate
-without fallback and is submitted to three fresh formal reviews. Their results,
-integration, and delivery remain pending.
-The historical configuration green status above does not make this new
-composition green.
+without fallback. Three fresh formal reviews each reported 0 blocker, 0 high,
+0 medium, and 0 low findings; their deduplicated union is zero and the behavior
+candidate is **GREEN**. Exact feature-SHA workflows, non-force integration,
+exact `main` workflows, and delivery remain pending.
+This catalog review result does not change the separate delivered configuration
+behavior.
 
 This configuration slice advances the built-in and current file
 schema to v3 while retaining strict read compatibility for the exact legacy v1

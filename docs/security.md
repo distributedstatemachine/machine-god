@@ -40,9 +40,10 @@ complete exact-1.94.1 replacement gate. The raw overlap-deduplicated union was
 collection. Topology documentation is fixed at `268d35a`; signal/output-
 lifecycle remediation is integrated at exact `aa60db1`, tree `278fa365`. Exact
 cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the complete exact-1.94.1
-replacement gate without fallback and is submitted to three fresh formal
-reviews. Their results, integration, and delivery remain pending; no candidate
-is review-green. The ledger is
+replacement gate without fallback. Three fresh formal reviews each reported
+0 blocker, 0 high, 0 medium, and 0 low findings; the deduplicated union is zero
+and the behavior candidate is **GREEN**. Exact feature-SHA workflows, non-force
+integration, exact `main` workflows, and delivery remain pending. The ledger is
 [`m03-models-cli-review-01.md`](reviews/m03-models-cli-review-01.md).
 
 Catalog HTTP now has a dedicated non-WASM
