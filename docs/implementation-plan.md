@@ -67,9 +67,12 @@ projection but requires a specialized one-pass summary operation rather than
 `FileSessionStore::load` or a full `SessionRecord`. It uses at most 4 KiB per
 read, fixed-stack known-token scratch, canonical `serde_json::Number`
 semantics, payload-sized ownership only for the two returned IDs, and a fixed-
-digest strictly 65,536-node-capped duplicate tracker that grows entries and
+digest duplicate tracker capped at 65,536 entries that grows entries and
 buckets fallibly in proportion to unique keys and reproduces ordinary last-
-value-wins metadata/nested-JSON semantics. The ordinary store schema is
+value-wins metadata/nested-JSON semantics. Aggregate final decoded-tree logical-
+node accounting is separately capped at 65,536; shadowed duplicate values may
+increase parse work beyond that logical-node count, but the 8,651,165-byte file
+ceiling bounds total parse work. The ordinary store schema is
 object-only for its envelope, record, message, tool-call, and tool-output
 structs and string-only for role; ordinary loading/listing and streamed
 inspection reject the six noncanonical sequence/map forms consistently while
@@ -163,9 +166,18 @@ cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
 and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
 is solely that the candidate described its own committed remediation as
-pending. There is no additional production, API, native, or performance finding.
-Fresh cycle-7 reviews, remote workflows, `main` integration, and delivery
-remain pending.
+pending. There was no additional production, API, native, or performance
+finding. Formal cycle 7 rejected exact candidate
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`. Correctness/API and native effects
+each reported `0/0/0/0`; performance/resources reported `0/0/0/1`, producing a
+deduplicated `0/0/0/1` union. The sole low is imprecise resource wording:
+shadowed duplicate values may parse more nodes than survive in the final tree.
+The 65,536 caps apply separately to tracker entries and aggregate final decoded-
+tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
+total parse work. Production and resources were otherwise green. The current
+cycle-8 candidate contains this wording correction. Only formal cycle-8 review,
+remote workflows, `main` integration, and delivery are pending.
 Pinned fx has broader
 `last`, `--id`, history, workspace, resume, migration, and recovery semantics,
 so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
@@ -3538,10 +3550,13 @@ inspect the exact current-schema record in one forward pass through a fixed
 4 KiB input buffer without calling `FileSessionStore::load` or constructing a
 full `SessionRecord`. Known tokens use fixed-stack scratch; only the two
 returned IDs retain payload-sized strings. Canonical `serde_json::Number`
-parsing and a fixed-digest strictly node-capped duplicate tracker must match
+parsing and a fixed-digest entry-capped duplicate tracker must match
 ordinary last-value-wins metadata/nested-JSON semantics. Tracker entries and
-buckets must grow fallibly in proportion to unique keys under the unchanged
-65,536 ceiling. The ordinary-store schema is object-only for its envelope,
+buckets must grow fallibly in proportion to unique keys and are capped at
+65,536. Aggregate final decoded-tree logical-node accounting is separately
+capped at 65,536. Shadowed duplicate values may increase total parse work beyond
+that logical-node count, but the 8,651,165-byte file ceiling bounds that work.
+The ordinary-store schema is object-only for its envelope,
 record, message, tool-call, and tool-output structs and string-only for role;
 ordinary loading/listing and streamed inspection must reject all six
 noncanonical sequence/map forms consistently while the canonical writer stays
@@ -3683,9 +3698,15 @@ green. Cross-document status remediation is composed in exact cycle-6 candidate
 `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
 and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
-is solely the self-pending remediation wording. There is no additional
-production, API, native, or performance finding. Fresh cycle-7 review, remote
-workflows, `main` integration, and delivery remain pending.
+is solely the self-pending remediation wording. There was no additional
+production, API, native, or performance finding. Formal cycle 7 rejected exact
+candidate `399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
+deduplicated union is `0/0/0/1`. The sole low corrects the node/work-cap wording;
+production and resources were otherwise green. The current cycle-8 candidate
+contains this wording correction. Only formal cycle-8 review, remote workflows,
+`main` integration, and delivery are pending.
 
 Only a deduplicated `0/0/0/0` exact SHA may proceed through feature
 workflows, a non-force fast-forward, and exact `main` workflows. There is no
@@ -4666,8 +4687,9 @@ gate:
   themes plus duplicate-key and stale-docs low themes. The synchronized
   replacement requires one-pass fixed-4-KiB streaming, canonical
   `serde_json::Number` semantics, fixed-stack known tokens, only two retained
-  ID strings, and a fixed-digest strictly node-capped last-value-wins duplicate
-  tracker. Exact remediation source `f4dbe3d`, tree `86971ac`, passed the
+  ID strings, and a fixed-digest 65,536-entry-capped last-value-wins duplicate
+  tracker with separate 65,536 final decoded-tree logical-node accounting.
+  Exact remediation source `f4dbe3d`, tree `86971ac`, passed the
   complete required exact-1.94.1 local gate without fallback. Focused 56 CLI
   unit, 54 CLI process, and 21 native tests; Python 135/8 skips; byte-stable
   pinned fx; WASI/FreeBSD; docs 85/147/626/81; no-delta; and the 4,001,760-byte
@@ -4693,7 +4715,7 @@ gate:
   8.9 MB even for an empty record. The replacement contract makes the five
   structs object-only and role string-only, keeps the canonical writer
   unchanged, grows fixed-fingerprint entries/buckets fallibly with unique keys
-  under the unchanged 65,536 ceiling, and requires small-record high-water plus
+  under a 65,536-entry ceiling, and requires small-record high-water plus
   equal-structure long/short-value allocation evidence. Exact remediation
   `1f96c4b`, tree `b320f55`, passed the complete exact-1.94.1 local gate without
   fallback. Focused 24 native and 64 CLI process tests with 16 differentials,
@@ -4714,8 +4736,16 @@ gate:
   `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
   and performance/resources each reported `0/0/0/1`; the deduplicated
   `0/0/0/1` is solely the self-pending remediation wording. No additional
-  production, API, native, or performance finding exists. Fresh cycle-7 reviews,
-  remote workflows, `main` integration, and delivery remain pending.
+  production, API, native, or performance finding exists. Formal cycle 7
+  rejected exact candidate `399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+  `d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+  each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`,
+  deduplicated to `0/0/0/1`. The sole low corrects node/work-cap wording:
+  tracker entries and aggregate final decoded-tree logical nodes have separate
+  65,536 caps, while the 8,651,165-byte file ceiling bounds total parse work,
+  including shadowed values. Production/resources were otherwise green. The
+  current cycle-8 candidate contains this wording correction. Only formal
+  cycle-8 review, remote workflows, `main` integration, and delivery are pending.
   It remains limited to six structural fields and makes no compatibility or
   performance claim. After its delivery, bounded work returns to the remaining
   native tools rather than further CLI inspection.

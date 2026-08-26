@@ -7,9 +7,9 @@ the wire-form mismatch plus eager approximately 8.9 MB tracker allocation.
 Exact remediation `1f96c4bf`, tree `b320f552`, makes `StoredEnvelope`,
 `StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
 object-only and `Role` string-only, preserves canonical writer bytes, and grows
-fixed-fingerprint tracker entries/buckets fallibly with unique keys under the
-65,536-node ceiling. Exact gate-record candidate `8f533cde`, tree `8215fb94`,
-passed the complete exact-1.94.1 local gate without fallback: focused 24
+fixed-fingerprint tracker entries/buckets fallibly with unique keys, with at
+most 65,536 tracker entries. Exact gate-record candidate `8f533cde`, tree
+`8215fb94`, passed the complete exact-1.94.1 local gate without fallback: focused 24
 native/64 CLI process/16 differential, Python 135/8 skips, byte-stable pinned
 fx `b1774fb`, WASI/FreeBSD with only the established `read_file` warning, docs
 85/147/626/81, `cargo-deny` 0.20.2 with three established duplicate warnings,
@@ -32,10 +32,19 @@ cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
 correctness/API, native effects, and performance/resources each reported
 `0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
-committed remediation as pending. There is no additional production, API,
-native, or performance finding. Three fresh cycle-7 reviews, remote
-workflows, `main` integration, and delivery remain pending. The slice remains
-non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
+committed remediation as pending. There was no additional production, API,
+native, or performance finding. Formal cycle 7 rejected exact
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
+deduplicated union is `0/0/0/1`. The sole low corrects resource wording:
+shadowed duplicate values may parse more nodes than survive in the final tree.
+The 65,536 caps apply separately to tracker entries and aggregate final decoded-
+tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
+total parse work. Production and resource behavior were otherwise green. The
+current cycle-8 candidate contains this wording correction. Only formal cycle-8
+review, remote workflows, `main` integration, and delivery are pending. The
+slice remains non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
 equivalence claim is made. See the
 [`live ledger`](reviews/m03-session-cli-review-01.md).
 
@@ -78,10 +87,13 @@ only an existing validated machine-god hierarchy, and must inspect exactly one
 validated current-schema record through the synchronized one-pass fixed-4-KiB
 summary parser. Canonical `serde_json::Number` semantics, fixed-stack known
 tokens, only two retained ID strings, object-only stored structs, string-only
-roles, and a fixed-digest strictly node-capped last-value-wins duplicate
-tracker are required. Tracker entries and buckets grow fallibly with unique
-keys rather than eagerly reserving the ceiling. While parsing values that may
-later be shadowed, the parser must also reproduce `serde_json`'s typed-parent-
+roles, and a fixed-digest 65,536-entry-capped last-value-wins duplicate tracker
+are required. Aggregate final decoded-tree logical-node accounting is separately
+capped at 65,536. Tracker entries and buckets grow fallibly with unique keys
+rather than eagerly reserving the entry ceiling. Shadowed values can increase
+total parse work beyond the final-tree logical-node count, but the 8,651,165-
+byte file ceiling bounds that work. While parsing values that may later be
+shadowed, the parser must also reproduce `serde_json`'s typed-parent-
 aware active-container limit before applying the store's final-tree depth and
 node limits. The CLI receives only bounded
 structural fields; message bodies, tool content, reasoning, metadata keys, and

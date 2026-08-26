@@ -7,8 +7,8 @@ the wire-form mismatch plus eager approximately 8.9 MB tracker allocation.
 Exact remediation `1f96c4bf`, tree `b320f552`, makes `StoredEnvelope`,
 `StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
 object-only and `Role` string-only, keeps the canonical writer unchanged, and
-grows fixed-fingerprint tracker storage fallibly with unique keys under the
-65,536-node ceiling. Exact gate-record candidate `8f533cde`, tree `8215fb94`,
+grows fixed-fingerprint tracker storage fallibly with unique keys, with at most
+65,536 tracker entries. Exact gate-record candidate `8f533cde`, tree `8215fb94`,
 passed the complete exact-1.94.1 local gate without fallback: focused 24
 native/64 CLI process/16 differential, Python 135/8 skips, byte-stable pinned
 fx `b1774fb`, WASI/FreeBSD with only the established `read_file` warning, docs
@@ -32,17 +32,27 @@ cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
 correctness/API, native effects, and performance/resources each reported
 `0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
-committed remediation as pending. There is no additional production, API,
-native, or performance finding. Three fresh cycle-7 reviews remain pending,
-as do remote workflows, `main` integration, and delivery. The slice
-remains non-equivalent, unmeasured, and claim-ineligible; no product-
+committed remediation as pending. There was no additional production, API,
+native, or performance finding. Formal cycle 7 rejected exact
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
+deduplicated union is `0/0/0/1`. The sole low corrects resource wording:
+shadowed duplicate values may parse more nodes than survive in the final tree.
+The 65,536 caps apply separately to tracker entries and aggregate final decoded-
+tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
+total parse work. Production and resource behavior were otherwise green. The
+current cycle-8 candidate contains this wording correction. Only formal cycle-8
+review, remote workflows, `main` integration, and delivery are pending. The
+slice remains non-equivalent, unmeasured, and claim-ineligible; no product-
 performance or fx-equivalence claim is made.
 
 - [`m03-session-cli-review-01.md`](m03-session-cli-review-01.md) tracks the
   in-progress bounded slice-32 `session <id> [--json]` composition from exact
   delivered base `6e687b6`. It retains the full rejected cycle-4, remediated
-  gate-record, rejected cycle-5 evidence, and composed/rejected cycle-6 status
-  summarized above. Three fresh cycle-7 reviews remain pending.
+  gate-record, rejected cycle-5 and cycle-6 evidence, and rejected cycle-7
+  status summarized above. The current cycle-8 candidate contains the wording
+  correction; only its formal review and delivery gates remain pending.
   Historical initial composition was `852fec7`, focused remediation advanced
   through precursor `c0c16a7`, and gate precursor `fa099f7`, tree `64d6a72`,
   passed its local and supplemental gates before formal cycle-1 review.

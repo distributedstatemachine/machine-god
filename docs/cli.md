@@ -7,9 +7,9 @@ the wire-form mismatch plus eager approximately 8.9 MB tracker allocation.
 Exact remediation `1f96c4bf`, tree `b320f552`, makes `StoredEnvelope`,
 `StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
 object-only and `Role` string-only, preserves the canonical writer, and grows
-fixed-fingerprint tracker storage fallibly with unique keys under the 65,536-
-node ceiling. Exact gate-record candidate `8f533cde`, tree `8215fb94`, passed
-the complete exact-1.94.1 local gate without fallback. Focused 24 native/64 CLI
+fixed-fingerprint tracker storage fallibly with unique keys, with at most
+65,536 tracker entries. Exact gate-record candidate `8f533cde`, tree `8215fb94`,
+passed the complete exact-1.94.1 local gate without fallback. Focused 24 native/64 CLI
 process/16 differential, Python 135/8 skips, byte-stable pinned fx `b1774fb`,
 WASI/FreeBSD with only the established `read_file` warning, docs 85/147/626/81,
 `cargo-deny` 0.20.2 with three established duplicate warnings, `cargo-audit`
@@ -32,10 +32,19 @@ cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
 correctness/API, native effects, and performance/resources each reported
 `0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
-committed remediation as pending. There is no additional production, API,
-native, or performance finding. Three fresh cycle-7 reviews, remote
-workflows, `main` integration, and delivery remain pending. The slice remains
-non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
+committed remediation as pending. There was no additional production, API,
+native, or performance finding. Formal cycle 7 rejected exact
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
+deduplicated union is `0/0/0/1`. The sole low corrects resource wording:
+shadowed duplicate values may parse more nodes than survive in the final tree.
+The 65,536 caps apply separately to tracker entries and aggregate final decoded-
+tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
+total parse work. Production and resource behavior were otherwise green. The
+current cycle-8 candidate contains this wording correction. Only formal cycle-8
+review, remote workflows, `main` integration, and delivery are pending. The
+slice remains non-equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
 equivalence claim is made. See the
 [`live ledger`](reviews/m03-session-cli-review-01.md).
 
@@ -61,8 +70,9 @@ gate but is rejected. The three track counts are `0/0/1/2`, `0/0/1/2`, and
 themes plus duplicate-key and stale-documentation low themes. The synchronized
 native replacement uses one-pass fixed-4-KiB streaming, canonical
 `serde_json::Number` semantics, fixed-stack known tokens, two retained ID
-strings, and a fixed-digest strictly node-capped last-value-wins duplicate
-tracker. Cycle-2 replacement source was composed at exact
+strings, and a fixed-digest 65,536-entry-capped last-value-wins duplicate
+tracker with a separate 65,536 final decoded-tree logical-node cap. Cycle-2
+replacement source was composed at exact
 `f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
 `86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
 exact-1.94.1 local gate without fallback. Focused evidence is 56 CLI unit, 54

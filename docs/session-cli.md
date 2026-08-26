@@ -53,9 +53,19 @@ remediation is composed in exact cycle-6 candidate
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
 and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
 is solely that the candidate's pages described their own committed remediation
-as pending. There was no additional production, API, native, or performance finding.
-Fresh cycle-7 reviews, remote workflows, `main` integration, and delivery
-remain pending; this is not a review-green or delivered claim.
+as pending. There was no additional production, API, native, or performance
+finding. Formal cycle 7 rejected exact
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
+deduplicated union is `0/0/0/1`. The sole low corrects resource wording:
+shadowed duplicate values may parse more nodes than survive in the final tree.
+The 65,536 caps apply separately to tracker entries and aggregate final decoded-
+tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
+total parse work. Production and resource behavior were otherwise green. The
+current cycle-8 candidate contains this wording correction. Only formal cycle-8
+review, remote workflows, `main` integration, and delivery are pending; this is
+not a review-green or delivered claim.
 No compatibility or performance claim exists. The live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
@@ -191,11 +201,14 @@ message/metadata structural validation remain authoritative. Known field,
 variant, and role tokens are recognized with fixed-stack scratch space. Only
 the returned session and incarnation ID strings are retained as payload-sized
 owned strings. Metadata and nested JSON object keys are represented during the
-pass by fixed-size digests in a strictly node-capped tracker. Its entries and
+pass by fixed-size digests in an entry-capped tracker. Its entries and
 buckets grow fallibly in proportion to unique keys actually encountered rather
-than reserving the complete 65,536-node capacity for every inspection; repeated
+than reserving the complete 65,536-entry capacity for every inspection; repeated
 keys replace the prior logical value and node contribution so the result matches
-ordinary last-value-wins deserialization. No transcript string, metadata key,
+ordinary last-value-wins deserialization. Tracker entries and aggregate final
+decoded-tree logical nodes are separately capped at 65,536. Shadowed duplicate
+values can increase total parse work beyond that logical-node count, but the
+8,651,165-byte record cap bounds that work. No transcript string, metadata key,
 or arbitrary JSON scalar is retained after validation. Before those final-tree
 limits, parsing also reproduces `serde_json` 1.0.151's 127 simultaneously
 active container budget, including three typed parents for metadata, six for a

@@ -42,9 +42,19 @@ document status remediation is composed in exact cycle-6 candidate
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
 and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
 is solely that the candidate's pages described their own committed remediation
-as pending. There was no additional production, API, native, or performance finding.
-Fresh cycle-7 reviews, remote workflows, `main` integration, and delivery
-remain pending. Its sole first consumer is the strict
+as pending. There was no additional production, API, native, or performance
+finding. Formal cycle 7 rejected exact
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
+deduplicated union is `0/0/0/1`. The sole low corrects the resource contract:
+shadowed duplicate values may parse more nodes than survive in the final tree.
+The 65,536 caps apply separately to tracker entries and aggregate final decoded-
+tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
+total parse work. Production and resource behavior were otherwise green. The
+current cycle-8 candidate contains this wording correction. Only formal cycle-8
+review, remote workflows, `main` integration, and delivery are pending. Its
+sole first consumer is the strict
 [`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
@@ -136,10 +146,13 @@ conversion where required. Metadata and nested arbitrary JSON use ordinary
 last-value-wins duplicate-key semantics. A fixed-digest tracker records object
 key identity and each key's current logical node contribution. Its entries and
 buckets grow fallibly in proportion to unique keys encountered rather than
-reserving the full 65,536-node capacity for every inspection; a repeated key
-replaces its prior contribution. Tracker entries and aggregate arbitrary-JSON
-work are strictly capped by the store's 65,536-node limit, and container depth
-is capped at 64. Independently, parsing matches `serde_json` 1.0.151's 127-
+reserving capacity for 65,536 entries on every inspection; a repeated key
+replaces its prior contribution. Tracker entries are strictly capped at 65,536,
+and aggregate final decoded-tree logical-node accounting is separately capped
+at 65,536; shadowed duplicate values can make total parse work visit more nodes.
+That total work remains bounded by the 8,651,165-byte file ceiling, and final-
+tree container depth is capped at 64. Independently, parsing matches
+`serde_json` 1.0.151's 127-
 active-container recursion accounting even for values later shadowed by a
 duplicate key. Typed parents consume three slots before metadata JSON, six
 before JSON content, and seven before tool-call or tool-result JSON. Exact
@@ -213,4 +226,9 @@ audit were otherwise green. Cross-document remediation is composed in exact
 cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. All three cycle-6 tracks reported
 `0/0/0/1`, deduplicated to the sole self-pending wording low; no additional
-production finding exists. Fresh cycle-7 review remains pending.
+production finding exists. Formal cycle 7 rejected exact `399e75e`, tree
+`d056b96`, with correctness/API and native at `0/0/0/0` and performance/
+resources at `0/0/0/1`, deduplicated to the sole imprecise node/work-cap wording
+low. Production and resources were otherwise green. The current cycle-8
+candidate contains this wording correction. Only formal cycle-8 review remains
+pending at this contract checkpoint.

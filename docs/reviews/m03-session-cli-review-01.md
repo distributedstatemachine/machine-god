@@ -1,14 +1,17 @@
 # Milestone 03 session CLI review ledger
 
-Status: formal cycle 6 rejected exact candidate
-`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
-`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
-and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
-is the sole self-pending remediation wording finding. That exact candidate is
-itself the committed cross-document remediation for cycle 5; there is no
-additional production/API/native/performance finding. Three fresh cycle-7
-reviews, remote delivery gates, integration, and delivery remain pending. This
-is not a review-green or delivered claim.
+Status: formal cycle 7 rejected exact candidate
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`. Correctness/API and native effects
+each reported `0/0/0/0`; performance/resources reported `0/0/0/1`, so the
+deduplicated union is `0/0/0/1`. The sole low corrects imprecise resource
+wording: shadowed duplicate values may parse more nodes than survive in the
+final tree. Tracker entries and aggregate final decoded-tree logical-node
+accounting have separate 65,536 caps, while the 8,651,165-byte file ceiling
+bounds total parse work. Production and resources were otherwise green. The
+current cycle-8 candidate contains this wording correction. Only formal cycle-8
+review, remote delivery gates, integration, and delivery are pending. This is
+not a review-green or delivered claim.
 Historical rejected candidates and verdicts remain recorded below.
 Bounded slice 32 starts from exact delivered base
 `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
@@ -246,11 +249,11 @@ contract as follows:
 - accept and reject numbers with canonical `serde_json::Number` semantics;
 - retain payload-sized ownership only for the two returned ID strings;
 - stream-discard transcript strings, metadata keys/values, tool payloads, and
-  arbitrary JSON scalars after validation; and
-- use fixed-size key digests in a strictly node-capped duplicate tracker so
+  arbitrary JSON scalars after validation;
+- use fixed-size key digests in a 65,536-entry-capped duplicate tracker so
   metadata and nested arbitrary JSON match ordinary last-value-wins semantics,
-  including replacement of a repeated key's prior logical node contribution;
-  and
+  including replacement of a repeated key's prior logical node contribution,
+  with separate 65,536 final decoded-tree logical-node accounting; and
 - reproduce `serde_json` 1.0.151's parse-time 127-active-container recursion
   budget including typed parent containers, independently of the final-tree
   depth limit.
@@ -424,8 +427,9 @@ unchanged. Ordinary loading/listing and streamed inspection must reject each of
 the five positional struct sequences and the externally tagged unit-role map
 consistently.
 
-The fixed-fingerprint duplicate tracker retains its strict 65,536-node ceiling,
-but entries and buckets must grow fallibly in proportion to unique keys
+The fixed-fingerprint duplicate tracker retains a strict 65,536-entry ceiling,
+while aggregate final decoded-tree logical-node accounting is separately capped
+at 65,536. Entries and buckets must grow fallibly in proportion to unique keys
 actually encountered rather than reserving maximum capacity for every
 inspection.
 Replacement allocation evidence must bound empty/small-record allocator
@@ -542,13 +546,41 @@ The overlapping reports deduplicate to `0/0/0/1`:
 
 There is no additional production, API, native, performance, resource, or
 compatibility finding. Any finding rejects the entire candidate, so `5332d6a`
-is not review-green. The wording remediation is present in this replacement;
-three fresh cycle-7 reviews on one exact SHA remain pending. No prior discovery,
-implementation, review, or remediation agent may approve its own work or be
-reused in a later review cycle. Only a deduplicated `0/0/0/0` candidate is
-formally green. Remote workflows, `main` integration, delivery, compatibility-
-promotion, product-performance, and fx-equivalence claims remain pending or
-absent.
+is not review-green. The wording remediation produced exact cycle-7 candidate
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`, assessed next.
+
+## Formal cycle 7 verdict
+
+Three fresh isolated agents reviewed exact candidate
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`. Counts are blocker/high/medium/
+low:
+
+| Track | Verdict | Counts |
+| --- | --- | --- |
+| Correctness/API and pinned-fx boundary | Green | `0/0/0/0` |
+| Native boundary/effects and portability | Green | `0/0/0/0` |
+| Performance/concurrency/resources and evidence | Rejected | `0/0/0/1` |
+
+The reports deduplicate to `0/0/0/1`:
+
+1. **Low — imprecise node/work-cap wording.** The native inspection contract
+   said aggregate arbitrary-JSON work was strictly capped at 65,536 nodes, but
+   values later shadowed by duplicate keys can require more parse work than the
+   final decoded tree retains. The 65,536 limits apply separately to tracker
+   entries and aggregate final decoded-tree logical-node accounting. The
+   8,651,165-byte file ceiling bounds total parse work, including shadowed
+   values.
+
+There is no production-behavior, API, native-effect, compatibility, allocation,
+or other resource finding. Any finding rejects the entire candidate, so
+`399e75e` is not review-green. The current cycle-8 candidate contains this
+wording correction. Only formal cycle-8 review, remote workflows, `main`
+integration, and delivery are pending. Do not claim cycle 8 green before those
+reviews report `0/0/0/0` on one exact SHA. No prior discovery, implementation,
+review, or remediation agent may approve its own work or be reused in a later
+review cycle. Product-performance and fx-equivalence claims remain absent.
 
 After each review/remediation iteration, committed and integrated worktrees
 must be verified clean and then safely removed; active or uncommitted worktrees

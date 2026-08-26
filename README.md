@@ -16,8 +16,8 @@ allocation. Exact remediation `1f96c4bf05f93a99b86f0ca549621e739953e520`,
 tree `b320f55219ebc808790138dfd293d32e83da77c3`, makes `StoredEnvelope`,
 `StoredRecord`, `StoredMessage`, `StoredToolCall`, and `StoredToolOutput`
 object-only and `Role` string-only, leaves the canonical writer unchanged, and
-grows fixed-fingerprint tracker entries/buckets fallibly with unique keys under
-the unchanged 65,536-node ceiling.
+grows fixed-fingerprint tracker entries/buckets fallibly with unique keys, with
+at most 65,536 tracker entries.
 
 Exact gate-record candidate `8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`,
 tree `8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`, passed the complete local gate
@@ -45,9 +45,19 @@ documentation remediation is already composed in exact cycle-6 candidate
 `d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
 correctness/API, native effects, and performance/resources each reported
 `0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
-committed remediation as pending. There is no additional production, API,
-native, or performance finding. Three fresh cycle-7 reviews, remote workflows,
-`main` integration, and delivery remain pending. The slice remains non-
+committed remediation as pending. There was no additional production, API,
+native, or performance finding. Formal cycle 7 rejected exact
+`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
+`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
+each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
+deduplicated union is `0/0/0/1`. The sole low corrects resource wording:
+shadowed duplicate values may parse more nodes than survive in the final tree.
+The 65,536 caps apply separately to tracker entries and aggregate final decoded-
+tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
+total parse work. Production and resource behavior were otherwise green. The
+current cycle-8 candidate contains this wording correction. Only formal cycle-8
+review, remote workflows, `main` integration, and delivery are pending. The
+slice remains non-
 equivalent, unmeasured, and claim-ineligible; no product-performance or fx-
 equivalence claim is made. The authoritative record is the
 [`live ledger`](docs/reviews/m03-session-cli-review-01.md).
@@ -67,8 +77,9 @@ not match ordinary load and stale maintained documentation. The synchronized
 replacement contract now requires a specialized one-pass summary parser with
 a fixed 4 KiB input buffer, canonical `serde_json::Number` semantics, fixed-
 stack known-token handling, retention of only the two returned ID strings, and
-a fixed-digest, strictly node-capped duplicate tracker that preserves last-
-value-wins behavior for metadata and nested JSON. It inspects one exact current-
+a fixed-digest, 65,536-entry-capped duplicate tracker that preserves last-value-
+wins behavior for metadata and nested JSON. Final decoded-tree logical-node
+accounting is separately capped at 65,536. It inspects one exact current-
 schema record without constructing a full `SessionRecord`, transcript, or
 metadata payload. It constructs no workspace, engine, provider, credential,
 permission handler, network transport, or runtime. The
