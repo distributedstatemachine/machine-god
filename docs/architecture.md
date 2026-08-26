@@ -1,8 +1,11 @@
 # Architecture
 
-In-progress bounded slice 32 preserves the host boundary for strict
-`session <id> [--json]`. `machine-god-cli` owns grammar, core-ID parsing,
-bounded rendering, exit/channel behavior, and an injected host seam.
+In-progress bounded slice 32 initially composed production and independent
+evidence through `852fec7`; focused composition-gate remediation advances the
+current precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`, while preserving the host boundary
+for strict `session <id> [--json]`. `machine-god-cli` owns grammar, core-ID
+parsing, bounded rendering, exit/channel behavior, and an injected host seam.
 `machine-god-native` owns state-only first-poll environment capture, existing-
 root safety, the exact file-store load, structural projection, and redacted
 native errors. `machine-god-core` remains unchanged and receives no ambient
@@ -10,7 +13,15 @@ authority. The CLI receives a purpose-built `NativeSessionInspection`, not a
 full `SessionRecord`, so transcript and metadata content never cross into the
 renderer. No full native reference host, engine, provider, workspace, config,
 credential, network transport, permission handler, or runtime is constructed.
-See the frozen [`CLI`](session-cli.md) and
+The composition fix makes non-exhaustive native categories fail closed to
+`Unavailable` and aligns help bytes to `Inspect a saved session`. Focused
+exact-1.94.1 evidence is green for 12 native inspection tests, 56 CLI unit
+tests, 46 independent CLI process tests, and native/CLI warnings-denied Clippy.
+A release binary plus representative human, JSON, and `NotFound` smokes are
+green. The full exact workspace gate, formal adversarial product review, remote
+workflows, `main` integration, and delivery remain pending, so this precursor
+is not yet a green candidate.
+See the normative [`CLI`](session-cli.md) and
 [`native`](native-session-inspection.md) contracts.
 
 Delivered bounded slice 31 preserves the host boundary for top-level

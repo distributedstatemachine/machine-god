@@ -1,7 +1,14 @@
 # Security
 
-In-progress bounded slice 32 adds no network, subprocess, credential, provider,
-permission, workspace, configuration, runtime, or engine authority. Its
+In-progress bounded slice 32 has production and independent evidence composed
+initially through `852fec7` and focused composition-gate remediation through
+current exact precursor `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused native/CLI warnings-denied
+Clippy and representative release-binary human, JSON, and `NotFound` smokes are
+green. The full exact workspace gate, formal adversarial product review, remote
+workflows, `main` integration, and delivery remain pending. It adds no network,
+subprocess, credential, provider, permission, workspace, configuration,
+runtime, or engine authority. Its
 `session` facade captures only state environment inputs on first poll, opens
 only an existing validated machine-god hierarchy, and loads exactly one
 validated current-schema record. The CLI receives only bounded structural
@@ -13,8 +20,10 @@ migrated, reset, or deleted. Closed redacted error categories expose no path,
 environment value, record content, filename, or OS diagnostic. The exact
 boundary is in [`session-cli.md`](session-cli.md),
 [`native-session-inspection.md`](native-session-inspection.md), and the
-[`live ledger`](reviews/m03-session-cli-review-01.md). No implementation or
-delivery claim exists yet.
+[`live ledger`](reviews/m03-session-cli-review-01.md). Non-exhaustive native
+categories fail closed to the CLI's `Unavailable` presentation. The composition
+adds no dependency or unsafe Rust; the candidate is not yet green, and the
+feature is not delivered.
 
 Delivered bounded slice 31 adds no new network, subprocess, credential,
 provider, permission, workspace, or engine authority. Its native `sessions`

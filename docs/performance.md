@@ -4,15 +4,21 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-The in-progress slice-32 [`session` command](session-cli.md) freezes resource
-bounds without a performance result. It loads one exact record under the
-existing 8,651,165-byte, JSON-depth-64, and JSON-node-65,536 store ceilings,
-projects six bounded structural fields, and assembles complete output under an
+The in-progress slice-32 [`session` command](session-cli.md) has production and
+independent evidence initially composed through `852fec7` and focused
+composition-gate remediation composed through current precursor `c0c16a7`.
+The full exact workspace gate, formal adversarial product review, remote
+workflows, `main` integration, and delivery remain pending. A release binary and
+representative human, JSON, and `NotFound` smokes are green, but provide no
+performance result. The slice retains the frozen resource bounds and loads one
+exact record under the existing 8,651,165-byte, JSON-depth-64, and JSON-node-
+65,536 store ceilings. It projects six bounded structural fields and assembles
+complete output under an
 inclusive 4,096-byte ceiling. The fixed bootstrap inventory has no
 `session-json` workload and is unchanged. This slice is deliberately non-
 equivalent, not measured, and claim-ineligible; no sample, comparison,
 threshold, compatibility promotion, product-performance result, or fx-
-equivalence claim exists.
+equivalence claim exists. The composition adds no dependency or unsafe Rust.
 
 The delivered slice-30 [`doctor` command](doctor-cli.md) has explicit resource
 bounds but no performance result: exactly four closed checks and one complete

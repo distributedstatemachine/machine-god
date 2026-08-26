@@ -1,9 +1,18 @@
 # Native session inspection
 
-Status: contract-frozen library component for in-progress Milestone 03 slice
-32 from exact delivered base `6e687b6872e11845a306c6eaff77b1252a66c393`.
-No implementation or delivery claim exists yet. Its sole first consumer is the
-strict [`session` CLI contract](session-cli.md).
+Status: production and focused evidence composed for in-progress Milestone 03
+slice 32 from exact delivered base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Initial composition was
+`852fec7`; focused composition-gate remediation advances the current precursor
+to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. All 12 native inspection tests and
+focused native/CLI warnings-denied Clippy are green under exact Rust/Cargo
+1.94.1. A release binary plus representative human, JSON, and `NotFound` smokes
+are green. The full exact workspace gate, formal adversarial product review,
+remote workflows, `main` integration, and delivery remain pending; there is no
+claim that the candidate is green or the feature is delivered. Its sole first
+consumer is the strict
+[`session` CLI contract](session-cli.md).
 
 The native layer owns an engine-free, by-ID projection of one current-schema
 file session record. Core remains provider-neutral and unchanged; the CLI does

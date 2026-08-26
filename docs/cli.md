@@ -1,9 +1,13 @@
 # Command-line interface
 
-In-progress slice 32 freezes strict top-level `session <id> [--json]` under the
-[`session` contract](session-cli.md). The command will load one exact
+In-progress slice 32 composes strict top-level `session <id> [--json]`
+production and independent evidence. Initial composition was `852fec7`;
+focused composition-gate remediation advances the current precursor to exact
+`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`, under the normative
+[`session` contract](session-cli.md). The command loads one exact
 current-schema record through the separate
-[`native inspection facade`](native-session-inspection.md) and render only its
+[`native inspection facade`](native-session-inspection.md) and renders only its
 validated ID, incarnation ID, revision, next turn sequence, message count, and
 top-level metadata-entry count. Transcript content, metadata keys/values,
 `last`, `--id`, resume, replay, migration, recovery, workspace selection,
@@ -11,9 +15,16 @@ configuration, credentials, engine/provider construction, network, and runtime
 are outside the slice. Parsing and ID validation precede effects; existing-root
 inspection is no-create except for the file store's documented private `0600`
 lock sidecar on a present record. Human/JSON output is assembled under 4,096
-bytes. There is no matching bootstrap workload, and no implementation,
-delivery, performance, or equivalence claim exists yet. The delivered count
-remains thirty-one; evidence will accumulate in the
+bytes. Non-exhaustive native categories fail closed to `Unavailable`, and help
+bytes use `Inspect a saved session`. Focused exact-1.94.1 evidence is green for
+12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
+tests, and native/CLI warnings-denied Clippy. A release binary plus
+representative human, JSON, and `NotFound` smokes are green. The full workspace
+exact gate, formal adversarial product review, remote workflows, `main`
+integration, and delivery remain pending. There is no matching bootstrap
+workload and no claim that the candidate is green or the
+feature is delivered, performant, or equivalent. The delivered count remains
+thirty-one; evidence is in the
 [`live ledger`](reviews/m03-session-cli-review-01.md).
 
 Delivered slice 31 adds a strict top-level `sessions [--json]`

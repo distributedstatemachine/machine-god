@@ -50,18 +50,32 @@ review ledger is
 [`m03-session-cli-review-01.md`](reviews/m03-session-cli-review-01.md). Two
 independent discovery agents audited the remaining M03 CLI and pinned-fx
 surfaces and agreed this summary-only exact-ID inspection is the smallest
-coherent next slice. The command will return only validated ID, incarnation,
-revision, allocator, message-count, and top-level metadata-count fields from
-one current-schema machine-god record. It will expose no transcript or metadata
-content and construct no workspace, engine, provider, credential, permission
-handler, network transport, or runtime. State capture is first-poll and state-
-only; missing roots/records are no-create `NotFound`, while a present load may
-create only the store's documented private `0600` lock sidecar. Complete output
-is capped at 4,096 bytes. Pinned fx has broader `last`, `--id`, history,
-workspace, resume, migration, and recovery semantics, so this slice is
-deliberately non-equivalent, unmeasured, and claim-ineligible. No implementation,
-candidate, formal-review, workflow, integration, delivery, product-performance,
-or fx-equivalence claim exists yet. The delivered count remains thirty-one.
+coherent next slice. Production and independent evidence components were
+initially composed through `852fec7`; focused composition-gate remediation
+advances the current precursor to exact
+`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. The command returns only validated
+ID, incarnation, revision, allocator, message-count, and top-level metadata-
+count fields from one current-schema machine-god record. It exposes no
+transcript or metadata content and constructs no workspace, engine, provider,
+credential, permission handler, network transport, or runtime. State capture
+is first-poll and state-only; missing roots/records are no-create `NotFound`,
+while a present load may create only the store's documented private `0600` lock
+sidecar. Complete output is capped at 4,096 bytes. Composition fixed two seams:
+non-exhaustive native categories fail closed to `Unavailable`, and help bytes
+align to `Inspect a saved session`. Focused exact-1.94.1 evidence is green for
+12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
+tests, and native/CLI all-target/all-feature warnings-denied Clippy. A release
+binary and representative human, JSON, and `NotFound` smoke cases are also
+green. The full exact workspace gate, formal adversarial product review, remote
+workflows, `main` integration, and delivery remain pending; the precursor is not
+yet a green candidate. Pinned fx has broader
+`last`, `--id`, history, workspace, resume, migration, and recovery semantics,
+so this slice is deliberately non-equivalent, unmeasured, and claim-ineligible.
+The fixed benchmark workload is unchanged, and the composition adds no
+dependency or unsafe Rust. No remote workflow, `main` integration, delivery,
+product-performance, or fx-equivalence claim exists yet. The delivered count
+remains thirty-one.
 
 The thirty-first bounded slice, strict top-level `sessions [--json]`, is
 **DELIVERED** from exact base `feaf9fa1bc6bb66544947152e2c5fe91c8cd185e`.
@@ -3394,8 +3408,11 @@ force fast-forward, and exact `main` workflows.
 
 ### In-progress bounded slice 32: top-level `session`
 
-The thirty-second slice is contract-frozen from exact delivered base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. It adds only strict
+The thirty-second slice has production and independent evidence composed from
+exact delivered base `6e687b6872e11845a306c6eaff77b1252a66c393`. Initial
+composition was `852fec7`; focused composition-gate remediation advances the
+current precursor to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. It adds only strict
 `session <id>` and `session <id> --json`. The ID is parsed through the core
 portable contract before effects, while exact tokens `last`, `--id`, and
 `--json` are reserved in ID position. Every upstream-style selector, reordered
@@ -3406,9 +3423,9 @@ environment or filesystem access. The normative contracts are
 tracked in
 [`m03-session-cli-review-01.md`](reviews/m03-session-cli-review-01.md).
 
-Native will capture only `XDG_STATE_HOME` and lazy-fallback `HOME` on first
-poll, open the already-existing validated machine-god hierarchy, load the exact
-current-schema record once, and project only ID, incarnation ID, positive
+Native captures only `XDG_STATE_HOME` and lazy-fallback `HOME` on first
+poll, opens the already-existing validated machine-god hierarchy, loads the
+exact current-schema record once, and projects only ID, incarnation ID, positive
 revision, positive next turn sequence, message count, and top-level metadata-
 entry count. Missing hierarchy or record is no-create `NotFound`. Existing
 record loads may create only the file store's permanent private `0600` lock
@@ -3426,15 +3443,29 @@ detail is reflected. There is no matching bootstrap `session-json` workload,
 so the fixed inventory and its classifications remain unchanged. The feature
 is intentionally non-equivalent, not measured, and claim-ineligible.
 
-Native and CLI production/evidence will be assigned to isolated,
-non-overlapping worktrees after this contract commit. The composed exact
-candidate must pass focused evidence and the complete exact-1.94.1 local gate,
-then three fresh correctness/API, native persistence/portability, and
-performance/resource reviewers. Any finding rejects the candidate and requires
+Native production/focused evidence, CLI production/unit evidence, and
+independent process/workflow evidence were built in isolated, non-overlapping
+worktrees and composed as `10a5333`, `412d63b`, and `55f37fc`. Composition
+makes non-exhaustive native categories fail closed to `Unavailable` and aligns
+help bytes to `Inspect a saved session`. Focused exact-1.94.1 evidence is green
+for 12 native inspection tests, 56 CLI unit tests, 46 independent CLI process
+tests, and native/CLI all-target/all-feature warnings-denied Clippy. Focused
+composition-gate remediation is exact
+`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Its release binary and
+representative human, JSON, and `NotFound` smokes are green. The fixed benchmark
+inventory remains unchanged, and no new dependency or unsafe Rust is
+introduced.
+
+The full exact workspace gate remains pending. After it passes, three fresh
+adversarial product reviewers must inspect the same exact SHA across
+correctness/API, native boundary/effects, and performance/concurrency/resources.
+Any finding rejects the candidate and requires
 remediation, the complete replacement gate, and three new reviewers. Only a
 deduplicated `0/0/0/0` exact SHA may proceed through feature workflows, a non-
-force fast-forward, and exact `main` workflows. No implementation or delivery
-claim exists yet, and the delivered count remains thirty-one.
+force fast-forward, and exact `main` workflows. There is no claim that the
+candidate is green or that integration, workflows, or delivery are complete;
+the delivered count remains thirty-one.
 
 ### Milestone 03 completion boundary
 
@@ -4395,10 +4426,15 @@ gate:
   `32939742230`, feature benchmark `32939742231`, main CI `32940279028`, and
   main benchmark `32940279005`; `main` was fast-forwarded without force. The
   delivered count is thirty-one. Strict `session <id> [--json]` is the
-  contract-frozen in-progress bounded slice 32 from exact delivered base
-  `6e687b6`; implementation and formal review have not started. It is limited
-  to six structural fields from one exact machine-god record and makes no
-  compatibility or performance claim. `models [--json]` is
+  in-progress bounded slice 32 from exact delivered base `6e687b6`. Production
+  and independent evidence were initially composed through `852fec7`, with
+  focused remediation through current precursor `c0c16a7`. Its 12 native, 56
+  CLI unit, and 46 independent CLI process tests, focused native/CLI Clippy,
+  and representative release-binary human/JSON/`NotFound` smokes are green
+  under exact 1.94.1. Its full workspace gate, formal adversarial product
+  review, remote workflows, `main` integration, and delivery remain pending.
+  It is limited to six structural fields from one exact machine-god record and
+  makes no compatibility or performance claim. `models [--json]` is
   delivered as bounded slice 29. Exact cycle-2 candidate
   `2ea9d94374c4dd18f43255af785ee31088126c56` passed its replacement gate but
   was rejected. Pre-review gate attempt

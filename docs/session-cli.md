@@ -1,9 +1,18 @@
 # Top-level session command
 
-Status: contract-frozen bounded Milestone 03 slice 32 from exact delivered base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. No implementation, review,
-workflow, integration, delivery, compatibility, or performance claim exists
-yet. The live evidence record is the
+Status: production and independent evidence composed for bounded Milestone 03
+slice 32 from exact delivered base
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Initial composition was
+`852fec7`; focused composition-gate remediation advances the current precursor
+to exact `c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. Focused exact-1.94.1 evidence is
+green for 12 native inspection tests, 56 CLI unit tests, 46 independent CLI
+process tests, and native/CLI warnings-denied Clippy. A release binary plus
+representative human, JSON, and `NotFound` smokes are green. The full workspace
+gate, formal adversarial product review, remote workflows, `main` integration,
+and delivery remain pending; this is not yet a green candidate. No
+compatibility or performance claim exists. The
+live evidence record is the
 [`session` review ledger](reviews/m03-session-cli-review-01.md).
 
 This slice adds a strict, engine-free inspection of one current-schema

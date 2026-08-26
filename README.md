@@ -8,18 +8,27 @@ performance evidence live in [`docs/`](docs/README.md).
 
 Bounded Milestone 03 slice 32, strict top-level
 `session <id> [--json]`, is **IN PROGRESS** from exact delivered base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. It will inspect one exact
+`6e687b6872e11845a306c6eaff77b1252a66c393`. Production and independent
+evidence were initially composed through `852fec7`; focused composition-gate
+remediation advances the current precursor to exact
+`c0c16a745943a97330223aafd4a6f6a7dce84ca6`, tree
+`61bcf619fc9190a9a70ab3a9c643605c88ab1817`. It inspects one exact
 current-schema machine-god record through an engine-free native facade and
-return only ID, incarnation, revision, allocator, message-count, and top-level
-metadata-count fields. It will expose no transcript or metadata content and
-will construct no workspace, engine, provider, credential, permission handler,
+returns only ID, incarnation, revision, allocator, message-count, and top-level
+metadata-count fields. It exposes no transcript or metadata content and
+constructs no workspace, engine, provider, credential, permission handler,
 network transport, or runtime. The
 [`session` contract](docs/session-cli.md),
 [`native inspection contract`](docs/native-session-inspection.md), and
-[`live review ledger`](docs/reviews/m03-session-cli-review-01.md) are frozen
-before implementation. Two independent discovery agents agreed this is the
-smallest coherent remaining M03 CLI slice. No implementation, delivery,
-compatibility, product-performance, or fx-equivalence claim exists yet; the
+[`live review ledger`](docs/reviews/m03-session-cli-review-01.md) remain
+normative. Focused exact-1.94.1 evidence is green for 12 native inspection
+tests, 56 CLI unit tests, 46 independent CLI process tests, and native/CLI
+all-target/all-feature warnings-denied Clippy. A release binary and
+representative human, JSON, and `NotFound` smoke cases are also green. The full
+workspace exact gate, formal three-track adversarial product review, remote
+workflows, `main` integration, and delivery remain pending. The precursor is
+not yet a green candidate or a delivered feature. No
+compatibility, product-performance, or fx-equivalence claim is made; the
 delivered count remains thirty-one.
 
 Bounded Milestone 03 slice 31, strict top-level `sessions [--json]`, is

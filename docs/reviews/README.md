@@ -1,9 +1,11 @@
 # Adversarial reviews
 
 - [`m03-session-cli-review-01.md`](m03-session-cli-review-01.md) tracks the
-  in-progress bounded slice-32 `session <id> [--json]` candidate from exact
-  delivered base `6e687b6`. Contracts are frozen; implementation and formal
-  review have not started.
+  in-progress bounded slice-32 `session <id> [--json]` composition from exact
+  delivered base `6e687b6`. Production and independent evidence are composed
+  initially through `852fec7`, with focused remediation through current
+  precursor `c0c16a7`; the complete candidate gate and formal adversarial
+  product review remain pending.
 
 - [`m03-sessions-cli-review-01.md`](m03-sessions-cli-review-01.md) tracks the
   delivered bounded slice-31 `sessions [--json]` candidate. Cycle 1 rejected
