@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-11 question resource remediation
+## Slice 35 cycle-12 question resource remediation
 
-Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -992,7 +992,21 @@ subprocess child correct base callback-256 Pending, callback-257 cancellation,
 primary replacement, and `SIGABRT` while proving lane/capacity recovery.
 
 Direct 46, all required exact-1.94.1 commands, extended/release-smoke gates,
-and the unchanged dev-only fixture/lock delta are green. Formal review,
-workflows, integration, and delivery remain pending. No benchmark, product-
-performance, or fx-equivalence result is claimed. See
+and the unchanged dev-only fixture/lock delta are green. Formal cycle 11
+rejected exact candidate `b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
+`26d90d8ec3924f6b7e12617506d5275ae32ec00b`. Correctness/API reported
+`0/0/0/1`, lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`,
+and the distinct union is `0/0/2/1`.
+
+The product-resource medium is a capacity leak: a forgotten opaque panic
+payload can retain the supplied prompt Waker, whose `ActivityWake` owns the
+active permit for its entire `Arc` lifetime. Cycle 12 must use a state-held
+permit and admitted callback guard; close removes state capacity only after
+target teardown while its local guard preserves ordering. Forgotten closed
+Wakers must retain no capacity, with ordinary/ambient retained-Waker recovery
+evidence. Release `panic = "abort"` separately invalidates shipped unwind
+claims; cycle 12 targets `unwind` plus an independent release-product probe.
+The kind/code low is corrected. No cycle-12 source, evidence, gate, review,
+workflow, integration, delivery, benchmark, product-performance, or
+fx-equivalence result exists. See
 [`ask-user-question.md`](ask-user-question.md).

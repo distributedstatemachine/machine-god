@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-11 interaction and authority remediation
+## Slice 35 cycle-12 interaction and authority remediation
 
-Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2365,7 +2365,18 @@ forgets every suppressed opaque payload before selected resume. Ordinary
 resources still drop; no dependency, thread, public API, or authority changes.
 Four tests plus a subprocess child correct the four rejected-base outcomes and
 prove lane close/capacity recovery. Direct 46 and all pinned/extended/release-
-smoke gates are green. Formal review, workflows, integration, and delivery
-remain pending. This is not benchmark, product-performance, or fx-equivalence
-evidence. The analogous terminal path remains out of scope and is not claimed
-fixed.
+smoke gates are green. Formal cycle 11 rejected exact
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`/`26d90d8` with distinct
+`0/0/0/1`, `0/0/1/0`, and `0/0/1/0` tracks, union `0/0/2/1`.
+
+Release panic `abort` makes the shipped unwind-settlement paths ineffective;
+test-profile subprocess evidence cannot establish product no-abort or recovery.
+Separately, forgetting a panic payload that retains the supplied Waker can keep
+its `ActivityWake` permit forever. Cycle 12 targets release `unwind` with an
+independent product probe and state-held permit ownership removed after close
+target teardown while a local close/callback guard preserves ordering. Ordinary
+and ambient retained-Waker payload cases must prove capacity recovery. The
+kind/code documentation low is corrected. No cycle-12 source, evidence, gate,
+review, workflow, integration, delivery, benchmark, product-performance, or fx-
+equivalence result exists. The analogous terminal path remains out of scope and
+is not claimed fixed.

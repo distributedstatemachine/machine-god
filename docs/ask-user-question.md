@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -477,8 +477,9 @@ exactly 256 downstream callbacks. Calls 1 through 255 carry normal observation-
 aware source-wake progress. If a wake after poll 255 would continue, sticky
 exhaustion is recorded before callback 256, which schedules a terminal outer
 poll. That poll checks cancellation first, then returns the existing
-nonretryable `Execution` error with kind `ask_user_question_prompt_failed` and
-redacted message `ask_user_question prompt failed` if exhausted.
+nonretryable error with kind `Execution`, code
+`ask_user_question_prompt_failed`, and redacted message
+`ask_user_question prompt failed` if exhausted.
 
 Exhaustion suppresses retained binds/wakes until close. Short residual chains
 now progress autonomously through callback 3. Close/panic behavior, A-drop-
@@ -587,9 +588,45 @@ status 10/0, diff/protected/no-unsafe, and release-smoke gates are green. The
 locked release remains 3,985,216 bytes with SHA-256
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
 three missing-root smokes create no files. The authorized dev-only fixture/lock
-delta and production graph are unchanged. Formal review, workflows,
-integration, and delivery remain pending. This is not benchmark, product-
+delta and production graph are unchanged. At that local checkpoint, formal
+review, workflows, integration, and delivery remained pending. This is not benchmark, product-
 performance, compatibility-promotion, or fx-equivalence evidence.
+
+## Formal cycle-11 outcome and cycle-12 requirements
+
+Formal cycle 11 reviewed exact candidate
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
+`26d90d8ec3924f6b7e12617506d5275ae32ec00b`. Correctness/API reported
+`0/0/0/1`, lifecycle/platform reported `0/0/1/0`, and
+performance/resources reported `0/0/1/0`. The findings are distinct, so the
+deduplicated union is `0/0/2/1`.
+
+The low finding is documentation accuracy: this contract and the review ledger
+called `ask_user_question_prompt_failed` an error kind. This rejection record
+corrects both current descriptions to error kind `Execution` and error code
+`ask_user_question_prompt_failed`.
+
+The first medium is a release-profile mismatch. Root `Cargo.toml` configures
+release panic handling as `abort`, so the implemented `catch_unwind` and panic-
+settlement paths cannot recover in the shipped release. The subprocess evidence
+uses only the test profile. Its no-abort, precedence, lane-close, and capacity-
+recovery results therefore do not establish release behavior. Cycle 12 must
+switch release panic handling to `unwind` and independently build and run a
+release-profile product probe that exercises those guarantees.
+
+The second medium is a prompt-permit leak. An intentionally forgotten opaque
+secondary panic payload may own a retained prompt Waker. `ActivityWake`
+currently owns the active prompt permit for its entire `Arc` lifetime, so that
+forgotten payload can keep default prompt capacity occupied forever. Cycle 12
+must detach permit ownership from closed Waker identity: state owns the permit,
+an admitted callback owns a local guard, and close removes the state permit
+only after target teardown while a local close/callback guard preserves the
+established ordering. Forgotten closed inert Waker clones must retain no
+capacity. Deterministic ordinary- and ambient-payload evidence must retain the
+supplied Waker and prove subsequent capacity recovery.
+
+No cycle-12 source, evidence, gate, review, workflow, integration, or delivery
+result exists at this rejection checkpoint.
 
 ## Product boundary
 

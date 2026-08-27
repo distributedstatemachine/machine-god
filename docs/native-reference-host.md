@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -127,8 +127,13 @@ reaches terminal 256 across queued/synchronous/external delivery. Central
 cleanup precedence forgets all suppressed opaque payloads. Four tests plus a
 subprocess child prove exact bound/cancellation and marker/no-abort/lane/
 capacity recovery. Direct 46 and the complete local gate are green; no
-dependency, thread, or public API is added. Formal review, workflows,
-integration, and delivery remain pending.
+dependency, thread, or public API is added. Formal cycle 11 rejected exact
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`/`26d90d8` with a `0/0/2/1`
+union. Release panic `abort` defeats the shipped recovery path, and forgotten
+panic payloads retaining a Waker can retain its prompt permit forever. Cycle 12
+targets release `unwind` plus a release-product probe and state-held capacity
+removed after close target teardown while local guards preserve ordering. The
+kind/code low is corrected; no cycle-12 source, evidence, or gate exists.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -861,7 +866,9 @@ the complete local gate compose at `0279b8c`/`50b2423`. Formal cycle 9 rejected
 source/evidence and complete local gate now compose at
 `72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
 distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
-complete local gate compose at `b8b721a`/`4672150`, with formal review pending.
+complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
+`b1d454b`/`26d90d8` with a `0/0/2/1` union; cycle-12 remediation has not
+started.
 The analogous preexisting terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
@@ -1423,6 +1430,7 @@ at `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
 source/evidence and the complete local gate compose at
 `72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
 distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
-complete local gate compose at `b8b721a`/`4672150`; formal review, workflows,
-integration, and delivery remain pending. Analogous preexisting terminal code
-is out of scope and is not claimed fixed.
+complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
+`b1d454b`/`26d90d8` with a `0/0/2/1` union; no cycle-12 source, evidence, gate,
+review, workflow, integration, or delivery result exists. Analogous preexisting
+terminal code is out of scope and is not claimed fixed.

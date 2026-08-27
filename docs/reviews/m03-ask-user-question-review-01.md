@@ -1,10 +1,9 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 10
-rejected its exact immutable candidate with two distinct correctness/lifecycle
-findings. Cycle-11 source, deterministic evidence, and the complete local gate
-now compose at the exact behavior head below. Three fresh formal reviews,
-remote workflows, integration, and delivery remain pending.
+Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**. Formal cycle
+11 rejected the exact immutable candidate below with two distinct mediums and
+one low. Cycle-12 source, evidence, gate, review, workflows, integration, and
+delivery do not yet exist.
 
 ## Frozen lineage
 
@@ -166,6 +165,9 @@ remote workflows, integration, and delivery remain pending.
   `40d474d3c0ea222302da2d4ab3ad5093b18fc2c2`, green for formatting, all 46
   direct question tests, one engine test, native all-target/all-feature
   warnings-denied Clippy, native no-default, WASI, and FreeBSD checks
+- Formal cycle-11 candidate, **REJECTED**:
+  `b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
+  `26d90d8ec3924f6b7e12617506d5275ae32ec00b`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -202,7 +204,8 @@ formal reviews rejected later candidate `4ea1c1f`/`78e781f` with a
 deduplicated `0/0/2/0` union. Cycle-11 source, evidence, replacement gates,
 and cycle-10 rejection docs now compose at exact behavior head
 `b8b721a`/`4672150`; its complete exact-1.94.1 local gate is green. Three fresh
-formal reviews, workflows, integration, and delivery remain pending.
+formal reviews rejected exact candidate `b1d454b`/`26d90d8` with a
+deduplicated `0/0/2/1` union. Cycle-12 remediation has not started.
 
 ## Frozen first-slice decisions
 
@@ -1160,8 +1163,8 @@ Callbacks 1 through 255 carry ordinary observation-aware source-wake progress.
 If a wake after poll 255 would continue the chain, the lane records sticky
 delivery exhaustion before callback 256; callback 256 schedules one terminal
 outer poll. That poll checks cancellation first, so cancellation wins, then
-returns the existing nonretryable `Execution` error with kind
-`ask_user_question_prompt_failed` and redacted message
+returns the existing nonretryable error with kind `Execution`, code
+`ask_user_question_prompt_failed`, and redacted message
 `ask_user_question prompt failed` when exhaustion remains.
 
 The exhausted state suppresses retained binds and wakes until close. Short
@@ -1286,8 +1289,9 @@ queued-poll activations, and later external wakes all share it.
 `begin_callback` accounts before every callback. Callbacks 1 through 255 carry
 ordinary delivery; state becomes sticky `DeliveryResourceExhausted` before
 callback 256, which schedules the terminal poll. That poll checks cancellation
-first and otherwise returns the fixed nonretryable `Execution` error with kind
-`ask_user_question_prompt_failed`. Further binds and wakes are suppressed.
+first and otherwise returns the fixed nonretryable error with kind `Execution`
+and code `ask_user_question_prompt_failed`. Further binds and wakes are
+suppressed.
 Callback panics do not refund consumed budget. Delivery remains one serialized,
 nonrecursive lane with callback concurrency at most one.
 
@@ -1353,8 +1357,59 @@ The authorized dev-only native fixture and one native dependency-list line in
 `Cargo.lock` remain unchanged; the production normal/build dependency graph is
 unchanged. This is regression and release-smoke evidence, not a formal-review,
 integration, delivery, benchmark, product-performance, compatibility-promotion,
-or fx-equivalence claim. Three fresh exact-SHA formal reviews and both feature
-and `main` workflow gates remain pending.
+or fx-equivalence claim. At that local checkpoint, three fresh exact-SHA formal
+reviews and both feature and `main` workflow gates remained pending.
+
+## Formal cycle-11 outcome
+
+Three fresh review tracks examined exact immutable candidate
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
+`26d90d8ec3924f6b7e12617506d5275ae32ec00b`:
+
+- correctness/API: `0 blocker / 0 high / 0 medium / 1 low`;
+- lifecycle/platform: `0 blocker / 0 high / 1 medium / 0 low`;
+- performance/resources: `0 blocker / 0 high / 1 medium / 0 low`; and
+- deduplicated union: `0 blocker / 0 high / 2 medium / 1 low`.
+
+All three findings are distinct.
+
+### Prompt-failure kind/code documentation
+
+The current contract and this ledger mislabeled
+`ask_user_question_prompt_failed` as an error kind. It is the error code; the
+kind is `Execution`. This rejection commit corrects both current descriptions.
+
+### Release-profile panic mismatch
+
+Root `Cargo.toml` sets release panic handling to `abort`. Every
+`catch_unwind`/settlement path in the remediation is therefore ineffective in
+the shipped release, while the current subprocess coverage runs only under the
+test profile. The documented no-abort, cleanup-precedence, lane-closure, and
+capacity-recovery results do not establish release behavior.
+
+Cycle 12 must change the release profile to panic `unwind` and independently
+build and execute a release-profile product probe covering those behaviors.
+Removing the unsupported claims was an alternative review disposition, but the
+chosen remediation target is unwind plus the product probe.
+
+### Forgotten-payload prompt-permit leak
+
+A suppressed opaque secondary panic payload may own a retained prompt Waker.
+The precedence logic intentionally forgets that payload forever. Because the
+current `ActivityWake` owns its active prompt permit for the entire `Arc`
+lifetime, the forgotten payload can keep default prompt capacity permanently
+busy even after delivery is closed.
+
+Cycle 12 must separate capacity ownership from closed Waker identity. The state
+must hold the permit, each admitted callback must hold a local guard, and close
+must remove the state-held permit after target teardown while its local close/
+callback guard preserves the established ordering. A forgotten closed inert
+Waker clone must retain no capacity. Deterministic ordinary- and ambient-panic-
+payload cases must retain the supplied Waker and prove a fresh prompt can be
+admitted afterward.
+
+No cycle-12 source, independent evidence, local gate, formal review, workflow,
+integration, or delivery result exists at this rejection checkpoint.
 
 ## Deferred and nonclaim record
 

@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 11 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 11
+REJECTED — CYCLE 12 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -467,8 +467,30 @@ without fallback. Extended Python 136/8, compatibility, deny/audit
 1,226/211/zero, portability, docs 91/318/701/534/0, status 10/0,
 diff/protected/no-unsafe, unchanged release/smokes, and authorized dev-only
 fixture/lock delta are green; the production graph is unchanged. Formal review,
-workflows, integration, and delivery remain pending, with no benchmark,
-product-performance, or fx-equivalence claim.
+workflows, integration, and delivery were pending at that checkpoint, with no
+benchmark, product-performance, or fx-equivalence claim.
+
+Formal cycle 11 reviewed exact candidate
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
+`26d90d8ec3924f6b7e12617506d5275ae32ec00b`. Correctness/API reported
+`0/0/0/1`, lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`,
+and the three distinct findings produce union `0/0/2/1`. The low mislabeled
+`ask_user_question_prompt_failed` as an error kind; the contract and ledger now
+correctly name kind `Execution` and that value as its code.
+
+One medium is release-profile validity: root `Cargo.toml` uses panic `abort`,
+so shipped `catch_unwind`/settlement paths cannot recover and test-profile
+subprocess evidence cannot establish no-abort, precedence, lane closure, or
+capacity recovery. Cycle 12 must use release panic `unwind` and independently
+build/run a release-profile product probe. The other medium is capacity: an
+intentionally forgotten secondary payload may retain the supplied prompt Waker;
+because its `ActivityWake` owns the permit for the entire `Arc` lifetime, the
+payload can keep default capacity busy forever. Cycle 12 must move the permit
+into state, give admitted callbacks local guards, and remove state capacity on
+close only after target teardown while the local close/callback guard preserves
+ordering. Forgotten closed inert Wakers must retain no capacity. Ordinary and
+ambient retained-Waker payload evidence must prove fresh admission. No cycle-12
+source, evidence, gate, review, workflow, integration, or delivery result exists.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4527,8 +4549,10 @@ gate compose at exact `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
 remediation/evidence and the complete local gate compose at
 `72e8e75`/`5405180`. Formal cycle 10 rejected exact `4ea1c1f`/`78e781f` with
 two distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
-complete local gate compose at `b8b721a`/`4672150`; reviews, workflows,
-integration, and delivery remain pending, and
+complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
+`b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle 12 must establish release-
+profile unwind behavior and detach closed Waker identity from prompt capacity;
+no cycle-12 source, evidence, or gate exists, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

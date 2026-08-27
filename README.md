@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11
+REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -193,10 +193,20 @@ never refunds panic. Central cleanup selection applies the documented prompt/
 activity/registration/notifier/ambient precedence and forgets every suppressed
 opaque payload. Four regressions plus a subprocess child correct base
 callback-256 `Pending`, callback-257 cancellation, primary replacement, and
-`SIGABRT`. The complete pinned/extended/release-smoke gate is green. The current
+`SIGABRT`. The complete pinned/extended/release-smoke gate is green. Formal
+cycle 11 rejected exact candidate
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
+`26d90d8ec3924f6b7e12617506d5275ae32ec00b`, with track counts `0/0/0/1`,
+`0/0/1/0`, and `0/0/1/0`, deduplicated to `0/0/2/1`. Release panic `abort`
+invalidates unwind-recovery claims outside test profile, and a forgotten panic
+payload retaining a prompt Waker can retain capacity forever. Cycle 12 targets
+release panic `unwind` plus an independent release-product probe and state-held
+permit ownership that close detaches from inert Waker identity. The low kind/
+code documentation label is corrected in the contract and ledger. The current
 status is
-**CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review,
-integration, delivery, benchmark, or fx-equivalence result is claimed.
+**CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**; no cycle-12 source,
+evidence, gate, review, integration, delivery, benchmark, or fx-equivalence
+result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

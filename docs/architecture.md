@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11
+REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -148,8 +148,14 @@ accounts every callback before dispatch and reaches sticky terminal 256 across
 queued/synchronous/external wakes. Central cleanup selection applies fixed
 prompt/activity/registration/notifier/ambient precedence and forgets every
 suppressed opaque payload. Direct 46 and the complete local gate are green with
-no dependency, thread, or public API change. Formal review, workflows,
-integration, and delivery remain pending.
+no dependency, thread, or public API change. Formal cycle 11 rejected exact
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`/`26d90d8` with a `0/0/2/1`
+union. Release panic `abort` defeats recovery in the product profile, while a
+forgotten panic payload can retain an `ActivityWake` and its prompt permit
+forever. Cycle 12 must use release `unwind`, prove it with a release-product
+probe, and move capacity into state so close detaches it from inert Waker
+identity while local close/callback guards preserve ordering. The kind/code
+documentation low is corrected; no cycle-12 implementation or gate exists.
 See
 [`ask-user-question.md`](ask-user-question.md).
 
@@ -2399,7 +2405,9 @@ rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
 cycle-10 source/evidence and the complete local gate now compose at
 `72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
 distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
-complete local gate compose at `b8b721a`/`4672150`, with fresh review pending.
+complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
+`b1d454b`/`26d90d8` with a deduplicated `0/0/2/1` union; cycle-12 remediation
+has not started.
 Analogous preexisting terminal code is out of scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
@@ -2441,6 +2449,7 @@ rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
 cycle-10 source, evidence, and the complete local gate are established at
 `72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
 distinct mediums and a `0/0/2/0` union. Cycle-11 source, evidence, and the
-complete local gate are established at `b8b721a`/`4672150`; formal reviews,
-workflows, integration, and delivery remain pending. The analogous preexisting
-terminal path remains outside this bounded slice.
+complete local gate are established at `b8b721a`/`4672150`. Formal cycle 11
+rejected `b1d454b`/`26d90d8` with a `0/0/2/1` union; no cycle-12 source,
+evidence, gate, review, workflow, integration, or delivery result exists. The
+analogous preexisting terminal path remains outside this bounded slice.

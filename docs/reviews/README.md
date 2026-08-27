@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 11 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 11 REJECTED — CYCLE 12
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -148,8 +148,14 @@ Cycle-11 docs `d839d18`/`f8342db`, evidence `3692d19`/`adf2b93`, and source
 and centralized cleanup precedence correct the queue budget and unwind defects.
 Four tests plus a subprocess child prove the rejected base's callback-256
 Pending, callback-257 cancellation, replaced primary, and `SIGABRT` cases.
-Direct 46 and the complete local gate are green. Formal review, workflows,
-integration, and delivery remain pending; no benchmark or fx claim is made.
+Direct 46 and the complete local gate are green. Formal cycle 11 rejected exact
+`b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`/`26d90d8`: correctness/API
+reported `0/0/0/1`, lifecycle/platform `0/0/1/0`, performance/resources
+`0/0/1/0`, and the union is `0/0/2/1`. The mediums are release panic `abort`
+invalidating shipped recovery and a forgotten Waker-owning panic payload
+retaining capacity forever. Cycle 12 targets release `unwind` plus a product
+probe and state-held capacity detached on close. The kind/code low is corrected;
+no cycle-12 source, evidence, gate, review, integration, or delivery exists.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

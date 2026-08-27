@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11
+REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
+status is **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -157,8 +157,14 @@ budget now spans queued and synchronous delivery; fixed centralized cleanup
 precedence forgets every suppressed opaque payload. Base callback-256 Pending,
 callback-257 cancellation, primary replacement, and `SIGABRT` evidence are
 corrected. Direct 46 and all focused/pinned/extended/release-smoke gates are
-green. No dependency, thread, or public API is added. Formal review, workflows,
-integration, and delivery remain pending.
+green. No dependency, thread, or public API is added. Formal cycle 11 rejected
+exact `b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
+`26d90d8ec3924f6b7e12617506d5275ae32ec00b`, with a `0/0/2/1` union. Release
+panic `abort` invalidates shipped unwind-recovery claims, and an intentionally
+forgotten payload can retain a Waker-owned prompt permit forever. Cycle 12
+targets release `unwind` with a product probe and state-held capacity detached
+on close from inert Waker identity. The kind/code documentation low is fixed;
+no cycle-12 implementation or gate exists.
 The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
