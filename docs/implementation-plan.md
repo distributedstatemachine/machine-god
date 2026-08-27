@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 7
-REJECTED — CYCLE 8 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 8 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -299,8 +299,33 @@ flags, and admit the then-current replay only after successful destruction.
 Deterministic panic-recovery and reentrant-close-suppression tests, a complete
 replacement gate, and three fresh reviews are required. The analogous
 preexisting native `terminal` ordering is outside this bounded slice and is not
-claimed fixed. Cycle-8 source/evidence, feature workflows, fast-forward
-integration, delivery, and exact `main` workflows remain pending.
+claimed fixed. Rejection docs `22d5702`/`3650dba`, evidence
+`cf4abfd`/`5681bab`, and source `a1b3d23` compose at exact behavior head
+`d8075ffee2d6765df2ce7842300e26bb7127d52b`, tree
+`fa32564476ce6a74cd3ba09c48a4b98af602cb72`; independent cross-composition
+`01d9a06`/`c917dce7856e9a1736651fa01696c5ad7e42fbcb` is green for formatting,
+direct 37, engine one, and native Clippy.
+
+A is now destroyed under `catch_unwind` outside the lock while lane/activity
+ownership remains. Replay arbitration happens only afterward against the then-
+current lifecycle, pending state, and target, so destructor close/replacement
+wins. Callback or target-drop panic clears the lane flags, callback panic wins
+if both occur, no foreign work runs under lock, and concurrency remains at most
+one. The two deterministic regressions record the rejected base at fresh B=0
+and stale B=1, then prove recovery, close suppression, and capacity retention.
+
+The integrated focused gate is green for formatting, direct 37, engine one,
+host nine, host lifecycle one, manifest six, and native warnings-denied Clippy.
+All four pinned gates pass. Extended evidence passes Python 136/8 skips,
+compatibility, deny with established duplicates, audit 1,226/211/zero,
+native/WASI/FreeBSD with only the established `read_file` warning, docs
+91/318/701/534/0, status 10/0, clean diff/protected/no-unsafe checks, and fresh
+3,985,216-byte release/missing-root smokes. Release SHA-256 remains
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The authorized Cargo delta remains the audited dev-only reentrant fixture and
+one native lock dependency-list line; the production normal/build graph is
+unchanged. Three fresh reviews, feature workflows, fast-forward integration,
+delivery, and exact `main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4348,8 +4373,9 @@ statuses, and the focused status scan compose at exact head
 green. Formal cycle 7 rejected exact `6176729`/`f2cd844` with a `0/0/1/0`
 union because replay B is selected before prior target A is destroyed. Cycle-8
 destruction-before-selection remediation, panic-recovery and reentrant-close-
-suppression evidence, a replacement gate, three fresh reviews, remote
-workflows, integration, and delivery remain pending, and
+suppression evidence, direct 37, and the complete pinned/extended/release gate
+compose at exact `d8075ff`/`fa32564`. Three fresh reviews, remote workflows,
+integration, and delivery remain pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

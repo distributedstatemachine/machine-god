@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 REJECTED
-— CYCLE 8 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -117,13 +117,22 @@ resources each reported `0/0/0/0`, lifecycle/platform reported `0/0/1/0`,
 and the deduplicated union is `0/0/1/0`. Replay B is selected before prior
 target A is dropped; an A-destructor panic can wedge `notifying`, while an
 A-destructor reentrant close or replacement can still permit stale B delivery.
-Cycle 8 must destroy A first, catch and settle drop unwind and lane flags, and
-admit only the then-current replay after successful destruction, with
-deterministic panic-recovery and reentrant-close-suppression evidence. Analogous
-preexisting `terminal` code is outside this bounded slice and is not claimed
-fixed. The
-current status is **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**; no
-cycle-8 source, gate, review, or delivery result is claimed.
+Cycle-8 rejection docs `22d5702`/`3650dba`, evidence `cf4abfd`/`5681bab`, and
+source `a1b3d23` compose at exact behavior head
+`d8075ffee2d6765df2ce7842300e26bb7127d52b`, tree
+`fa32564476ce6a74cd3ba09c48a4b98af602cb72`. Target A is destroyed under
+`catch_unwind` outside the lock while the lane/activity remains owned; replay
+arbitration then reads the current lifecycle, pending state, and target, so an
+A-destructor close/replacement wins. Callback or target-drop panic clears the
+lane, callback panic wins if both occur, foreign work stays outside the lock,
+and callback concurrency remains at most one. The two deterministic regressions
+show the rejected base's fresh B=0 wedge and stale B=1 delivery, while the fix
+recovers/suppresses them and retains capacity. Cross-composition formatting,
+direct 37/engine one/native Clippy, all focused/pinned/extended gates, status
+10/0, and unchanged release smokes are green. Analogous preexisting `terminal`
+code is outside this bounded slice and is not claimed fixed. The current status
+is **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review result
+is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

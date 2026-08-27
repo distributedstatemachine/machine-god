@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**;
+`ask_user_question` is **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -63,11 +63,17 @@ complete pinned/extended gate were green. Formal cycle 7 rejected exact
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
 `0/0/1/0`. Replay B is selected before prior target A is dropped, so A's
 destructor can panic and wedge `notifying` or reentrantly close/replace the lane
-before stale B delivery. Cycle 8 must drop A first, catch and settle unwind and
-lane flags, admit only the then-current replay after successful destruction,
-and add deterministic panic-recovery and reentrant-close-suppression evidence. The
-analogous preexisting terminal path is outside this bounded slice and is not
-claimed fixed. Cycle-8 gates and fresh reviews remain pending.
+before stale B delivery. Cycle-8 docs `22d5702`/`3650dba`, evidence
+`cf4abfd`/`5681bab`, and source `a1b3d23`/`d8075ff` compose at exact head
+`d8075ff`/`fa32564`. A is destroyed under `catch_unwind` outside the lock while
+the lane/activity remains retained; only then does arbitration select the
+current replay. Destructor close/replacement wins, every callback/target-drop
+panic clears lane flags, callback panic wins if both occur, and callback
+concurrency stays at most one without lock-held foreign work. The rejected-base
+B=0 wedge/B=1 stale-delivery tests now recover and suppress respectively while
+retaining capacity. Direct 37, host nine/lifecycle one, and the complete pinned/
+extended gate are green. The analogous preexisting terminal path is outside
+this bounded slice and is not claimed fixed. Fresh reviews remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -791,9 +797,9 @@ complete local gate are green. Formal cycle 6 rejected exact
 `85058a8`/`fd3c507` with a `0/0/1/1` union. Cycle-7 bounded replay, status
 consistency, source, evidence, and complete local gate compose at
 `fbb3f5c`/`7cee96e`. Formal cycle 7 rejected `6176729`/`f2cd844` with a
-`0/0/1/0` union. Cycle-8 destruction-before-selection remediation, its gate,
-and fresh reviews remain pending; the analogous preexisting terminal code is
-outside this slice.
+`0/0/1/0` union. Cycle-8 destruction-before-selection remediation, evidence,
+and complete local gate compose at `d8075ff`/`fa32564`. Fresh reviews remain
+pending; the analogous preexisting terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1344,6 +1350,7 @@ requires consistent operative opening statuses. Cycle-7 observation-aware
 source/evidence and complete gate are green at `fbb3f5c`/`7cee96e`; fresh
 reviews later rejected exact `6176729`/`f2cd844` with a `0/0/1/0` union.
 Cycle-8 prior-target destruction before replay selection, unwind recovery,
-reentrant-close suppression, gates, reviews, remote workflows, integration,
-and delivery remain pending. Analogous preexisting terminal code is out of
-scope and is not claimed fixed.
+reentrant-close suppression, and the complete local gate compose at
+`d8075ff`/`fa32564`. Reviews, remote workflows, integration, and delivery remain
+pending. Analogous preexisting terminal code is out of scope and is not claimed
+fixed.

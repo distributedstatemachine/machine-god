@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-8 question resource remediation
 
-Status: **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -855,5 +855,27 @@ replay, catch and settle drop unwind plus lane flags, and admit only the then-
 current replay after successful destruction. Deterministic tests must prove
 panic recovery and reentrant-close suppression before a replacement gate and
 three fresh reviews. Analogous preexisting terminal code is outside this
-bounded slice and is not claimed fixed. No cycle-8 green result is claimed. See
+bounded slice and is not claimed fixed.
+
+Cycle-8 docs `22d5702`/`3650dba`, evidence `cf4abfd`/`5681bab`, and source
+`a1b3d23`/`d8075ff` compose at exact behavior head
+`d8075ffee2d6765df2ce7842300e26bb7127d52b`, tree
+`fa32564476ce6a74cd3ba09c48a4b98af602cb72`. A is destroyed under
+`catch_unwind` outside the lock while lane/activity ownership is retained.
+Only afterward does arbitration read the current lifecycle, pending bit, and
+target. Destructor close/replacement wins; callback or target-drop panic clears
+the lane; callback panic wins if both occur; no foreign work runs under lock;
+and maximum callback concurrency remains one.
+
+`replay_target_drop_panic_clears_lane_for_a_fresh_notification` records fresh
+B=0 on the rejected base's wedged lane, then proves the fix recovers and
+delivers. `replay_target_drop_close_suppresses_selected_replay_and_retains_capacity`
+records one stale B delivery on the base, then proves close suppression and
+capacity retention. Cross-composition `01d9a06`/`c917dce` passes formatting,
+direct 37, engine one, and native Clippy. Focused, all four pinned, Python
+136/8, compatibility, deny/audit 1,226/211/zero, portability, docs
+91/318/701/534/0, status 10/0, diff/protected/no-unsafe, and unchanged release-
+smoke gates are green. The exact Cargo delta remains the audited dev-only
+fixture and one native lock list line; the production graph is unchanged.
+Formal review, remote workflows, integration, and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).

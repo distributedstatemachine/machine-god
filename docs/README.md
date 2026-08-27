@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 REJECTED
-— CYCLE 8 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,19 +90,25 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**. Formal cycle
+status is **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
 `0/0/1/0`. Replay B is selected before prior target A is dropped, so A's
 destructor can panic and wedge `notifying` or reentrantly close/replace the lane
-before stale B delivery. Cycle 8 must destroy A first, catch and settle unwind
-and lane flags, admit only the then-current replay after successful
-destruction, and prove panic recovery plus reentrant-close suppression.
-Analogous preexisting
-`terminal` code remains outside this slice and is not claimed fixed. The fix,
-evidence, replacement gate, three fresh reviews, remote workflows, integration,
-and delivery remain pending. The normative
+before stale B delivery. Cycle-8 docs `22d5702`/`3650dba`, evidence
+`cf4abfd`/`5681bab`, and source `a1b3d23`/`d8075ff` compose at exact behavior
+head `d8075ff`, tree `fa32564`. A is destroyed under `catch_unwind` outside the
+lock while lane/activity ownership remains; only afterward does arbitration
+read the then-current lifecycle, pending state, and target. Destructor close or
+replacement wins, every callback/target-drop panic clears the lane, callback
+panic wins if both occur, and maximum callback concurrency remains one. The
+rejected-base B=0 wedge/B=1 stale-delivery regressions now recover and suppress
+respectively while retaining capacity. Focused direct 37/engine one, complete
+pinned/extended, status 10/0, and unchanged release-smoke gates are green.
+Analogous preexisting `terminal` code remains outside this slice and is not
+claimed fixed. Three fresh reviews, remote workflows, integration, and delivery
+remain pending. The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).

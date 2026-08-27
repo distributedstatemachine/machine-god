@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -311,8 +311,48 @@ notifier. A complete replacement gate and three fresh reviews are required.
 
 The analogous notifier/destructor ordering in native `terminal` predates this
 finding and is outside this bounded slice. This remediation target makes no
-claim that the terminal path is fixed. No cycle-8 source, evidence, green gate,
-review, workflow, integration, or delivery result is claimed.
+claim that the terminal path is fixed.
+
+## Cycle-8 implementation and local checkpoint
+
+Rejection docs `22d570286f76067971504ee2283ee40d49eab8a1`/`3650dba`, evidence
+`cf4abfd7385904ff4c32c503ff7d8f3823225032`/`5681bab`, and source
+`a1b3d231077a67a63f8984cbd3fe4f8cc2370108` compose at exact behavior head
+`d8075ffee2d6765df2ce7842300e26bb7127d52b`, tree
+`fa32564476ce6a74cd3ba09c48a4b98af602cb72`. Independent cross-composition
+`01d9a06`/`c917dce7856e9a1736651fa01696c5ad7e42fbcb` is green for formatting,
+37 direct tests, one engine test, and native warnings-denied Clippy.
+
+Target A is destroyed under `catch_unwind` outside the notifier lock while the
+lane and originating activity remain retained. Only after A's successful
+destruction does replay arbitration read the then-current lifecycle, pending
+notice, and target. A destructor's close or replacement therefore wins.
+Callback panic or target-drop panic clears the lane flags; callback panic wins
+deterministically if both occur. Foreign callback, clone, drop, and Waker work
+stays outside the lock, and callback concurrency remains at most one.
+
+`replay_target_drop_panic_clears_lane_for_a_fresh_notification` records the
+rejected base with fresh B at zero callbacks because `notifying` remains wedged,
+then proves cycle 8 clears the lane and delivers the fresh notice.
+`replay_target_drop_close_suppresses_selected_replay_and_retains_capacity`
+records one stale B delivery on the rejected base, then proves the fix lets A's
+reentrant close suppress B and retain capacity through destruction.
+
+The focused gate passes exact-1.94.1 formatting, direct 37, engine one, all-
+feature host nine, host lifecycle one, native manifest six, and native all-
+target/all-feature warnings-denied Clippy. All four pinned workspace gates are
+green. The extended gate passes Python 136/8 skips, pinned compatibility,
+dependency policy/audit 1,226/211/zero, native/FreeBSD/WASI portability with
+only the established unrelated `read_file` warning, documentation
+91/318/701/534/0, status consistency 10 current/zero stale, clean diff/
+protected/no-unsafe checks, and a fresh locked release plus three missing-root
+smokes. The 3,985,216-byte release SHA-256 is
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The existing audited reentrant-Waker fixture and one native lock dependency-
+list line remain the exact dev-only Cargo delta; the production normal/build
+graph is unchanged. Formal review, remote workflows, integration, and delivery
+remain pending. The analogous preexisting terminal path is still outside this
+bounded slice and is not claimed fixed.
 
 ## Product boundary
 

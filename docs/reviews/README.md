@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 7 REJECTED — CYCLE 8
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 8 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -84,8 +84,18 @@ replacement can permit stale B delivery. Cycle 8 must drop A before selecting
 replay, catch and settle unwind and lane flags, and admit only the then-current
 replay after successful destruction, with deterministic panic-recovery and
 reentrant-close-suppression evidence. The analogous preexisting terminal path is outside
-this bounded slice and is not claimed fixed. Replacement gates, three fresh
-exact-SHA reviews, remote workflows, integration, and delivery remain pending.
+this bounded slice and is not claimed fixed. Rejection docs
+`22d5702`/`3650dba`, evidence `cf4abfd`/`5681bab`, and source
+`a1b3d23`/`d8075ff` compose at exact head `d8075ff`/`fa32564`. A is destroyed
+under `catch_unwind` outside the lock while the lane/activity remains; then-
+current replay arbitration follows. Destructor close/replacement wins, callback
+or target-drop panic clears flags, callback panic wins if both occur, no foreign
+work runs under lock, and concurrency stays at most one. Deterministic evidence
+records the rejected-base fresh B=0 wedge and stale B=1 delivery, then proves
+recovery, close suppression, and capacity retention. Focused direct 37/engine
+one, all pinned/extended, status 10/0, and unchanged release-smoke gates are
+green. Three fresh exact-SHA reviews, remote workflows, integration, and
+delivery remain pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

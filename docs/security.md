@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-8 interaction and authority remediation
 
-Status: **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2250,5 +2250,24 @@ replacement gate, and three fresh reviews are required.
 
 Native `terminal` has analogous preexisting destructor/replay ordering. It is
 outside this bounded slice, and this remediation target does not claim that
-path fixed. No cycle-8 source, evidence, green gate, review, workflow,
-integration, or delivery result is claimed.
+path fixed.
+
+Cycle-8 docs `22d5702`/`3650dba`, evidence `cf4abfd`/`5681bab`, and source
+`a1b3d23`/`d8075ff` compose at exact behavior head
+`d8075ffee2d6765df2ce7842300e26bb7127d52b`, tree
+`fa32564476ce6a74cd3ba09c48a4b98af602cb72`. A is destroyed under
+`catch_unwind` outside the lock while the lane/activity remains retained. Only
+after successful destruction does replay arbitration inspect the then-current
+lifecycle, pending state, and target, so destructor close/replacement wins.
+Callback or target-drop panic clears lane flags; callback panic wins if both
+occur; no foreign work runs under lock; callback concurrency stays at most one;
+and interaction authority remains unchanged.
+
+The two named deterministic regressions record the rejected base's fresh B=0
+wedge and stale B=1 delivery, then prove lane recovery, close suppression, and
+capacity retention. Cross-composition formatting/direct 37/engine one/native
+Clippy, all focused/pinned/extended gates, docs/status, unchanged release smoke,
+and the existing dev-only Cargo delta are green. The production graph remains
+unchanged. Formal review, remote workflows, integration, and delivery remain
+pending. The analogous preexisting terminal path remains out of scope and is
+not claimed fixed.
