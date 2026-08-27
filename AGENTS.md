@@ -3,12 +3,27 @@
 ## Workflow
 
 - Read `docs/implementation-plan.md` before changing code.
+- Treat `docs/implementation-plan.md` as the only live source for the current
+  phase, delivered-slice count, delivered-main SHA, workflow IDs, and next gate.
 - Work on one bounded feature branch at a time.
 - Use isolated worktrees for parallel agents and assign non-overlapping files.
 - Do not revert another agent's changes; adapt to integrated work.
 - Update documentation with behavior in the same commit.
+- Update behavior documents only when durable behavior changes. Review ledgers
+  are historical evidence, not live status dashboards; do not duplicate live
+  phase, delivered count, or workflow IDs outside the implementation plan.
 - Do not call work complete until local checks, adversarial review, and remote
   CI pass for the exact commit.
+
+Documentation-only maintenance, review-result seals, and delivery records that
+change no product behavior are exempt from a new adversarial product-review
+cycle. They still require proportionate local checks and exact remote CI. Such
+maintenance does not increment the delivered-slice count.
+
+Compact `docs/implementation-plan.md` after every five deliveries or whenever
+it exceeds 600 lines. Preserve its canonical live-status block, milestone
+state, compact delivered-slice inventory, remaining boundary, and gates; keep
+detailed review history under `docs/reviews/`.
 
 ## Required checks
 
