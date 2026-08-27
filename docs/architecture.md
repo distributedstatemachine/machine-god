@@ -10,12 +10,17 @@ fifteen alphabetical tools, thirteen backed by one original workspace
 descriptor plus twelve clones; its private non-Linux terminal remains in that
 catalog and fails fixed unsupported at allowed execution before cwd lookup or
 spawn. Timeout is independently enforced from first poll around controllable
-userspace phases, but safe Rust cannot turn a blocked host syscall into an
-unconditional wall-clock ceiling. Output-limit observation is authoritative,
-and group cleanup retains the leader through signal dispatch, reports ambiguous
-cleanup, and proves only the disappearance of observed signalable members. This
-is a bounded foreground-exec subset, not a sandbox, PTY, durable terminal,
-performance result, or fx-equivalence claim. See [`terminal.md`](terminal.md).
+userspace phases, but safe Rust cannot turn a blocked host syscall, synchronous
+executor poll/drop, or Waker callback into an unconditional wall-clock ceiling.
+Output-limit observation is published before cleanup and remains authoritative
+against a concurrent guardian. Blocking notification tails retain their
+originating active slots, bounding their threads and stacks by configured
+capacity. Group cleanup retains the leader through final signal dispatch;
+already-exited leaders bypass the termination grace, while all paths report
+ambiguous cleanup and prove only the disappearance of observed signalable
+members. This is a bounded foreground-exec subset, not a sandbox, PTY, durable
+terminal, performance result, or fx-equivalence claim. See
+[`terminal.md`](terminal.md).
 
 Bounded Milestone 03 slice 33 is **DELIVERED** from exact delivered base
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334`. It adds native `web_search` without

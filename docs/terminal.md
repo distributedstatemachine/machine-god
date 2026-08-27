@@ -37,8 +37,9 @@ components, repeated or trailing separators, absolute and platform-prefix
 paths, components spelled exactly `~`, `.` or `..`, NUL, C0/C1
 controls, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, and bidi-control
 characters reject rather than normalize. Unicode is not normalized or
-case-folded. Preparation performs no filesystem, environment, process, thread,
-or network effect.
+case-folded. A literal component such as `~cache` is an ordinary valid name,
+whether leading or nested; only the exact component `~` rejects. Preparation
+performs no filesystem, environment, process, thread, or network effect.
 
 The exact tool description is:
 
@@ -153,10 +154,12 @@ immediately before a `ToolOutput` is returned.
 
 This timeout is not an unconditional wall-clock ceiling. Safe Rust cannot
 preempt a host thread blocked inside a filesystem lookup, `Command::spawn`, a
-kernel wait, or another uninterruptible syscall. Cancellation and the deadline
-are checked immediately around those boundaries, and execution resumes the
-authoritative timeout path when control returns, but elapsed wall-clock time can
-exceed the requested duration while the host syscall remains blocked.
+kernel wait, another uninterruptible syscall, a trusted executor's synchronous
+`poll` or `Drop`, or an arbitrary blocking `Waker` callback. Cancellation and
+the deadline are checked immediately around controllable boundaries, and
+execution resumes the authoritative timeout path when control returns, but
+elapsed wall-clock time can exceed the requested duration while one of those
+synchronous operations remains blocked.
 
 The child starts in a new process group. One system worker owns it and two
 bounded readers drain stdout and stderr concurrently to prevent pipe deadlock.
@@ -164,13 +167,20 @@ Across both streams, execution:
 
 - retains at most 64 KiB of raw output using deterministic head-and-tail
   retention;
-- continues draining and counting through 1 MiB of produced bytes; and
+- continues draining and counting through 1 MiB of produced bytes;
 - makes `output_limit` authoritative once either reader observes an aggregate
   produced count beyond 1 MiB, including when exit or deadline becomes ready
-  concurrently; and
+  concurrently. That terminal cause is published to the outer guardian before
+  process-group cleanup begins, so a deadline during cleanup cannot discard the
+  authoritative overflow; and
 - promptly stops both readers after that observation, with fixed chunk and
   post-stop read-count ceilings that deterministically bound overshoot rather
   than claiming termination on the first byte beyond 1 MiB.
+
+Final arbitration preserves the validated outcome invariants: a result with
+more than 1 MiB observed is always `output_limit`, and a `timed_out` result
+never carries counters that make it an output-limit outcome. A validated
+executor outcome is not rewritten into a contradictory status/counter pair.
 
 Invalid UTF-8 is replaced lossily in presentation and identified by per-stream
 `*_lossy` flags; the output makes no byte-round-trip claim. Head/tail omission
@@ -221,13 +231,15 @@ commit point.
 
 After commit, cancellation, timeout, output overflow, or future drop sends
 `SIGTERM` to the owned process group, waits for a bounded grace, sends `SIGKILL`
-if necessary, and observes for another bounded grace. Cleanup retains the
-direct-child leader identity until group signals have been dispatched, avoiding
-numeric PID/PGID reuse between reaping and signalling. It distinguishes an
-absent group from permission or other signal ambiguity, reaps the direct child,
-closes pipes, joins readers and the worker, and releases the permit. The same
-group cleanup runs after an ordinary direct-child exit when original-group
-members remain.
+if necessary, and observes for another bounded grace. An already-exited
+foreground leader instead receives group `SIGTERM` followed immediately by the
+final group `SIGKILL`; it does not impose the termination grace on every normal
+command. Both paths retain the direct-child leader identity until the final
+group signal has been dispatched, avoiding numeric PID/PGID reuse between
+reaping and signalling, then reap the leader and observe group disappearance.
+Cleanup distinguishes an absent group from permission or other signal
+ambiguity, closes pipes, and joins readers. Worker joining and active-slot
+release follow the notification-tail contract below.
 
 Successful cleanup guarantees that no observed, signalable member of the
 original process group remains. If disappearance cannot be established, the
@@ -243,14 +255,17 @@ clock claim.
 
 Reader shutdown uses deterministic fixed read-count and chunk-size bounds, so
 an escaped descendant that retains and continuously writes a pipe cannot make
-join unbounded. Owned descriptors, pipes, readers, the direct child, and the
-capacity permit are cleaned before a result is published. A finished publisher
-or deadline-notification thread can overlap an arbitrary inline or blocking
-`Waker`; joining that thread from the consuming path could self-join or cross-
-thread deadlock. Its handle may therefore be released only after all command
-resources are gone, and only its resource-free callback/final-bookkeeping tail
-may briefly outlive publication. This exception is not limited to self-
-reentrant Wakers.
+join unbounded. Owned descriptors, pipes, readers, and the direct child are
+cleaned before a result is published. A finished publisher or deadline-
+notification thread can overlap an arbitrary inline or blocking `Waker`;
+joining that thread from the consuming path could self-join or cross-thread
+deadlock. Its handle may therefore be released after command resources are
+gone, but its callback/final-bookkeeping tail retains the originating per-tool
+active slot until the callback returns. OS threads and stacks are consequently
+bounded by the configured active capacity even when a callback blocks
+indefinitely; further calls fail fast as busy rather than accumulating detached
+tails. This exception is not limited to self-reentrant Wakers and makes no
+wall-clock bound for callback completion.
 
 ## Acceptance evidence
 
@@ -260,12 +275,14 @@ denial with zero effects; retained-root cwd and symlink/replacement races;
 shell quoting, newlines, fixed program/argv, null stdin, and exact environment;
 separate streams, invalid UTF-8, pipe pressure, output and serialized caps;
 exit codes, signals, timeout, authoritative output overflow and bounded
-overshoot, spawn/wait failure; cancellation before and after spawn plus the
-final prepublication check; drop and direct-child reaping; process groups,
-TERM-ignore/KILL, ambiguous cleanup, and leader-identity retention; concurrency
-limits and permit release; redaction; public-construction and private-host
-unsupported behavior; engine event/output persistence; and the fifteen-tool
-alphabetical reference catalog.
+overshoot, cause visibility during cleanup, and validated outcome arbitration;
+spawn/wait failure; cancellation before and after spawn plus the final
+prepublication check; drop and direct-child reaping; process groups,
+TERM-ignore/KILL, normal-exit latency, ambiguous cleanup, and leader-identity
+retention; concurrency limits, blocking-Waker saturation, and active-slot
+release; exact-tilde and tilde-prefixed cwd literals; redaction; public-
+construction and private-host unsupported behavior; engine event/output
+persistence; and the fifteen-tool alphabetical reference catalog.
 The required exact Rust checks, release-mode focused tests, fresh release-binary
 smokes, portability checks, three fresh adversarial product reviews, exact
 feature workflows, fast-forward integration, exact main workflows, and clean

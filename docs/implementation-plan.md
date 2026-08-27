@@ -56,15 +56,17 @@ capability, separate bounded stdout/stderr capture, fail-fast concurrency,
 first-poll timeout around controllable userspace phases, cancellation,
 authoritative output limiting, and bounded process-group cleanup. Safe Rust
 cannot preempt blocked filesystem, spawn, kernel-wait, or uninterruptible host
-syscalls, so the timeout is not an unconditional wall-clock ceiling. The
+syscalls, nor synchronous trusted-executor poll/drop or arbitrary Waker
+callbacks, so the timeout is not an unconditional wall-clock ceiling. The
 production system executor's public constructors are Linux-only because safe
 standard Rust exposes no descriptor-relative process cwd primitive on macOS and
 unsafe Rust is forbidden. Private reference-host composition retains the non-
 Linux catalog entry and fails fixed unsupported at allowed execution before cwd
 lookup or spawn. It is not a sandbox and makes no PTY, durable-session, fx-
-equivalence, benchmark, or product-performance claim. Production, independent
-evidence, documentation, and the complete local gate are composed; three fresh
-adversarial product review tracks and remote delivery remain pending.
+equivalence, benchmark, or product-performance claim. Formal cycle 2 rejected
+its exact candidate with a deduplicated `0/2/1/2` union. Cycle-3 source,
+evidence, and documentation remediation is in progress; its replacement gate,
+fresh exact-SHA reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -80,13 +82,18 @@ Python run. Exact evidence/documentation remediation `80c6ee0`, tree `027c4bc`,
 requires unconditional native `sha2` for terminal environment identity and
 passed the complete exact-1.94.1 replacement gate. Formal cycle 1 rejected exact
 candidate `fba499e`, tree `8679917`, with a deduplicated `0/3/3/4` union.
-Replacement semantics reject `~` components and U+2028/U+2029, validate
-environment bounds before sorting, arbitrate observed output overflow
-authoritatively, add final cancellation checks, retain the process-group leader
-through signal dispatch, distinguish cleanup ambiguity, and narrow lifecycle
-and timeout claims to what safe Rust and an ordinary non-subreaper process can
-prove. Source, evidence, and documentation remediation are pending; delivery
-has not begun.
+Independent evidence `8c58c29`, contract remediation `ddccdb2`, and lifecycle/
+resource remediation `3725aed` compose through exact `b03ecb0`; its complete
+replacement gate is green. Formal cycle 2 rejected exact candidate `a566db2`,
+tree `785c084`, with a deduplicated `0/2/1/2` union. Accepted cycle-3 semantics
+publish observed output-limit authority before cleanup and preserve validated
+outcome invariants; retain the originating active slot through an arbitrary
+blocking Waker callback; avoid a mandatory TERM grace after ordinary foreground
+exit while retaining the leader through final signal dispatch; accept literal
+tilde-prefixed components such as `~cache` while rejecting exact `~`; and keep
+the public timeout claim conditional around blocking syscalls, executor poll/
+drop, and callbacks. Remediation does not establish a replacement candidate,
+gate, review result, or delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
@@ -3953,8 +3960,10 @@ cycle-2 tracks rejected exact candidate `a566db2`, tree `785c084`, with a
 deduplicated `0 blocker / 2 high / 1 medium / 2 low` union covering
 deadline/output arbitration, bounded notification tails, normal-exit latency,
 tilde grammar, and public Rustdoc. Every finding is accepted; cycle-3
-remediation, replacement gate, review, and remote delivery remain pending, so
-this combined item stays unchecked. The delivered
+remediation is in progress in non-overlapping source, evidence, and maintained-
+documentation tracks. That remediation status does not establish a replacement
+candidate, gate, review result, or remote delivery, so this combined item stays
+unchecked. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit

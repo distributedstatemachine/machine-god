@@ -2,9 +2,11 @@
 
 Current bounded slice 34, native `terminal`, is **IN PROGRESS — CONTRACT
 FROZEN** from exact delivered base `52b5885`. It implements only bounded
-foreground `exec` with a Linux-only system executor. Production, independent
-evidence, local gates, and the first three fresh product-review tracks are
-pending. Scope and worktree cleanup are recorded in
+foreground `exec` with a Linux-only system executor. Cycle 2 rejected exact
+candidate `a566db2`, tree `785c084`, with a deduplicated `0/2/1/2` union.
+Accepted cycle-3 production, evidence, and documentation remediation is in
+progress; no replacement candidate, gate, review result, or delivery is yet
+claimed. Scope and worktree cleanup are recorded in
 [`m03-terminal-review-01.md`](m03-terminal-review-01.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED** from exact delivered

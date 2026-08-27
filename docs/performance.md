@@ -12,13 +12,20 @@ limit four, and hard active limit sixteen are resource ceilings, not measured
 performance results. Each admitted call owns at most one deadline-guardian
 thread; Linux system execution additionally owns one worker and two readers.
 Once either reader observes more than 1 MiB aggregate production,
-`output_limit` is authoritative and fixed chunk/post-stop read-count ceilings
-bound overshoot while stopping both readers promptly. The first-poll deadline
-is independently enforced around controllable userspace phases, but a blocked
-filesystem lookup, `Command::spawn`, kernel wait, or uninterruptible syscall can
-exceed it in wall-clock time. These are bounded ownership and work facts, not a
-latency, throughput, sandbox, or performance claim. No benchmark workload
-changes in this slice. See [`terminal.md`](terminal.md).
+`output_limit` is published before cleanup and remains authoritative against a
+concurrent guardian; fixed chunk/post-stop read-count ceilings bound overshoot
+while stopping both readers promptly. Publisher and guardian threads that are
+blocked in arbitrary Waker callbacks retain their originating active slots
+until return, so their threads and stacks remain bounded by configured capacity
+and further calls fail fast as busy. An already-exited foreground leader gets
+TERM and immediate final KILL while its identity is retained, avoiding a fixed
+termination-grace floor for normal commands. The first-poll deadline is
+independently enforced around controllable userspace phases, but a blocked
+filesystem lookup, `Command::spawn`, kernel wait, uninterruptible syscall,
+synchronous executor poll/drop, or Waker callback can exceed it in wall-clock
+time. These are bounded ownership and work facts, not a latency, throughput,
+sandbox, or performance claim. No benchmark workload changes in this slice.
+See [`terminal.md`](terminal.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED**, unmeasured, and
 claim-ineligible. It changes no benchmark workload or recorded comparison. Its

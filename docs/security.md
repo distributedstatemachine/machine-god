@@ -9,15 +9,22 @@ system executor's public constructors are Linux-only; private non-Linux host
 composition keeps the catalog entry and fails fixed unsupported at allowed
 execute before cwd lookup or spawn. Output, controllable timeout phases, and
 concurrency are bounded, but a blocked host syscall is not subject to an
-unconditional wall-clock ceiling. Cancellation/drop retain the direct-child
-leader through process-group signal dispatch, observe for bounded TERM/KILL
-graces, reap that child, and turn ambiguous cleanup into a fixed error. Success
-proves no observed signalable original-group member remains; without subreaper
-or privilege it does not prove adopted-zombie or credential-escaped cleanup,
-and `setsid` descendants remain outside containment. Bounded post-stop reads
-prevent an escaped pipe writer from blocking cleanup. An arbitrary inline or
-blocking Waker can leave only a resource-free publisher tail briefly alive;
-command resources and capacity are released first. See [`terminal.md`](terminal.md).
+unconditional wall-clock ceiling. Cancellation, timeout, output overflow, and
+drop retain the direct-child leader through process-group signal dispatch,
+observe for bounded TERM/KILL graces, reap that child, and turn ambiguous
+cleanup into a fixed error. An already-exited foreground leader receives TERM
+and immediate final KILL while its identity is retained, without the
+termination grace. Success proves no observed signalable original-group member
+remains; without subreaper or privilege it does not prove adopted-zombie or
+credential-escaped cleanup, and `setsid` descendants remain outside
+containment. Bounded post-stop reads
+prevent an escaped pipe writer from blocking cleanup. Output-limit authority is
+visible before cleanup and wins a concurrent guardian. An arbitrary inline or
+blocking Waker callback may outlive publication after command resources are
+gone, but it retains the originating per-tool active slot until return; the
+configured capacity bounds callback threads/stacks and makes later calls fail
+fast as busy. A blocked host syscall, executor poll/drop, or callback remains
+outside the unconditional wall-clock claim. See [`terminal.md`](terminal.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED**. Its composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1

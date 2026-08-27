@@ -29,7 +29,12 @@ Native rechecks cancellation after executor/guardian destruction and directly
 before returning `ToolOutput`. Its timeout starts at first poll and is
 independent of the executor around controllable userspace phases, but core makes
 no wall-clock guarantee for a native thread blocked in filesystem, spawn,
-kernel-wait, or other uninterruptible host work. Public system construction is
+kernel-wait, other uninterruptible host work, synchronous executor poll/drop,
+or a Waker callback. Native publishes an observed output-limit cause before
+cleanup and preserves validated status/counter invariants during final
+arbitration. A blocking publisher or guardian callback retains its originating
+per-tool active slot until return, bounding notification threads and causing
+later admissions to fail fast at capacity. Public system construction is
 Linux-only; private non-Linux reference-host composition retains the advertised
 tool and returns fixed unsupported only after strict preparation, permission,
 and execution argument validation, before cwd lookup or spawn.

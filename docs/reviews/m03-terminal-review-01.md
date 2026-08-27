@@ -230,6 +230,31 @@ All three review worktrees were read-only and clean; each was removed and
 pruned with its temporary branch immediately after its verdict. Cycle 3
 requires a complete replacement gate and three fresh exact-SHA reviews.
 
+## Cycle 3 remediation in progress
+
+Accepted remediation is split across non-overlapping production, evidence, and
+maintained-documentation worktrees. The maintained contract now records the
+required replacement semantics:
+
+- the production output-limit cause is visible to the guardian before cleanup
+  and wins a concurrent deadline, while final arbitration cannot turn a
+  validated outcome into a contradictory status/counter combination;
+- a worker or deadline thread blocked in an arbitrary Waker callback retains
+  its originating per-tool active slot until return, bounding callback threads
+  and stacks at configured capacity and making later calls fail fast as busy;
+- cancellation, timeout, overflow, and drop use TERM grace then final KILL,
+  while an already-exited foreground leader receives TERM and immediate final
+  KILL with its identity retained through signal dispatch, then reap and bounded
+  disappearance observation;
+- only a component spelled exactly `~` rejects; literal `~cache` is valid in a
+  leading or nested position; and
+- the public timeout remains non-unconditional across blocked host syscalls,
+  synchronous executor poll/drop, and arbitrary callback execution.
+
+This is a remediation-status record only. It does not assert that source and
+evidence components have been composed, name a replacement candidate or tree,
+claim a green local gate or review, or advance remote delivery.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in

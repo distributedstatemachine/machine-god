@@ -7,11 +7,12 @@ retained workspace-relative starting directory, exact environment-snapshot
 identity in the process capability, bounded separate stdout/stderr, timeout,
 cancellation, fail-fast concurrency, an independent deadline guardian,
 and bounded process-group cleanup. Its first-poll timeout governs controllable
-userspace phases but is not a wall-clock ceiling across blocked host syscalls.
-Public system-executor construction is Linux-only; the private non-Linux host
-entry stays advertised and returns fixed unsupported at allowed execution
-before cwd lookup or spawn. It adds no PTY, durable session, sandbox, CLI
-command, benchmark, product-performance, or fx-equivalence claim. See the
+userspace phases but is not a wall-clock ceiling across blocked host syscalls,
+synchronous executor poll/drop, or Waker callbacks. Public system-executor
+construction is Linux-only; the private non-Linux host entry stays advertised
+and returns fixed unsupported at allowed execution before cwd lookup or spawn.
+It adds no PTY, durable session, sandbox, CLI command, benchmark, product-
+performance, or fx-equivalence claim. See the
 [`terminal` contract](terminal.md) and
 [`live review ledger`](reviews/m03-terminal-review-01.md).
 
