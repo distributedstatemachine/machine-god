@@ -3937,14 +3937,20 @@ gate:
   `web_fetch`, `web_search`, `terminal`, `ask_user_question`, `vision`, and
   `read_tool_result`. Every authority-bearing tool requires normalized
   preflight, exact policy/execution agreement, resource bounds, redacted
-  diagnostics, cancellation/drop tests, and platform scope stated before
-  integration. Slice 33 `web_search` is delivered through exact record
-  `52b5885`; its feature and main CI/Benchmark workflows are green. Slice 34
-  contract-freezes the bounded foreground-`exec` subset of `terminal` from that
-  exact base. Production, independent evidence, lifecycle hardening, and the
-  fifteen-tool host composition are present through `59b069a`; complete exact
-  local gates, formal review, and delivery remain pending. This combined item
-  therefore stays unchecked. The delivered
+diagnostics, cancellation/drop tests, and platform scope stated before
+integration. Slice 33 `web_search` is delivered through exact record
+`52b5885`; its feature and main CI/Benchmark workflows are green. Slice 34
+contract-freezes the bounded foreground-`exec` subset of `terminal` from that
+exact base. Cycle 1 rejected exact candidate `fba499e` with a deduplicated
+`0 blocker / 3 high / 3 medium / 4 low` product-finding union. Independent
+evidence `8c58c29`, contract remediation `ddccdb2`, and lifecycle/resource
+remediation `3725aed` compose through exact `b03ecb0`; all isolated remediation
+worktrees are removed and pruned. The complete exact-1.94.1 replacement gate is
+green with 1,150 non-documentation Rust tests, two doctests, 136 Python tests,
+pinned-fx regeneration, dependency policy/audit, Linux/FreeBSD/WASI checks,
+documentation/diff invariants, and fresh release-binary smoke. Three fresh
+cycle-2 reviews and remote delivery remain pending, so this combined item stays
+unchecked. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit

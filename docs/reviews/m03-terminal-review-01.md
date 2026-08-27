@@ -134,6 +134,51 @@ spawn.
 
 Cycle 2 requires a complete replacement gate and three fresh exact-SHA reviews.
 
+## Cycle 2 remediation and replacement gate
+
+The three accepted remediation tracks were implemented in non-overlapping
+isolated worktrees from exact cycle-1 record `49567ec`. Independent evidence
+component `8c58c29418f4bf74cb646790c21539a8891db57b`, tree
+`5e34b9db3ff456f4f1b6f98d5b7ffbb5bac28a85`, integrated as exact `ac4c3c3`.
+Documentation component `ddccdb2759210ae2cccc2a53668da59cf7811edf`, tree
+`8831c0c1787166d34c41f9a5f67e34a2fc1df50b`, integrated as exact `e30a195`.
+Production component `3725aedb066ec99240c5db2d4263ad6952e97aba`, tree
+`f23bd94df13d110996bc9350abefab12341ffe97`, integrated as exact
+`b03ecb03d9786be3d43cca7dc6885e273aa36b5d`. Each source worktree was clean
+before integration; all three worktrees and temporary branches were then
+removed and pruned.
+
+The replacement behavior head `b03ecb03d9786be3d43cca7dc6885e273aa36b5d`,
+tree `06a87fd085bb1024572ac04abbb68f1ee958e9a0`, passes its complete local gate
+under exact Rust and Cargo 1.94.1 without fallback:
+
+- the two regressions that failed on the rejected candidate now pass, followed
+  by 21 portable terminal integration tests and five private terminal tests;
+- all four required commands pass, with warnings denied across every workspace
+  target and feature, 1,150 listed non-documentation tests, and two doctests;
+- all 136 Python tests pass with eight expected macOS skips, and regeneration
+  against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` is byte-stable;
+- exact `cargo-deny` 0.20.2 accepts advisories, bans, licenses, and sources with
+  the three established duplicate warnings; `cargo-audit` 0.22.2 loads 1,226
+  advisories, scans 211 lockfile dependencies, and reports no vulnerability;
+- Linux native-library and terminal-test checks and warnings-denied Clippy pass;
+  FreeBSD warnings-denied Clippy passes; WASI no-default and all-feature checks
+  pass with only the established unrelated `read_file` warning;
+- documentation integrity covers 89 Markdown files, 312 fence markers, 678
+  parsed links, and 515 repository-relative targets with zero missing targets;
+- the exact 29-file base diff is +5,130/-192, adds no unsafe Rust, and leaves
+  workflows, benchmarks, compatibility data, the root manifest, and
+  `Cargo.lock` unchanged; and
+- a fresh locked 3,985,216-byte arm64 Mach-O release binary has SHA-256
+  `b515ce0951f44a1e30171ee69c400cb9e750430e3a9d4959028ab49a16a55383` and
+  passes the available help and status smoke paths. The terminal tool is not a
+  CLI subcommand, so its user-visible boundary is exercised through the native
+  and engine integration targets rather than a fabricated CLI route.
+
+This gate makes no formal cycle-2 review, remote workflow, integration,
+performance, sandbox, or fx-equivalence claim. Formal reviewers identify the
+exact immutable candidate and tree below.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in
