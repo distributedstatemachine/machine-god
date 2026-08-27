@@ -27,8 +27,8 @@ including all four required workspace commands and 55 focused tests: 26 direct
 tool, one engine, 15 configuration, three root-selection, nine reference-host,
 and one reference-host lifecycle test. This checkpoint establishes
 implementation and local regression/delivery evidence only. It does not
-establish a frozen replacement candidate, formal replacement review, remote
-CI, benchmark evidence, integration, delivery, product performance,
+establish a formal replacement-review outcome, remote CI, benchmark evidence,
+integration, delivery, product performance,
 compatibility promotion, or fx equivalence. No release-binary prompt exercise
 applies because this library-only slice adds no CLI prompt UI.
 
@@ -37,7 +37,8 @@ Formal cycle 1 reviewed exact candidate
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, and rejected it. The
 deduplicated result was 0 blocker, 1 high, 3 medium, and 3 low findings.
 Cycle 2 implements and locally proves remediation for every accepted finding.
-A frozen replacement candidate and formal replacement review do not exist yet.
+The cycle-2 tree is ready for immutable same-SHA review; no formal replacement-
+review outcome exists yet.
 The detailed outcome, remediation, and local-gate evidence are in the
 [`review ledger`](reviews/m03-ask-user-question-review-01.md).
 

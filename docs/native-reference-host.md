@@ -9,8 +9,8 @@ Formal cycle 1 rejected exact candidate
 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
 `c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
 at exact `c8718c6`, tree `c27463b`; the complete exact-1.94.1 local gate is
-green with 55 focused tests. No frozen replacement candidate or formal
-replacement review exists yet.
+green with 55 focused tests. The cycle-2 tree is ready for immutable same-SHA
+review; no formal replacement-review outcome exists yet.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed

@@ -698,7 +698,7 @@ gate, but formal cycle 1 rejected the later immutable candidate with a
 deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
 `c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
 at exact `c8718c6`, tree `c27463b`; the complete exact-1.94.1 local gate is
-green with 55 focused tests. A frozen replacement candidate and formal review
-remain pending. This is regression/delivery evidence, not a benchmark or
-product-performance result. See
+green with 55 focused tests. The cycle-2 tree is ready for immutable same-SHA
+review; formal review remains pending. This is regression/delivery evidence,
+not a benchmark or product-performance result. See
 [`ask-user-question.md`](ask-user-question.md).

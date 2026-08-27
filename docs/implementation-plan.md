@@ -4105,9 +4105,9 @@ gate. Formal cycle 1 rejected exact candidate `6c54ec3`, tree `bea9024`, with a
 deduplicated `0 blocker / 1 high / 3 medium / 3 low` union. Cycle-2 evidence
 `c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose at
 exact `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is green
-with 55 focused tests. A frozen replacement candidate, formal replacement
-review, remote workflows, integration, and delivery remain pending, so this
-combined item remains unchecked. Slice 33 `web_search` is delivered
+with 55 focused tests. The cycle-2 tree is ready for immutable same-SHA review;
+formal replacement review, remote workflows, integration, and delivery remain
+pending, so this combined item remains unchecked. Slice 33 `web_search` is delivered
 through exact record `52b5885`; its feature and main CI/Benchmark workflows
 are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that

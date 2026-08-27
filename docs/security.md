@@ -2113,5 +2113,5 @@ sentinels. Exact rules are in
 a deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
 `c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
 at exact `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is
-green. A frozen replacement candidate, formal replacement review, remote
-workflows, and delivery remain pending.
+green. The cycle-2 tree is ready for immutable same-SHA review; formal
+replacement review, remote workflows, and delivery remain pending.

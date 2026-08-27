@@ -18,8 +18,8 @@ timeout, ambient terminal discovery, product-performance result, or
 fx-equivalence claim. Cycle-2 evidence `c77b336`/`0dd1128`, production
 `9d2e0f2`/`47e9505`, and cycle-1 finding docs compose at exact behavior head
 `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is green with
-55 focused tests. A frozen replacement candidate, formal review, remote
-workflows, and delivery remain pending. See
+55 focused tests. The cycle-2 tree is ready for immutable same-SHA review;
+formal review, remote workflows, and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2216,5 +2216,5 @@ suite locally proves those corrections plus the exact/+1, terminal-class,
 maximum-concurrency, independent-counter, deep, wrong-name, unpolled, drop,
 and unwind boundaries. The complete bounds, precedence, output, and deferrals
 are normative in [`ask-user-question.md`](ask-user-question.md). The local gate
-is green; a frozen candidate, formal replacement review, remote workflows, and
-delivery remain pending.
+is green; the cycle-2 tree is ready for immutable same-SHA review, while formal
+replacement review, remote workflows, and delivery remain pending.

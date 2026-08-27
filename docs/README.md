@@ -17,10 +17,10 @@ candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `c77b336` (integrated as `0dd1128`) and production component `9d2e0f2`
 (integrated as `47e9505`) remediate those findings. Cycle-1 finding docs compose
 with them at exact behavior head `c8718c6`, tree `c27463b`, whose complete
-exact-1.94.1 local gate is green with 55 focused tests. A frozen replacement
-candidate, formal replacement review, feature and `main` workflows,
-integration, and delivery remain pending; this is regression/delivery
-evidence, not a performance or fx-equivalence claim. The normative boundary is
+exact-1.94.1 local gate is green with 55 focused tests. The cycle-2 tree is
+ready for immutable same-SHA review; formal replacement review, feature and
+`main` workflows, integration, and delivery remain pending. This is regression/
+delivery evidence, not a performance or fx-equivalence claim. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

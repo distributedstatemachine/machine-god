@@ -1,8 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
 Status: **CYCLE 2 LOCAL GATE GREEN — FORMAL REPLACEMENT REVIEW, REMOTE
-WORKFLOWS, INTEGRATION, AND DELIVERY PENDING**. No frozen replacement candidate
-or formal cycle-2 review exists yet.
+WORKFLOWS, INTEGRATION, AND DELIVERY PENDING**. The cycle-2 tree is ready for
+immutable same-SHA review; no formal cycle-2 outcome exists yet.
 
 ## Frozen lineage
 
@@ -45,8 +45,8 @@ The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
 candidate remains rejected. Cycle-2 source, evidence, and cycle-1 finding docs
 now compose at `c8718c6`/`c27463b`, and the complete local gate for that exact
-head is green. A separately frozen replacement candidate, three fresh exact-SHA
-reviews, exact feature workflows, fast-forward integration, and exact `main`
+head is green. An immutable same-SHA candidate review by three fresh tracks,
+exact feature workflows, fast-forward integration, and exact `main`
 workflows remain required.
 
 ## Frozen first-slice decisions
@@ -184,9 +184,9 @@ interactive CLI evidence.
 
 ## Replacement review plan
 
-The complete cycle-2 exact-1.94.1 local gate is green. Next, freeze a new
-immutable candidate SHA/tree and spawn three fresh read-only product reviewers
-in isolated clean worktrees:
+The complete cycle-2 exact-1.94.1 local gate is green. The replacement tree is
+ready to be identified by its immutable candidate SHA in reviewer reports.
+Spawn three fresh read-only product reviewers in isolated clean worktrees:
 
 1. correctness/API/schema and pinned-fx boundary;
 2. lifecycle/cancellation/platform/host composition; and
