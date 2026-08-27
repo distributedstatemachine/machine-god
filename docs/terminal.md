@@ -154,15 +154,24 @@ underlying caller-Waker callback is in flight for the admitted execution;
 concurrent notices before a re-poll coalesce into that callback. If a poll
 observes the in-flight callback and a later notice arrives before it returns,
 the notifier preserves one serialized replay to the latest bound caller Waker
-so that notice is not lost. No notifier lock is held while an arbitrary Waker is
-cloned, dropped, or invoked. Retaining any request, executor, notifier, or
-supplied Waker keeps the same activity alive, so later calls fail fast as busy
-while the configured capacity remains occupied.
+so that notice is not lost. The supplied notifier Waker may itself be used to
+re-poll the outer future. It is recognized in that outer `Context` and is never
+installed as its own notification target; such a self-re-poll preserves the
+last external caller Waker instead of forming an `Arc` cycle or recursively
+notifying itself. No notifier lock is held while an arbitrary Waker is cloned,
+dropped, or invoked. Retaining any request, executor, notifier, or supplied
+Waker keeps the same activity alive, so later calls fail fast as busy while the
+configured capacity remains occupied.
 
 The outer call retains that activity through bounded output rendering, the
-final cancellation check, and public function return. The slot is released
-exactly once, only after the last outer, request, executor, notifier, Waker, or
-native-thread activity owner returns or is dropped.
+final cancellation check, and public function return. On outer completion the
+notifier closes, cancels any queued replay, and removes and destroys its external
+target outside the notifier lock. A notice through an independently retained
+supplied Waker after close does not deliver to the completed task, but that
+retained clone still owns the activity and capacity until it is dropped. A
+callback already in flight likewise owns the activity until it returns. The slot
+is released exactly once, only after the last outer, request, executor,
+notifier, Waker, callback, or native-thread activity owner returns or is dropped.
 
 The timeout deadline begins on first poll before capacity admission or cwd
 validation. After admission, one tool-owned condition-variable guardian wakes
@@ -178,7 +187,8 @@ injected executor, or arming deadline notification, TerminalTool supplies an
 opaque Waker from the shared activity-backed notifier. A public executor
 therefore needs and receives no access to the private activity counter. Every
 retained clone and the single coalesced callback in flight keeps the originating
-slot until it returns.
+slot until it returns. Using that supplied Waker to re-poll the outer future does
+not replace the notifier's external delivery target.
 
 This timeout is not an unconditional wall-clock ceiling. Safe Rust cannot
 preempt a host thread blocked inside a filesystem lookup, `Command::spawn`, a
@@ -303,7 +313,10 @@ most one underlying caller-Waker callback is in flight. Notices preceding a
 re-poll coalesce into it; one notice following an observing poll is retained as
 a serialized replay to the latest bound target. No notifier lock spans
 arbitrary Waker clone, drop, or wake behavior. An inline or blocking callback
-retains the activity through callback return.
+retains the activity through callback return. Completion closes delivery,
+clears the external target outside the notifier lock, cancels replay, and
+suppresses subsequent notices to the completed task without releasing activity
+owned by an independently retained supplied-Waker clone.
 
 Joining a native notification thread from the consuming path could self-join or
 cross-thread deadlock, so its handle may be released only while the same
@@ -335,9 +348,13 @@ and injected Waker registrations, callbacks, and native threads; retained-
 request and retained-Waker saturation; concurrent multi-family notice
 coalescing with at most one underlying callback, serialized replay after a poll-
 observed later notice, and no lock held across arbitrary Waker clone/drop/wake;
-no-Waker thread return; activity retention through bounded rendering, final
-cancellation, and public return; exact-once active-slot release; exact-tilde and
-tilde-prefixed cwd literals; redaction; public-
+executor-, deadline-, and cancellation-driven self-repoll through the supplied
+notifier Waker without replacing the external target; close-time replay
+cancellation and post-close delivery suppression; retained supplied-Waker clone
+busy behavior and recovery after its drop; no-Waker thread return; activity
+retention through bounded rendering, final cancellation, and public return;
+exact-once active-slot release; exact-tilde and tilde-prefixed cwd literals;
+redaction; public-
 construction and private-host unsupported behavior; engine event/output
 persistence; and the fifteen-tool alphabetical reference catalog.
 The required exact Rust checks, release-mode focused tests, fresh release-binary
