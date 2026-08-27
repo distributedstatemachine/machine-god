@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-13 question resource remediation
 
-Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**.
+Status: **DELIVERED**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -1044,7 +1044,11 @@ performance/resources, and union each reported `0/0/0/0`. Reviewers validated
 the real target-drop path, both primaries, secondary Waker ownership/control/
 suppression/forget, stale-zero/fresh-capacity ordering, lifetime-256 and all
 other resource bounds, and current unwind wording. All prior findings are
-resolved. This review-exempt docs seal makes no behavior, performance,
-equivalence, or delivery claim. Feature workflows, integration, `main`
-workflows, and delivery remain pending. See
+resolved. Review-exempt delivered record `490d122`, tree `fe8c07f`, passed
+feature CI/Benchmark runs `33075442826`/`33075442823` and main CI/Benchmark
+runs `33076056430`/`33076056448`; every workflow succeeded for that exact SHA
+and each benchmark run retained exactly two unexpired exact-SHA artifacts.
+Slice 35 is delivered and the delivered count is 35. This documentation-only
+delivery seal is review-exempt, changes no product behavior, and makes no
+product-performance or fx-equivalence claim. See
 [`ask-user-question.md`](ask-user-question.md).

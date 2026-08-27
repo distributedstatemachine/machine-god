@@ -1,9 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**. Three
-fresh formal reviews report a zero-finding union on the exact immutable
-candidate below. Feature workflows, integration, `main` workflows, and delivery
-remain pending.
+Status: **DELIVERED**. Three fresh formal reviews report a zero-finding union on
+the exact immutable candidate below. Exact feature and `main` CI/Benchmark
+workflows passed for the review-exempt delivered record.
 
 ## Frozen lineage
 
@@ -238,7 +237,8 @@ candidate `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-12
 rejection docs and cycle-13 evidence now compose at exact behavior head
 `c252620`/`a921449`; its complete exact-1.94.1 local gate is green. Fresh formal
 cycle-13 reviews found zero findings on exact candidate `a4f1bb9`/`72a0303`.
-Feature workflows, integration, `main` workflows, and delivery remain pending.
+Exact delivery record `490d122` passed feature and main CI/Benchmark gates;
+slice 35 is delivered and the delivered count is 35.
 
 ## Frozen first-slice decisions
 
@@ -1657,8 +1657,43 @@ documentation.
 This documentation-only formal-result seal is exempt from redundant review per
 the user's direction. It changes no source, API, dependency, authority, limit,
 or behavior, and makes no product-performance, compatibility, fx-equivalence,
-integration, delivery, or new evidence claim. Feature workflows, `main`
-integration and workflows, and delivery remain pending.
+integration, delivery, or new evidence claim. At that review checkpoint,
+feature workflows, `main` integration and workflows, and delivery remained
+pending; the completed delivery is recorded below.
+
+## Delivery gate
+
+Only a review-green exact candidate may be pushed as the feature branch. Its
+exact feature CI and Benchmark evidence SHA must pass before `main` is fast-
+forwarded without force. Exact main CI and Benchmark evidence must then pass,
+with the expected exact-SHA artifacts retained. No package or GitHub release is
+authorized.
+
+## Delivery result
+
+Formal cycle 13 reviewed exact immutable behavior candidate
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`, tree
+`72a0303d81f34586f93775050ad70257cc2da551`; all three tracks and the
+deduplicated union reported `0/0/0/0`. The review-exempt delivered record is
+exact `490d12268ffe48740442ea7141e4ac08d8e37239`, tree
+`fe8c07fe1518819a08becdb25e9ca60bc0b63660`.
+
+Feature CI `33075442826` passed all six jobs for that exact SHA. Feature
+Benchmark evidence `33075442823` passed both jobs and retained exactly two
+unexpired exact-SHA artifacts. `main` was then fast-forwarded without force
+from `5846799b665d62fc8301b33520da5cda33e850b3` to `490d122`. Main CI
+`33076056430` passed all six jobs and main Benchmark evidence `33076056448`
+passed both jobs with exactly two unexpired exact-SHA artifacts. Every workflow
+succeeded for exact `490d12268ffe48740442ea7141e4ac08d8e37239`; remote
+feature and main heads, workflow `headSha` values, artifact associations, and
+the local tree were verified. Every earlier implementation, evidence,
+documentation, remediation, and review worktree was verified clean, removed,
+and pruned before this delivery-record worktree was created. Slice 35 is
+delivered and the delivered count is 35.
+
+This documentation-only delivery seal follows the user's review exemption and
+does not restart product review. It changes no product behavior. Its exact
+feature and main workflows still gate integration of the record itself.
 
 ## Deferred and nonclaim record
 

@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 13 FORMAL REVIEW GREEN —
-FEATURE WORKFLOWS PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **DELIVERED** from exact
+delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -182,10 +182,13 @@ green. Formal cycle 13 reviewed exact
 the union reported `0/0/0/0`. Reviewers validated the real in-close target drop,
 both primaries, secondary Waker ownership/control/suppression/forget, zero stale
 plus fresh capacity before closed identity release, lifetime-256/resource
-bounds, and current unwind wording. All prior findings are resolved. This docs-
-only result seal is review-exempt and makes no behavior, performance,
-equivalence, or delivery claim. Feature workflows, integration, `main`
-workflows, and delivery remain pending.
+bounds, and current unwind wording. All prior findings are resolved. Review-
+exempt delivered record `490d122`, tree `fe8c07f`, passed feature CI/Benchmark
+runs `33075442826`/`33075442823` and main CI/Benchmark runs
+`33076056430`/`33076056448`; every workflow succeeded for that exact SHA and
+each benchmark run retained exactly two unexpired exact-SHA artifacts. The
+delivered count is 35. This documentation-only delivery seal is review-exempt
+and changes no product behavior.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

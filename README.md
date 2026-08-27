@@ -6,8 +6,7 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 FORMAL
-REVIEW GREEN — FEATURE WORKFLOWS PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **DELIVERED**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -246,9 +245,13 @@ drop, both primaries, secondary-payload Waker ownership/panicking control/
 suppression/forget, zero stale wakes plus fresh capacity before closed identity
 release, lifetime-256/resource bounds, and current unwind wording. All prior
 findings are resolved. This documentation-only result seal is review-exempt and
-makes no behavior, performance, equivalence, or delivery claim.
-The current status is **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS
-PENDING**; no integration, delivery, benchmark, product-
+makes no behavior, performance, equivalence, or delivery claim. Review-exempt
+delivered record `490d122`, tree `fe8c07f`, passed feature CI/Benchmark runs
+`33075442826`/`33075442823` and main CI/Benchmark runs
+`33076056430`/`33076056448`; every workflow succeeded for that exact SHA and
+each benchmark run retained exactly two unexpired exact-SHA artifacts. Slice 35
+is delivered and the delivered count is 35. This documentation-only delivery
+seal is review-exempt and changes no product behavior. No benchmark, product-
 performance, or fx-equivalence result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and

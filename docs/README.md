@@ -1,7 +1,6 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 FORMAL
-REVIEW GREEN — FEATURE WORKFLOWS PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **DELIVERED**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +89,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**. Formal cycle
+status is **DELIVERED**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -196,9 +195,14 @@ the union reported `0/0/0/0`. Reviewers validated the real in-close target drop,
 prompt-drop/ambient primaries, secondary-payload ownership/control/suppression/
 forget, zero stale plus fresh capacity before closed identities release,
 lifetime-256/resource bounds, and current unwind wording. All prior findings
-are resolved. This docs-only seal is review-exempt and makes no behavior,
-performance, equivalence, or delivery claim. Feature workflows, integration,
-`main` workflows, and delivery remain pending.
+are resolved. This docs-only formal-result seal is review-exempt and makes no
+behavior, performance, or equivalence claim. Review-exempt delivered record
+`490d122`, tree `fe8c07f`, passed feature CI/Benchmark runs
+`33075442826`/`33075442823` and main CI/Benchmark runs
+`33076056430`/`33076056448`; every workflow succeeded for that exact SHA and
+each benchmark run retained exactly two unexpired exact-SHA artifacts. Slice 35
+is delivered and the delivered count is 35. This documentation-only delivery
+seal is review-exempt and changes no product behavior.
 The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the

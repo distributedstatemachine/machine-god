@@ -2076,7 +2076,7 @@ action.
 
 ## Slice 35 cycle-13 interaction and authority remediation
 
-Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**.
+Status: **DELIVERED**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2413,6 +2413,12 @@ destruction, both primary paths, secondary supplied-Waker ownership/control/
 suppression/forget, stale-zero/fresh-capacity ordering, lifetime-256/resource
 bounds, and current unwind wording. All prior findings are resolved. This
 review-exempt docs seal changes no authority or behavior and makes no
-performance, equivalence, or delivery claim. Feature workflows, integration,
-`main` workflows, and delivery remain pending. The analogous terminal path
+performance or equivalence claim. Review-exempt delivered record `490d122`,
+tree `fe8c07f`, passed feature CI/Benchmark runs
+`33075442826`/`33075442823` and main CI/Benchmark runs
+`33076056430`/`33076056448`; every workflow succeeded for that exact SHA and
+each benchmark run retained exactly two unexpired exact-SHA artifacts. Slice 35
+is delivered and the delivered count is 35. This documentation-only delivery
+seal is review-exempt and changes no product behavior or authority. The
+analogous terminal path
 remains out of scope and is not claimed fixed.

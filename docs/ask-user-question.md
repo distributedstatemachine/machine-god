@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**.
+Status: **DELIVERED**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -770,9 +770,15 @@ the prompt-lifetime 256-callback ceiling and other resource bounds, and current
 release-unwind wording. Every prior finding is resolved.
 
 This documentation-only formal-result seal is review-exempt under the user's
-direction. It changes and claims no behavior, performance result, compatibility
-or fx equivalence, integration, or delivery. Feature workflows, `main`
-integration and workflows, and delivery remain pending.
+direction. It changes and claims no behavior, performance result, compatibility,
+or fx equivalence. Review-exempt delivered record
+`490d12268ffe48740442ea7141e4ac08d8e37239`, tree
+`fe8c07fe1518819a08becdb25e9ca60bc0b63660`, passed feature CI/Benchmark
+runs `33075442826`/`33075442823` and main CI/Benchmark runs
+`33076056430`/`33076056448`; every workflow succeeded for that exact SHA and
+each benchmark run retained exactly two unexpired exact-SHA artifacts. Slice 35
+is delivered and the delivered count is 35. This subsequent documentation-only
+delivery seal is also review-exempt and changes no product behavior.
 
 ## Product boundary
 

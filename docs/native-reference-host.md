@@ -1,7 +1,6 @@
 # Native reference-host composition
 
-Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**;
+Status: **DELIVERED** through slice-35 `ask_user_question`;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -163,9 +162,13 @@ the union reported `0/0/0/0`. Reviewers validated in-close target drop, both
 primaries, secondary Waker ownership/control/suppression/forget, stale-zero/
 fresh-capacity ordering, lifetime-256/resource bounds, and current unwind
 wording. All prior findings are resolved. This review-exempt docs seal makes no
-behavior, performance, equivalence, or delivery claim. Feature workflows,
-integration, `main` workflows, and delivery remain pending; no dependency is
-added.
+behavior, performance, equivalence, or delivery claim. Review-exempt delivered
+record `490d122`, tree `fe8c07f`, passed feature CI/Benchmark runs
+`33075442826`/`33075442823` and main CI/Benchmark runs
+`33076056430`/`33076056448`; every workflow succeeded for that exact SHA and
+each benchmark run retained exactly two unexpired exact-SHA artifacts. Slice 35
+is delivered and the delivered count is 35. This documentation-only delivery
+seal is review-exempt and changes no product behavior; no dependency is added.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -903,8 +906,9 @@ complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 complete local gate compose at `696dccf`/`f8734a8`; formal cycle 12 rejected
 `3dec7a2`/`c34d20a` with a `0/0/1/2` union. Cycle-13 evidence and the complete
 local gate compose at `c252620`/`a921449`; formal cycle 13 is green on
-`a4f1bb9`/`72a0303` with a zero-finding union. Feature workflows, integration,
-`main` workflows, and delivery remain pending.
+`a4f1bb9`/`72a0303` with a zero-finding union. Exact delivery record
+`490d122` passed feature and main CI/Benchmark gates; slice 35 is delivered and
+the delivered count is 35.
 The analogous preexisting terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
@@ -1471,7 +1475,8 @@ complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 complete local gate compose at `696dccf`/`f8734a8`; formal cycle 12 rejected
 `3dec7a2`/`c34d20a` with a `0/0/1/2` union. Cycle-13 evidence and the complete
 local gate compose at `c252620`/`a921449`; formal cycle 13 is green on
-`a4f1bb9`/`72a0303` with a zero-finding union. Feature workflows, integration,
-`main` workflows, and delivery remain pending. Analogous
+`a4f1bb9`/`72a0303` with a zero-finding union. Exact delivery record
+`490d122` passed feature and main CI/Benchmark gates; slice 35 is delivered and
+the delivered count is 35. Analogous
 preexisting terminal code
 is out of scope and is not claimed fixed.

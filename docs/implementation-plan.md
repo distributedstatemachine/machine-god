@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 13 FORMAL
-REVIEW GREEN — FEATURE WORKFLOWS PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **DELIVERED**
+from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -599,9 +599,15 @@ identities release; lifetime-256 and other resource bounds; and current unwind
 wording. All prior findings are resolved.
 
 This documentation-only formal-result seal is review-exempt under the user's
-direction and makes no behavior, product-performance, compatibility, fx-
-equivalence, integration, or delivery claim. Feature workflows, `main`
-integration and workflows, and delivery remain pending.
+direction and makes no behavior, product-performance, compatibility, or fx-
+equivalence claim. Review-exempt delivered record
+`490d12268ffe48740442ea7141e4ac08d8e37239`, tree
+`fe8c07fe1518819a08becdb25e9ca60bc0b63660`, passed feature CI/Benchmark
+runs `33075442826`/`33075442823` and main CI/Benchmark runs
+`33076056430`/`33076056448`; every workflow succeeded for that exact SHA and
+each benchmark run retained exactly two unexpired exact-SHA artifacts. Slice 35
+is delivered and the delivered count is 35. This subsequent documentation-only
+delivery seal is also review-exempt and changes no product behavior.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4667,8 +4673,9 @@ product probe are established, and closed Waker identity retains no capacity.
 Formal cycle 12 rejected exact `3dec7a2`/`c34d20a` with a deduplicated
 `0/0/1/2` union. Cycle-13 rejection docs/evidence and the complete local gate
 compose at exact `c252620`/`a921449`; formal cycle 13 is green on exact
-`a4f1bb9`/`72a0303` with a zero-finding union. Feature workflows, integration,
-`main` workflows, and delivery remain pending. `vision` plus `read_tool_result` remain unimplemented, so this combined
+`a4f1bb9`/`72a0303` with a zero-finding union. Exact delivery record
+`490d122` passed feature and main CI/Benchmark gates; slice 35 is delivered and
+the delivered count is 35. `vision` plus `read_tool_result` remain unimplemented, so this combined
 item remains unchecked. Slice 33
 `web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark
