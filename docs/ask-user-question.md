@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -245,9 +245,9 @@ The low is inconsistent operative opening status. `README.md:9`,
 `docs/README.md:3`, and `docs/architecture.md:3` still described cycle 5 while
 later summaries described cycle 6. The rejection-doc checkpoint aligned every
 operative opening to its then-current rejection/remediation status. This local-
-gate checkpoint advances all ten operative status regions to **CYCLE 7 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**; the focused consistency scan reports ten
-current and zero stale.
+gate checkpoint advanced all ten operative status regions to its then-current
+local-gate status; its focused consistency scan reported ten current and zero
+stale. The cycle-7 review outcome below supersedes that operative status.
 
 ## Cycle-7 implementation and local checkpoint
 
@@ -285,8 +285,34 @@ unsafe checks, and a fresh locked release plus three missing-root smokes. The
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 The existing audited reentrant-Waker path fixture and one native lock dependency-
 list line remain the exact dev-only Cargo delta; the production graph is
-unchanged. Formal review, remote workflows, integration, and delivery remain
-pending.
+unchanged. Formal cycle 7 later rejected the exact candidate below, so this
+historical checkpoint does not approve it.
+
+## Formal cycle-7 outcome and cycle-8 remediation target
+
+Three fresh tracks reviewed exact candidate
+`617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`. Correctness/API and performance/
+resources each reported `0/0/0/0`; lifecycle/platform reported `0/0/1/0`;
+the deduplicated union is `0/0/1/0`. The nonzero medium rejects cycle 7.
+
+The product lifecycle defect occurs between one delivery and replay. Replay
+target B is selected before prior target A is dropped. If A's destructor
+panics, unwinding bypasses lane settlement and leaves `notifying` wedged. If
+A's destructor reentrantly closes the notifier or installs a replacement, the
+already selected B can still receive stale delivery after that lifecycle
+transition.
+
+Cycle 8 must drop A before selecting any replay target, catch and settle a drop
+unwind plus all lane flags, and admit the then-current replay only after A was
+destroyed successfully. Deterministic tests must prove recovery after a
+panicking destructor and suppression when A's destructor reentrantly closes the
+notifier. A complete replacement gate and three fresh reviews are required.
+
+The analogous notifier/destructor ordering in native `terminal` predates this
+finding and is outside this bounded slice. This remediation target makes no
+claim that the terminal path is fixed. No cycle-8 source, evidence, green gate,
+review, workflow, integration, or delivery result is claimed.
 
 ## Product boundary
 

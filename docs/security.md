@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-7 interaction and authority remediation
+## Slice 35 cycle-8 interaction and authority remediation
 
-Status: **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2214,8 +2214,9 @@ reviews are required.
 
 The low is stale opening status in `README.md`, `docs/README.md`, and
 `docs/architecture.md`. The rejection-doc checkpoint aligned the then-current
-status; this checkpoint advances all ten operative regions to **CYCLE 7 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**, with a focused 10-current/zero-stale scan.
+status; the cycle-7 local-gate checkpoint advanced all ten operative regions
+and recorded a focused 10-current/zero-stale scan. The cycle-7 review outcome
+below supersedes that operative status.
 
 Cycle-7 rejection docs `6128f03`/`1d354ff`, evidence `acca13c`/`b75fc54`, and
 source `3d48ce8`/`fbb3f5c` compose at exact head
@@ -2232,5 +2233,22 @@ the fix uses one; refined evidence proves one lossless post-observation replay.
 Focused direct 35/engine one/host nine/lifecycle one, all pinned and extended
 gates, status 10/0, and unchanged release smokes are green. The existing audited
 dev-only fixture and one native lock dependency-list line remain the exact
-Cargo delta; production graph is unchanged. Formal review, remote workflows,
-integration, and delivery remain pending.
+Cargo delta; production graph is unchanged. Formal cycle 7 reviewed exact
+`617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`. Correctness/API and performance/
+resources each reported `0/0/0/0`; lifecycle/platform reported `0/0/1/0`;
+the deduplicated union is `0/0/1/0`, so the candidate is rejected.
+
+This is a product lifecycle finding, not an expansion of interaction authority.
+Replay B is selected before prior target A is dropped. If A's destructor
+panics, unwinding leaves `notifying` wedged; if it reentrantly closes or replaces
+the notifier, already selected B may still receive stale delivery. Cycle 8 must
+drop A before replay selection, catch and settle drop unwind and lane flags,
+and admit only the then-current replay after successful destruction.
+Deterministic panic-recovery and reentrant-close-suppression tests, a complete
+replacement gate, and three fresh reviews are required.
+
+Native `terminal` has analogous preexisting destructor/replay ordering. It is
+outside this bounded slice, and this remediation target does not claim that
+path fixed. No cycle-8 source, evidence, green gate, review, workflow,
+integration, or delivery result is claimed.

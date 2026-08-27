@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -57,7 +57,17 @@ rejection docs `6128f03`/`1d354ff`, evidence `acca13c`/`b75fc54`, and source
 `3d48ce8`/`fbb3f5c` compose at exact head `fbb3f5c`/`7cee96e`. Entry clears
 state, bind observes, one later notice earns one replay, and close/panic clears
 state without lock-held Waker work. Direct 35, host nine/lifecycle one, and the
-complete pinned/extended gate are green. Fresh reviews remain pending.
+complete pinned/extended gate were green. Formal cycle 7 rejected exact
+`617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
+resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
+`0/0/1/0`. Replay B is selected before prior target A is dropped, so A's
+destructor can panic and wedge `notifying` or reentrantly close/replace the lane
+before stale B delivery. Cycle 8 must drop A first, catch and settle unwind and
+lane flags, admit only the then-current replay after successful destruction,
+and add deterministic panic-recovery and reentrant-close-suppression evidence. The
+analogous preexisting terminal path is outside this bounded slice and is not
+claimed fixed. Cycle-8 gates and fresh reviews remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -780,7 +790,10 @@ compose at `707a794`/`1e60299`; both deterministic many-clone tests and the
 complete local gate are green. Formal cycle 6 rejected exact
 `85058a8`/`fd3c507` with a `0/0/1/1` union. Cycle-7 bounded replay, status
 consistency, source, evidence, and complete local gate compose at
-`fbb3f5c`/`7cee96e`. Fresh reviews remain pending.
+`fbb3f5c`/`7cee96e`. Formal cycle 7 rejected `6176729`/`f2cd844` with a
+`0/0/1/0` union. Cycle-8 destruction-before-selection remediation, its gate,
+and fresh reviews remain pending; the analogous preexisting terminal code is
+outside this slice.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1329,4 +1342,8 @@ smoke gates are green. Formal cycle 6 rejected exact `85058a8`/`fd3c507`
 because replay may self-rearm synchronously without bound; its low finding also
 requires consistent operative opening statuses. Cycle-7 observation-aware
 source/evidence and complete gate are green at `fbb3f5c`/`7cee96e`; fresh
-reviews, remote workflows, integration, and delivery remain pending.
+reviews later rejected exact `6176729`/`f2cd844` with a `0/0/1/0` union.
+Cycle-8 prior-target destruction before replay selection, unwind recovery,
+reentrant-close suppression, gates, reviews, remote workflows, integration,
+and delivery remain pending. Analogous preexisting terminal code is out of
+scope and is not claimed fixed.

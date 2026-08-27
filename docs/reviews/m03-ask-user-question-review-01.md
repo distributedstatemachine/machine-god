@@ -1,11 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 6
-rejected its exact immutable candidate with one product resource finding and
-one maintained-documentation finding. Cycle-7 source, deterministic evidence,
-and status-consistency remediation now pass the complete local gate at the exact
-behavior head below. Three fresh formal reviews, remote workflows, integration,
-and delivery remain pending.
+Status: **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**. Formal cycle 7
+rejected its exact immutable candidate with one product lifecycle finding.
+Cycle-7 source, deterministic evidence, and the complete local gate remain
+recorded below. Cycle-8 source, evidence, a replacement gate, three fresh formal
+reviews, remote workflows, integration, and delivery remain pending.
 
 ## Frozen lineage
 
@@ -108,6 +107,9 @@ and delivery remain pending.
 - Independent cycle-7 cross-composition candidate:
   `c0c9eb0`, tree `6fd79edfac2705e8dfe79bbe43011ab83dc4cd94`, green for formatting,
   35 direct question tests, one engine test, and native warnings-denied Clippy
+- Formal cycle-7 candidate, **REJECTED**:
+  `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+  `f2cd844449193b46cfa1473ae21edad68664157e`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -129,8 +131,11 @@ union. Cycle-6 finding docs, evidence, and source compose at exact behavior head
 exact-SHA reviews rejected later candidate `85058a8`/`fd3c507` with a
 deduplicated `0/0/1/1` union. Cycle-7 rejection docs, evidence, and source now
 compose at exact behavior head `fbb3f5c`/`7cee96e`; its complete exact-1.94.1
-local gate is green. Three fresh exact-SHA reviews, exact feature workflows,
-fast-forward integration, and exact `main` workflows remain required.
+local gate is green. Three fresh exact-SHA reviews rejected later candidate
+`6176729`/`f2cd844` with a deduplicated `0/0/1/0` union. Cycle-8 remediation,
+its evidence and complete gate, three fresh exact-SHA reviews, exact feature
+workflows, fast-forward integration, and exact `main` workflows remain
+required.
 
 ## Frozen first-slice decisions
 
@@ -813,8 +818,45 @@ only one native dependency-list line changes in `Cargo.lock`. The production
 normal/build dependency graph remains unchanged, and audit still covers 211
 dependencies. This checkpoint is regression and delivery evidence, not a
 benchmark, product-performance, compatibility-promotion, fx-equivalence,
-formal-review, integration, or delivery-completion claim. Three fresh exact-SHA
-formal reviews and both feature and `main` remote workflow gates remain pending.
+formal-review, integration, or delivery-completion claim. Formal cycle 7 later
+rejected the exact candidate recorded below, so this historical gate does not
+approve it.
+
+## Formal cycle-7 outcome and cycle-8 remediation target
+
+All three fresh read-only tracks reviewed exact candidate
+`617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`:
+
+| Track | Blocker | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: |
+| Correctness/API/schema | 0 | 0 | 0 | 0 |
+| Lifecycle/cancellation/platform | 0 | 0 | 1 | 0 |
+| Performance/concurrency/resources | 0 | 0 | 0 | 0 |
+| Deduplicated union | 0 | 0 | 1 | 0 |
+
+Any nonzero finding rejects the candidate, so cycle 7 is not green. The one
+accepted medium is a product lifecycle defect in replay-target destruction.
+The notifier selects replay target B before dropping the prior target A. If
+A's destructor panics, unwinding occurs before the lane can settle and leaves
+`notifying` wedged. If A's destructor instead reentrantly closes the notifier or
+installs a replacement, the already selected B can still receive stale
+delivery despite that intervening lifecycle transition.
+
+Cycle 8 must drop A before selecting any replay target. Drop unwind must be
+caught, the lane flags must be settled on every unwind path, and only after A
+has been destroyed successfully may the notifier admit the then-current target
+for replay. Deterministic evidence must cover panic recovery and suppression of
+replay after A's destructor reentrantly closes the notifier. The replacement
+must pass a new complete gate and three fresh exact-SHA reviews.
+
+The native `terminal` notifier contains analogous preexisting destructor/
+replay ordering, but it is outside this bounded slice-35 change and review.
+Nothing in this cycle-8 target claims to fix, approve, or deliver that separate
+terminal path.
+
+No cycle-8 source, evidence, gate, review, workflow, integration, or delivery
+result is claimed.
 
 ## Deferred and nonclaim record
 

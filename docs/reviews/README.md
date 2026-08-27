@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 7 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 7 REJECTED — CYCLE 8
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -74,8 +74,18 @@ state; callback concurrency stays at most one without lock-held Waker work.
 Finite-budget evidence rejects the base at 65 callbacks for budget 64 while
 the fix uses one; positive evidence proves one lossless post-observation replay.
 Focused direct 35/engine one, all pinned/extended, status 10/0, and release-
-smoke gates are green. Three fresh exact-SHA reviews, remote workflows,
-integration, and delivery remain pending.
+smoke gates were green. Formal cycle 7 reviewed exact
+`617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
+resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
+`0/0/1/0`. Replay B was selected before prior target A was dropped; an
+A-destructor panic can wedge `notifying`, and an A-destructor reentrant close or
+replacement can permit stale B delivery. Cycle 8 must drop A before selecting
+replay, catch and settle unwind and lane flags, and admit only the then-current
+replay after successful destruction, with deterministic panic-recovery and
+reentrant-close-suppression evidence. The analogous preexisting terminal path is outside
+this bounded slice and is not claimed fixed. Replacement gates, three fresh
+exact-SHA reviews, remote workflows, integration, and delivery remain pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

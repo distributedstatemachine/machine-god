@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 7 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 7
+REJECTED — CYCLE 8 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -259,7 +259,8 @@ observation-aware coalescing, constant bounded callback count, lossless replay
 for a notice after an outer observation, and deterministic finite-budget
 evidence. The low is stale cycle-5 text in the three operative opening
 summaries; the rejection docs aligned their then-current state, and this
-checkpoint advances all ten operative status regions with a 10/0 focused scan.
+cycle-7 checkpoint advanced all ten operative status regions with a 10/0
+focused scan.
 Cycle-7 rejection docs `6128f03`/`1d354ff`,
 evidence `acca13c`/`b75fc54`, and source `3d48ce8` compose at exact behavior
 head `fbb3f5c5f40d0726b444b1ebc6f25fb1ee1fee36`, tree
@@ -284,9 +285,22 @@ WASI/FreeBSD with only the established `read_file` warning, docs
 3,985,216-byte release/missing-root smokes. Release SHA-256 remains
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 The exact Cargo delta remains the audited dev-only reentrant fixture and one
-native lock dependency-list line; production graph is unchanged. Three fresh
-reviews, feature workflows, fast-forward integration, delivery, and exact
-`main` workflows remain pending.
+native lock dependency-list line; production graph is unchanged. Formal cycle
+7 reviewed exact candidate `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`. Correctness/API and performance/
+resources each reported `0/0/0/0`; lifecycle/platform reported `0/0/1/0`;
+the deduplicated union is `0/0/1/0`, so the candidate is rejected.
+
+Replay B is selected before prior target A is dropped. A destructor panic can
+therefore unwind before lane settlement and wedge `notifying`; an A-destructor
+reentrant close or replacement can instead permit delivery to stale B. Cycle 8
+must drop A before replay selection, catch and settle drop unwind and all lane
+flags, and admit the then-current replay only after successful destruction.
+Deterministic panic-recovery and reentrant-close-suppression tests, a complete
+replacement gate, and three fresh reviews are required. The analogous
+preexisting native `terminal` ordering is outside this bounded slice and is not
+claimed fixed. Cycle-8 source/evidence, feature workflows, fast-forward
+integration, delivery, and exact `main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4331,8 +4345,11 @@ lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, deduplicated
 observation-then-notice delivery, finite-budget evidence, consistent opening
 statuses, and the focused status scan compose at exact head
 `fbb3f5c`/`7cee96e`. Direct 35 and the complete pinned/extended/release gate are
-green. Three fresh reviews, remote workflows, integration, and delivery remain
-pending, and
+green. Formal cycle 7 rejected exact `6176729`/`f2cd844` with a `0/0/1/0`
+union because replay B is selected before prior target A is destroyed. Cycle-8
+destruction-before-selection remediation, panic-recovery and reentrant-close-
+suppression evidence, a replacement gate, three fresh reviews, remote
+workflows, integration, and delivery remain pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

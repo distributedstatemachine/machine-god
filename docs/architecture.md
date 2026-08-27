@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 REJECTED
+— CYCLE 8 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -79,7 +79,17 @@ making synchronous work unbounded. Cycle-7 docs `6128f03`/`1d354ff`, evidence
 one later replay, clears on close/panic, retains activity, and performs no
 foreign Waker work under lock. Finite-budget and positive replay evidence,
 focused direct 35/engine one, the complete pinned/extended gate, and status
-10/0 are green. Formal review remains pending. See
+10/0 were green. Formal cycle 7 rejected exact candidate
+`617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
+resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
+`0/0/1/0`. The lane selects replay B before dropping prior target A, allowing
+an A-destructor panic to wedge `notifying` or an A-destructor reentrant close/
+replacement to permit stale B delivery. Cycle 8
+must drop A first, catch and settle unwind and lane flags, and select only the
+then-current replay after successful destruction, with deterministic panic and
+reentrant-close evidence. Analogous preexisting `terminal` code is out of scope and is
+not claimed fixed. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2312,7 +2322,10 @@ operative opening summaries were stale. Cycle-7 observation-aware bounded
 replay, finite-budget evidence, and status consistency now compose through
 `fbb3f5c`/`7cee96e`. Entry/observation/replay state bounds callbacks and
 preserves one post-observation notice without lock-held foreign work. The
-focused and complete local gates are green; formal review remains pending.
+focused and complete local gates were green. Formal cycle 7 rejected exact
+`6176729`/`f2cd844` because replay selection precedes prior-target destruction.
+Cycle-8 destruction-before-selection remediation and recovery/suppression
+evidence remain pending; analogous preexisting terminal code is out of scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2343,5 +2356,7 @@ rejected exact `54b1aab`/`54586d2` with a `0/0/1/0` union. Cycle-6 source,
 evidence, and complete local gate are established at `707a794`/`1e60299`.
 Formal cycle 6 rejected `85058a8`/`fd3c507` with a `0/0/1/1` union. Cycle-7
 source, evidence, and complete local gate are established at
-`fbb3f5c`/`7cee96e`. Fresh reviews, remote workflows, integration, and delivery
-remain unestablished.
+`fbb3f5c`/`7cee96e`. Formal cycle 7 rejected `6176729`/`f2cd844` with a
+`0/0/1/0` union. Cycle-8 remediation, evidence, gate, fresh reviews, remote
+workflows, integration, and delivery remain unestablished. The analogous
+preexisting terminal path remains outside this bounded slice.

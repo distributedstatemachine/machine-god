@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 REJECTED
+— CYCLE 8 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -110,8 +110,20 @@ foreign Waker work runs under the notifier lock. Finite-budget evidence rejects
 the base at 65 callbacks for budget 64 while the fix performs one, and a
 refined test proves one post-observation replay. Focused direct 35/engine one,
 all pinned/extended gates, status consistency 10/0, and unchanged release smoke
-are green. The current status is **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW
-PENDING**; no formal-review result is claimed.
+were green. Formal cycle 7 rejected exact candidate
+`617672984fbb897f2efec63de6a05bb32db9a3db`, tree
+`f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
+resources each reported `0/0/0/0`, lifecycle/platform reported `0/0/1/0`,
+and the deduplicated union is `0/0/1/0`. Replay B is selected before prior
+target A is dropped; an A-destructor panic can wedge `notifying`, while an
+A-destructor reentrant close or replacement can still permit stale B delivery.
+Cycle 8 must destroy A first, catch and settle drop unwind and lane flags, and
+admit only the then-current replay after successful destruction, with
+deterministic panic-recovery and reentrant-close-suppression evidence. Analogous
+preexisting `terminal` code is outside this bounded slice and is not claimed
+fixed. The
+current status is **CYCLE 7 REJECTED — CYCLE 8 REMEDIATION IN PROGRESS**; no
+cycle-8 source, gate, review, or delivery result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
