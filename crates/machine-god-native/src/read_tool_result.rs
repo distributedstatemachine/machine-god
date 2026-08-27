@@ -75,9 +75,9 @@ impl std::error::Error for ReadToolResultConfigError {}
 /// Bounded scan and concurrency limits for [`ReadToolResultTool`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReadToolResultLimits {
-    max_active_reads: usize,
-    max_scanned_tool_results: usize,
-    max_serialized_scan_bytes: usize,
+    active_reads: usize,
+    scanned_tool_results: usize,
+    serialized_scan_bytes: usize,
 }
 
 impl ReadToolResultLimits {
@@ -101,37 +101,37 @@ impl ReadToolResultLimits {
             return Err(ReadToolResultConfigError::invalid_limits());
         }
         Ok(Self {
-            max_active_reads,
-            max_scanned_tool_results,
-            max_serialized_scan_bytes,
+            active_reads: max_active_reads,
+            scanned_tool_results: max_scanned_tool_results,
+            serialized_scan_bytes: max_serialized_scan_bytes,
         })
     }
 
     /// Maximum simultaneous active reads.
     #[must_use]
     pub const fn max_active_reads(self) -> usize {
-        self.max_active_reads
+        self.active_reads
     }
 
     /// Maximum prior tool-result blocks inspected by one execution.
     #[must_use]
     pub const fn max_scanned_tool_results(self) -> usize {
-        self.max_scanned_tool_results
+        self.scanned_tool_results
     }
 
     /// Maximum aggregate compact result bytes serialized by one execution.
     #[must_use]
     pub const fn max_serialized_scan_bytes(self) -> usize {
-        self.max_serialized_scan_bytes
+        self.serialized_scan_bytes
     }
 }
 
 impl Default for ReadToolResultLimits {
     fn default() -> Self {
         Self {
-            max_active_reads: DEFAULT_MAX_ACTIVE_READS,
-            max_scanned_tool_results: DEFAULT_MAX_SCANNED_RESULTS,
-            max_serialized_scan_bytes: DEFAULT_MAX_SERIALIZED_SCAN_BYTES,
+            active_reads: DEFAULT_MAX_ACTIVE_READS,
+            scanned_tool_results: DEFAULT_MAX_SCANNED_RESULTS,
+            serialized_scan_bytes: DEFAULT_MAX_SERIALIZED_SCAN_BYTES,
         }
     }
 }
@@ -165,9 +165,9 @@ impl ReadToolResultTool {
         limits: ReadToolResultLimits,
     ) -> Result<Self, ReadToolResultConfigError> {
         let limits = ReadToolResultLimits::new(
-            limits.max_active_reads,
-            limits.max_scanned_tool_results,
-            limits.max_serialized_scan_bytes,
+            limits.active_reads,
+            limits.scanned_tool_results,
+            limits.serialized_scan_bytes,
         )?;
         Ok(Self {
             session_store,
@@ -241,7 +241,7 @@ impl Tool for ReadToolResultTool {
             check_cancellation(&cancellation)?;
             let normalized = normalize_arguments(&arguments)?;
             check_cancellation(&cancellation)?;
-            let Some(permit) = try_acquire(active_reads, limits.max_active_reads) else {
+            let Some(_permit) = try_acquire(active_reads, limits.active_reads) else {
                 check_cancellation(&cancellation)?;
                 return Err(read_busy());
             };
@@ -281,19 +281,22 @@ impl Tool for ReadToolResultTool {
             for message in &record.messages {
                 check_cancellation(&cancellation)?;
                 for block in &message.content {
-                    let (call_id, output) = match block {
-                        ContentBlock::ToolResult { call_id, output } => (call_id, output),
-                        _ => continue,
+                    let ContentBlock::ToolResult {
+                        ref call_id,
+                        ref output,
+                    } = *block
+                    else {
+                        continue;
                     };
                     scanned_results = scanned_results.checked_add(1).ok_or_else(not_found)?;
-                    if scanned_results > limits.max_scanned_tool_results {
+                    if scanned_results > limits.scanned_tool_results {
                         return Err(not_found());
                     }
                     let serialized = serde_json::to_vec(output).map_err(|_| resource_limit())?;
                     scanned_bytes = scanned_bytes
                         .checked_add(serialized.len())
                         .ok_or_else(not_found)?;
-                    if scanned_bytes > limits.max_serialized_scan_bytes {
+                    if scanned_bytes > limits.serialized_scan_bytes {
                         return Err(not_found());
                     }
                     check_cancellation(&cancellation)?;
@@ -304,9 +307,8 @@ impl Tool for ReadToolResultTool {
                         &serialized,
                     );
                     if candidate == normalized.handle {
-                        let output = page_output(normalized, &serialized)?;
+                        let output = page_output(&normalized, &serialized)?;
                         check_cancellation(&cancellation)?;
-                        drop(permit);
                         return Ok(output);
                     }
                 }
@@ -389,16 +391,16 @@ fn check_argument_bytes(arguments: &Value) -> Result<(), ToolError> {
     }
 }
 
-fn page_output(arguments: NormalizedArguments, serialized: &[u8]) -> Result<ToolOutput, ToolError> {
+fn page_output(
+    arguments: &NormalizedArguments,
+    serialized: &[u8],
+) -> Result<ToolOutput, ToolError> {
     let source = std::str::from_utf8(serialized).map_err(|_| resource_limit())?;
     let start = arguments.start_byte - 1;
     if start > source.len() || !source.is_char_boundary(start) {
         return Err(invalid_arguments());
     }
-    let mut end = start
-        .checked_add(arguments.byte_count)
-        .unwrap_or(usize::MAX)
-        .min(source.len());
+    let mut end = start.saturating_add(arguments.byte_count).min(source.len());
     while !source.is_char_boundary(end) {
         end -= 1;
     }

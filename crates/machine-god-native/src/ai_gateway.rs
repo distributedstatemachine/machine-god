@@ -579,18 +579,18 @@ fn build_request(
         .tools
         .iter()
         .any(|tool| tool.name.as_str() == READ_TOOL_RESULT_TOOL_NAME);
-    let mut source_remaining = limits.max_request_bytes;
-    let mut wire_remaining = limits.max_request_bytes;
-    let prompt = build_prompt(
-        request.messages,
-        &request.session_id,
-        &request.session_incarnation_id,
+    let context = PromptBuildContext {
+        session_id: &request.session_id,
+        session_incarnation_id: &request.session_incarnation_id,
         reader_advertised,
         limits,
-        &mut source_remaining,
-        &mut wire_remaining,
         cancellation,
-    )?;
+    };
+    let mut budgets = ToolOutputBudgets {
+        source_remaining: limits.max_request_bytes,
+        wire_remaining: limits.max_request_bytes,
+    };
+    let prompt = build_prompt(request.messages, &context, &mut budgets)?;
     let mut tools = Vec::new();
     for tool in request.tools {
         check_cancel(cancellation)?;
@@ -644,20 +644,28 @@ pub(crate) fn build_gateway_transport_request(
     AiGatewayTransportRequest { headers, body }
 }
 
-fn build_prompt(
-    messages: Vec<Message>,
-    session_id: &SessionId,
-    session_incarnation_id: &SessionIncarnationId,
+struct PromptBuildContext<'a> {
+    session_id: &'a SessionId,
+    session_incarnation_id: &'a SessionIncarnationId,
     reader_advertised: bool,
     limits: AiGatewayLimits,
-    source_remaining: &mut usize,
-    wire_remaining: &mut usize,
-    cancellation: &CancellationToken,
+    cancellation: &'a CancellationToken,
+}
+
+struct ToolOutputBudgets {
+    source_remaining: usize,
+    wire_remaining: usize,
+}
+
+fn build_prompt(
+    messages: Vec<Message>,
+    projection: &PromptBuildContext<'_>,
+    budgets: &mut ToolOutputBudgets,
 ) -> Result<Vec<GatewayMessage>, ProviderError> {
     let mut prompt = Vec::with_capacity(messages.len());
     let mut pending: BTreeMap<ToolCallId, ToolName> = BTreeMap::new();
     for message in messages {
-        check_cancel(cancellation)?;
+        check_cancel(projection.cancellation)?;
         if !pending.is_empty() && message.role != Role::Tool {
             return Err(invalid_request("gateway_invalid_history"));
         }
@@ -682,15 +690,15 @@ fn build_prompt(
                         }
                         ContentBlock::ToolCall { call } => {
                             saw_call = true;
-                            if pending.len() >= limits.max_tool_calls
+                            if pending.len() >= projection.limits.max_tool_calls
                                 || pending.insert(call.id.clone(), call.name.clone()).is_some()
                             {
                                 return Err(invalid_request("gateway_invalid_history"));
                             }
                             drop(serialize_bounded(
                                 &call.arguments,
-                                limits.max_tool_arguments_bytes,
-                                cancellation,
+                                projection.limits.max_tool_arguments_bytes,
+                                projection.cancellation,
                             )?);
                             parts.push(GatewayPart::ToolCall {
                                 tool_call_id: call.id.to_string(),
@@ -724,30 +732,7 @@ fn build_prompt(
                 let Some(name) = pending.remove(&call_id) else {
                     return Err(invalid_request("gateway_invalid_history"));
                 };
-                let serialized_output =
-                    serialize_bounded(&output, *source_remaining, cancellation)?;
-                *source_remaining = source_remaining
-                    .checked_sub(serialized_output.len())
-                    .expect("bounded serialization cannot exceed remaining budget");
-                check_cancel(cancellation)?;
-                let value = if reader_advertised
-                    && serialized_output.len() > TOOL_RESULT_PROJECTION_THRESHOLD_BYTES
-                {
-                    project_tool_result(
-                        session_id,
-                        session_incarnation_id,
-                        &call_id,
-                        &serialized_output,
-                        output.is_error,
-                    )
-                } else {
-                    String::from_utf8(serialized_output)
-                        .map_err(|_| protocol_error("gateway_internal_encoding"))?
-                };
-                check_cancel(cancellation)?;
-                *wire_remaining = wire_remaining
-                    .checked_sub(value.len())
-                    .ok_or_else(|| invalid_request("gateway_request_byte_limit"))?;
+                let value = build_tool_result_value(&output, &call_id, projection, budgets)?;
                 GatewayMessage {
                     role: "tool",
                     content: GatewayContent::Parts(vec![GatewayPart::ToolResult {
@@ -768,6 +753,41 @@ fn build_prompt(
         return Err(invalid_request("gateway_invalid_history"));
     }
     Ok(prompt)
+}
+
+fn build_tool_result_value(
+    output: &machine_god_core::ToolOutput,
+    call_id: &ToolCallId,
+    projection: &PromptBuildContext<'_>,
+    budgets: &mut ToolOutputBudgets,
+) -> Result<String, ProviderError> {
+    let serialized_output =
+        serialize_bounded(output, budgets.source_remaining, projection.cancellation)?;
+    budgets.source_remaining = budgets
+        .source_remaining
+        .checked_sub(serialized_output.len())
+        .expect("bounded serialization cannot exceed remaining budget");
+    check_cancel(projection.cancellation)?;
+    let value = if projection.reader_advertised
+        && serialized_output.len() > TOOL_RESULT_PROJECTION_THRESHOLD_BYTES
+    {
+        project_tool_result(
+            projection.session_id,
+            projection.session_incarnation_id,
+            call_id,
+            &serialized_output,
+            output.is_error,
+        )
+    } else {
+        String::from_utf8(serialized_output)
+            .map_err(|_| protocol_error("gateway_internal_encoding"))?
+    };
+    check_cancel(projection.cancellation)?;
+    budgets.wire_remaining = budgets
+        .wire_remaining
+        .checked_sub(value.len())
+        .ok_or_else(|| invalid_request("gateway_request_byte_limit"))?;
+    Ok(value)
 }
 
 fn exact_text(content: Vec<ContentBlock>) -> Result<String, ProviderError> {

@@ -48,7 +48,7 @@ impl AiGatewayTransport for ContinuationTransport {
                 1 => tool_call_response(
                     "large-call",
                     LARGE_TOOL_NAME,
-                    json!({"value": "make it large"}),
+                    &json!({"value": "make it large"}),
                 ),
                 2 => {
                     let request: Value = serde_json::from_slice(&state.bodies[1]).unwrap();
@@ -64,7 +64,7 @@ impl AiGatewayTransport for ContinuationTransport {
                     tool_call_response(
                         "read-call",
                         READ_TOOL_RESULT_TOOL_NAME,
-                        json!({
+                        &json!({
                             "handle": handle,
                             "start_byte": 1,
                             "byte_count": 8_192,
@@ -81,32 +81,32 @@ impl AiGatewayTransport for ContinuationTransport {
     }
 }
 
-fn sse(value: Value) -> Vec<u8> {
+fn sse(value: &Value) -> Vec<u8> {
     format!("data: {value}\n\n").into_bytes()
 }
 
-fn tool_call_response(call_id: &str, tool_name: &str, arguments: Value) -> Vec<Vec<u8>> {
+fn tool_call_response(call_id: &str, tool_name: &str, arguments: &Value) -> Vec<Vec<u8>> {
     vec![
-        sse(json!({
+        sse(&json!({
             "type": "tool-input-start",
             "id": call_id,
             "toolName": tool_name,
         })),
-        sse(json!({
+        sse(&json!({
             "type": "tool-input-delta",
             "id": call_id,
             "delta": arguments.to_string(),
         })),
-        sse(json!({
+        sse(&json!({
             "type": "tool-input-end",
             "id": call_id,
         })),
-        sse(json!({
+        sse(&json!({
             "type": "tool-call",
             "toolCallId": call_id,
             "toolName": tool_name,
         })),
-        sse(json!({
+        sse(&json!({
             "type": "finish",
             "finishReason": {"unified": "tool-calls"},
         })),
@@ -115,12 +115,12 @@ fn tool_call_response(call_id: &str, tool_name: &str, arguments: Value) -> Vec<V
 
 fn text_response(text: &str) -> Vec<Vec<u8>> {
     vec![
-        sse(json!({
+        sse(&json!({
             "type": "text-delta",
             "id": "text-final",
             "delta": text,
         })),
-        sse(json!({
+        sse(&json!({
             "type": "finish",
             "finishReason": {"unified": "stop"},
         })),
