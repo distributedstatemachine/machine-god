@@ -1517,6 +1517,41 @@ fn output_limit_ready_on_the_deadline_repoll_remains_authoritative() {
 }
 
 #[test]
+fn outer_future_drop_closes_delivery_but_retained_waker_keeps_capacity() {
+    let temporary = TemporaryDirectory::new("outer-drop-retained-waker");
+    let executor = SelfRepollExecutor::default();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+    )
+    .unwrap();
+    let observed = Arc::new(ObservedWake::default());
+    let external_waker = Waker::from(Arc::clone(&observed));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("outer-drop-retained-waker", "."),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &external_waker).is_pending());
+    let retained = executor.retained_waker();
+    assert_eq!(observed.calls(), 0);
+
+    // Dropping the pending outer future destroys the injected execution,
+    // which releases its stored Waker. The independently retained clone still
+    // owns capacity, but its notifier must no longer target the dropped task.
+    drop(first);
+    retained.wake_by_ref();
+    assert_eq!(observed.calls(), 0);
+    assert_self_repoll_tail_is_busy(&tool, &executor);
+
+    drop(retained);
+    assert_self_repoll_capacity_recovers(&tool, &executor);
+}
+
+#[test]
 fn executor_result_after_supplied_waker_repoll_reaches_the_original_host() {
     let temporary = TemporaryDirectory::new("executor-self-repoll");
     let executor = SelfRepollExecutor::default();
