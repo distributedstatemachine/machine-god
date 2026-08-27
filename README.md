@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10
+REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -174,10 +174,20 @@ callback 256, whose outer poll checks cancellation first and otherwise returns
 the existing redacted nonretryable prompt-failed error. Existing close/panic,
 A-drop, panic precedence, permit, and no-lock-held-foreign-Waker rules remain;
 no thread, queue, dependency, or public API is added. Focused direct 41 and the
-complete exact-1.94.1 pinned/extended/release-smoke gates are green. The current
-status is
-**CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review,
-integration, delivery, benchmark, or fx-equivalence result is claimed.
+complete exact-1.94.1 pinned/extended/release-smoke gates are green. Formal
+cycle 10 rejected exact candidate `4ea1c1f5be3586ce9bee696b12c4120dc2a72018`,
+tree `78e781ffd7b03aafdf295ae79f4090120971c248`: correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources reported `0/0/0/0`,
+and the distinct mediums produce a `0/0/2/0` union. A queue-only executor lets
+every self-waking `Pending` poll start a fresh notify counter at one, bypassing
+256 indefinitely while retaining capacity. Separately, discarded or
+nonselected opaque cleanup-panic payloads can destruct during unwind, replace
+the prompt-poll primary, or double-panic abort. Cycle 11 must retain one finite
+budget for the prompt lifetime and explicitly forget suppressed payloads, with
+queue-bound/cancellation and primary-marker/no-abort/lane/capacity evidence.
+The current status is
+**CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**; no cycle-11 source,
+evidence, gate, review, integration, or delivery is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

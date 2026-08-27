@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -110,8 +110,18 @@ exactly 256 callbacks, and converts a continuing chain into cancellation-first
 terminal poll or the existing redacted nonretryable prompt-failed error. Close/
 panic, A-drop, panic ordering, permit retention, and no foreign Waker work under
 the mutex remain; no thread, queue, dependency, or public API is added. Direct
-41 and the complete local gate are green. Formal review, workflows,
-integration, and delivery remain pending.
+41 and the complete local gate are green. Formal cycle 10 rejected exact
+`4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`: correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources reported `0/0/0/0`,
+and the distinct union is `0/0/2/0`. Queue-only callback return makes each
+self-waking `Pending` poll start a new notify-local counter at one, bypassing
+the 256 cap. Suppressed/nonselected cleanup-panic payloads can separately
+replace the primary or double-panic abort during unwind. Cycle 11 must retain a
+prompt-lifetime budget and forget every suppressed payload, proving queue/
+cancellation bounds and marker/no-abort/lane/capacity recovery. No cycle-11
+source, evidence, or gate is claimed.
+No cycle-11 review, integration, or delivery exists yet.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -842,8 +852,9 @@ union. Cycle-9 panic-primary and bounded-activation remediation/evidence plus
 the complete local gate compose at `0279b8c`/`50b2423`. Formal cycle 9 rejected
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
 source/evidence and complete local gate now compose at
-`72e8e75`/`5405180`, with formal review pending. The analogous preexisting
-terminal code is outside this slice.
+`72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
+distinct mediums and a `0/0/2/0` union; cycle-11 work does not exist. The
+analogous preexisting terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1402,6 +1413,7 @@ callback work, residual pending delivery, and the complete local gate compose
 at `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
 source/evidence and the complete local gate compose at
-`72e8e75`/`5405180`. Formal review, workflows, integration, and delivery remain
-pending. Analogous preexisting terminal code is out of scope and is not claimed
-fixed.
+`72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
+distinct mediums and a `0/0/2/0` union; cycle-11 source, evidence, review,
+integration, and delivery do not exist. Analogous preexisting terminal code is
+out of scope and is not claimed fixed.

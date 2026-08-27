@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-10 interaction and authority remediation
 
-Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2338,7 +2338,20 @@ dependency, public API, or authority change is added. Three named tests prove
 base-two/new-three short and cancellation progress plus base-two/exact-
 terminal-256 exhaustion; their exact names are retained in the contract and
 ledger. Focused direct 41, all pinned/extended gates, and
-unchanged release smokes are green. Formal review, workflows, integration, and
-delivery remain pending. This is not benchmark, product-performance, or fx-
-equivalence evidence. The analogous terminal path remains out of scope and is
-not claimed fixed.
+unchanged release smokes are green. Formal cycle 10 rejected exact candidate
+`4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`: correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources `0/0/0/0`, and the
+distinct union is `0/0/2/0`.
+
+One medium is a queued-executor lifecycle/resource bypass: notify-local budget
+state resets to one after every queue-only callback returns and clears `Open`,
+so queued self-waking `Pending` polls can run indefinitely and retain capacity.
+The other is panic integrity: suppressed/nonselected opaque cleanup payloads
+can destruct while unwinding, replace the prompt-poll primary, or double-panic
+abort. Cycle 11 must retain one finite prompt-lifetime budget and explicitly
+forget all suppressed payloads, with queue-bound/cancellation and primary-
+marker/no-abort/lane/capacity evidence. No cycle-11 source, evidence, gate,
+review, integration, or delivery is claimed. This is not benchmark, product-
+performance, or fx-equivalence evidence. The analogous terminal path remains
+out of scope and is not claimed fixed.

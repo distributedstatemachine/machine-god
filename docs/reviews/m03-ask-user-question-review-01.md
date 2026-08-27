@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 9
-rejected its exact immutable candidate with one deduplicated correctness/
-lifecycle liveness finding. Cycle-10 source, deterministic evidence, and the
-complete local gate now compose at the exact behavior head below. Three fresh
-formal reviews, remote workflows, integration, and delivery remain pending.
+Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**. Formal cycle
+10 rejected its exact immutable candidate with two distinct correctness/
+lifecycle findings. The historical cycle-10 source, deterministic evidence,
+and complete local gate remain recorded below. No cycle-11 source, evidence,
+gate, review, workflow, integration, or delivery exists yet.
 
 ## Frozen lineage
 
@@ -150,6 +150,9 @@ formal reviews, remote workflows, integration, and delivery remain pending.
 - Final disposable cycle-10 source/evidence composition:
   `a8acbf4`, tree `54124807ac991cc93dc15db28bad21ac8e2a19ae`, green for formatting
   and all 41 direct question tests
+- Formal cycle-10 candidate, **REJECTED**:
+  `4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+  `78e781ffd7b03aafdf295ae79f4090120971c248`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -182,7 +185,9 @@ green. Three fresh exact-SHA reviews rejected later candidate
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` union. Cycle-10 source,
 evidence, and cycle-9 rejection docs now compose at exact behavior head
 `72e8e75`/`5405180`; its complete exact-1.94.1 local gate is green. Three fresh
-formal reviews, workflows, integration, and delivery remain pending.
+formal reviews rejected later candidate `4ea1c1f`/`78e781f` with a
+deduplicated `0/0/2/0` union. Cycle-11 source, evidence, replacement gates,
+formal reviews, workflows, integration, and delivery do not exist yet.
 
 ## Frozen first-slice decisions
 
@@ -1202,6 +1207,50 @@ smoke evidence, not a formal-review, integration, delivery, benchmark,
 product-performance, compatibility-promotion, or fx-equivalence claim. Three
 fresh exact-SHA formal reviews and both feature and `main` workflow gates remain
 pending.
+
+## Formal cycle-10 outcome
+
+Three fresh review tracks examined exact immutable candidate
+`4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`:
+
+- correctness/API: `0 blocker / 0 high / 1 medium / 0 low`;
+- lifecycle/platform: `0 blocker / 0 high / 1 medium / 0 low`;
+- performance/resources: `0 blocker / 0 high / 0 medium / 0 low`; and
+- deduplicated union: `0 blocker / 0 high / 2 medium / 0 low`.
+
+The two mediums are distinct.
+
+### Queued-executor delivery-budget bypass
+
+`callbacks_started` is initialized inside every notify activation. A queue-only
+downstream Waker returns immediately after enqueue, so the lane clears back to
+`Open` before the queued outer poll runs. If the prompt self-wakes and returns
+`Pending` on each queued poll, every wake starts a fresh notify with its counter
+back at one. The 256-callback terminal path is never reached, the prompt can run
+indefinitely, and its retained activity keeps prompt capacity occupied. The
+cycle-10 evidence covers only a synchronous reentrant callback that waits for
+its poll, so it does not exercise this queue-driven schedule.
+
+Cycle 11 must retain one hard finite delivery budget across callback return and
+queued-poll activations for the full prompt lifetime. Deterministic queue-driven
+evidence must prove the exact terminal bound and cancellation-first behavior.
+
+### Teardown-panic precedence and abort risk
+
+The prompt-poll panic handler catches `drop(doomed)` and then discards its `Err`
+payload. Destroying that captured opaque cleanup-panic payload can itself panic,
+replace the primary prompt-poll panic, or double-panic and abort the process.
+`PromptActivity::drop` and analogous local cleanup selectors can likewise let
+suppressed or nonselected captured payloads destruct during unwind.
+
+Cycle 11 must explicitly forget every suppressed or nonselected opaque cleanup
+payload. It may select a documented cleanup primary only when the thread is not
+already unwinding. Deterministic evidence must prove prompt-poll primary marker
+identity, absence of process abort, lane closure, and capacity recovery.
+
+No cycle-11 source, independent evidence, local gate, formal review, workflow,
+integration, or delivery result is claimed at this rejection checkpoint.
 
 ## Deferred and nonclaim record
 

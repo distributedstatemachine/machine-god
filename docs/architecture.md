@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10
+REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -132,8 +132,19 @@ continuation after poll 255 records exhaustion before terminal callback 256,
 whose outer poll checks cancellation first. Existing close/panic/A-drop/panic-
 precedence/permit rules remain, with no foreign Waker work under the mutex and
 no thread, queue, dependency, or public API change. Direct 41 and the complete
-local gate are green; formal review, workflows, integration, and delivery
-remain pending.
+local gate are green. Formal cycle 10 rejected exact
+`4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`: correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources reported `0/0/0/0`,
+and the two distinct mediums produce a `0/0/2/0` union. Queue-only callback
+return clears `Open`, so each queued self-
+wake creates a new notify-local counter at one and bypasses the 256 limit.
+Separately, opaque cleanup-panic payloads discarded or left nonselected can
+destruct during unwind, replace the primary, or double-panic abort. Cycle 11
+must own one budget for the prompt lifetime and forget all suppressed payloads,
+proving queue/cancellation bounds plus primary identity/no abort/lane close/
+capacity recovery. No cycle-11 implementation or evidence is claimed.
+No cycle-11 gate, review, integration, or delivery exists yet.
 See
 [`ask-user-question.md`](ask-user-question.md).
 
@@ -2381,8 +2392,9 @@ the activation ceiling, residual pending survives, and dual panic preserves the
 callback panic. Direct 39 and the complete local gate are green. Formal cycle 9
 rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
 cycle-10 source/evidence and the complete local gate now compose at
-`72e8e75`/`5405180`, with fresh review pending. Analogous preexisting terminal
-code is out of scope.
+`72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
+distinct mediums and a `0/0/2/0` union; cycle-11 work does not exist.
+Analogous preexisting terminal code is out of scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2421,6 +2433,7 @@ integration, and delivery were not established; formal cycle 8 rejected exact
 complete local gate are established at `0279b8c`/`50b2423`. Formal cycle 9
 rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
 cycle-10 source, evidence, and the complete local gate are established at
-`72e8e75`/`5405180`. Formal reviews, workflows, integration, and delivery
-remain pending. The analogous preexisting terminal path remains outside this
-bounded slice.
+`72e8e75`/`5405180`. Formal cycle 10 rejected `4ea1c1f`/`78e781f` with two
+distinct mediums and a `0/0/2/0` union; cycle-11 source, evidence, reviews,
+workflows, integration, and delivery do not exist. The analogous preexisting
+terminal path remains outside this bounded slice.

@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -507,6 +507,36 @@ remains the dev-only native fixture plus one native lock dependency-list line;
 the production graph is unchanged. Formal review, workflows, integration, and
 delivery remain pending. This is not benchmark, product-performance,
 compatibility-promotion, or fx-equivalence evidence.
+
+## Formal cycle-10 outcome and cycle-11 requirements
+
+Formal cycle 10 reviewed exact candidate
+`4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`. Correctness/API reported
+`0/0/1/0`, lifecycle/platform reported `0/0/1/0`, and
+performance/resources reported `0/0/0/0`. The two mediums are distinct, so the
+deduplicated union is `0/0/2/0`.
+
+First, `callbacks_started` resets inside every notify. A queue-only downstream
+Waker returns after enqueue, allowing the lane to clear `Open` before the queued
+outer poll. A prompt that self-wakes and returns `Pending` on every queued poll
+therefore starts every notify at counter one. It never reaches 256, can run
+indefinitely, and retains capacity. Existing evidence covers only synchronous
+reentrant callback execution that waits for its poll. Cycle 11 must retain a
+hard finite delivery budget across callback-return and queued-poll activations
+for the prompt lifetime, with queue-driven exact-bound and cancellation
+evidence.
+
+Second, the prompt-poll panic handler catches `drop(doomed)` but discards its
+`Err` payload. Destruction of that captured opaque cleanup panic can replace the
+primary or double-panic and abort. `PromptActivity::drop` and analogous local
+selectors can also destruct suppressed/nonselected payloads during unwind.
+Cycle 11 must explicitly forget every suppressed or nonselected opaque cleanup
+payload, choose a documented primary only when not already unwinding, and prove
+prompt-poll primary identity, no abort, lane closure, and capacity recovery.
+
+No cycle-11 source, evidence, gate, review, workflow, integration, or delivery
+result is claimed.
 
 ## Product boundary
 

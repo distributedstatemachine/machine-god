@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 10 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 10 REJECTED — CYCLE 11
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -131,8 +131,17 @@ at exactly 256 callbacks. Rejection docs
 chains progress through callback 3; continuous chains reach terminal callback
 256, then cancellation wins or the existing redacted nonretryable prompt-
 failed error returns. Direct 41 and the complete local gate are green. No
-thread, queue, dependency, or public API is added. Formal review, workflows,
-integration, and delivery remain pending.
+thread, queue, dependency, or public API is added. Formal cycle 10 rejected
+exact `4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`: correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources `0/0/0/0`, and the two
+distinct mediums produce `0/0/2/0`. A queue-only callback returns before its
+poll, so every queued self-wake resets the notify counter to one and bypasses
+the finite cap. Separately, cleanup-panic payload destruction during unwind can
+replace the primary or double-panic abort. Cycle 11 must enforce a prompt-
+lifetime budget, explicitly forget suppressed/nonselected payloads, and add
+queue-bound/cancellation plus primary-marker/no-abort/lane/capacity evidence.
+No cycle-11 source, evidence, gate, review, integration, or delivery is claimed.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

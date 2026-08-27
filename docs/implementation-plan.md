@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 10 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 10
+REJECTED — CYCLE 11 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -413,9 +413,28 @@ required exact-1.94.1 commands pass without fallback. Extended Python 136/8,
 compatibility, deny/audit 1,226/211/zero, portability, docs
 91/318/701/534/0, status 10/0, diff/protected/no-unsafe, unchanged locked
 release/missing-root smokes, and the audited dev-only Cargo delta are green;
-the production dependency graph is unchanged. Formal review, workflows,
-integration, and delivery remain pending, with no benchmark, product-
-performance, or fx-equivalence claim.
+the production dependency graph is unchanged. Formal cycle 10 reviewed exact
+candidate `4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`. Correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources reported `0/0/0/0`,
+and the two distinct mediums produce a deduplicated `0/0/2/0` union.
+
+The first medium bypasses the finite callback budget with a queued executor.
+`callbacks_started` resets in every notify; a queue-only downstream Waker
+returns after enqueue, the lane clears `Open`, and a self-waking `Pending`
+prompt starts each queued activation back at counter one. It can run forever,
+never reach 256, and retain capacity. Cycle-11 work must carry one hard finite
+budget across callback-return/queued-poll activations for the prompt lifetime,
+with queue-driven exact-bound and cancellation evidence.
+
+The second medium is cleanup-panic precedence. The prompt-poll panic handler
+catches `drop(doomed)` but discards its `Err` payload, whose destructor can
+replace the primary or double-panic abort. `PromptActivity::drop` and analogous
+selectors can also destruct suppressed/nonselected payloads during unwind.
+Cycle 11 must forget all such opaque payloads, select a cleanup primary only
+when not unwinding, and prove prompt-poll primary identity, no abort, lane
+closure, and capacity recovery. No cycle-11 source, evidence, gate, review,
+workflow, integration, or delivery is claimed.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4472,8 +4491,9 @@ residual pending delivery, direct 39, and the complete pinned/extended/release
 gate compose at exact `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
 remediation/evidence and the complete local gate compose at
-`72e8e75`/`5405180`; reviews, workflows, integration, and delivery remain
-pending, and
+`72e8e75`/`5405180`. Formal cycle 10 rejected exact `4ea1c1f`/`78e781f` with
+two distinct mediums and a `0/0/2/0` union; cycle-11 source, evidence, reviews,
+workflows, integration, and delivery do not exist yet, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

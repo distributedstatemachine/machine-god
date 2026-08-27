@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-10 question resource remediation
 
-Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -957,7 +957,24 @@ proves base-two to exact terminal-256 continuous exhaustion; and
 `cancellation_in_the_residual_wake_window_progresses_and_closes_delivery`
 proves base-two/new-three cancellation-first close.
 Focused direct 41, all required exact-1.94.1 commands, and extended/release-
-smoke gates are green. Formal review, workflows, integration, and delivery
-remain pending. No benchmark, product-performance, or fx-equivalence result is
-claimed. See
+smoke gates are green. Formal cycle 10 rejected exact candidate
+`4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
+`78e781ffd7b03aafdf295ae79f4090120971c248`. Correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources reported `0/0/0/0`,
+and the distinct union is `0/0/2/0`.
+
+The resource defect is a queued-executor budget bypass. Because
+`callbacks_started` is notify-local and a queue-only callback returns after
+enqueue, the lane clears `Open` before the queued `Pending` poll self-wakes.
+Each wake starts again at one, so 256 is never reached and capacity remains
+occupied indefinitely. Existing evidence covers synchronous reentrant callback
+execution only. Cycle 11 needs one prompt-lifetime budget with queue-driven
+exact-bound and cancellation evidence.
+
+The separate cleanup defect can replace the primary panic or double-panic abort
+when discarded/nonselected opaque cleanup payloads destruct during unwind.
+Cycle 11 must forget all suppressed payloads and prove primary identity, no
+abort, lane close, and capacity recovery. No cycle-11 source, evidence, gate,
+review, integration, or delivery is claimed. No benchmark, product-
+performance, or fx-equivalence result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).
