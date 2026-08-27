@@ -33,6 +33,7 @@ enum Mode {
     TimedOut,
     OutputLimit,
     DelayedOutputLimit(Duration),
+    OutputLimitAfterPending,
     Error(TerminalExecutorErrorKind),
     Pending,
     CancelThenExit,
@@ -160,8 +161,11 @@ impl Future for FakeExecution {
     type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
 
     fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
-        self.state.polls.fetch_add(1, Ordering::SeqCst);
+        let previous_polls = self.state.polls.fetch_add(1, Ordering::SeqCst);
         if matches!(self.mode, Mode::Pending) {
+            return Poll::Pending;
+        }
+        if matches!(self.mode, Mode::OutputLimitAfterPending) && previous_polls == 0 {
             return Poll::Pending;
         }
         if matches!(self.mode, Mode::CancelThenExit) {
@@ -178,7 +182,9 @@ impl Future for FakeExecution {
             Mode::CancelThenExit | Mode::DropCancelThenExit => TerminalExecutionStatus::Exited(0),
             Mode::Signaled(signal) => TerminalExecutionStatus::Signaled(signal),
             Mode::TimedOut => TerminalExecutionStatus::TimedOut,
-            Mode::OutputLimit | Mode::DelayedOutputLimit(_) => TerminalExecutionStatus::OutputLimit,
+            Mode::OutputLimit | Mode::DelayedOutputLimit(_) | Mode::OutputLimitAfterPending => {
+                TerminalExecutionStatus::OutputLimit
+            }
             Mode::Error(_) | Mode::Pending => unreachable!(),
         };
         Poll::Ready(TerminalExecutionOutcome::new(
@@ -194,6 +200,7 @@ impl Future for FakeExecution {
 struct BlockingWakeState {
     entered: bool,
     released: bool,
+    returned: bool,
 }
 
 #[derive(Default)]
@@ -220,6 +227,20 @@ impl BlockingWake {
         self.changed.notify_all();
     }
 
+    fn wait_until_returned(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut state = self.state.lock().unwrap();
+        while !state.returned {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "terminal Waker callback did not return"
+            );
+            let waited = self.changed.wait_timeout(state, remaining).unwrap();
+            state = waited.0;
+        }
+    }
+
     fn block(&self) {
         let mut state = self.state.lock().unwrap();
         state.entered = true;
@@ -227,6 +248,8 @@ impl BlockingWake {
         while !state.released {
             state = self.changed.wait(state).unwrap();
         }
+        state.returned = true;
+        self.changed.notify_all();
     }
 }
 
@@ -250,6 +273,89 @@ impl Drop for BlockingWakeRelease {
 
 fn poll_with_waker<F: Future + ?Sized>(future: Pin<&mut F>, waker: &Waker) -> Poll<F::Output> {
     future.poll(&mut Context::from_waker(waker))
+}
+
+#[derive(Default)]
+struct RetainedPublisherState {
+    calls: AtomicUsize,
+    polls: AtomicUsize,
+    inner: Mutex<RetainedPublisherInner>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct RetainedPublisherInner {
+    published: bool,
+    waker: Option<Waker>,
+}
+
+#[derive(Clone, Default)]
+struct RetainedPublisherExecutor {
+    state: Arc<RetainedPublisherState>,
+}
+
+impl RetainedPublisherExecutor {
+    fn publish_and_wake(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut inner = self.state.inner.lock().unwrap();
+        while inner.waker.is_none() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "injected executor did not retain a task Waker"
+            );
+            let waited = self.state.changed.wait_timeout(inner, remaining).unwrap();
+            inner = waited.0;
+        }
+        inner.published = true;
+        let waker = inner.waker.take().expect("retained task Waker exists");
+        drop(inner);
+        waker.wake();
+    }
+
+    fn calls(&self) -> usize {
+        self.state.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl TerminalExecutor for RetainedPublisherExecutor {
+    fn execute(
+        &self,
+        _request: TerminalExecutionRequest,
+        _cancellation: CancellationToken,
+    ) -> TerminalExecution {
+        self.state.calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(RetainedPublisherExecution {
+            state: Arc::clone(&self.state),
+        })
+    }
+}
+
+struct RetainedPublisherExecution {
+    state: Arc<RetainedPublisherState>,
+}
+
+impl Future for RetainedPublisherExecution {
+    type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.state.polls.fetch_add(1, Ordering::SeqCst);
+        let mut inner = self.state.inner.lock().unwrap();
+        if !inner.published {
+            if inner.waker.is_none() {
+                inner.waker = Some(context.waker().clone());
+                self.state.changed.notify_all();
+            }
+            return Poll::Pending;
+        }
+        drop(inner);
+        Poll::Ready(TerminalExecutionOutcome::new(
+            TerminalExecutionStatus::Exited(0),
+            TerminalCapturedOutput::new(Vec::new(), 0).unwrap(),
+            TerminalCapturedOutput::new(Vec::new(), 0).unwrap(),
+            Duration::from_millis(1),
+        ))
+    }
 }
 
 impl Drop for FakeExecution {
@@ -967,6 +1073,186 @@ fn output_limit_ready_after_deadline_remains_authoritative() {
     assert_eq!(output.content["stderr_bytes"], 0);
     assert_eq!(executor.polls(), 1);
     assert_eq!(executor.drops(), 1);
+}
+
+#[test]
+fn output_limit_ready_on_the_deadline_repoll_remains_authoritative() {
+    let temporary = TemporaryDirectory::new("output-limit-deadline-repoll");
+    let executor = FakeExecutor::new(Mode::OutputLimitAfterPending).with_totals(
+        usize::try_from(MAX_TERMINAL_PRODUCED_OUTPUT_BYTES).unwrap() + 1,
+        0,
+    );
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        TerminalLimits::new(Duration::from_millis(20), 1).unwrap(),
+    )
+    .unwrap();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments("produce-overflow-on-repoll", "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(output.is_error);
+    assert_eq!(output.content["status"], "output_limit");
+    assert_eq!(
+        output.content["stdout_bytes"],
+        MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 1
+    );
+    assert_eq!(output.content["stderr_bytes"], 0);
+    assert_eq!(executor.polls(), 2);
+    assert_eq!(executor.drops(), 1);
+}
+
+#[test]
+fn injected_publisher_waker_retains_the_originating_capacity_slot() {
+    let temporary = TemporaryDirectory::new("injected-publisher-capacity");
+    let executor = RetainedPublisherExecutor::default();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+    )
+    .unwrap();
+    let blocking = Arc::new(BlockingWake::default());
+    let waker = Waker::from(Arc::clone(&blocking));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("first", "."),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &waker).is_pending());
+    std::thread::scope(|scope| {
+        let publisher_executor = executor.clone();
+        let publisher = scope.spawn(move || publisher_executor.publish_and_wake());
+        let _release_on_unwind = BlockingWakeRelease(Arc::clone(&blocking));
+        blocking.wait_until_entered();
+
+        let first_output = match poll_once(first.as_mut()) {
+            Poll::Ready(Ok(output)) => output,
+            Poll::Ready(Err(error)) => panic!("injected execution failed: {error}"),
+            Poll::Pending => panic!("published injected execution remained pending"),
+        };
+        drop(first);
+        assert_eq!(first_output.content["status"], "exited");
+
+        for attempt in 0..16 {
+            let mut blocked = Box::pin(tool.execute(
+                context(),
+                exact_arguments(&format!("blocked-{attempt}"), "."),
+                CancellationToken::new(),
+            ));
+            match poll_once(blocked.as_mut()) {
+                Poll::Ready(Err(error)) => {
+                    assert_eq!(error.kind, ToolErrorKind::Unavailable);
+                    assert_eq!(error.code, "terminal_busy");
+                }
+                Poll::Ready(Ok(_)) => {
+                    panic!("execution bypassed an injected publisher Waker callback")
+                }
+                Poll::Pending => {
+                    panic!("injected publisher Waker callback released capacity early")
+                }
+            }
+        }
+        assert_eq!(executor.calls(), 1);
+
+        blocking.release();
+        publisher.join().unwrap();
+    });
+
+    let recovered = execute(
+        &tool,
+        exact_arguments("recovered", "."),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(!recovered.is_error);
+    assert_eq!(executor.calls(), 2);
+}
+
+#[test]
+fn deadline_and_injected_waker_families_share_one_capacity_slot() {
+    let temporary = TemporaryDirectory::new("dual-waker-capacity");
+    let executor = RetainedPublisherExecutor::default();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        TerminalLimits::new(Duration::from_millis(500), 1).unwrap(),
+    )
+    .unwrap();
+    let publisher_blocking = Arc::new(BlockingWake::default());
+    let deadline_blocking = Arc::new(BlockingWake::default());
+    let publisher_waker = Waker::from(Arc::clone(&publisher_blocking));
+    let deadline_waker = Waker::from(Arc::clone(&deadline_blocking));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("first", "."),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &publisher_waker).is_pending());
+    assert!(poll_with_waker(first.as_mut(), &deadline_waker).is_pending());
+    std::thread::scope(|scope| {
+        let publisher_executor = executor.clone();
+        let publisher = scope.spawn(move || publisher_executor.publish_and_wake());
+        let _publisher_release_on_unwind = BlockingWakeRelease(Arc::clone(&publisher_blocking));
+        let _deadline_release_on_unwind = BlockingWakeRelease(Arc::clone(&deadline_blocking));
+        publisher_blocking.wait_until_entered();
+        deadline_blocking.wait_until_entered();
+
+        let first_output = match poll_once(first.as_mut()) {
+            Poll::Ready(Ok(output)) => output,
+            Poll::Ready(Err(error)) => panic!("overlapping execution failed: {error}"),
+            Poll::Pending => panic!("overlapping execution remained pending after its deadline"),
+        };
+        drop(first);
+        assert_eq!(first_output.content["status"], "timed_out");
+
+        deadline_blocking.release();
+        deadline_blocking.wait_until_returned();
+        let must_remain_busy_until = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < must_remain_busy_until {
+            let mut blocked = Box::pin(tool.execute(
+                context(),
+                exact_arguments("blocked-after-deadline-callback", "."),
+                CancellationToken::new(),
+            ));
+            match poll_once(blocked.as_mut()) {
+                Poll::Ready(Err(error)) => {
+                    assert_eq!(error.kind, ToolErrorKind::Unavailable);
+                    assert_eq!(error.code, "terminal_busy");
+                }
+                Poll::Ready(Ok(_)) => {
+                    panic!("deadline callback released the shared slot before publisher return")
+                }
+                Poll::Pending => {
+                    panic!("publisher callback no longer retained the shared capacity slot")
+                }
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(executor.calls(), 1);
+
+        publisher_blocking.release();
+        publisher.join().unwrap();
+    });
+
+    let recovered = execute(
+        &tool,
+        exact_arguments("recovered", "."),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(!recovered.is_error);
+    assert_eq!(executor.calls(), 2);
 }
 
 #[test]
