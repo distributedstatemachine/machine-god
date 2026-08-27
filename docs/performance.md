@@ -11,10 +11,14 @@ cutoff, 48 KiB serialized output, 120-second default deadline, default active
 limit four, and hard active limit sixteen are resource ceilings, not measured
 performance results. Each admitted call owns at most one deadline-guardian
 thread; Linux system execution additionally owns one worker and two readers.
-Every nonblocking reader performs at most 64 additional 16 KiB reads after stop
-is requested. These are bounded ownership facts, not latency or throughput
-claims. No benchmark workload changes in this slice. See
-[`terminal.md`](terminal.md).
+Once either reader observes more than 1 MiB aggregate production,
+`output_limit` is authoritative and fixed chunk/post-stop read-count ceilings
+bound overshoot while stopping both readers promptly. The first-poll deadline
+is independently enforced around controllable userspace phases, but a blocked
+filesystem lookup, `Command::spawn`, kernel wait, or uninterruptible syscall can
+exceed it in wall-clock time. These are bounded ownership and work facts, not a
+latency, throughput, sandbox, or performance claim. No benchmark workload
+changes in this slice. See [`terminal.md`](terminal.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED**, unmeasured, and
 claim-ineligible. It changes no benchmark workload or recorded comparison. Its

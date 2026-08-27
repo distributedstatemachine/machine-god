@@ -6,9 +6,12 @@ It freezes only bounded foreground `exec`: fixed `/bin/sh -c`, a descriptor-
 retained workspace-relative starting directory, exact environment-snapshot
 identity in the process capability, bounded separate stdout/stderr, timeout,
 cancellation, fail-fast concurrency, an independent deadline guardian,
-process-group cleanup, and a Linux-only
-system executor. It adds no PTY, durable session, sandbox, CLI command,
-benchmark, product-performance, or fx-equivalence claim. See the
+and bounded process-group cleanup. Its first-poll timeout governs controllable
+userspace phases but is not a wall-clock ceiling across blocked host syscalls.
+Public system-executor construction is Linux-only; the private non-Linux host
+entry stays advertised and returns fixed unsupported at allowed execution
+before cwd lookup or spawn. It adds no PTY, durable session, sandbox, CLI
+command, benchmark, product-performance, or fx-equivalence claim. See the
 [`terminal` contract](terminal.md) and
 [`live review ledger`](reviews/m03-terminal-review-01.md).
 

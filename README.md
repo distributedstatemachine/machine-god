@@ -12,9 +12,13 @@ The frozen first slice implements only bounded foreground `exec`: fixed
 `/bin/sh -c`, descriptor-retained workspace cwd, exact environment-snapshot
 identity in the process capability, separate bounded stdout/stderr, deadline,
 cancellation, fail-fast concurrency, an independent deadline guardian, and
-process-group cleanup. Its system
-executor is Linux-only. It adds no PTY, durable session, sandbox, CLI command,
-benchmark, product-performance, or fx-equivalence claim. See the
+bounded process-group cleanup. The timeout begins on first poll and governs
+controllable userspace phases, but it is not a wall-clock ceiling across a
+blocked host syscall. Public system-executor construction is Linux-only; the
+private non-Linux reference-host entry remains advertised and returns fixed
+unsupported at allowed execution before cwd lookup or spawn. It adds no PTY,
+durable session, sandbox, CLI command, benchmark, product-performance, or fx-
+equivalence claim. See the
 [`terminal` contract](docs/terminal.md) and
 [`live review ledger`](docs/reviews/m03-terminal-review-01.md).
 

@@ -8,8 +8,12 @@ identity-preserving clones, while rootless `web_fetch` and Gateway-backed
 `web_search` own no workspace descriptor. The slice-34 candidate inserts
 workspace-backed `terminal` after `rename_file` and before `web_fetch`,
 producing fifteen tools and thirteen descriptor-backed tools. Its Linux system
-executor is the only platform-default process implementation in this slice. See
-[`terminal.md`](terminal.md) and the
+executor is the only platform-default process implementation in this slice.
+Public `TerminalTool::open` and `open_with_limits` fail construction off Linux.
+Private reference-host descriptor composition deliberately keeps `terminal` in
+the non-Linux catalog; after strict preparation and permission, allowed execute
+revalidates arguments and returns fixed unsupported before cwd lookup, guardian
+or worker creation, or spawn. See [`terminal.md`](terminal.md) and the
 [`slice-34 ledger`](reviews/m03-terminal-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree

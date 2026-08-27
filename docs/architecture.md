@@ -5,8 +5,15 @@ delivered base `52b5885`. Provider-neutral core gains only the exact
 `ProcessEnvironment` identity carried by `Capability::Process`; native owns the
 retained-root cwd walk, environment snapshot, fixed `/bin/sh`, process group,
 deadline guardian, worker/readers, output bounds, and cleanup. The system
-executor is Linux-only. The reference host composes fifteen alphabetical tools,
-thirteen backed by one original workspace descriptor plus twelve clones. This
+executor's public constructors are Linux-only. The reference host composes
+fifteen alphabetical tools, thirteen backed by one original workspace
+descriptor plus twelve clones; its private non-Linux terminal remains in that
+catalog and fails fixed unsupported at allowed execution before cwd lookup or
+spawn. Timeout is independently enforced from first poll around controllable
+userspace phases, but safe Rust cannot turn a blocked host syscall into an
+unconditional wall-clock ceiling. Output-limit observation is authoritative,
+and group cleanup retains the leader through signal dispatch, reports ambiguous
+cleanup, and proves only the disappearance of observed signalable members. This
 is a bounded foreground-exec subset, not a sandbox, PTY, durable terminal,
 performance result, or fx-equivalence claim. See [`terminal.md`](terminal.md).
 

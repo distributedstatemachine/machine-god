@@ -34,7 +34,8 @@ complete canonical argument object is bounded by 64 KiB.
 workspace root. Otherwise it contains at most 256 slash-separated components,
 4,096 UTF-8 bytes in total, and 255 UTF-8 bytes per component. Empty
 components, repeated or trailing separators, absolute and platform-prefix
-paths, `~`, `.` or `..` components, NUL, C0/C1 controls, and bidi-control
+paths, components spelled exactly `~`, `.` or `..`, NUL, C0/C1
+controls, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, and bidi-control
 characters reject rather than normalize. Unicode is not normalized or
 case-folded. Preparation performs no filesystem, environment, process, thread,
 or network effect.
@@ -72,10 +73,13 @@ The environment digest identifies the exact bounded snapshot retained when the
 tool is constructed; it never exposes raw keys or values. Construction accepts
 at most 512 entries, 1,024 bytes per key, 16 KiB per value, and 256 KiB in
 aggregate. Keys must be nonempty, contain neither `=` nor NUL, and values must
-contain no NUL. Entries are sorted by raw platform spelling before length-
-prefixed SHA-256 hashing, so insertion order cannot change permission identity.
-The system executor clears its environment and installs exactly that snapshot.
-The model cannot add, remove, or replace an entry.
+contain no NUL. Entry validity plus individual and aggregate sizes are checked
+before sorting, so a rejectable snapshot cannot trigger sort work outside the
+stated construction bounds. Valid entries are then sorted by raw platform
+spelling before length-prefixed SHA-256 hashing, so insertion order cannot
+change permission identity. The system executor clears its environment and
+installs exactly that snapshot. The model cannot add, remove, or replace an
+entry.
 
 The stable serialized capability therefore contains the fixed program, exact
 two arguments, canonical cwd, profile name, and digest. Successful preparation
@@ -106,12 +110,20 @@ directory.
 
 Safe standard Rust has no descriptor-relative `Command` cwd primitive on
 macOS, and unsafe Rust is forbidden by repository policy. The production system
-executor is therefore Linux-only in this slice. Its construction on macOS,
-FreeBSD, WASI, and other targets fails with the fixed unsupported category
-before filesystem lookup, environment inspection, thread creation, or spawn.
-The public contract remains portable, and a trusted injected `TerminalExecutor`
-may implement the same ownership contract on Unix for deterministic tests or a
-future separately reviewed helper.
+executor is therefore Linux-only in this slice. Public `TerminalTool::open` and
+`TerminalTool::open_with_limits` construction on macOS, FreeBSD, WASI, and other
+non-Linux targets fails with the fixed unsupported category before filesystem
+lookup, environment inspection, thread creation, or spawn.
+
+Reference-host composition is a deliberate private exception: it retains and
+clones the workspace descriptor and advertises `terminal` in the same fifteen-
+tool catalog on supported host-composition targets. On a non-Linux host, strict
+preparation and permission still occur through the engine; an allowed execution
+strictly reparses the canonical arguments and then returns the fixed unsupported
+error before cwd lookup, worker or guardian creation, or spawn. The exported
+contracts remain portable, and a trusted injected `TerminalExecutor` may
+implement the same ownership contract for deterministic tests or a future
+separately reviewed helper.
 
 ## Fixed execution protocol
 
@@ -130,12 +142,21 @@ defaults. `open_with_limits` selects the same fixed system executor with public
 validated bounds, and `with_executor` supplies a trusted executor plus those
 bounds. Accepted deadlines are 1 millisecond through 600 seconds.
 
-The absolute deadline begins on first poll before capacity admission or cwd
+The timeout deadline begins on first poll before capacity admission or cwd
 validation. After admission, one tool-owned condition-variable guardian wakes
-the outer future at the deadline independently of the executor. Therefore even
-a permanently pending injected executor is synchronously dropped at expiry.
-Failure to create that bounded guardian fails before executor construction or
-process spawn. Cancellation is checked again when the guardian becomes ready.
+the outer future at that deadline independently of the executor. It enforces the
+same deadline around every controllable userspace phase, including a permanently
+pending injected executor, which is destroyed at expiry. Failure to create that
+bounded guardian fails before executor construction or process spawn.
+Cancellation is rechecked after executor and guardian destruction and again
+immediately before a `ToolOutput` is returned.
+
+This timeout is not an unconditional wall-clock ceiling. Safe Rust cannot
+preempt a host thread blocked inside a filesystem lookup, `Command::spawn`, a
+kernel wait, or another uninterruptible syscall. Cancellation and the deadline
+are checked immediately around those boundaries, and execution resumes the
+authoritative timeout path when control returns, but elapsed wall-clock time can
+exceed the requested duration while the host syscall remains blocked.
 
 The child starts in a new process group. One system worker owns it and two
 bounded readers drain stdout and stderr concurrently to prevent pipe deadlock.
@@ -144,8 +165,12 @@ Across both streams, execution:
 - retains at most 64 KiB of raw output using deterministic head-and-tail
   retention;
 - continues draining and counting through 1 MiB of produced bytes; and
-- terminates the process group with status `output_limit` on the first byte
-  beyond 1 MiB.
+- makes `output_limit` authoritative once either reader observes an aggregate
+  produced count beyond 1 MiB, including when exit or deadline becomes ready
+  concurrently; and
+- promptly stops both readers after that observation, with fixed chunk and
+  post-stop read-count ceilings that deterministically bound overshoot rather
+  than claiming termination on the first byte beyond 1 MiB.
 
 Invalid UTF-8 is replaced lossily in presentation and identified by per-stream
 `*_lossy` flags; the output makes no byte-round-trip claim. Head/tail omission
@@ -186,29 +211,46 @@ invariant, and unsupported failures use fixed redacted tool-error categories.
 ## Cancellation, timeout, and ownership
 
 Cancellation is checked before cwd acquisition, before capacity and worker
-creation, in the serialized final-spawn gate, after spawn failure, and while
-waiting. Cancellation wins any same-poll race and returns the fixed cancelled
-tool error without partial command output. The final spawn attempt and abort
-transition share one state gate: abort recorded first guarantees zero child;
-successful spawn recorded first is the command-effect commit point.
+creation, in the serialized final-spawn gate, after spawn failure, while
+waiting, after executor and guardian destruction, and immediately before final
+`ToolOutput` publication. Cancellation wins any same-poll race and returns the
+fixed cancelled tool error without partial command output. The final spawn
+attempt and abort transition share one state gate: abort recorded first
+guarantees zero child; successful spawn recorded first is the command-effect
+commit point.
 
 After commit, cancellation, timeout, output overflow, or future drop sends
-`SIGTERM` to the owned process group, waits at most 250 milliseconds, sends
-`SIGKILL` if necessary, reaps the direct child, closes pipes, joins readers and
-the worker, and releases the permit. After the direct child exits normally, the
-executor also terminates any remaining members of the original group before
-returning. Once stop is requested, each nonblocking reader performs at most 64
-additional 16 KiB reads, so a deliberately escaped descendant that retains and
-continuously writes a pipe cannot make join unbounded.
+`SIGTERM` to the owned process group, waits for a bounded grace, sends `SIGKILL`
+if necessary, and observes for another bounded grace. Cleanup retains the
+direct-child leader identity until group signals have been dispatched, avoiding
+numeric PID/PGID reuse between reaping and signalling. It distinguishes an
+absent group from permission or other signal ambiguity, reaps the direct child,
+closes pipes, joins readers and the worker, and releases the permit. The same
+group cleanup runs after an ordinary direct-child exit when original-group
+members remain.
 
-No command resource, descriptor, child, original process-group member, reader,
-or permit survives output publication or future drop. An inline Waker may
-re-enter and consume the completed result on the worker or deadline-guardian
-thread itself; that thread cannot join itself, so only its resource-free
-notification callback tail may briefly outlive the consuming poll. Non-self
-paths join the thread. A descendant that deliberately escapes the group with
-`setsid`, and a process stuck in an uninterruptible kernel wait, remain outside
-the claimed containment boundary.
+Successful cleanup guarantees that no observed, signalable member of the
+original process group remains. If disappearance cannot be established, the
+tool returns fixed redacted `terminal_wait_failed` when it has a result channel,
+rather than claiming success. Future drop has no result channel and completes
+the same bounded cleanup path without upgrading ambiguity to a disappearance
+claim. Without subreaper or elevated authority, this foreground tool cannot
+prove that an adopted zombie has been reaped or that a credential-escaped or
+otherwise unsignalable member has disappeared. A descendant that deliberately
+escapes the group with `setsid` is also outside containment. A process or host
+operation stuck in an uninterruptible kernel wait remains outside the wall-
+clock claim.
+
+Reader shutdown uses deterministic fixed read-count and chunk-size bounds, so
+an escaped descendant that retains and continuously writes a pipe cannot make
+join unbounded. Owned descriptors, pipes, readers, the direct child, and the
+capacity permit are cleaned before a result is published. A finished publisher
+or deadline-notification thread can overlap an arbitrary inline or blocking
+`Waker`; joining that thread from the consuming path could self-join or cross-
+thread deadlock. Its handle may therefore be released only after all command
+resources are gone, and only its resource-free callback/final-bookkeeping tail
+may briefly outlive publication. This exception is not limited to self-
+reentrant Wakers.
 
 ## Acceptance evidence
 
@@ -217,10 +259,13 @@ canonical arguments; exact capability serde and policy/execution equality;
 denial with zero effects; retained-root cwd and symlink/replacement races;
 shell quoting, newlines, fixed program/argv, null stdin, and exact environment;
 separate streams, invalid UTF-8, pipe pressure, output and serialized caps;
-exit codes, signals, timeout, output overflow, spawn/wait failure; cancellation
-before and after spawn; drop and reaping; process groups and TERM-ignore/KILL;
-concurrency limits and permit release; redaction; unsupported targets; engine
-event/output persistence; and the fifteen-tool alphabetical reference catalog.
+exit codes, signals, timeout, authoritative output overflow and bounded
+overshoot, spawn/wait failure; cancellation before and after spawn plus the
+final prepublication check; drop and direct-child reaping; process groups,
+TERM-ignore/KILL, ambiguous cleanup, and leader-identity retention; concurrency
+limits and permit release; redaction; public-construction and private-host
+unsupported behavior; engine event/output persistence; and the fifteen-tool
+alphabetical reference catalog.
 The required exact Rust checks, release-mode focused tests, fresh release-binary
 smokes, portability checks, three fresh adversarial product reviews, exact
 feature workflows, fast-forward integration, exact main workflows, and clean

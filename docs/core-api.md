@@ -25,6 +25,15 @@ canonical arguments and derives the same immutable identity from tool state.
 The environment values, retained descriptor, process group, pipes, deadline
 guardian, threads, and cleanup remain wholly native.
 
+Native rechecks cancellation after executor/guardian destruction and directly
+before returning `ToolOutput`. Its timeout starts at first poll and is
+independent of the executor around controllable userspace phases, but core makes
+no wall-clock guarantee for a native thread blocked in filesystem, spawn,
+kernel-wait, or other uninterruptible host work. Public system construction is
+Linux-only; private non-Linux reference-host composition retains the advertised
+tool and returns fixed unsupported only after strict preparation, permission,
+and execution argument validation, before cwd lookup or spawn.
+
 ## Delivered slice-33 `web_search` boundary
 
 The delivered native [`web_search` slice](web-search.md) requires no new core

@@ -20,13 +20,13 @@ exact `59b069a84e7d4dc4d76ac65520b9045603cae8af`.
 
 Early independent evidence found that an inline reentrant Waker makes the
 literal no-thread-tail wording impossible: a worker cannot join itself from its
-own callback. The accepted invariant is stronger where it matters. Every child,
-original process-group member, pipe, reader, descriptor, and capacity permit is
-cleaned before publication; only the resource-free notification callback tail
-may self-detach. Non-self paths join. Production also remediated pre-spawn
-deadline, reader-join, escaped-writer, exit/signal-range, duration, pending-
-executor deadline, cancellation-precedence, and portability gaps before any
-formal candidate.
+own callback. Before formal review, the contract consequently allowed a
+resource-free notification callback tail to self-detach while still claiming
+every original process-group member was gone. Formal cycle 1 below rejected
+both the self-only Waker exception and the stronger group-disappearance claim.
+Production had also remediated pre-spawn deadline, reader-join, escaped-writer,
+exit/signal-range, duration, pending-executor deadline, cancellation-precedence,
+and portability gaps before that formal candidate.
 
 Exact focused evidence is green for four private limit/deadline/outcome tests,
 nineteen portable contract/lifecycle tests, two engine permission/durability
@@ -114,6 +114,24 @@ Overlap deduplicates to `0 blocker / 3 high / 3 medium / 4 low`:
     cwd-dependent execution, or the exact snapshotted environment.
 
 All findings are accepted for source, evidence, or honest-contract remediation.
+The replacement contract makes a finished publisher tail exception for any
+arbitrary inline or blocking Waker only after command resources are gone. It
+starts timeout accounting on first poll and independently enforces it around
+controllable userspace phases without claiming safe Rust can preempt a blocked
+host syscall. Observed aggregate output above 1 MiB is authoritative and stops
+both readers under deterministic read-count/overshoot bounds. Group cleanup
+retains the leader identity through signal dispatch, distinguishes absence from
+ambiguity, observes after KILL, and reaps the direct child. Successful cleanup
+claims no observed signalable original-group member remains; adopted zombies,
+credential-escaped or unsignalable members, `setsid` descendants, and
+uninterruptible waits are not claimed away. Fixed cleanup ambiguity returns an
+observable `terminal_wait_failed`; drop has no result channel and does not claim
+ambiguous members disappeared. Cancellation is rechecked after executor/
+guardian teardown and directly before `ToolOutput` return. Public system
+construction fails off Linux, while private host composition advertises
+`terminal` and fails fixed unsupported at allowed execution before cwd lookup or
+spawn.
+
 Cycle 2 requires a complete replacement gate and three fresh exact-SHA reviews.
 
 ## Required composition

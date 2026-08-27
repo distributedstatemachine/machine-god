@@ -5,14 +5,19 @@ exec boundary requires exact process capability identity before one fixed
 `/bin/sh -c` invocation. The retained workspace descriptor constrains only the
 starting directory; this is explicitly not a sandbox, and an approved command
 may exercise host authority available to the machine account. The production
-system executor is Linux-only, output/time/concurrency are bounded, and
-cancellation/drop own process-group termination and reaping. One independent
-deadline guardian prevents a pending injected executor from disabling timeout.
-An escaped `setsid` descendant is outside process-group containment, while
-bounded post-stop reads prevent its retained pipe from blocking cleanup. Only a
-resource-free inline-Waker callback tail may self-detach; command resources and
-capacity are released before publication. See
-[`terminal.md`](terminal.md).
+system executor's public constructors are Linux-only; private non-Linux host
+composition keeps the catalog entry and fails fixed unsupported at allowed
+execute before cwd lookup or spawn. Output, controllable timeout phases, and
+concurrency are bounded, but a blocked host syscall is not subject to an
+unconditional wall-clock ceiling. Cancellation/drop retain the direct-child
+leader through process-group signal dispatch, observe for bounded TERM/KILL
+graces, reap that child, and turn ambiguous cleanup into a fixed error. Success
+proves no observed signalable original-group member remains; without subreaper
+or privilege it does not prove adopted-zombie or credential-escaped cleanup,
+and `setsid` descendants remain outside containment. Bounded post-stop reads
+prevent an escaped pipe writer from blocking cleanup. An arbitrary inline or
+blocking Waker can leave only a resource-free publisher tail briefly alive;
+command resources and capacity are released first. See [`terminal.md`](terminal.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED**. Its composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
