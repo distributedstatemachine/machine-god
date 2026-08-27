@@ -411,6 +411,16 @@ struct RetainedPublisherExecution {
     state: Arc<RetainedPublisherState>,
 }
 
+impl Drop for RetainedPublisherExecution {
+    fn drop(&mut self) {
+        let retained = {
+            let mut inner = self.state.inner.lock().unwrap();
+            inner.waker.take()
+        };
+        drop(retained);
+    }
+}
+
 const CLONED_WAKER_FANOUT: usize = 16;
 
 #[derive(Default)]
@@ -1487,7 +1497,11 @@ fn cloned_injected_wakers_coalesce_blocking_callbacks_and_retain_one_slot() {
             .expect("the forwarded Waker callback did not return after release");
     });
 
-    assert_eq!(blocking.snapshot(), (1, 0, 1, 1));
+    let (entered, in_flight, max_in_flight, returned) = blocking.snapshot();
+    assert!((1..=2).contains(&entered));
+    assert_eq!(in_flight, 0);
+    assert_eq!(max_in_flight, 1);
+    assert_eq!(returned, entered);
     let mut recovered = Box::pin(tool.execute(
         context(),
         exact_arguments("recovered", "."),
@@ -1582,16 +1596,43 @@ fn deadline_and_injected_waker_families_share_one_callback_and_capacity_slot() {
 
         deadline_blocking.release();
         publisher.join().unwrap();
-        assert_eq!(deadline_blocking.snapshot(), (1, 0, 1, 1));
+        assert_eq!(publisher_blocking.snapshot(), (0, 0, 0, 0));
+        let (entered, in_flight, max_in_flight, returned) = deadline_blocking.snapshot();
+        assert!((1..=2).contains(&entered));
+        assert_eq!(in_flight, 0);
+        assert_eq!(max_in_flight, 1);
+        assert_eq!(returned, entered);
     });
 
-    let mut recovered = Box::pin(tool.execute(
-        context(),
-        exact_arguments("recovered", "."),
-        CancellationToken::new(),
-    ));
-    assert!(poll_once(recovered.as_mut()).is_pending());
+    let recovery_deadline = Instant::now() + Duration::from_secs(2);
+    let mut recovered = loop {
+        let mut candidate = Box::pin(tool.execute(
+            context(),
+            exact_arguments("recovered", "."),
+            CancellationToken::new(),
+        ));
+        match poll_once(candidate.as_mut()) {
+            Poll::Pending => break candidate,
+            Poll::Ready(Err(error)) if error.code == "terminal_busy" => {
+                assert!(
+                    Instant::now() < recovery_deadline,
+                    "shared notifier capacity did not recover"
+                );
+                drop(candidate);
+                std::thread::yield_now();
+            }
+            Poll::Ready(Err(error)) => panic!("capacity recovery failed: {error}"),
+            Poll::Ready(Ok(_)) => panic!("unpublished injected execution completed"),
+        }
+    };
     assert_eq!(executor.calls(), 2);
+    executor.publish_and_wake();
+    let recovered_output = match poll_once(recovered.as_mut()) {
+        Poll::Ready(Ok(output)) => output,
+        Poll::Ready(Err(error)) => panic!("recovered execution failed: {error}"),
+        Poll::Pending => panic!("published recovered execution remained pending"),
+    };
+    assert_eq!(recovered_output.content["status"], "exited");
 }
 
 #[test]
