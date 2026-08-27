@@ -26,9 +26,11 @@ self-target notifier-cycle defect and one low stale-status defect. Cycle-6
 remediation prevents the supplied notifier Waker from becoming its own target,
 explicitly closes notification on completion, and refreshes these status
 summaries. Exact cycle-6 behavior head `8705811`, tree `8a319c1`, passes the
-complete exact-1.94.1 replacement gate. The immutable review candidate, formal
-review, remote delivery, product-performance, and fx-equivalence claims remain
-pending. See the
+complete exact-1.94.1 replacement gate. Formal cycle 6 rejected exact candidate
+`28292b7`, tree `487f160`, with a deduplicated `0/0/1/0` union: dropping a
+pending outer future can leave an independently retained supplied Waker able to
+deliver to the stale host target. Cycle-7 remediation and review, remote
+delivery, product-performance, and fx-equivalence claims remain pending. See the
 [`terminal` contract](docs/terminal.md) and
 [`live review ledger`](docs/reviews/m03-terminal-review-01.md).
 

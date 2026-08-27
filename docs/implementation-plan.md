@@ -84,8 +84,11 @@ cycle 5 rejected exact candidate `0c04859`, tree `b0359fb`, with a deduplicated
 its own supplied Waker, explicitly closes its target after completion, adds
 public retained-Waker re-poll delivery/recovery evidence, and updates stale
 top-level status summaries. Exact behavior head `8705811`, tree `8a319c1`,
-passes the complete exact-1.94.1 replacement gate. An immutable candidate,
-three fresh exact-SHA reviews, and remote delivery remain pending.
+passes the complete exact-1.94.1 replacement gate. Formal cycle 6 rejected exact
+candidate `28292b7`, tree `487f160`, with a deduplicated `0/0/1/0` union: the
+pending outer-future drop path can leave stale host-Waker delivery open through
+an independently retained supplied clone. Cycle-7 remediation, three fresh
+exact-SHA reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -154,7 +157,11 @@ evidence, and refreshes the top-level status entry points. Maintained docs
 component `31669fd`, independent evidence `059188d`, and production/private-
 evidence `1f14717` compose through exact behavior head `8705811`, tree
 `8a319c1`. Its complete exact-1.94.1 replacement gate is green. Cycle 6 has not
-yet established an immutable candidate, review result, or delivery.
+established delivery: formal exact candidate `28292b7`, tree `487f160`, was
+rejected with a deduplicated `0/0/1/0` union. Correctness/API found the pending
+outer-future drop path leaves stale host-Waker delivery open through an
+independently retained supplied clone; lifecycle/platform and performance/
+resources were green. Cycle-7 remediation and review remain pending.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base

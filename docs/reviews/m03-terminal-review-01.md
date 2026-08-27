@@ -718,6 +718,40 @@ and the complete gate plus three fresh tracks repeat until each track and the
 deduplicated union report `0/0/0/0`. This is ordinary terminal-agent product
 review, not a cybersecurity assessment.
 
+## Formal cycle 6 review
+
+Three fresh read-only adversarial product tracks reviewed exact candidate
+`28292b73eb089f49e0e23970125856b38fa67a32`, tree
+`487f16034116708794e1999568310e53ac3962ff`, and **REJECTED** it:
+
+- correctness, public API, schema, capability, and engine integration reported
+  `0/0/1/0`;
+- native process, cancellation, lifecycle, and platform behavior reported
+  `0/0/0/0`; and
+- performance, concurrency, memory/output bounds, and resource ownership
+  reported `0/0/0/0`.
+
+The deduplicated union is `0 blocker / 0 high / 1 medium / 0 low`:
+
+1. **Medium:** `await_executor` closes its notifier only after the inner
+   `poll_fn` returns. Dropping the pending outer tool future destroys that async
+   frame before the close statement. A contract-valid injected executor can
+   release its stored supplied Waker while leaving an independently retained
+   clone; waking that clone after outer-future drop still invokes the stale
+   external host Waker. Capacity ownership by the clone is intentional, but
+   delivery to the dropped task is not. Cycle 7 must use frame-owned RAII close
+   so normal return, future drop, and unwind all detach the target and suppress
+   replay without releasing clone-owned activity. Independent public evidence
+   must prove stale delivery is suppressed while capacity stays busy until the
+   retained clone drops.
+
+The performance track additionally passed 600 repeated notifier/self-repoll/
+close race cases. Every review worktree remained read-only and clean at the
+exact candidate. Each worktree and temporary branch was removed and pruned
+immediately after its verdict. Cycle 7 requires non-overlapping source,
+independent-evidence, and maintained-documentation remediation, a complete
+replacement gate, and three fresh exact-SHA reviews.
+
 ## Delivery gate
 
 Only a review-green exact candidate may be pushed as the feature branch. Its

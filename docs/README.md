@@ -20,7 +20,10 @@ status defect. Cycle-6 remediation prevents the supplied notifier Waker from
 becoming its own target, explicitly closes notification on completion, and
 refreshes these status summaries. Exact cycle-6 behavior head `8705811`, tree
 `8a319c1`, passes the complete exact-1.94.1 replacement gate. The immutable
-review candidate, formal review, remote delivery, product-performance, and fx-
+candidate was `28292b7`, tree `487f160`; formal cycle 6 rejected it with a
+deduplicated `0/0/1/0` union because pending outer-future drop can leave an
+independently retained supplied Waker able to deliver to the stale host target.
+Cycle-7 remediation and review, remote delivery, product-performance, and fx-
 equivalence claims remain pending. See the
 [`terminal` contract](terminal.md) and
 [`live review ledger`](reviews/m03-terminal-review-01.md).

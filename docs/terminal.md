@@ -5,8 +5,9 @@ frozen from exact delivered base
 `52b5885f275c9f6f4f16b378f71780c29f2ebab2` and pinned fx observation
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
 Exact cycle-6 behavior head `8705811`, tree `8a319c1`, passes the complete
-exact-1.94.1 replacement gate; immutable review and remote delivery remain
-pending.
+exact-1.94.1 replacement gate. Formal cycle 6 rejected exact candidate
+`28292b7`, tree `487f160`, because pending outer-future drop can leave stale
+Waker delivery open. Cycle-7 review and remote delivery remain pending.
 
 ## Boundary
 
