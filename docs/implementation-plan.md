@@ -67,8 +67,10 @@ equivalence, benchmark, or product-performance claim. Formal cycle 2 rejected
 its exact candidate with a deduplicated `0/2/1/2` union. Cycle-3 production,
 independent evidence, and documentation remediation is composed through exact
 behavior head `62d0fe17e765b86be12efe8f99c96f871b47ba0c`, tree `0e6f94b`.
-Its complete exact-1.94.1 replacement gate is green; an immutable candidate,
-three fresh exact-SHA reviews, and remote delivery remain pending.
+Its complete exact-1.94.1 replacement gate was green. Formal cycle 3 rejected
+exact candidate `3215b9e`, tree `3fafcad`, with a deduplicated `0/2/2/0` union.
+Cycle-4 source, evidence, and documentation remediation is pending; its
+replacement gate, fresh exact-SHA reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -97,8 +99,12 @@ the public timeout claim conditional around blocking syscalls, executor poll/
 drop, and callbacks. Exact behavior head `62d0fe17`, tree `0e6f94b`, passes all
 four required commands with 1,157 non-documentation tests and two doctests,
 Python 136/8 skips, pinned-fx drift, dependency policy/audit, Linux/FreeBSD/WASI,
-documentation/diff/no-unsafe, and fresh release-binary gates green. This does
-not yet establish the immutable review candidate, review result, or delivery.
+documentation/diff/no-unsafe, and fresh release-binary gates green. Formal
+cycle 3 rejected exact candidate `3215b9e`, tree `3fafcad`, with two high and
+two medium deduplicated findings covering the last overflow/deadline race and a
+unified originating-slot ownership failure across injected executors, dual
+callbacks, and no-Waker native thread tails. Cycle-4 remediation is pending and
+does not establish a replacement candidate, green gate, review, or delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
@@ -3973,9 +3979,15 @@ isolated worktree was cleaned after integration. The exact behavior head
 non-documentation Rust tests, two doctests, Python 136/8 skips, byte-stable
 pinned fx, dependency policy/audit, Linux/FreeBSD/WASI, 89/312/678/515
 documentation integrity, unchanged protected inputs, no added unsafe Rust, and
-fresh release smoke are green. The immutable cycle-3 candidate, three fresh
-reviews, and remote delivery remain pending, so this combined item stays
-unchecked. The delivered
+fresh release smoke are green. Formal cycle 3 rejected exact candidate
+`3215b9e`, tree `3fafcad`: track counts `0/1/0/1`, `0/1/1/1`, and `0/0/1/0`
+deduplicate to `0 blocker / 2 high / 2 medium / 0 low`. Accepted cycle-4
+remediation must close the final overflow/deadline publication interleave and
+share one originating admission slot through the outer execution, injected and
+built-in Waker families, callback returns, and native thread completion. Every
+cycle-3 review worktree was removed and pruned. Replacement composition, its
+complete gate, three fresh reviews, and remote delivery remain pending, so this
+combined item stays unchecked. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit

@@ -320,6 +320,65 @@ The immutable review candidate and tree are recorded only after the gate record
 is committed, and three fresh product-review tracks must inspect that exact
 object.
 
+## Formal cycle 3 review
+
+Three fresh adversarial product tracks reviewed exact candidate
+`3215b9eeef9a8d139be84761aec1f08d4f321bb0`, tree
+`3fafcade3056131ea978e98d43cf01a17adc58aa`, and **REJECTED** it:
+
+- correctness, public API, schema, capability, and engine integration reported
+  `0/1/0/1`;
+- native process, cancellation, lifecycle, and platform behavior reported
+  `0/1/1/1`; and
+- performance, concurrency, memory/output bounds, and resource ownership
+  reported `0/0/1/0`.
+
+Overlap deduplicates to `0 blocker / 2 high / 2 medium / 0 low`:
+
+1. **High:** after the deadline timer becomes ready and the guardian's second
+   executor poll returns pending, a production reader can set the overflow
+   marker before timeout publication. Dropping the executor then joins and
+   observes authoritative output limit but discards it, so the outer result is
+   an empty timeout. Existing Linux evidence establishes overflow earlier and
+   does not control this final interleave. The replacement needs a shared cause
+   arbiter or equivalent close-and-recheck protocol plus a deterministic
+   barrier regression.
+2. **High:** a public injected executor has no access to the private callback
+   lease authority. It may legally publish, retain the supplied task Waker, and
+   block while invoking it; a concurrent poll consumes the result and releases
+   the originating permit. Repeated calls can therefore accumulate injected
+   publisher threads and stacks outside configured capacity. Terminal-owned
+   polling must supply an opaque capacity-backed notifier/Waker, or the public
+   seam and detached-tail contract must be narrowed consistently.
+3. **Medium:** the deadline and production publishers independently increment
+   the active counter. One admitted execution at capacity one can therefore
+   leave two callback threads/stacks after its permit releases, despite the
+   maintained exact-capacity statement. Replacement ownership must share or
+   transfer the one originating admission slot through all retained Waker
+   families and callback returns rather than allocate a counter entry per
+   callback.
+4. **Medium:** an unfinished stopped deadline thread or published worker thread
+   is detached even when it never found a Waker and acquired no callback lease,
+   or after its callback lease ended just before thread return. Repeated fast
+   ready executions under scheduling delay can leave unaccounted thread tails.
+   Replacement code must synchronously join an unfinished no-callback tail or
+   keep the originating slot alive through actual thread completion, with
+   deterministic publication-gap and fast-ready regressions.
+
+The accepted unified remediation is one execution-activity ownership protocol:
+one admitted active slot is shared by the outer execution, every TerminalTool-
+supplied Waker family, and both native guardian/worker threads until all of them
+finish. Public injected executors receive only the wrapped task Waker during
+polling, so a retained or in-flight callback also retains that originating
+slot. No publisher allocates a second active count. Native threads hold the same
+activity through return even without a registered Waker. The final deadline
+decision also closes or rechecks the shared authoritative production cause
+after executor destruction, so an observed output limit cannot be discarded.
+
+Every review worktree remained read-only and clean. Each worktree and temporary
+branch was removed and pruned immediately after its verdict. Cycle 4 requires a
+complete replacement gate and three fresh exact-SHA reviews.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in
