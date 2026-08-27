@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 11 REJECTED — CYCLE 12
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 12 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -153,9 +153,15 @@ Direct 46 and the complete local gate are green. Formal cycle 11 rejected exact
 reported `0/0/0/1`, lifecycle/platform `0/0/1/0`, performance/resources
 `0/0/1/0`, and the union is `0/0/2/1`. The mediums are release panic `abort`
 invalidating shipped recovery and a forgotten Waker-owning panic payload
-retaining capacity forever. Cycle 12 targets release `unwind` plus a product
-probe and state-held capacity detached on close. The kind/code low is corrected;
-no cycle-12 source, evidence, gate, review, integration, or delivery exists.
+retaining capacity forever. Cycle-12 docs `5047d40`/`e582331`, source
+`0684f3e`/`54d0af0`, and evidence `87d175b` compose at exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`; disposable composition is
+`8378a47`/`522d0a4`. Release `unwind`, the product probe, detachable state-held
+capacity, and local callback/close guards make closed forgotten Wakers inert.
+Direct 46, manifest eight, all exact/extended/portability gates, and the fresh
+release/smokes pass. Formal review, workflows, integration, and delivery remain
+pending; no performance or fx-equivalence claim is made.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

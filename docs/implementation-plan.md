@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 11
-REJECTED — CYCLE 12 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 12 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -490,7 +490,52 @@ into state, give admitted callbacks local guards, and remove state capacity on
 close only after target teardown while the local close/callback guard preserves
 ordering. Forgotten closed inert Wakers must retain no capacity. Ordinary and
 ambient retained-Waker payload evidence must prove fresh admission. No cycle-12
-source, evidence, gate, review, workflow, integration, or delivery result exists.
+source, evidence, gate, review, workflow, integration, or delivery result
+existed at that rejection checkpoint.
+
+Cycle-11 rejection docs `5047d40401dc2917c4b3eb3e41e989ba0cdc6941`/
+`e582331c729fc9351f6063219c07c1ae2a47be97`, cycle-12 source
+`0684f3e1db9002f8c31c4f330edc95481f6f8a7b`/
+`54d0af0ad647132e6d45187d58a933b8469161d5`, and independent evidence
+`87d175bcab5414c525196b891505fd8d434c8b8a` compose at exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`. Exact disposable source/evidence
+composition `8378a479d11d52d80fdf7ba7b1d719dac3e0027f`, tree
+`522d0a454fa7c091277971b9fe21f78149638249`, is independently composed.
+
+Cycle 12 changes the root release panic profile from `abort` to `unwind` and
+proves product-profile recovery with a separately built release executable.
+The probe exits zero with empty stderr and exact 34-byte stdout
+`primary-caught\ncapacity-recovered\n`. Capacity ownership moves from the
+retained `ActivityWake` identity into detachable state. Each admitted callback
+holds a local activity guard; close takes the state-held permit after marking
+closed, retains it through out-of-lock target teardown, and releases it before
+selected panic resumption. A concurrent callback retains its own guard through
+return and lane settlement. Closed retained or intentionally forgotten Waker
+identities therefore retain no capacity. Ordinary and ambient cleanup-panic
+evidence retain the supplied Waker, suppress stale delivery, and prove fresh
+admission. No thread, public API, or dependency is added.
+
+The exact-1.94.1 focused gate passes formatting, direct 46, engine one,
+reference host nine, lifecycle one, native manifest eight, and native all-
+target/all-feature warnings-denied Clippy. The four required exact-1.94.1
+workspace formatting, all-target/all-feature Clippy, test, and doctest commands
+all pass. Extended Python runs 138 tests with 130 passes/eight skips; pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef` is byte-stable; `cargo-deny`
+0.19.9 reports only the three established duplicates and zero errors;
+`cargo-audit` 0.22.2 reports 1,226/211/zero; native, WASI, and FreeBSD checks
+pass with only the established unrelated WASI warning; docs are
+91/318/701/534/0 and status 10/0; protected inputs, diff, and no-unsafe checks
+are clean.
+
+The fresh locked arm64 Mach-O release is 4,481,664 bytes with SHA-256
+`68eff46a45dbed3b13fa31b09dba196f10d84a5dcf929648fc346aac35660e42`.
+Missing-root help/doctor JSON/sessions JSON smokes are exactly 672/418/62 bytes
+and create no roots. The manifest delta is root release panic `abort` to
+`unwind` plus the existing dev-only fixture and one native `Cargo.lock`
+dependency-list line; no dependency is added. Formal review, workflows,
+integration, and delivery remain pending, and no benchmark, product-
+performance, compatibility-promotion, or fx-equivalence result is claimed.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4550,9 +4595,10 @@ remediation/evidence and the complete local gate compose at
 `72e8e75`/`5405180`. Formal cycle 10 rejected exact `4ea1c1f`/`78e781f` with
 two distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
 complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
-`b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle 12 must establish release-
-profile unwind behavior and detach closed Waker identity from prompt capacity;
-no cycle-12 source, evidence, or gate exists, and
+`b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source/evidence and its
+complete local gate compose at `696dccf`/`f8734a8`: release unwind and the
+product probe are established, and closed Waker identity retains no capacity.
+Formal review, workflows, integration, and delivery remain pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

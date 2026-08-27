@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11
-REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 12 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -199,14 +199,25 @@ cycle 11 rejected exact candidate
 `26d90d8ec3924f6b7e12617506d5275ae32ec00b`, with track counts `0/0/0/1`,
 `0/0/1/0`, and `0/0/1/0`, deduplicated to `0/0/2/1`. Release panic `abort`
 invalidates unwind-recovery claims outside test profile, and a forgotten panic
-payload retaining a prompt Waker can retain capacity forever. Cycle 12 targets
-release panic `unwind` plus an independent release-product probe and state-held
-permit ownership that close detaches from inert Waker identity. The low kind/
-code documentation label is corrected in the contract and ledger. The current
-status is
-**CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**; no cycle-12 source,
-evidence, gate, review, integration, delivery, benchmark, or fx-equivalence
-result is claimed.
+payload retaining a prompt Waker can retain capacity forever. Cycle-12 rejection
+docs `5047d40`/`e582331`, source `0684f3e`/`54d0af0`, and evidence
+`87d175b` compose at exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`; disposable source/evidence
+composition is `8378a47`/`522d0a4`. Release panic is now `unwind`. The prompt
+permit is detachable state, admitted callbacks retain local guards, and close
+releases state capacity after target teardown; closed retained or forgotten
+Waker identities retain no capacity. Ordinary/ambient retained-Waker evidence
+and a release product probe prove recovery; the probe emits exact 34-byte
+`primary-caught\ncapacity-recovered\n`. Direct 46, native manifest eight, all
+focused/required/extended/portability gates, docs/status 91/318/701/534/0 and
+10/0, and the fresh release/smokes are green. The 4,481,664-byte arm64 Mach-O
+release has SHA-256
+`68eff46a45dbed3b13fa31b09dba196f10d84a5dcf929648fc346aac35660e42`.
+The kind/code label is corrected; no dependency is added. The current status is
+**CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review,
+integration, delivery, benchmark, product-performance, or fx-equivalence result
+is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

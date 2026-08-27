@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -625,8 +625,54 @@ established ordering. Forgotten closed inert Waker clones must retain no
 capacity. Deterministic ordinary- and ambient-payload evidence must retain the
 supplied Waker and prove subsequent capacity recovery.
 
-No cycle-12 source, evidence, gate, review, workflow, integration, or delivery
-result exists at this rejection checkpoint.
+At that rejection checkpoint, no cycle-12 source, evidence, gate, review,
+workflow, integration, or delivery result existed.
+
+## Cycle-12 implementation and local checkpoint
+
+Rejection docs `5047d40401dc2917c4b3eb3e41e989ba0cdc6941`/
+`e582331c729fc9351f6063219c07c1ae2a47be97`, source
+`0684f3e1db9002f8c31c4f330edc95481f6f8a7b`/
+`54d0af0ad647132e6d45187d58a933b8469161d5`, and evidence
+`87d175bcab5414c525196b891505fd8d434c8b8a` compose at exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`. Disposable source/evidence
+composition `8378a479d11d52d80fdf7ba7b1d719dac3e0027f`, tree
+`522d0a454fa7c091277971b9fe21f78149638249`, independently checks the
+component composition.
+
+Root release panic handling is `unwind`. The independently built and run
+release-profile product probe catches the primary cleanup panic and admits a
+fresh prompt. Its stderr is empty and its exact 34-byte stdout is
+`primary-caught\ncapacity-recovered\n`.
+
+The prompt permit is now detachable state rather than lifetime ownership of an
+`ActivityWake` identity. Every admitted callback takes a local activity guard.
+Close removes the target and state-held permit, destroys the target outside the
+lock while its local guard preserves capacity ordering, then releases that
+guard before resuming a selected panic. Concurrent callbacks likewise retain
+their own guard through callback return and lane settlement. Closed retained or
+forgotten Waker identities are inert and retain no capacity. Deterministic
+ordinary and ambient panic-payload cases retain the supplied Waker, suppress
+stale delivery, and prove fresh admission. No thread, public API, or dependency
+is added.
+
+The exact-1.94.1 focused gate passes formatting, direct 46, engine one,
+reference host nine, reference-host lifecycle one, native manifest eight, and
+native warnings-denied Clippy. All four required exact-1.94.1 workspace gates
+pass. Extended Python 138/130/8, pinned-fx byte stability, deny with only three
+established duplicates and zero errors, audit 1,226/211/zero, native/WASI/
+FreeBSD portability, docs 91/318/701/534/0, status 10/0, and clean protected/
+no-unsafe gates pass.
+
+The fresh locked arm64 Mach-O release is 4,481,664 bytes with SHA-256
+`68eff46a45dbed3b13fa31b09dba196f10d84a5dcf929648fc346aac35660e42`.
+Missing-root help, doctor JSON, and sessions JSON smokes produce exactly 672,
+418, and 62 output bytes and create no roots. The manifest delta is release
+panic `abort` to `unwind`, plus the existing dev-only fixture and one native
+lock dependency-list line; no dependency is added. Formal review, workflows,
+integration, and delivery remain pending. This is not benchmark, product-
+performance, compatibility-promotion, or fx-equivalence evidence.
 
 ## Product boundary
 

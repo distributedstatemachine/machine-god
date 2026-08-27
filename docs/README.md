@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11
-REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 12 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**. Formal cycle
+status is **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -162,9 +162,16 @@ exact `b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
 `26d90d8ec3924f6b7e12617506d5275ae32ec00b`, with a `0/0/2/1` union. Release
 panic `abort` invalidates shipped unwind-recovery claims, and an intentionally
 forgotten payload can retain a Waker-owned prompt permit forever. Cycle 12
-targets release `unwind` with a product probe and state-held capacity detached
-on close from inert Waker identity. The kind/code documentation low is fixed;
-no cycle-12 implementation or gate exists.
+uses release `unwind` with an independently built product probe and state-held
+capacity detached on close from inert Waker identity. Rejection docs
+`5047d40`/`e582331`, source `0684f3e`/`54d0af0`, and evidence `87d175b`
+compose at exact behavior head `696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`,
+tree `f8734a8815b424f07d59f668f5ccd2a59319a8b1`; disposable composition is
+`8378a47`/`522d0a4`. The release probe emits exact 34-byte
+`primary-caught\ncapacity-recovered\n`; closed forgotten Wakers retain no
+capacity. Direct 46, manifest eight, all exact/extended/portability gates,
+4,481,664-byte release and exact smokes are green. The kind/code low is fixed;
+formal review, workflows, integration, and delivery remain pending.
 The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the

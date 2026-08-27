@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-12 question resource remediation
 
-Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -1004,9 +1004,20 @@ active permit for its entire `Arc` lifetime. Cycle 12 must use a state-held
 permit and admitted callback guard; close removes state capacity only after
 target teardown while its local guard preserves ordering. Forgotten closed
 Wakers must retain no capacity, with ordinary/ambient retained-Waker recovery
-evidence. Release `panic = "abort"` separately invalidates shipped unwind
-claims; cycle 12 targets `unwind` plus an independent release-product probe.
-The kind/code low is corrected. No cycle-12 source, evidence, gate, review,
-workflow, integration, delivery, benchmark, product-performance, or
-fx-equivalence result exists. See
+evidence. Cycle-12 docs `5047d40`/`e582331`, source `0684f3e`/`54d0af0`, and
+evidence `87d175b` compose at exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`; disposable source/evidence
+composition is `8378a47`/`522d0a4`.
+
+Release panic is `unwind`, and an independent release-product probe emits exact
+34-byte `primary-caught\ncapacity-recovered\n`. The permit lives in detachable
+state. Admitted callbacks retain local guards; close retains its guard through
+target teardown and then releases capacity, so closed forgotten Waker identities
+retain none. Ordinary and ambient retained-Waker payload evidence proves fresh
+admission. Direct 46, manifest eight, all exact/extended/portability gates,
+docs/status 91/318/701/534/0 and 10/0, and the 4,481,664-byte release/smokes pass.
+Formal review, workflows, integration, and delivery remain pending. This is no
+benchmark, product-performance, compatibility-promotion, or fx-equivalence
+result. See
 [`ask-user-question.md`](ask-user-question.md).

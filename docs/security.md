@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-12 interaction and authority remediation
 
-Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2372,11 +2372,20 @@ smoke gates are green. Formal cycle 11 rejected exact
 Release panic `abort` makes the shipped unwind-settlement paths ineffective;
 test-profile subprocess evidence cannot establish product no-abort or recovery.
 Separately, forgetting a panic payload that retains the supplied Waker can keep
-its `ActivityWake` permit forever. Cycle 12 targets release `unwind` with an
-independent product probe and state-held permit ownership removed after close
-target teardown while a local close/callback guard preserves ordering. Ordinary
-and ambient retained-Waker payload cases must prove capacity recovery. The
-kind/code documentation low is corrected. No cycle-12 source, evidence, gate,
-review, workflow, integration, delivery, benchmark, product-performance, or fx-
-equivalence result exists. The analogous terminal path remains out of scope and
-is not claimed fixed.
+its `ActivityWake` permit forever. Cycle-12 docs `5047d40`/`e582331`, source
+`0684f3e`/`54d0af0`, and evidence `87d175b` compose at exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`; disposable composition is
+`8378a47`/`522d0a4`.
+
+Release panic is `unwind`, and the separately built release-product probe
+catches the primary panic and recovers capacity. Prompt capacity is detachable
+state. Local admitted-callback and close guards preserve callback/target
+teardown ordering; closed retained or forgotten Waker identities are inert and
+retain no permit. Ordinary and ambient retained-Waker cases prove stale
+suppression and fresh admission. Direct 46, manifest eight, all exact/extended/
+portability gates, and the 4,481,664-byte release/exact smokes pass. Formal
+review, workflows, integration, and delivery remain pending. This is not
+benchmark, product-performance, compatibility-promotion, or fx-equivalence
+evidence. The analogous terminal path remains out of scope and is not claimed
+fixed.

@@ -1,9 +1,9 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 11 REJECTED — CYCLE 12 REMEDIATION IN PROGRESS**. Formal cycle
-11 rejected the exact immutable candidate below with two distinct mediums and
-one low. Cycle-12 source, evidence, gate, review, workflows, integration, and
-delivery do not yet exist.
+Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Cycle-12 source,
+independent evidence, and the complete local gate compose at the exact behavior
+head below. Fresh formal reviews, workflows, integration, and delivery remain
+pending.
 
 ## Frozen lineage
 
@@ -168,6 +168,19 @@ delivery do not yet exist.
 - Formal cycle-11 candidate, **REJECTED**:
   `b1d454ba21d2a380a4198bb1253c4cb1bc34d4a6`, tree
   `26d90d8ec3924f6b7e12617506d5275ae32ec00b`
+- Cycle-11 rejection-documentation component:
+  `5047d40401dc2917c4b3eb3e41e989ba0cdc6941`, integrated as
+  `e582331c729fc9351f6063219c07c1ae2a47be97`
+- Cycle-12 source component:
+  `0684f3e1db9002f8c31c4f330edc95481f6f8a7b`, integrated as
+  `54d0af0ad647132e6d45187d58a933b8469161d5`
+- Cycle-12 independent evidence and exact behavior head before documentation:
+  `87d175bcab5414c525196b891505fd8d434c8b8a`, integrated as
+  `696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+  `f8734a8815b424f07d59f668f5ccd2a59319a8b1`
+- Exact disposable cycle-12 source/evidence composition:
+  `8378a479d11d52d80fdf7ba7b1d719dac3e0027f`, tree
+  `522d0a454fa7c091277971b9fe21f78149638249`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -205,7 +218,10 @@ deduplicated `0/0/2/0` union. Cycle-11 source, evidence, replacement gates,
 and cycle-10 rejection docs now compose at exact behavior head
 `b8b721a`/`4672150`; its complete exact-1.94.1 local gate is green. Three fresh
 formal reviews rejected exact candidate `b1d454b`/`26d90d8` with a
-deduplicated `0/0/2/1` union. Cycle-12 remediation has not started.
+deduplicated `0/0/2/1` union. Cycle-12 rejection docs, source, and independent
+evidence now compose at exact behavior head `696dccf`/`f8734a8`; its complete
+exact-1.94.1 local gate is green. Fresh formal reviews, workflows, integration,
+and delivery remain pending.
 
 ## Frozen first-slice decisions
 
@@ -1408,8 +1424,79 @@ Waker clone must retain no capacity. Deterministic ordinary- and ambient-panic-
 payload cases must retain the supplied Waker and prove a fresh prompt can be
 admitted afterward.
 
-No cycle-12 source, independent evidence, local gate, formal review, workflow,
-integration, or delivery result exists at this rejection checkpoint.
+At that rejection checkpoint, no cycle-12 source, independent evidence, local
+gate, formal review, workflow, integration, or delivery result existed.
+
+## Cycle-12 implemented remediation and local implementation gate
+
+Cycle-11 rejection documentation
+`5047d40401dc2917c4b3eb3e41e989ba0cdc6941`, integrated as
+`e582331c729fc9351f6063219c07c1ae2a47be97`, source
+`0684f3e1db9002f8c31c4f330edc95481f6f8a7b`, integrated as
+`54d0af0ad647132e6d45187d58a933b8469161d5`, and independent evidence
+`87d175bcab5414c525196b891505fd8d434c8b8a`, integrated at exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`. Exact disposable source/evidence
+composition `8378a479d11d52d80fdf7ba7b1d719dac3e0027f`, tree
+`522d0a454fa7c091277971b9fe21f78149638249`, independently establishes the
+component composition before integration.
+
+Root release panic handling is now `unwind`, so the established caught-panic
+selection and settlement paths remain active in the shipped profile. The
+release-profile product probe is built locked, offline, and optimized against
+the native package, then run as a real executable. It exits successfully with
+empty stderr and exactly 34 stdout bytes:
+`primary-caught\ncapacity-recovered\n`. This proves the primary panic is caught
+and a fresh prompt is admitted in the release profile.
+
+Prompt capacity is detached from retained notifier identity. The permit is an
+optional state-held guard. Each admitted callback takes a local target plus
+activity guard, so concurrent close cannot release capacity before that
+callback returns. Close marks the state closed and removes its target and
+permit under the lock, destroys the target outside the lock while the local
+close guard retains capacity, then releases that guard before selected panic
+resumption. Closed retained or intentionally forgotten Waker identities are
+therefore inert and retain no prompt capacity. Ordinary and ambient cleanup-
+panic evidence retain the supplied Waker, verify stale delivery suppression,
+and prove fresh admission. No thread, public API, or dependency is added.
+
+The focused exact-1.94.1 gate passes formatting, all 46 direct question tests,
+one question-engine test, nine all-feature reference-host tests, one reference-
+host lifecycle test, all eight native-manifest tests, and native all-target/
+all-feature warnings-denied Clippy. Exact behavior head
+`696dccfa84b9ce0a57ca4f764a6f05aefedb39f3`, tree
+`f8734a8815b424f07d59f668f5ccd2a59319a8b1`, passes all four required exact-
+1.94.1 formatting, workspace all-target/all-feature warnings-denied Clippy,
+workspace test, and workspace doctest commands.
+
+The extended gate is green:
+
+- Python runs 138 tests: 130 pass and eight platform skips;
+- pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` regeneration is byte-stable;
+- `cargo-deny` 0.19.9 exits zero with only the three established duplicate
+  warnings for `core-foundation`, `cpufeatures`, and `syn`, and zero errors;
+- `cargo-audit` 0.22.2 loads 1,226 advisories, scans 211 dependencies, and
+  reports zero vulnerabilities;
+- native no-default compilation, all-feature WASI library compilation, and
+  warnings-denied no-default FreeBSD Clippy pass; WASI emits only the
+  established unrelated `read_file::check_cancellation` warning;
+- documentation integrity is 91 Markdown files, 318 fence markers, 701 parsed
+  links, 534 local links, and zero missing targets; status is 10 current and
+  zero stale;
+- the exact diff is clean, protected `.github`, benchmarks, and compatibility
+  inputs are unchanged, and no Rust `unsafe` is added; and
+- the fresh locked arm64 Mach-O release is 4,481,664 bytes with SHA-256
+  `68eff46a45dbed3b13fa31b09dba196f10d84a5dcf929648fc346aac35660e42`.
+  Missing-root help, doctor JSON, and sessions JSON smokes produce exactly 672,
+  418, and 62 output bytes respectively and create no roots.
+
+The exact manifest delta is root release panic `abort` to `unwind`, plus the
+existing dev-only native test-fixture entry and one native dependency-list line
+in `Cargo.lock`; no dependency is added. This is regression and release-smoke
+evidence, not formal-review, workflow, integration, delivery, benchmark,
+product-performance, compatibility-promotion, or fx-equivalence evidence.
+Fresh exact-SHA formal reviews and both feature and `main` workflows remain
+pending.
 
 ## Deferred and nonclaim record
 
