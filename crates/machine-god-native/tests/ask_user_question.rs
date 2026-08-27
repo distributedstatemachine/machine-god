@@ -359,6 +359,7 @@ const PROMPT_WAKER_FANOUT: usize = 16;
 #[derive(Default)]
 struct PromptWakerFanoutInner {
     published: bool,
+    registered: bool,
     wakers: Vec<Waker>,
 }
 
@@ -379,7 +380,7 @@ impl PromptWakerFanoutPrompter {
         self.state.calls.load(Ordering::SeqCst)
     }
 
-    fn publish_and_take_wakers(&self) -> Vec<Waker> {
+    fn take_wakers(&self) -> Vec<Waker> {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut inner = self.state.inner.lock().unwrap();
         while inner.wakers.len() != PROMPT_WAKER_FANOUT {
@@ -391,8 +392,11 @@ impl PromptWakerFanoutPrompter {
             let waited = self.state.changed.wait_timeout(inner, remaining).unwrap();
             inner = waited.0;
         }
-        inner.published = true;
         std::mem::take(&mut inner.wakers)
+    }
+
+    fn publish(&self) {
+        self.state.inner.lock().unwrap().published = true;
     }
 }
 
@@ -405,6 +409,7 @@ impl QuestionPrompter for PromptWakerFanoutPrompter {
             "a new prompt started while retained Wakers remained"
         );
         inner.published = false;
+        inner.registered = false;
         drop(inner);
         Box::pin(PromptWakerFanoutFuture {
             state: Arc::clone(&self.state),
@@ -422,10 +427,11 @@ impl Future for PromptWakerFanoutFuture {
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let mut inner = self.state.inner.lock().unwrap();
         if !inner.published {
-            if inner.wakers.is_empty() {
+            if !inner.registered {
                 inner.wakers = std::iter::repeat_with(|| context.waker().clone())
                     .take(PROMPT_WAKER_FANOUT)
                     .collect();
+                inner.registered = true;
                 self.state.changed.notify_all();
             }
             return Poll::Pending;
@@ -516,6 +522,67 @@ struct CountingCallbackRelease(Arc<CountingBlockingCallback>);
 impl Drop for CountingCallbackRelease {
     fn drop(&mut self) {
         self.0.release();
+    }
+}
+
+const REENTRANT_PROMPT_WAKE_BUDGET: usize = 64;
+
+struct ReentrantWakeProbe {
+    calls: AtomicUsize,
+    in_flight: AtomicUsize,
+    max_in_flight: AtomicUsize,
+    remaining_rewakes: AtomicUsize,
+    retained: Mutex<Option<Waker>>,
+}
+
+impl ReentrantWakeProbe {
+    fn new() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            in_flight: AtomicUsize::new(0),
+            max_in_flight: AtomicUsize::new(0),
+            remaining_rewakes: AtomicUsize::new(REENTRANT_PROMPT_WAKE_BUDGET),
+            retained: Mutex::new(None),
+        }
+    }
+
+    fn set_retained(&self, retained: Waker) {
+        let previous = self.retained.lock().unwrap().replace(retained);
+        drop(previous);
+    }
+
+    fn clear_retained(&self) {
+        let retained = self.retained.lock().unwrap().take();
+        drop(retained);
+    }
+
+    fn callback(&self) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_in_flight.fetch_max(in_flight, Ordering::SeqCst);
+
+        let should_rewake = self
+            .remaining_rewakes
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok();
+        if should_rewake {
+            let retained = self.retained.lock().unwrap().as_ref().cloned();
+            if let Some(retained) = retained {
+                retained.wake_by_ref();
+            }
+        }
+
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn snapshot(&self) -> (usize, usize, usize) {
+        (
+            self.calls.load(Ordering::SeqCst),
+            self.in_flight.load(Ordering::SeqCst),
+            self.max_in_flight.load(Ordering::SeqCst),
+        )
     }
 }
 
@@ -1761,7 +1828,7 @@ fn in_flight_cancellation_wake_retains_capacity_until_callback_returns() {
 }
 
 #[test]
-fn cloned_prompt_wakers_coalesce_blocking_callbacks_and_replay_once() {
+fn cloned_prompt_wakers_replay_once_after_outer_repoll_observes_the_burst() {
     let prompter = PromptWakerFanoutPrompter::default();
     let tool = AskUserQuestionTool::new(prompter.clone());
     let prepared = prepare(&tool, basic_arguments());
@@ -1778,12 +1845,14 @@ fn cloned_prompt_wakers_coalesce_blocking_callbacks_and_replay_once() {
             .poll(&mut Context::from_waker(&waker))
             .is_pending()
     );
-    let retained_wakers = prompter.publish_and_take_wakers();
+    let mut retained_wakers = prompter.take_wakers();
     assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+    let later_notification = retained_wakers.pop().unwrap();
+    let initial_notifications = retained_wakers.len();
 
     thread::scope(|scope| {
         let _release_on_unwind = CountingCallbackRelease(Arc::clone(&blocking));
-        let start = Arc::new(Barrier::new(PROMPT_WAKER_FANOUT + 1));
+        let start = Arc::new(Barrier::new(initial_notifications + 1));
         let (returned_sender, returned_receiver) = mpsc::channel();
         for retained_waker in retained_wakers {
             let start = Arc::clone(&start);
@@ -1798,13 +1867,21 @@ fn cloned_prompt_wakers_coalesce_blocking_callbacks_and_replay_once() {
         start.wait();
         blocking.wait_until_entered();
 
-        for _ in 1..PROMPT_WAKER_FANOUT {
+        for _ in 1..initial_notifications {
             returned_receiver
                 .recv_timeout(Duration::from_secs(2))
                 .expect("concurrent prompt Waker notifications did not coalesce and return");
         }
         assert_eq!(blocking.snapshot(), (1, 1, 1, 0));
 
+        assert!(
+            first
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        prompter.publish();
+        later_notification.wake();
         blocking.release();
         returned_receiver
             .recv_timeout(Duration::from_secs(2))
@@ -1845,8 +1922,9 @@ fn completed_prompt_closes_retained_waker_delivery_until_every_clone_drops() {
             .poll(&mut Context::from_waker(&waker))
             .is_pending()
     );
-    let mut retained_wakers = prompter.publish_and_take_wakers();
+    let mut retained_wakers = prompter.take_wakers();
     assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+    prompter.publish();
 
     let stale_snapshot = thread::scope(|scope| {
         let _release_on_unwind = CountingCallbackRelease(Arc::clone(&blocking));
@@ -1908,6 +1986,62 @@ fn completed_prompt_closes_retained_waker_delivery_until_every_clone_drops() {
     assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(prompter.calls(), 2);
     drop(recovered);
+}
+
+#[test]
+fn reentrant_prompt_wake_before_outer_repoll_has_constant_callback_work() {
+    let prompter = PromptWakerFanoutPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let probe = Arc::new(ReentrantWakeProbe::new());
+    let callback_probe = Arc::clone(&probe);
+    let (waker, callback) = reentrant_waker(Callback::Wake, move || {
+        callback_probe.callback();
+    });
+    let mut first = Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
+
+    assert!(
+        first
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    let mut retained_wakers = prompter.take_wakers();
+    assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+    probe.set_retained(retained_wakers[0].clone());
+
+    retained_wakers[1].wake_by_ref();
+    let amplified = probe.snapshot();
+    let amplified_fixture_calls = callback.calls();
+    probe.clear_retained();
+
+    drop(first);
+    retained_wakers[2].wake_by_ref();
+    let closed = probe.snapshot();
+
+    while retained_wakers.len() > 1 {
+        drop(retained_wakers.pop());
+        let busy = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
+            .unwrap_err();
+        assert_error(
+            &busy,
+            ToolErrorKind::Unavailable,
+            "ask_user_question_busy",
+            "ask_user_question prompt capacity is exhausted",
+            true,
+        );
+        assert_eq!(prompter.calls(), 1);
+    }
+    drop(retained_wakers.pop());
+
+    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(prompter.calls(), 2);
+    drop(recovered);
+
+    assert_eq!(amplified, (1, 0, 1));
+    assert_eq!(amplified_fixture_calls, 1);
+    assert_eq!(closed, amplified);
 }
 
 #[test]
