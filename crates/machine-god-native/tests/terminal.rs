@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use machine_god_core::{
     CancellationToken, Capability, ProcessEnvironment, Tool, ToolError, ToolErrorKind, ToolOutput,
 };
+#[cfg(target_os = "linux")]
+use machine_god_native::MAX_TERMINAL_PRODUCED_OUTPUT_BYTES;
 use machine_god_native::{
     TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
     TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
@@ -34,6 +36,7 @@ enum Mode {
     Error(TerminalExecutorErrorKind),
     Pending,
     CancelThenExit,
+    DropCancelThenExit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -169,7 +172,7 @@ impl Future for FakeExecution {
         }
         let status = match self.mode {
             Mode::Exited(code) => TerminalExecutionStatus::Exited(code),
-            Mode::CancelThenExit => TerminalExecutionStatus::Exited(0),
+            Mode::CancelThenExit | Mode::DropCancelThenExit => TerminalExecutionStatus::Exited(0),
             Mode::Signaled(signal) => TerminalExecutionStatus::Signaled(signal),
             Mode::TimedOut => TerminalExecutionStatus::TimedOut,
             Mode::OutputLimit => TerminalExecutionStatus::OutputLimit,
@@ -186,6 +189,9 @@ impl Future for FakeExecution {
 
 impl Drop for FakeExecution {
     fn drop(&mut self) {
+        if matches!(self.mode, Mode::DropCancelThenExit) {
+            let _ = self.cancellation.cancel();
+        }
         self.state.drops.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -344,8 +350,11 @@ fn strict_schema_command_and_cwd_boundaries_reject_without_executor_effects() {
         json!({ "action": "exec", "command": "true", "cwd": "./a" }),
         json!({ "action": "exec", "command": "true", "cwd": "a/./b" }),
         json!({ "action": "exec", "command": "true", "cwd": "a/../b" }),
+        json!({ "action": "exec", "command": "true", "cwd": "a/~/b" }),
         json!({ "action": "exec", "command": "true", "cwd": "a\0b" }),
         json!({ "action": "exec", "command": "true", "cwd": "a\nb" }),
+        json!({ "action": "exec", "command": "true", "cwd": "a\u{2028}b" }),
+        json!({ "action": "exec", "command": "true", "cwd": "a\u{2029}b" }),
         json!({ "action": "exec", "command": "true", "cwd": "a\u{202e}b" }),
         json!({ "action": "exec", "command": "true", "cwd": over_component }),
         json!({ "action": "exec", "command": "true", "cwd": over_cwd }),
@@ -463,6 +472,40 @@ fn environment_digest_is_order_stable_and_raw_values_never_reflect() {
     assert!(requests[0].deadline <= now + Duration::from_secs(120));
     assert!(!requests[0].debug.contains(PRIVATE_ENVIRONMENT_KEY));
     assert!(!requests[0].debug.contains(PRIVATE_ENVIRONMENT_VALUE));
+}
+
+#[test]
+fn injected_environment_is_an_owned_construction_snapshot() {
+    let temporary = TemporaryDirectory::new("owned-environment");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let mut supplied_environment = environment();
+    let expected_environment = supplied_environment.clone();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        supplied_environment.clone(),
+        Arc::new(executor.clone()),
+        TerminalLimits::default(),
+    )
+    .unwrap();
+
+    supplied_environment.clear();
+    supplied_environment.push((
+        OsString::from(PRIVATE_ENVIRONMENT_KEY),
+        OsString::from("changed-after-construction"),
+    ));
+
+    let output = execute(
+        &tool,
+        exact_arguments("true", "."),
+        CancellationToken::new(),
+    )
+    .unwrap();
+
+    assert!(!output.is_error);
+    let mut expected_environment = expected_environment;
+    expected_environment.sort();
+    assert_eq!(executor.requests()[0].environment, expected_environment);
+    assert_ne!(executor.requests()[0].environment, supplied_environment);
 }
 
 #[test]
@@ -586,6 +629,28 @@ fn pre_cancel_and_same_poll_cancel_win_without_publishing_output() {
     assert_eq!(error.kind, ToolErrorKind::Cancelled);
     assert_eq!(race_executor.calls(), 1);
     assert_eq!(race_executor.drops(), 1);
+}
+
+#[test]
+fn cancellation_from_ready_executor_drop_wins_before_output_publication() {
+    let temporary = TemporaryDirectory::new("drop-cancellation");
+    let executor = FakeExecutor::new(Mode::DropCancelThenExit);
+    let tool = tool(temporary.path(), &executor);
+
+    let error = execute(
+        &tool,
+        exact_arguments("true", "."),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(error.message, "terminal execution was cancelled");
+    assert!(!error.retryable);
+    assert_eq!(executor.calls(), 1);
+    assert_eq!(executor.polls(), 1);
+    assert_eq!(executor.drops(), 1);
 }
 
 #[test]
@@ -961,10 +1026,12 @@ impl EscapedProcessGuard {
 
     fn terminate(&self) -> bool {
         let _ = rustix::process::kill_process_group(self.pid, rustix::process::Signal::TERM);
+        let _ = rustix::process::kill_process(self.pid, rustix::process::Signal::TERM);
         if self.wait_until_gone(Duration::from_millis(500)) {
             return true;
         }
         let _ = rustix::process::kill_process_group(self.pid, rustix::process::Signal::KILL);
+        let _ = rustix::process::kill_process(self.pid, rustix::process::Signal::KILL);
         self.wait_until_gone(Duration::from_secs(2))
     }
 
@@ -1020,6 +1087,77 @@ fn linux_system_executor_runs_fixed_shell_in_selected_cwd_with_separate_streams(
 
 #[cfg(target_os = "linux")]
 #[test]
+fn linux_system_executor_uses_retained_root_after_path_replacement() {
+    if !require_linux_executable("/bin/cat") {
+        return;
+    }
+    let temporary = TemporaryDirectory::new("system-retained-root");
+    let root = temporary.path().join("workspace");
+    let moved = temporary.path().join("workspace-moved");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("identity.txt"), b"original-workspace").unwrap();
+    let tool = TerminalTool::open(&root).unwrap();
+
+    std::fs::rename(&root, &moved).unwrap();
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("identity.txt"), b"replacement-workspace").unwrap();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments("/bin/cat identity.txt", "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(!output.is_error);
+    assert_eq!(output.content["status"], "exited");
+    assert_eq!(output.content["exit_code"], 0);
+    assert_eq!(output.content["stdout"], "original-workspace");
+    assert_ne!(output.content["stdout"], "replacement-workspace");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_system_environment_snapshot_reaches_the_shell() {
+    const CHILD_MODE: &str = "MACHINE_GOD_TERMINAL_ENVIRONMENT_CHILD";
+    const PRESENT: &str = "MACHINE_GOD_TERMINAL_SNAPSHOT_PRESENT";
+    const ABSENT: &str = "MACHINE_GOD_TERMINAL_SNAPSHOT_ABSENT";
+
+    if std::env::var_os(CHILD_MODE).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("linux_system_environment_snapshot_reaches_the_shell")
+            .arg("--nocapture")
+            .env(CHILD_MODE, "1")
+            .env(PRESENT, "construction-snapshot-value")
+            .env_remove(ABSENT)
+            .status()
+            .unwrap();
+        assert!(status.success(), "controlled environment child failed");
+        return;
+    }
+
+    let temporary = TemporaryDirectory::new("system-environment");
+    let tool = TerminalTool::open(temporary.path()).unwrap();
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments(
+            "printf '%s|%s' \"$MACHINE_GOD_TERMINAL_SNAPSHOT_PRESENT\" \"${MACHINE_GOD_TERMINAL_SNAPSHOT_ABSENT-unset}\"",
+            ".",
+        ),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(!output.is_error);
+    assert_eq!(
+        output.content["stdout"],
+        "construction-snapshot-value|unset"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn linux_system_executor_reports_direct_shell_signal_status() {
     let temporary = TemporaryDirectory::new("system-signal");
     let tool = TerminalTool::open(temporary.path()).unwrap();
@@ -1050,7 +1188,7 @@ fn linux_system_executor_terminates_on_aggregate_output_pressure() {
 
     let output = futures_executor::block_on(tool.execute(
         context(),
-        exact_arguments("/usr/bin/head -c 2097152 /dev/zero", "."),
+        exact_arguments("/usr/bin/head -c 1048577 /dev/zero", "."),
         CancellationToken::new(),
     ))
     .unwrap();
@@ -1061,10 +1199,48 @@ fn linux_system_executor_terminates_on_aggregate_output_pressure() {
     assert_eq!(output.content["exit_code"], Value::Null);
     assert_eq!(output.content["signal"], Value::Null);
     assert!(output.content["stdout_bytes"].as_u64().unwrap() > 1024 * 1024);
+    assert!(
+        output.content["stdout_bytes"].as_u64().unwrap()
+            <= MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 2 * 16 * 1024,
+        "reader work exceeded the deterministic two-in-flight-read allowance"
+    );
     assert_eq!(output.content["stderr_bytes"], 0);
     assert_eq!(output.content["stdout_truncated"], true);
     assert_eq!(output.content["stdout_lossy"], false);
     assert!(serde_json::to_vec(&output).unwrap().len() <= 48 * 1024);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_system_deadline_output_overlap_never_publishes_a_contradictory_outcome() {
+    if !require_linux_executable("/usr/bin/head") || !std::path::Path::new("/dev/zero").exists() {
+        eprintln!("skipping terminal deadline/output evidence because head or /dev/zero is absent");
+        return;
+    }
+    let temporary = TemporaryDirectory::new("system-deadline-output");
+    let tool = TerminalTool::open_with_limits(
+        temporary.path(),
+        TerminalLimits::new(Duration::from_millis(5), 1).unwrap(),
+    )
+    .unwrap();
+    let started = Instant::now();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments("/usr/bin/head -c 1048577 /dev/zero", "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(output.is_error);
+    let produced = output.content["stdout_bytes"].as_u64().unwrap()
+        + output.content["stderr_bytes"].as_u64().unwrap();
+    match output.content["status"].as_str().unwrap() {
+        "output_limit" => assert!(produced > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES),
+        "timed_out" => assert!(produced <= MAX_TERMINAL_PRODUCED_OUTPUT_BYTES),
+        status => panic!("unexpected deadline/output status {status}"),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1164,6 +1340,37 @@ fn linux_system_ready_publication_has_already_terminated_background_group_member
         Err(rustix::io::Errno::SRCH),
         "terminal output was published before the background group member was gone"
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_system_ready_publication_observes_term_ignoring_group_member_cleanup() {
+    if !require_linux_executable("/bin/sleep") {
+        return;
+    }
+    let temporary = TemporaryDirectory::new("system-ready-term-ignore");
+    let tool = TerminalTool::open(temporary.path()).unwrap();
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments(
+            "(trap '' TERM; printf '%s' ready > term-ignore.ready; exec /bin/sleep 60) & descendant=$!; i=0; while [ ! -s term-ignore.ready ] && [ \"$i\" -lt 200 ]; do i=$((i + 1)); /bin/sleep 0.01; done; test -s term-ignore.ready || exit 42; printf '%s' \"$descendant\" > term-ignore.pid",
+            ".",
+        ),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    let pid = read_linux_pid(&temporary.path().join("term-ignore.pid"));
+    let cleanup = EscapedProcessGuard::new(pid);
+
+    assert!(!output.is_error);
+    assert_eq!(output.content["status"], "exited");
+    assert_eq!(output.content["exit_code"], 0);
+    assert_eq!(
+        rustix::process::test_kill_process(pid),
+        Err(rustix::io::Errno::SRCH),
+        "TERM-ignoring original-group member survived successful publication"
+    );
+    drop(cleanup);
 }
 
 #[cfg(target_os = "linux")]
