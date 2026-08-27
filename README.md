@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2 LOCAL
-GATE GREEN; FORMAL REPLACEMENT REVIEW, REMOTE WORKFLOWS, AND DELIVERY PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2
+REJECTED; CYCLE 3 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -25,10 +25,14 @@ candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `c77b336` (integrated as `0dd1128`) and production component `9d2e0f2`
 (integrated as `47e9505`) remediate those findings. Cycle-1 finding docs compose
 with them at exact behavior head `c8718c6`, tree `c27463b`, whose complete
-exact-1.94.1 local gate is green with 55 focused tests. The cycle-2 tree is
-ready for immutable same-SHA review; formal replacement review, remote
-workflows, integration, and delivery remain pending. This is regression/
-delivery evidence, not a performance or fx-equivalence claim. See the
+exact-1.94.1 local gate was green with 55 focused tests. Formal cycle 2 then
+rejected exact candidate `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
+`503a91f334156dbcf2470560b9bb456c3491fd3d`, with a deduplicated
+0 blocker / 0 high / 2 medium / 2 low union. Cycle 3 must bound complete
+pre-trim host answers before scanning, correct result evidence to the reachable
+41,102-byte maximum while retaining the 49,152-byte defense-in-depth guard,
+and repair stale authority/review wording. No cycle-3 local gate or review is
+green yet; remote workflows, integration, and delivery remain pending. See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

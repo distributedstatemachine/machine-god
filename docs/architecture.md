@@ -1,8 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2 LOCAL
-GATE GREEN; FORMAL REPLACEMENT REVIEW, REMOTE WORKFLOWS, AND DELIVERY
-PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2
+REJECTED; CYCLE 3 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -18,8 +17,12 @@ timeout, ambient terminal discovery, product-performance result, or
 fx-equivalence claim. Cycle-2 evidence `c77b336`/`0dd1128`, production
 `9d2e0f2`/`47e9505`, and cycle-1 finding docs compose at exact behavior head
 `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is green with
-55 focused tests. The cycle-2 tree is ready for immutable same-SHA review;
-formal review, remote workflows, and delivery remain pending. See
+55 focused tests. Formal cycle 2 rejected exact candidate `910d7bc`, tree
+`503a91f`, with a deduplicated `0/0/2/2` union. Cycle 3 must reject complete
+pre-trim host answers above 4,096 bytes before scanning, retain the 49,152-byte
+serialized-result guard only as defense in depth, prove the reachable
+41,102-byte maximum, and correct stale documentation. No cycle-3 local gate or
+review is green; remote workflows and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2181,7 +2184,7 @@ Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
 fixed structural state (`has_provider` and tool count); it never invokes the
 provider's `name` method or copies provider-controlled text.
 
-## Slice 35 locally remediated question-interaction boundary
+## Slice 35 cycle-3 question-interaction remediation boundary
 
 The `ask_user_question` slice adds one portable native adapter,
 not UI state to core or the CLI. Strict effect-free native preparation
@@ -2199,6 +2202,9 @@ environment, network, or persistence authority. The prompt carries normalized
 terminal-safe values; a structured outcome carries answers, explicit user
 cancellation, or noninteractive unavailability. Answers remain ordered and
 bounded but need not equal an option label, allowing a host-owned `Other` path.
+Cycle 3 freezes the raw-answer ceiling over the complete pre-trim strings
+returned by that host. Length is checked before ASCII-edge scanning, so an
+arbitrarily large whitespace-only response cannot widen synchronous work.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2212,9 +2218,10 @@ workspace-descriptor clone. Cycle 2 intentionally inserts `answer` before
 adjacent cancellation recheck after request cloning, validates a bounded raw
 incoming preimage for direct prepared execution, and stops serialized string
 and key scanning at the remaining byte budget. The expanded deterministic
-suite locally proves those corrections plus the exact/+1, terminal-class,
+suite locally proved the cycle-2 input, prepared, presentation, terminal-class,
 maximum-concurrency, independent-counter, deep, wrong-name, unpolled, drop,
-and unwind boundaries. The complete bounds, precedence, output, and deferrals
-are normative in [`ask-user-question.md`](ask-user-question.md). The local gate
-is green; the cycle-2 tree is ready for immutable same-SHA review, while formal
-replacement review, remote workflows, and delivery remain pending.
+and unwind corrections. It did not prove rejection at the unreachable
+49,152-byte result guard. Legal inputs reach at most 41,102 serialized output
+bytes; the larger guard remains defense in depth. The complete cycle-3 target
+is normative in [`ask-user-question.md`](ask-user-question.md). Formal cycle 2
+is rejected, and no cycle-3 local gate or review is green.

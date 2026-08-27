@@ -1,7 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 2 LOCAL GATE GREEN — FORMAL REPLACEMENT REVIEW, REMOTE
-WORKFLOWS, AND DELIVERY PENDING**.
+Status: **CYCLE 2 REJECTED — CYCLE 3 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -36,10 +35,13 @@ Formal cycle 1 reviewed exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, and rejected it. The
 deduplicated result was 0 blocker, 1 high, 3 medium, and 3 low findings.
-Cycle 2 implements and locally proves remediation for every accepted finding.
-The cycle-2 tree is ready for immutable same-SHA review; no formal replacement-
-review outcome exists yet.
-The detailed outcome, remediation, and local-gate evidence are in the
+Cycle 2 implemented every accepted cycle-1 correction and passed its local
+gate, but formal review rejected exact candidate
+`910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
+`503a91f334156dbcf2470560b9bb456c3491fd3d`, with a deduplicated 0 blocker,
+0 high, 2 medium, and 2 low findings. Cycle 3 is in progress; it has no green
+local gate or formal review. The detailed outcome and remediation target are
+recorded in the
 [`review ledger`](reviews/m03-ask-user-question-review-01.md).
 
 ## Product boundary
@@ -129,10 +131,11 @@ punctuation and escaping.
 | Rendered option description | 2,048 bytes each |
 | Aggregate rendered presentation text | 32,768 bytes |
 | Serialized normalized prepared arguments | 49,152 bytes |
-| Raw answer | 4,096 bytes each |
-| Aggregate raw answers | 4,096 bytes |
+| Complete pre-trim host answer | 4,096 bytes each |
+| Aggregate complete pre-trim host answers | 4,096 bytes |
 | Aggregate rendered answers | 16,384 bytes |
-| Serialized `ToolOutput` | 49,152 bytes |
+| Reachable serialized `ToolOutput` maximum | 41,102 bytes |
+| Serialized `ToolOutput` defense-in-depth guard | 49,152 bytes |
 | Default simultaneous active prompts per tool | 1 |
 | Hard simultaneous active prompts per tool | 8 |
 
@@ -141,12 +144,21 @@ label, and present description, excluding vector and object overhead. The
 separate normalized-argument serialization check includes that overhead and
 JSON escaping. Neither ceiling substitutes for the other.
 
-The raw question total is at most 4,096 bytes. The raw answer total is also at
-most 4,096 bytes. Terminal encoding expands one raw byte by at most four
-rendered bytes, and compact JSON needs at most one additional escape byte per
-rendered byte. The final 49,152-byte result check is nevertheless authoritative
-and includes the complete `ToolOutput` envelope. Overflow uses checked
-arithmetic and fails rather than truncating.
+The raw question total is at most 4,096 bytes. Answer limits measure the
+complete strings returned by the host before any trim or character scan: each
+answer and their aggregate are at most 4,096 bytes. Checking `String::len`
+before ASCII-edge trimming prevents an arbitrarily large whitespace-only host
+response from causing unbounded synchronous scanning. Terminal encoding
+expands one accepted answer byte by at most four rendered bytes, and compact
+JSON needs at most one additional escape byte per rendered byte.
+
+Under every legal question and answer bound, the exact reachable maximum
+serialized `ToolOutput` is 41,102 bytes. Evidence must prove that reachable
+maximum, not claim a first-over rejection that legal inputs cannot construct.
+The separate 49,152-byte complete-result check remains an authoritative
+defense-in-depth guard over the final envelope, but is unreachable under the
+other frozen limits. Overflow uses checked arithmetic and fails rather than
+truncating.
 
 The input ceiling is checked by a bounded serialization pass before semantic
 traversal or string cloning. The rejected cycle-1 candidate scanned a complete
@@ -238,10 +250,11 @@ The prompter returns one of three structured outcomes:
 - `Cancelled` for an explicit user cancellation; or
 - `Unavailable` for a noninteractive host.
 
-`Answered` must contain exactly one answer per prepared question. Each answer
-is ASCII-trimmed, must remain nonempty, and is checked against the per-answer
-and aggregate raw limits. Machine-god then applies the same terminal-safe
-encoding and aggregate rendered limit used above. It deliberately does not
+`Answered` must contain exactly one answer per prepared question. Each complete
+host-returned string is checked against the per-answer and aggregate 4,096-byte
+limits before scanning or trimming. Within-bound answers are ASCII-trimmed and
+must remain nonempty. Machine-god then applies the same terminal-safe encoding
+and aggregate rendered limit used above. It deliberately does not
 require an answer to equal an option label. This admits a bounded `Other`
 answer. The only claimed parity with pinned fx's answer codec is the absence
 of option-label membership enforcement; machine-god additionally ASCII-trims
@@ -292,11 +305,12 @@ For a non-cancelled ready result, precedence is:
 
 1. redacted prompter failure;
 2. answer-count mismatch;
-3. per-answer raw validation in question order;
-4. aggregate raw answer limit;
-5. terminal rendering and aggregate rendered-answer limit;
-6. serialized result limit; and
-7. ordered success publication.
+3. per-answer complete pre-trim byte limit in question order;
+4. aggregate complete pre-trim answer limit;
+5. ASCII-edge trim and empty-answer rejection;
+6. terminal rendering and aggregate rendered-answer limit;
+7. serialized result defense-in-depth guard; and
+8. ordered success publication.
 
 No partially validated or partially encoded answer array is returned.
 

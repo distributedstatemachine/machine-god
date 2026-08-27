@@ -656,13 +656,14 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 locally remediated question resource model
+## Slice 35 cycle-3 question resource remediation
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
 questions, 24 options, 32 KiB incoming serialized arguments, 32 KiB aggregate
-rendered presentation text, 48 KiB normalized arguments, 4 KiB aggregate raw
-answers, 16 KiB rendered answers, and a 48 KiB complete serialized result.
+rendered presentation text, 48 KiB normalized arguments, 4 KiB aggregate
+complete pre-trim host answers, 16 KiB rendered answers, a 41,102-byte reachable
+serialized result maximum, and a separate 48 KiB defense-in-depth result guard.
 Per-field raw and rendered limits prevent one string from consuming an
 aggregate budget. Every addition and encoding expansion is checked, and no
 overflow path truncates or partially publishes an answer.
@@ -681,12 +682,21 @@ overlaps the correctness evidence-overclaim finding and counts once in the
 deduplicated union. The expanded direct suite now establishes those boundaries.
 
 Terminal encoding and result construction are intended to remain linear in
-their bounded inputs. The tool owns one prompt future and one permit; the
-limits are default concurrency one and hard maximum eight with
+their bounded inputs. Formal cycle 2 found that the submitted implementation
+trimmed a host answer before checking its length, so an arbitrarily large
+whitespace-only string could force an unbounded synchronous scan. Cycle 3
+freezes an O(1) complete-string length check before trim: both each answer and
+the aggregate complete pre-trim bytes are limited to 4,096. The tool owns one
+prompt future and one permit; the limits are default concurrency one and hard
+maximum eight with
 fail-fast saturation and no waiter queue or capacity Waker. Exact-limit and
-first-over-limit input, prepared, presentation, answer, and result evidence,
-plus explicit one/eight/ninth-admission and independent-counter evidence, are
-green in the 26-test direct suite. Deep and maximum-depth drop paths,
+first-over-limit input, prepared, presentation, and answer evidence, plus
+explicit one/eight/ninth-admission and independent-counter evidence, were green
+in the 26-test direct suite. Its claimed exact/+1 49,152-byte result evidence
+was invalid because legal inputs reach at most 41,102 serialized bytes. Cycle 3
+must prove that exact reachable maximum and retain 49,152 only as a
+defense-in-depth guard; it must not claim a reachable guard rejection. Deep and
+maximum-depth drop paths,
 wrong-name/canonical-prepared rejection, and unpolled/pending/drop/unwind
 resource ownership are also exercised deterministically.
 
@@ -698,7 +708,9 @@ gate, but formal cycle 1 rejected the later immutable candidate with a
 deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
 `c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
 at exact `c8718c6`, tree `c27463b`; the complete exact-1.94.1 local gate is
-green with 55 focused tests. The cycle-2 tree is ready for immutable same-SHA
-review; formal review remains pending. This is regression/delivery evidence,
-not a benchmark or product-performance result. See
+green with 55 focused tests. Formal cycle 2 rejected exact candidate
+`910d7bc`, tree `503a91f`: correctness/API reported `0/0/1/0`, lifecycle/
+platform `0/0/0/2`, performance/resources `0/0/2/0`, and the deduplicated union
+is `0/0/2/2`. No cycle-3 local gate or review is green. This is not a benchmark
+or product-performance result. See
 [`ask-user-question.md`](ask-user-question.md).

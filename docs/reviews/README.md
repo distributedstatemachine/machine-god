@@ -1,14 +1,17 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, has a **FROZEN CONTRACT** from
-exact delivered base `5846799`. It is limited to ordinary questions through an
-injected rootless prompter: strict 1-4/2-6 input, terminal-safe bounded text,
+Bounded slice 35, native `ask_user_question`, is **CYCLE 2 REJECTED; CYCLE 3
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
+terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-authority preparation, fixed
 redacted outcomes, and default-one/hard-eight fail-fast prompt concurrency.
 `permission_request_id`, CLI presentation, timeout, detached work, approval
-escalation, and later-tool scope are deferred. Production, independent
-evidence, exact candidate gates, three fresh review tracks, remote workflows,
-and delivery remain pending. See
+escalation, and later-tool scope are deferred. Cycle-2 production, independent
+evidence, and its exact local candidate gate were completed, but three formal
+tracks rejected exact candidate `910d7bc`, tree `503a91f`, with a deduplicated
+`0/0/2/2` union. Cycle-3 source, evidence, local gate, three fresh tracks,
+remote workflows, and delivery remain pending. See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 
 Bounded slice 34, native `terminal`, is **DELIVERED** from exact delivered base

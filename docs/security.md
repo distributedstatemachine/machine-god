@@ -2072,7 +2072,7 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 locally remediated interaction and authority rules
+## Slice 35 cycle-3 interaction and authority remediation
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2089,8 +2089,11 @@ Model-supplied questions, labels, and descriptions are untrusted presentation
 data. Strict objects, byte ceilings, ASCII-edge trimming, case-insensitive
 ASCII label deduplication, and exact terminal-safe control/bidi encoding run
 before presentation. The same normalized values reach execution and the
-injected prompter. Answers are also trimmed, bounded, terminal-safe encoded,
-and serialized under a fixed complete-result ceiling. Errors and debug output
+injected prompter. Cycle 3 requires the complete pre-trim bytes of each host
+answer and their aggregate to be length-checked before any trim scan. Only
+within-bound answers are trimmed, empty-checked, terminal-safe encoded, and
+serialized under the reachable 41,102-byte maximum plus a fixed 49,152-byte
+defense-in-depth guard. Errors and debug output
 reflect no input, answer, host diagnostic, identity, or executor data.
 
 The injected prompter is a trusted rootless host boundary. The adapter cannot
@@ -2113,5 +2116,8 @@ sentinels. Exact rules are in
 a deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
 `c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
 at exact `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is
-green. The cycle-2 tree is ready for immutable same-SHA review; formal
-replacement review, remote workflows, and delivery remain pending.
+green. Formal cycle 2 rejected exact candidate `910d7bc`, tree `503a91f`, with
+a deduplicated `0/0/2/2` union: unbounded pre-trim host-answer scanning,
+unreachable result-bound evidence, incorrect external-authority wording, and
+stale/ambiguous review lineage. Cycle 3 has no green local gate or formal
+review; remote workflows and delivery remain pending.

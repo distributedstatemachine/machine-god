@@ -1,8 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 2 LOCAL GATE GREEN — FORMAL REPLACEMENT REVIEW, REMOTE
-WORKFLOWS, INTEGRATION, AND DELIVERY PENDING**. The cycle-2 tree is ready for
-immutable same-SHA review; no formal cycle-2 outcome exists yet.
+Status: **CYCLE 2 REJECTED — CYCLE 3 REMEDIATION IN PROGRESS**. Cycle 3 has no
+green local gate or formal review. Remote workflows, integration, and delivery
+remain pending.
 
 ## Frozen lineage
 
@@ -40,14 +40,18 @@ immutable same-SHA review; no formal cycle-2 outcome exists yet.
 - Cycle-1 finding documentation and exact composed behavior head:
   `c8718c60ead54b4e66916cecb1d382c1e8f82934`, tree
   `c27463b76607ae048363327e163c2077e296b898`
+- Formal cycle-2 candidate, **REJECTED**:
+  `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
+  `503a91f334156dbcf2470560b9bb456c3491fd3d`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
 candidate remains rejected. Cycle-2 source, evidence, and cycle-1 finding docs
 now compose at `c8718c6`/`c27463b`, and the complete local gate for that exact
-head is green. An immutable same-SHA candidate review by three fresh tracks,
-exact feature workflows, fast-forward integration, and exact `main`
-workflows remain required.
+head was green. Formal cycle 2 nevertheless rejected its later immutable
+candidate. Cycle-3 source, independent evidence, a complete replacement gate,
+three fresh exact-SHA reviews, exact feature workflows, fast-forward
+integration, and exact `main` workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -60,7 +64,9 @@ workflows remain required.
 - Optional descriptions must be strings; trimmed empty descriptions become
   absent.
 - Answers must exactly match the question count and order, but need not match
-  an option. Bounded free-form answers support an `Other` path.
+  an option. Bounded free-form answers support an `Other` path. The per-answer
+  and aggregate raw bounds measure complete host-returned strings before trim
+  or scanning.
 - Preparation explicitly requires no policy-governed authority. Core must skip
   permission-ID construction, permission events, and the permission handler
   only for this trusted explicit disposition; the injected prompter separately
@@ -84,15 +90,19 @@ workflows remain required.
 | Raw/rendered description | 512 / 2,048 bytes |
 | Aggregate rendered presentation | 32,768 bytes |
 | Serialized normalized arguments | 49,152 bytes |
-| Raw answer / aggregate raw answers | 4,096 / 4,096 bytes |
+| Complete pre-trim host answer / aggregate | 4,096 / 4,096 bytes |
 | Aggregate rendered answers | 16,384 bytes |
-| Serialized result | 49,152 bytes |
+| Reachable serialized result maximum | 41,102 bytes |
+| Serialized result defense-in-depth guard | 49,152 bytes |
 | Default/hard active prompts | 1 / 8, fail-fast |
 
 These bounds measure distinct stages. The incoming serialized ceiling is
-checked before traversal; raw fields after ASCII trim; rendering while terminal
-encoding; presentation as the sum of rendered display strings; normalized
-arguments and result as compact full JSON serialization. No stage truncates.
+checked before traversal; raw question/option fields after ASCII trim; complete
+host-answer lengths before trim or scan; rendering while terminal encoding;
+presentation as the sum of rendered display strings; and normalized arguments
+and result as compact full JSON serialization. Legal inputs reach at most
+41,102 result bytes; the larger 49,152-byte guard is defense in depth. No stage
+truncates.
 
 ## Parallel ownership
 
@@ -165,11 +175,13 @@ composed head `c8718c6`, tree `c27463b`:
 - pinned-fx wording, all four reference-host signatures, and the exact
   sixteen-tool alphabetical catalog are corrected; and
 - the 26 direct tests cover exact and first-over input, prepared,
-  presentation, answer, and result limits; every documented terminal class;
+  presentation, and answer limits; every documented terminal class;
   default-one and maximum-eight capacity, fail-fast ninth admission and
   independent counters; deep and maximum-depth drop paths; wrong-name and
   canonical-prepared rejection; and inert/unpolled, pending-drop, cancellation,
-  and unwind resource ownership.
+  and unwind resource ownership. Its claimed 49,152-byte exact/+1 result
+  evidence was later rejected because that guard is unreachable under legal
+  inputs.
 
 The full focused gate is 55 tests: 26 direct, one engine, 15 configuration,
 three root-selection, nine reference-host, and one reference-host lifecycle
@@ -182,11 +194,59 @@ engine evidence with deterministic injected provider, permission handler, and
 question prompter is required instead. A later composed release-host slice owns
 interactive CLI evidence.
 
-## Replacement review plan
+## Formal cycle-2 outcome
 
-The complete cycle-2 exact-1.94.1 local gate is green. The replacement tree is
-ready to be identified by its immutable candidate SHA in reviewer reports.
-Spawn three fresh read-only product reviewers in isolated clean worktrees:
+All three read-only tracks reviewed exact candidate
+`910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
+`503a91f334156dbcf2470560b9bb456c3491fd3d`:
+
+| Track | Blocker | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: |
+| Correctness/API/schema | 0 | 0 | 1 | 0 |
+| Lifecycle/cancellation/platform | 0 | 0 | 0 | 2 |
+| Performance/concurrency/resources | 0 | 0 | 2 | 0 |
+| Deduplicated union | 0 | 0 | 2 | 2 |
+
+The result-bound evidence medium was reported by correctness and performance
+and counts once in the union. The accepted findings are:
+
+- **Medium — unbounded pre-trim answer scan:** answer validation trims a
+  host-returned string before applying the 4,096-byte limit. An arbitrarily
+  large whitespace-only response can therefore force unbounded synchronous
+  scanning before rejection.
+- **Medium — unreachable result-bound evidence:** the focused test labeled as
+  exact and first-over 49,152-byte result evidence cannot reach that guard
+  under the other legal limits. The exact reachable maximum is 41,102 bytes;
+  49,152 remains a defense-in-depth guard, not a reachable rejection boundary.
+- **Low — authority wording:** `docs/README.md` said preparation requires no
+  external authority. The correct claim is no policy-governed authority; the
+  injected prompter separately owns its host interaction authority.
+- **Low — review lineage:** `docs/reviews/README.md` still called completed
+  cycle-2 production, evidence, and local gates pending, while
+  `docs/native-reference-host.md` placed pre-slice-35 green SHAs beside current
+  signatures without stating that those historical reviews did not cover the
+  later question parameter or sixteen-tool catalog.
+
+Any nonzero finding rejects the candidate, so cycle 2 is not green despite its
+earlier local-gate evidence.
+
+## Cycle-3 remediation plan
+
+Cycle 3 freezes these corrections before implementation:
+
+- check each complete host-returned answer and the aggregate complete answer
+  bytes against 4,096 before ASCII trimming or any character scan;
+- only then trim, reject empty answers, terminal-safe encode, and construct the
+  ordered result;
+- replace the unreachable result-guard exact/+1 claim with evidence for the
+  exact reachable 41,102-byte maximum while retaining the 49,152-byte guard as
+  defense in depth; and
+- correct the authority summary, review index, and historical reference-host
+  lineage scope.
+
+After isolated production and independent-evidence remediation compose with
+these docs, run a complete exact-1.94.1 local gate and freeze a new immutable
+candidate. Then spawn three fresh read-only product reviewers:
 
 1. correctness/API/schema and pinned-fx boundary;
 2. lifecycle/cancellation/platform/host composition; and
@@ -194,8 +254,9 @@ Spawn three fresh read-only product reviewers in isolated clean worktrees:
 
 Each reports blocker/high/medium/low counts and concrete evidence. Deduplicate
 overlap without lowering severity. Any confirmed finding rejects the candidate;
-remediation receives a new complete local gate and three fresh reviewers.
-Only an exact `0/0/0/0` union may proceed to feature workflows and `main`.
+remediation receives a new complete local gate and three fresh reviewers. Only
+an exact `0/0/0/0` union may proceed to feature workflows and `main`. No
+cycle-3 gate or review result exists yet.
 
 ## Required gates
 

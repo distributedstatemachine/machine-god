@@ -44,9 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 2 LOCAL
-GATE GREEN; FORMAL REPLACEMENT REVIEW, REMOTE WORKFLOWS, INTEGRATION, AND
-DELIVERY PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 2
+REJECTED; CYCLE 3 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -62,9 +61,11 @@ Preparation uses core's explicit no-authority disposition, so the engine does
 not construct a permission ID, emit permission events, or invoke the permission
 handler for this tool; every existing tool retains permission-required
 behavior. `permission_request_id` is always rejected because auto-denied
-approval continuation is deferred. Fixed input/prepared/result ceilings are
-32/48/48 KiB, presentation is 32 KiB, answer input is 4 KiB aggregate, and
-prompt concurrency is default one/hard eight with fail-fast admission. The
+approval continuation is deferred. Fixed input/prepared ceilings are 32/48 KiB,
+presentation is 32 KiB, complete pre-trim host-answer input is 4 KiB aggregate,
+the reachable result maximum is 41,102 bytes, and the separate 48 KiB result
+guard is defense in depth. Prompt concurrency is default one/hard eight with
+fail-fast admission. The
 tool owns the prompt future, sets no timeout, and detaches no work. No CLI UI,
 durable terminal expansion, `vision`, `read_tool_result`, M05 surface,
 benchmark workload, performance result, or fx-equivalence claim is added.
@@ -94,18 +95,33 @@ Cycle-2 independent evidence component
 `47e9505f463b5ca9f4f418198022a4805757621b`. Cycle-1 finding docs compose with
 both at exact behavior head `c8718c60ead54b4e66916cecb1d382c1e8f82934`,
 tree `c27463b76607ae048363327e163c2077e296b898`. The production component
-implements every accepted source correction, and the expanded evidence proves
-the exact/+1, terminal-class, maximum-concurrency, independent-counter, deep,
-wrong-name, unpolled, cancellation, drop, and unwind boundaries.
+implemented every accepted cycle-1 source correction, and the expanded evidence
+proved the input, prepared, presentation, terminal-class, maximum-concurrency,
+independent-counter, deep, wrong-name, unpolled, cancellation, drop, and unwind
+boundaries. Its claimed exact/+1 49,152-byte result evidence was not reachable
+under legal input limits.
 
 The complete exact-1.94.1 local gate for that composed head is green: 55
 focused tests; all four required commands; Python, pinned-fx drift, dependency,
 audit, native/FreeBSD/WASI portability, documentation, diff/no-unsafe, release,
 and isolated missing-root smoke checks. This is regression/delivery evidence,
 not product-performance or fx-equivalence evidence. No CLI prompt UI exists,
-so release-binary question prompting is not applicable. A frozen replacement
-candidate, three fresh exact-SHA adversarial tracks, feature workflows,
-integration, delivery, and exact `main` workflows remain pending.
+so release-binary question prompting is not applicable. Formal cycle 2 reviewed
+exact candidate `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
+`503a91f334156dbcf2470560b9bb456c3491fd3d`. Correctness/API reported
+`0/0/1/0`, lifecycle/platform `0/0/0/2`, and performance/resources `0/0/2/0`;
+the result-evidence medium deduplicates across correctness and performance for
+a union of 0 blocker, 0 high, 2 medium, and 2 low findings.
+
+Accepted cycle-2 findings are the unbounded pre-trim scan of a host-returned
+answer; unreachable exact/+1 evidence for the 49,152-byte defense-in-depth
+result guard, where legal inputs reach at most 41,102 bytes; incorrect
+no-external-authority wording; and stale/ambiguous review lineage. Cycle 3
+freezes complete pre-trim per-answer and aggregate length checks before ASCII
+trim, exact reachable-maximum evidence, and corrected documentation. Isolated
+production/evidence remediation, a complete local gate, three fresh exact-SHA
+tracks, feature workflows, integration, delivery, and exact `main` workflows
+remain pending. No cycle-3 local gate or review is green.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4105,9 +4121,13 @@ gate. Formal cycle 1 rejected exact candidate `6c54ec3`, tree `bea9024`, with a
 deduplicated `0 blocker / 1 high / 3 medium / 3 low` union. Cycle-2 evidence
 `c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose at
 exact `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is green
-with 55 focused tests. The cycle-2 tree is ready for immutable same-SHA review;
-formal replacement review, remote workflows, integration, and delivery remain
-pending, so this combined item remains unchecked. Slice 33 `web_search` is delivered
+with 55 focused tests. Formal cycle 2 rejected exact candidate `910d7bc`, tree
+`503a91f`, with a deduplicated `0/0/2/2` union. Cycle 3 must bound complete
+pre-trim host-answer bytes before scanning, prove the reachable 41,102-byte
+result maximum without claiming the 49,152-byte guard is reachable, and correct
+stale documentation. Its source, evidence, local gate, formal review, remote
+workflows, integration, and delivery remain pending, so this combined item
+remains unchecked. Slice 33 `web_search` is delivered
 through exact record `52b5885`; its feature and main CI/Benchmark workflows
 are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that
