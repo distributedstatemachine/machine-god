@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fourth bounded slice, native `terminal`, is contract-frozen and
-**IN PROGRESS** from exact delivered base
+The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
+delivered base
 `52b5885f275c9f6f4f16b378f71780c29f2ebab2`. Its normative boundary is
 [`terminal.md`](terminal.md) and its live ledger is
 [`m03-terminal-review-01.md`](reviews/m03-terminal-review-01.md). This first
@@ -93,7 +93,10 @@ independently retained clones and already-running callbacks keep the original
 activity. Exact behavior head `9810ee9`, tree `cf7390e`, passes the complete
 exact-1.94.1 replacement gate. Formal cycle 7 is green on exact candidate
 `3f07389`, tree `f048cdc`: all three tracks and the deduplicated union report
-`0/0/0/0`. Remote delivery remains pending.
+`0/0/0/0`. Review-exempt delivered record `ddd6a89`, tree `4a227b3`, passed
+feature CI/Benchmark runs `33040148977`/`33040148920` and main CI/Benchmark
+runs `33040487021`/`33040487046`; each benchmark run retained exactly two
+unexpired exact-SHA artifacts. The delivered count is 34.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -175,8 +178,10 @@ stale post-drop delivery; and preserves retained-clone and in-flight-callback
 activity ownership. The complete exact-1.94.1 replacement gate is green. Cycle
 7 is formally green on exact candidate `3f07389`, tree `f048cdc`:
 correctness/API, lifecycle/platform, and performance/resources each reported
-`0/0/0/0`. This documentation-only result record is review-exempt and does not
-claim remote delivery.
+`0/0/0/0`. Review-exempt delivered record `ddd6a89`, tree `4a227b3`, passed
+the exact feature and main CI/Benchmark gates recorded above. This subsequent
+documentation-only delivery seal is also review-exempt and changes no product
+behavior.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base

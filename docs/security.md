@@ -1,6 +1,6 @@
 # Security
 
-Bounded slice 34, native `terminal`, is **IN PROGRESS**. Its frozen foreground-
+Bounded slice 34, native `terminal`, is **DELIVERED**. Its frozen foreground-
 exec boundary requires exact process capability identity before one fixed
 `/bin/sh -c` invocation. The retained workspace descriptor constrains only the
 starting directory; this is explicitly not a sandbox, and an approved command

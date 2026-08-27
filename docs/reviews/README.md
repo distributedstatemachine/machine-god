@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Current bounded slice 34, native `terminal`, is **IN PROGRESS — CONTRACT
-FROZEN** from exact delivered base `52b5885`. It implements only bounded
+Bounded slice 34, native `terminal`, is **DELIVERED** from exact delivered base
+`52b5885`. It implements only bounded
 foreground `exec` with a Linux-only system executor. Formal cycle 5 rejected
 exact candidate `0c04859`, tree `b0359fb`, with a deduplicated `0/1/0/1`
 union: a high self-target notifier cycle and a low stale-status defect. Cycle-6
@@ -16,8 +16,11 @@ maintained documentation compose through exact behavior head `9810ee9`, tree
 `cf7390e`, whose complete exact-1.94.1 replacement gate is green. The immutable
 candidate was `3f07389`, tree `f048cdc`. Formal cycle 7 is **GREEN**:
 correctness/API, lifecycle/platform, and performance/resources each reported
-`0/0/0/0`. Remote delivery remains pending. Scope and worktree cleanup are
-recorded in
+`0/0/0/0`. Review-exempt delivered record `ddd6a89`, tree `4a227b3`, passed
+feature CI/Benchmark runs `33040148977`/`33040148920` and main CI/Benchmark
+runs `33040487021`/`33040487046`; each benchmark run retained exactly two
+unexpired exact-SHA artifacts. The delivered count is 34. Scope and worktree
+cleanup are recorded in
 [`m03-terminal-review-01.md`](m03-terminal-review-01.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED** from exact delivered

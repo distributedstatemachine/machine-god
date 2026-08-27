@@ -6,7 +6,7 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Current bounded Milestone 03 slice 34, native `terminal`, is **IN PROGRESS**
+Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED**
 from exact delivered base `52b5885f275c9f6f4f16b378f71780c29f2ebab2`.
 The frozen first slice implements only bounded foreground `exec`: fixed
 `/bin/sh -c`, descriptor-retained workspace cwd, exact environment-snapshot
@@ -35,8 +35,11 @@ to own capacity. Exact behavior head `9810ee9`, tree `cf7390e`, passes the
 complete exact-1.94.1 replacement gate.
 Formal cycle 7 is **GREEN** on exact candidate `3f07389`, tree `f048cdc`:
 correctness/API, lifecycle/platform, and performance/resources each reported
-`0/0/0/0`. Remote delivery remains pending; no product-performance or fx-
-equivalence claim is made. See the
+`0/0/0/0`. Review-exempt delivered record `ddd6a89`, tree `4a227b3`, passed
+feature CI/Benchmark runs `33040148977`/`33040148920` and main CI/Benchmark
+runs `33040487021`/`33040487046`; every run succeeded for that exact SHA and
+both benchmark runs retained two unexpired exact-SHA artifacts. The delivered
+count is 34. No product-performance or fx-equivalence claim is made. See the
 [`terminal` contract](docs/terminal.md) and
 [`live review ledger`](docs/reviews/m03-terminal-review-01.md).
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Bounded Milestone 03 slice 34, native `terminal`, is **IN PROGRESS** from exact
+Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
 delivered base `52b5885`. Provider-neutral core gains only the exact
 `ProcessEnvironment` identity carried by `Capability::Process`; native owns the
 retained-root cwd walk, environment snapshot, fixed `/bin/sh`, process group,

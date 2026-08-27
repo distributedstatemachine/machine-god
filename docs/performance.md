@@ -4,7 +4,7 @@ Performance comparisons must build both projects in release modes on identical
 hardware, retain raw samples, warm up before at least 30 measured runs, and report
 median, p95, confidence intervals, RSS, and binary sections.
 
-Bounded slice 34, native `terminal`, is **IN PROGRESS**, unmeasured, and
+Bounded slice 34, native `terminal`, is **DELIVERED**, unmeasured, and
 claim-ineligible. Its 32 KiB command, 4,096-byte/256-component cwd, bounded
 256 KiB environment snapshot, 64 KiB retained raw output, 1 MiB produced-output
 cutoff, 48 KiB serialized output, 120-second default deadline, default active

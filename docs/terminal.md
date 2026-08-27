@@ -1,6 +1,6 @@
 # Native `terminal` foreground-exec contract
 
-Status: **IN PROGRESS** as bounded Milestone 03 slice 34. The contract is
+Status: **DELIVERED** as bounded Milestone 03 slice 34. The contract is
 frozen from exact delivered base
 `52b5885f275c9f6f4f16b378f71780c29f2ebab2` and pinned fx observation
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
@@ -9,8 +9,9 @@ exact-1.94.1 replacement gate. Formal cycle 6 rejected exact candidate
 `28292b7`, tree `487f160`, because pending outer-future drop can leave stale
 Waker delivery open. Exact cycle-7 behavior head `9810ee9`, tree `cf7390e`,
 passes the complete exact-1.94.1 replacement gate. Formal cycle 7 is green on
-exact candidate `3f07389`, tree `f048cdc`, with a `0/0/0/0` union; remote
-delivery remains pending.
+exact candidate `3f07389`, tree `f048cdc`, with a `0/0/0/0` union. Review-
+exempt delivered record `ddd6a89`, tree `4a227b3`, passed feature and main
+CI/Benchmark gates; the delivered count is 34.
 
 ## Boundary
 
