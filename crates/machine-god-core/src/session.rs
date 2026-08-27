@@ -1,9 +1,10 @@
 use crate::{
     BoxFuture, CancellationToken, Capability, ContentBlock, EngineError, EngineEvent,
     InferenceOptions, Message, ModelEvent, ModelEventStream, ModelRequest, PermissionDecision,
-    PermissionRequest, PermissionRequestId, PermissionRisk, PreparedToolCall, Role, SessionId,
-    SessionIncarnationId, SessionStoreError, SessionStoreErrorKind, StopReason, TokenUsage,
-    ToolCall, ToolContext, ToolOutput, TurnEvent, TurnId,
+    PermissionRequest, PermissionRequestId, PermissionRisk, PreparedToolAuthorization,
+    PreparedToolCall, Role, SessionId, SessionIncarnationId, SessionStoreError,
+    SessionStoreErrorKind, StopReason, TokenUsage, ToolCall, ToolContext, ToolOutput, TurnEvent,
+    TurnId,
 };
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -1243,54 +1244,65 @@ async fn run_turn_inner(
                 Err(error) => (tool_error_output(&error), false),
                 Ok(prepared) => {
                     validate_prepared_tool_call(&prepared, limits)?;
-                    let ordinal = tool_calls
-                        .checked_add(round_index)
-                        .and_then(|index| index.checked_add(1))
-                        .ok_or_else(|| {
-                            TurnFailure::limit("tool_call_limit", "tool call count overflowed")
-                        })?;
-                    let permission_id = permission_request_id(
-                        &session_id,
-                        &session_incarnation_id,
-                        &turn_id,
-                        ordinal,
-                    )?;
-                    let request = PermissionRequest {
-                        id: permission_id.clone(),
-                        session_id: session_id.clone(),
-                        session_incarnation_id: session_incarnation_id.clone(),
-                        turn_id: turn_id.clone(),
-                        capability: prepared.capability().clone(),
-                        risk: PermissionRisk::Critical,
-                        reason: "model requested this registered tool".to_owned(),
+                    let denied = match prepared.authorization() {
+                        PreparedToolAuthorization::NoAuthorityRequired => false,
+                        PreparedToolAuthorization::PermissionRequired(capability) => {
+                            let ordinal = tool_calls
+                                .checked_add(round_index)
+                                .and_then(|index| index.checked_add(1))
+                                .ok_or_else(|| {
+                                    TurnFailure::limit(
+                                        "tool_call_limit",
+                                        "tool call count overflowed",
+                                    )
+                                })?;
+                            let permission_id = permission_request_id(
+                                &session_id,
+                                &session_incarnation_id,
+                                &turn_id,
+                                ordinal,
+                            )?;
+                            let request = PermissionRequest {
+                                id: permission_id.clone(),
+                                session_id: session_id.clone(),
+                                session_incarnation_id: session_incarnation_id.clone(),
+                                turn_id: turn_id.clone(),
+                                capability: capability.clone(),
+                                risk: PermissionRisk::Critical,
+                                reason: "model requested this registered tool".to_owned(),
+                            };
+                            emitter
+                                .emit(TurnEvent::PermissionRequested {
+                                    request: request.clone(),
+                                })
+                                .await;
+                            let authorization = engine.permission_handler.authorize(request);
+                            let decision = await_cancellable(authorization, &cancellation)
+                                .await?
+                                .map_err(|error| TurnFailure::permission(&error))?;
+                            let decision = match decision {
+                                PermissionDecision::Allow { scope } => {
+                                    PermissionDecision::Allow { scope }
+                                }
+                                PermissionDecision::Deny { reason } => PermissionDecision::Deny {
+                                    reason: bounded_text(
+                                        &reason,
+                                        limits.max_permission_denial_reason_bytes.get(),
+                                    ),
+                                },
+                            };
+                            emitter
+                                .emit(TurnEvent::PermissionResolved {
+                                    request_id: permission_id,
+                                    decision: decision.clone(),
+                                })
+                                .await;
+                            matches!(decision, PermissionDecision::Deny { .. })
+                        }
                     };
-                    emitter
-                        .emit(TurnEvent::PermissionRequested {
-                            request: request.clone(),
-                        })
-                        .await;
-                    let authorization = engine.permission_handler.authorize(request);
-                    let decision = await_cancellable(authorization, &cancellation)
-                        .await?
-                        .map_err(|error| TurnFailure::permission(&error))?;
-                    let decision = match decision {
-                        PermissionDecision::Allow { scope } => PermissionDecision::Allow { scope },
-                        PermissionDecision::Deny { reason } => PermissionDecision::Deny {
-                            reason: bounded_text(
-                                &reason,
-                                limits.max_permission_denial_reason_bytes.get(),
-                            ),
-                        },
-                    };
-                    emitter
-                        .emit(TurnEvent::PermissionResolved {
-                            request_id: permission_id,
-                            decision: decision.clone(),
-                        })
-                        .await;
 
-                    match decision {
-                        PermissionDecision::Deny { .. } => (
+                    if denied {
+                        (
                             ToolOutput {
                                 content: json!({
                                     "code": "permission_denied",
@@ -1299,28 +1311,27 @@ async fn run_turn_inner(
                                 is_error: true,
                             },
                             false,
-                        ),
-                        PermissionDecision::Allow { .. } => {
-                            emitter
-                                .emit(TurnEvent::ToolStarted { call: call.clone() })
-                                .await;
-                            let execution = tool.execute(
-                                ToolContext {
-                                    session_id: session_id.clone(),
-                                    session_incarnation_id: session_incarnation_id.clone(),
-                                    turn_id: turn_id.clone(),
-                                    call_id: call_id.clone(),
-                                },
-                                prepared.into_arguments(),
-                                cancellation.clone(),
-                            );
-                            let result = await_tool_output(execution, &cancellation).await?;
-                            let output = match result {
-                                Ok(output) => output,
-                                Err(error) => tool_error_output(&error),
-                            };
-                            (output, true)
-                        }
+                        )
+                    } else {
+                        emitter
+                            .emit(TurnEvent::ToolStarted { call: call.clone() })
+                            .await;
+                        let execution = tool.execute(
+                            ToolContext {
+                                session_id: session_id.clone(),
+                                session_incarnation_id: session_incarnation_id.clone(),
+                                turn_id: turn_id.clone(),
+                                call_id: call_id.clone(),
+                            },
+                            prepared.into_arguments(),
+                            cancellation.clone(),
+                        );
+                        let result = await_tool_output(execution, &cancellation).await?;
+                        let output = match result {
+                            Ok(output) => output,
+                            Err(error) => tool_error_output(&error),
+                        };
+                        (output, true)
                     }
                 }
             };
@@ -1666,27 +1677,29 @@ fn validate_prepared_tool_call(
         ));
     }
 
-    if let Some(value) = capability_json_value(prepared.capability()) {
-        validate_json_value(value, limits)?;
-    }
-    // Saturation keeps the derived bound representable even for a
-    // host-supplied `usize::MAX` argument limit.
-    let capability_limit = limits
-        .max_tool_argument_bytes
-        .get()
-        .saturating_add(PREPARED_CAPABILITY_ENVELOPE_BYTES);
-    let capability_bytes = serialized_json_size_bounded(prepared.capability(), capability_limit)
-        .map_err(|error| {
-            TurnFailure::protocol(
-                "tool_argument_serialization",
-                format!("prepared tool capability could not be serialized: {error}"),
-            )
-        })?;
-    if capability_bytes.is_none() {
-        return Err(TurnFailure::limit(
-            "tool_argument_size_limit",
-            "prepared tool capability exceeded the configured serialized size limit",
-        ));
+    if let PreparedToolAuthorization::PermissionRequired(capability) = prepared.authorization() {
+        if let Some(value) = capability_json_value(capability) {
+            validate_json_value(value, limits)?;
+        }
+        // Saturation keeps the derived bound representable even for a
+        // host-supplied `usize::MAX` argument limit.
+        let capability_limit = limits
+            .max_tool_argument_bytes
+            .get()
+            .saturating_add(PREPARED_CAPABILITY_ENVELOPE_BYTES);
+        let capability_bytes =
+            serialized_json_size_bounded(capability, capability_limit).map_err(|error| {
+                TurnFailure::protocol(
+                    "tool_argument_serialization",
+                    format!("prepared tool capability could not be serialized: {error}"),
+                )
+            })?;
+        if capability_bytes.is_none() {
+            return Err(TurnFailure::limit(
+                "tool_argument_size_limit",
+                "prepared tool capability exceeded the configured serialized size limit",
+            ));
+        }
     }
     Ok(())
 }

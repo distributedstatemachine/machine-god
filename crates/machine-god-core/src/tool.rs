@@ -33,12 +33,29 @@ pub struct ToolContext {
 
 /// Effect-free result of preparing one model-requested tool call.
 ///
-/// The owned capability is the exact policy input for this invocation. The
-/// owned arguments are passed unchanged to [`Tool::execute`] only after policy
-/// allows that capability.
+/// The authorization disposition is an explicit assertion by trusted tool
+/// code. The owned arguments are passed unchanged to [`Tool::execute`] after
+/// any required authorization succeeds.
 pub struct PreparedToolCall {
-    capability: Capability,
+    authorization: PreparedToolAuthorization,
     arguments: Value,
+}
+
+/// Authorization disposition selected by trusted [`Tool::prepare`] code.
+///
+/// Core never infers this disposition from model-controlled arguments. Tools
+/// retain the permission-required behavior unless they explicitly construct
+/// [`PreparedToolAuthorization::NoAuthorityRequired`] through
+/// [`PreparedToolCall::without_authority`].
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum PreparedToolAuthorization {
+    /// Present the exact capability to the host permission policy before
+    /// execution.
+    PermissionRequired(Capability),
+    /// Execute without invoking permission policy because this call requires
+    /// no policy-governed authority.
+    NoAuthorityRequired,
 }
 
 impl PreparedToolCall {
@@ -54,15 +71,46 @@ impl PreparedToolCall {
     #[must_use]
     pub fn new(capability: Capability, arguments: Value) -> Self {
         Self {
-            capability,
+            authorization: PreparedToolAuthorization::PermissionRequired(capability),
             arguments,
         }
     }
 
+    /// Creates a prepared call that requires no permission or authority.
+    ///
+    /// This is a trusted-host assertion, not an optimization. A tool must use
+    /// this constructor only when executing the prepared arguments requires no
+    /// policy-governed authority. Core skips permission request/resolution
+    /// events and does not invoke the permission handler for this call.
+    #[must_use]
+    pub fn without_authority(arguments: Value) -> Self {
+        Self {
+            authorization: PreparedToolAuthorization::NoAuthorityRequired,
+            arguments,
+        }
+    }
+
+    /// Returns the explicit authorization disposition for this call.
+    #[must_use]
+    pub fn authorization(&self) -> &PreparedToolAuthorization {
+        &self.authorization
+    }
+
     /// Returns the exact capability that will be presented to policy.
+    ///
+    /// # Panics
+    ///
+    /// Panics when this call was explicitly prepared with
+    /// [`PreparedToolCall::without_authority`]. Inspect
+    /// [`PreparedToolCall::authorization`] when handling either disposition.
     #[must_use]
     pub fn capability(&self) -> &Capability {
-        &self.capability
+        match &self.authorization {
+            PreparedToolAuthorization::PermissionRequired(capability) => capability,
+            PreparedToolAuthorization::NoAuthorityRequired => {
+                panic!("a no-authority prepared call has no permission capability")
+            }
+        }
     }
 
     /// Returns the exact arguments that will be passed to execution.
@@ -86,19 +134,21 @@ impl fmt::Debug for PreparedToolCall {
 
 impl Drop for PreparedToolCall {
     fn drop(&mut self) {
-        match &mut self.capability {
-            Capability::Tool { arguments, .. } => {
-                crate::session::drop_json_value_iterative(std::mem::take(arguments));
+        if let PreparedToolAuthorization::PermissionRequired(capability) = &mut self.authorization {
+            match capability {
+                Capability::Tool { arguments, .. } => {
+                    crate::session::drop_json_value_iterative(std::mem::take(arguments));
+                }
+                Capability::Custom { details, .. } => {
+                    crate::session::drop_json_value_iterative(std::mem::take(details));
+                }
+                Capability::Filesystem { .. }
+                | Capability::FilesystemRename { .. }
+                | Capability::FilesystemCopy { .. }
+                | Capability::OpenFile { .. }
+                | Capability::Process { .. }
+                | Capability::Network { .. } => {}
             }
-            Capability::Custom { details, .. } => {
-                crate::session::drop_json_value_iterative(std::mem::take(details));
-            }
-            Capability::Filesystem { .. }
-            | Capability::FilesystemRename { .. }
-            | Capability::FilesystemCopy { .. }
-            | Capability::OpenFile { .. }
-            | Capability::Process { .. }
-            | Capability::Network { .. } => {}
         }
         crate::session::drop_json_value_iterative(std::mem::take(&mut self.arguments));
     }

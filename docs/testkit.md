@@ -88,7 +88,11 @@ assert!(matches!(
   tool wakes on cancellation and returns a structured cancelled error.
 - `ScriptedPreparedTool` independently scripts preparation and execution.
   `ToolPrepareStep::Prepared` supplies the normalized capability and exact
-  execution arguments, while `ToolPrepareStep::Error` fails before execution.
+  execution arguments, `ToolPrepareStep::NoAuthority` explicitly supplies exact
+  arguments for a trusted no-authority execution, and `ToolPrepareStep::Error`
+  fails before execution. The no-authority step exercises the real engine path:
+  permission calls and permission events are absent while ordinary tool events,
+  cancellation, bounds, persistence, and recovery remain active.
   Each `RecordedToolPreparation` retains the complete provider-requested
   `ToolCall`; execution recording retains the context, post-preflight
   arguments, and cancellation token. Preparation and execution have separate

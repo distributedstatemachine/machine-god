@@ -111,6 +111,21 @@ process arguments, and network destinations before presenting a
 only bounded, nonblocking work. An allowed execution receives the exact
 arguments returned by preflight.
 
+Preparation has an explicit provider-neutral authorization disposition.
+[`PreparedToolCall::new`](crate::PreparedToolCall::new), the default
+[`Tool::prepare`](crate::Tool::prepare), and every existing tool require policy
+authorization for their exact capability. A narrowly trusted tool may instead
+use
+[`PreparedToolCall::without_authority`](crate::PreparedToolCall::without_authority)
+only when its prepared execution requires no policy-governed authority. That
+explicit form skips `PermissionRequested`, `PermissionResolved`, permission-ID
+construction, and [`PermissionHandler::authorize`](crate::PermissionHandler::authorize);
+it does not skip prepared-argument validation, cancellation, `ToolStarted` and
+`ToolFinished`, bounded output validation, durable result replacement, or the
+next provider round. Core never derives the disposition from model-controlled
+arguments. Hosts must treat the no-authority constructor as a trust-boundary
+assertion rather than a permission optimization.
+
 [`EngineLimits`](crate::EngineLimits) supplies nonzero resource bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
 assistant text and observer-visible reasoning, a JSON container depth of 64,
@@ -302,7 +317,8 @@ created -> started -> provider round -> final assistant commit -> completed
                          |
                          +-> tool-call stop -> atomic assistant +
                                   unknown-result placeholders commit
-                                  -> prepare -> validate -> permission -> tool
+                                  -> prepare -> validate -> required permission?
+                                  -> tool
                                   -> in-place result replacement -----+
                          ^                                           |
                          +------------- next provider round <--------+

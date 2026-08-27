@@ -32,6 +32,11 @@ pub enum ToolPrepareStep {
         capability: Capability,
         arguments: Value,
     },
+    /// Prepare execution without permission policy or policy-governed
+    /// authority.
+    NoAuthority {
+        arguments: Value,
+    },
     Error(ToolError),
 }
 
@@ -321,6 +326,9 @@ impl Tool for ScriptedPreparedTool {
                 capability,
                 arguments,
             } => Ok(PreparedToolCall::new(capability, arguments)),
+            ToolPrepareStep::NoAuthority { arguments } => {
+                Ok(PreparedToolCall::without_authority(arguments))
+            }
             ToolPrepareStep::Error(error) => Err(error),
         }
     }

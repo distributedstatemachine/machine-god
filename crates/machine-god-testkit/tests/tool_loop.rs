@@ -73,6 +73,10 @@ fn prepared(capability: Capability, arguments: Value) -> ToolPrepareStep {
     }
 }
 
+fn no_authority(arguments: Value) -> ToolPrepareStep {
+    ToolPrepareStep::NoAuthority { arguments }
+}
+
 fn unknown_result_size() -> usize {
     serde_json::to_vec(&ToolOutput {
         content: json!({
@@ -518,6 +522,80 @@ fn prepared_capability_reaches_policy_and_only_allowed_arguments_reach_execution
 }
 
 #[test]
+fn explicit_no_authority_preparation_skips_policy_but_keeps_tool_lifecycle_and_durability() {
+    let requested = call("trusted-call", "trusted", json!({"raw": true}));
+    let normalized = json!({"questions": [{"question": "Continue?"}]});
+    let provider = ScriptedModelProvider::new(
+        "no-authority",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: requested.clone(),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let tool = ScriptedPreparedTool::new(
+        spec("trusted"),
+        [no_authority(normalized.clone())],
+        [ToolStep::Output(ToolOutput::success(json!({
+            "answers": ["yes"]
+        })))],
+    );
+    let store = InMemorySessionStore::new();
+    let permissions = ScriptedPermissionHandler::new([]);
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let id = SessionId::new("no-authority").unwrap();
+
+    let output = collect(&engine.create_test_session(id.clone()));
+
+    assert!(matches!(
+        output.last().unwrap().payload,
+        TurnEvent::Completed { .. }
+    ));
+    assert!(permissions.requests().is_empty());
+    assert!(output.iter().all(|event| !matches!(
+        event.payload,
+        TurnEvent::PermissionRequested { .. } | TurnEvent::PermissionResolved { .. }
+    )));
+    assert_eq!(
+        output
+            .iter()
+            .filter(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        output
+            .iter()
+            .filter(|event| matches!(event.payload, TurnEvent::ToolFinished { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(tool.preparations()[0].call, requested);
+    assert_eq!(tool.invocations()[0].arguments, normalized);
+    assert_eq!(provider.requests().len(), 2);
+    let durable = store.record(&id).unwrap();
+    assert_eq!(durable.messages.len(), 4);
+    let ContentBlock::ToolResult { output, .. } = &durable.messages[2].content[0] else {
+        panic!("expected durable no-authority tool result")
+    };
+    assert_eq!(output.content, json!({"answers": ["yes"]}));
+}
+
+#[test]
 fn preparation_error_recovers_with_a_durable_generic_result_without_effects() {
     let requested = call("invalid", "prepared", json!({"raw": true}));
     let provider = ScriptedModelProvider::new(
@@ -801,6 +879,42 @@ fn oversized_prepared_values_fail_before_policy_or_execution() {
         },
         json!({}),
     );
+
+    let provider = ScriptedModelProvider::new(
+        "oversized-no-authority-arguments",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("oversized", "trusted", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let tool = ScriptedPreparedTool::new(
+        spec("trusted"),
+        [no_authority(Value::String("x".repeat(512)))],
+        [ToolStep::Output(ToolOutput::success("must not execute"))],
+    );
+    let permissions = ScriptedPermissionHandler::new([]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .limits(with_limit(EngineLimits::default(), "arguments", 128))
+        .build()
+        .unwrap();
+
+    let output = collect(
+        &engine.create_test_session(SessionId::new("oversized-no-authority-arguments").unwrap()),
+    );
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "tool_argument_size_limit"
+    ));
+    assert!(permissions.requests().is_empty());
+    assert!(tool.invocations().is_empty());
 }
 
 fn protocol_failure(
@@ -1113,6 +1227,51 @@ fn oversized_executed_result_leaves_a_durable_unknown_result_marker() {
     };
     assert!(output.is_error);
     assert_eq!(output.content["code"], "tool_result_unknown");
+}
+
+#[test]
+fn no_authority_execution_keeps_result_bounds_and_the_durable_unknown_marker() {
+    let provider = ScriptedModelProvider::new(
+        "no-authority-large-result",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("large-result", "trusted", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let tool = ScriptedPreparedTool::new(
+        spec("trusted"),
+        [no_authority(json!({"normalized": true}))],
+        [ToolStep::Output(ToolOutput::success("x".repeat(4_096)))],
+    );
+    let store = InMemorySessionStore::new();
+    let permissions = ScriptedPermissionHandler::new([]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(permissions.clone())
+        .tool(tool.clone())
+        .limits(with_limit(
+            EngineLimits::default(),
+            "result",
+            unknown_result_size(),
+        ))
+        .build()
+        .unwrap();
+    let id = SessionId::new("no-authority-large-result").unwrap();
+
+    let output = collect(&engine.create_test_session(id.clone()));
+
+    assert!(matches!(
+        &output.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "tool_result_size_limit"
+    ));
+    assert!(permissions.requests().is_empty());
+    assert_eq!(tool.invocations().len(), 1);
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "large-result");
 }
 
 #[test]
@@ -1431,6 +1590,47 @@ fn cancellation_interrupts_pending_permission_tool_store_and_new_provider_phases
             ..
         }
     ));
+
+    // Explicit no-authority tool execution remains cancellable while policy is
+    // absent.
+    let provider = ScriptedModelProvider::new(
+        "cancel-no-authority-tool",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("call", "trusted", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let permissions = ScriptedPermissionHandler::new([]);
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(ScriptedPreparedTool::new(
+            spec("trusted"),
+            [no_authority(json!({"normalized": true}))],
+            [ToolStep::Pending],
+        ))
+        .build()
+        .unwrap();
+    let session = engine.create_test_session(SessionId::new("cancel-no-authority-tool").unwrap());
+    let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
+    for _ in 0..4 {
+        let _ = next(&mut turn);
+    }
+    poll_pending(&mut turn);
+    assert!(turn.handle().cancel());
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(permissions.requests().is_empty());
 
     // Assistant transcript save pending before any permission request.
     let provider = ScriptedModelProvider::new(

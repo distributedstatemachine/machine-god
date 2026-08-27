@@ -4,11 +4,11 @@ use machine_god_core::{
     BoxFuture, BuildError, CancellationToken, Capability, ContentBlock, Engine, EngineBuilder,
     EngineError, EngineEvent, EngineLimits, EventSink, EventSinkError, FilesystemAccess,
     ModelEvent, ModelEventStream, ModelProvider, ModelRequest, NetworkTarget, PermissionDecision,
-    PermissionError, PermissionGrantScope, PermissionHandler, PermissionRequest, PreparedToolCall,
-    ProviderError, ProviderErrorKind, Role, Session, SessionId, SessionIncarnationId,
-    SessionRecord, SessionRevision, SessionStore, SessionStoreError, StopReason, TokenUsage, Tool,
-    ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
-    Turn, TurnEvent, TurnHandle,
+    PermissionError, PermissionGrantScope, PermissionHandler, PermissionRequest,
+    PreparedToolAuthorization, PreparedToolCall, ProviderError, ProviderErrorKind, Role, Session,
+    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore,
+    SessionStoreError, StopReason, TokenUsage, Tool, ToolCall, ToolCallId, ToolContext, ToolError,
+    ToolErrorKind, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent, TurnHandle,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
@@ -678,6 +678,10 @@ fn default_tool_preflight_preserves_policy_and_execution_inputs() {
     let prepared = tool.prepare(call.clone()).unwrap();
 
     assert_eq!(prepared.arguments(), &call.arguments);
+    assert!(matches!(
+        prepared.authorization(),
+        PreparedToolAuthorization::PermissionRequired(_)
+    ));
     assert_eq!(
         prepared.capability(),
         &Capability::Tool {
@@ -685,6 +689,18 @@ fn default_tool_preflight_preserves_policy_and_execution_inputs() {
             call_id: call.id,
             arguments: call.arguments,
         }
+    );
+}
+
+#[test]
+fn no_authority_preparation_is_explicit_and_retains_exact_arguments() {
+    let arguments = json!({"questions": [{"question": "Continue?"}]});
+    let prepared = PreparedToolCall::without_authority(arguments.clone());
+
+    assert_eq!(prepared.arguments(), &arguments);
+    assert_eq!(
+        prepared.authorization(),
+        &PreparedToolAuthorization::NoAuthorityRequired
     );
 }
 
@@ -872,6 +888,8 @@ fn prepared_tool_call_reclaims_deep_json_iteratively() {
         deep_value(20_000),
     );
     drop(prepared);
+
+    drop(PreparedToolCall::without_authority(deep_value(20_000)));
 }
 
 #[test]
