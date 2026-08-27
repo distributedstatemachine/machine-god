@@ -144,13 +144,22 @@ validated bounds, and `with_executor` supplies a trusted executor plus those
 bounds. Accepted deadlines are 1 millisecond through 600 seconds.
 
 One successful admission creates exactly one execution activity and consumes
-exactly one active slot. That slot is shared, never incremented, by the outer
-call, its owned request and executor, every clone and callback in the
-TerminalTool-supplied Waker family, and the native worker and deadline threads
-through their actual returns. Retaining any request, executor, or supplied
-Waker keeps the same activity alive; later calls fail fast as busy while the
-configured capacity remains occupied. The slot is released exactly once, when
-the last activity owner returns or is dropped.
+exactly one active slot. One activity-backed coalescing notifier is shared,
+never incremented, by the outer call, its owned request and executor, every
+terminal-owned Waker registration, and the native worker and deadline threads
+through their actual returns. The notifier supplies the outer cancellation
+future, injected or system executor polling, and deadline notification. Every
+retained notifier or Waker clone owns the same activity, but at most one
+underlying caller-Waker callback is in flight for the admitted execution;
+concurrent notices coalesce. No notifier lock is held while an arbitrary Waker
+is cloned, dropped, or invoked. Retaining any request, executor, notifier, or
+supplied Waker keeps the same activity alive, so later calls fail fast as busy
+while the configured capacity remains occupied.
+
+The outer call retains that activity through bounded output rendering, the
+final cancellation check, and public function return. The slot is released
+exactly once, only after the last outer, request, executor, notifier, Waker, or
+native-thread activity owner returns or is dropped.
 
 The timeout deadline begins on first poll before capacity admission or cwd
 validation. After admission, one tool-owned condition-variable guardian wakes
@@ -161,11 +170,12 @@ bounded guardian fails before executor construction or process spawn.
 Cancellation is rechecked after executor and guardian destruction and again
 immediately before a `ToolOutput` is returned.
 
-Before polling either the built-in or a public injected executor, TerminalTool
-wraps the task Waker in an opaque Waker that owns the same execution activity
-and supplies the resulting context to the executor. A public executor therefore
-needs and receives no access to the private activity counter. Every retained
-clone and in-flight callback keeps the originating slot until it returns.
+Before registering outer cancellation, polling either the built-in or a public
+injected executor, or arming deadline notification, TerminalTool supplies an
+opaque Waker from the shared activity-backed notifier. A public executor
+therefore needs and receives no access to the private activity counter. Every
+retained clone and the single coalesced callback in flight keeps the originating
+slot until it returns.
 
 This timeout is not an unconditional wall-clock ceiling. Safe Rust cannot
 preempt a host thread blocked inside a filesystem lookup, `Command::spawn`, a
@@ -193,12 +203,15 @@ Across both streams, execution:
 
 Cancellation is checked first. Output-limit observation and deadline expiry
 then use one linearized final-cause close. If a reader's overflow observation
-linearizes before the timeout close, output limit wins and cleanup completes a
-valid `output_limit` result. If the timeout close linearizes first, timeout wins
-and any overflow observed afterward cannot change that closed cause. Final
-publication never exposes a contradictory status/counter pair: a timed-out
-result does not publish later cleanup counters as an output-limit outcome, and
-a validated executor outcome is not rewritten inconsistently.
+linearizes first, its output-limit claim closes timeout competition. Successful
+cleanup then publishes a valid `output_limit` outcome. The claim does not
+fabricate that outcome when cleanup fails: the specific fixed typed wait, pipe,
+or other executor cleanup error is preserved regardless of whether the deadline
+passes before the error reaches the outer tool. If the timeout close linearizes
+first, timeout wins and any overflow observed afterward cannot change that
+closed cause. Final publication never exposes a contradictory status/counter
+pair, rewrites a validated executor outcome inconsistently, or converts a
+specific cleanup failure into a deadline-dependent generic invariant.
 
 Invalid UTF-8 is replaced lossily in presentation and identified by per-stream
 `*_lossy` flags; the output makes no byte-round-trip claim. Head/tail omission
@@ -245,7 +258,9 @@ waiting, after executor and guardian destruction, and immediately before final
 fixed cancelled tool error without partial command output. The final spawn
 attempt and abort transition share one state gate: abort recorded first
 guarantees zero child; successful spawn recorded first is the command-effect
-commit point.
+commit point. The outer cancellation registration uses the same coalescing
+activity notifier as executor and deadline notification, so an inline or
+blocking cancellation callback cannot outlive activity accounting.
 
 After commit, cancellation, timeout, output overflow, or future drop sends
 `SIGTERM` to the owned process group, waits for a bounded grace, sends `SIGKILL`
@@ -275,18 +290,25 @@ Reader shutdown uses deterministic fixed read-count and chunk-size bounds, so
 an escaped descendant that retains and continuously writes a pipe cannot make
 join unbounded. Owned descriptors, pipes, readers, and the direct child are
 cleaned before a result is published. The one admitted execution activity is
-shared by the outer call, its owned request and executor, every
-TerminalTool-supplied Waker clone and callback, and each native worker or
-deadline thread. It is never incremented for a publisher or callback. A native
-thread retains that activity through its actual return even when it observed no
-Waker. A retained request or Waker and an arbitrary inline or blocking callback
-likewise retain it through callback return. Joining such a thread from the
-consuming path could self-join or cross-thread deadlock, so its handle may be
-released only while the same activity continues to own the slot. OS threads and
-stacks are consequently bounded by configured capacity; further calls fail
-fast as busy rather than accumulating work outside admission accounting. This
-ownership rule makes no wall-clock bound for executor destruction, native
-thread return, or callback completion.
+shared by the outer call, its owned request and executor, the single coalescing
+notifier behind every terminal-owned Waker registration, and each native worker
+or deadline thread. It is never incremented for a publisher or callback. A
+native thread retains that activity through its actual return even when it
+observed no Waker. A retained request, notifier, or Waker likewise retains the
+slot. Concurrent executor, cancellation, and deadline notices may race, but at
+most one underlying caller-Waker callback is in flight; the rest coalesce
+without holding a notifier lock across arbitrary Waker clone, drop, or wake
+behavior. An inline or blocking callback retains the activity through callback
+return.
+
+Joining a native notification thread from the consuming path could self-join or
+cross-thread deadlock, so its handle may be released only while the same
+activity continues to own the slot. Notification tails, OS threads, and stacks
+are consequently bounded by configured capacity; further calls fail fast as
+busy rather than accumulating work outside admission accounting. This ownership
+rule makes no wall-clock bound for executor destruction, native thread return,
+or callback completion. The outer activity remains retained through bounded
+rendering, the final cancellation check, and public return.
 
 ## Acceptance evidence
 
@@ -297,15 +319,20 @@ shell quoting, newlines, fixed program/argv, null stdin, and exact environment;
 separate streams, invalid UTF-8, pipe pressure, output and serialized caps;
 exit codes, signals, timeout, authoritative output overflow and bounded
 overshoot, cancellation-first linearized output/deadline closure, each order of
-that close, and validated noncontradictory outcome arbitration;
-spawn/wait failure; cancellation before and after spawn plus the final
-prepublication check; drop and direct-child reaping; process groups,
+that close, validated noncontradictory outcome arbitration, and stable specific
+wait/pipe/other cleanup errors after an output-limit claim on either side of the
+deadline; spawn/wait failure; cancellation before and after spawn plus blocked
+outer-cancellation callback saturation/recovery and the final prepublication
+check; drop and direct-child reaping; process groups,
 TERM-ignore/KILL, normal-exit latency, ambiguous cleanup, and leader-identity
-retention; concurrency limits; one non-incrementing shared activity across the
-outer call, owned request/executor, built-in and injected wrapped-Waker families,
-callbacks, and native threads; retained-request and retained-Waker saturation;
-no-Waker thread return; exact-once active-slot release; exact-tilde and tilde-
-prefixed cwd literals; redaction; public-
+retention; concurrency limits; one non-incrementing shared activity and notifier
+across the outer call, owned request/executor, cancellation, deadline, built-in
+and injected Waker registrations, callbacks, and native threads; retained-
+request and retained-Waker saturation; concurrent multi-family notice
+coalescing with at most one underlying callback and no lock held across arbitrary
+Waker clone/drop/wake; no-Waker thread return; activity retention through
+bounded rendering, final cancellation, and public return; exact-once active-
+slot release; exact-tilde and tilde-prefixed cwd literals; redaction; public-
 construction and private-host unsupported behavior; engine event/output
 persistence; and the fifteen-tool alphabetical reference catalog.
 The required exact Rust checks, release-mode focused tests, fresh release-binary
