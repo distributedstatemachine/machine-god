@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10
-REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -182,12 +182,21 @@ and the distinct mediums produce a `0/0/2/0` union. A queue-only executor lets
 every self-waking `Pending` poll start a fresh notify counter at one, bypassing
 256 indefinitely while retaining capacity. Separately, discarded or
 nonselected opaque cleanup-panic payloads can destruct during unwind, replace
-the prompt-poll primary, or double-panic abort. Cycle 11 must retain one finite
-budget for the prompt lifetime and explicitly forget suppressed payloads, with
-queue-bound/cancellation and primary-marker/no-abort/lane/capacity evidence.
-The current status is
-**CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**; no cycle-11 source,
-evidence, gate, review, integration, or delivery is claimed.
+the prompt-poll primary, or double-panic abort. Cycle-11 rejection docs
+`d839d18`/`f8342db`, evidence `3692d19`/`adf2b93`, and source `83dd836`
+compose at exact behavior head `b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`,
+tree `46721503429685e5feb8e4ac33f74e865acf0c2a`; disposable composition
+`49b1186`/`40d474d` passes direct 46 and all focused portability checks. The
+state-owned lifetime budget accounts before each callback, reaches sticky
+exhaustion before terminal callback 256, gives cancellation precedence, and
+never refunds panic. Central cleanup selection applies the documented prompt/
+activity/registration/notifier/ambient precedence and forgets every suppressed
+opaque payload. Four regressions plus a subprocess child correct base
+callback-256 `Pending`, callback-257 cancellation, primary replacement, and
+`SIGABRT`. The complete pinned/extended/release-smoke gate is green. The current
+status is
+**CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review,
+integration, delivery, benchmark, or fx-equivalence result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**. Formal cycle
-10 rejected its exact immutable candidate with two distinct correctness/
-lifecycle findings. The historical cycle-10 source, deterministic evidence,
-and complete local gate remain recorded below. No cycle-11 source, evidence,
-gate, review, workflow, integration, or delivery exists yet.
+Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 10
+rejected its exact immutable candidate with two distinct correctness/lifecycle
+findings. Cycle-11 source, deterministic evidence, and the complete local gate
+now compose at the exact behavior head below. Three fresh formal reviews,
+remote workflows, integration, and delivery remain pending.
 
 ## Frozen lineage
 
@@ -153,6 +153,19 @@ gate, review, workflow, integration, or delivery exists yet.
 - Formal cycle-10 candidate, **REJECTED**:
   `4ea1c1f5be3586ce9bee696b12c4120dc2a72018`, tree
   `78e781ffd7b03aafdf295ae79f4090120971c248`
+- Cycle-10 rejection-documentation component:
+  `d839d1845e638a22aa027ec722c4eccbcbe5c6e3`, integrated as `f8342db`
+- Cycle-11 independent evidence component:
+  `3692d19608900ecc39c6babe8f90e06ea9cc3821`, integrated as `adf2b93`
+- Cycle-11 source component and exact behavior head:
+  `83dd836bd684dac90e5b161087eded1a04b336d6`, integrated as
+  `b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+  `46721503429685e5feb8e4ac33f74e865acf0c2a`
+- Exact disposable cycle-11 source/evidence composition:
+  `49b1186c51d3873fb9e329eb38a0c792d6646850`, tree
+  `40d474d3c0ea222302da2d4ab3ad5093b18fc2c2`, green for formatting, all 46
+  direct question tests, one engine test, native all-target/all-feature
+  warnings-denied Clippy, native no-default, WASI, and FreeBSD checks
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -187,7 +200,9 @@ evidence, and cycle-9 rejection docs now compose at exact behavior head
 `72e8e75`/`5405180`; its complete exact-1.94.1 local gate is green. Three fresh
 formal reviews rejected later candidate `4ea1c1f`/`78e781f` with a
 deduplicated `0/0/2/0` union. Cycle-11 source, evidence, replacement gates,
-formal reviews, workflows, integration, and delivery do not exist yet.
+and cycle-10 rejection docs now compose at exact behavior head
+`b8b721a`/`4672150`; its complete exact-1.94.1 local gate is green. Three fresh
+formal reviews, workflows, integration, and delivery remain pending.
 
 ## Frozen first-slice decisions
 
@@ -1249,8 +1264,97 @@ payload. It may select a documented cleanup primary only when the thread is not
 already unwinding. Deterministic evidence must prove prompt-poll primary marker
 identity, absence of process abort, lane closure, and capacity recovery.
 
-No cycle-11 source, independent evidence, local gate, formal review, workflow,
-integration, or delivery result is claimed at this rejection checkpoint.
+At that rejection checkpoint, no cycle-11 source, independent evidence, local
+gate, formal review, workflow, integration, or delivery result was claimed.
+
+## Cycle-11 implemented remediation and local implementation gate
+
+Cycle-10 rejection documentation
+`d839d1845e638a22aa027ec722c4eccbcbe5c6e3`, integrated as `f8342db`,
+independent evidence `3692d19608900ecc39c6babe8f90e06ea9cc3821`, integrated
+as `adf2b93`, and source `83dd836bd684dac90e5b161087eded1a04b336d6`
+compose at exact behavior head `b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`,
+tree `46721503429685e5feb8e4ac33f74e865acf0c2a`. Exact disposable composition
+`49b1186c51d3873fb9e329eb38a0c792d6646850`, tree
+`40d474d3c0ea222302da2d4ab3ad5093b18fc2c2`, is green for formatting, all 46
+direct tests, one engine test, native warnings-denied Clippy, native no-default,
+WASI, and FreeBSD checks.
+
+The exact 256-callback private delivery budget is now state-owned across the
+complete prompt lifetime: synchronous replay, queue-only callback-return/
+queued-poll activations, and later external wakes all share it.
+`begin_callback` accounts before every callback. Callbacks 1 through 255 carry
+ordinary delivery; state becomes sticky `DeliveryResourceExhausted` before
+callback 256, which schedules the terminal poll. That poll checks cancellation
+first and otherwise returns the fixed nonretryable `Execution` error with kind
+`ask_user_question_prompt_failed`. Further binds and wakes are suppressed.
+Callback panics do not refund consumed budget. Delivery remains one serialized,
+nonrecursive lane with callback concurrency at most one.
+
+Cleanup-panic selection is centralized with these fixed precedence rules:
+
+- prompt-poll primary over all activity cleanup;
+- `PromptActivity` prompt drop over cancellation waiter, registration close,
+  and registration drop;
+- `ActivityWakerRegistration` close over cached-Waker drop;
+- notifier callback over target drop; and
+- ambient unwind over every cleanup panic.
+
+Every nonselected or suppressed opaque panic payload is explicitly forgotten
+before a selected payload resumes. Ordinary resources are still dropped. The
+remediation adds no dependency, thread, or public API.
+
+Deterministic evidence establishes both corrections:
+
+- `queue_only_wakes_share_one_prompt_lifetime_delivery_bound` changes the
+  rejected base's callback-256 `Pending` poll into exact terminal exhaustion;
+- `cancellation_wins_after_the_terminal_queue_only_wake_is_enqueued` changes
+  rejected-base cancellation at callback 257 into cancellation-first callback
+  256 completion;
+- `prompt_poll_panic_precedes_panicking_target_cleanup_payload` changes the
+  rejected base's replaced primary marker into stable prompt-poll identity; and
+- `prompt_drop_cleanup_precedence_survives_panicking_secondary_payloads`, with
+  its subprocess child, changes the rejected base's `SIGABRT` outcome into
+  documented prompt-drop precedence without abort, while proving lane closure
+  and capacity recovery.
+
+The focused gate passes under exact Rust and Cargo 1.94.1 without fallback:
+formatting; 46 direct question tests; one question-engine test; nine all-
+feature reference-host tests; one reference-host lifecycle test; six native-
+manifest tests; and native all-target/all-feature warnings-denied Clippy.
+
+Exact behavior head `b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+`46721503429685e5feb8e4ac33f74e865acf0c2a`, passes all four required exact-
+1.94.1 workspace formatting, all-target/all-feature warnings-denied Clippy,
+test, and doctest commands without fallback.
+
+The extended gate is green:
+
+- repo-wide Python passes 136 tests with eight intentional skips, and pinned
+  compatibility regeneration is byte-stable;
+- `cargo deny` passes with only the established `core-foundation`,
+  `cpufeatures`, and `syn` duplicate-dependency warnings;
+  `cargo audit --no-fetch` loads 1,226 advisories, checks 211 dependencies, and
+  reports zero vulnerabilities;
+- native no-default compilation, the all-feature WASI library check, and
+  warnings-denied no-default FreeBSD Clippy are green; WASI emits only the
+  established unrelated `read_file::check_cancellation` warning;
+- documentation integrity reports 91 Markdown files, 318 fence markers, 701
+  parsed links, 534 local links, and zero missing targets; all ten operative
+  status regions are current with zero stale openings;
+- the exact diff is clean, protected `.github`, benchmark, and compatibility
+  inputs are unchanged, and no Rust `unsafe` is added; and
+- a fresh locked release binary is 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated missing-root `--help`, `doctor --json`, and `sessions --json` smoke
+  checks pass without creating files.
+
+The authorized dev-only native fixture and one native dependency-list line in
+`Cargo.lock` remain unchanged; the production normal/build dependency graph is
+unchanged. This is regression and release-smoke evidence, not a formal-review,
+integration, delivery, benchmark, product-performance, compatibility-promotion,
+or fx-equivalence claim. Three fresh exact-SHA formal reviews and both feature
+and `main` workflow gates remain pending.
 
 ## Deferred and nonclaim record
 

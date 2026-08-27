@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10
-REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 11 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**. Formal cycle
+status is **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -149,10 +149,16 @@ platform each reported `0/0/1/0`, performance/resources `0/0/0/0`, and the
 distinct union is `0/0/2/0`. Queue-only delivery resets the notify-local budget
 to one on every self-waking `Pending` poll, so 256 is never reached. Separately,
 suppressed/nonselected opaque cleanup-panic payloads can replace the primary or
-double-panic abort during unwind. Cycle 11 must make the budget prompt-lifetime
-and forget every suppressed payload, with exact queue/cancellation and marker/
-no-abort/lane/capacity evidence. No cycle-11 source or evidence exists yet.
-No cycle-11 gate, review, integration, or delivery exists yet.
+double-panic abort during unwind. Cycle-11 docs `d839d18`/`f8342db`, evidence
+`3692d19`/`adf2b93`, and source `83dd836` compose at exact head
+`b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+`46721503429685e5feb8e4ac33f74e865acf0c2a`. The lifetime-wide 256-callback
+budget now spans queued and synchronous delivery; fixed centralized cleanup
+precedence forgets every suppressed opaque payload. Base callback-256 Pending,
+callback-257 cancellation, primary replacement, and `SIGABRT` evidence are
+corrected. Direct 46 and all focused/pinned/extended/release-smoke gates are
+green. No dependency, thread, or public API is added. Formal review, workflows,
+integration, and delivery remain pending.
 The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the

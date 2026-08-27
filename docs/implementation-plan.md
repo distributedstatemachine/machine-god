@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 10
-REJECTED — CYCLE 11 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 11 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -433,8 +433,42 @@ replace the primary or double-panic abort. `PromptActivity::drop` and analogous
 selectors can also destruct suppressed/nonselected payloads during unwind.
 Cycle 11 must forget all such opaque payloads, select a cleanup primary only
 when not unwinding, and prove prompt-poll primary identity, no abort, lane
-closure, and capacity recovery. No cycle-11 source, evidence, gate, review,
-workflow, integration, or delivery is claimed.
+closure, and capacity recovery. Rejection docs `d839d18`/`f8342db`, evidence
+`3692d19608900ecc39c6babe8f90e06ea9cc3821`/`adf2b93`, and source
+`83dd836bd684dac90e5b161087eded1a04b336d6` compose at exact behavior head
+`b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+`46721503429685e5feb8e4ac33f74e865acf0c2a`; disposable exact composition
+`49b1186c51d3873fb9e329eb38a0c792d6646850`/
+`40d474d3c0ea222302da2d4ab3ad5093b18fc2c2` passes direct 46, formatting,
+engine one, native Clippy/no-default/WASI/FreeBSD.
+
+The private 256-callback budget is state-owned across the prompt lifetime.
+`begin_callback` accounts before every synchronous, queue-only, or later
+external callback; calls 1-255 are ordinary, sticky exhaustion precedes
+terminal callback 256, cancellation wins its first check, and otherwise the
+fixed nonretryable prompt-failed result returns. Further delivery is suppressed
+and callback panic does not refund budget; one serialized nonrecursive lane
+keeps concurrency at most one.
+
+Central cleanup selection establishes prompt-poll over activity cleanup;
+prompt drop over waiter, registration close, and registration drop;
+registration close over cached-Waker drop; notifier callback over target drop;
+and ambient unwind over every cleanup panic. Every nonselected/suppressed opaque
+payload is forgotten before selected resume, while ordinary resources drop.
+There is no new dependency, thread, or public API.
+
+Four deterministic tests plus a subprocess child prove base callback-256
+`Pending` becomes exact exhaustion, callback-257 cancellation becomes
+cancellation-first callback 256, prompt-poll marker replacement is prevented,
+and base `SIGABRT` becomes prompt-drop precedence with lane/capacity recovery.
+Focused exact-1.94.1 formatting, direct 46, engine one, host nine/lifecycle one,
+manifest six, and native Clippy are green. All four required exact commands pass
+without fallback. Extended Python 136/8, compatibility, deny/audit
+1,226/211/zero, portability, docs 91/318/701/534/0, status 10/0,
+diff/protected/no-unsafe, unchanged release/smokes, and authorized dev-only
+fixture/lock delta are green; the production graph is unchanged. Formal review,
+workflows, integration, and delivery remain pending, with no benchmark,
+product-performance, or fx-equivalence claim.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4492,8 +4526,9 @@ gate compose at exact `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
 remediation/evidence and the complete local gate compose at
 `72e8e75`/`5405180`. Formal cycle 10 rejected exact `4ea1c1f`/`78e781f` with
-two distinct mediums and a `0/0/2/0` union; cycle-11 source, evidence, reviews,
-workflows, integration, and delivery do not exist yet, and
+two distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
+complete local gate compose at `b8b721a`/`4672150`; reviews, workflows,
+integration, and delivery remain pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -535,8 +535,61 @@ Cycle 11 must explicitly forget every suppressed or nonselected opaque cleanup
 payload, choose a documented primary only when not already unwinding, and prove
 prompt-poll primary identity, no abort, lane closure, and capacity recovery.
 
-No cycle-11 source, evidence, gate, review, workflow, integration, or delivery
-result is claimed.
+At that rejection checkpoint, no cycle-11 source, evidence, gate, review,
+workflow, integration, or delivery result was claimed.
+
+## Cycle-11 implementation and local checkpoint
+
+Cycle-10 rejection docs `d839d1845e638a22aa027ec722c4eccbcbe5c6e3`/`f8342db`,
+evidence `3692d19608900ecc39c6babe8f90e06ea9cc3821`/`adf2b93`, and source
+`83dd836bd684dac90e5b161087eded1a04b336d6` compose at exact behavior head
+`b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+`46721503429685e5feb8e4ac33f74e865acf0c2a`. Disposable exact composition
+`49b1186c51d3873fb9e329eb38a0c792d6646850`/
+`40d474d3c0ea222302da2d4ab3ad5093b18fc2c2` passes formatting, direct 46,
+engine one, native Clippy, no-default, WASI, and FreeBSD checks.
+
+The private 256-callback budget is state-owned for the complete prompt
+lifetime across synchronous replay, queue-only callback return plus queued
+polls, and later external wakes. `begin_callback` accounts before each
+callback. Calls 1-255 are ordinary; sticky `DeliveryResourceExhausted` is set
+before callback 256, which schedules the terminal poll. Cancellation wins the
+first check; otherwise the existing nonretryable `Execution`/
+`ask_user_question_prompt_failed` result returns. Further binds/wakes are
+suppressed, callback panics do not refund budget, and one serialized
+nonrecursive lane keeps callback concurrency at most one.
+
+Cleanup-panic selection is centralized. Prompt-poll primary precedes activity
+cleanup. Within `PromptActivity`, prompt drop precedes cancellation waiter,
+registration close, and registration drop. Within
+`ActivityWakerRegistration`, close precedes cached-Waker drop. Notifier callback
+precedes target drop. Ambient unwind precedes every cleanup panic. All
+nonselected/suppressed opaque payloads are explicitly forgotten before a
+selected resume, while ordinary resources still drop. No dependency, thread,
+or public API is added.
+
+`queue_only_wakes_share_one_prompt_lifetime_delivery_bound` changes base
+callback-256 `Pending` into exact terminal exhaustion.
+`cancellation_wins_after_the_terminal_queue_only_wake_is_enqueued` changes base
+cancellation callback 257 into cancellation-first callback 256.
+`prompt_poll_panic_precedes_panicking_target_cleanup_payload` preserves the
+prompt-poll primary marker instead of the base replacement.
+`prompt_drop_cleanup_precedence_survives_panicking_secondary_payloads` and its
+subprocess child replace the base `SIGABRT` with prompt-drop precedence, lane
+closure, and capacity recovery.
+
+The exact-1.94.1 focused gate passes formatting, direct 46, engine one, host
+nine, host lifecycle one, manifest six, and native warnings-denied Clippy. All
+four required exact-1.94.1 commands pass without fallback. Extended Python
+136/8, byte-stable compatibility, deny with established duplicates, audit
+1,226/211/zero, native/WASI/FreeBSD portability, docs 91/318/701/534/0,
+status 10/0, diff/protected/no-unsafe, and release-smoke gates are green. The
+locked release remains 3,985,216 bytes with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+three missing-root smokes create no files. The authorized dev-only fixture/lock
+delta and production graph are unchanged. Formal review, workflows,
+integration, and delivery remain pending. This is not benchmark, product-
+performance, compatibility-promotion, or fx-equivalence evidence.
 
 ## Product boundary
 

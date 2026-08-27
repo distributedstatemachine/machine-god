@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-10 interaction and authority remediation
+## Slice 35 cycle-11 interaction and authority remediation
 
-Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2351,7 +2351,21 @@ The other is panic integrity: suppressed/nonselected opaque cleanup payloads
 can destruct while unwinding, replace the prompt-poll primary, or double-panic
 abort. Cycle 11 must retain one finite prompt-lifetime budget and explicitly
 forget all suppressed payloads, with queue-bound/cancellation and primary-
-marker/no-abort/lane/capacity evidence. No cycle-11 source, evidence, gate,
-review, integration, or delivery is claimed. This is not benchmark, product-
-performance, or fx-equivalence evidence. The analogous terminal path remains
-out of scope and is not claimed fixed.
+marker/no-abort/lane/capacity evidence. Cycle-11 docs `d839d18`/`f8342db`,
+evidence `3692d19608900ecc39c6babe8f90e06ea9cc3821`/`adf2b93`, and source
+`83dd836bd684dac90e5b161087eded1a04b336d6` compose at exact behavior head
+`b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+`46721503429685e5feb8e4ac33f74e865acf0c2a`.
+
+The state-owned lifetime budget accounts before every callback across all wake
+styles, reaches sticky terminal 256, gives cancellation precedence, suppresses
+later delivery, and never refunds panic. Central cleanup selection implements
+the documented prompt/activity/registration/notifier/ambient precedence and
+forgets every suppressed opaque payload before selected resume. Ordinary
+resources still drop; no dependency, thread, public API, or authority changes.
+Four tests plus a subprocess child correct the four rejected-base outcomes and
+prove lane close/capacity recovery. Direct 46 and all pinned/extended/release-
+smoke gates are green. Formal review, workflows, integration, and delivery
+remain pending. This is not benchmark, product-performance, or fx-equivalence
+evidence. The analogous terminal path remains out of scope and is not claimed
+fixed.

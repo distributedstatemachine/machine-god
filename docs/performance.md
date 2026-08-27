@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-10 question resource remediation
+## Slice 35 cycle-11 question resource remediation
 
-Status: **CYCLE 10 REJECTED — CYCLE 11 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 11 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -974,7 +974,25 @@ exact-bound and cancellation evidence.
 The separate cleanup defect can replace the primary panic or double-panic abort
 when discarded/nonselected opaque cleanup payloads destruct during unwind.
 Cycle 11 must forget all suppressed payloads and prove primary identity, no
-abort, lane close, and capacity recovery. No cycle-11 source, evidence, gate,
-review, integration, or delivery is claimed. No benchmark, product-
+abort, lane close, and capacity recovery. Cycle-11 docs `d839d18`/`f8342db`,
+evidence `3692d19608900ecc39c6babe8f90e06ea9cc3821`/`adf2b93`, and source
+`83dd836bd684dac90e5b161087eded1a04b336d6` compose at exact behavior head
+`b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+`46721503429685e5feb8e4ac33f74e865acf0c2a`; disposable composition
+`49b1186c51d3873fb9e329eb38a0c792d6646850`/`40d474d` passes direct 46 and
+all focused portability checks.
+
+The state-owned prompt-lifetime budget calls `begin_callback` before every
+queued, synchronous, or external callback. Calls 1-255 are ordinary; sticky
+exhaustion precedes terminal callback 256, cancellation wins, later delivery is
+suppressed, and panic does not refund budget. One nonrecursive serialized lane
+keeps concurrency at most one. Central cleanup precedence forgets every
+suppressed/nonselected payload before selected resume. Four tests plus a
+subprocess child correct base callback-256 Pending, callback-257 cancellation,
+primary replacement, and `SIGABRT` while proving lane/capacity recovery.
+
+Direct 46, all required exact-1.94.1 commands, extended/release-smoke gates,
+and the unchanged dev-only fixture/lock delta are green. Formal review,
+workflows, integration, and delivery remain pending. No benchmark, product-
 performance, or fx-equivalence result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).

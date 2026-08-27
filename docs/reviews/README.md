@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 10 REJECTED — CYCLE 11
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 11 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -141,7 +141,15 @@ the finite cap. Separately, cleanup-panic payload destruction during unwind can
 replace the primary or double-panic abort. Cycle 11 must enforce a prompt-
 lifetime budget, explicitly forget suppressed/nonselected payloads, and add
 queue-bound/cancellation plus primary-marker/no-abort/lane/capacity evidence.
-No cycle-11 source, evidence, gate, review, integration, or delivery is claimed.
+Cycle-11 docs `d839d18`/`f8342db`, evidence `3692d19`/`adf2b93`, and source
+`83dd836` compose at exact behavior head
+`b8b721a065f4b14f5f3678a22ee5b0bd2267ca2f`, tree
+`46721503429685e5feb8e4ac33f74e865acf0c2a`. Lifetime-wide callback accounting
+and centralized cleanup precedence correct the queue budget and unwind defects.
+Four tests plus a subprocess child prove the rejected base's callback-256
+Pending, callback-257 cancellation, replaced primary, and `SIGABRT` cases.
+Direct 46 and the complete local gate are green. Formal review, workflows,
+integration, and delivery remain pending; no benchmark or fx claim is made.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 
