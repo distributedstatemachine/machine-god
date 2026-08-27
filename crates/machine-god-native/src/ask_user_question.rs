@@ -60,7 +60,7 @@ pub const ASK_USER_QUESTION_DEFAULT_MAX_ACTIVE_PROMPTS: usize = 1;
 pub const ASK_USER_QUESTION_MAX_ACTIVE_PROMPTS: usize = 8;
 
 const ASK_USER_QUESTION_DESCRIPTION: &str = "Ask the user one to four bounded questions with ordered options. Options guide the response but a bounded free-form answer is allowed. Use this only when progress requires an explicit user decision; it is not an approval or permission channel.";
-const MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY: usize = 2;
+const MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY: usize = 256;
 
 /// One normalized option supplied to a [`QuestionPrompter`].
 #[derive(Clone, Eq, PartialEq)]
@@ -480,6 +480,13 @@ impl Tool for AskUserQuestionTool {
             let prompted = poll_fn(|context| {
                 if cancellation.is_cancelled() {
                     return Poll::Ready(Err(cancelled()));
+                }
+                if activity
+                    .as_ref()
+                    .expect("prompt activity remains present while polling")
+                    .wake_delivery_resource_exhausted()
+                {
+                    return Poll::Ready(Err(prompt_failed()));
                 }
                 if activity
                     .as_mut()
@@ -1080,6 +1087,13 @@ impl<'a> PromptActivity<'a> {
             .bind(downstream);
     }
 
+    fn wake_delivery_resource_exhausted(&self) -> bool {
+        self.registered_waker
+            .as_ref()
+            .expect("prompt activity retains its Waker registration")
+            .wake_delivery_resource_exhausted()
+    }
+
     fn poll_cancellation(&mut self, context: &mut Context<'_>) -> Poll<()> {
         self.register_waker(context.waker());
         let waker = self
@@ -1193,6 +1207,13 @@ impl ActivityWakerRegistration {
             .close();
     }
 
+    fn wake_delivery_resource_exhausted(&self) -> bool {
+        self.wake
+            .as_ref()
+            .expect("activity Waker registration retains its notifier")
+            .delivery_resource_exhausted()
+    }
+
     fn waker(&self) -> &Waker {
         self.waker
             .as_ref()
@@ -1246,6 +1267,7 @@ struct ActivityWakeState {
 enum ActivityWakeLifecycle {
     #[default]
     Open,
+    DeliveryResourceExhausted,
     Closed,
 }
 
@@ -1261,7 +1283,7 @@ impl ActivityWake {
         let notifier_target = target.will_wake(notifier_waker);
         {
             let mut state = lock_activity_wake(&self.state);
-            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
+            if !matches!(state.lifecycle, ActivityWakeLifecycle::Open) {
                 return;
             }
             if state.notifying {
@@ -1290,9 +1312,7 @@ impl ActivityWake {
         let incoming = Arc::new(target.clone());
         let (replaced, unused) = {
             let mut state = lock_activity_wake(&self.state);
-            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
-                (None, Some(incoming))
-            } else {
+            if matches!(state.lifecycle, ActivityWakeLifecycle::Open) {
                 // Notification may have started while the arbitrary target
                 // clone ran. This bind is still an observing outer poll.
                 if state.notifying {
@@ -1308,6 +1328,8 @@ impl ActivityWake {
                 } else {
                     (state.target.replace(incoming), None)
                 }
+            } else {
+                (None, Some(incoming))
             }
         };
         // Arbitrary Waker destruction also remains outside the lock.
@@ -1328,10 +1350,17 @@ impl ActivityWake {
         drop(target);
     }
 
+    fn delivery_resource_exhausted(&self) -> bool {
+        matches!(
+            lock_activity_wake(&self.state).lifecycle,
+            ActivityWakeLifecycle::DeliveryResourceExhausted
+        )
+    }
+
     fn notify(&self) {
         let mut target = {
             let mut state = lock_activity_wake(&self.state);
-            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
+            if !matches!(state.lifecycle, ActivityWakeLifecycle::Open) {
                 return;
             }
             if state.notifying {
@@ -1351,11 +1380,15 @@ impl ActivityWake {
             state.pending_after_observation = false;
             target
         };
-        let mut callbacks_remaining = MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY;
+        let mut callbacks_started = 1_usize;
 
+        // This loop is an iterative trampoline: every ordinary replay is
+        // admitted only by a distinct outer bind/poll observation followed by
+        // a later source notification. Pre-observation notices and duplicate
+        // notices in one observation epoch coalesce. There is no scheduler to
+        // hand residual work to, so the final bounded callback instead makes
+        // the outer future observe a fixed terminal delivery failure.
         loop {
-            debug_assert!(callbacks_remaining > 0);
-            callbacks_remaining -= 1;
             let notified = catch_unwind(AssertUnwindSafe(|| target.wake_by_ref()));
             // Releasing a replaced callback target may run arbitrary Waker
             // destruction. Keep the callback lane occupied, retain the
@@ -1366,16 +1399,35 @@ impl ActivityWake {
             let target_drop_failed = target_drop.is_err();
             let next = {
                 let mut state = lock_activity_wake(&self.state);
-                if matches!(state.lifecycle, ActivityWakeLifecycle::Closed)
-                    || callback_failed
-                    || target_drop_failed
-                {
+                if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
                     state.notifying = false;
                     state.observed_while_notifying = false;
                     state.pending_after_observation = false;
                     None
-                } else if callbacks_remaining > 0 && state.pending_after_observation {
+                } else if callback_failed || target_drop_failed {
+                    state.lifecycle = ActivityWakeLifecycle::Open;
+                    state.notifying = false;
+                    state.observed_while_notifying = false;
+                    state.pending_after_observation = false;
+                    None
+                } else if matches!(
+                    state.lifecycle,
+                    ActivityWakeLifecycle::DeliveryResourceExhausted
+                ) {
+                    state.notifying = false;
+                    state.observed_while_notifying = false;
+                    state.pending_after_observation = false;
+                    None
+                } else if state.pending_after_observation {
                     if let Some(target) = state.target.as_ref().map(Arc::clone) {
+                        debug_assert!(callbacks_started < MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY);
+                        if callbacks_started + 1 == MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY {
+                            // Reserve the final callback for scheduling a poll
+                            // that observes the sticky bounded-delivery error.
+                            // Until close, retained Wakers cannot start more
+                            // callbacks even when the target queues its poll.
+                            state.lifecycle = ActivityWakeLifecycle::DeliveryResourceExhausted;
+                        }
                         state.observed_while_notifying = false;
                         state.pending_after_observation = false;
                         Some(target)
@@ -1385,10 +1437,9 @@ impl ActivityWake {
                         None
                     }
                 } else {
-                    // A notice observed during the one allowed replay remains
-                    // pending for a later explicit notification activation.
                     state.notifying = false;
                     state.observed_while_notifying = false;
+                    state.pending_after_observation = false;
                     None
                 }
             };
@@ -1409,6 +1460,7 @@ impl ActivityWake {
                 return;
             };
             target = next;
+            callbacks_started += 1;
         }
     }
 }
