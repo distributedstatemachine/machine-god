@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -157,8 +157,15 @@ suppression/forget, and aggregate `2/2/0/2` target drops/secondary callbacks/
 stale wakes/fresh admissions. Exact stdout is 193 bytes and stderr is empty.
 Focused 46/1/9/1/8 plus native Clippy, all exact and extended gates, and fresh
 CLI SHA-256 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`
-are green. Formal review, workflows, integration, and delivery remain pending;
-no dependency is added.
+are green. Formal cycle 13 reviewed exact
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`/`72a0303`; all three tracks and
+the union reported `0/0/0/0`. Reviewers validated in-close target drop, both
+primaries, secondary Waker ownership/control/suppression/forget, stale-zero/
+fresh-capacity ordering, lifetime-256/resource bounds, and current unwind
+wording. All prior findings are resolved. This review-exempt docs seal makes no
+behavior, performance, equivalence, or delivery claim. Feature workflows,
+integration, `main` workflows, and delivery remain pending; no dependency is
+added.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -895,8 +902,9 @@ complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 `b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source/evidence and the
 complete local gate compose at `696dccf`/`f8734a8`; formal cycle 12 rejected
 `3dec7a2`/`c34d20a` with a `0/0/1/2` union. Cycle-13 evidence and the complete
-local gate compose at `c252620`/`a921449`; formal review, workflows, integration,
-and delivery remain pending.
+local gate compose at `c252620`/`a921449`; formal cycle 13 is green on
+`a4f1bb9`/`72a0303` with a zero-finding union. Feature workflows, integration,
+`main` workflows, and delivery remain pending.
 The analogous preexisting terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
@@ -1462,7 +1470,8 @@ complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 `b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source/evidence and the
 complete local gate compose at `696dccf`/`f8734a8`; formal cycle 12 rejected
 `3dec7a2`/`c34d20a` with a `0/0/1/2` union. Cycle-13 evidence and the complete
-local gate compose at `c252620`/`a921449`; formal review, workflows, integration,
-and delivery remain pending. Analogous
+local gate compose at `c252620`/`a921449`; formal cycle 13 is green on
+`a4f1bb9`/`72a0303` with a zero-finding union. Feature workflows, integration,
+`main` workflows, and delivery remain pending. Analogous
 preexisting terminal code
 is out of scope and is not claimed fixed.

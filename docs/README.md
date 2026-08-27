@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 FORMAL
+REVIEW GREEN — FEATURE WORKFLOWS PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
+status is **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -190,7 +190,15 @@ zero stale wakes, and two fresh admissions. Exact stdout is 193 bytes and stderr
 is empty. Focused 46/1/9/1/8 plus native Clippy, all four exact gates, the
 extended matrix, and a 4,481,664-byte CLI release with SHA-256
 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4` are
-green. Formal review, workflows, integration, and delivery remain pending.
+green. Formal cycle 13 reviewed exact
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`/`72a0303`: all three tracks and
+the union reported `0/0/0/0`. Reviewers validated the real in-close target drop,
+prompt-drop/ambient primaries, secondary-payload ownership/control/suppression/
+forget, zero stale plus fresh capacity before closed identities release,
+lifetime-256/resource bounds, and current unwind wording. All prior findings
+are resolved. This docs-only seal is review-exempt and makes no behavior,
+performance, equivalence, or delivery claim. Feature workflows, integration,
+`main` workflows, and delivery remain pending.
 The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the

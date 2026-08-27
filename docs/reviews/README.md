@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 13 FORMAL REVIEW GREEN —
+FEATURE WORKFLOWS PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -177,8 +177,15 @@ product suppression/forget, and exact `2/2/0/2` drops/callbacks/stale-wakes/
 fresh-capacity totals. Exact stdout is 193 bytes with empty stderr. Focused
 46/1/9/1/8 plus native Clippy, all exact/extended gates, and fresh CLI SHA-256
 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4` are
-green. Formal review, workflows, integration, and delivery remain pending; no
-performance or fx-equivalence claim is made.
+green. Formal cycle 13 reviewed exact
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`/`72a0303`; all three tracks and
+the union reported `0/0/0/0`. Reviewers validated the real in-close target drop,
+both primaries, secondary Waker ownership/control/suppression/forget, zero stale
+plus fresh capacity before closed identity release, lifetime-256/resource
+bounds, and current unwind wording. All prior findings are resolved. This docs-
+only result seal is review-exempt and makes no behavior, performance,
+equivalence, or delivery claim. Feature workflows, integration, `main`
+workflows, and delivery remain pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

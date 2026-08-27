@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 FORMAL
+REVIEW GREEN — FEATURE WORKFLOWS PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -237,8 +237,18 @@ admissions in exact 193-byte stdout with empty stderr. Focused 46/1/9/1/8 plus
 native Clippy, all four exact-1.94.1 required gates, the extended matrix, and
 the fresh 4,481,664-byte CLI release are green; the CLI SHA-256 is
 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
-The current status is **CYCLE 13 LOCAL GATE GREEN — FORMAL
-REVIEW PENDING**; no integration, delivery, benchmark, product-
+Formal cycle 13 reviewed exact candidate
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`, tree
+`72a0303d81f34586f93775050ad70257cc2da551`: correctness/API/evidence,
+lifecycle/platform/concurrency, performance/resources, and the deduplicated
+union each reported `0/0/0/0`. Reviewers validated the real in-close target
+drop, both primaries, secondary-payload Waker ownership/panicking control/
+suppression/forget, zero stale wakes plus fresh capacity before closed identity
+release, lifetime-256/resource bounds, and current unwind wording. All prior
+findings are resolved. This documentation-only result seal is review-exempt and
+makes no behavior, performance, equivalence, or delivery claim.
+The current status is **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS
+PENDING**; no integration, delivery, benchmark, product-
 performance, or fx-equivalence result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and

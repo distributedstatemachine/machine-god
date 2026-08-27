@@ -2076,7 +2076,7 @@ action.
 
 ## Slice 35 cycle-13 interaction and authority remediation
 
-Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2406,7 +2406,13 @@ product, and records two target drops, two secondary callbacks, zero stale
 wakes, and two fresh admissions. Exact stdout is 193 bytes with empty stderr.
 The complete exact local gate and fresh CLI SHA-256
 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4` are
-green. Formal review, workflows, integration, and delivery remain pending. This
-is not benchmark, product-performance, compatibility-promotion, or fx-
-equivalence evidence. The analogous terminal path remains out of scope and is
-not claimed fixed.
+green. Formal cycle 13 reviewed exact
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`/`72a0303`; all three tracks and
+the union reported `0/0/0/0`. Reviewers validated actual in-close target
+destruction, both primary paths, secondary supplied-Waker ownership/control/
+suppression/forget, stale-zero/fresh-capacity ordering, lifetime-256/resource
+bounds, and current unwind wording. All prior findings are resolved. This
+review-exempt docs seal changes no authority or behavior and makes no
+performance, equivalence, or delivery claim. Feature workflows, integration,
+`main` workflows, and delivery remain pending. The analogous terminal path
+remains out of scope and is not claimed fixed.

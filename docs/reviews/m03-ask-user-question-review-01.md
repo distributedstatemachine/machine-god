@@ -1,9 +1,9 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Cycle-13
-independent evidence and the complete local gate compose at the exact behavior
-head below. Fresh formal reviews, workflows, integration, and delivery remain
-pending.
+Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**. Three
+fresh formal reviews report a zero-finding union on the exact immutable
+candidate below. Feature workflows, integration, `main` workflows, and delivery
+remain pending.
 
 ## Frozen lineage
 
@@ -191,6 +191,9 @@ pending.
   `c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as
   `c252620f55eb75edbb1f771950200168671ef0f3`, tree
   `a921449778a5fa71d13a756670a1b41ea16fdc69`
+- Formal cycle-13 candidate, **GREEN**:
+  `a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`, tree
+  `72a0303d81f34586f93775050ad70257cc2da551`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -234,7 +237,8 @@ exact-1.94.1 local gate is green. Three fresh formal reviews rejected later
 candidate `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-12
 rejection docs and cycle-13 evidence now compose at exact behavior head
 `c252620`/`a921449`; its complete exact-1.94.1 local gate is green. Fresh formal
-reviews, workflows, integration, and delivery remain pending.
+cycle-13 reviews found zero findings on exact candidate `a4f1bb9`/`72a0303`.
+Feature workflows, integration, `main` workflows, and delivery remain pending.
 
 ## Frozen first-slice decisions
 
@@ -1626,7 +1630,35 @@ dev-only native fixture, and one native dependency-list line in `Cargo.lock`;
 no dependency is added. This is regression/release-smoke evidence, not a formal-
 review, workflow, integration, delivery, benchmark, product-performance,
 compatibility-promotion, or fx-equivalence result. Fresh exact-SHA formal
-reviews and both feature and `main` workflows remain pending.
+reviews and both feature and `main` workflows remained pending at that local-
+gate checkpoint.
+
+## Formal cycle-13 outcome
+
+Three fresh review tracks examined exact immutable candidate
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`, tree
+`72a0303d81f34586f93775050ad70257cc2da551`:
+
+- correctness/API/evidence: `0 blocker / 0 high / 0 medium / 0 low`;
+- lifecycle/platform/concurrency: `0 blocker / 0 high / 0 medium / 0 low`;
+- performance/resources: `0 blocker / 0 high / 0 medium / 0 low`; and
+- deduplicated union: `0 blocker / 0 high / 0 medium / 0 low`.
+
+All prior findings are resolved. The reviewers specifically validated that the
+release executable triggers final-target destruction inside notifier close;
+preserves ordinary prompt-`Drop` and ambient primaries; creates a secondary
+panic payload owning the supplied Waker; proves that payload's panicking
+destructor in the control; suppresses and intentionally forgets it in product;
+observes zero stale wakes and fresh capacity before retained closed identities
+are released; preserves the prompt-lifetime 256-callback ceiling and all other
+resource bounds; and uses current release-unwind wording throughout operative
+documentation.
+
+This documentation-only formal-result seal is exempt from redundant review per
+the user's direction. It changes no source, API, dependency, authority, limit,
+or behavior, and makes no product-performance, compatibility, fx-equivalence,
+integration, delivery, or new evidence claim. Feature workflows, `main`
+integration and workflows, and delivery remain pending.
 
 ## Deferred and nonclaim record
 

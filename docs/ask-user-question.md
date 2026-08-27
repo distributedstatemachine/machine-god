@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -755,9 +755,24 @@ Missing-root help, doctor JSON, and sessions JSON smokes are exactly 672, 418,
 and 62 bytes with empty stderr and create no roots. The manifest delta remains
 release panic `abort` to `unwind`, plus the existing dev-only fixture and one
 native lock dependency-list line; no dependency is added. Fresh formal review,
-remote workflows, integration, and delivery remain pending. This checkpoint
-makes no benchmark, product-performance, compatibility-promotion, or fx-
-equivalence claim.
+remote workflows, integration, and delivery were pending at that checkpoint.
+
+Formal cycle 13 reviewed exact immutable candidate
+`a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`, tree
+`72a0303d81f34586f93775050ad70257cc2da551`. Correctness/API/evidence,
+lifecycle/platform/concurrency, and performance/resources each reported
+`0 blocker / 0 high / 0 medium / 0 low`; the deduplicated union is also
+`0/0/0/0`. Reviewers specifically validated real in-close final-target drop,
+ordinary prompt-`Drop` and ambient primaries, secondary-payload supplied-Waker
+ownership plus panicking destructor control plus product suppression/forget,
+zero stale wakes and fresh capacity before retained closed identities release,
+the prompt-lifetime 256-callback ceiling and other resource bounds, and current
+release-unwind wording. Every prior finding is resolved.
+
+This documentation-only formal-result seal is review-exempt under the user's
+direction. It changes and claims no behavior, performance result, compatibility
+or fx equivalence, integration, or delivery. Feature workflows, `main`
+integration and workflows, and delivery remain pending.
 
 ## Product boundary
 

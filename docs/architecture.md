@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 FORMAL
+REVIEW GREEN — FEATURE WORKFLOWS PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -180,8 +180,15 @@ panics in control, suppresses/forgets it in product, and records drops/callbacks
 stale-wakes/fresh-capacity `2/2/0/2` in exact 193-byte stdout with empty stderr.
 The complete exact local gate is green, including fresh CLI SHA-256
 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
-Formal review, workflows, integration, and delivery remain pending; no
-performance or equivalence result is claimed.
+Formal cycle 13 reviewed exact `a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`/
+`72a0303d81f34586f93775050ad70257cc2da551`; correctness/API/evidence,
+lifecycle/platform/concurrency, performance/resources, and union each reported
+`0/0/0/0`. Reviewers validated in-close target destruction, both primary paths,
+the secondary payload's Waker/control/suppression/forget chain, stale-zero/fresh-
+capacity ordering, lifetime-256/resource bounds, and current unwind prose. All
+prior findings are resolved. This review-exempt docs seal makes no behavior,
+performance, equivalence, or delivery claim. Feature workflows, integration,
+`main` workflows, and delivery remain pending.
 See
 [`ask-user-question.md`](ask-user-question.md).
 
@@ -2436,7 +2443,8 @@ complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 evidence, and complete local gate compose at `696dccf`/`f8734a8`; formal cycle
 12 rejected `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-13
 evidence and the complete local gate compose at `c252620`/`a921449`; formal
-review, workflows, integration, and delivery remain pending.
+cycle 13 is green on `a4f1bb9`/`72a0303` with a zero-finding union. Feature
+workflows, integration, `main` workflows, and delivery remain pending.
 Analogous preexisting terminal code is out of scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
@@ -2483,5 +2491,6 @@ rejected `b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source, evidence,
 and complete local gate are established at `696dccf`/`f8734a8`; formal cycle 12
 rejected `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-13
 evidence and the complete local gate compose at `c252620`/`a921449`; formal
-review, workflows, integration, and delivery remain pending. The analogous preexisting
+cycle 13 is green on `a4f1bb9`/`72a0303` with a zero-finding union. Feature
+workflows, integration, `main` workflows, and delivery remain pending. The analogous preexisting
 terminal path remains outside this bounded slice.

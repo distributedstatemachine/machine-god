@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-13 question resource remediation
 
-Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 13 FORMAL REVIEW GREEN — FEATURE WORKFLOWS PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -1038,6 +1038,13 @@ secondary callbacks, zero stale wakes, and two fresh admissions. Exact stdout
 is 193 bytes and stderr is empty. The complete exact local gate is green,
 including a fresh 4,481,664-byte CLI release with SHA-256
 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
-Workflows, integration, and delivery remain pending. This is no benchmark,
-product-performance, compatibility-promotion, or fx-equivalence result. See
+Formal cycle 13 reviewed exact `a4f1bb91c00064e0ceb6975e1c9e7b4a09b1ff95`/
+`72a0303`: correctness/API/evidence, lifecycle/platform/concurrency,
+performance/resources, and union each reported `0/0/0/0`. Reviewers validated
+the real target-drop path, both primaries, secondary Waker ownership/control/
+suppression/forget, stale-zero/fresh-capacity ordering, lifetime-256 and all
+other resource bounds, and current unwind wording. All prior findings are
+resolved. This review-exempt docs seal makes no behavior, performance,
+equivalence, or delivery claim. Feature workflows, integration, `main`
+workflows, and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).
