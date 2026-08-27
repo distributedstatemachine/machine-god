@@ -9,10 +9,10 @@ use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
-    FileSessionStore, LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind,
-    NativeSessionLifecycle, NativeTransportKind, PermissionMode, PermissionPrompter,
-    PreparedNativeRoots, TerminalTool, WebFetchTool, WebSearchDeadline, WebSearchLimits,
-    WebSearchTool, discover_ai_gateway_credential,
+    AskUserQuestionTool, FileSessionStore, LoadedNativeConfig, NativeCredentialSourceKind,
+    NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
+    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, TerminalTool, WebFetchTool,
+    WebSearchDeadline, WebSearchLimits, WebSearchTool, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -136,6 +136,7 @@ impl NativeReferenceHost {
         workspace_root: &Path,
         session_root: &Path,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
@@ -159,6 +160,7 @@ impl NativeReferenceHost {
             workspace_tools,
             session_store,
             permission_prompter,
+            question_prompter,
             Some(credential_source),
         )
     }
@@ -181,6 +183,7 @@ impl NativeReferenceHost {
         credential_environment: AiGatewayCredentialEnvironment,
         prepared_roots: PreparedNativeRoots,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
@@ -203,6 +206,7 @@ impl NativeReferenceHost {
             workspace_tools,
             session_store,
             permission_prompter,
+            question_prompter,
             Some(credential_source),
         )
     }
@@ -222,6 +226,7 @@ impl NativeReferenceHost {
     ///
     /// Returns a fixed stage-only error if a configured selection is unsupported
     /// or any explicit component cannot be constructed safely.
+    #[allow(clippy::too_many_arguments)]
     pub fn compose_with_ai_gateway_transport(
         loaded_config: LoadedNativeConfig,
         transport: Arc<dyn AiGatewayTransport>,
@@ -229,6 +234,7 @@ impl NativeReferenceHost {
         workspace_root: &Path,
         session_root: &Path,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
@@ -243,6 +249,7 @@ impl NativeReferenceHost {
             workspace_tools,
             session_store,
             permission_prompter,
+            question_prompter,
             None,
         )
     }
@@ -267,6 +274,7 @@ impl NativeReferenceHost {
         network_target: NetworkTarget,
         prepared_roots: PreparedNativeRoots,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
@@ -280,6 +288,7 @@ impl NativeReferenceHost {
             workspace_tools,
             session_store,
             permission_prompter,
+            question_prompter,
             None,
         )
     }
@@ -330,6 +339,7 @@ impl NativeReferenceHost {
         workspace_tools: WorkspaceTools,
         session_store: FileSessionStore,
         permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
         credential_source: Option<AiGatewayCredentialSource>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
@@ -365,6 +375,7 @@ impl NativeReferenceHost {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebFetchTransport)
         })?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
+        let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
         let session_store = Arc::new(session_store);
         let engine_session_store: Arc<dyn machine_god_core::SessionStore> =
             Arc::clone(&session_store) as Arc<dyn machine_god_core::SessionStore>;
@@ -372,6 +383,7 @@ impl NativeReferenceHost {
             .provider(provider)
             .shared_session_store(engine_session_store)
             .permission_handler(permission_handler)
+            .tool(ask_user_question)
             .tool(workspace_tools.copy_file)
             .tool(workspace_tools.create_folder)
             .tool(workspace_tools.delete_file)
