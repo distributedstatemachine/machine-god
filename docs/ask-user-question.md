@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -379,8 +379,54 @@ at most one, retain capacity, and add deterministic large-budget evidence for
 both the bound and later delivery.
 
 Any analogous native `terminal` path is preexisting and outside this bounded
-slice. It is not claimed fixed. No cycle-9 source, evidence, green gate, review,
-workflow, integration, delivery result, or future SHA is claimed.
+slice. It is not claimed fixed.
+
+## Cycle-9 implementation and local checkpoint
+
+Rejection docs `2faedc764c9cc3caa7813babed0abf0f2f867c90`/`5296dcc`, evidence
+`cf2e2207d7f298a9aa102476673d9ab33a42024c`/`ee25455`, and source
+`527e10dcc53cb609de394ac59d3fe2641ceed627` compose at exact behavior head
+`0279b8cb744b8d5cee92d2bfc263abcca60a9987`, tree
+`50b2423637fc9eb8f0cd6792874a2385ff32fd06`. Independent disposable cross-
+composition `13eccf9`/`56695d8d7c2daaa38355c22a04276b583b93a815` is green
+for formatting, 39 direct tests, one engine test, and native warnings-denied
+Clippy.
+
+One explicit notify activation executes the initial callback plus at most one
+replay. Post-observation pending work produced by that replay remains after lane
+release and is eligible only when a later explicit activation arrives. Close
+and panic clear state, callback concurrency is at most one, target A is dropped
+before replay arbitration, and the lane/activity retains permit capacity.
+
+When both the callback and A's drop panic, cycle 9 intentionally forgets the
+opaque secondary payload so its destructor cannot replace the callback panic.
+The callback panic remains primary. A single target-drop panic still propagates,
+and no foreign work executes under the notifier lock.
+
+`callback_panic_precedes_panicking_replay_target_payload_drop` proves primary
+marker identity, lane cleanup, capacity retention, and fresh delivery.
+`one_notify_activation_has_one_replay_and_leaves_residual_pending_work` rejects
+base `e929b5e` after 257 callbacks exhaust budget 256; cycle 9 performs two
+callbacks, then reaches four total only after a later activation while residual
+pending work is decremented.
+
+The focused gate passes exact-1.94.1 formatting, direct 39, engine one, all-
+feature host nine, host lifecycle one, native manifest six, and native all-
+target/all-feature warnings-denied Clippy. All four required exact-1.94.1
+workspace commands pass without fallback. The extended gate passes Python
+136/8 skips; byte-stable compatibility; deny with only `core-foundation`,
+`cpufeatures`, and `syn` duplicates; audit 1,226/211/zero; native, FreeBSD, and
+WASI portability with only the established unrelated `read_file` warning;
+documentation 91/318/701/534/0; status 10/0; clean diff/protected/no-unsafe;
+and a fresh locked release plus three missing-root smokes. The 3,985,216-byte
+release SHA-256 is
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The authorized Cargo delta is the native dev-only test-fixture line and one
+native dependency-list line in `Cargo.lock`; the production normal/build graph
+is unchanged. Formal review, workflows, integration, and delivery remain
+pending. This is not benchmark, product-performance, compatibility-promotion,
+or fx-equivalence evidence. The analogous terminal path remains out of scope
+and is not claimed fixed.
 
 ## Product boundary
 

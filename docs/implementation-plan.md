@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 8
-REJECTED — CYCLE 9 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 9 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -340,8 +340,33 @@ cap an explicit notify activation at the initial callback plus at most one
 replay, retain residual pending work for a later explicit activation, keep
 concurrency at most one, retain capacity, and add deterministic large-budget
 evidence. Any analogous preexisting terminal path is outside this slice and is
-not claimed fixed. Cycle-9 source/evidence, gates, reviews, feature workflows,
-fast-forward integration, delivery, and exact `main` workflows remain pending.
+not claimed fixed. Rejection docs `2faedc7`/`5296dcc`, evidence
+`cf2e220`/`ee25455`, and source `527e10d` compose at exact behavior head
+`0279b8cb744b8d5cee92d2bfc263abcca60a9987`, tree
+`50b2423637fc9eb8f0cd6792874a2385ff32fd06`; disposable cross-composition
+`13eccf9`/`56695d8d7c2daaa38355c22a04276b583b93a815` is green for formatting,
+direct 39, engine one, and native Clippy.
+
+One explicit activation is capped at initial plus one replay, while residual
+pending work survives lane release for later explicit activation. Close/panic
+clears, A drops before arbitration, callback concurrency stays at most one, and
+capacity remains retained. Dual panic intentionally forgets the opaque
+secondary payload to preserve callback-primary precedence; a lone target-drop
+panic propagates. The two deterministic tests prove the primary marker plus
+lane/capacity/fresh delivery, and reduce base 257 callbacks to two then four
+total after later activation.
+
+Focused exact-1.94.1 formatting, direct 39, engine one, host nine, lifecycle
+one, manifest six, and native Clippy are green. All four required exact-1.94.1
+commands pass without fallback. Extended Python 136/8, compatibility,
+deny/audit 1,226/211/zero, portability, docs 91/318/701/534/0, status 10/0,
+diff/protected/no-unsafe, and unchanged 3,985,216-byte release/missing-root
+smokes are green. Release SHA-256 remains
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The authorized Cargo change remains only the native dev-only fixture line and
+one native lock dependency-list line; production normal/build dependencies are
+unchanged. Reviews, workflows, fast-forward integration, delivery, and exact
+`main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4394,8 +4419,9 @@ compose at exact `d8075ff`/`fa32564`. Formal cycle 8 rejected exact
 `e929b5e`/`cfadc42` with a `0/0/2/0` union: a secondary panic payload can
 override the primary, and re-poll/re-notify can execute 257 callbacks for budget
 256. Cycle-9 primary-preservation and initial-plus-one bounded activation,
-evidence, gates, three fresh reviews, remote workflows, integration, and
-delivery remain pending, and
+residual pending delivery, direct 39, and the complete pinned/extended/release
+gate compose at exact `0279b8c`/`50b2423`. Three fresh reviews, remote
+workflows, integration, and delivery remain pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

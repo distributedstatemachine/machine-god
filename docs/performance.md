@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-9 question resource remediation
 
-Status: **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -896,5 +896,29 @@ notify activation at the initial callback plus at most one replay, retain
 residual pending work for later explicit activation, preserve maximum callback
 concurrency one and capacity ownership, and add deterministic large-budget
 evidence. Analogous preexisting terminal code is outside this bounded slice and
-is not claimed fixed. No cycle-9 green result or future SHA is claimed. See
+is not claimed fixed.
+
+Cycle-9 docs `2faedc7`/`5296dcc`, evidence `cf2e220`/`ee25455`, and source
+`527e10d`/`0279b8c` compose at exact behavior head
+`0279b8cb744b8d5cee92d2bfc263abcca60a9987`, tree
+`50b2423637fc9eb8f0cd6792874a2385ff32fd06`. One explicit notify activation is
+initial plus at most one replay. Residual post-observation pending work survives
+lane release for later activation; close/panic clears; concurrency stays one;
+A drops before arbitration; and capacity remains retained. Dual panic forgets
+the opaque secondary payload to preserve callback-primary precedence; a single
+target-drop panic propagates.
+
+`callback_panic_precedes_panicking_replay_target_payload_drop` proves primary
+marker identity plus lane/capacity/fresh delivery.
+`one_notify_activation_has_one_replay_and_leaves_residual_pending_work` rejects
+base `e929b5e` at 257 callbacks for budget 256; cycle 9 performs two callbacks,
+then reaches four total only after later activation while residual work
+decrements. Cross-composition `13eccf9`/`56695d8` passes formatting, direct 39,
+engine one, and native Clippy. Focused, all four pinned exact-1.94.1 commands,
+Python 136/8, compatibility, deny/audit 1,226/211/zero, portability, docs
+91/318/701/534/0, status 10/0, diff/protected/no-unsafe, and unchanged release-
+smoke gates are green. The authorized Cargo delta remains the dev-only fixture
+line plus one native lock list line; production normal/build dependencies are
+unchanged. Formal review, workflows, integration, and delivery remain pending.
+No benchmark, product-performance, or fx-equivalence result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).

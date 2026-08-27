@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 REJECTED
-— CYCLE 9 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**. Formal cycle
+status is **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -115,9 +115,18 @@ re-notify extending one activation to 257 callbacks for budget 256. Cycle 9
 must suppress or forget the secondary payload while proving primary marker,
 lane, capacity, and fresh delivery; and cap an explicit notify activation at
 initial plus one replay while retaining residual pending work for a later
-activation. Analogous preexisting `terminal` code is outside this slice and is
-not claimed fixed. Cycle-9 source/evidence, gates, three fresh reviews, remote
-workflows, integration, and delivery remain pending. The normative
+activation. Cycle-9 docs `2faedc7`/`5296dcc`, evidence `cf2e220`/`ee25455`,
+and source `527e10d`/`0279b8c` compose at exact head `0279b8c`, tree `50b2423`.
+Explicit activation is initial plus at most one replay; residual pending work
+survives for later activation; close/panic clears; concurrency remains one; and
+capacity remains held. Dual panic forgets the opaque secondary payload to
+preserve callback-primary precedence, while a lone target-drop panic propagates.
+Marker and residual-work evidence passes with 39 direct tests: 257 callbacks on
+the base becomes two and then four total after later activation. Focused,
+pinned, extended, status 10/0, and unchanged release-smoke gates are green.
+Analogous preexisting `terminal` code is outside this slice and is not claimed
+fixed. Three fresh reviews, workflows, integration, and delivery remain pending.
+The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).

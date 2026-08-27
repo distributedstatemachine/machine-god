@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 8 REJECTED — CYCLE 9
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 9 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -103,9 +103,18 @@ notify extending an activation to 257 callbacks for budget 256. Cycle 9 must
 suppress/forget the secondary with primary-marker/lane/capacity/fresh-delivery
 evidence, and cap activation at initial plus one replay while retaining residual
 pending work for later activation. The analogous preexisting terminal path is
-outside this slice and is not claimed fixed. Cycle-9 source/evidence, gates,
-three fresh exact-SHA reviews, remote workflows, integration, and delivery
-remain pending.
+outside this slice and is not claimed fixed. Rejection docs
+`2faedc7`/`5296dcc`, evidence `cf2e220`/`ee25455`, and source
+`527e10d`/`0279b8c` compose at exact head `0279b8c`/`50b2423`. Activation is
+initial plus at most one replay, residual pending survives for later explicit
+activation, close/panic clears, A drops before arbitration, concurrency remains
+one, and capacity stays retained. Dual panic forgets the opaque secondary
+payload to preserve callback-primary precedence; lone target-drop panic
+propagates. Marker and residual-work tests pass with direct 39: the base's 257
+callbacks become two, then four total after later activation. Focused,
+pinned/extended, status 10/0, and unchanged release-smoke gates are green.
+Three fresh exact-SHA reviews, workflows, integration, and delivery remain
+pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

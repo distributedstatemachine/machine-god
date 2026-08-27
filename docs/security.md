@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-9 interaction and authority remediation
 
-Status: **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2287,4 +2287,24 @@ activation at the initial callback plus at most one replay, retain residual
 pending work for a later explicit activation, and preserve callback concurrency
 at most one and capacity ownership. Deterministic large-budget evidence is
 required. The analogous preexisting terminal path remains outside this slice
-and is not claimed fixed. No cycle-9 green result or future SHA is claimed.
+and is not claimed fixed.
+
+Cycle-9 docs `2faedc7`/`5296dcc`, evidence `cf2e220`/`ee25455`, and source
+`527e10d`/`0279b8c` compose at exact behavior head
+`0279b8cb744b8d5cee92d2bfc263abcca60a9987`, tree
+`50b2423637fc9eb8f0cd6792874a2385ff32fd06`. Explicit activation is capped at
+initial plus one replay, residual pending survives for later activation,
+close/panic clears, A drops before arbitration, concurrency remains one, and
+capacity stays owned. When callback and target drop both panic, the opaque
+secondary payload is intentionally forgotten so callback panic stays primary;
+a single target-drop panic still propagates. Interaction authority is unchanged.
+
+The two named deterministic tests prove primary marker identity, lane cleanup,
+capacity/fresh delivery, and the residual-work bound: base `e929b5e` executes
+257 callbacks for budget 256, while cycle 9 executes two and reaches four total
+only after a later activation. Focused direct 39/engine one/native Clippy, all
+pinned/extended gates, docs/status, unchanged release smoke, and the dev-only
+Cargo delta are green; production normal/build dependencies remain unchanged.
+Formal review, workflows, integration, and delivery remain pending. This is not
+benchmark, product-performance, or fx-equivalence evidence. The analogous
+terminal path remains out of scope and is not claimed fixed.

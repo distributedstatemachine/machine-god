@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 REJECTED
-— CYCLE 9 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -140,10 +140,22 @@ executing 257 callbacks for budget 256. Cycle 9 must safely suppress/forget the
 secondary payload while preserving primary-marker, lane, capacity, and fresh-
 delivery evidence; and bound one explicit notify activation to the initial
 callback plus at most one replay while retaining residual pending work for a
-later explicit activation. Callback concurrency must remain at most one and
-capacity retained. Analogous preexisting `terminal` code is outside this slice
-and is not claimed fixed. The current status is **CYCLE 8 REJECTED — CYCLE 9
-REMEDIATION IN PROGRESS**; no cycle-9 green result or future SHA is claimed.
+later explicit activation. Cycle-9 rejection docs `2faedc7`/`5296dcc`, evidence
+`cf2e220`/`ee25455`, and source `527e10d` compose at exact behavior head
+`0279b8cb744b8d5cee92d2bfc263abcca60a9987`, tree
+`50b2423637fc9eb8f0cd6792874a2385ff32fd06`. Explicit activation is now initial
+plus at most one replay; residual post-observation pending work survives lane
+release for a later explicit activation. Close/panic clears, A drops before
+arbitration, concurrency stays at most one, and capacity remains retained.
+Dual panic intentionally forgets the opaque secondary payload so the callback
+panic stays primary; a lone target-drop panic still propagates. Deterministic
+evidence proves the primary marker and changes the rejected base's 257 callbacks
+to two, then four total after later activation. Focused direct 39/engine one,
+all pinned/extended gates, status 10/0, and unchanged release smokes are green.
+Analogous preexisting `terminal` code is outside this slice and is not claimed
+fixed. The current status is **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW
+PENDING**; no formal-review, integration, delivery, benchmark, or fx-equivalence
+result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

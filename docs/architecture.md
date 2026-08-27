@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 REJECTED
-— CYCLE 9 REMEDIATION IN PROGRESS**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -103,8 +103,17 @@ outer re-poll plus re-notify can extend one activation to 257 callbacks for
 budget 256. Cycle 9 must preserve the primary by suppressing/forgetting the
 secondary payload and cap each explicit activation at initial plus one replay,
 retaining residual pending work for later activation. Primary-marker/lane/
-capacity/fresh-delivery and large-budget evidence are required. Analogous
-preexisting `terminal` code is out of scope and is not claimed fixed. See
+capacity/fresh-delivery and large-budget evidence are required. Cycle-9 docs
+`2faedc7`/`5296dcc`, evidence `cf2e220`/`ee25455`, and source
+`527e10d`/`0279b8c` compose at exact head `0279b8c`/`50b2423`. One activation
+runs initial plus at most one replay and preserves residual pending work for a
+later activation. Close/panic clears, concurrency remains one, A drops before
+arbitration, and capacity stays retained. Dual panic intentionally forgets the
+opaque secondary payload so callback panic remains primary; a lone target-drop
+panic propagates. Deterministic evidence proves the marker and two-then-four
+callback bound, and the complete local gate is green. Analogous preexisting
+`terminal` code is out of scope and is not claimed fixed. Formal review remains
+pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2346,8 +2355,10 @@ complete local gates were green. Formal cycle 8 rejected exact
 `e929b5e`/`cfadc42` with a `0/0/2/0` union: secondary panic-payload destruction
 can replace the primary, and re-poll/re-notify can replay without a constant
 activation bound. Cycle-9 primary-preservation and bounded-activation
-remediation/evidence remain pending. Analogous preexisting terminal code is out
-of scope.
+remediation/evidence compose at `0279b8c`/`50b2423`: initial plus one replay is
+the activation ceiling, residual pending survives, and dual panic preserves the
+callback panic. Direct 39 and the complete local gate are green; formal review
+remains pending. Analogous preexisting terminal code is out of scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2382,6 +2393,7 @@ source, evidence, and complete local gate are established at
 `0/0/1/0` union. Cycle-8 remediation, evidence, and complete local gate are
 established at `d8075ff`/`fa32564`. Fresh reviews, remote workflows,
 integration, and delivery were not established; formal cycle 8 rejected exact
-`e929b5e`/`cfadc42` with a `0/0/2/0` union. Cycle-9 source, evidence, gate,
-reviews, workflows, integration, and delivery remain unestablished. The
-analogous preexisting terminal path remains outside this bounded slice.
+`e929b5e`/`cfadc42` with a `0/0/2/0` union. Cycle-9 source, evidence, and the
+complete local gate are established at `0279b8c`/`50b2423`. Reviews, workflows,
+integration, and delivery remain unestablished. The analogous preexisting
+terminal path remains outside this bounded slice.
