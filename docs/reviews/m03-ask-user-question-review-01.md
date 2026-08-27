@@ -1,8 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 3 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. The cycle-3 tree
-is ready for immutable same-SHA formal review. No cycle-3 formal-review or
-remote-workflow result is claimed; integration and delivery remain pending.
+Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**. Formal cycle 3
+rejected its exact immutable candidate. Cycle-4 source, replacement gate,
+review, remote workflows, integration, and delivery remain pending.
 
 ## Frozen lineage
 
@@ -52,6 +52,9 @@ remote-workflow result is claimed; integration and delivery remain pending.
   `bfdf05b6db1a343c8b4ab15cad98476986a77552`, integrated at exact behavior
   head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
   `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`
+- Formal cycle-3 candidate, **REJECTED**:
+  `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+  `c49221efbea66c840b333f0de0161aa686aad52f`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -60,8 +63,10 @@ now compose at `c8718c6`/`c27463b`, and the complete local gate for that exact
 head was green. Formal cycle 2 nevertheless rejected its later immutable
 candidate. Cycle-3 source, independent evidence, and corrected documentation
 now compose at `8bdc33d`/`7a342fc`; its complete replacement gate is green.
-Three fresh exact-SHA reviews, exact feature workflows, fast-forward
-integration, and exact `main` workflows remain required.
+Formal cycle 3 nevertheless rejected exact candidate `746e510`/`c49221e`.
+Cycle-4 remediation, a complete replacement gate, three fresh exact-SHA
+reviews, exact feature workflows, fast-forward integration, and exact `main`
+workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -261,8 +266,9 @@ Isolated production `cf531d1`/`b7b4358`, independent evidence
 the complete pre-trim per-answer and aggregate exact/first-over boundaries and
 the exact reachable 41,102-byte result maximum. The larger 49,152-byte guard is
 authoritative defense in depth but unreachable under the other legal limits.
-The complete local gate is green, so this tree is ready for immutable same-SHA
-review by three fresh read-only product reviewers:
+The complete local gate was green. The later documentation checkpoint formed
+exact immutable candidate `746e510`/`c49221e`, which three fresh read-only
+product reviewers inspected across:
 
 1. correctness/API/schema and pinned-fx boundary;
 2. lifecycle/cancellation/platform/host composition; and
@@ -271,8 +277,66 @@ review by three fresh read-only product reviewers:
 Each reports blocker/high/medium/low counts and concrete evidence. Deduplicate
 overlap without lowering severity. Any confirmed finding rejects the candidate;
 remediation receives a new complete local gate and three fresh reviewers. Only
-an exact `0/0/0/0` union may proceed to feature workflows and `main`. No
-cycle-3 formal-review result exists yet.
+an exact `0/0/0/0` union may proceed to feature workflows and `main`.
+
+## Formal cycle-3 outcome
+
+All three read-only tracks reviewed exact candidate
+`746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`:
+
+| Track | Blocker | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: |
+| Correctness/API/schema | 0 | 0 | 1 | 2 |
+| Lifecycle/cancellation/platform | 0 | 0 | 0 | 2 |
+| Performance/concurrency/resources | 0 | 0 | 2 | 0 |
+| Deduplicated union | 0 | 0 | 3 | 2 |
+
+The two lifecycle lows overlap the two performance mediums, so each appears
+once at medium severity in the deduplicated union. The five accepted findings
+are:
+
+- **Medium — partial public capability accessor:**
+  `PreparedToolCall::capability()` panics for the valid public
+  `NoAuthorityRequired` state. Public capability inspection must be total and
+  optional for both authorization dispositions.
+- **Medium — unbounded malformed-answer destruction:** `Answered(Vec<String>)`
+  permits an injected host to return an arbitrarily large vector. Count
+  rejection is constant-time, but synchronously destroying that rejected
+  vector is unbounded and occurs in the tool future.
+- **Medium — permit released before cancellation-Waker teardown:** declaration
+  and destruction order can release the active-prompt permit before every
+  prompt/cancellation waiter and retained Waker is torn down, allowing a new
+  call to enter while arbitrary destructor callbacks from the old call still
+  execute.
+- **Low — contradictory public authority wording:** broad prose said
+  `without_authority` requires no permission or authority. The exact claim is
+  no policy-governed authority; an injected prompter separately owns its host
+  interaction authority.
+- **Low — stale architecture result:** the maintained architecture section
+  said no cycle-3 local gate was green even though the exact cycle-3 local gate
+  was recorded green before formal review rejected the later candidate.
+
+Any nonzero finding rejects the candidate, so cycle 3 is not green despite its
+complete historical local-gate evidence.
+
+## Cycle-4 remediation target
+
+Cycle 4 freezes all accepted corrections without widening the first slice:
+
+- make the public capability accessor return an optional capability for both
+  valid prepared-call dispositions, with no panic path;
+- store answered values behind a privately owned container that admits zero
+  through four strings only. Zero through four deliberately remains broad
+  enough for execution to detect count mismatches against any legal one-to-four
+  question batch, while preventing an unbounded vector destructor;
+- keep the active-prompt permit alive until prompt-future and cancellation
+  waiter/Waker teardown completes on return, pending drop, and unwind; and
+- correct the public authority wording and stale architecture sentence.
+
+This record does not claim cycle-4 source composition, focused evidence, local
+gate, formal review, remote workflows, integration, or delivery. A complete
+replacement gate and three fresh exact-SHA reviews remain required.
 
 ## Required gates
 
@@ -353,9 +417,10 @@ under exact Rust and Cargo 1.94.1 without fallback:
 
 User-visible prompt execution does not apply because this library-only slice
 adds no CLI prompt UI. This gate is regression/delivery evidence; it makes no
-formal-review, remote-CI, benchmark, product-performance, compatibility-
-promotion, fx-equivalence, integration, or delivery-completion claim. The tree
-is ready for immutable same-SHA formal review.
+remote-CI, benchmark, product-performance, compatibility-promotion, fx-
+equivalence, integration, or delivery-completion claim. It was the historical
+pre-review gate for the later exact candidate `746e510`/`c49221e`, which formal
+cycle 3 rejected; it does not establish any cycle-4 gate result.
 
 ## Deferred and nonclaim record
 

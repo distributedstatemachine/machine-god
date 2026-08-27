@@ -2072,11 +2072,14 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-3 interaction and authority remediation
+## Slice 35 cycle-4 interaction and authority remediation
+
+Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
-ask-mode permission prompter. The separately injected `QuestionPrompter` still
+ask-mode permission prompter. This does not mean the interaction is authority-
+free: the separately injected `QuestionPrompter` still
 owns whatever terminal, UI, or transport authority its host implementation
 needs. The core exception is narrow and trusted-tool-owned: every existing
 prepared call remains permission-required, and core retains all ordinary
@@ -2102,7 +2105,12 @@ or detaching private work; conformance requires the interaction to remain owned
 by its returned future and to clean up on drop. Machine-god adds no timeout or
 ambient terminal discovery. Normatively, first-poll cancellation, fail-fast
 admission, and an adjacent final cancellation check precede prompter
-invocation; cancellation wins any same-poll ready outcome. Formal cycle 1
+invocation; cancellation wins any same-poll ready outcome. Cycle 4 additionally
+admits only zero through four privately stored answer strings, preserving
+count-mismatch validation without accepting an unbounded host-owned vector. It
+keeps the prompt permit until the prompt future and cancellation waiter/Waker
+are destroyed, so a replacement call cannot overlap old-call destructor
+callbacks beyond the configured active limit. Formal cycle 1
 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, because it performed up to 16 KiB
@@ -2125,5 +2133,10 @@ stale/ambiguous review lineage. Cycle-3 source `cf531d1`/`b7b4358`, evidence
 `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. Its complete exact-1.94.1
 local gate is green with 57 focused tests, including exact and first-over
 complete pre-trim per-answer/aggregate evidence and exact reachable 41,102-byte
-result evidence. The tree is ready for immutable same-SHA formal review;
-review, remote workflows, and delivery remain pending.
+result evidence. Formal cycle 3 rejected exact candidate
+`746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated `0/0/3/2`
+union. Cycle 4 will make capability inspection total and optional, bound the
+privately stored answer container to zero through four entries, and retain the
+active prompt permit through prompt and cancellation-Waker teardown. Cycle-4
+source, gate, review, remote workflows, and delivery remain pending.

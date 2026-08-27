@@ -1,10 +1,11 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 3 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 3 REJECTED — CYCLE 4
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
-bounded ordered free-form answers, explicit no-authority preparation, fixed
+bounded ordered free-form answers, explicit no-policy-authority preparation,
+separately owned prompter interaction authority, fixed
 redacted outcomes, and default-one/hard-eight fail-fast prompt concurrency.
 `permission_request_id`, CLI presentation, timeout, detached work, approval
 escalation, and later-tool scope are deferred. Cycle-2 production, independent
@@ -14,9 +15,12 @@ tracks rejected exact candidate `910d7bc`, tree `503a91f`, with a deduplicated
 `3e3c0c7`/`f3f6f9d`, and docs `bfdf05b` compose at exact behavior head
 `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
 `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. The complete exact-1.94.1
-local gate is green with 57 focused tests. The tree is ready for immutable
-same-SHA formal review; three fresh tracks, remote workflows, and delivery
-remain pending. See
+local gate is green with 57 focused tests. Formal cycle 3 rejected exact
+candidate `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`: correctness/API reported
+`0/0/1/2`, lifecycle/platform `0/0/0/2`, performance/resources `0/0/2/0`, and
+the deduplicated union is `0/0/3/2`. Cycle-4 remediation, its replacement gate,
+three fresh tracks, remote workflows, and delivery remain pending. See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 
 Bounded slice 34, native `terminal`, is **DELIVERED** from exact delivered base

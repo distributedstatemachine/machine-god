@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3
+REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -25,8 +25,11 @@ tree `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. It rejects complete pre-trim
 host answers above 4,096 bytes before scanning and proves the reachable
 41,102-byte maximum while retaining the unreachable 49,152-byte serialized-
 result guard as defense in depth. The complete exact-1.94.1 local gate is green
-with 57 focused tests. This tree is ready for immutable same-SHA formal review;
-reviews, remote workflows, and delivery remain pending. See
+with 57 focused tests. Formal cycle 3 rejected exact candidate
+`746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated `0/0/3/2`
+union. Cycle-4 source, gate, review, remote workflows, and delivery remain
+pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -1687,7 +1690,12 @@ model final answer -> assistant commit -> terminal events
 Tool preflight is a provider-neutral transformation before policy. The
 source-compatible `Tool::prepare` default returns the provider's original JSON
 arguments with the existing raw `Capability::Tool`. A tool may instead return a
-`PreparedToolCall` containing a normalized capability and replacement arguments.
+`PreparedToolCall` containing replacement arguments and either a normalized
+`PermissionRequired(Capability)` disposition or the trusted explicit
+`NoAuthorityRequired` disposition. Cycle 4 makes public capability inspection
+total: the capability accessor returns `Some` only for permission-required
+calls and `None` for no-policy-authority calls, rather than panicking for a
+valid public state.
 Preparation is synchronous trusted-host code and must be deterministic,
 bounded, nonblocking, and free of external effects. Core checks cancellation
 immediately before and after the call; it cannot interrupt preparation in
@@ -1697,16 +1705,22 @@ capability, depth and node traversal covers only JSON values embedded in its
 `Tool` or `Custom` variant. Every variant is also serialized as a whole under
 one total byte cap of the configured argument limit plus 1 KiB. That fixed 1
 KiB is headroom within the total capability cap, not a separately metered
-envelope. Core then presents the prepared capability to policy and passes
-exactly the prepared arguments to `Tool::execute` only after policy allows the
-request.
+envelope. Core presents a permission-required prepared capability to policy
+and passes exactly the prepared arguments to `Tool::execute` only after policy
+allows the request. For an explicit no-policy-authority disposition, core skips
+permission identity, events, and policy without implying that an injected host
+boundary such as `QuestionPrompter` lacks its own terminal, UI, or transport
+authority.
 
-The trusted tool must ensure those arguments can drive only effects contained
-by the exact capability that policy authorized. Filesystem, process, and network
-implementations must not reinterpret normalized arguments into a broader path,
-command, or destination. This obligation keeps authorization and execution
-about the same normalized operation without giving core semantic knowledge of
-tool JSON or ambient operating-system authority.
+For `PermissionRequired`, the trusted tool must ensure those arguments can
+drive only effects contained by the exact capability that policy authorized.
+Filesystem, process, and network implementations must not reinterpret
+normalized arguments into a broader path, command, or destination. For
+`NoAuthorityRequired`, the trusted tool must ensure execution needs no policy-
+governed authority; that does not erase authority separately encapsulated by an
+injected host interface. These obligations keep authorization disposition and
+execution aligned without giving core semantic knowledge of tool JSON or
+ambient operating-system authority.
 
 The native `read_file` tool is constructed with one explicit absolute workspace
 root. On supported Unix targets construction opens the final root directory
@@ -2188,7 +2202,7 @@ Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
 fixed structural state (`has_provider` and tool count); it never invokes the
 provider's `name` method or copies provider-controlled text.
 
-## Slice 35 cycle-3 question-interaction remediation boundary
+## Slice 35 cycle-4 question-interaction remediation boundary
 
 The `ask_user_question` slice adds one portable native adapter,
 not UI state to core or the CLI. Strict effect-free native preparation
@@ -2199,16 +2213,22 @@ permission handler. It still owns cancellation, `ToolStarted`/`ToolFinished`,
 placeholder durability and replacement, result bounds, and recovery. All
 existing tools remain on `PermissionRequired(Capability)`.
 
-An injected `QuestionPrompter` owns presentation. The tool owns the returned
-prompt future and one fail-fast local permit, and releases both on completion
-or drop. It creates no runtime, timer, task, thread, queue, terminal, root,
-environment, network, or persistence authority. The prompt carries normalized
+An injected `QuestionPrompter` owns presentation and whatever terminal, UI, or
+transport authority its host implementation requires. The portable adapter
+owns the returned prompt future and one fail-fast local permit. It creates no
+runtime, timer, task, thread, queue, root, environment, network, or persistence
+authority of its own. The prompt carries normalized
 terminal-safe values; a structured outcome carries answers, explicit user
 cancellation, or noninteractive unavailability. Answers remain ordered and
 bounded but need not equal an option label, allowing a host-owned `Other` path.
 Cycle 3 freezes the raw-answer ceiling over the complete pre-trim strings
 returned by that host. Length is checked before ASCII-edge scanning, so an
 arbitrarily large whitespace-only response cannot widen synchronous work.
+Cycle 4 also prevents unbounded synchronous destruction after a malformed
+response: `Answered` privately stores zero through four strings. That range
+still lets execution reject every legal answer-count mismatch. Return, pending-
+drop, and unwind teardown destroy the prompt future and cancellation waiter/
+Waker while the active permit remains held, then release capacity.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2226,6 +2246,7 @@ suite locally proved the cycle-2 input, prepared, presentation, terminal-class,
 maximum-concurrency, independent-counter, deep, wrong-name, unpolled, drop,
 and unwind corrections. It did not prove rejection at the unreachable
 49,152-byte result guard. Legal inputs reach at most 41,102 serialized output
-bytes; the larger guard remains defense in depth. The complete cycle-3 target
-is normative in [`ask-user-question.md`](ask-user-question.md). Formal cycle 2
-is rejected, and no cycle-3 local gate or review is green.
+bytes; the larger guard remains defense in depth. The complete cycle-4 target
+is normative in [`ask-user-question.md`](ask-user-question.md). Cycle 3 passed
+its local gate but formal review rejected exact candidate `746e510`, tree
+`c49221e`; no cycle-4 source, local gate, or review is green.

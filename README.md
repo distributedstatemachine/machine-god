@@ -6,15 +6,16 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3
+REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
 for terminal-safe presentation, and calls only an explicitly injected rootless
 `QuestionPrompter`. Answers are ordered and bounded but may be free-form so a
-host can support `Other`. Explicit no-authority preparation prevents the
-question tool from recursively entering permission policy. The deferred
+host can support `Other`. Explicit no-policy-authority preparation prevents the
+question tool from recursively entering permission policy; the injected
+prompter still owns its host interaction authority. The deferred
 `permission_request_id` field is always rejected. This first slice adds no
 CLI/TUI, timeout, detached work, approval escalation, durable terminal work,
 `vision`, or `read_tool_result`. Historical behavior head `a76818e`, tree
@@ -36,9 +37,16 @@ behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
 `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. Complete pre-trim answer
 lengths are bounded before scanning, evidence proves the reachable
 41,102-byte maximum while retaining the unreachable 49,152-byte defense guard,
-and the complete local gate is green with 57 focused tests. The tree is ready
-for immutable same-SHA formal review; reviews, remote workflows, integration,
-and delivery remain pending. See the
+and the complete local gate is green with 57 focused tests. Formal cycle 3
+rejected exact candidate `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated
+0 blocker / 0 high / 3 medium / 2 low union. Cycle 4 will make the public
+capability accessor total and optional, bound the privately stored host-answer
+container to zero through four entries, and retain the prompt permit through
+prompt/cancellation-Waker teardown. It also corrects broad authority wording:
+the call skips policy-governed authority, while the injected prompter owns its
+host interaction authority. Cycle-4 source, gate, reviews, remote workflows,
+integration, and delivery remain pending. See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

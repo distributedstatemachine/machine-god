@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 3 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -43,8 +43,10 @@ markers, 701 parsed links, 534 local links, and zero missing targets. The fresh
 locked release binary is 3,985,216 bytes with SHA-256
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
 isolated `help`, `doctor`, and `sessions` runs do not create the missing root.
-This tree is ready for immutable same-SHA formal review. The checkpoint does
-not establish a formal review outcome, remote CI, benchmark evidence,
+Formal cycle 3 reviewed exact candidate
+`746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`, and rejected it. That outcome does
+not establish cycle-4 source, gate, review, remote CI, benchmark evidence,
 integration, delivery, product performance, compatibility promotion, or fx
 equivalence. No release-binary prompt exercise applies because this library-
 only slice adds no CLI prompt UI.
@@ -57,10 +59,30 @@ Cycle 2 implemented every accepted cycle-1 correction and passed its local
 gate, but formal review rejected exact candidate
 `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
 `503a91f334156dbcf2470560b9bb456c3491fd3d`, with a deduplicated 0 blocker,
-0 high, 2 medium, and 2 low findings. Cycle 3 corrects every accepted finding
-and passes the local gate above, but formal review remains pending. The detailed
-outcome and remediation record are in the
+0 high, 2 medium, and 2 low findings. Cycle 3 corrected every accepted cycle-2
+finding and passed the local gate above, but formal review rejected its
+immutable candidate with a deduplicated 0 blocker, 0 high, 3 medium, and 2 low
+findings. The detailed outcome and cycle-4 remediation target are in the
 [`review ledger`](reviews/m03-ask-user-question-review-01.md).
+
+## Formal cycle-3 outcome and cycle-4 target
+
+Correctness/API reported `0/0/1/2`, lifecycle/platform `0/0/0/2`, and
+performance/resources `0/0/2/0` on exact candidate
+`746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`. The lifecycle resource reports
+overlap both performance mediums, producing a deduplicated `0/0/3/2` union.
+Accepted findings are the partial panicking capability accessor, contradictory
+broad public authority wording, the stale architecture no-green-gate sentence,
+unbounded synchronous destruction of a malformed host answer vector, and
+permit release before cancellation waiter/Waker teardown.
+
+Cycle 4 freezes a total optional capability accessor, privately stored bounded
+answers admitting zero through four values so count mismatches remain
+observable, and teardown of the prompt/cancellation waiter/Waker while the
+active permit remains held. Cycle-4 source, focused evidence, complete local
+gate, formal review, remote workflows, integration, and delivery are not yet
+established.
 
 ## Product boundary
 
@@ -85,6 +107,13 @@ constructs no permission request ID, emits no `PermissionRequested` or
 call. Argument validation, cancellation, tool events, result limits,
 persistence, and recovery remain unchanged. Every existing tool retains the
 permission-required default.
+
+That no-authority name is scoped to policy-governed authority; it does not
+claim that the injected prompter lacks terminal, UI, or transport authority.
+Cycle 4 makes `PreparedToolCall::capability()` a total optional accessor:
+permission-required calls return their exact capability and explicit no-policy-
+authority calls return no capability. Inspecting either valid public state must
+not panic.
 
 ## Model-visible schema
 
@@ -245,8 +274,11 @@ a capacity Waker, or invoke the prompter. A successful permit is held until the
 tool returns or its future is dropped.
 
 The prompt future remains owned by the tool future. Dropping an unpolled tool
-future invokes no prompt. Dropping a pending future drops the prompt future and
-releases its permit. The adapter starts no thread, task, channel, timer,
+future invokes no prompt. Cycle 4 requires pending-return, drop, and unwind
+paths to tear down the prompt future and cancellation waiter/Waker while the
+active-prompt permit is still held, then release that permit. This prevents a
+new call from entering while arbitrary destructor callbacks owned by the old
+call still execute. The adapter starts no thread, task, channel, timer,
 runtime, retry, or detached work. A conforming prompter must keep interaction
 work owned by the returned future or perform its own complete drop cleanup.
 
@@ -262,13 +294,19 @@ no process-global registry.
 
 ## Outcomes, answers, and precedence
 
-The prompter returns one of three structured outcomes:
+The prompter returns one of three structured outcomes. Cycle 4 stores answered
+values behind a private bounded container whose checked construction admits
+zero through four strings only:
 
-- `Answered` with an ordered vector of strings;
+- `Answered` with that ordered bounded answer container;
 - `Cancelled` for an explicit user cancellation; or
 - `Unavailable` for a noninteractive host.
 
-`Answered` must contain exactly one answer per prepared question. Each complete
+The zero-to-four construction range intentionally includes count mismatches for
+every legal one-to-four-question batch so execution still owns mismatch
+validation, but a malformed host cannot transfer an arbitrarily large vector
+whose synchronous destructor escapes the resource contract. `Answered` must
+contain exactly one answer per prepared question. Each complete
 host-returned string is checked against the per-answer and aggregate 4,096-byte
 limits before scanning or trimming. Within-bound answers are ASCII-trimmed and
 must remain nonempty. Machine-god then applies the same terminal-safe encoding

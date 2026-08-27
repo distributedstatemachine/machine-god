@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 3 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 3
+REJECTED — CYCLE 4 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -139,9 +139,20 @@ fresh 3,985,216-byte locked release binary with SHA-256
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 Isolated `help`, `doctor`, and `sessions` smoke checks do not create the missing
 root. This is regression/delivery evidence, not a performance result or fx-
-equivalence claim. The tree is ready for immutable same-SHA formal review.
-Three fresh review tracks, feature workflows, integration, delivery, and exact
-`main` workflows remain pending.
+equivalence claim. Formal cycle 3 rejected exact candidate
+`746e510c7d8eb93229996e74f91827f489e5bb31`, tree
+`c49221efbea66c840b333f0de0161aa686aad52f`. Correctness/API reported
+`0/0/1/2`, lifecycle/platform `0/0/0/2`, and performance/resources `0/0/2/0`;
+the lifecycle resource reports overlap the two performance mediums, producing
+a deduplicated `0/0/3/2` union. Accepted findings are the partial panicking
+capability accessor; contradictory broad public authority wording; the stale
+architecture no-green-gate sentence; unbounded synchronous destruction of a
+malformed host answer vector; and release of prompt capacity before
+cancellation waiter/Waker teardown. Cycle 4 freezes a total optional capability
+accessor, a privately stored zero-to-four-answer container that still permits
+count-mismatch validation, and waiter/Waker teardown under the active permit.
+Cycle-4 source, replacement gate, three fresh review tracks, feature workflows,
+integration, delivery, and exact `main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4134,8 +4145,9 @@ gate:
 diagnostics, cancellation/drop tests, and platform scope stated before
 integration. Slice 35 implements the ordinary-question-only `ask_user_question`
 contract from exact delivered slice-34 base `5846799`. It rejects the deferred
-`permission_request_id`, uses explicit no-authority preparation, injects a
-rootless bounded prompter, and permits ordered bounded free-form answers.
+`permission_request_id`, uses the explicit no-policy-authority disposition,
+injects a rootless bounded prompter that separately owns its host interaction
+authority, and permits ordered bounded free-form answers.
 Historical behavior head `a76818e`, tree `f44def5`, passed its recorded local
 gate. Formal cycle 1 rejected exact candidate `6c54ec3`, tree `bea9024`, with a
 deduplicated `0 blocker / 1 high / 3 medium / 3 low` union. Cycle-2 evidence
@@ -4149,11 +4161,14 @@ behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
 bytes are bounded before scanning; evidence proves the reachable 41,102-byte
 result maximum without claiming the unreachable 49,152-byte defense guard as a
 reachable boundary. The complete exact-1.94.1 local gate is green with 57
-focused tests. The tree is ready for immutable same-SHA formal review; formal
-review, remote workflows, integration, and delivery remain pending, so this
-combined item remains unchecked. Slice 33 `web_search` is delivered
-through exact record `52b5885`; its feature and main CI/Benchmark workflows
-are green. Slice 34
+focused tests. Formal cycle 3 rejected exact candidate `746e510`, tree
+`c49221e`, with a deduplicated `0/0/3/2` union. Cycle 4 targets total optional
+capability inspection, zero-to-four privately stored host answers, and prompt/
+cancellation-Waker teardown before releasing the active permit. Replacement
+source, gate, review, remote workflows, integration, and delivery remain
+pending, so this combined item remains unchecked. Slice 33 `web_search` is
+delivered through exact record `52b5885`; its feature and main CI/Benchmark
+workflows are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that
 exact base. Cycle 1 rejected exact candidate `fba499e` with a deduplicated
 `0 blocker / 3 high / 3 medium / 4 low` product-finding union. Independent

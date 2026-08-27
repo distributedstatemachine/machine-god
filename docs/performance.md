@@ -656,7 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-3 question resource remediation
+## Slice 35 cycle-4 question resource remediation
+
+Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -688,8 +690,8 @@ whitespace-only string could force an unbounded synchronous scan. Cycle 3
 freezes an O(1) complete-string length check before trim: both each answer and
 the aggregate complete pre-trim bytes are limited to 4,096. The tool owns one
 prompt future and one permit; the limits are default concurrency one and hard
-maximum eight with
-fail-fast saturation and no waiter queue or capacity Waker. Exact-limit and
+maximum eight with fail-fast saturation and no waiter queue or capacity Waker.
+Exact-limit and
 first-over-limit input, prepared, presentation, and answer evidence, plus
 explicit one/eight/ninth-admission and independent-counter evidence, were green
 in the 26-test direct suite. Its claimed exact/+1 49,152-byte result evidence
@@ -717,7 +719,21 @@ is `0/0/2/2`. Cycle-3 source `cf531d1`/`b7b4358`, evidence
 `3e3c0c7`/`f3f6f9d`, and docs `bfdf05b` compose at exact behavior head
 `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
 `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. The complete exact-1.94.1
-local gate is green with 57 focused tests, including 28 direct tests, and the
-tree is ready for immutable same-SHA formal review. Review and delivery remain
-pending. This is not a benchmark or product-performance result. See
+local gate is green with 57 focused tests, including 28 direct tests. Formal
+cycle 3 rejected exact candidate `746e510c7d8eb93229996e74f91827f489e5bb31`,
+tree `c49221efbea66c840b333f0de0161aa686aad52f`.
+Performance/resources reported `0/0/2/0`: an arbitrarily large malformed
+`Answered(Vec<String>)` is rejected by count but still destroyed synchronously,
+and permit destruction precedes teardown of every prompt/cancellation waiter
+and retained Waker. Lifecycle reported both at low severity; the deduplicated
+union keeps their medium severity and totals `0/0/3/2` with the separate API
+and documentation findings.
+
+Cycle 4 privately stores at most four answer strings while still admitting
+zero through four entries so legal count mismatches remain testable. It also
+keeps the active permit held through prompt-future and cancellation waiter/
+Waker teardown on return, pending drop, and unwind, bounding those arbitrary
+destructor callbacks inside the configured concurrency slot. Cycle-4 source,
+evidence, gate, review, and delivery remain pending. This is not a benchmark or
+product-performance result. See
 [`ask-user-question.md`](ask-user-question.md).
