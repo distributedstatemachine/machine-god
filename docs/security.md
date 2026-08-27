@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-9 interaction and authority remediation
 
-Status: **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2305,6 +2305,25 @@ capacity/fresh delivery, and the residual-work bound: base `e929b5e` executes
 only after a later activation. Focused direct 39/engine one/native Clippy, all
 pinned/extended gates, docs/status, unchanged release smoke, and the dev-only
 Cargo delta are green; production normal/build dependencies remain unchanged.
-Formal review, workflows, integration, and delivery remain pending. This is not
-benchmark, product-performance, or fx-equivalence evidence. The analogous
-terminal path remains out of scope and is not claimed fixed.
+Formal cycle 9 rejected exact candidate
+`1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+`5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`. Correctness/API and lifecycle/
+platform reported the same `0/0/1/0` medium, performance/resources reported
+`0/0/0/0`, and the deduplicated union is `0/0/1/0`.
+
+The defect is lifecycle progress, not new authority. After the initial callback
+and one replay are spent, a legal wake after the replay poll remains only in
+`pending_after_observation`; lane release schedules no downstream callback,
+and only unrelated later explicit notify activity consumes it. The committed
+test manually invokes `retained_wakers[2]`. A self-waking prompt or cancellation
+transition whose wake is last can therefore remain `Pending` indefinitely, and
+no timeout exists.
+
+Cycle 10 must make every corresponding post-poll wake schedule progress without
+unrelated activity while preserving bounded nonrecursive delivery, callback
+single-flight, established panic/drop ordering, and permit ownership. A
+deferred/trampoline dispatcher or justified public contract redesign may be
+required. No cycle-10 source, evidence, gate, review, integration, or delivery
+is claimed. This is not benchmark, product-performance, or fx-equivalence
+evidence. The analogous terminal path remains out of scope and is not claimed
+fixed.

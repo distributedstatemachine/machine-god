@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 9 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 9 REJECTED — CYCLE 10
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -113,8 +113,18 @@ payload to preserve callback-primary precedence; lone target-drop panic
 propagates. Marker and residual-work tests pass with direct 39: the base's 257
 callbacks become two, then four total after later activation. Focused,
 pinned/extended, status 10/0, and unchanged release-smoke gates are green.
-Three fresh exact-SHA reviews, workflows, integration, and delivery remain
-pending.
+Formal cycle 9 rejected exact `1eeab670a552bc15b5602319b0bb1ce27d2be497`,
+tree `5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`: correctness/API and lifecycle/
+platform reported the same `0/0/1/0` medium, performance/resources reported
+`0/0/0/0`, and the deduplicated union is `0/0/1/0`. After the callback-plus-
+one-replay budget, a legal wake after the replay poll remains pending with no
+downstream scheduling until unrelated explicit notify activity. The committed
+test manually invokes `retained_wakers[2]`; a last self-wake or cancellation
+wake can otherwise leave the no-timeout prompt pending indefinitely. Cycle 10
+must provide autonomous post-poll progress while retaining bounded nonrecursive
+single-flight delivery, panic/drop ordering, and permit ownership. A deferred/
+trampoline dispatcher or justified public contract redesign may be needed. No
+cycle-10 source, evidence, gate, review, integration, or delivery is claimed.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

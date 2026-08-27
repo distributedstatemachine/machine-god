@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -89,8 +89,20 @@ concurrency remains one; and capacity stays held. Dual panic forgets the opaque
 secondary payload to preserve callback-primary precedence, while a lone target-
 drop panic propagates. The marker and residual-work regressions pass with 39
 direct tests, and the complete local gate is green. The analogous preexisting
-terminal path is outside this bounded slice and is not claimed fixed. Fresh
-reviews remain pending.
+terminal path is outside this bounded slice and is not claimed fixed. Formal
+cycle 9 rejected exact `1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+`5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`: correctness/API and lifecycle/
+platform each reported the same `0/0/1/0` medium, performance/resources
+reported `0/0/0/0`, and the deduplicated union is `0/0/1/0`. Once the
+activation budget is spent, a legal wake after the replay poll can remain
+pending without downstream
+scheduling until unrelated explicit notify activity; the committed test
+manually invokes `retained_wakers[2]`. A last self-wake or cancellation wake can
+therefore leave the no-timeout host prompt pending indefinitely. Cycle 10 must
+schedule every post-poll wake without unrelated activity while preserving
+bounded nonrecursive single-flight delivery, panic/drop ordering, and permit
+ownership. No cycle-10 source, evidence, or gate is claimed.
+No cycle-10 review, integration, or delivery exists yet.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -818,8 +830,10 @@ consistency, source, evidence, and complete local gate compose at
 and complete local gate compose at `d8075ff`/`fa32564`. Fresh reviews remain
 pending, and formal cycle 8 rejected `e929b5e`/`cfadc42` with a `0/0/2/0`
 union. Cycle-9 panic-primary and bounded-activation remediation/evidence plus
-the complete local gate compose at `0279b8c`/`50b2423`. Fresh reviews remain
-pending; the analogous preexisting terminal code is outside this slice.
+the complete local gate compose at `0279b8c`/`50b2423`. Formal cycle 9 rejected
+`1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
+work does not yet exist. The analogous preexisting terminal code is outside
+this slice.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1375,6 +1389,7 @@ reentrant-close suppression, and the complete local gate compose at
 pending, and formal cycle 8 rejected exact `e929b5e`/`cfadc42` with a
 `0/0/2/0` union. Cycle-9 primary-panic preservation, constant per-activation
 callback work, residual pending delivery, and the complete local gate compose
-at `0279b8c`/`50b2423`. Reviews, workflows, integration, and delivery remain
-pending. Analogous preexisting terminal code is out of scope and is not claimed
-fixed.
+at `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
+`1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
+source, evidence, review, integration, and delivery do not exist. Analogous
+preexisting terminal code is out of scope and is not claimed fixed.

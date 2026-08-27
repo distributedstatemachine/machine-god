@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-9 question resource remediation
 
-Status: **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -919,6 +919,23 @@ Python 136/8, compatibility, deny/audit 1,226/211/zero, portability, docs
 91/318/701/534/0, status 10/0, diff/protected/no-unsafe, and unchanged release-
 smoke gates are green. The authorized Cargo delta remains the dev-only fixture
 line plus one native lock list line; production normal/build dependencies are
-unchanged. Formal review, workflows, integration, and delivery remain pending.
-No benchmark, product-performance, or fx-equivalence result is claimed. See
+unchanged. Formal cycle 9 rejected exact candidate
+`1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+`5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`. Correctness/API and lifecycle/
+platform each reported the same `0/0/1/0` medium, performance/resources
+reported `0/0/0/0`, and the deduplicated union is `0/0/1/0`.
+
+After the initial callback plus one replay budget is exhausted, a legal wake
+after the replay poll remains only in `pending_after_observation`. Releasing
+the lane schedules no downstream callback; only unrelated later explicit
+notify activity consumes the work. The committed regression manually invokes
+`retained_wakers[2]`, so a self-waking prompt or cancellation transition whose
+wake is last may remain `Pending` indefinitely. No timeout exists.
+
+Cycle 10 must schedule every corresponding post-poll wake without unrelated
+activity while retaining bounded nonrecursive callback work, single-flight,
+panic/drop ordering, and capacity ownership. A deferred/trampoline dispatcher
+or a justified public contract redesign may be required. No cycle-10 source,
+evidence, gate, review, integration, or delivery is claimed. No benchmark,
+product-performance, or fx-equivalence result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).

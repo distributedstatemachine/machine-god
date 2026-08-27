@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9
+REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -112,8 +112,22 @@ arbitration, and capacity stays retained. Dual panic intentionally forgets the
 opaque secondary payload so callback panic remains primary; a lone target-drop
 panic propagates. Deterministic evidence proves the marker and two-then-four
 callback bound, and the complete local gate is green. Analogous preexisting
-`terminal` code is out of scope and is not claimed fixed. Formal review remains
-pending. See
+`terminal` code is out of scope and is not claimed fixed. Formal cycle 9
+rejected exact candidate `1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+`5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`: correctness/API and lifecycle/
+platform each reported the same `0/0/1/0` medium, performance/resources
+reported `0/0/0/0`, and the deduplicated union is `0/0/1/0`. A legal wake
+after the replay poll remains only in
+`pending_after_observation` once the initial-plus-one-replay activation budget
+is exhausted; lane release schedules nothing, and only unrelated later notify
+activity consumes it. The retained-Waker test manually calls
+`retained_wakers[2]`, so a last self-wake or cancellation wake can otherwise
+leave this no-timeout prompt pending indefinitely. Cycle 10 must provide
+autonomous post-poll scheduling while retaining bounded nonrecursive single-
+flight delivery, panic/drop ordering, and permit ownership, possibly through a
+deferred/trampoline dispatcher or a justified public contract redesign. No
+cycle-10 source, evidence, gate, review, integration, or delivery exists yet.
+See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2357,8 +2371,10 @@ can replace the primary, and re-poll/re-notify can replay without a constant
 activation bound. Cycle-9 primary-preservation and bounded-activation
 remediation/evidence compose at `0279b8c`/`50b2423`: initial plus one replay is
 the activation ceiling, residual pending survives, and dual panic preserves the
-callback panic. Direct 39 and the complete local gate are green; formal review
-remains pending. Analogous preexisting terminal code is out of scope.
+callback panic. Direct 39 and the complete local gate are green. Formal cycle 9
+rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
+cycle-10 work does not yet exist. Analogous preexisting terminal code is out of
+scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2394,6 +2410,8 @@ source, evidence, and complete local gate are established at
 established at `d8075ff`/`fa32564`. Fresh reviews, remote workflows,
 integration, and delivery were not established; formal cycle 8 rejected exact
 `e929b5e`/`cfadc42` with a `0/0/2/0` union. Cycle-9 source, evidence, and the
-complete local gate are established at `0279b8c`/`50b2423`. Reviews, workflows,
-integration, and delivery remain unestablished. The analogous preexisting
-terminal path remains outside this bounded slice.
+complete local gate are established at `0279b8c`/`50b2423`. Formal cycle 9
+rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
+cycle-10 source, evidence, reviews, workflows, integration, and delivery do not
+exist. The analogous preexisting terminal path remains outside this bounded
+slice.

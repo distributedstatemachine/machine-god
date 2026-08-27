@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9
+REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -153,9 +153,21 @@ evidence proves the primary marker and changes the rejected base's 257 callbacks
 to two, then four total after later activation. Focused direct 39/engine one,
 all pinned/extended gates, status 10/0, and unchanged release smokes are green.
 Analogous preexisting `terminal` code is outside this slice and is not claimed
-fixed. The current status is **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW
-PENDING**; no formal-review, integration, delivery, benchmark, or fx-equivalence
-result is claimed.
+fixed. Formal cycle 9 rejected exact candidate `1eeab670a552bc15b5602319b0bb1ce27d2be497`,
+tree `5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`: correctness/API and lifecycle/
+platform each reported `0/0/1/0`, performance/resources reported `0/0/0/0`,
+and the deduplicated union is `0/0/1/0`. After the initial callback plus one
+replay budget is spent, a legal wake after the replay poll can remain only
+pending, with no downstream
+schedule until unrelated later activity; the committed regression manually
+invokes `retained_wakers[2]`. A last self-wake or cancellation wake can
+therefore leave this no-timeout prompt pending indefinitely. Cycle 10 must make
+every wake after its corresponding poll schedule progress without unrelated
+activity while retaining bounded nonrecursive delivery, single-flight, panic/
+drop ordering, and permit ownership. A deferred/trampoline dispatcher or a
+justified public contract redesign may be required. The current status is
+**CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**; no cycle-10 source,
+evidence, gate, review, integration, or delivery is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

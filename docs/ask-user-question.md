@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -427,6 +427,38 @@ is unchanged. Formal review, workflows, integration, and delivery remain
 pending. This is not benchmark, product-performance, compatibility-promotion,
 or fx-equivalence evidence. The analogous terminal path remains out of scope
 and is not claimed fixed.
+
+## Formal cycle-9 outcome and cycle-10 requirement
+
+Formal cycle 9 reviewed exact candidate
+`1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+`5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`. Correctness/API reported
+`0/0/1/0`, lifecycle/platform reported `0/0/1/0`, and
+performance/resources reported `0/0/0/0`. The correctness and lifecycle
+reports describe one defect, so the deduplicated union is `0/0/1/0`.
+
+After one explicit activation has used its initial callback and one replay, a
+legal wake emitted after the replay poll sets only
+`pending_after_observation`. Notify releases the lane without scheduling a
+downstream callback. That wake is consumed only when an unrelated later
+explicit notify activates the lane. The committed
+`one_notify_activation_has_one_replay_and_leaves_residual_pending_work` test
+manually calls `retained_wakers[2]` to make progress; it does not demonstrate
+autonomous progress from the retained wake.
+
+Consequently, a self-waking prompt or cancellation transition can remain
+`Pending` indefinitely when its wake is the last external activity. The tool
+sets no timeout, so nothing else is required to arrive. The candidate is
+rejected.
+
+Cycle 10 must ensure every wake emitted after its corresponding poll schedules
+progress without unrelated activity. Delivery must remain bounded and
+nonrecursive, callback execution single-flight, established callback/target-
+drop panic ordering unchanged, and the prompt permit retained through all
+activity ownership. A deferred/trampoline dispatcher may be necessary; a
+public contract redesign is acceptable only with an explicit, justified
+progress rule. No cycle-10 source, evidence, gate, review, workflow,
+integration, or delivery result is claimed.
 
 ## Product boundary
 

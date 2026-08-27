@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 9 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 9
+REJECTED — CYCLE 10 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -365,8 +365,27 @@ smokes are green. Release SHA-256 remains
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 The authorized Cargo change remains only the native dev-only fixture line and
 one native lock dependency-list line; production normal/build dependencies are
-unchanged. Reviews, workflows, fast-forward integration, delivery, and exact
-`main` workflows remain pending.
+unchanged. Formal cycle 9 reviewed exact candidate
+`1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+`5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`. Correctness/API and lifecycle/
+platform each reported the same `0/0/1/0` medium, performance/resources
+reported `0/0/0/0`, and the deduplicated union is `0/0/1/0`.
+
+The candidate is rejected for a liveness defect. After an activation exhausts
+the initial callback plus one replay budget, a legal wake emitted after the
+replay poll remains only in `pending_after_observation`; lane release schedules
+no downstream callback, and only unrelated later explicit notify activity
+consumes the pending wake. The committed regression manually calls
+`retained_wakers[2]` to progress. A self-waking prompt or cancellation
+transition whose wake is last can therefore remain `Pending` indefinitely, and
+this slice has no timeout.
+
+Cycle 10 must ensure every wake after its corresponding poll schedules progress
+without unrelated activity while preserving bounded nonrecursive delivery,
+single-flight, established panic/drop ordering, and permit ownership. A
+deferred/trampoline dispatcher or a justified public contract redesign may be
+required. No cycle-10 source, evidence, local gate, review, workflow,
+integration, or delivery exists yet.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4420,8 +4439,10 @@ compose at exact `d8075ff`/`fa32564`. Formal cycle 8 rejected exact
 override the primary, and re-poll/re-notify can execute 257 callbacks for budget
 256. Cycle-9 primary-preservation and initial-plus-one bounded activation,
 residual pending delivery, direct 39, and the complete pinned/extended/release
-gate compose at exact `0279b8c`/`50b2423`. Three fresh reviews, remote
-workflows, integration, and delivery remain pending, and
+gate compose at exact `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
+`1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
+remediation, evidence, reviews, workflows, integration, and delivery do not
+exist yet, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

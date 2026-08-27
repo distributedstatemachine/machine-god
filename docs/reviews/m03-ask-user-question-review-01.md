@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 9 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 8
-rejected its exact immutable candidate with two product lifecycle/resource
-findings. Cycle-9 source, deterministic evidence, and the complete local gate
-now compose at the exact behavior head below. Three fresh formal reviews,
-remote workflows, integration, and delivery remain pending.
+Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**. Formal cycle 9
+rejected its exact immutable candidate with one deduplicated correctness/
+lifecycle liveness finding. The historical cycle-9 source, deterministic
+evidence, and complete local gate remain recorded below. No cycle-10 source,
+evidence, gate, review, workflow, integration, or delivery exists yet.
 
 ## Frozen lineage
 
@@ -135,6 +135,9 @@ remote workflows, integration, and delivery remain pending.
 - Independent disposable cycle-9 cross-composition:
   `13eccf9`, tree `56695d8d7c2daaa38355c22a04276b583b93a815`, green for formatting,
   39 direct question tests, one engine test, and native warnings-denied Clippy
+- Formal cycle-9 candidate, **REJECTED**:
+  `1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+  `5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -163,9 +166,10 @@ its complete exact-1.94.1 local gate is green. Three fresh exact-SHA reviews
 rejected later candidate `e929b5e`/`cfadc42` with a deduplicated `0/0/2/0`
 union. Cycle-9 rejection docs, evidence, and source now compose at exact
 behavior head `0279b8c`/`50b2423`; its complete exact-1.94.1 local gate is
-green. Three fresh exact-SHA reviews, exact feature workflows, fast-forward
-integration, and exact `main` workflows remain required before any delivery
-claim.
+green. Three fresh exact-SHA reviews rejected later candidate
+`1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` union. Cycle-10 source,
+evidence, replacement gates, formal reviews, workflows, integration, and
+delivery do not exist yet.
 
 ## Frozen first-slice decisions
 
@@ -1068,6 +1072,40 @@ smoke evidence, not a benchmark, product-performance, compatibility-promotion, f
 equivalence, formal-review, integration, or delivery-completion claim. Three
 fresh exact-SHA formal reviews and both feature and `main` workflow gates remain
 pending.
+
+## Formal cycle-9 outcome
+
+Three fresh review tracks examined exact immutable candidate
+`1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
+`5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`:
+
+- correctness/API: `0 blocker / 0 high / 1 medium / 0 low`;
+- lifecycle/platform: `0 blocker / 0 high / 1 medium / 0 low`;
+- performance/resources: `0 blocker / 0 high / 0 medium / 0 low`; and
+- deduplicated union: `0 blocker / 0 high / 1 medium / 0 low`.
+
+The correctness and lifecycle reports describe the same product liveness
+defect. Once one explicit activation has spent its initial-callback-plus-one-
+replay budget, a legal wake emitted after the replay poll is recorded only in
+`pending_after_observation`. Notify then releases the lane without scheduling a
+downstream callback. Only an unrelated later explicit notify consumes that
+pending work. The committed
+`one_notify_activation_has_one_replay_and_leaves_residual_pending_work`
+regression advances by manually invoking `retained_wakers[2]`, so it proves
+retention but not autonomous progress.
+
+A self-waking prompt or cancellation transition whose wake is the last external
+activity can therefore remain `Pending` indefinitely. This slice has no
+timeout, so no independent deadline eventually repairs the missed schedule.
+The candidate is rejected.
+
+Cycle 10 must ensure every wake emitted after its corresponding poll schedules
+progress without requiring unrelated activity. It must retain bounded,
+nonrecursive delivery, callback single-flight, established panic/target-drop
+ordering, and prompt-permit ownership. A deferred or trampoline dispatcher may
+be required; alternatively, a public contract redesign needs an explicit and
+justified progress rule. No cycle-10 source, independent evidence, local gate,
+formal review, workflow, integration, or delivery result is claimed.
 
 ## Deferred and nonclaim record
 
