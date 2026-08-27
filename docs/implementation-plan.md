@@ -44,8 +44,9 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 1
-REJECTED; CYCLE 2 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 2 LOCAL
+GATE GREEN; FORMAL REPLACEMENT REVIEW, REMOTE WORKFLOWS, INTEGRATION, AND
+DELIVERY PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -84,11 +85,27 @@ byte budget; overstated exact/+1, terminal-class, maximum-concurrency, and
 resource-path evidence; overstated pinned-fx answer-codec parity; output order
 depending on incidental lexical-map behavior rather than intentional
 answer-then-question insertion; and stale reference-host signatures/catalog
-prose. Cycle 2 must remediate each item and add the missing deterministic
-boundary/concurrency/resource-path evidence. A complete replacement gate,
-three fresh exact-SHA adversarial tracks, feature workflows, integration,
-delivery, and exact `main` workflows remain pending; no replacement result is
-green yet.
+prose.
+
+Cycle-2 independent evidence component
+`c77b336a378b349f51eaddc60cb342f805fd7e21` is integrated as
+`0dd1128b914b00f15a17be3cbf2b6f7edccf605b`; production component
+`9d2e0f234fd96beb2b2ce5b7dd5a6c123905fbf6` is integrated as
+`47e9505f463b5ca9f4f418198022a4805757621b`. Cycle-1 finding docs compose with
+both at exact behavior head `c8718c60ead54b4e66916cecb1d382c1e8f82934`,
+tree `c27463b76607ae048363327e163c2077e296b898`. The production component
+implements every accepted source correction, and the expanded evidence proves
+the exact/+1, terminal-class, maximum-concurrency, independent-counter, deep,
+wrong-name, unpolled, cancellation, drop, and unwind boundaries.
+
+The complete exact-1.94.1 local gate for that composed head is green: 55
+focused tests; all four required commands; Python, pinned-fx drift, dependency,
+audit, native/FreeBSD/WASI portability, documentation, diff/no-unsafe, release,
+and isolated missing-root smoke checks. This is regression/delivery evidence,
+not product-performance or fx-equivalence evidence. No CLI prompt UI exists,
+so release-binary question prompting is not applicable. A frozen replacement
+candidate, three fresh exact-SHA adversarial tracks, feature workflows,
+integration, delivery, and exact `main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4085,9 +4102,12 @@ contract from exact delivered slice-34 base `5846799`. It rejects the deferred
 rootless bounded prompter, and permits ordered bounded free-form answers.
 Historical behavior head `a76818e`, tree `f44def5`, passed its recorded local
 gate. Formal cycle 1 rejected exact candidate `6c54ec3`, tree `bea9024`, with a
-deduplicated `0 blocker / 1 high / 3 medium / 3 low` union. Cycle-2 remediation,
-replacement evidence and review, remote workflows, integration, and delivery
-are pending, so this combined item remains unchecked. Slice 33 `web_search` is delivered
+deduplicated `0 blocker / 1 high / 3 medium / 3 low` union. Cycle-2 evidence
+`c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose at
+exact `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is green
+with 55 focused tests. A frozen replacement candidate, formal replacement
+review, remote workflows, integration, and delivery remain pending, so this
+combined item remains unchecked. Slice 33 `web_search` is delivered
 through exact record `52b5885`; its feature and main CI/Benchmark workflows
 are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that

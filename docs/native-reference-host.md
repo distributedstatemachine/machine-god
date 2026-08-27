@@ -1,12 +1,16 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 1 REJECTED; CYCLE 2 REMEDIATION IN PROGRESS**;
-Milestone 03 remains **IN PROGRESS**. Formal cycle 1 rejected exact candidate
+`ask_user_question` is **CYCLE 2 LOCAL GATE GREEN; FORMAL REPLACEMENT REVIEW,
+REMOTE WORKFLOWS, AND DELIVERY PENDING**; Milestone 03 remains **IN PROGRESS**.
+Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
-0 blocker / 1 high / 3 medium / 3 low union. No replacement gate or review is
-green yet.
+0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
+`c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
+at exact `c8718c6`, tree `c27463b`; the complete exact-1.94.1 local gate is
+green with 55 focused tests. No frozen replacement candidate or formal
+replacement review exists yet.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -1208,7 +1212,7 @@ are green. Milestone 03 remains in progress because remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.
 
-## Slice 35 rootless composition under remediation
+## Slice 35 locally remediated rootless composition
 
 Slice 35 adds one explicit shared `QuestionPrompter` parameter to
 each production and custom reference-host constructor. Construction stores the
@@ -1224,12 +1228,13 @@ The exact local tool order is `ask_user_question`, `copy_file`, `create_folder`,
 `list_files`, `open_file`, `read_file`, `rename_file`, `terminal`, `web_fetch`,
 `web_search`, and `write_file`. Historical behavior head `a76818e`, tree
 `f44def5`, passed its recorded local gate, but formal cycle 1 rejected exact
-candidate `6c54ec3`, tree `bea9024`; cycle-2 remediation and replacement
-evidence are pending. The descriptor count stays thirteen: the
+candidate `6c54ec3`, tree `bea9024`. Cycle-2 evidence and production corrections
+compose with the finding docs at exact `c8718c6`, tree `c27463b`; its complete
+local gate is green. The descriptor count stays thirteen: the
 question tool and two web tools own no workspace descriptor. The no-authority
 question call invokes neither the separately injected `PermissionPrompter` nor
 permission events. A noninteractive host must inject the fixed unavailable
 prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
-contract and replacement-review plan are
+contract, local-gate evidence, and replacement-review plan are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).

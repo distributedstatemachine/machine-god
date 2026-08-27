@@ -6,8 +6,9 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **FORMAL CYCLE 1
-REJECTED; CYCLE 2 REMEDIATION IN PROGRESS** from exact delivered base
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2 LOCAL
+GATE GREEN; FORMAL REPLACEMENT REVIEW, REMOTE WORKFLOWS, AND DELIVERY PENDING**
+from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
 for terminal-safe presentation, and calls only an explicitly injected rootless
@@ -20,9 +21,14 @@ CLI/TUI, timeout, detached work, approval escalation, durable terminal work,
 `f44def5`, passed its recorded local gate. Formal cycle 1 rejected exact
 candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
-0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 remediation,
-replacement evidence and review, remote workflows, integration, and delivery
-remain pending; no performance or fx-equivalence claim is made. See the
+0 blocker / 1 high / 3 medium / 3 low union. Independent evidence component
+`c77b336` (integrated as `0dd1128`) and production component `9d2e0f2`
+(integrated as `47e9505`) remediate those findings. Cycle-1 finding docs compose
+with them at exact behavior head `c8718c6`, tree `c27463b`, whose complete
+exact-1.94.1 local gate is green with 55 focused tests. A frozen replacement
+candidate, formal replacement review, remote workflows, integration, and
+delivery remain pending; this is regression/delivery evidence, not a
+performance or fx-equivalence claim. See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

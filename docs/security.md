@@ -2072,7 +2072,7 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 interaction and authority rules under remediation
+## Slice 35 locally remediated interaction and authority rules
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2102,14 +2102,16 @@ admission, and an adjacent final cancellation check precede prompter
 invocation; cancellation wins any same-poll ready outcome. Formal cycle 1
 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
-`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, because it performs up to 16 KiB
-of request cloning after its cancellation check and then invokes the prompter
-without rechecking. That high-severity lifecycle finding is under cycle-2
-remediation.
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, because it performed up to 16 KiB
+of request cloning after its cancellation check and then invoked the prompter
+without rechecking. Cycle 2 adds and locally proves the adjacent final check
+after cloning, so observable cancellation prevents prompter invocation.
 Explicit user cancellation and noninteractive use return fixed non-authorizing
 sentinels. Exact rules are in
 [`ask-user-question.md`](ask-user-question.md). Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but cycle 1 reported
-a deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Replacement
-evidence, adversarial review, and delivery remain pending; no cycle-2 green
-claim is made.
+a deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
+`c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
+at exact `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is
+green. A frozen replacement candidate, formal replacement review, remote
+workflows, and delivery remain pending.

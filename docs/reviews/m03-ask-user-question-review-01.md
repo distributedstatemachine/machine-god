@@ -1,8 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 1 REJECTED — CYCLE 2 REMEDIATION IN PROGRESS**. Replacement
-gate, replacement review, remote workflows, integration, and delivery are
-pending.
+Status: **CYCLE 2 LOCAL GATE GREEN — FORMAL REPLACEMENT REVIEW, REMOTE
+WORKFLOWS, INTEGRATION, AND DELIVERY PENDING**. No frozen replacement candidate
+or formal cycle-2 review exists yet.
 
 ## Frozen lineage
 
@@ -31,13 +31,23 @@ pending.
 - Formal cycle-1 candidate, **REJECTED**:
   `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
   `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`
+- Cycle-2 independent evidence component:
+  `c77b336a378b349f51eaddc60cb342f805fd7e21`, integrated as
+  `0dd1128b914b00f15a17be3cbf2b6f7edccf605b`
+- Cycle-2 production component:
+  `9d2e0f234fd96beb2b2ce5b7dd5a6c123905fbf6`, integrated as
+  `47e9505f463b5ca9f4f418198022a4805757621b`
+- Cycle-1 finding documentation and exact composed behavior head:
+  `c8718c60ead54b4e66916cecb1d382c1e8f82934`, tree
+  `c27463b76607ae048363327e163c2077e296b898`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
-candidate is rejected and must not be described as green. Cycle-2 source,
-evidence, and documentation remediation, a complete replacement gate, three
-fresh exact-SHA reviews, exact feature workflows, fast-forward integration,
-and exact `main` workflows remain required.
+candidate remains rejected. Cycle-2 source, evidence, and cycle-1 finding docs
+now compose at `c8718c6`/`c27463b`, and the complete local gate for that exact
+head is green. A separately frozen replacement candidate, three fresh exact-SHA
+reviews, exact feature workflows, fast-forward integration, and exact `main`
+workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -139,29 +149,32 @@ performance and counts once in the union. The following findings are accepted:
   signatures omitted `question_prompter`, and the composition prose still
   described a fifteen-tool catalog instead of the actual sixteen-tool catalog.
 
-## Cycle-2 remediation and evidence plan
+## Cycle-2 implemented remediation and local evidence
 
-Cycle 2 is in progress and is not green. Planned remediation is:
+Cycle 2 implements every accepted remediation and locally proves it at exact
+composed head `c8718c6`, tree `c27463b`:
 
-- add the final adjacent cancellation check immediately before prompter
-  invocation, after all request cloning or other intervening work;
-- make direct prepared execution prove that normalized arguments have a valid
-  incoming preimage under the 32 KiB input and per-field raw limits;
-- make serialized string-value and object-key sizing consume a remaining byte
-  budget and stop scanning as soon as the applicable ceiling is exceeded;
-- construct successful output with intentional `answer` then `question`
-  insertion independent of map implementation or dependency features;
-- correct the pinned-fx statement and all four reference-host signatures and
-  document the exact sixteen-tool alphabetical catalog; and
-- add deterministic exact-limit and first-over-limit input, prepared,
-  presentation, and result tests; complete terminal-class coverage; explicit
-  one/eight/ninth-admission and independent-counter evidence; and the missing
-  deep, wrong-name, and unpolled resource-path tests.
+- the final cancellation check is adjacent to prompter invocation after all
+  request cloning and other intervening work;
+- direct prepared execution reconstructs and validates a canonical incoming
+  preimage under the 32 KiB input and per-field raw limits;
+- serialized string-value and object-key sizing consumes a remaining byte
+  budget and stops as soon as the applicable ceiling is exceeded;
+- successful output intentionally inserts `answer` then `question` independent
+  of dependency map features;
+- pinned-fx wording, all four reference-host signatures, and the exact
+  sixteen-tool alphabetical catalog are corrected; and
+- the 26 direct tests cover exact and first-over input, prepared,
+  presentation, answer, and result limits; every documented terminal class;
+  default-one and maximum-eight capacity, fail-fast ninth admission and
+  independent counters; deep and maximum-depth drop paths; wrong-name and
+  canonical-prepared rejection; and inert/unpolled, pending-drop, cancellation,
+  and unwind resource ownership.
 
-Until those tests are integrated and pass on a replacement candidate, the
-earlier suite establishes only the cases its assertions directly exercise. It
-does not establish the broader exact/+1 or maximum-concurrency claims listed
-above.
+The full focused gate is 55 tests: 26 direct, one engine, 15 configuration,
+three root-selection, nine reference-host, and one reference-host lifecycle
+test. This is local regression/delivery evidence, not formal review, product
+performance, compatibility promotion, or fx equivalence.
 
 User-visible execution through the fresh release binary is not applicable to
 this library-only slice because no CLI prompt UI is added. Reference-host
@@ -171,9 +184,9 @@ interactive CLI evidence.
 
 ## Replacement review plan
 
-After cycle-2 remediation passes a new complete exact-1.94.1 local gate, freeze
-a new immutable candidate SHA/tree and spawn three fresh read-only product
-reviewers in isolated clean worktrees:
+The complete cycle-2 exact-1.94.1 local gate is green. Next, freeze a new
+immutable candidate SHA/tree and spawn three fresh read-only product reviewers
+in isolated clean worktrees:
 
 1. correctness/API/schema and pinned-fx boundary;
 2. lifecycle/cancellation/platform/host composition; and
@@ -201,35 +214,38 @@ documentation integrity, diff/protected-input/no-added-unsafe checks, and
 applicable release-binary smokes. Gate success is regression/delivery evidence,
 not a product-performance or fx-equivalence claim.
 
-## Local implementation gate
+## Cycle-2 local implementation gate
 
-Historical behavior head `a76818e7779f8d306cdb0101903236d5e755488f`, tree
-`f44def500e9f2d598c81f97abf46f62e59ef1ce3`, passes the complete local gate
-under exact Rust and Cargo 1.94.1 without fallback:
+Exact composed behavior head `c8718c60ead54b4e66916cecb1d382c1e8f82934`,
+tree `c27463b76607ae048363327e163c2077e296b898`, passes the complete
+local gate under exact Rust and Cargo 1.94.1 without fallback:
 
 - all four required formatting, workspace warnings-denied Clippy, workspace
   test, and workspace doctest commands are green;
-- the recorded focused commands ran 20 direct tool tests, one engine test, and
-  the affected 15 configuration, three root-selection, nine reference-host,
-  and one reference-host lifecycle tests (49 total), but cycle 1 identified
-  the semantic coverage gaps listed above;
+- focused evidence is green for 26 direct tool tests, one engine test, and the
+  affected 15 configuration, three root-selection, nine reference-host, and
+  one reference-host lifecycle tests (55 total);
 - repo-wide Python discovery passes 136 tests with eight intentional skips,
   and the pinned-fx drift check is green;
 - `cargo deny` passes every category with the three established duplicate-
   dependency warnings; `cargo audit` checks 1,226 advisories across 211
   dependencies with zero vulnerabilities;
-- the all-feature WASI check and warnings-denied no-default-feature FreeBSD
-  Clippy check are green;
-- documentation integrity reports `91/318/699/532/0`; exact diff checks find
-  no Cargo-file delta and no added unsafe Rust; and
+- native no-default compilation, the all-feature WASI check, and
+  warnings-denied no-default-feature FreeBSD Clippy are green; WASI emits only
+  the established unrelated `read_file` dead-code warning;
+- documentation integrity reports 91 Markdown files, 318 fence markers, 701
+  parsed links, 534 local links, and zero missing targets; exact diff checks
+  find no Cargo-file delta and no added unsafe Rust; and
 - a fresh locked release binary is 3,985,216 bytes with SHA-256
   `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
-  isolated-root `help`, `doctor`, and `sessions` smoke checks pass.
+  isolated missing-root `help`, `doctor`, and `sessions` smoke checks pass.
 
-This historical gate makes no positive claim about rejected candidate
-`6c54ec3`, formal review, CI, benchmark, performance, compatibility,
-fx-equivalence, integration, or delivery. Replacement reviewer reports must
-identify the later exact immutable candidate they inspect.
+User-visible prompt execution does not apply because this library-only slice
+adds no CLI prompt UI. This gate is
+regression/delivery evidence; it makes no formal-review, remote-CI, benchmark,
+product-performance, compatibility-promotion, fx-equivalence, integration, or
+delivery-completion claim. Replacement reviewer reports must identify the
+later exact immutable candidate they inspect.
 
 ## Deferred and nonclaim record
 

@@ -1,6 +1,7 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 1 REJECTED — CYCLE 2 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 2 LOCAL GATE GREEN — FORMAL REPLACEMENT REVIEW, REMOTE
+WORKFLOWS, AND DELIVERY PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -11,23 +12,34 @@ ordinary, bounded questions through an explicitly injected, rootless
 ## Local implementation checkpoint
 
 Core no-authority component `de1ce26`, frozen contract `13cd366`, contract
-correction `399f960`, production component `b24a673` (tree `47713c8`), and
-independent evidence compose through exact behavior head `a76818e`, tree
-`f44def5`. The complete exact-Rust-1.94.1 local gate is green, including the
-required workspace commands, 49 focused native/engine/composition tests,
-compatibility, dependency, portability, documentation, and fresh release
-checks. This checkpoint establishes implementation and local regression
-evidence only. It does not establish an immutable review candidate, formal
-adversarial outcome, remote CI, benchmark evidence, integration, delivery,
-product performance, compatibility promotion, or fx equivalence.
+correction `399f960`, initial production component `b24a673`, and initial
+evidence `a76818e` formed the rejected cycle-1 candidate. Cycle-2 independent
+evidence component `c77b336a378b349f51eaddc60cb342f805fd7e21` is integrated
+as `0dd1128b914b00f15a17be3cbf2b6f7edccf605b`; production component
+`9d2e0f234fd96beb2b2ce5b7dd5a6c123905fbf6` is integrated as
+`47e9505f463b5ca9f4f418198022a4805757621b`. Cycle-1 finding documentation
+composes with both at exact behavior head
+`c8718c60ead54b4e66916cecb1d382c1e8f82934`, tree
+`c27463b76607ae048363327e163c2077e296b898`.
+
+That exact composed head passes the complete exact-Rust-1.94.1 local gate,
+including all four required workspace commands and 55 focused tests: 26 direct
+tool, one engine, 15 configuration, three root-selection, nine reference-host,
+and one reference-host lifecycle test. This checkpoint establishes
+implementation and local regression/delivery evidence only. It does not
+establish a frozen replacement candidate, formal replacement review, remote
+CI, benchmark evidence, integration, delivery, product performance,
+compatibility promotion, or fx equivalence. No release-binary prompt exercise
+applies because this library-only slice adds no CLI prompt UI.
 
 Formal cycle 1 reviewed exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, and rejected it. The
 deduplicated result was 0 blocker, 1 high, 3 medium, and 3 low findings.
-Cycle-2 remediation and replacement evidence are in progress; no replacement
-gate or review is green yet. The detailed outcome and accepted findings are in
-the [`review ledger`](reviews/m03-ask-user-question-review-01.md).
+Cycle 2 implements and locally proves remediation for every accepted finding.
+A frozen replacement candidate and formal replacement review do not exist yet.
+The detailed outcome, remediation, and local-gate evidence are in the
+[`review ledger`](reviews/m03-ask-user-question-review-01.md).
 
 ## Product boundary
 
@@ -135,14 +147,12 @@ rendered byte. The final 49,152-byte result check is nevertheless authoritative
 and includes the complete `ToolOutput` envelope. Overflow uses checked
 arithmetic and fails rather than truncating.
 
-Normatively, the input ceiling is checked by a bounded serialization pass
-before semantic traversal or string cloning. The rejected cycle-1 candidate
-does not yet satisfy that work bound for an arbitrarily oversized JSON string
-value or object key: its sizing helper scans the complete string before testing
-the remaining 32/48 KiB budget. Cycle-2 remediation must make string and key
-accounting remaining-budget-aware and stop as soon as the applicable ceiling
-is exceeded. Per-field raw ceilings are checked after trim and before terminal
-encoding. Rendered
+The input ceiling is checked by a bounded serialization pass before semantic
+traversal or string cloning. The rejected cycle-1 candidate scanned a complete
+oversized JSON string value or object key before testing the remaining 32/48
+KiB budget. Cycle 2 makes string and key accounting remaining-budget-aware and
+stops as soon as the applicable ceiling is exceeded. Per-field raw ceilings
+are checked after trim and before terminal encoding. Rendered
 per-field and aggregate ceilings are checked during encoding. The normalized
 serialized ceiling is checked last. An input can fit 32 KiB and still fail a
 later rendered or normalized ceiling; no field is silently shortened.
@@ -180,14 +190,14 @@ encoding. Comparison is bytewise ASCII case-insensitive: `Yes` conflicts with
 non-ASCII case variants are not folded. Duplicate questions and labels reused
 in different questions are allowed.
 
-The normalized values supplied to `QuestionPrompter` must be the exact
-normalized values retained in prepared execution arguments. Direct `execute`
-must accept only a canonical normalized value that has an incoming preimage
-satisfying the same raw-field and incoming-serialization bounds as
-preparation. The rejected cycle-1 candidate widens preparation here: a direct
-prepared call can supply a printable 4,096-byte question that preparation
-would reject at the 1,024-byte raw limit. Preimage validation for direct
-execution is therefore a cycle-2 remediation item, not completed behavior.
+The normalized values supplied to `QuestionPrompter` are the exact normalized
+values retained in prepared execution arguments. Direct `execute` accepts only
+a canonical normalized value with an incoming preimage satisfying the same
+raw-field and incoming-serialization bounds as preparation. The rejected
+cycle-1 candidate admitted a printable 4,096-byte question that preparation
+would reject at the 1,024-byte raw limit. Cycle 2 decodes a terminal-safe
+preimage, rechecks its raw and canonical rendering bounds, and verifies the
+complete incoming preimage under 32 KiB before invoking the prompter.
 
 ## Injected prompt boundary
 
@@ -250,12 +260,12 @@ non-error `ToolOutput`:
 ```
 
 The representation intentionally inserts `answer` and then `question` for each
-object; array order equals input question order. This order must not depend on
+object; array order equals input question order. This order does not depend on
 the selected `serde_json::Map` implementation, lexical map behavior, or
-feature unification. The rejected cycle-1 candidate inserts `question` before
-`answer` and happens to serialize in the documented order only with the
-current lexical-map dependency behavior. Cycle-2 remediation must encode the
-intended insertion directly and add feature-robust evidence. Questions are the
+feature unification. The rejected cycle-1 candidate inserted `question` before
+`answer` and happened to serialize in the documented order only with the
+current lexical-map dependency behavior. Cycle 2 expresses and tests the
+intended insertion directly. Questions are the
 exact normalized strings shown to the prompter. No option, description,
 internal ID, timing, or host metadata is returned. Pinned fx emits the same two
 object members in the opposite textual key order; JSON object order is not
@@ -269,11 +279,10 @@ misread as authorization.
 
 Engine cancellation has precedence at first poll, immediately before prompt
 invocation, and after every ready prompt outcome before interpretation. The
-rejected cycle-1 candidate checks cancellation and then clones up to 16 KiB of
-question presentation text before invoking the prompter, with no adjacent
-recheck. A concurrent cancellation can therefore become observable during
-that work yet still permit UI invocation. Cycle-2 remediation must add an
-adjacent pre-invocation cancellation check after the last intervening work.
+rejected cycle-1 candidate checked cancellation and then cloned up to 16 KiB of
+question presentation text before invoking the prompter. Cycle 2 adds the
+adjacent pre-invocation cancellation check after that last intervening work,
+so observable cancellation prevents UI invocation.
 Cancellation that is observable in the same poll as answers, user
 cancellation, unavailability, or host failure wins and returns the fixed
 cancelled tool error. After cancellation wins, no answer result is published.

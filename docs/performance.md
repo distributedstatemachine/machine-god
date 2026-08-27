@@ -656,7 +656,7 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 question resource model under remediation
+## Slice 35 locally remediated question resource model
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -673,27 +673,32 @@ term has a fixed 24-label ceiling. Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`. The performance/resources track
 reported 0 blocker, 0 high, 2 medium, and 0 low findings. First, its serialized
-JSON sizing helper scans an entire arbitrarily oversized string value or object
-key before applying the remaining 32/48 KiB budget. Cycle-2 remediation must
-make that scan remaining-budget-aware and stop at the first over-limit byte.
-Second, the ledger overstated exact/+1 boundary and maximum-concurrency
-evidence; this overlaps the correctness evidence-overclaim finding and counts
-once in the deduplicated union.
+JSON sizing helper scanned an entire arbitrarily oversized string value or
+object key before applying the remaining 32/48 KiB budget. Cycle 2 makes the
+scan remaining-budget-aware and stops at the first over-limit byte. Second, the
+ledger overstated exact/+1 boundary and maximum-concurrency evidence; this
+overlaps the correctness evidence-overclaim finding and counts once in the
+deduplicated union. The expanded direct suite now establishes those boundaries.
 
 Terminal encoding and result construction are intended to remain linear in
 their bounded inputs. The tool owns one prompt future and one permit; the
-normative limits are default concurrency one and hard maximum eight with
+limits are default concurrency one and hard maximum eight with
 fail-fast saturation and no waiter queue or capacity Waker. Exact-limit and
-first-over-limit input, prepared, presentation, and result evidence, plus
-explicit one/eight/ninth-admission and independent-counter evidence, remain
-pending until the cycle-2 tests are integrated.
+first-over-limit input, prepared, presentation, answer, and result evidence,
+plus explicit one/eight/ninth-admission and independent-counter evidence, are
+green in the 26-test direct suite. Deep and maximum-depth drop paths,
+wrong-name/canonical-prepared rejection, and unpolled/pending/drop/unwind
+resource ownership are also exercised deterministically.
 
 No timeout is claimed. Pending duration and externally allocated UI state are
 properties of the injected prompter. A conforming prompter detaches no work;
 the adapter starts no task, thread, timer, retry, channel, or runtime.
 Historical behavior head `a76818e`, tree `f44def5`, passed its recorded local
 gate, but formal cycle 1 rejected the later immutable candidate with a
-deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 remediation,
-replacement evidence, and replacement review are in progress and are not
-green. This is not a benchmark or product-performance result. See
+deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 evidence
+`c77b336`/`0dd1128`, production `9d2e0f2`/`47e9505`, and finding docs compose
+at exact `c8718c6`, tree `c27463b`; the complete exact-1.94.1 local gate is
+green with 55 focused tests. A frozen replacement candidate and formal review
+remain pending. This is regression/delivery evidence, not a benchmark or
+product-performance result. See
 [`ask-user-question.md`](ask-user-question.md).
