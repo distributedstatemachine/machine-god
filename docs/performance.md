@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-5 question resource remediation
 
-Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -767,6 +767,20 @@ audit inventory are unchanged. The fresh locked release binary remains
 3,985,216 bytes with SHA-256
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 These are bounded ownership and regression facts, not a benchmark or product-
-performance result. Formal review, remote workflows, integration, and delivery
-remain pending. See
+performance result. Formal cycle 5 reviewed exact candidate
+`54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+`54586d2256c8a3d2289b92bc9bc842eed9ce4d07`. Correctness/API and lifecycle/
+platform each reported `0/0/0/0`; performance/resources reported `0/0/1/0`,
+which is also the deduplicated union. The candidate is rejected on one product
+resource/capacity medium: arbitrary retained activity-Waker clones can each
+forward a concurrent blocking downstream callback while consuming only one
+prompt slot.
+
+Cycle 6 must introduce one activity-backed single-flight coalescing notifier.
+At most one callback may be in flight, pending notifications must replay
+without loss, the stale downstream target must close, and capacity must remain
+held until callback and retained-clone ownership is gone. Deterministic owned-
+future evidence must cover many independently retained clones. The new complete
+gate, three fresh reviews, remote workflows, integration, and delivery remain
+pending; no cycle-6 component or green result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).

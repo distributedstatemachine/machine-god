@@ -73,7 +73,19 @@ portability/dependency/documentation matrix, and a fresh locked release smoke.
 The authorized Cargo delta is test-only: native adds the existing audited
 `machine-god-reentrant-waker-test` path dev-dependency, whose package was
 already locked; production normal/build dependencies are unchanged. Formal
-cycle-5 review, remote workflows, integration, and delivery remain pending.
+cycle 5 reviewed exact candidate
+`54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+`54586d2256c8a3d2289b92bc9bc842eed9ce4d07`: correctness/API and lifecycle/
+platform each reported `0/0/0/0`, while performance/resources and the
+deduplicated union reported `0/0/1/0`. The candidate is rejected because
+arbitrary retained activity-Waker clones can independently forward concurrent
+blocking downstream callbacks while consuming one prompt slot. Cycle-6
+remediation must use an activity-backed single-flight coalescing notifier,
+replay notifications without loss, close the stale downstream target, retain
+capacity through callback/clone ownership, and add deterministic owned-future
+many-clone evidence before a new complete gate and three fresh reviews. The
+slice is **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**; no cycle-6
+source or green result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

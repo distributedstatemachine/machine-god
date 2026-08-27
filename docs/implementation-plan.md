@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 5 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 5
+REJECTED — CYCLE 6 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -214,9 +214,19 @@ remains 211 dependencies. The fresh locked release binary is 3,985,216 bytes
 with SHA-256
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
 isolated `--help`, `doctor --json`, and `sessions --json` against missing XDG
-roots succeed without creating files. Three fresh formal reviews, feature
+roots succeed without creating files. Formal cycle 5 reviewed exact candidate
+`54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+`54586d2256c8a3d2289b92bc9bc842eed9ce4d07`. Correctness/API and lifecycle/
+platform each reported `0/0/0/0`; performance/resources and the deduplicated
+union reported `0/0/1/0`. The product resource/capacity finding rejects the
+candidate: arbitrary retained activity-Waker clones independently forward
+concurrent blocking downstream callbacks while consuming one prompt slot.
+Cycle 6 requires an activity-backed single-flight coalescing notifier, at most
+one callback in flight, lossless notification replay, stale-target close,
+capacity retention through callback/clone ownership, and deterministic owned-
+future many-clone evidence. A new complete gate, three fresh reviews, feature
 workflows, fast-forward integration, delivery, and exact `main` workflows
-remain pending.
+remain pending. No cycle-6 component or green result is claimed.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4243,9 +4253,17 @@ originating permit through callback return, cache equivalent registration,
 tear down the prompt/waiter/cached-Waker family under activity, recheck
 cancellation after teardown before every direct return, and deterministically
 prove both identified races. Exact behavior head `b870731`, tree `0b025f8`,
-passes the complete exact-1.94.1 local gate. Formal review, remote workflows,
-integration, and delivery remain pending, and `vision` plus `read_tool_result`
-remain unimplemented, so this combined item remains unchecked. Slice 33
+passes the complete exact-1.94.1 local gate. Formal cycle 5 rejected exact
+candidate `54b1aab`, tree `54586d2`: correctness/API and lifecycle/platform
+were `0/0/0/0`; performance/resources and the deduplicated union were
+`0/0/1/0`. Arbitrary retained activity-Waker clones independently forward
+concurrent blocking downstream callbacks behind one prompt slot. Cycle-6
+remediation requires an activity-backed single-flight coalescing notifier,
+lossless replay, stale-target close, capacity ownership until callback/clone
+teardown, deterministic owned-future many-clone evidence, a new complete gate,
+and three fresh reviews. Remote workflows, integration, and delivery remain
+pending, and `vision` plus `read_tool_result` remain unimplemented, so this
+combined item remains unchecked. Slice 33
 `web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark
 workflows are green. Slice 34

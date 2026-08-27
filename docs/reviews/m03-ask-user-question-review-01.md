@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 4
-rejected its exact immutable candidate. Cycle-5 source and deterministic race
-evidence now pass the complete local gate at the exact behavior head below.
-Three fresh formal reviews, remote workflows, integration, and delivery remain
-pending.
+Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**. Formal cycle 5
+rejected its exact immutable candidate with one product resource/capacity
+finding. Cycle-6 source and deterministic evidence remediation, a new complete
+local gate, three fresh formal reviews, remote workflows, integration, and
+delivery remain pending.
 
 ## Frozen lineage
 
@@ -79,6 +79,9 @@ pending.
 - Direct cycle-5 cross-composition checkpoint:
   `e1947c1495c7cbdc69236b8f7ab1599dda80ca07`, tree `e63f8272`, green for all
   32 direct `ask_user_question` tests
+- Formal cycle-5 candidate, **REJECTED**:
+  `54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+  `54586d2256c8a3d2289b92bc9bc842eed9ce4d07`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -93,9 +96,11 @@ Cycle-4 core, native, and finding-documentation work compose at
 green. Formal cycle 4 nevertheless rejected exact candidate
 `42ce6f0`/`b761f7b` with a deduplicated `0/0/2/1` union. Cycle-5 source,
 independent race evidence, and finding docs compose at `b870731`/`0b025f8`;
-its complete exact-1.94.1 local gate is green. Three fresh exact-SHA reviews,
-exact feature workflows, fast-forward integration, and exact `main` workflows
-remain required.
+its complete exact-1.94.1 local gate is green. Formal cycle 5 nevertheless
+rejected exact candidate `54b1aab`/`54586d2` with a deduplicated `0/0/1/0`
+union. Cycle-6 remediation, its complete local gate, three fresh exact-SHA
+reviews, exact feature workflows, fast-forward integration, and exact `main`
+workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -575,9 +580,38 @@ package already existed in `Cargo.lock`; only the native dependency-list lock
 line changed. The production normal/build dependency graph remains unchanged,
 and the audit inventory remains 211 dependencies. This gate is regression and
 delivery evidence, not a benchmark, product-performance, compatibility-
-promotion, fx-equivalence, formal-review, integration, or delivery-completion
-claim. Three fresh exact-SHA formal reviews and both feature and `main` remote
-workflow gates remain pending.
+promotion, fx-equivalence, integration, or delivery-completion claim. Formal
+cycle 5 later rejected the exact candidate recorded below, so this historical
+gate does not approve it.
+
+## Formal cycle-5 outcome and cycle-6 remediation target
+
+All three fresh read-only tracks reviewed exact candidate
+`54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+`54586d2256c8a3d2289b92bc9bc842eed9ce4d07`:
+
+| Track | Blocker | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: |
+| Correctness/API/schema | 0 | 0 | 0 | 0 |
+| Lifecycle/cancellation/platform | 0 | 0 | 0 | 0 |
+| Performance/concurrency/resources | 0 | 0 | 1 | 0 |
+| Deduplicated union | 0 | 0 | 1 | 0 |
+
+Any nonzero finding rejects the candidate, so cycle 5 is not green. The one
+accepted medium is a product resource/capacity defect, not a cybersecurity
+finding: arbitrary retained activity-Waker clones can independently forward
+concurrent blocking downstream callbacks while all of those callbacks consume
+only one configured prompt slot.
+
+Cycle 6 must replace independent forwarding with one activity-backed,
+single-flight coalescing notifier. At most one downstream callback may be in
+flight; notifications arriving while it runs must be replayed without loss;
+the stale downstream target must be closed; and configured capacity must remain
+held until callback and retained-clone ownership is gone. Deterministic
+owned-future evidence must exercise many independently retained clones and
+concurrent blocking downstream callbacks. The remediation must then pass a new
+complete local gate and three fresh exact-SHA review agents. No cycle-6 source,
+evidence, gate, or review result is claimed yet.
 
 ## Deferred and nonclaim record
 

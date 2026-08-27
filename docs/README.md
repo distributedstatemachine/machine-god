@@ -59,8 +59,17 @@ accepted races. Its exact-1.94.1 required and extended local gates are green;
 32 direct question tests and the integrated engine/host suites pass. The only
 Cargo delta is the existing audited reentrant-Waker helper added as a native
 test-only path dependency, with no production normal/build dependency change.
-Formal review, remote workflows, integration, and delivery remain pending. The
-normative boundary is
+Formal cycle 5 reviewed exact `54b1aab5660e90096b95518bde4ebffb93f28fa6`,
+tree `54586d2256c8a3d2289b92bc9bc842eed9ce4d07`: correctness/API and lifecycle/
+platform were `0/0/0/0`; performance/resources and the deduplicated union were
+`0/0/1/0`. The candidate is rejected because arbitrary retained activity-Waker
+clones can independently forward concurrent blocking downstream callbacks
+while consuming one prompt slot. Cycle 6 must add an activity-backed single-
+flight coalescing notifier, lossless replay, stale-target close, capacity
+ownership through callback/clone teardown, and deterministic owned-future many-
+clone evidence. The slice is **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN
+PROGRESS**; a new complete gate, three fresh reviews, remote workflows,
+integration, and delivery remain pending. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-5 interaction and authority remediation
 
-Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2169,5 +2169,16 @@ required and extended local gates are green, including audit of 1,226
 advisories across 211 dependencies with zero vulnerabilities, portability,
 documentation, no-added-unsafe, and isolated missing-root checks. The added
 reentrant-Waker helper is an existing audited test-only path dev-dependency;
-production normal/build dependency topology is unchanged. Formal review,
-remote workflows, integration, and delivery remain pending.
+production normal/build dependency topology is unchanged. Formal cycle 5
+reviewed exact candidate `54b1aab5660e90096b95518bde4ebffb93f28fa6`,
+tree `54586d2256c8a3d2289b92bc9bc842eed9ce4d07`: correctness/API and lifecycle/
+platform each reported `0/0/0/0`; performance/resources and the deduplicated
+union reported `0/0/1/0`. The candidate is rejected for a product resource/
+capacity defect, not a cybersecurity finding: arbitrary retained activity-
+Waker clones independently forward concurrent blocking downstream callbacks
+while consuming one prompt slot. Cycle 6 must use an activity-backed single-
+flight coalescing notifier, replay notifications without loss, close the stale
+downstream target, retain capacity until callback and clone ownership is gone,
+and add deterministic owned-future many-clone evidence. A new complete gate,
+three fresh reviews, remote workflows, integration, and delivery remain
+pending; no cycle-6 green result is claimed.

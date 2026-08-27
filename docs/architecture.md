@@ -53,7 +53,18 @@ teardown cancellation and the concurrently moved callback. The complete
 exact-1.94.1 required and extended local gate is green. The new reentrant-Waker
 test helper is an existing audited package used only as a native path
 dev-dependency; production normal/build dependency topology is unchanged.
-Formal review, remote workflows, integration, and delivery remain pending. See
+Formal cycle 5 rejected exact candidate
+`54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+`54586d2256c8a3d2289b92bc9bc842eed9ce4d07`: correctness/API and lifecycle/
+platform were `0/0/0/0`; performance/resources and the deduplicated union were
+`0/0/1/0`. Arbitrary retained activity-Waker clones can independently forward
+concurrent blocking downstream callbacks while consuming one prompt slot.
+Cycle 6 must replace that fan-out with an activity-backed single-flight
+coalescing notifier, replay notifications without loss, close the stale target,
+retain capacity through callback/clone teardown, and prove the boundary with a
+deterministic owned-future many-clone regression. The slice is **CYCLE 5
+REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**; a new complete gate and three
+fresh reviews remain pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2268,7 +2279,13 @@ callback overlap. Cycle-5 evidence `ad47fcb`/`bcce292` and source
 deterministically. They compose with finding docs `ba53f55`/`b870731` at exact
 behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
 `0b025f8e42e18006a72d89becf0e395d35c91a57`, whose complete local gate is
-green. Formal review remains pending.
+green. Formal cycle 5 rejected exact candidate `54b1aab`, tree `54586d2`, with
+a deduplicated `0/0/1/0` product resource/capacity finding: arbitrary retained
+activity-Waker clones can independently forward concurrent blocking downstream
+callbacks behind one prompt slot. Cycle 6 requires an activity-backed single-
+flight coalescing notifier, lossless replay, stale-target close, capacity
+ownership through callback/clone teardown, and deterministic owned-future many-
+clone evidence before a new complete gate and three fresh reviews.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2294,5 +2311,7 @@ finding docs `b057958` compose at exact behavior head `cb93bff`, tree
 `fa402acb`; its complete exact-1.94.1 local gate is green. Formal cycle 4
 rejected exact candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
 `b761f7b93d535a1580910f43ff509c40aa07415b`, with a deduplicated `0/0/2/1`
-union. Cycle-5 source, evidence, gate, formal review, remote workflows,
-integration, and delivery remain unestablished.
+union. Cycle-5 source, evidence, and gate are established, but formal cycle 5
+rejected exact `54b1aab`/`54586d2` with a `0/0/1/0` union. Cycle-6 source,
+evidence, gate, fresh reviews, remote workflows, integration, and delivery
+remain unestablished.

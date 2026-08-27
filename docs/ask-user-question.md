@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -84,11 +84,13 @@ reported `0/0/0/1`, lifecycle/platform `0/0/1/1`, and
 performance/resources `0/0/1/0`; the deduplicated union is 0 blocker, 0 high,
 2 medium, and 1 low. The historical cycle-4 local gate remains valid regression
 evidence for that rejected candidate, not approval. Cycle-5 source and evidence
-are established at the exact local-gate-green behavior head recorded below;
-formal review, remote CI, benchmark workflow, integration, and delivery remain
-pending. No product-performance, compatibility-promotion, or fx-equivalence
-result is established. No release-binary prompt exercise applies because this
-library-only slice adds no CLI prompt UI.
+are established at the exact local-gate-green behavior head recorded below.
+Formal cycle 5 nevertheless rejected its later exact candidate; cycle-6
+remediation, a new complete local gate, three fresh formal reviews, remote CI,
+benchmark workflow, integration, and delivery remain pending. No product-
+performance, compatibility-promotion, or fx-equivalence result is established.
+No release-binary prompt exercise applies because this library-only slice adds
+no CLI prompt UI.
 
 Formal cycle 1 reviewed exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -163,8 +165,25 @@ with SHA-256
 Isolated `--help`, `doctor --json`, and `sessions --json` runs against missing
 XDG roots succeed without creating files. This checkpoint is regression and
 delivery evidence, not formal approval, a benchmark result, or an fx-
-equivalence claim. Three fresh formal reviews, remote workflows, integration,
-and delivery remain pending.
+equivalence claim. Formal cycle 5 later rejected the exact candidate below.
+
+## Formal cycle-5 outcome and cycle-6 remediation target
+
+Three fresh read-only tracks reviewed exact candidate
+`54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+`54586d2256c8a3d2289b92bc9bc842eed9ce4d07`. Correctness/API and lifecycle/
+platform each reported `0/0/0/0`; performance/resources reported `0/0/1/0`.
+The deduplicated union is `0/0/1/0`, so the candidate is rejected.
+
+The one medium is a product resource/capacity defect: arbitrary retained
+activity-Waker clones independently forward concurrent blocking downstream
+callbacks while consuming one prompt slot. Cycle 6 must introduce an activity-
+backed single-flight coalescing notifier, allow at most one callback in flight,
+replay notifications without loss, close the stale downstream target, and
+retain capacity until callback and clone ownership is gone. Deterministic
+owned-future evidence must cover many retained clones. A new complete gate and
+three fresh reviewers follow remediation; no cycle-6 source, evidence, gate, or
+review result is claimed yet.
 
 ## Product boundary
 

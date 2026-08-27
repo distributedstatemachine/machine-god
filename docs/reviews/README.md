@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 5 REJECTED — CYCLE 6
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -40,8 +40,18 @@ ownership, cached registration, teardown under activity, the final post-
 teardown cancellation check, and deterministic race evidence are implemented.
 All required exact-1.94.1 and extended local gates are green. The only Cargo
 delta is an existing audited path fixture added to native tests; production
-normal/build dependencies remain unchanged. Three fresh exact-SHA formal
-reviews, remote workflows, integration, and delivery remain pending. See
+normal/build dependencies remain unchanged. Formal cycle 5 reviewed exact
+candidate `54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
+`54586d2256c8a3d2289b92bc9bc842eed9ce4d07`: correctness/API and lifecycle/
+platform were `0/0/0/0`; performance/resources and the deduplicated union were
+`0/0/1/0`. The candidate is rejected because arbitrary retained activity-Waker
+clones independently forward concurrent blocking downstream callbacks while
+consuming one prompt slot. Cycle 6 requires an activity-backed single-flight
+coalescing notifier, lossless replay, stale-target close, capacity retention
+through callback/clone ownership, and deterministic owned-future many-clone
+evidence. A new complete gate, three fresh exact-SHA reviews, remote workflows,
+integration, and delivery remain pending; no cycle-6 green result is claimed.
+See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 
 Bounded slice 34, native `terminal`, is **DELIVERED** from exact delivered base
