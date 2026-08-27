@@ -163,7 +163,7 @@ mod tests {
                 descriptor.try_clone().map_err(|_| WorkspaceRootError)
             });
 
-            assert!(matches!(result, Err(_)));
+            assert!(result.is_err());
             assert_eq!(attempts.get(), failing_attempt);
         }
     }
