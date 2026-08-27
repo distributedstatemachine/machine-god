@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
@@ -366,6 +367,91 @@ fn boundary_value(questions: &[BoundaryQuestion]) -> Value {
     })
 }
 
+fn distributed_boundary_value(mut c1_scalars: usize, mut literal_backslashes: usize) -> Value {
+    fn fill(
+        base: String,
+        raw_limit: usize,
+        c1_scalars: &mut usize,
+        literal_backslashes: &mut usize,
+    ) -> String {
+        let mut value = base;
+        let mut remaining = raw_limit - value.len();
+        let expanded = (*c1_scalars).min(remaining / '\u{80}'.len_utf8());
+        value.extend(std::iter::repeat_n('\u{80}', expanded));
+        *c1_scalars -= expanded;
+        remaining -= expanded * '\u{80}'.len_utf8();
+
+        let escaped = (*literal_backslashes).min(remaining);
+        value.extend(std::iter::repeat_n('\\', escaped));
+        *literal_backslashes -= escaped;
+        value
+    }
+
+    let questions = (0..MAX_ASK_USER_QUESTION_QUESTIONS)
+        .map(|question| BoundaryQuestion {
+            question: fill(
+                format!("q{question}"),
+                MAX_ASK_USER_QUESTION_RAW_QUESTION_BYTES,
+                &mut c1_scalars,
+                &mut literal_backslashes,
+            ),
+            options: (0..MAX_ASK_USER_QUESTION_OPTIONS_PER_QUESTION)
+                .map(|option| BoundaryOption {
+                    label: fill(
+                        format!("l{question}-{option}"),
+                        MAX_ASK_USER_QUESTION_RAW_OPTION_LABEL_BYTES,
+                        &mut c1_scalars,
+                        &mut literal_backslashes,
+                    ),
+                    description: fill(
+                        "d".to_owned(),
+                        MAX_ASK_USER_QUESTION_RAW_OPTION_DESCRIPTION_BYTES,
+                        &mut c1_scalars,
+                        &mut literal_backslashes,
+                    ),
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(c1_scalars, 0, "fixture lacks C1 scalar capacity");
+    assert_eq!(
+        literal_backslashes, 0,
+        "fixture lacks literal-backslash capacity"
+    );
+    boundary_value(&questions)
+}
+
+fn rendered_presentation_bytes(arguments: &Value) -> usize {
+    arguments["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|question| {
+            question["question"].as_str().unwrap().len()
+                + question["options"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|option| {
+                        option["label"].as_str().unwrap().len()
+                            + option
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .map_or(0, str::len)
+                    })
+                    .sum::<usize>()
+        })
+        .sum()
+}
+
+fn deeply_nested_array(depth: usize) -> Value {
+    let mut nested = Value::Null;
+    for _ in 0..depth {
+        nested = Value::Array(vec![nested]);
+    }
+    nested
+}
+
 fn serialized_argument_boundary(target: usize) -> Value {
     let mut questions = (0..4)
         .map(|question| BoundaryQuestion {
@@ -553,6 +639,10 @@ fn preparation_canonicalizes_in_order_and_success_allows_free_form_other() {
             }
         ]))
     );
+    assert_eq!(
+        serde_json::to_string(&output.content).unwrap(),
+        r#"[{"answer":"an unlisted Other answer","question":"\\x1b[31mChoose\\u{200b}\\u{061c} now"},{"answer":"custom\\x1banswer","question":"Next?"}]"#
+    );
     assert_eq!(prompter.calls(), 1);
     assert_eq!(
         prompter.requests(),
@@ -652,6 +742,124 @@ fn duplicate_labels_are_compared_after_terminal_rendering_and_trim_is_ascii_exac
 }
 
 #[test]
+fn every_documented_terminal_unsafe_class_has_exact_encoding_evidence() {
+    let mut unsafe_text = String::new();
+    let mut expected = String::new();
+    for code in 0_u32..=0x1f {
+        unsafe_text.push(char::from_u32(code).unwrap());
+        write!(&mut expected, "\\x{code:02x}").unwrap();
+    }
+    unsafe_text.push('\u{7f}');
+    expected.push_str("\\x7f");
+    for code in 0x80_u32..=0x9f {
+        unsafe_text.push(char::from_u32(code).unwrap());
+        write!(&mut expected, "\\u{{{code:04x}}}").unwrap();
+    }
+    for code in [0x061c]
+        .into_iter()
+        .chain(0x200b..=0x200f)
+        .chain(0x2028..=0x202e)
+        .chain(0x2060..=0x206f)
+        .chain([0xfeff])
+    {
+        unsafe_text.push(char::from_u32(code).unwrap());
+        write!(&mut expected, "\\u{{{code:04x}}}").unwrap();
+    }
+
+    let tool = AskUserQuestionTool::new(ScriptedPrompter::default());
+    let prepared = prepare(
+        &tool,
+        json!({
+            "questions": [{
+                "question": unsafe_text,
+                "options": [{"label": "first"}, {"label": "second"}]
+            }]
+        }),
+    );
+    assert_eq!(prepared["questions"][0]["question"], expected);
+}
+
+#[test]
+fn direct_execute_enforces_raw_limits_without_rejecting_prepared_expansion() {
+    let over_raw = [
+        json!({
+            "questions": [{
+                "question": "q".repeat(MAX_ASK_USER_QUESTION_RAW_QUESTION_BYTES + 1),
+                "options": [{"label": "first"}, {"label": "second"}]
+            }]
+        }),
+        json!({
+            "questions": [{
+                "question": "question",
+                "options": [
+                    {"label": "l".repeat(MAX_ASK_USER_QUESTION_RAW_OPTION_LABEL_BYTES + 1)},
+                    {"label": "second"}
+                ]
+            }]
+        }),
+        json!({
+            "questions": [{
+                "question": "question",
+                "options": [
+                    {
+                        "label": "first",
+                        "description": "d".repeat(
+                            MAX_ASK_USER_QUESTION_RAW_OPTION_DESCRIPTION_BYTES + 1
+                        )
+                    },
+                    {"label": "second"}
+                ]
+            }]
+        }),
+    ];
+    for arguments in over_raw {
+        let prompter = ScriptedPrompter::new([Ok(QuestionPromptOutcome::Unavailable)]);
+        let tool = AskUserQuestionTool::new(prompter.clone());
+        let error = execute(&tool, arguments, CancellationToken::new()).unwrap_err();
+        assert_error(
+            &error,
+            ToolErrorKind::InvalidInput,
+            "ask_user_question_resource_limit",
+            "ask_user_question resource limit exceeded",
+            false,
+        );
+        assert_eq!(prompter.calls(), 0);
+    }
+
+    let prompter = ScriptedPrompter::new([Ok(QuestionPromptOutcome::Unavailable)]);
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(
+        &tool,
+        json!({
+            "questions": [{
+                "question": "\0".repeat(MAX_ASK_USER_QUESTION_RAW_QUESTION_BYTES),
+                "options": [
+                    {
+                        "label": "\0".repeat(MAX_ASK_USER_QUESTION_RAW_OPTION_LABEL_BYTES),
+                        "description": "\0".repeat(
+                            MAX_ASK_USER_QUESTION_RAW_OPTION_DESCRIPTION_BYTES
+                        )
+                    },
+                    {"label": "visible"}
+                ]
+            }]
+        }),
+    );
+    assert_eq!(
+        prepared["questions"][0]["question"].as_str().unwrap().len(),
+        MAX_ASK_USER_QUESTION_RENDERED_QUESTION_BYTES
+    );
+    let output = execute(&tool, prepared, CancellationToken::new()).unwrap();
+    assert_eq!(
+        output,
+        ToolOutput::success(
+            "(ask_user_question is only available in the interactive shell; ask the user freeform instead)"
+        )
+    );
+    assert_eq!(prompter.calls(), 1);
+}
+
+#[test]
 fn permission_request_id_has_its_fixed_precedence_and_redacted_failure() {
     let marker = "PERMISSION_REQUEST_PRIVATE_MARKER";
     let tool = AskUserQuestionTool::new(ScriptedPrompter::default());
@@ -748,22 +956,17 @@ fn terminal_encoding_reaches_each_exact_rendered_field_maximum() {
 #[test]
 fn aggregate_rendered_presentation_limit_is_checked_without_truncation() {
     let tool = AskUserQuestionTool::new(ScriptedPrompter::default());
-    let rendered_bytes = 4 * (1 + 341 * 8) + 24 * ((3 + 41 * 8) + 170 * 8);
-    assert!(rendered_bytes > MAX_ASK_USER_QUESTION_RENDERED_PRESENTATION_BYTES);
-    let arguments = json!({
-        "questions": (0..4).map(|question| json!({
-            "question": format!("{question}{}", "\u{200b}".repeat(341)),
-            "options": (0..6).map(|option| json!({
-                "label": format!("{question}-{option}{}", "\u{200b}".repeat(41)),
-                "description": "\u{200b}".repeat(170),
-            })).collect::<Vec<_>>()
-        })).collect::<Vec<_>>()
-    });
-    assert!(
-        serde_json::to_vec(&arguments).unwrap().len()
-            < MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES
+    let exact = distributed_boundary_value(4_080, 0);
+    assert_eq!(serde_json::to_vec(&exact).unwrap().len(), 9_135);
+    let exact = prepare(&tool, exact);
+    assert_eq!(
+        rendered_presentation_bytes(&exact),
+        MAX_ASK_USER_QUESTION_RENDERED_PRESENTATION_BYTES
     );
-    let error = tool.prepare(call(arguments)).unwrap_err();
+
+    let over = distributed_boundary_value(4_080, 1);
+    assert_eq!(serde_json::to_vec(&over).unwrap().len(), 9_137);
+    let error = tool.prepare(call(over)).unwrap_err();
     assert_error(
         &error,
         ToolErrorKind::InvalidInput,
@@ -784,6 +987,19 @@ fn incoming_serialized_argument_boundary_is_exact_and_checked_first() {
     prepare(&tool, exact);
 
     let over = serialized_argument_boundary(MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES + 1);
+    assert_eq!(
+        serde_json::to_vec(&over).unwrap().len(),
+        MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES + 1
+    );
+    let error = tool.prepare(call(over.clone())).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::InvalidInput,
+        "ask_user_question_resource_limit",
+        "ask_user_question resource limit exceeded",
+        false,
+    );
+
     let marker = "PRIVATE_OVERSIZED_INPUT_MARKER";
     let mut over = over.as_object().unwrap().clone();
     over.insert(marker.to_owned(), Value::Bool(true));
@@ -796,6 +1012,30 @@ fn incoming_serialized_argument_boundary_is_exact_and_checked_first() {
         false,
     );
     assert!(!format!("{error:?} {error}").contains(marker));
+}
+
+#[test]
+fn normalized_prepared_serialization_boundary_is_exact_and_inclusive() {
+    let tool = AskUserQuestionTool::new(ScriptedPrompter::default());
+    let exact = distributed_boundary_value(2_443, 13_095);
+    assert_eq!(serde_json::to_vec(&exact).unwrap().len(), 32_051);
+    let exact = prepare(&tool, exact);
+    assert_eq!(rendered_presentation_bytes(&exact), 32_767);
+    assert_eq!(
+        serde_json::to_vec(&exact).unwrap().len(),
+        MAX_ASK_USER_QUESTION_SERIALIZED_PREPARED_ARGUMENT_BYTES
+    );
+
+    let over = distributed_boundary_value(2_442, 13_100);
+    assert_eq!(serde_json::to_vec(&over).unwrap().len(), 32_059);
+    let error = tool.prepare(call(over)).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::InvalidInput,
+        "ask_user_question_resource_limit",
+        "ask_user_question resource limit exceeded",
+        false,
+    );
 }
 
 #[test]
@@ -837,6 +1077,110 @@ fn deeply_nested_direct_input_is_rejected_without_invoking_the_prompt() {
     let error = execute(&tool, Value::Object(root), CancellationToken::new()).unwrap_err();
     assert_eq!(error.kind, ToolErrorKind::InvalidInput);
     assert_eq!(prompter.calls(), 0);
+}
+
+#[test]
+fn serialized_size_rejects_exact_plus_one_strings_and_keys_before_prompting() {
+    let prompter = ScriptedPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+
+    let exact_string =
+        Value::String("s".repeat(MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES - 2));
+    assert_eq!(
+        serde_json::to_vec(&exact_string).unwrap().len(),
+        MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES
+    );
+    assert_invalid(&tool, exact_string);
+    let over_string =
+        Value::String("s".repeat(MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES - 1));
+    let error = tool.prepare(call(over_string)).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::InvalidInput,
+        "ask_user_question_resource_limit",
+        "ask_user_question resource limit exceeded",
+        false,
+    );
+
+    let mut exact_key = serde_json::Map::new();
+    exact_key.insert(
+        "k".repeat(MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES - 9),
+        Value::Null,
+    );
+    let exact_key = Value::Object(exact_key);
+    assert_eq!(
+        serde_json::to_vec(&exact_key).unwrap().len(),
+        MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES
+    );
+    assert_invalid(&tool, exact_key);
+    let mut over_key = serde_json::Map::new();
+    over_key.insert(
+        "k".repeat(MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES - 8),
+        Value::Null,
+    );
+    let error = tool.prepare(call(Value::Object(over_key))).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::InvalidInput,
+        "ask_user_question_resource_limit",
+        "ask_user_question resource limit exceeded",
+        false,
+    );
+
+    let oversized = Value::String("s".repeat(MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES * 32));
+    let error = tool.prepare(call(oversized)).unwrap_err();
+    assert_eq!(error.code, "ask_user_question_resource_limit");
+    assert_eq!(prompter.calls(), 0);
+}
+
+#[test]
+fn maximum_depth_drop_paths_are_iterative_on_a_small_stack() {
+    const SMALL_STACK_BYTES: usize = 64 * 1024;
+    const EXACT_INCOMING_ROOT_ARRAY_DEPTH: usize =
+        (MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES - 4) / 2;
+    const EXACT_PREPARED_ROOT_ARRAY_DEPTH: usize =
+        (MAX_ASK_USER_QUESTION_SERIALIZED_PREPARED_ARGUMENT_BYTES - 4) / 2;
+
+    std::thread::Builder::new()
+        .name("ask-question-iterative-drop".to_owned())
+        .stack_size(SMALL_STACK_BYTES)
+        .spawn(|| {
+            let prompter = ScriptedPrompter::default();
+            let tool = AskUserQuestionTool::new(prompter.clone());
+
+            let error = tool
+                .prepare(call(deeply_nested_array(EXACT_INCOMING_ROOT_ARRAY_DEPTH)))
+                .unwrap_err();
+            assert_eq!(error.code, "ask_user_question_invalid_arguments");
+
+            let error = tool
+                .prepare(ToolCall {
+                    id: ToolCallId::new("wrong-name-deep-call").unwrap(),
+                    name: ToolName::new("wrong_name").unwrap(),
+                    arguments: deeply_nested_array(EXACT_INCOMING_ROOT_ARRAY_DEPTH),
+                })
+                .unwrap_err();
+            assert_eq!(error.code, "ask_user_question_invalid_arguments");
+
+            let unpolled = tool.execute(
+                context(),
+                deeply_nested_array(EXACT_PREPARED_ROOT_ARRAY_DEPTH),
+                CancellationToken::new(),
+            );
+            drop(unpolled);
+
+            let error = execute(
+                &tool,
+                deeply_nested_array(EXACT_PREPARED_ROOT_ARRAY_DEPTH + 1),
+                CancellationToken::new(),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "ask_user_question_resource_limit");
+            assert_eq!(prompter.calls(), 0);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]
@@ -950,6 +1294,60 @@ fn unpolled_pending_drop_and_fail_fast_capacity_are_owned_and_recoverable() {
     drop(recovered);
     assert_eq!(probe.drops.load(Ordering::SeqCst), 2);
     assert_eq!(probe.live.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn hard_eight_prompt_capacity_fails_ninth_and_is_independent_per_tool() {
+    let probe = Arc::new(PendingProbe::default());
+    let prompter = PendingPrompter {
+        probe: Arc::clone(&probe),
+    };
+    let tool = AskUserQuestionTool::with_max_active_prompts(
+        prompter.clone(),
+        ASK_USER_QUESTION_MAX_ACTIVE_PROMPTS,
+    )
+    .unwrap();
+    let independent = AskUserQuestionTool::with_max_active_prompts(prompter, 1).unwrap();
+    let prepared = prepare(&tool, basic_arguments());
+
+    let mut active = (0..ASK_USER_QUESTION_MAX_ACTIVE_PROMPTS)
+        .map(|_| Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new())))
+        .collect::<Vec<_>>();
+    for future in &mut active {
+        assert!(poll_once(future.as_mut()).is_pending());
+    }
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 8);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 8);
+
+    let ninth = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
+        .unwrap_err();
+    assert_error(
+        &ninth,
+        ToolErrorKind::Unavailable,
+        "ask_user_question_busy",
+        "ask_user_question prompt capacity is exhausted",
+        true,
+    );
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 8);
+
+    let mut independent_prompt =
+        Box::pin(independent.execute(context(), prepared.clone(), CancellationToken::new()));
+    assert!(poll_once(independent_prompt.as_mut()).is_pending());
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 9);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 9);
+
+    drop(active.pop());
+    assert_eq!(probe.live.load(Ordering::SeqCst), 8);
+    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 10);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 9);
+
+    drop(active);
+    drop(independent_prompt);
+    drop(recovered);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 0);
+    assert_eq!(probe.drops.load(Ordering::SeqCst), 10);
 }
 
 #[test]
@@ -1137,17 +1535,55 @@ fn exact_answer_and_aggregate_answer_boundaries_are_enforced() {
 
 #[test]
 fn worst_case_terminal_rendering_keeps_the_complete_tool_output_bounded() {
-    let answer = "\0".repeat(MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES);
+    let arguments = json!({
+        "questions": (0..MAX_ASK_USER_QUESTION_QUESTIONS).map(|question| json!({
+            "question": "\0".repeat(MAX_ASK_USER_QUESTION_RAW_QUESTION_BYTES),
+            "options": [
+                {"label": format!("a{question}")},
+                {"label": format!("b{question}")}
+            ]
+        })).collect::<Vec<_>>()
+    });
+    let answers = (0..MAX_ASK_USER_QUESTION_QUESTIONS)
+        .map(|_| "\0".repeat(MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES / 4))
+        .collect::<Vec<_>>();
     let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(vec![answer]),
+        QuestionPromptOutcome::Answered(answers),
     )]));
-    let prepared = prepare(&tool, basic_arguments());
-    let output = execute(&tool, prepared, CancellationToken::new()).unwrap();
+    let prepared = prepare(&tool, arguments);
+    let output = execute(&tool, prepared.clone(), CancellationToken::new()).unwrap();
     let serialized = serde_json::to_vec(&output).unwrap();
+    // Each raw byte produces at most five compact-JSON bytes after terminal
+    // rendering: a C0 byte becomes four ASCII bytes with one escaped backslash.
+    // The 4,096 question plus 4,096 answer bytes therefore contribute 40,960
+    // bytes; the four ordered pairs and complete ToolOutput envelope add 142.
+    assert_eq!(serialized.len(), 41_102);
     assert!(serialized.len() <= MAX_ASK_USER_QUESTION_SERIALIZED_RESULT_BYTES);
     assert_eq!(
-        output.content[0]["answer"].as_str().unwrap().len(),
-        MAX_ASK_USER_QUESTION_RENDERED_ANSWER_BYTES
+        output
+            .content
+            .as_array()
+            .unwrap()
+            .iter()
+            .fold(0, |total, pair| total
+                + pair["answer"].as_str().unwrap().len()),
+        MAX_ASK_USER_QUESTION_RENDERED_ANSWER_BYTES,
+    );
+
+    let oversized_answers = [1_024, 1_024, 1_024, 1_025]
+        .map(|bytes| "a".repeat(bytes))
+        .into_iter()
+        .collect::<Vec<_>>();
+    let oversized = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
+        QuestionPromptOutcome::Answered(oversized_answers),
+    )]));
+    let error = execute(&oversized, prepared, CancellationToken::new()).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::InvalidInput,
+        "ask_user_question_resource_limit",
+        "ask_user_question resource limit exceeded",
+        false,
     );
 }
 
