@@ -1,17 +1,29 @@
 //! Bounded, permission-gated foreground shell execution.
 
 use std::error::Error;
-use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::fmt;
 use std::future::{Future, poll_fn};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::task::Poll;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::task::{Context, Poll, Waker};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use machine_god_core::{
+    BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
+    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+};
+use serde_json::{Value, json};
+#[cfg(unix)]
+use sha2::{Digest, Sha256};
 #[cfg(target_os = "linux")]
 use std::collections::VecDeque;
 #[cfg(target_os = "linux")]
@@ -22,19 +34,6 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, AtomicU64};
-#[cfg(target_os = "linux")]
-use std::sync::{Mutex, MutexGuard};
-#[cfg(target_os = "linux")]
-use std::task::{Context, Waker};
-#[cfg(target_os = "linux")]
-use std::thread::{self, JoinHandle};
-
-use machine_god_core::{
-    BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
-    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
-};
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 #[cfg(target_os = "linux")]
 use rustix::fd::AsRawFd;
@@ -331,7 +330,14 @@ impl TerminalExecutionOutcome {
     ) -> Result<Self, TerminalExecutorError> {
         let retained = stdout.bytes.len().saturating_add(stderr.bytes.len());
         let produced = stdout.total_bytes.saturating_add(stderr.total_bytes);
-        if retained > MAX_TERMINAL_RETAINED_OUTPUT_BYTES
+        let status_valid = match status {
+            TerminalExecutionStatus::Exited(code) => (0..=255).contains(&code),
+            TerminalExecutionStatus::Signaled(signal) => (1..=255).contains(&signal),
+            TerminalExecutionStatus::TimedOut | TerminalExecutionStatus::OutputLimit => true,
+        };
+        if !status_valid
+            || duration > TERMINAL_MAX_TIMEOUT
+            || retained > MAX_TERMINAL_RETAINED_OUTPUT_BYTES
             || (matches!(status, TerminalExecutionStatus::OutputLimit)
                 != (produced > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES))
         {
@@ -374,6 +380,8 @@ pub struct TerminalExecutionRequest {
     cwd: String,
     environment: Vec<(OsString, OsString)>,
     environment_sha256: String,
+    #[cfg(target_os = "linux")]
+    started: Instant,
     deadline: Instant,
     #[cfg(unix)]
     directory: OwnedFd,
@@ -449,7 +457,11 @@ pub type TerminalExecution =
 /// Trusted process boundary for one exact foreground request.
 pub trait TerminalExecutor: Send + Sync + 'static {
     /// Creates an inert future. Dropping it must synchronously terminate, reap,
-    /// and join every owned process, pipe, and worker.
+    /// and join every owned process, pipe, and worker. Executors should honor
+    /// [`TerminalExecutionRequest::deadline`] so they can return bounded partial
+    /// output; the tool also owns an independent deadline wake and drops this
+    /// future synchronously at expiry, so a pending implementation cannot
+    /// disable the absolute bound.
     fn execute(
         &self,
         request: TerminalExecutionRequest,
@@ -458,6 +470,7 @@ pub trait TerminalExecutor: Send + Sync + 'static {
 }
 
 struct EnvironmentSnapshot {
+    #[cfg(unix)]
     entries: Vec<(OsString, OsString)>,
     sha256: String,
 }
@@ -555,6 +568,7 @@ impl TerminalTool {
     }
 }
 
+#[cfg(unix)]
 fn validate_limits(limits: TerminalLimits) -> Result<(), TerminalConfigError> {
     TerminalLimits::new(limits.timeout, limits.max_active_executions).map(|_| ())
 }
@@ -632,6 +646,7 @@ fn open_workspace_root(root: &Path) -> Result<OwnedFd, TerminalConfigError> {
     Ok(root)
 }
 
+#[cfg(unix)]
 fn invalid_environment() -> TerminalConfigError {
     TerminalConfigError::new(TerminalConfigErrorKind::InvalidEnvironment)
 }
@@ -743,9 +758,12 @@ impl TerminalTool {
     fn execution_request(
         &self,
         arguments: TerminalArguments,
+        started: Instant,
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<TerminalExecutionRequest, ToolError> {
+        #[cfg(not(target_os = "linux"))]
+        let _ = started;
         check_cancellation(cancellation)?;
         let mut directory = finish_precommit(
             rustix::fs::openat(
@@ -780,6 +798,8 @@ impl TerminalTool {
             cwd: arguments.cwd,
             environment: self.environment.entries.clone(),
             environment_sha256: self.environment.sha256.clone(),
+            #[cfg(target_os = "linux")]
+            started,
             deadline,
             directory,
             #[cfg(target_os = "linux")]
@@ -793,6 +813,7 @@ impl TerminalTool {
     fn execution_request(
         &self,
         _arguments: TerminalArguments,
+        _started: Instant,
         _deadline: Instant,
         _cancellation: &CancellationToken,
     ) -> Result<TerminalExecutionRequest, ToolError> {
@@ -860,11 +881,22 @@ async fn await_executor(
     mut future: TerminalExecution,
     cancellation: &CancellationToken,
     deadline: Instant,
+    started: Instant,
+    timer: DeadlineTimer,
 ) -> Result<TerminalExecutionOutcome, ToolError> {
     let mut cancelled = Box::pin(cancellation.cancelled());
     poll_fn(|context| {
         if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
             return Poll::Ready(Err(cancelled_error()));
+        }
+        if timer.poll_expired(context).is_ready() {
+            return Poll::Ready(
+                empty_outcome(
+                    TerminalExecutionStatus::TimedOut,
+                    bounded_duration(started.elapsed()),
+                )
+                .map_err(map_executor_error),
+            );
         }
         match Pin::new(&mut future).poll(context) {
             Poll::Ready(_) if cancellation.is_cancelled() => Poll::Ready(Err(cancelled_error())),
@@ -873,6 +905,7 @@ async fn await_executor(
                     && !matches!(outcome.status, TerminalExecutionStatus::TimedOut)
                 {
                     outcome.status = TerminalExecutionStatus::TimedOut;
+                    outcome.duration = bounded_duration(started.elapsed());
                 }
                 Poll::Ready(Ok(outcome))
             }
@@ -881,6 +914,31 @@ async fn await_executor(
         }
     })
     .await
+}
+
+fn bounded_duration(duration: Duration) -> Duration {
+    std::cmp::min(duration, TERMINAL_MAX_TIMEOUT)
+}
+
+fn empty_outcome(
+    status: TerminalExecutionStatus,
+    duration: Duration,
+) -> Result<TerminalExecutionOutcome, TerminalExecutorError> {
+    TerminalExecutionOutcome::new(
+        status,
+        TerminalCapturedOutput::new(Vec::new(), 0)?,
+        TerminalCapturedOutput::new(Vec::new(), 0)?,
+        duration,
+    )
+}
+
+fn render_timeout(cwd: &str, started: Instant) -> Result<ToolOutput, ToolError> {
+    let outcome = empty_outcome(
+        TerminalExecutionStatus::TimedOut,
+        bounded_duration(started.elapsed()),
+    )
+    .map_err(map_executor_error)?;
+    render_output(cwd, &outcome)
 }
 
 fn render_output(cwd: &str, outcome: &TerminalExecutionOutcome) -> Result<ToolOutput, ToolError> {
@@ -1008,6 +1066,124 @@ impl Drop for ActivePermit {
     }
 }
 
+struct DeadlineTimer {
+    shared: Arc<DeadlineTimerShared>,
+    thread: Option<JoinHandle<()>>,
+}
+
+struct DeadlineTimerShared {
+    deadline: Instant,
+    state: Mutex<DeadlineTimerState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct DeadlineTimerState {
+    stopped: bool,
+    expired: bool,
+    waker: Option<Waker>,
+}
+
+impl DeadlineTimer {
+    fn new(deadline: Instant) -> Result<Self, ToolError> {
+        let shared = Arc::new(DeadlineTimerShared {
+            deadline,
+            state: Mutex::new(DeadlineTimerState::default()),
+            changed: Condvar::new(),
+        });
+        let worker_shared = Arc::clone(&shared);
+        let thread = thread::Builder::new()
+            .name("machine-god-terminal-deadline".to_owned())
+            .spawn(move || run_deadline_timer(&worker_shared))
+            .map_err(|_| execution_unavailable())?;
+        Ok(Self {
+            shared,
+            thread: Some(thread),
+        })
+    }
+
+    fn poll_expired(&self, context: &Context<'_>) -> Poll<()> {
+        let mut incoming = Some(context.waker().clone());
+        let (expired, replaced) = {
+            let mut state = lock_deadline(&self.shared.state);
+            if state.expired || Instant::now() >= self.shared.deadline {
+                state.expired = true;
+                (true, state.waker.take())
+            } else {
+                let replaced = match state.waker.as_ref() {
+                    Some(existing) if existing.will_wake(context.waker()) => None,
+                    Some(_) => state
+                        .waker
+                        .replace(incoming.take().expect("deadline incoming waker exists")),
+                    None => {
+                        state.waker = incoming.take();
+                        None
+                    }
+                };
+                (false, replaced)
+            }
+        };
+        drop(replaced);
+        drop(incoming);
+        if expired {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl Drop for DeadlineTimer {
+    fn drop(&mut self) {
+        let suppressed = {
+            let mut state = lock_deadline(&self.shared.state);
+            state.stopped = true;
+            state.waker.take()
+        };
+        drop(suppressed);
+        self.shared.changed.notify_all();
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        if thread.thread().id() == thread::current().id() {
+            // Only the resource-free tail of an inline deadline wake remains.
+            drop(thread);
+        } else {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn run_deadline_timer(shared: &DeadlineTimerShared) {
+    let mut state = lock_deadline(&shared.state);
+    loop {
+        if state.stopped {
+            return;
+        }
+        let now = Instant::now();
+        if now >= shared.deadline {
+            state.expired = true;
+            let waker = state.waker.take();
+            drop(state);
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+            return;
+        }
+        let waited = shared
+            .changed
+            .wait_timeout(state, shared.deadline.saturating_duration_since(now))
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state = waited.0;
+    }
+}
+
+fn lock_deadline(state: &Mutex<DeadlineTimerState>) -> MutexGuard<'_, DeadlineTimerState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[derive(Clone)]
 struct TerminalArguments {
     command: String,
@@ -1072,14 +1248,31 @@ impl Tool for TerminalTool {
             if self.system_unsupported {
                 return Err(unsupported_platform());
             }
-            check_deadline(deadline)?;
-            let permit = ActivePermit::acquire(&self.active, self.limits.max_active_executions)
-                .ok_or_else(busy)?;
+            if Instant::now() >= deadline {
+                check_cancellation(&cancellation)?;
+                return render_timeout(&parsed.cwd, started);
+            }
+            let Some(permit) =
+                ActivePermit::acquire(&self.active, self.limits.max_active_executions)
+            else {
+                check_cancellation(&cancellation)?;
+                return if Instant::now() >= deadline {
+                    render_timeout(&parsed.cwd, started)
+                } else {
+                    Err(busy())
+                };
+            };
             check_cancellation(&cancellation)?;
-            let request = self.execution_request(parsed.clone(), deadline, &cancellation)?;
+            let request =
+                self.execution_request(parsed.clone(), started, deadline, &cancellation)?;
             check_cancellation(&cancellation)?;
+            if Instant::now() >= deadline {
+                drop(permit);
+                return render_timeout(&parsed.cwd, started);
+            }
+            let timer = DeadlineTimer::new(deadline)?;
             let future = self.executor.execute(request, cancellation.clone());
-            let outcome = await_executor(future, &cancellation, deadline).await?;
+            let outcome = await_executor(future, &cancellation, deadline, started, timer).await?;
             drop(permit);
             render_output(&parsed.cwd, &outcome)
         })
@@ -1357,7 +1550,12 @@ fn run_system_command(
     if cancellation.is_cancelled() || lock_worker(shared).abort {
         return Err(executor_error(TerminalExecutorErrorKind::Cancelled));
     }
-    let started = Instant::now();
+    if Instant::now() >= request.deadline() {
+        return empty_outcome(
+            TerminalExecutionStatus::TimedOut,
+            bounded_duration(request.started.elapsed()),
+        );
+    }
     let mut command = Command::new(TERMINAL_PROGRAM);
     command
         .arg("-c")
@@ -1374,6 +1572,11 @@ fn run_system_command(
         let state = lock_worker(shared);
         if cancellation.is_cancelled() || state.abort {
             None
+        } else if Instant::now() >= request.deadline() {
+            return empty_outcome(
+                TerminalExecutionStatus::TimedOut,
+                bounded_duration(request.started.elapsed()),
+            );
         } else {
             Some(command.spawn())
         }
@@ -1381,7 +1584,13 @@ fn run_system_command(
     let Some(spawn) = spawn else {
         return Err(executor_error(TerminalExecutorErrorKind::Cancelled));
     };
-    let mut child = spawn.map_err(|_| executor_error(TerminalExecutorErrorKind::Spawn))?;
+    let mut child = match spawn {
+        Ok(child) => child,
+        Err(_) if cancellation.is_cancelled() || lock_worker(shared).abort => {
+            return Err(executor_error(TerminalExecutorErrorKind::Cancelled));
+        }
+        Err(_) => return Err(executor_error(TerminalExecutorErrorKind::Spawn)),
+    };
     let group = rustix::process::Pid::from_raw(
         i32::try_from(child.id())
             .map_err(|_| executor_error(TerminalExecutorErrorKind::Invariant))?,
@@ -1464,13 +1673,16 @@ fn run_system_command(
     };
 
     stop_readers.store(true, Ordering::Release);
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
-    TerminalExecutionOutcome::new(terminal_status, stdout, stderr, started.elapsed())
+    let stdout = stdout_reader.join();
+    let stderr = stderr_reader.join();
+    let stdout = stdout.map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
+    let stderr = stderr.map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
+    TerminalExecutionOutcome::new(
+        terminal_status,
+        stdout,
+        stderr,
+        bounded_duration(request.started.elapsed()),
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -1517,7 +1729,14 @@ fn read_pipe(
 ) -> Result<TerminalCapturedOutput, TerminalExecutorError> {
     let mut capture = PipeCapture::default();
     let mut buffer = [0_u8; 16 * 1024];
+    let mut stopping_reads = 0_u8;
     loop {
+        if stop.load(Ordering::Acquire) {
+            stopping_reads = stopping_reads.saturating_add(1);
+            if stopping_reads > 64 {
+                break;
+            }
+        }
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(length) => {
@@ -1647,19 +1866,6 @@ fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError>
     }
 }
 
-fn check_deadline(deadline: Instant) -> Result<(), ToolError> {
-    if Instant::now() >= deadline {
-        Err(fixed_tool_error(
-            ToolErrorKind::Execution,
-            "terminal_timed_out",
-            "terminal execution timed out",
-            true,
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 fn invalid_arguments() -> ToolError {
     fixed_tool_error(
         ToolErrorKind::InvalidInput,
@@ -1687,6 +1893,7 @@ fn invalid_cwd() -> ToolError {
     )
 }
 
+#[cfg(unix)]
 fn cwd_unavailable() -> ToolError {
     fixed_tool_error(
         ToolErrorKind::Unavailable,
@@ -1748,4 +1955,140 @@ fn fixed_tool_error(
     retryable: bool,
 ) -> ToolError {
     ToolError::new(kind, code, message, retryable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        TERMINAL_MAX_TIMEOUT, TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome,
+        TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalLimits,
+        TerminalTool,
+    };
+    use machine_god_core::{
+        CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId, ToolContext, TurnId,
+    };
+    use serde_json::json;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll};
+    use std::time::{Duration, Instant};
+
+    fn empty_capture() -> TerminalCapturedOutput {
+        TerminalCapturedOutput::new(Vec::new(), 0).unwrap()
+    }
+
+    #[test]
+    fn outcome_rejects_impossible_status_and_duration_values() {
+        for status in [
+            TerminalExecutionStatus::Exited(-1),
+            TerminalExecutionStatus::Exited(256),
+            TerminalExecutionStatus::Signaled(0),
+            TerminalExecutionStatus::Signaled(256),
+        ] {
+            assert!(
+                TerminalExecutionOutcome::new(
+                    status,
+                    empty_capture(),
+                    empty_capture(),
+                    Duration::ZERO,
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            TerminalExecutionOutcome::new(
+                TerminalExecutionStatus::Exited(0),
+                empty_capture(),
+                empty_capture(),
+                TERMINAL_MAX_TIMEOUT + Duration::from_nanos(1),
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn independent_deadline_stops_and_drops_a_pending_executor() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let executor = Arc::new(PendingExecutor {
+            dropped: Arc::clone(&dropped),
+        });
+        let root = std::env::current_dir().unwrap();
+        let tool = TerminalTool::with_executor(
+            &root,
+            Vec::new(),
+            executor,
+            TerminalLimits::new(Duration::from_millis(5), 1).unwrap(),
+        )
+        .unwrap();
+        let started = Instant::now();
+        let output = futures_executor::block_on(tool.execute(
+            context(),
+            json!({
+                "action": "exec",
+                "command": "ignored",
+                "cwd": ".",
+                "profile": "clean"
+            }),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert_eq!(output.content["status"], "timed_out");
+        assert!(output.is_error);
+        assert!(dropped.load(Ordering::Acquire));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    struct PendingExecutor {
+        dropped: Arc<AtomicBool>,
+    }
+
+    #[cfg(unix)]
+    impl TerminalExecutor for PendingExecutor {
+        fn execute(
+            &self,
+            request: TerminalExecutionRequest,
+            _cancellation: CancellationToken,
+        ) -> TerminalExecution {
+            Box::pin(PendingExecution {
+                _request: request,
+                dropped: Arc::clone(&self.dropped),
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    struct PendingExecution {
+        _request: TerminalExecutionRequest,
+        dropped: Arc<AtomicBool>,
+    }
+
+    #[cfg(unix)]
+    impl Future for PendingExecution {
+        type Output = Result<TerminalExecutionOutcome, super::TerminalExecutorError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Pending
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for PendingExecution {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
+
+    #[cfg(unix)]
+    fn context() -> ToolContext {
+        ToolContext {
+            session_id: SessionId::new("session").unwrap(),
+            session_incarnation_id: SessionIncarnationId::new("incarnation").unwrap(),
+            turn_id: TurnId::new("turn").unwrap(),
+            call_id: ToolCallId::new("call").unwrap(),
+        }
+    }
 }
