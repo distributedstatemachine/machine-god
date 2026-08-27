@@ -533,6 +533,74 @@ Maintained documentation owns the exact notifier, precedence, and publication
 contract. This is a remediation-status record only: it does not assert composed
 behavior, a green gate or review, or remote delivery.
 
+## Cycle 5 composition and replacement gate
+
+Cycle-5 remediation completed from non-overlapping isolated components.
+Maintained-documentation component
+`774c725e4ea03871e687e57f0c202161fb5702d7`, tree `df8a6e0`, integrated as
+`d8d6708`. Independent-evidence component
+`d854c1435c24930b43eb2e010e72c3c348e6348a`, tree `b774248`, integrated as
+`02d9969`. Production/private-evidence component
+`0453fa8b67accfd079a5cd6dafa9ec09011cc09a`, tree `598d84e`, integrated as
+`93796de`. The stale dual-callback test was corrected by exact component
+`ecff5dc407faa94c0844f58eb5a55ac3768d172a`, integrated as `9021971`.
+
+Composition then exposed two distinct issues. The external retained-publisher
+fixture installed a fresh supplied Waker on its final poll but did not remove it
+on future drop, correctly keeping the activity busy forever under the product
+contract. Exact evidence component
+`80fc24e3f8bcd17ba41497b99b4a608670c4e27d`, tree `bf7ba0a`, integrated as
+`ac6d3e9`, makes that fixture deregister its retained Waker and accepts at most
+one serialized callback replay. Production also discarded every notice during
+an in-flight callback. A legal inline poll could observe the first notice before
+a later deadline or executor notice was discarded, losing the required later
+wake. Exact source component
+`a4845aad049b7293d2177ade7fd7f618469ff1c5`, tree `ca0795f`, integrated as
+`2e86fb6`, adds poll-observed pending arbitration: notices before a re-poll
+coalesce into the current callback, while a notice after that observation gets
+one serialized replay to the latest target. Callback concurrency remains one.
+Exact `dc82875` factors the bounded recovery probe for warnings-denied Clippy,
+and `3bfc0bf` aligns the maintained contract.
+
+Every component worktree was verified clean before integration. Each worktree
+and temporary branch was removed and pruned immediately after its iteration.
+Exact behavior head `3bfc0bfaf7bed4d27a6cc3588d1edb72d04778c7`, tree
+`d4ed10ddbb2f8ca9eaee57511555d1418592c352`, passes the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- all four required commands pass, including warnings-denied workspace all-
+  target/all-feature Clippy, 1,170 listed non-documentation Rust tests, and two
+  doctests;
+- focused suites pass 29 external terminal, 17 private terminal, two engine,
+  and one unsupported-platform cases. The cycle-4 cancellation and fan-out
+  regressions fail on the rejected base and pass here; private evidence covers
+  typed cleanup errors on both sides of the deadline, serialized wake replay,
+  replay suppression after an observing poll, panic recovery, and target-before-
+  activity destruction;
+- all 136 Python tests pass with eight expected macOS skips, while regeneration
+  against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` remains
+  byte-stable;
+- exact `cargo-deny` 0.20.2 accepts advisories, bans, licenses, and sources with
+  the three established duplicate warnings; `cargo-audit` 0.22.2 loads 1,226
+  advisories, scans 211 lockfile dependencies, and reports no vulnerability;
+- Linux native-library and terminal-test checks and warnings-denied Clippy pass;
+  FreeBSD warnings-denied Clippy passes; WASI no-default and all-feature checks
+  pass with only the established unrelated `read_file` dead-code warning;
+- documentation integrity covers 89 maintained Markdown files, 312 triple-
+  backtick occurrences, 678 parsed links, and 515 repository-relative targets
+  with zero missing targets;
+- the exact 29-file base diff is +7,717/-193, adds no unsafe Rust, and leaves
+  workflows, benchmarks, compatibility data, the root manifest, and
+  `Cargo.lock` unchanged; and
+- a fresh locked 3,985,216-byte arm64 Mach-O release binary has SHA-256
+  `b515ce0951f44a1e30171ee69c400cb9e750430e3a9d4959028ab49a16a55383` and
+  passes 672-byte help plus 355-byte isolated status smoke with empty stderr and
+  no state or temporary-directory residue.
+
+This gate makes no formal cycle-5 review or remote-delivery claim. Three fresh
+product-review tracks must identify the immutable candidate and tree recorded
+after this gate result is committed.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in

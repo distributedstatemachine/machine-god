@@ -76,8 +76,11 @@ exact candidate `105259b`, tree `003262f`, with a deduplicated `0/2/2/0`
 union. Cycle-5 remediation covers a single activity-backed coalescing notifier
 for cancellation, executor, and deadline registrations; stable typed cleanup-
 error precedence after an output-limit claim; and activity ownership through
-bounded publication and public return. A replacement gate, immutable candidate,
-three fresh exact-SHA reviews, and remote delivery remain pending.
+bounded publication and public return. Exact behavior head `3bfc0bf`, tree
+`d4ed10d`, passes the complete exact-1.94.1 replacement gate with poll-observed
+serialized wake replay and corrected retained-Waker fixture evidence. An
+immutable candidate, three fresh exact-SHA reviews, and remote delivery remain
+pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -124,8 +127,18 @@ cycle-5 replacement coalesces all terminal-owned Waker registrations behind one
 activity-backed notifier with one underlying callback in flight, preserves a
 specific executor cleanup error after an output-limit cause closes timeout
 competition, and retains the outer activity through bounded publication and
-return. Cycle 5 has not yet established composition, a replacement gate,
-candidate, review result, or delivery.
+return. The rejected cycle-4 candidate did not establish the cycle-5
+composition, replacement gate, review result, or delivery. Cycle-5
+documentation `774c725`, initial evidence `d854c14`, production `0453fa8`,
+corrected shared-family evidence
+`ecff5dc`, wake-replay evidence `80fc24e`, and production replay fix `a4845aa`
+are now composed through exact behavior head `3bfc0bf`, tree `d4ed10d`. Its
+complete exact-1.94.1 replacement gate is green: focused 29/17/2/1 terminal
+suites, 1,170 non-doc Rust tests, two doctests, Python 136/8 skips, pinned fx,
+dependency policy/audit, Linux/FreeBSD/WASI, 89/312/678/515 documentation
+integrity, protected/no-unsafe checks, and fresh release smoke all pass. This
+does not establish the immutable candidate, formal cycle-5 review result, or
+delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
