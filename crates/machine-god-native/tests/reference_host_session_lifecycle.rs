@@ -14,6 +14,7 @@ use machine_god_core::{BoxFuture, CancellationToken, PermissionRequest, SessionI
 use machine_god_native::{
     AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest, NativeEnvironment,
     NativeReferenceHost, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
+    QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
     load_native_config,
 };
 
@@ -88,6 +89,18 @@ impl PermissionPrompter for InertPrompter {
     }
 }
 
+#[derive(Debug)]
+struct InertQuestionPrompter;
+
+impl QuestionPrompter for InertQuestionPrompter {
+    fn prompt(
+        &self,
+        _request: QuestionPromptRequest,
+    ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>> {
+        panic!("session lifecycle construction and creation must not ask user questions")
+    }
+}
+
 #[test]
 fn reference_host_lifecycle_engine_and_public_store_share_one_exact_store() {
     let temporary = TemporaryDirectory::new();
@@ -105,6 +118,7 @@ fn reference_host_lifecycle_engine_and_public_store_share_one_exact_store() {
         &workspace,
         &sessions,
         prompter,
+        Arc::new(InertQuestionPrompter),
         never_deadline(),
     )
     .unwrap();

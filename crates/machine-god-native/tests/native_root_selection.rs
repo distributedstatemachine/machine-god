@@ -23,6 +23,7 @@ use machine_god_native::{
     AiGatewayTransport, AiGatewayTransportRequest, NativeEnvironment, NativeReferenceHost,
     NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind, NativeRootSelection,
     PermissionPromptDecision, PermissionPromptError, PermissionPrompter, PreparedNativeRoots,
+    QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
     load_native_config,
 };
 use serde_json::Value;
@@ -147,6 +148,21 @@ impl PermissionPrompter for RecordingPrompter {
     }
 }
 
+struct InertQuestionPrompter;
+
+impl QuestionPrompter for InertQuestionPrompter {
+    fn prompt(
+        &self,
+        _request: QuestionPromptRequest,
+    ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>> {
+        panic!("native-root fixture did not expect an ordinary question prompt")
+    }
+}
+
+fn inert_question_prompter() -> Arc<dyn QuestionPrompter> {
+    Arc::new(InertQuestionPrompter)
+}
+
 fn built_in_config() -> machine_god_native::LoadedNativeConfig {
     load_native_config(&NativeEnvironment::new(None, None, None)).unwrap()
 }
@@ -261,6 +277,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
         production_gateway_target(),
         prepared,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     )
     .unwrap();
@@ -372,6 +389,7 @@ fn prepared_production_constructor_discovers_credentials_only_after_preparation(
             AiGatewayCredentialEnvironment::new(None, None),
             prepared,
             Arc::new(prompter.clone()),
+            inert_question_prompter(),
             never_deadline(),
         ),
     );
@@ -388,6 +406,7 @@ fn prepared_production_constructor_discovers_credentials_only_after_preparation(
         AiGatewayCredentialEnvironment::new(Some(OsString::from(token)), None),
         prepared,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     )
     .unwrap();
@@ -417,6 +436,7 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     )
     .unwrap();
@@ -432,6 +452,7 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
         &missing_workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     ));
     assert_eq!(
@@ -448,6 +469,7 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
         &workspace,
         &missing_sessions,
         Arc::new(prompter),
+        inert_question_prompter(),
         never_deadline(),
     ));
     assert_eq!(

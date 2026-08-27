@@ -435,7 +435,8 @@ mod composition {
         AiGatewayByteStream, AiGatewayCredentialEnvironment, AiGatewayCredentialSource,
         AiGatewayTransport, AiGatewayTransportRequest, NativeReferenceHost,
         NativeReferenceHostBuildErrorKind, PermissionPromptDecision, PermissionPromptError,
-        PermissionPrompter,
+        PermissionPrompter, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
+        QuestionPrompter,
     };
 
     use super::{
@@ -475,6 +476,21 @@ mod composition {
             self.calls.fetch_add(1, Ordering::Relaxed);
             panic!("composition must not poll the permission prompt")
         }
+    }
+
+    struct InertQuestionPrompter;
+
+    impl QuestionPrompter for InertQuestionPrompter {
+        fn prompt(
+            &self,
+            _request: QuestionPromptRequest,
+        ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>> {
+            panic!("composition must not poll an ordinary question prompt")
+        }
+    }
+
+    fn inert_question_prompter() -> Arc<dyn QuestionPrompter> {
+        Arc::new(InertQuestionPrompter)
     }
 
     fn roots(temporary: &TemporaryDirectory) -> (PathBuf, PathBuf) {
@@ -528,6 +544,7 @@ mod composition {
                 &workspace,
                 &sessions,
                 Arc::new(prompter.clone()),
+                inert_question_prompter(),
                 never_deadline(),
             )
             .unwrap();
@@ -561,6 +578,7 @@ mod composition {
             &workspace,
             &sessions,
             Arc::new(prompter.clone()),
+            inert_question_prompter(),
             never_deadline(),
         )
         .unwrap_err();
@@ -590,6 +608,7 @@ mod composition {
                 &workspace,
                 &sessions,
                 Arc::new(prompter.clone()),
+                inert_question_prompter(),
                 never_deadline(),
             )
             .unwrap();
@@ -627,6 +646,7 @@ mod composition {
                 &workspace,
                 &sessions,
                 Arc::new(prompter.clone()),
+                inert_question_prompter(),
                 never_deadline(),
             )
             .unwrap();

@@ -21,15 +21,16 @@ use machine_god_core::{
     PermissionRequest, Role, SessionId, SessionIncarnationId, StopReason, TurnEvent,
 };
 use machine_god_native::{
-    AI_GATEWAY_DEFAULT_MODEL, AiGatewayByteStream, AiGatewayCredentialEnvironment,
-    AiGatewayCredentialSource, AiGatewayTransport, AiGatewayTransportRequest, COPY_FILE_TOOL_NAME,
-    CREATE_FOLDER_TOOL_NAME, ConfigOrigin, DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME,
-    FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME,
-    LoadedNativeConfig, NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
-    NativeReferenceHostBuildErrorKind, OPEN_FILE_TOOL_NAME, PermissionPromptDecision,
-    PermissionPromptError, PermissionPrompter, READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME,
-    TERMINAL_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME,
-    load_native_config,
+    AI_GATEWAY_DEFAULT_MODEL, ASK_USER_QUESTION_TOOL_NAME, AiGatewayByteStream,
+    AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayTransport,
+    AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME, ConfigOrigin,
+    DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME,
+    GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig, NativeEnvironment,
+    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+    OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
+    QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
+    READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME, TERMINAL_TOOL_NAME, WEB_FETCH_TOOL_NAME,
+    WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -224,6 +225,46 @@ impl PermissionPrompter for AllowingPrompter {
     }
 }
 
+struct InertQuestionPrompter;
+
+impl QuestionPrompter for InertQuestionPrompter {
+    fn prompt(
+        &self,
+        _request: QuestionPromptRequest,
+    ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>> {
+        panic!("reference-host fixture did not expect an ordinary question prompt")
+    }
+}
+
+fn inert_question_prompter() -> Arc<dyn QuestionPrompter> {
+    Arc::new(InertQuestionPrompter)
+}
+
+#[derive(Clone, Default)]
+struct AnsweringQuestionPrompter {
+    questions: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl QuestionPrompter for AnsweringQuestionPrompter {
+    fn prompt(
+        &self,
+        request: QuestionPromptRequest,
+    ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>> {
+        self.questions.lock().unwrap().push(
+            request
+                .questions()
+                .iter()
+                .map(|question| question.question().to_owned())
+                .collect(),
+        );
+        Box::pin(async {
+            Ok(QuestionPromptOutcome::Answered(vec![
+                "a free-form answer".to_owned(),
+            ]))
+        })
+    }
+}
+
 fn config_path(config_root: &Path) -> PathBuf {
     config_root.join("machine-god").join("config.json")
 }
@@ -331,6 +372,22 @@ fn web_search_round_responses() -> [Vec<u8>; 3] {
     [outer_tool_call, nested_search, outer_finish]
 }
 
+fn ask_user_question_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"question-call\",\"toolName\":\"ask_user_question\",\"input\":{\"questions\":[{\"question\":\"  Which path?  \",\"options\":[{\"label\":\"First\"},{\"label\":\"Second\"}]}]}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"question complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
 fn compose_with_transport(
     loaded: LoadedNativeConfig,
     transport: ScriptedTransport,
@@ -347,6 +404,7 @@ fn compose_with_transport(
         workspace,
         sessions,
         prompter,
+        inert_question_prompter(),
         never_deadline(),
     )
 }
@@ -448,13 +506,14 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
     assert_eq!(
         tools
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
         [
+            ASK_USER_QUESTION_TOOL_NAME,
             COPY_FILE_TOOL_NAME,
             CREATE_FOLDER_TOOL_NAME,
             DELETE_FILE_TOOL_NAME,
@@ -837,6 +896,7 @@ fn capacity_one_shared_transport_releases_outer_stream_for_custom_target_search(
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     )
     .unwrap();
@@ -902,6 +962,54 @@ fn capacity_one_shared_transport_releases_outer_stream_for_custom_target_search(
 }
 
 #[test]
+fn composed_host_routes_rootless_questions_without_permission_policy() {
+    let temporary = TemporaryDirectory::new("composed-question");
+    let (workspace, sessions) = roots(temporary.path());
+    let transport = ScriptedTransport::new(
+        "COMPOSED_QUESTION_TRANSPORT_SENTINEL",
+        ask_user_question_round_responses(),
+    );
+    let permission_prompter = AllowingPrompter::default();
+    let question_prompter = AnsweringQuestionPrompter::default();
+    let host = NativeReferenceHost::compose_with_ai_gateway_transport(
+        built_in_config(),
+        Arc::new(transport.clone()),
+        production_gateway_target(),
+        &workspace,
+        &sessions,
+        Arc::new(permission_prompter.clone()),
+        Arc::new(question_prompter.clone()),
+        never_deadline(),
+    )
+    .unwrap();
+
+    let (_, events) = collect_turn(&host, "composed-question");
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        TurnEvent::PermissionRequested { .. } | TurnEvent::PermissionResolved { .. }
+    )));
+    assert!(permission_prompter.requests().is_empty());
+    assert_eq!(
+        question_prompter.questions.lock().unwrap().as_slice(),
+        [vec!["Which path?".to_owned()]]
+    );
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_exact_native_tool_catalog(&body(&requests[0]));
+    let result = decoded_tool_output(&body(&requests[1]), 2);
+    assert_eq!(
+        result,
+        json!({
+            "content": [{
+                "answer": "a free-form answer",
+                "question": "Which path?"
+            }],
+            "is_error": false
+        })
+    );
+}
+
+#[test]
 fn v1_projection_composes_without_migrating_observable_loaded_schema() {
     let temporary = TemporaryDirectory::new("v1-projection");
     let (workspace, sessions) = roots(temporary.path());
@@ -949,6 +1057,7 @@ fn production_http_constructor_selects_oidc_then_api_key_without_runtime_effects
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     )
     .unwrap();
@@ -970,6 +1079,7 @@ fn production_http_constructor_selects_oidc_then_api_key_without_runtime_effects
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     )
     .unwrap();
@@ -994,6 +1104,7 @@ fn missing_or_invalid_selected_credential_fails_after_valid_roots_without_fallba
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     ));
     assert_eq!(
@@ -1013,6 +1124,7 @@ fn missing_or_invalid_selected_credential_fails_after_valid_roots_without_fallba
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     ));
     assert_eq!(
@@ -1035,6 +1147,7 @@ fn missing_or_invalid_selected_credential_fails_after_valid_roots_without_fallba
         &workspace,
         &sessions,
         Arc::new(prompter.clone()),
+        inert_question_prompter(),
         never_deadline(),
     ));
     assert_eq!(
@@ -1078,6 +1191,7 @@ fn every_invalid_root_shape_fails_at_its_stage_before_credential_handoff() {
             path,
             &valid_sessions,
             Arc::new(AllowingPrompter::default()),
+            inert_question_prompter(),
             never_deadline(),
         ));
         assert_eq!(
@@ -1113,6 +1227,7 @@ fn every_invalid_root_shape_fails_at_its_stage_before_credential_handoff() {
             &valid_workspace,
             path,
             Arc::new(AllowingPrompter::default()),
+            inert_question_prompter(),
             never_deadline(),
         ));
         assert_eq!(
