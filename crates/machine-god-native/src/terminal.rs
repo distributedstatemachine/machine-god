@@ -928,8 +928,8 @@ async fn await_executor(
     let mut cancelled = Box::pin(cancellation.cancelled());
     let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
     let notifier_waker = Waker::from(Arc::clone(&notifier));
-    poll_fn(|context| {
-        notifier.bind(context.waker());
+    let result = poll_fn(|context| {
+        notifier.bind(context.waker(), &notifier_waker);
         let mut shared_context = Context::from_waker(&notifier_waker);
         if cancelled.as_mut().poll(&mut shared_context).is_ready() || cancellation.is_cancelled() {
             return Poll::Ready(Err(cancelled_error()));
@@ -1014,7 +1014,9 @@ async fn await_executor(
             }
         }
     })
-    .await
+    .await;
+    notifier.close();
+    result
 }
 
 fn bounded_duration(duration: Duration) -> Duration {
@@ -1248,6 +1250,14 @@ struct ActivityNotifierState {
     notifying: bool,
     observed_while_notifying: bool,
     pending_after_observation: bool,
+    lifecycle: ActivityNotifierLifecycle,
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum ActivityNotifierLifecycle {
+    #[default]
+    Open,
+    Closed,
 }
 
 impl ActivityNotifier {
@@ -1258,22 +1268,38 @@ impl ActivityNotifier {
         }
     }
 
-    fn bind(&self, target: &Waker) {
-        // Cloning and destroying an arbitrary Waker may execute foreign code,
-        // so only Arc bookkeeping and identity comparison happen under lock.
-        let incoming = Arc::new(target.clone());
-        let (replaced, unused) = {
+    fn bind(&self, target: &Waker, notifier_waker: &Waker) {
+        let notifier_target = target.will_wake(notifier_waker);
+        {
             let mut state = lock_activity_notifier(&self.state);
+            if matches!(state.lifecycle, ActivityNotifierLifecycle::Closed) {
+                return;
+            }
             if state.notifying {
                 // This poll observes every notice that preceded the bind. A
                 // later notice in the same callback window needs one replay.
                 state.observed_while_notifying = true;
                 state.pending_after_observation = false;
             }
-            if state
-                .target
-                .as_deref()
-                .is_some_and(|existing| existing.will_wake(target))
+            if notifier_target {
+                // A trusted executor may retain the supplied notifier Waker
+                // and the outer host may legally use that Waker to re-poll.
+                // That poll is an observation, but binding the Waker would
+                // replace the genuine outer target with this notifier itself.
+                return;
+            }
+        }
+
+        // Cloning and destroying an arbitrary Waker may execute foreign code,
+        // so only Arc bookkeeping and identity comparison happen under lock.
+        let incoming = Arc::new(target.clone());
+        let (replaced, unused) = {
+            let mut state = lock_activity_notifier(&self.state);
+            if matches!(state.lifecycle, ActivityNotifierLifecycle::Closed)
+                || state
+                    .target
+                    .as_deref()
+                    .is_some_and(|existing| existing.will_wake(target))
             {
                 (None, Some(incoming))
             } else {
@@ -1284,9 +1310,26 @@ impl ActivityNotifier {
         drop(unused);
     }
 
+    fn close(&self) {
+        let target = {
+            let mut state = lock_activity_notifier(&self.state);
+            state.lifecycle = ActivityNotifierLifecycle::Closed;
+            state.observed_while_notifying = false;
+            state.pending_after_observation = false;
+            state.target.take()
+        };
+        // Destroying an arbitrary Waker may run foreign code. The notifier's
+        // activity remains owned by `self`, including through a callback that
+        // was already in flight when the target was removed.
+        drop(target);
+    }
+
     fn notify(&self) {
         let mut target = {
             let mut state = lock_activity_notifier(&self.state);
+            if matches!(state.lifecycle, ActivityNotifierLifecycle::Closed) {
+                return;
+            }
             if state.notifying {
                 // Notices before a re-poll are represented by the callback
                 // already in flight. A notice after that poll must be replayed
@@ -1311,7 +1354,8 @@ impl ActivityNotifier {
             }));
             let next = {
                 let mut state = lock_activity_notifier(&self.state);
-                if notified.is_err() {
+                if matches!(state.lifecycle, ActivityNotifierLifecycle::Closed) || notified.is_err()
+                {
                     state.notifying = false;
                     state.observed_while_notifying = false;
                     state.pending_after_observation = false;
@@ -2729,8 +2773,8 @@ mod tests {
         let worker = Arc::clone(&activity);
         let guardian = Arc::clone(&activity);
         let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
-        notifier.bind(Waker::noop());
         let worker_waker = Waker::from(Arc::clone(&notifier));
+        notifier.bind(Waker::noop(), &worker_waker);
         let guardian_waker = worker_waker.clone();
         assert_eq!(active.load(Ordering::Acquire), 1);
 
@@ -2761,8 +2805,8 @@ mod tests {
             Arc::clone(&maximum_in_flight),
         ));
         let blocking_waker = Waker::from(Arc::clone(&blocking));
-        notifier.bind(&blocking_waker);
         let notifier_waker = Waker::from(Arc::clone(&notifier));
+        notifier.bind(&blocking_waker, &notifier_waker);
 
         let rebound = Arc::new(CountingNotifierTarget {
             calls: AtomicUsize::new(0),
@@ -2775,7 +2819,7 @@ mod tests {
             let first_waker = notifier_waker.clone();
             let first = scope.spawn(move || first_waker.wake());
             blocking.wait_until_entered();
-            notifier.bind(&rebound_waker);
+            notifier.bind(&rebound_waker, &notifier_waker);
 
             let mut burst = Vec::new();
             for _ in 0..32 {
@@ -2818,8 +2862,8 @@ mod tests {
             Arc::clone(&maximum_in_flight),
         ));
         let blocking_waker = Waker::from(Arc::clone(&blocking));
-        notifier.bind(&blocking_waker);
         let notifier_waker = Waker::from(Arc::clone(&notifier));
+        notifier.bind(&blocking_waker, &notifier_waker);
 
         std::thread::scope(|scope| {
             let first_waker = notifier_waker.clone();
@@ -2835,7 +2879,7 @@ mod tests {
                 wake.join().unwrap();
             }
 
-            notifier.bind(&blocking_waker);
+            notifier.bind(&blocking_waker, &notifier_waker);
             blocking.release();
             first.join().unwrap();
         });
@@ -2848,14 +2892,85 @@ mod tests {
     }
 
     #[test]
+    fn activity_notifier_self_bind_preserves_the_external_target() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+        let notifier_waker = Waker::from(Arc::clone(&notifier));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let maximum_in_flight = Arc::new(AtomicUsize::new(0));
+        let target = Arc::new(CountingNotifierTarget {
+            calls: AtomicUsize::new(0),
+            in_flight,
+            maximum_in_flight,
+        });
+        let target_waker = Waker::from(Arc::clone(&target));
+
+        notifier.bind(&target_waker, &notifier_waker);
+        notifier.bind(&notifier_waker, &notifier_waker);
+        notifier_waker.wake_by_ref();
+        assert_eq!(target.calls.load(Ordering::Acquire), 1);
+
+        notifier.close();
+        notifier.bind(&target_waker, &notifier_waker);
+        notifier_waker.wake_by_ref();
+        assert_eq!(target.calls.load(Ordering::Acquire), 1);
+
+        drop((target_waker, target, activity, notifier));
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(notifier_waker);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn activity_notifier_close_suppresses_an_in_flight_replay() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+        let notifier_waker = Waker::from(Arc::clone(&notifier));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let maximum_in_flight = Arc::new(AtomicUsize::new(0));
+        let blocking = Arc::new(BlockingNotifierTarget::new(
+            Arc::clone(&in_flight),
+            Arc::clone(&maximum_in_flight),
+        ));
+        let blocking_waker = Waker::from(Arc::clone(&blocking));
+        notifier.bind(&blocking_waker, &notifier_waker);
+        let rebound = Arc::new(CountingNotifierTarget {
+            calls: AtomicUsize::new(0),
+            in_flight,
+            maximum_in_flight: Arc::clone(&maximum_in_flight),
+        });
+        let rebound_waker = Waker::from(Arc::clone(&rebound));
+
+        let first_waker = notifier_waker.clone();
+        let first = std::thread::spawn(move || first_waker.wake());
+        blocking.wait_until_entered();
+        notifier.bind(&rebound_waker, &notifier_waker);
+        notifier_waker.wake_by_ref();
+        notifier.close();
+        notifier.bind(&rebound_waker, &notifier_waker);
+        notifier_waker.wake_by_ref();
+
+        assert_eq!(blocking.calls.load(Ordering::Acquire), 1);
+        assert_eq!(rebound.calls.load(Ordering::Acquire), 0);
+        assert_eq!(maximum_in_flight.load(Ordering::Acquire), 1);
+        drop((activity, notifier, notifier_waker));
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        blocking.release();
+        first.join().unwrap();
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn activity_notifier_recovers_after_target_panic() {
         let active = Arc::new(AtomicUsize::new(0));
         let activity = ExecutionActivity::acquire(&active, 1).unwrap();
         let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
         let target = Arc::new(PanicOnceNotifierTarget(AtomicUsize::new(0)));
         let target_waker = Waker::from(Arc::clone(&target));
-        notifier.bind(&target_waker);
         let notifier_waker = Waker::from(Arc::clone(&notifier));
+        notifier.bind(&target_waker, &notifier_waker);
 
         let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             notifier_waker.wake_by_ref();
@@ -2866,7 +2981,7 @@ mod tests {
     }
 
     #[test]
-    fn activity_notifier_drops_target_before_releasing_activity() {
+    fn activity_notifier_close_drops_target_before_releasing_activity() {
         let active = Arc::new(AtomicUsize::new(0));
         let activity = ExecutionActivity::acquire(&active, 1).unwrap();
         let dropped = Arc::new(AtomicBool::new(false));
@@ -2876,16 +2991,18 @@ mod tests {
         });
         let target_waker = Waker::from(Arc::clone(&target));
         let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
-        notifier.bind(&target_waker);
         let notifier_waker = Waker::from(Arc::clone(&notifier));
+        notifier.bind(&target_waker, &notifier_waker);
 
         drop(target_waker);
         drop(target);
         drop(activity);
-        drop(notifier_waker);
         assert!(!dropped.load(Ordering::Acquire));
-        drop(notifier);
+        notifier.close();
         assert!(dropped.load(Ordering::Acquire));
+        drop(notifier);
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(notifier_waker);
         assert_eq!(active.load(Ordering::Acquire), 0);
     }
 
