@@ -534,6 +534,41 @@ impl Future for RetainedPublisherExecution {
     }
 }
 
+fn assert_retained_publisher_capacity_recovers(
+    tool: &TerminalTool,
+    executor: &RetainedPublisherExecutor,
+) {
+    let recovery_deadline = Instant::now() + Duration::from_secs(2);
+    let mut recovered = loop {
+        let mut candidate = Box::pin(tool.execute(
+            context(),
+            exact_arguments("recovered", "."),
+            CancellationToken::new(),
+        ));
+        match poll_once(candidate.as_mut()) {
+            Poll::Pending => break candidate,
+            Poll::Ready(Err(error)) if error.code == "terminal_busy" => {
+                assert!(
+                    Instant::now() < recovery_deadline,
+                    "shared notifier capacity did not recover"
+                );
+                drop(candidate);
+                std::thread::yield_now();
+            }
+            Poll::Ready(Err(error)) => panic!("capacity recovery failed: {error}"),
+            Poll::Ready(Ok(_)) => panic!("unpublished injected execution completed"),
+        }
+    };
+    assert_eq!(executor.calls(), 2);
+    executor.publish_and_wake();
+    let recovered_output = match poll_once(recovered.as_mut()) {
+        Poll::Ready(Ok(output)) => output,
+        Poll::Ready(Err(error)) => panic!("recovered execution failed: {error}"),
+        Poll::Pending => panic!("published recovered execution remained pending"),
+    };
+    assert_eq!(recovered_output.content["status"], "exited");
+}
+
 impl Drop for FakeExecution {
     fn drop(&mut self) {
         if matches!(self.mode, Mode::DropCancelThenExit) {
@@ -1604,35 +1639,7 @@ fn deadline_and_injected_waker_families_share_one_callback_and_capacity_slot() {
         assert_eq!(returned, entered);
     });
 
-    let recovery_deadline = Instant::now() + Duration::from_secs(2);
-    let mut recovered = loop {
-        let mut candidate = Box::pin(tool.execute(
-            context(),
-            exact_arguments("recovered", "."),
-            CancellationToken::new(),
-        ));
-        match poll_once(candidate.as_mut()) {
-            Poll::Pending => break candidate,
-            Poll::Ready(Err(error)) if error.code == "terminal_busy" => {
-                assert!(
-                    Instant::now() < recovery_deadline,
-                    "shared notifier capacity did not recover"
-                );
-                drop(candidate);
-                std::thread::yield_now();
-            }
-            Poll::Ready(Err(error)) => panic!("capacity recovery failed: {error}"),
-            Poll::Ready(Ok(_)) => panic!("unpublished injected execution completed"),
-        }
-    };
-    assert_eq!(executor.calls(), 2);
-    executor.publish_and_wake();
-    let recovered_output = match poll_once(recovered.as_mut()) {
-        Poll::Ready(Ok(output)) => output,
-        Poll::Ready(Err(error)) => panic!("recovered execution failed: {error}"),
-        Poll::Pending => panic!("published recovered execution remained pending"),
-    };
-    assert_eq!(recovered_output.content["status"], "exited");
+    assert_retained_publisher_capacity_recovers(&tool, &executor);
 }
 
 #[test]
