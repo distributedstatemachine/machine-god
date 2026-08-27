@@ -11,8 +11,8 @@ use crate::{
     AiGatewayProvider, AiGatewayTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
     FileSessionStore, LoadedNativeConfig, NativeCredentialSourceKind, NativeProviderKind,
     NativeSessionLifecycle, NativeTransportKind, PermissionMode, PermissionPrompter,
-    PreparedNativeRoots, WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
-    discover_ai_gateway_credential,
+    PreparedNativeRoots, TerminalTool, WebFetchTool, WebSearchDeadline, WebSearchLimits,
+    WebSearchTool, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -33,6 +33,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     WebFetchTransport,
     /// The production bounded web-search transport could not be constructed.
     WebSearchTransport,
+    /// The bounded terminal tool could not snapshot its process environment.
+    TerminalConfig,
     /// The selected provider could not be constructed.
     Provider,
     /// The provider-neutral engine could not be constructed.
@@ -89,6 +91,9 @@ impl fmt::Display for NativeReferenceHostBuildError {
             }
             NativeReferenceHostBuildErrorKind::WebSearchTransport => {
                 "native reference-host web-search transport construction failed"
+            }
+            NativeReferenceHostBuildErrorKind::TerminalConfig => {
+                "native reference-host terminal construction failed"
             }
             NativeReferenceHostBuildErrorKind::Provider => {
                 "native reference-host provider construction failed"
@@ -328,6 +333,12 @@ impl NativeReferenceHost {
         credential_source: Option<AiGatewayCredentialSource>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
+        let terminal =
+            TerminalTool::from_root_descriptor(workspace_tools.terminal_root).map_err(|_| {
+                NativeReferenceHostBuildError::new(
+                    NativeReferenceHostBuildErrorKind::TerminalConfig,
+                )
+            })?;
         let search_transport =
             AiGatewayWebSearchTransport::new(model.clone(), Arc::clone(&transport)).map_err(
                 |_| {
@@ -372,6 +383,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.open_file)
             .tool(workspace_tools.read_file)
             .tool(workspace_tools.rename_file)
+            .tool(terminal)
             .tool(web_fetch)
             .tool(web_search)
             .tool(workspace_tools.write_file)
@@ -450,4 +462,24 @@ fn consume_prepared_roots(
     prepared_roots.into_parts().map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WorkspaceRoot)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind};
+
+    #[test]
+    fn terminal_configuration_failure_has_one_fixed_redacted_shape() {
+        let error =
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig);
+
+        assert_eq!(
+            error.to_string(),
+            "native reference-host terminal construction failed"
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "NativeReferenceHostBuildError { kind: TerminalConfig }"
+        );
+    }
 }

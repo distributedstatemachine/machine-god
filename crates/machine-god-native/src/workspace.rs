@@ -22,6 +22,7 @@ pub(crate) struct WorkspaceTools {
     pub(crate) open_file: OpenFileTool,
     pub(crate) read_file: ReadFileTool,
     pub(crate) rename_file: RenameFileTool,
+    pub(crate) terminal_root: OwnedFd,
     pub(crate) write_file: WriteFileTool,
 }
 
@@ -82,6 +83,7 @@ impl WorkspaceRoot {
         let open_file_root = clone_descriptor(&self.descriptor)?;
         let read_file_root = clone_descriptor(&self.descriptor)?;
         let rename_file_root = clone_descriptor(&self.descriptor)?;
+        let terminal_root = clone_descriptor(&self.descriptor)?;
         let write_file_root = clone_descriptor(&self.descriptor)?;
         Ok(WorkspaceTools {
             copy_file: CopyFileTool::from_root_descriptor(copy_file_root),
@@ -95,11 +97,74 @@ impl WorkspaceRoot {
             open_file: OpenFileTool::from_root_descriptor(open_file_root),
             read_file: ReadFileTool::from_root_descriptor(read_file_root),
             rename_file: RenameFileTool::from_root_descriptor(rename_file_root),
+            terminal_root,
             write_file: WriteFileTool::from_root_descriptor(write_file_root),
         })
     }
 
     pub(crate) const fn descriptor(&self) -> &OwnedFd {
         &self.descriptor
+    }
+}
+
+#[cfg(all(test, feature = "ai-gateway-http"))]
+mod tests {
+    use std::cell::Cell;
+
+    use super::{WorkspaceRoot, WorkspaceRootError};
+
+    #[test]
+    fn workspace_composition_uses_exactly_twelve_identity_preserving_clones() {
+        let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|_| panic!("open workspace root for clone evidence"));
+        let original_metadata = rustix::fs::fstat(root.descriptor()).unwrap();
+        let original_identity = (
+            i128::from(original_metadata.st_dev),
+            i128::from(original_metadata.st_ino),
+        );
+        let mut clone_identities = Vec::new();
+
+        let tools = root
+            .into_tools_with_clone(|descriptor| {
+                let clone = descriptor.try_clone().map_err(|_| WorkspaceRootError)?;
+                let clone_metadata = rustix::fs::fstat(&clone).unwrap();
+                clone_identities.push((
+                    i128::from(clone_metadata.st_dev),
+                    i128::from(clone_metadata.st_ino),
+                ));
+                Ok(clone)
+            })
+            .unwrap_or_else(|_| panic!("compose workspace tools for clone evidence"));
+
+        assert_eq!(clone_identities, vec![original_identity; 12]);
+        let terminal_metadata = rustix::fs::fstat(&tools.terminal_root).unwrap();
+        assert_eq!(
+            (
+                i128::from(terminal_metadata.st_dev),
+                i128::from(terminal_metadata.st_ino),
+            ),
+            original_identity
+        );
+    }
+
+    #[test]
+    fn every_descriptor_clone_failure_aborts_workspace_composition() {
+        for failing_attempt in 1..=12 {
+            let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                .unwrap_or_else(|_| panic!("open workspace root for clone failure evidence"));
+            let attempts = Cell::new(0);
+
+            let result = root.into_tools_with_clone(|descriptor| {
+                let attempt = attempts.get() + 1;
+                attempts.set(attempt);
+                if attempt == failing_attempt {
+                    return Err(WorkspaceRootError);
+                }
+                descriptor.try_clone().map_err(|_| WorkspaceRootError)
+            });
+
+            assert!(matches!(result, Err(_)));
+            assert_eq!(attempts.get(), failing_attempt);
+        }
     }
 }
