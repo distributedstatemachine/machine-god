@@ -278,13 +278,16 @@ impl Future for PrimaryPromptPanicFuture {
 struct PromptDropPanicOncePrompter {
     calls: Arc<AtomicUsize>,
     pending_probe: Arc<PendingProbe>,
+    supplied_waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl QuestionPrompter for PromptDropPanicOncePrompter {
     fn prompt(&self, _request: QuestionPromptRequest) -> BoxFuture<'_, PromptResult> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if call == 0 {
-            return Box::pin(PromptDropPanicFuture);
+            return Box::pin(PromptDropPanicFuture {
+                supplied_waker: Arc::clone(&self.supplied_waker),
+            });
         }
         self.pending_probe.live.fetch_add(1, Ordering::SeqCst);
         Box::pin(PendingPrompt {
@@ -293,12 +296,20 @@ impl QuestionPrompter for PromptDropPanicOncePrompter {
     }
 }
 
-struct PromptDropPanicFuture;
+struct PromptDropPanicFuture {
+    supplied_waker: Arc<Mutex<Option<Waker>>>,
+}
 
 impl Future for PromptDropPanicFuture {
     type Output = PromptResult;
 
-    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        let previous = self
+            .supplied_waker
+            .lock()
+            .unwrap()
+            .replace(context.waker().clone());
+        drop(previous);
         Poll::Pending
     }
 }
@@ -898,6 +909,45 @@ struct SecondaryTargetPanic;
 #[derive(Debug)]
 struct SecondaryPayloadDropPanic;
 
+struct SecondaryTargetWithPromptWakerPanic {
+    _supplied_waker: Waker,
+}
+
+impl Drop for SecondaryTargetWithPromptWakerPanic {
+    fn drop(&mut self) {
+        panic_any(SecondaryPayloadDropPanic);
+    }
+}
+
+#[derive(Default)]
+struct PanickingCleanupTargetProbe {
+    wakes: AtomicUsize,
+    drops: AtomicUsize,
+}
+
+struct PanickingCleanupTarget {
+    probe: Arc<PanickingCleanupTargetProbe>,
+    teardown: Option<Waker>,
+}
+
+impl Wake for PanickingCleanupTarget {
+    fn wake(self: Arc<Self>) {
+        self.probe.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.probe.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Drop for PanickingCleanupTarget {
+    fn drop(&mut self) {
+        self.probe.drops.fetch_add(1, Ordering::SeqCst);
+        let teardown = self.teardown.take();
+        drop(teardown);
+    }
+}
+
 const PROMPT_DROP_PRECEDENCE_CHILD: &str = "MACHINE_GOD_PROMPT_DROP_PRECEDENCE_CHILD";
 
 impl Drop for SecondaryTargetPanic {
@@ -1393,32 +1443,21 @@ fn assert_error(
     assert_eq!(error.retryable, retryable);
 }
 
-fn assert_retained_prompt_capacity_recovers_after_last_clone(
+fn assert_closed_prompt_capacity_recovers_with_retained_clones(
     tool: &AskUserQuestionTool,
     prompter: &PromptWakerFanoutPrompter,
     prepared: &Value,
     retained_wakers: &mut Vec<Waker>,
 ) {
-    while retained_wakers.len() > 1 {
-        drop(retained_wakers.pop());
-        let busy = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
-            .unwrap_err();
-        assert_error(
-            &busy,
-            ToolErrorKind::Unavailable,
-            "ask_user_question_busy",
-            "ask_user_question prompt capacity is exhausted",
-            true,
-        );
-        assert_eq!(prompter.calls(), 1);
-    }
-    drop(retained_wakers.pop());
-
     let mut recovered =
         Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
     assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(prompter.calls(), 2);
+    for stale in retained_wakers.iter() {
+        stale.wake_by_ref();
+    }
     drop(recovered);
+    retained_wakers.clear();
 }
 
 fn assert_queue_only_lifetime_bound(cancel_before_terminal_poll: bool) {
@@ -1506,21 +1545,12 @@ fn assert_queue_only_lifetime_bound(cancel_before_terminal_poll: bool) {
     retained.wake_by_ref();
     assert_eq!(queue.snapshot(), (REENTRANT_DELIVERY_LIMIT, 0, 1));
 
-    let busy = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
-        .unwrap_err();
-    assert_error(
-        &busy,
-        ToolErrorKind::Unavailable,
-        "ask_user_question_busy",
-        "ask_user_question prompt capacity is exhausted",
-        true,
-    );
-    assert_eq!(prompter.calls(), 1);
-    drop(retained);
-
     let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
     assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(prompter.calls(), 2);
+    retained.wake_by_ref();
+    assert_eq!(queue.snapshot(), (REENTRANT_DELIVERY_LIMIT, 0, 1));
+    drop(retained);
     drop(recovered);
 }
 
@@ -1546,6 +1576,29 @@ fn panicking_drop_waker(entries: Arc<AtomicUsize>) -> Waker {
     waker
 }
 
+fn panicking_cleanup_target(
+    supplied_waker: Arc<Mutex<Option<Waker>>>,
+    entries: Arc<AtomicUsize>,
+    probe: Arc<PanickingCleanupTargetProbe>,
+) -> Waker {
+    let (teardown, _handle) = reentrant_waker(Callback::Drop, move || {
+        entries.fetch_add(1, Ordering::SeqCst);
+        let retained = supplied_waker
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("prompt poll published its supplied Waker")
+            .clone();
+        panic_any(SecondaryTargetWithPromptWakerPanic {
+            _supplied_waker: retained,
+        });
+    });
+    Waker::from(Arc::new(PanickingCleanupTarget {
+        probe,
+        teardown: Some(teardown),
+    }))
+}
+
 fn forget_panicking_target_drop(waker: Waker) {
     let result = catch_unwind(AssertUnwindSafe(|| drop(waker)));
     let payload = result.expect_err("panicking target Waker unexpectedly dropped cleanly");
@@ -1559,20 +1612,28 @@ fn forget_panicking_target_drop(waker: Waker) {
 fn assert_prompt_drop_cleanup_precedence(ambient_unwind: bool) {
     let calls = Arc::new(AtomicUsize::new(0));
     let pending_probe = Arc::new(PendingProbe::default());
+    let supplied_waker = Arc::new(Mutex::new(None));
     let tool = AskUserQuestionTool::new(PromptDropPanicOncePrompter {
         calls: Arc::clone(&calls),
         pending_probe: Arc::clone(&pending_probe),
+        supplied_waker: Arc::clone(&supplied_waker),
     });
     let prepared = prepare(&tool, basic_arguments());
     let mut execution = tool.execute(context(), prepared.clone(), CancellationToken::new());
     let secondary_entries = Arc::new(AtomicUsize::new(0));
-    let waker = panicking_drop_waker(Arc::clone(&secondary_entries));
+    let target_probe = Arc::new(PanickingCleanupTargetProbe::default());
+    let waker = panicking_cleanup_target(
+        Arc::clone(&supplied_waker),
+        Arc::clone(&secondary_entries),
+        Arc::clone(&target_probe),
+    );
     assert!(
         execution
             .as_mut()
             .poll(&mut Context::from_waker(&waker))
             .is_pending()
     );
+    drop(waker);
 
     if ambient_unwind {
         let result = catch_unwind(AssertUnwindSafe(|| {
@@ -1591,8 +1652,16 @@ fn assert_prompt_drop_cleanup_precedence(ambient_unwind: bool) {
         );
     }
 
-    forget_panicking_target_drop(waker);
-    assert_eq!(secondary_entries.load(Ordering::SeqCst), 2);
+    let stale = supplied_waker
+        .lock()
+        .unwrap()
+        .take()
+        .expect("prompt poll retained its supplied Waker");
+    stale.wake_by_ref();
+    drop(stale);
+    assert_eq!(target_probe.wakes.load(Ordering::SeqCst), 0);
+    assert_eq!(target_probe.drops.load(Ordering::SeqCst), 1);
+    assert_eq!(secondary_entries.load(Ordering::SeqCst), 1);
     let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
     assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -2752,25 +2821,12 @@ fn completed_prompt_closes_retained_waker_delivery_until_every_clone_drops() {
     assert_eq!(blocking.snapshot(), (1, 0, 1, 1));
     assert_eq!(callback.calls(), 1);
 
-    while retained_wakers.len() > 1 {
-        drop(retained_wakers.pop());
-        let busy = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
-            .unwrap_err();
-        assert_error(
-            &busy,
-            ToolErrorKind::Unavailable,
-            "ask_user_question_busy",
-            "ask_user_question prompt capacity is exhausted",
-            true,
-        );
-        assert_eq!(prompter.calls(), 1);
-    }
-    drop(retained_wakers.pop());
-
-    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
-    assert!(poll_once(recovered.as_mut()).is_pending());
-    assert_eq!(prompter.calls(), 2);
-    drop(recovered);
+    assert_closed_prompt_capacity_recovers_with_retained_clones(
+        &tool,
+        &prompter,
+        &prepared,
+        &mut retained_wakers,
+    );
 }
 
 #[test]
@@ -2804,25 +2860,12 @@ fn reentrant_prompt_wake_before_outer_repoll_has_constant_callback_work() {
     retained_wakers[2].wake_by_ref();
     let closed = probe.snapshot();
 
-    while retained_wakers.len() > 1 {
-        drop(retained_wakers.pop());
-        let busy = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
-            .unwrap_err();
-        assert_error(
-            &busy,
-            ToolErrorKind::Unavailable,
-            "ask_user_question_busy",
-            "ask_user_question prompt capacity is exhausted",
-            true,
-        );
-        assert_eq!(prompter.calls(), 1);
-    }
-    drop(retained_wakers.pop());
-
-    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
-    assert!(poll_once(recovered.as_mut()).is_pending());
-    assert_eq!(prompter.calls(), 2);
-    drop(recovered);
+    assert_closed_prompt_capacity_recovers_with_retained_clones(
+        &tool,
+        &prompter,
+        &prepared,
+        &mut retained_wakers,
+    );
 
     assert_eq!(amplified, (1, 0, 1));
     assert_eq!(amplified_fixture_calls, 1);
@@ -2886,7 +2929,7 @@ fn replay_target_drop_panic_clears_lane_for_a_fresh_notification() {
     retained_wakers[3].wake_by_ref();
     let closed = probe.snapshot();
 
-    assert_retained_prompt_capacity_recovers_after_last_clone(
+    assert_closed_prompt_capacity_recovers_with_retained_clones(
         &tool,
         &prompter,
         &prepared,
@@ -2959,7 +3002,7 @@ fn replay_target_drop_close_suppresses_selected_replay_and_retains_capacity() {
     retained_wakers[2].wake_by_ref();
     let closed = probe.snapshot();
 
-    assert_retained_prompt_capacity_recovers_after_last_clone(
+    assert_closed_prompt_capacity_recovers_with_retained_clones(
         &tool,
         &prompter,
         &prepared,
@@ -3026,7 +3069,7 @@ fn callback_panic_precedes_panicking_replay_target_payload_drop() {
     drop(first);
     retained_wakers[3].wake_by_ref();
     let closed = probe.snapshot();
-    assert_retained_prompt_capacity_recovers_after_last_clone(
+    assert_closed_prompt_capacity_recovers_with_retained_clones(
         &tool,
         &prompter,
         &prepared,
@@ -3086,7 +3129,7 @@ fn observed_residual_wakes_progress_without_an_unrelated_activation() {
         driver.drop_execution();
         retained_wakers[3].wake_by_ref();
         let closed = driver.snapshot();
-        assert_retained_prompt_capacity_recovers_after_last_clone(
+        assert_closed_prompt_capacity_recovers_with_retained_clones(
             &tool,
             &prompter,
             &prepared,
@@ -3139,7 +3182,7 @@ fn continuously_rewaking_prompt_stops_at_the_delivery_limit_with_redacted_error(
         driver.drop_execution();
         retained_wakers[2].wake_by_ref();
         let closed = driver.snapshot();
-        assert_retained_prompt_capacity_recovers_after_last_clone(
+        assert_closed_prompt_capacity_recovers_with_retained_clones(
             &tool,
             &prompter,
             &prepared,
@@ -3199,7 +3242,7 @@ fn cancellation_in_the_residual_wake_window_progresses_and_closes_delivery() {
         driver.drop_execution();
         retained_wakers[2].wake_by_ref();
         let closed = driver.snapshot();
-        assert_retained_prompt_capacity_recovers_after_last_clone(
+        assert_closed_prompt_capacity_recovers_with_retained_clones(
             &tool,
             &prompter,
             &prepared,
@@ -3274,8 +3317,10 @@ fn prompt_drop_cleanup_precedence_survives_panicking_secondary_payloads() {
         .unwrap();
     assert!(
         output.status.success(),
-        "isolated prompt-drop precedence process failed with {}",
-        output.status
+        "isolated prompt-drop precedence process failed with {}:\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
 }
 

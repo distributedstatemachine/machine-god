@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import tomllib
 import unittest
 
@@ -35,6 +37,7 @@ MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
     "tokio",
     "webpki-root-certs",
 }
+RELEASE_PANIC_PROBE = "ask_user_question_release_panic_probe"
 
 
 class NativeManifestTests(unittest.TestCase):
@@ -46,6 +49,77 @@ class NativeManifestTests(unittest.TestCase):
             cls.manifest = tomllib.load(manifest_file)
         with CLI_MANIFEST.open("rb") as manifest_file:
             cls.cli_manifest = tomllib.load(manifest_file)
+
+    def test_release_profile_unwinds_owned_cleanup_panics(self) -> None:
+        self.assertEqual(
+            self.workspace_manifest["profile"]["release"]["panic"],
+            "unwind",
+        )
+
+    def test_release_question_panic_probe_recovers_capacity(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="machine-god-release-panic-"
+        ) as target_directory:
+            environment = os.environ.copy()
+            environment["CARGO_TARGET_DIR"] = target_directory
+            environment.pop("CARGO_BUILD_TARGET", None)
+
+            build = subprocess.run(
+                [
+                    "cargo",
+                    "+1.94.1",
+                    "build",
+                    "--locked",
+                    "--offline",
+                    "--release",
+                    "-p",
+                    "machine-god-native",
+                    "--example",
+                    RELEASE_PANIC_PROBE,
+                ],
+                cwd=REPOSITORY_ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            self.assertEqual(
+                build.returncode,
+                0,
+                msg=f"release probe build failed:\n{build.stderr[-4_000:]}",
+            )
+
+            executable = (
+                Path(target_directory)
+                / "release"
+                / "examples"
+                / f"{RELEASE_PANIC_PROBE}{'.exe' if os.name == 'nt' else ''}"
+            )
+            completed = subprocess.run(
+                [str(executable)],
+                cwd=REPOSITORY_ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertLessEqual(len(completed.stdout), 256)
+            self.assertLessEqual(len(completed.stderr), 256)
+            self.assertEqual(
+                completed.returncode,
+                0,
+                msg=(
+                    "release panic probe failed: "
+                    f"stdout={completed.stdout!r}, stderr={completed.stderr!r}"
+                ),
+            )
+            self.assertEqual(
+                completed.stdout,
+                "primary-caught\ncapacity-recovered\n",
+            )
+            self.assertEqual(completed.stderr, "")
 
     def test_tokio_signal_feature_is_cli_only(self) -> None:
         workspace_tokio = self.workspace_manifest["workspace"]["dependencies"][
