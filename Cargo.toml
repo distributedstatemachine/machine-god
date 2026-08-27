@@ -48,5 +48,5 @@ pedantic = { level = "warn", priority = -1 }
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 strip = "symbols"

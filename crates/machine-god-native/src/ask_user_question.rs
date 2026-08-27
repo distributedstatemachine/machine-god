@@ -1235,15 +1235,16 @@ impl Drop for ActivityWakerRegistration {
 }
 
 struct ActivityWake {
-    // State precedes the activity so any retained target is destroyed before
-    // the final notifier-owned permit reference on an unbound cleanup path.
     state: Mutex<ActivityWakeState>,
-    _activity: Arc<ActivePromptPermit>,
 }
 
 #[derive(Default)]
 struct ActivityWakeState {
+    // A closed notifier identity may be retained indefinitely in an opaque
+    // panic payload. Keeping the permit detachable in state lets close make
+    // those retained identities inert without releasing an active callback.
     target: Option<Arc<Waker>>,
+    activity: Option<Arc<ActivePromptPermit>>,
     delivery_callbacks_started: usize,
     notifying: bool,
     observed_while_notifying: bool,
@@ -1259,8 +1260,13 @@ enum ActivityWakeLifecycle {
     Closed,
 }
 
+struct ActivityWakeCallback {
+    target: Arc<Waker>,
+    activity: Arc<ActivePromptPermit>,
+}
+
 impl ActivityWakeState {
-    fn begin_callback(&mut self) -> Option<Arc<Waker>> {
+    fn begin_callback(&mut self) -> Option<ActivityWakeCallback> {
         if !matches!(self.lifecycle, ActivityWakeLifecycle::Open) {
             return None;
         }
@@ -1269,6 +1275,7 @@ impl ActivityWakeState {
             return None;
         }
         let target = self.target.as_ref().map(Arc::clone)?;
+        let activity = self.activity.as_ref().map(Arc::clone)?;
         self.delivery_callbacks_started += 1;
         if self.delivery_callbacks_started == MAX_ACTIVITY_WAKE_CALLBACKS_PER_PROMPT {
             // Callback 256 is admitted only after exhaustion becomes sticky,
@@ -1276,7 +1283,7 @@ impl ActivityWakeState {
             // suppressed for the remainder of this prompt activity.
             self.lifecycle = ActivityWakeLifecycle::DeliveryResourceExhausted;
         }
-        Some(target)
+        Some(ActivityWakeCallback { target, activity })
     }
 
     fn recover_after_callback_failure(&mut self) {
@@ -1292,8 +1299,10 @@ impl ActivityWakeState {
 impl ActivityWake {
     fn new(activity: Arc<ActivePromptPermit>) -> Self {
         Self {
-            state: Mutex::new(ActivityWakeState::default()),
-            _activity: activity,
+            state: Mutex::new(ActivityWakeState {
+                activity: Some(activity),
+                ..ActivityWakeState::default()
+            }),
         }
     }
 
@@ -1356,16 +1365,20 @@ impl ActivityWake {
     }
 
     fn close(&self) {
-        let target = {
+        let preserve_existing_primary = std::thread::panicking();
+        let (target, activity) = {
             let mut state = lock_activity_wake(&self.state);
             state.lifecycle = ActivityWakeLifecycle::Closed;
             state.observed_while_notifying = false;
             state.pending_after_observation = false;
-            state.target.take()
+            (state.target.take(), state.activity.take())
         };
-        // `self` owns the permit through target destruction; an in-flight
-        // callback likewise owns `self` through its complete return.
-        drop(target);
+        // Arbitrary target destruction stays outside the lock. The detached
+        // close guard retains capacity through it, but is released before any
+        // selected panic resumes. Closed notifier identities retain no permit.
+        let target_drop = catch_unwind(AssertUnwindSafe(|| drop(target)));
+        drop(activity);
+        settle_cleanup_panics(preserve_existing_primary, [target_drop]);
     }
 
     fn delivery_resource_exhausted(&self) -> bool {
@@ -1376,7 +1389,7 @@ impl ActivityWake {
     }
 
     fn notify(&self) {
-        let mut target = {
+        let mut callback = {
             let mut state = lock_activity_wake(&self.state);
             if !matches!(state.lifecycle, ActivityWakeLifecycle::Open) {
                 return;
@@ -1390,13 +1403,13 @@ impl ActivityWake {
                 }
                 return;
             }
-            let Some(target) = state.begin_callback() else {
+            let Some(callback) = state.begin_callback() else {
                 return;
             };
             state.notifying = true;
             state.observed_while_notifying = false;
             state.pending_after_observation = false;
-            target
+            callback
         };
 
         // This loop is an iterative trampoline within one activation. The
@@ -1406,6 +1419,7 @@ impl ActivityWake {
         // final bounded callback makes the outer future observe a fixed
         // terminal delivery failure.
         loop {
+            let ActivityWakeCallback { target, activity } = callback;
             let preserve_existing_primary = std::thread::panicking();
             let notified = catch_unwind(AssertUnwindSafe(|| target.wake_by_ref()));
             // Releasing a replaced callback target may run arbitrary Waker
@@ -1415,7 +1429,7 @@ impl ActivityWake {
             let target_drop = catch_unwind(AssertUnwindSafe(|| drop(target)));
             let callback_failed = notified.is_err();
             let target_drop_failed = target_drop.is_err();
-            let next = {
+            let next_callback = {
                 let mut state = lock_activity_wake(&self.state);
                 if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
                     state.notifying = false;
@@ -1454,13 +1468,18 @@ impl ActivityWake {
                     None
                 }
             };
+            // A concurrent close may have detached every other permit guard.
+            // Retain this callback's guard through callback return, arbitrary
+            // target destruction, and lane settlement, then release it before
+            // any selected panic resumes.
+            drop(activity);
             // Callback failure precedes target destruction. During an ambient
             // unwind both are cleanup failures and neither may replace it.
             settle_cleanup_panics(preserve_existing_primary, [notified, target_drop]);
-            let Some(next) = next else {
+            let Some(next_callback) = next_callback else {
                 return;
             };
-            target = next;
+            callback = next_callback;
         }
     }
 }
