@@ -380,6 +380,7 @@ impl Tool for AskUserQuestionTool {
                 .iter()
                 .map(|question| question.question.clone())
                 .collect();
+            check_cancellation(&cancellation)?;
             let prompt = match catch_unwind(AssertUnwindSafe(|| {
                 self.prompter.prompt(normalized.request)
             })) {
@@ -487,6 +488,8 @@ fn normalize_arguments(
     let mut rendered_presentation = 0_usize;
     let mut total_options = 0_usize;
     let mut questions = Vec::with_capacity(question_values.len());
+    let mut preimage_questions =
+        (phase == ArgumentPhase::Prepared).then(|| Vec::with_capacity(question_values.len()));
     for question_value in question_values {
         let Value::Object(question_object) = question_value else {
             return Err(invalid_arguments());
@@ -506,7 +509,7 @@ fn normalize_arguments(
             MAX_ASK_USER_QUESTION_RAW_QUESTION_BYTES,
             MAX_ASK_USER_QUESTION_RENDERED_QUESTION_BYTES,
         )?;
-        add_presentation_bytes(&mut rendered_presentation, question.len())?;
+        add_presentation_bytes(&mut rendered_presentation, question.rendered.len())?;
 
         let Some(Value::Array(option_values)) = question_object.get("options") else {
             return Err(invalid_arguments());
@@ -520,6 +523,9 @@ fn normalize_arguments(
             .ok_or_else(resource_limit)?;
 
         let mut options: Vec<QuestionPromptOption> = Vec::with_capacity(option_values.len());
+        let mut preimage_options = preimage_questions
+            .as_ref()
+            .map(|_| Vec::with_capacity(option_values.len()));
         for option_value in option_values {
             let Value::Object(option_object) = option_value else {
                 return Err(invalid_arguments());
@@ -543,11 +549,11 @@ fn normalize_arguments(
             )?;
             if options
                 .iter()
-                .any(|existing| existing.label.eq_ignore_ascii_case(&label))
+                .any(|existing| existing.label.eq_ignore_ascii_case(&label.rendered))
             {
                 return Err(invalid_arguments());
             }
-            add_presentation_bytes(&mut rendered_presentation, label.len())?;
+            add_presentation_bytes(&mut rendered_presentation, label.rendered.len())?;
 
             let description = match option_object.get("description") {
                 None => None,
@@ -560,11 +566,37 @@ fn normalize_arguments(
                 Some(_) => return Err(invalid_arguments()),
             };
             if let Some(description) = &description {
-                add_presentation_bytes(&mut rendered_presentation, description.len())?;
+                add_presentation_bytes(&mut rendered_presentation, description.rendered.len())?;
             }
-            options.push(QuestionPromptOption { label, description });
+            let (rendered_description, preimage_description) = match description {
+                Some(description) => (Some(description.rendered), description.incoming_preimage),
+                None => (None, None),
+            };
+            options.push(QuestionPromptOption {
+                label: label.rendered,
+                description: rendered_description,
+            });
+            if let Some(preimage_options) = &mut preimage_options {
+                preimage_options.push(QuestionPromptOption {
+                    label: label
+                        .incoming_preimage
+                        .expect("prepared labels retain an incoming preimage"),
+                    description: preimage_description,
+                });
+            }
         }
-        questions.push(QuestionPrompt { question, options });
+        questions.push(QuestionPrompt {
+            question: question.rendered,
+            options,
+        });
+        if let Some(preimage_questions) = &mut preimage_questions {
+            preimage_questions.push(QuestionPrompt {
+                question: question
+                    .incoming_preimage
+                    .expect("prepared questions retain an incoming preimage"),
+                options: preimage_options.expect("prepared options retain incoming preimages"),
+            });
+        }
     }
 
     let request = QuestionPromptRequest { questions };
@@ -578,10 +610,24 @@ fn normalize_arguments(
     if phase == ArgumentPhase::Prepared && owner.value() != &normalized_arguments {
         return Err(invalid_arguments());
     }
+    if let Some(questions) = preimage_questions {
+        let incoming_preimage = QuestionPromptRequest { questions };
+        if !serialized_json_value_fits(
+            &request_to_arguments(&incoming_preimage),
+            MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES,
+        ) {
+            return Err(resource_limit());
+        }
+    }
     Ok(NormalizedArguments {
         request,
         arguments: normalized_arguments,
     })
+}
+
+struct NormalizedText {
+    rendered: String,
+    incoming_preimage: Option<String>,
 }
 
 fn normalize_required_text(
@@ -589,7 +635,7 @@ fn normalize_required_text(
     phase: ArgumentPhase,
     raw_limit: usize,
     rendered_limit: usize,
-) -> Result<String, ToolError> {
+) -> Result<NormalizedText, ToolError> {
     let trimmed = trim_ascii_edges(text);
     if trimmed.is_empty() {
         return Err(invalid_arguments());
@@ -603,7 +649,10 @@ fn normalize_required_text(
             if rendered.len() > rendered_limit {
                 return Err(resource_limit());
             }
-            Ok(rendered)
+            Ok(NormalizedText {
+                rendered,
+                incoming_preimage: None,
+            })
         }
         ArgumentPhase::Prepared => {
             if trimmed != text {
@@ -616,7 +665,11 @@ fn normalize_required_text(
             if rendered != text {
                 return Err(invalid_arguments());
             }
-            Ok(rendered)
+            let incoming_preimage = terminal_safe_preimage(text, raw_limit)?;
+            Ok(NormalizedText {
+                rendered,
+                incoming_preimage: Some(incoming_preimage),
+            })
         }
     }
 }
@@ -626,7 +679,7 @@ fn normalize_optional_text(
     phase: ArgumentPhase,
     raw_limit: usize,
     rendered_limit: usize,
-) -> Result<Option<String>, ToolError> {
+) -> Result<Option<NormalizedText>, ToolError> {
     let trimmed = trim_ascii_edges(text);
     if trimmed.is_empty() {
         return match phase {
@@ -726,8 +779,8 @@ fn render_outcome(
                     .filter(|total| *total <= MAX_ASK_USER_QUESTION_RENDERED_ANSWER_BYTES)
                     .ok_or_else(resource_limit)?;
                 let mut pair = Map::new();
-                pair.insert("question".to_owned(), Value::String(question.clone()));
                 pair.insert("answer".to_owned(), Value::String(answer));
+                pair.insert("question".to_owned(), Value::String(question.clone()));
                 content.push(Value::Object(pair));
             }
             check_cancellation(cancellation)?;
@@ -769,6 +822,130 @@ fn encode_terminal_safe(text: &str) -> String {
         }
     }
     rendered
+}
+
+fn terminal_safe_preimage(rendered: &str, raw_limit: usize) -> Result<String, ToolError> {
+    let mut raw_bytes = rendered.len();
+    let mut costly_escapes = 0_usize;
+    let mut index = 0_usize;
+    while index < rendered.len() {
+        if let Some((decoded, escape_bytes)) = terminal_escape_at(rendered, index) {
+            if terminal_escape_can_be_decoded(rendered.len(), index, escape_bytes, decoded) {
+                let raw_savings = escape_bytes
+                    .checked_sub(decoded.len_utf8())
+                    .ok_or_else(invalid_arguments)?;
+                if serialized_json_character_size(decoded) <= escape_bytes + 1 {
+                    raw_bytes = raw_bytes
+                        .checked_sub(raw_savings)
+                        .ok_or_else(invalid_arguments)?;
+                } else {
+                    costly_escapes = costly_escapes.checked_add(1).ok_or_else(resource_limit)?;
+                }
+            }
+            index += escape_bytes;
+        } else {
+            index += rendered[index..]
+                .chars()
+                .next()
+                .expect("a nonempty string suffix has one scalar")
+                .len_utf8();
+        }
+    }
+
+    let costly_needed = raw_bytes.saturating_sub(raw_limit).div_ceil(3);
+    if costly_needed > costly_escapes {
+        return Err(resource_limit());
+    }
+
+    let mut preimage = String::with_capacity(raw_bytes);
+    let mut costly_decoded = 0_usize;
+    index = 0;
+    while index < rendered.len() {
+        if let Some((decoded, escape_bytes)) = terminal_escape_at(rendered, index) {
+            let decodable =
+                terminal_escape_can_be_decoded(rendered.len(), index, escape_bytes, decoded);
+            let beneficial = serialized_json_character_size(decoded) <= escape_bytes + 1;
+            if decodable && (beneficial || costly_decoded < costly_needed) {
+                preimage.push(decoded);
+                if !beneficial {
+                    costly_decoded += 1;
+                }
+            } else {
+                preimage.push_str(&rendered[index..index + escape_bytes]);
+            }
+            index += escape_bytes;
+        } else {
+            let character = rendered[index..]
+                .chars()
+                .next()
+                .expect("a nonempty string suffix has one scalar");
+            preimage.push(character);
+            index += character.len_utf8();
+        }
+    }
+
+    if preimage.len() > raw_limit {
+        return Err(resource_limit());
+    }
+    if trim_ascii_edges(&preimage) != preimage || encode_terminal_safe(&preimage) != rendered {
+        return Err(invalid_arguments());
+    }
+    Ok(preimage)
+}
+
+fn terminal_escape_can_be_decoded(
+    rendered_bytes: usize,
+    index: usize,
+    escape_bytes: usize,
+    decoded: char,
+) -> bool {
+    !matches!(decoded, '\t' | '\r' | '\n') || (index != 0 && index + escape_bytes != rendered_bytes)
+}
+
+fn terminal_escape_at(rendered: &str, index: usize) -> Option<(char, usize)> {
+    let bytes = rendered.as_bytes();
+    if bytes.get(index..index + 2) == Some(b"\\x") {
+        let high = lowercase_hex_digit(*bytes.get(index + 2)?)?;
+        let low = lowercase_hex_digit(*bytes.get(index + 3)?)?;
+        let code = u32::from(high) * 16 + u32::from(low);
+        if code <= 0x1f || code == 0x7f {
+            return char::from_u32(code).map(|character| (character, 4));
+        }
+    }
+    if bytes.get(index..index + 3) == Some(b"\\u{") && bytes.get(index + 7) == Some(&b'}') {
+        let mut code = 0_u32;
+        for offset in 3..7 {
+            code = code
+                .checked_mul(16)?
+                .checked_add(u32::from(lowercase_hex_digit(*bytes.get(index + offset)?)?))?;
+        }
+        if (0x80..=0x9f).contains(&code)
+            || code == 0x061c
+            || (0x200b..=0x200f).contains(&code)
+            || (0x2028..=0x202e).contains(&code)
+            || (0x2060..=0x206f).contains(&code)
+            || code == 0xfeff
+        {
+            return char::from_u32(code).map(|character| (character, 8));
+        }
+    }
+    None
+}
+
+fn lowercase_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
+fn serialized_json_character_size(character: char) -> usize {
+    match character {
+        '"' | '\\' | '\u{0008}' | '\t' | '\n' | '\u{000c}' | '\r' => 2,
+        '\u{0000}'..='\u{001f}' => 6,
+        _ => character.len_utf8(),
+    }
 }
 
 struct ActivePromptPermit {
@@ -915,7 +1092,10 @@ fn serialized_json_value_fits(root: &Value, limit: usize) -> bool {
                 }
             }
             Value::String(string) => {
-                let Some(size) = serialized_json_string_size(string) else {
+                let Some(remaining) = limit.checked_sub(total) else {
+                    return false;
+                };
+                let Some(size) = serialized_json_string_size(string, remaining) else {
                     return false;
                 };
                 if !add_serialized_size(&mut total, size, limit) {
@@ -942,7 +1122,10 @@ fn serialized_json_value_fits(root: &Value, limit: usize) -> bool {
                     return false;
                 }
                 for key in object.keys() {
-                    let Some(key_size) = serialized_json_string_size(key) else {
+                    let Some(remaining) = limit.checked_sub(total) else {
+                        return false;
+                    };
+                    let Some(key_size) = serialized_json_string_size(key, remaining) else {
                         return false;
                     };
                     if !add_serialized_size(&mut total, key_size, limit) {
@@ -967,15 +1150,17 @@ fn add_serialized_size(total: &mut usize, additional: usize, limit: usize) -> bo
     true
 }
 
-fn serialized_json_string_size(value: &str) -> Option<usize> {
+fn serialized_json_string_size(value: &str, limit: usize) -> Option<usize> {
+    if value.len() > limit.checked_sub(2)? {
+        return None;
+    }
     let mut size = 2_usize;
     for character in value.chars() {
-        let additional = match character {
-            '"' | '\\' | '\u{0008}' | '\t' | '\n' | '\u{000c}' | '\r' => 2,
-            '\u{0000}'..='\u{001f}' => 6,
-            _ => character.len_utf8(),
-        };
+        let additional = serialized_json_character_size(character);
         size = size.checked_add(additional)?;
+        if size > limit {
+            return None;
+        }
     }
     Some(size)
 }
