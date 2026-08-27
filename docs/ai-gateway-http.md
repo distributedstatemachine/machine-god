@@ -247,7 +247,8 @@ Hyper, Tokio, Rustls, socket, or operating-system message is reflected. Polling
 when no Tokio runtime handle is active returns a fixed, redacted, non-retryable
 `Transport` error and performs no request. A runtime handle without enabled I/O
 or time violates the API precondition; Tokio may panic, and the repository's
-abort-on-panic release profile may terminate that host process.
+current release profile uses panic `unwind`. An uncaught unwind may still
+terminate the host process, so this precondition remains mandatory.
 
 ## Separate model-catalog HTTP transport
 
@@ -367,7 +368,9 @@ The concrete deadline waiter checks for a current Tokio handle before it
 constructs a Tokio timer. Without a runtime it remains inert, allowing the
 provider to poll the concrete request and return the fixed nonretryable
 `RuntimeRequired` error; composing the provider over this concrete transport
-therefore does not panic in the release profile's abort-on-panic environment.
+therefore does not panic before returning that fixed error. The current release
+profile uses panic `unwind`, but this no-runtime path does not rely on catching a
+panic.
 With a live time-enabled runtime, the independent provider waiter constructs
 the same absolute-deadline timer and wakes at that deadline. Deterministic
 tests inject a permanently pending Reqwest resolver and paused Tokio time to

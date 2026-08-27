@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 12 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 12
+REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -208,16 +208,28 @@ composition is `8378a47`/`522d0a4`. Release panic is now `unwind`. The prompt
 permit is detachable state, admitted callbacks retain local guards, and close
 releases state capacity after target teardown; closed retained or forgotten
 Waker identities retain no capacity. Ordinary/ambient retained-Waker evidence
-and a release product probe prove recovery; the probe emits exact 34-byte
+and a release product probe exercise recovery; the probe emits exact 34-byte
 `primary-caught\ncapacity-recovered\n`. Direct 46, native manifest eight, all
 focused/required/extended/portability gates, docs/status 91/318/701/534/0 and
 10/0, and the fresh release/smokes are green. The 4,481,664-byte arm64 Mach-O
 release has SHA-256
 `68eff46a45dbed3b13fa31b09dba196f10d84a5dcf929648fc346aac35660e42`.
-The kind/code label is corrected; no dependency is added. The current status is
-**CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review,
-integration, delivery, benchmark, product-performance, or fx-equivalence result
-is claimed.
+The kind/code label is corrected; no dependency is added. Formal cycle 12
+rejected exact candidate `3dec7a2f073fa85479af19765b03b06cdfd9da8c`, tree
+`c34d20a45f70b82652bf78df9653f39399d7fc6d`, with correctness/API
+`0/0/1/1`, lifecycle/platform `0/0/1/2`, performance/resources `0/0/1/0`,
+and a deduplicated `0/0/1/2` union. The shared medium is incomplete release-
+profile evidence: the probe panics only during prompt polling under `NoopWake`
+and does not exercise cleanup-panic precedence, a target-drop secondary payload
+retaining the supplied Waker, stale-lane suppression, or detached-capacity
+recovery. The lows are stale clone-capacity wording in the normative contract
+and stale global release-abort wording in two current HTTP/security passages.
+Cycle 13 adds a real release prompt-drop-primary/target-drop-secondary probe for
+ordinary and ambient precedence, stale suppression, and recovery while closed
+clones remain retained; it changes no production behavior unless that evidence
+reveals a defect. The current status is **CYCLE 12 REJECTED — CYCLE 13
+REMEDIATION IN PROGRESS**; no integration, delivery, benchmark, product-
+performance, or fx-equivalence result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

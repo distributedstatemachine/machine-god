@@ -1,9 +1,9 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Cycle-12 source,
-independent evidence, and the complete local gate compose at the exact behavior
-head below. Fresh formal reviews, workflows, integration, and delivery remain
-pending.
+Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**. Cycle-12
+source, independent evidence, and the complete local gate compose at the exact
+behavior head below. Three fresh formal reviews rejected the later exact
+candidate below; cycle-13 evidence and documentation remediation is in progress.
 
 ## Frozen lineage
 
@@ -181,6 +181,9 @@ pending.
 - Exact disposable cycle-12 source/evidence composition:
   `8378a479d11d52d80fdf7ba7b1d719dac3e0027f`, tree
   `522d0a454fa7c091277971b9fe21f78149638249`
+- Formal cycle-12 candidate, **REJECTED**:
+  `3dec7a2f073fa85479af19765b03b06cdfd9da8c`, tree
+  `c34d20a45f70b82652bf78df9653f39399d7fc6d`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -220,7 +223,9 @@ and cycle-10 rejection docs now compose at exact behavior head
 formal reviews rejected exact candidate `b1d454b`/`26d90d8` with a
 deduplicated `0/0/2/1` union. Cycle-12 rejection docs, source, and independent
 evidence now compose at exact behavior head `696dccf`/`f8734a8`; its complete
-exact-1.94.1 local gate is green. Fresh formal reviews, workflows, integration,
+exact-1.94.1 local gate is green. Three fresh formal reviews rejected later
+candidate `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-13
+evidence and documentation remediation is in progress; workflows, integration,
 and delivery remain pending.
 
 ## Frozen first-slice decisions
@@ -1447,7 +1452,8 @@ release-profile product probe is built locked, offline, and optimized against
 the native package, then run as a real executable. It exits successfully with
 empty stderr and exactly 34 stdout bytes:
 `primary-caught\ncapacity-recovered\n`. This proves the primary panic is caught
-and a fresh prompt is admitted in the release profile.
+and a fresh prompt is admitted for this prompt-poll-panic path in the release
+profile; it does not establish cleanup-panic precedence.
 
 Prompt capacity is detached from retained notifier identity. The permit is an
 optional state-held guard. Each admitted callback takes a local target plus
@@ -1458,7 +1464,8 @@ close guard retains capacity, then releases that guard before selected panic
 resumption. Closed retained or intentionally forgotten Waker identities are
 therefore inert and retain no prompt capacity. Ordinary and ambient cleanup-
 panic evidence retain the supplied Waker, verify stale delivery suppression,
-and prove fresh admission. No thread, public API, or dependency is added.
+and prove fresh admission in the test profile. No thread, public API, or
+dependency is added.
 
 The focused exact-1.94.1 gate passes formatting, all 46 direct question tests,
 one question-engine test, nine all-feature reference-host tests, one reference-
@@ -1497,6 +1504,62 @@ evidence, not formal-review, workflow, integration, delivery, benchmark,
 product-performance, compatibility-promotion, or fx-equivalence evidence.
 Fresh exact-SHA formal reviews and both feature and `main` workflows remain
 pending.
+
+## Formal cycle-12 outcome
+
+Three fresh review tracks examined exact immutable candidate
+`3dec7a2f073fa85479af19765b03b06cdfd9da8c`, tree
+`c34d20a45f70b82652bf78df9653f39399d7fc6d`:
+
+- correctness/API: `0 blocker / 0 high / 1 medium / 1 low`;
+- lifecycle/platform: `0 blocker / 0 high / 1 medium / 2 low`;
+- performance/resources: `0 blocker / 0 high / 1 medium / 0 low`; and
+- deduplicated union: `0 blocker / 0 high / 1 medium / 2 low`.
+
+The medium is shared by all three tracks. The two lows are distinct after
+overlap deduplication.
+
+### Release cleanup-panic evidence gap
+
+The release-profile executable panics only from `QuestionPrompt::poll` and uses
+`NoopWake`. It proves that this one panic is catchable and that a later prompt
+can acquire capacity, but it does not enter the cleanup conflict for which the
+release-profile change was required. In particular, it does not create a
+prompt-drop primary panic plus a target-drop secondary panic payload that owns
+the supplied Waker. It therefore does not establish the documented primary-
+selection behavior, ordinary or ambient unwind precedence, stale-lane
+suppression, or detached-capacity recovery while closed Waker clones remain
+retained.
+
+Cycle 13 must build and run a real release executable with that exact cleanup
+composition. Separate ordinary and ambient cases must preserve the selected
+primary, suppress stale delivery, retain closed Waker identities through the
+recovery attempt, and admit a fresh prompt. The probe must use the supplied
+Waker rather than `NoopWake` so the forgotten secondary payload exercises the
+capacity ownership boundary under review.
+
+### Clone-capacity wording
+
+The current normative contract still says every `ActivityWake` clone retains
+the originating permit until the last clone drops. That was the pre-cycle-12
+design. Closed clones are now inert identities with detached state and retain
+no capacity; only the state-held permit and admitted callback/close guards
+retain capacity while active. Cycle 13 must correct the normative statement
+without weakening the active-callback and close-ordering requirements.
+
+### Stale global release-profile wording
+
+Current passages in `docs/ai-gateway-http.md` and `docs/security.md` still call
+the global release environment abort-on-panic even though root `Cargo.toml` now
+sets release panic handling to `unwind`. Cycle 13 must state the current profile
+truth while preserving the narrower API-precondition warning: an uncaught Tokio
+panic can still terminate a host even though unwind is enabled.
+
+At this rejection checkpoint, no cycle-13 source/evidence component,
+replacement gate, review, workflow, integration, or delivery result exists.
+The bounded cycle-13 target is evidence and documentation only; production
+source changes are permitted only if the new evidence exposes a behavior
+defect.
 
 ## Deferred and nonclaim record
 

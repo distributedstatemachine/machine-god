@@ -1974,7 +1974,9 @@ runtime. The concrete transport must be polled inside a live host-owned Tokio
 runtime with I/O and time enabled, and that runtime must remain driven through
 asynchronous socket teardown. No active runtime handle produces a fixed
 redacted failure. A handle without I/O or time violates the API precondition;
-Tokio may panic and the abort-on-panic release profile may terminate the host.
+Tokio may panic. The current release profile uses panic `unwind`; whether a host
+catches that unwind is outside this transport contract, so violating the
+precondition can still terminate the host.
 Cancellation
 and drop bound owned work but do not promise that the operating system, remote
 peer or dependency can prove whether already-transmitted bytes were delivered.
@@ -2072,9 +2074,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-12 interaction and authority remediation
+## Slice 35 cycle-13 interaction and authority remediation
 
-Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2383,9 +2385,18 @@ catches the primary panic and recovers capacity. Prompt capacity is detachable
 state. Local admitted-callback and close guards preserve callback/target
 teardown ordering; closed retained or forgotten Waker identities are inert and
 retain no permit. Ordinary and ambient retained-Waker cases prove stale
-suppression and fresh admission. Direct 46, manifest eight, all exact/extended/
-portability gates, and the 4,481,664-byte release/exact smokes pass. Formal
-review, workflows, integration, and delivery remain pending. This is not
-benchmark, product-performance, compatibility-promotion, or fx-equivalence
-evidence. The analogous terminal path remains out of scope and is not claimed
-fixed.
+suppression and fresh admission in the test profile. Direct 46, manifest eight,
+all exact/extended/portability gates, and the 4,481,664-byte release/exact smokes
+pass. Formal
+cycle 12 rejected exact `3dec7a2f073fa85479af19765b03b06cdfd9da8c`/
+`c34d20a45f70b82652bf78df9653f39399d7fc6d` with correctness/API `0/0/1/1`,
+lifecycle/platform `0/0/1/2`, performance/resources `0/0/1/0`, and a
+deduplicated `0/0/1/2` union. Its shared medium is a release probe limited to a
+prompt-poll panic under `NoopWake`; prompt-drop/target-drop cleanup precedence,
+a secondary payload retaining the supplied Waker, stale suppression, and
+detached-capacity recovery remain unproved in release. Cycle 13 adds ordinary
+and ambient release evidence for those paths and corrects the documentation
+lows, without a production change unless evidence reveals one. Workflows,
+integration, and delivery remain pending. This is not benchmark, product-
+performance, compatibility-promotion, or fx-equivalence evidence. The analogous
+terminal path remains out of scope and is not claimed fixed.

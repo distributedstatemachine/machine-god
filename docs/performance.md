@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-12 question resource remediation
+## Slice 35 cycle-13 question resource remediation
 
-Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -1014,10 +1014,21 @@ Release panic is `unwind`, and an independent release-product probe emits exact
 34-byte `primary-caught\ncapacity-recovered\n`. The permit lives in detachable
 state. Admitted callbacks retain local guards; close retains its guard through
 target teardown and then releases capacity, so closed forgotten Waker identities
-retain none. Ordinary and ambient retained-Waker payload evidence proves fresh
-admission. Direct 46, manifest eight, all exact/extended/portability gates,
+retain none. Ordinary and ambient retained-Waker payload evidence records fresh
+admission under the test profile. Direct 46, manifest eight, all exact/extended/
+portability gates,
 docs/status 91/318/701/534/0 and 10/0, and the 4,481,664-byte release/smokes pass.
-Formal review, workflows, integration, and delivery remain pending. This is no
-benchmark, product-performance, compatibility-promotion, or fx-equivalence
-result. See
+Formal cycle 12 rejected exact candidate
+`3dec7a2f073fa85479af19765b03b06cdfd9da8c`, tree
+`c34d20a45f70b82652bf78df9653f39399d7fc6d`. Correctness/API reported
+`0/0/1/1`, lifecycle/platform `0/0/1/2`, performance/resources `0/0/1/0`, and
+the deduplicated union is `0/0/1/2`. The shared resource/evidence medium is that
+the release probe uses only a prompt-poll panic and `NoopWake`; it does not
+exercise a target-drop secondary payload retaining the supplied Waker, stale-
+lane suppression, or capacity recovery while closed clones stay retained.
+Cycle 13 adds ordinary and ambient release cleanup evidence for those paths and
+corrects the two documentation lows. No production change is planned unless
+the evidence reveals one. Workflows, integration, and delivery remain pending.
+This is no benchmark, product-performance, compatibility-promotion, or fx-
+equivalence result. See
 [`ask-user-question.md`](ask-user-question.md).

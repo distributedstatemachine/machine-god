@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 12 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 12 REJECTED — CYCLE 13
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -160,8 +160,17 @@ retaining capacity forever. Cycle-12 docs `5047d40`/`e582331`, source
 `8378a47`/`522d0a4`. Release `unwind`, the product probe, detachable state-held
 capacity, and local callback/close guards make closed forgotten Wakers inert.
 Direct 46, manifest eight, all exact/extended/portability gates, and the fresh
-release/smokes pass. Formal review, workflows, integration, and delivery remain
-pending; no performance or fx-equivalence claim is made.
+release/smokes pass. Formal cycle 12 rejected exact
+`3dec7a2f073fa85479af19765b03b06cdfd9da8c`/`c34d20a` with correctness/API
+`0/0/1/1`, lifecycle/platform `0/0/1/2`, performance/resources `0/0/1/0`, and
+deduplicated union `0/0/1/2`. The shared medium is that the release probe covers
+only a prompt-poll panic under `NoopWake`, not cleanup-panic precedence, a
+target-drop secondary payload retaining the supplied Waker, stale-lane
+suppression, or detached-capacity recovery. Cycle 13 adds ordinary and ambient
+release evidence for those paths and corrects the clone-capacity and global
+release-profile documentation lows, with no production change unless evidence
+reveals one. Workflows, integration, and delivery remain pending; no performance
+or fx-equivalence claim is made.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

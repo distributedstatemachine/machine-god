@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 12 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 12
+REJECTED — CYCLE 13 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -504,7 +504,8 @@ composition `8378a479d11d52d80fdf7ba7b1d719dac3e0027f`, tree
 `522d0a454fa7c091277971b9fe21f78149638249`, is independently composed.
 
 Cycle 12 changes the root release panic profile from `abort` to `unwind` and
-proves product-profile recovery with a separately built release executable.
+records prompt-poll panic catchability plus fresh admission with a separately
+built release executable.
 The probe exits zero with empty stderr and exact 34-byte stdout
 `primary-caught\ncapacity-recovered\n`. Capacity ownership moves from the
 retained `ActivityWake` identity into detachable state. Each admitted callback
@@ -533,9 +534,32 @@ The fresh locked arm64 Mach-O release is 4,481,664 bytes with SHA-256
 Missing-root help/doctor JSON/sessions JSON smokes are exactly 672/418/62 bytes
 and create no roots. The manifest delta is root release panic `abort` to
 `unwind` plus the existing dev-only fixture and one native `Cargo.lock`
-dependency-list line; no dependency is added. Formal review, workflows,
-integration, and delivery remain pending, and no benchmark, product-
-performance, compatibility-promotion, or fx-equivalence result is claimed.
+dependency-list line; no dependency is added. Formal cycle 12 reviewed exact
+candidate `3dec7a2f073fa85479af19765b03b06cdfd9da8c`, tree
+`c34d20a45f70b82652bf78df9653f39399d7fc6d`. Correctness/API reported
+`0/0/1/1`, lifecycle/platform `0/0/1/2`, and performance/resources `0/0/1/0`;
+their shared medium and two distinct lows produce a deduplicated `0/0/1/2`
+union, so the candidate is rejected.
+
+The shared medium is incomplete release-profile evidence. The release probe
+panics only while polling the prompt with `NoopWake`; it does not create a
+prompt-drop primary plus target-drop secondary payload that retains the
+supplied Waker. It therefore does not establish ordinary or ambient cleanup-
+panic precedence, stale-lane suppression, or capacity recovery while closed
+Waker clones remain retained. One low is normative clone-capacity wording that
+says every activity clone retains the permit even though closed clones are now
+inert. The other is current global release-abort prose in the HTTP and security
+documents despite the root release profile now using `unwind`.
+
+Cycle 13 is bounded to documentation correction plus a real release executable
+that induces prompt-drop-primary and target-drop-secondary cleanup panics, with
+the secondary payload retaining the supplied Waker. Independent ordinary and
+ambient cases must prove primary precedence, stale delivery suppression, and
+fresh admission while closed clones remain retained. No production source
+change is planned unless this evidence exposes a behavior defect. A complete
+replacement gate and three fresh exact-SHA reviews remain required before
+workflows, integration, or delivery. No benchmark, product-performance,
+compatibility-promotion, or fx-equivalence result is claimed.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4598,9 +4622,11 @@ complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 `b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source/evidence and its
 complete local gate compose at `696dccf`/`f8734a8`: release unwind and the
 product probe are established, and closed Waker identity retains no capacity.
-Formal review, workflows, integration, and delivery remain pending, and
-`vision` plus `read_tool_result` remain unimplemented, so this combined item
-remains unchecked. Slice 33
+Formal cycle 12 rejected exact `3dec7a2`/`c34d20a` with a deduplicated
+`0/0/1/2` union. Cycle-13 release cleanup-panic evidence and documentation
+remediation are in progress; workflows, integration, and delivery remain
+pending. `vision` plus `read_tool_result` remain unimplemented, so this combined
+item remains unchecked. Slice 33
 `web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark
 workflows are green. Slice 34
