@@ -28,9 +28,9 @@ use machine_god_native::{
     GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig, NativeEnvironment,
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
     OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
-    QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
-    READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME, TERMINAL_TOOL_NAME, WEB_FETCH_TOOL_NAME,
-    WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
+    QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
+    QuestionPrompter, READ_FILE_TOOL_NAME, RENAME_FILE_TOOL_NAME, TERMINAL_TOOL_NAME,
+    WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -257,11 +257,9 @@ impl QuestionPrompter for AnsweringQuestionPrompter {
                 .map(|question| question.question().to_owned())
                 .collect(),
         );
-        Box::pin(async {
-            Ok(QuestionPromptOutcome::Answered(vec![
-                "a free-form answer".to_owned(),
-            ]))
-        })
+        let mut answers = QuestionPromptAnswers::new();
+        answers.try_push("a free-form answer".to_owned()).unwrap();
+        Box::pin(async move { Ok(QuestionPromptOutcome::Answered(answers)) })
     }
 }
 

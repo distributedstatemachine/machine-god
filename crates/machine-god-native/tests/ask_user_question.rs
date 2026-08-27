@@ -24,12 +24,26 @@ use machine_god_native::{
     MAX_ASK_USER_QUESTION_RENDERED_QUESTION_BYTES, MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES,
     MAX_ASK_USER_QUESTION_SERIALIZED_PREPARED_ARGUMENT_BYTES,
     MAX_ASK_USER_QUESTION_SERIALIZED_RESULT_BYTES, MAX_ASK_USER_QUESTION_TOTAL_OPTIONS,
-    MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPromptError, QuestionPromptOutcome,
-    QuestionPromptRequest, QuestionPrompter,
+    MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPromptAnswers, QuestionPromptError,
+    QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
 };
 use serde_json::{Value, json};
 
 type PromptResult = Result<QuestionPromptOutcome, QuestionPromptError>;
+
+fn answers(values: impl IntoIterator<Item = String>) -> QuestionPromptAnswers {
+    let mut answers = QuestionPromptAnswers::new();
+    for value in values {
+        answers
+            .try_push(value)
+            .expect("test fixtures stay within the public four-answer bound");
+    }
+    answers
+}
+
+fn answered(values: impl IntoIterator<Item = String>) -> QuestionPromptOutcome {
+    QuestionPromptOutcome::Answered(answers(values))
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RecordedOption {
@@ -183,9 +197,7 @@ impl Future for DropCancelsReady {
     type Output = PromptResult;
 
     fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
-        Poll::Ready(Ok(QuestionPromptOutcome::Answered(vec![
-            "must not publish".to_owned(),
-        ])))
+        Poll::Ready(Ok(answered(["must not publish".to_owned()])))
     }
 }
 
@@ -268,6 +280,38 @@ impl Future for ReentrantPending {
 }
 
 impl Drop for ReentrantPending {
+    fn drop(&mut self) {
+        let tool = self
+            .state
+            .tool
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let arguments = self.state.arguments.lock().unwrap().clone().unwrap();
+        let result = poll_ready(tool.execute(context(), arguments, CancellationToken::new()));
+        *self.state.observed.lock().unwrap() = Some(result);
+    }
+}
+
+#[derive(Default)]
+struct WakerTeardownState {
+    tool: Mutex<Option<Weak<AskUserQuestionTool>>>,
+    arguments: Mutex<Option<Value>>,
+    observed: Mutex<Option<Result<ToolOutput, ToolError>>>,
+}
+
+struct AdmissionOnWakerDrop {
+    state: Arc<WakerTeardownState>,
+}
+
+impl Wake for AdmissionOnWakerDrop {
+    fn wake(self: Arc<Self>) {}
+}
+
+impl Drop for AdmissionOnWakerDrop {
     fn drop(&mut self) {
         let tool = self
             .state
@@ -584,7 +628,7 @@ fn public_limits_and_schema_are_exact_and_strict() {
 
 #[test]
 fn preparation_canonicalizes_in_order_and_success_allows_free_form_other() {
-    let prompter = ScriptedPrompter::new([Ok(QuestionPromptOutcome::Answered(vec![
+    let prompter = ScriptedPrompter::new([Ok(answered([
         "  an unlisted Other answer  ".to_owned(),
         "custom\u{1b}answer".to_owned(),
     ]))]);
@@ -1201,7 +1245,7 @@ fn cancellation_wins_before_prompt_and_over_every_same_poll_outcome() {
     assert_eq!(untouched.calls(), 0);
 
     for outcome in [
-        Ok(QuestionPromptOutcome::Answered(vec!["answer".to_owned()])),
+        Ok(answered(["answer".to_owned()])),
         Ok(QuestionPromptOutcome::Cancelled),
         Ok(QuestionPromptOutcome::Unavailable),
         Err(QuestionPromptError::new()),
@@ -1376,6 +1420,49 @@ fn pending_drop_destroys_the_prompt_before_releasing_its_active_permit() {
 }
 
 #[test]
+fn outer_drop_destroys_the_cancellation_waker_before_releasing_capacity() {
+    let probe = Arc::new(PendingProbe::default());
+    let tool = Arc::new(AskUserQuestionTool::new(PendingPrompter {
+        probe: Arc::clone(&probe),
+    }));
+    let prepared = prepare(&tool, basic_arguments());
+    let state = Arc::new(WakerTeardownState::default());
+    *state.tool.lock().unwrap() = Some(Arc::downgrade(&tool));
+    *state.arguments.lock().unwrap() = Some(prepared.clone());
+
+    let waker = Waker::from(Arc::new(AdmissionOnWakerDrop {
+        state: Arc::clone(&state),
+    }));
+    let mut pending = Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
+    assert!(
+        pending
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+    drop(waker);
+    assert!(state.observed.lock().unwrap().is_none());
+
+    drop(pending);
+    let result = state.observed.lock().unwrap().take().unwrap();
+    let error =
+        result.expect_err("waker teardown must retain the originating prompt capacity permit");
+    assert_error(
+        &error,
+        ToolErrorKind::Unavailable,
+        "ask_user_question_busy",
+        "ask_user_question prompt capacity is exhausted",
+        true,
+    );
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+
+    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn cancelling_a_pending_prompt_drops_it_and_releases_capacity() {
     let probe = Arc::new(PendingProbe::default());
     let tool = AskUserQuestionTool::new(PendingPrompter {
@@ -1451,10 +1538,7 @@ fn sentinels_and_invalid_prompt_responses_are_exact_and_redacted() {
     }
 
     let private = "PRIVATE_INVALID_ANSWER_MARKER";
-    for outcome in [
-        Ok(QuestionPromptOutcome::Answered(Vec::new())),
-        Ok(QuestionPromptOutcome::Answered(vec![" ".to_owned()])),
-    ] {
+    for outcome in [Ok(answered([])), Ok(answered([" ".to_owned()]))] {
         let tool = AskUserQuestionTool::new(ScriptedPrompter::new([outcome]));
         let prepared = prepare(&tool, basic_arguments());
         let error = execute(&tool, prepared, CancellationToken::new()).unwrap_err();
@@ -1468,9 +1552,10 @@ fn sentinels_and_invalid_prompt_responses_are_exact_and_redacted() {
         assert!(!format!("{error:?} {error}").contains(private));
     }
 
-    let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(vec![format!("{private}{}", "x".repeat(4_096))]),
-    )]));
+    let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered([format!(
+        "{private}{}",
+        "x".repeat(4_096)
+    )]))]));
     let prepared = prepare(&tool, basic_arguments());
     let error = execute(&tool, prepared, CancellationToken::new()).unwrap_err();
     assert_error(
@@ -1497,9 +1582,7 @@ fn sentinels_and_invalid_prompt_responses_are_exact_and_redacted() {
 #[test]
 fn exact_answer_and_aggregate_answer_boundaries_are_enforced() {
     let exact = "a".repeat(4_096);
-    let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(vec![exact.clone()]),
-    )]));
+    let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered([exact.clone()]))]));
     let prepared = prepare(&tool, basic_arguments());
     assert_eq!(
         execute(&tool, prepared, CancellationToken::new())
@@ -1518,9 +1601,7 @@ fn exact_answer_and_aggregate_answer_boundaries_are_enforced() {
         (basic_arguments(), vec!["a".repeat(4_097)]),
         (two_questions, vec!["a".repeat(2_048), "b".repeat(2_049)]),
     ] {
-        let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-            QuestionPromptOutcome::Answered(answers),
-        )]));
+        let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered(answers))]));
         let prepared = prepare(&tool, arguments);
         let error = execute(&tool, prepared, CancellationToken::new()).unwrap_err();
         assert_error(
@@ -1545,9 +1626,7 @@ fn complete_pretrim_answer_bytes_have_an_exact_redacted_boundary() {
     );
     assert_eq!(exact.len(), MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES);
 
-    let exact_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(vec![exact]),
-    )]));
+    let exact_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered([exact]))]));
     let exact_prepared = prepare(&exact_tool, basic_arguments());
     assert_eq!(
         execute(&exact_tool, exact_prepared, CancellationToken::new())
@@ -1562,9 +1641,7 @@ fn complete_pretrim_answer_bytes_have_an_exact_redacted_boundary() {
         "\n".repeat(MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES + 1 - private.len())
     );
     assert_eq!(over.len(), MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES + 1);
-    let over_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(vec![over]),
-    )]));
+    let over_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered([over]))]));
     let over_prepared = prepare(&over_tool, basic_arguments());
     let error = execute(&over_tool, over_prepared, CancellationToken::new()).unwrap_err();
     assert_error(
@@ -1604,9 +1681,10 @@ fn complete_pretrim_answer_bytes_share_the_aggregate_boundary() {
         MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES
     );
 
-    let exact_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(vec![first.clone(), second]),
-    )]));
+    let exact_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered([
+        first.clone(),
+        second,
+    ]))]));
     let exact_prepared = prepare(&exact_tool, questions.clone());
     assert_eq!(
         execute(&exact_tool, exact_prepared, CancellationToken::new())
@@ -1624,9 +1702,8 @@ fn complete_pretrim_answer_bytes_share_the_aggregate_boundary() {
         first.len() + over_second.len(),
         MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES + 1
     );
-    let over_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(vec![first, over_second]),
-    )]));
+    let over_tool =
+        AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered([first, over_second]))]));
     let over_prepared = prepare(&over_tool, questions);
     let error = execute(&over_tool, over_prepared, CancellationToken::new()).unwrap_err();
     assert_error(
@@ -1653,9 +1730,7 @@ fn worst_case_terminal_rendering_keeps_the_complete_tool_output_bounded() {
     let answers = (0..MAX_ASK_USER_QUESTION_QUESTIONS)
         .map(|_| "\0".repeat(MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES / 4))
         .collect::<Vec<_>>();
-    let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(answers),
-    )]));
+    let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered(answers))]));
     let prepared = prepare(&tool, arguments);
     let output = execute(&tool, prepared.clone(), CancellationToken::new()).unwrap();
     let serialized = serde_json::to_vec(&output).unwrap();
@@ -1680,9 +1755,8 @@ fn worst_case_terminal_rendering_keeps_the_complete_tool_output_bounded() {
         .map(|bytes| "a".repeat(bytes))
         .into_iter()
         .collect::<Vec<_>>();
-    let oversized = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
-        QuestionPromptOutcome::Answered(oversized_answers),
-    )]));
+    let oversized =
+        AskUserQuestionTool::new(ScriptedPrompter::new([Ok(answered(oversized_answers))]));
     let error = execute(&oversized, prepared, CancellationToken::new()).unwrap_err();
     assert_error(
         &error,
@@ -1691,6 +1765,58 @@ fn worst_case_terminal_rendering_keeps_the_complete_tool_output_bounded() {
         "ask_user_question resource limit exceeded",
         false,
     );
+}
+
+#[test]
+fn public_answer_batch_has_four_private_slots_and_preserves_count_errors() {
+    let private = "PRIVATE_FIFTH_ANSWER_MARKER";
+    for mismatched_count in [0, 2, 3] {
+        let mut mismatched = QuestionPromptAnswers::new();
+        for index in 0..mismatched_count {
+            mismatched.try_push(format!("answer-{index}")).unwrap();
+        }
+        assert_eq!(mismatched.len(), mismatched_count);
+        let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
+            QuestionPromptOutcome::Answered(mismatched),
+        )]));
+        let prepared = prepare(&tool, basic_arguments());
+        let error = execute(&tool, prepared, CancellationToken::new()).unwrap_err();
+        assert_error(
+            &error,
+            ToolErrorKind::Execution,
+            "ask_user_question_invalid_response",
+            "ask_user_question prompt returned an invalid response",
+            false,
+        );
+    }
+
+    let mut bounded = QuestionPromptAnswers::new();
+    assert!(bounded.is_empty());
+    for answer in ["one", "two", "three", "four"] {
+        bounded.try_push(answer.to_owned()).unwrap();
+    }
+    assert_eq!(bounded.len(), MAX_ASK_USER_QUESTION_QUESTIONS);
+    assert_eq!(
+        bounded.iter().collect::<Vec<_>>(),
+        ["one", "two", "three", "four"]
+    );
+    assert_eq!(bounded.try_push(private.to_owned()).unwrap_err(), private);
+    assert_eq!(bounded.len(), MAX_ASK_USER_QUESTION_QUESTIONS);
+    assert!(!format!("{bounded:?}").contains(private));
+
+    let tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
+        QuestionPromptOutcome::Answered(bounded),
+    )]));
+    let prepared = prepare(&tool, basic_arguments());
+    let error = execute(&tool, prepared, CancellationToken::new()).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::Execution,
+        "ask_user_question_invalid_response",
+        "ask_user_question prompt returned an invalid response",
+        false,
+    );
+    assert!(!format!("{error:?} {error}").contains(private));
 }
 
 #[test]
@@ -1713,9 +1839,7 @@ fn construction_and_debug_contracts_are_data_free() {
     );
 
     let private = "PRIVATE_PROMPT_DEBUG_MARKER";
-    let prompter = ScriptedPrompter::new([Ok(QuestionPromptOutcome::Answered(vec![
-        private.to_owned(),
-    ]))]);
+    let prompter = ScriptedPrompter::new([Ok(answered([private.to_owned()]))]);
     let tool = AskUserQuestionTool::shared_prompter(Arc::new(prompter));
     let prepared = tool
         .prepare(call(json!({
@@ -1725,13 +1849,7 @@ fn construction_and_debug_contracts_are_data_free() {
     for diagnostic in [format!("{tool:?}"), format!("{prepared:?}")] {
         assert!(!diagnostic.contains(private));
     }
-    assert!(
-        !format!(
-            "{:?}",
-            QuestionPromptOutcome::Answered(vec![private.to_owned()])
-        )
-        .contains(private)
-    );
+    assert!(!format!("{:?}", answered([private.to_owned()])).contains(private));
 
     let debug = Arc::new(Mutex::new(None));
     let tool = AskUserQuestionTool::new(DebugCapturePrompter {

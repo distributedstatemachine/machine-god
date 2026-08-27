@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 
 use machine_god_core::{
-    BoxFuture, CancellationToken, PreparedToolCall, Tool, ToolCall, ToolContext, ToolError,
-    ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+    BoxFuture, CancellationToken, Cancelled, PreparedToolCall, Tool, ToolCall, ToolContext,
+    ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
 use serde_json::{Map, Value, json};
 
@@ -144,11 +144,90 @@ impl fmt::Debug for QuestionPromptRequest {
     }
 }
 
+/// Bounded ordered answers returned by a [`QuestionPrompter`].
+///
+/// The fixed private storage makes more than four answers unrepresentable at
+/// the prompt-outcome boundary. Hosts add one owned answer at a time, so this
+/// API never accepts an unbounded collection that execution would later need
+/// to reject or destroy.
+#[derive(Clone, Eq, PartialEq)]
+pub struct QuestionPromptAnswers {
+    answers: [Option<String>; MAX_ASK_USER_QUESTION_QUESTIONS],
+    len: usize,
+}
+
+impl QuestionPromptAnswers {
+    /// Creates an empty answer batch.
+    ///
+    /// Empty and otherwise short batches remain representable so the tool can
+    /// reject a host response whose answer count does not match the request.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            answers: [None, None, None, None],
+            len: 0,
+        }
+    }
+
+    /// Adds one ordered answer without accepting an intermediate collection.
+    ///
+    /// # Errors
+    ///
+    /// Returns the supplied answer unchanged when all four slots are occupied.
+    pub fn try_push(&mut self, answer: String) -> Result<(), String> {
+        let Some(slot) = self.answers.get_mut(self.len) else {
+            return Err(answer);
+        };
+        *slot = Some(answer);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Returns the number of ordered answers.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the batch contains no answers.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Iterates over the ordered answers.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.answers[..self.len].iter().filter_map(Option::as_deref)
+    }
+
+    fn into_values(self) -> impl ExactSizeIterator<Item = String> {
+        self.answers
+            .into_iter()
+            .take(self.len)
+            .map(|answer| answer.expect("occupied answer slots are present"))
+    }
+}
+
+impl Default for QuestionPromptAnswers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for QuestionPromptAnswers {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QuestionPromptAnswers")
+            .field("answer_count", &self.len)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Structured outcome returned by a [`QuestionPrompter`].
 #[derive(Clone, Eq, PartialEq)]
 pub enum QuestionPromptOutcome {
     /// One ordered answer for every question.
-    Answered(Vec<String>),
+    Answered(QuestionPromptAnswers),
     /// The user explicitly cancelled the prompt.
     Cancelled,
     /// The host has no interactive question surface.
@@ -390,13 +469,21 @@ impl Tool for AskUserQuestionTool {
                     resume_unwind(payload);
                 }
             };
-            let mut activity = Some(PromptActivity::new(prompt, permit));
-            let mut cancellation_wait = cancellation.cancelled();
+            let mut activity = Some(PromptActivity::new(
+                prompt,
+                cancellation.cancelled(),
+                permit,
+            ));
             let prompted = poll_fn(|context| {
                 if cancellation.is_cancelled() {
                     return Poll::Ready(Err(cancelled()));
                 }
-                if Pin::new(&mut cancellation_wait).poll(context).is_ready() {
+                if activity
+                    .as_mut()
+                    .expect("prompt activity remains present while polling")
+                    .poll_cancellation(context)
+                    .is_ready()
+                {
                     return Poll::Ready(Err(cancelled()));
                 }
                 let polled = catch_unwind(AssertUnwindSafe(|| {
@@ -760,7 +847,7 @@ fn render_outcome(
             let mut total_raw = 0_usize;
             let mut total_rendered = 0_usize;
             let mut content = Vec::with_capacity(answers.len());
-            for (question, answer) in questions.iter().zip(answers) {
+            for (question, answer) in questions.iter().zip(answers.into_values()) {
                 check_cancellation(cancellation)?;
                 if answer.len() > MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES {
                     return Err(resource_limit());
@@ -963,18 +1050,30 @@ impl Drop for ActivePromptPermit {
 
 struct PromptActivity<'a> {
     prompt: Option<BoxFuture<'a, Result<QuestionPromptOutcome, QuestionPromptError>>>,
+    cancellation_wait: Option<Cancelled>,
     permit: Option<ActivePromptPermit>,
 }
 
 impl<'a> PromptActivity<'a> {
     fn new(
         prompt: BoxFuture<'a, Result<QuestionPromptOutcome, QuestionPromptError>>,
+        cancellation_wait: Cancelled,
         permit: ActivePromptPermit,
     ) -> Self {
         Self {
             prompt: Some(prompt),
+            cancellation_wait: Some(cancellation_wait),
             permit: Some(permit),
         }
+    }
+
+    fn poll_cancellation(&mut self, context: &mut Context<'_>) -> Poll<()> {
+        Pin::new(
+            self.cancellation_wait
+                .as_mut()
+                .expect("cancellation wait exists until activity teardown"),
+        )
+        .poll(context)
     }
 
     fn poll_prompt(
@@ -998,10 +1097,17 @@ impl<'a> PromptActivity<'a> {
 impl Drop for PromptActivity<'_> {
     fn drop(&mut self) {
         let prompt = self.prompt.take();
-        let permit = self.permit.take();
         let prompt_drop = catch_unwind(AssertUnwindSafe(|| drop(prompt)));
+        let cancellation_wait = self.cancellation_wait.take();
+        let cancellation_wait_drop = catch_unwind(AssertUnwindSafe(|| drop(cancellation_wait)));
+        let permit = self.permit.take();
         drop(permit);
         if let Err(payload) = prompt_drop
+            && !std::thread::panicking()
+        {
+            resume_unwind(payload);
+        }
+        if let Err(payload) = cancellation_wait_drop
             && !std::thread::panicking()
         {
             resume_unwind(payload);

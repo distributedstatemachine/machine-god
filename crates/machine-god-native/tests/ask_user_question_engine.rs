@@ -7,8 +7,8 @@ use machine_god_core::{
     SessionIncarnationId, StopReason, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
 };
 use machine_god_native::{
-    ASK_USER_QUESTION_TOOL_NAME, AskUserQuestionTool, QuestionPromptError, QuestionPromptOutcome,
-    QuestionPromptRequest, QuestionPrompter,
+    ASK_USER_QUESTION_TOOL_NAME, AskUserQuestionTool, QuestionPromptAnswers, QuestionPromptError,
+    QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, ScriptedModelProvider, ScriptedPermissionHandler,
@@ -34,11 +34,9 @@ impl QuestionPrompter for RecordingQuestionPrompter {
                 .map(|question| question.question().to_owned())
                 .collect(),
         );
-        Box::pin(async {
-            Ok(QuestionPromptOutcome::Answered(vec![
-                "bounded Other answer".to_owned(),
-            ]))
-        })
+        let mut answers = QuestionPromptAnswers::new();
+        answers.try_push("bounded Other answer".to_owned()).unwrap();
+        Box::pin(async move { Ok(QuestionPromptOutcome::Answered(answers)) })
     }
 }
 

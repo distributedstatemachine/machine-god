@@ -145,8 +145,9 @@ pub use ask_user_question::{
     MAX_ASK_USER_QUESTION_RENDERED_QUESTION_BYTES, MAX_ASK_USER_QUESTION_SERIALIZED_ARGUMENT_BYTES,
     MAX_ASK_USER_QUESTION_SERIALIZED_PREPARED_ARGUMENT_BYTES,
     MAX_ASK_USER_QUESTION_SERIALIZED_RESULT_BYTES, MAX_ASK_USER_QUESTION_TOTAL_OPTIONS,
-    MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPrompt, QuestionPromptError,
-    QuestionPromptOption, QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
+    MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPrompt, QuestionPromptAnswers,
+    QuestionPromptError, QuestionPromptOption, QuestionPromptOutcome, QuestionPromptRequest,
+    QuestionPrompter,
 };
 
 pub use config::{
