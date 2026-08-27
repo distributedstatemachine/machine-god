@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -83,11 +83,12 @@ Formal cycle 4 reviewed exact candidate
 reported `0/0/0/1`, lifecycle/platform `0/0/1/1`, and
 performance/resources `0/0/1/0`; the deduplicated union is 0 blocker, 0 high,
 2 medium, and 1 low. The historical cycle-4 local gate remains valid regression
-evidence for that rejected candidate, not approval. No cycle-5 source, local
-gate, formal review, remote CI, benchmark workflow, integration, delivery,
-product-performance, compatibility-promotion, or fx-equivalence result is
-established. No release-binary prompt exercise applies because this library-
-only slice adds no CLI prompt UI.
+evidence for that rejected candidate, not approval. Cycle-5 source and evidence
+are established at the exact local-gate-green behavior head recorded below;
+formal review, remote CI, benchmark workflow, integration, and delivery remain
+pending. No product-performance, compatibility-promotion, or fx-equivalence
+result is established. No release-binary prompt exercise applies because this
+library-only slice adds no CLI prompt UI.
 
 Formal cycle 1 reviewed exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -120,14 +121,50 @@ performance/resources `0/0/1/0` on exact cycle-4 candidate
 - the reference-host document retained stale cycle-3-pending lineage.
 
 Cycle 5 freezes activity-backed cancellation ownership. Every registered or
-cached equivalent cancellation Waker clone and callback must retain the
-originating permit through callback return. Prompt, waiter, and cached-Waker
-teardown stays under that activity. After teardown, execution must make one
-final cancellation recheck before every direct success or error return.
-Deterministic race evidence must exercise both synchronous final-Waker
-cancellation and a concurrently moved callback. This is the remediation target;
-cycle-5 source, evidence, gate, review, remote workflows, integration, and
-delivery are not yet established.
+cached equivalent cancellation Waker clone and callback retains the originating
+permit through callback return. Prompt, waiter, and cached-Waker teardown stays
+under that activity. After teardown, execution makes one final cancellation
+recheck before every direct success or error return. Deterministic race evidence
+exercises both synchronous final-Waker cancellation and a concurrently moved
+callback.
+
+Independent evidence component
+`ad47fcb1a6eb751e4953d84933afa1c12dddfbd7`, integrated as `bcce292`, and
+source component `80382d8f3f4df53fea867f66c53620f1d6592c6d`, integrated as
+`e0fd8e0`, compose with finding-documentation component
+`ba53f5539b68817d2ebe920039ccb5c8303d8b34`, integrated as `b870731`, at exact
+behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Direct cross-composition at
+`e1947c1495c7cbdc69236b8f7ab1599dda80ca07`, tree `e63f8272`, passed all 32
+direct question tests. At the integrated head, formatting; 32 direct tests; one
+engine test; nine all-feature reference-host tests; one reference-host session-
+lifecycle test; native all-target/all-feature warnings-denied Clippy; and six
+native-manifest tests are green.
+
+That exact head also passes all four required exact-1.94.1 workspace commands.
+The extended gate passes 136 Python tests with eight intentional skips, the
+pinned compatibility drift check, dependency policy with only established
+duplicate warnings, and audit of 1,226 advisories across 211 dependencies with
+zero vulnerabilities. Native no-default, all-feature WASI library, and
+warnings-denied no-default FreeBSD checks pass; WASI emits only the established
+unrelated `read_file::check_cancellation` dead-code warning. Documentation
+integrity is 91 Markdown files, 318 fence markers, 701 parsed links, 534 local
+links, and zero missing targets. Diff checks are clean, protected `.github`,
+benchmark, and compatibility inputs are unchanged, and no Rust `unsafe` is
+added.
+
+The authorized manifest/lock delta is development-only: native tests add the
+existing audited `machine-god-reentrant-waker-test` path dev-dependency. The
+package already existed in `Cargo.lock`; only its native dependency-list line
+changed. The production normal/build dependency graph is unchanged, and audit
+still covers 211 dependencies. A fresh locked release binary is 3,985,216 bytes
+with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+Isolated `--help`, `doctor --json`, and `sessions --json` runs against missing
+XDG roots succeed without creating files. This checkpoint is regression and
+delivery evidence, not formal approval, a benchmark result, or an fx-
+equivalence claim. Three fresh formal reviews, remote workflows, integration,
+and delivery remain pending.
 
 ## Product boundary
 

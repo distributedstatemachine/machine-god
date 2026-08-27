@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4
-REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -42,12 +42,18 @@ permit release. The complete exact-1.94.1 replacement local gate is green with
 Cancellation observed only while the final registered Waker was destroyed
 could escape the last check, and a callback moved by concurrent cancellation
 could continue after outer drop released the permit. The reference-host
-lineage was also stale. Cycle 5 will make each cancellation Waker clone and
-callback activity-backed through callback return, retain an equivalent cached
-registration, destroy prompt/waiter/cached-Waker state under that activity,
-recheck cancellation after teardown before every direct return, and add
-deterministic race evidence. No cycle-5 source, gate, review, remote,
-integration, or delivery result is claimed. See
+lineage was also stale. Cycle-5 evidence `ad47fcb`/`bcce292`, source
+`80382d8`/`e0fd8e0`, and finding docs `ba53f55`/`b870731` compose at exact
+behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. The execution activity owns the
+permit, prompt, waiter, cached wrapper, all Waker clones, and any in-flight
+callback through callback return. Teardown then precedes a final cancellation
+check on every direct return. Deterministic evidence covers synchronous
+teardown cancellation and the concurrently moved callback. The complete
+exact-1.94.1 required and extended local gate is green. The new reentrant-Waker
+test helper is an existing audited package used only as a native path
+dev-dependency; production normal/build dependency topology is unchanged.
+Formal review, remote workflows, integration, and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2257,8 +2263,12 @@ retains the originating permit through callback return. Prompt, waiter, and
 cached-Waker teardown remains under that activity, followed by a final
 cancellation recheck before any direct success or error return. Deterministic
 race evidence must cover synchronous final-Waker cancellation and the moved-
-callback overlap. This records the remediation target only; no cycle-5 source
-or gate is claimed.
+callback overlap. Cycle-5 evidence `ad47fcb`/`bcce292` and source
+`80382d8`/`e0fd8e0` implement that activity boundary and cover both races
+deterministically. They compose with finding docs `ba53f55`/`b870731` at exact
+behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`, whose complete local gate is
+green. Formal review remains pending.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.

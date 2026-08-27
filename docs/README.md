@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4
-REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -48,12 +48,19 @@ interaction authority. Formal cycle 4 rejected exact candidate
 only while the final registered Waker was synchronously destroyed, after the
 last cancellation check, and a concurrently moved Waker callback could finish
 after outer drop released the permit. The reference-host record also retained
-stale cycle-3-pending lineage. Cycle 5 freezes activity-backed cancellation
-Waker ownership through callback return, an equivalent cached registration,
-prompt/waiter/cached-Waker teardown under that activity, a final cancellation
-recheck after teardown before every direct return, and deterministic race
-evidence. No cycle-5 source, local gate, review, remote workflow, integration,
-or delivery result is established. The normative boundary is
+stale cycle-3-pending lineage. Cycle-5 evidence `ad47fcb`/`bcce292`, source
+`80382d8`/`e0fd8e0`, and finding docs `ba53f55`/`b870731` compose at exact
+behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Activity-backed cancellation
+Waker ownership now extends through callback return, cached registration plus
+prompt/waiter/Waker teardown remains under activity, and direct returns make a
+final post-teardown cancellation check. Deterministic evidence covers both
+accepted races. Its exact-1.94.1 required and extended local gates are green;
+32 direct question tests and the integrated engine/host suites pass. The only
+Cargo delta is the existing audited reentrant-Waker helper added as a native
+test-only path dependency, with no production normal/build dependency change.
+Formal review, remote workflows, integration, and delivery remain pending. The
+normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

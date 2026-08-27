@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-5 interaction and authority remediation
 
-Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2157,6 +2157,17 @@ exact candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
 `0/0/0/1`, lifecycle/platform `0/0/1/1`, and performance/resources
 `0/0/1/0`, deduplicated to `0/0/2/1`. The accepted security/lifecycle defects
 are the post-check synchronous cancellation and callback-tail capacity escape;
-the remaining low is stale reference-host lineage. Deterministic evidence must
-exercise both races. No cycle-5 source, evidence, local gate, formal review,
-remote workflow, integration, or delivery result is claimed.
+the remaining low is stale reference-host lineage. Cycle-5 evidence
+`ad47fcb`/`bcce292`, source `80382d8`/`e0fd8e0`, and finding docs
+`ba53f55`/`b870731` compose at exact behavior head
+`b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Deterministic evidence exercises
+both races: every cached or registered cancellation Waker clone and in-flight
+callback holds the originating activity and permit through callback return,
+and post-teardown cancellation wins every direct result. The exact-1.94.1
+required and extended local gates are green, including audit of 1,226
+advisories across 211 dependencies with zero vulnerabilities, portability,
+documentation, no-added-unsafe, and isolated missing-root checks. The added
+reentrant-Waker helper is an existing audited test-only path dev-dependency;
+production normal/build dependency topology is unchanged. Formal review,
+remote workflows, integration, and delivery remain pending.

@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4
-REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -59,12 +59,22 @@ reported `0/0/0/1`, lifecycle/platform `0/0/1/1`, and performance/resources
 Accepted findings cover cancellation becoming observable during final
 cancellation-Waker destruction after the last check, a concurrently moved
 Waker callback continuing after outer drop and permit release, and stale
-reference-host lineage. Cycle 5 will retain the originating permit through
-activity-backed cancellation Waker clones and callback return, cache an
-equivalent registration, tear down prompt/waiter/cached-Waker state inside the
-activity, recheck cancellation after teardown before every direct return, and
-add deterministic race evidence. No cycle-5 source, gate, review, remote-
-workflow, integration, or delivery result is claimed. See the
+reference-host lineage. Cycle-5 evidence `ad47fcb` (integrated as `bcce292`),
+source `80382d8` (integrated as `e0fd8e0`), and finding docs `ba53f55`
+(integrated as `b870731`) now compose at exact behavior head
+`b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Activity-backed Waker clones and
+callbacks retain the originating permit through callback return; cached
+registration and prompt/waiter/Waker teardown stay under that activity; and a
+post-teardown check makes cancellation win every direct return. Both races are
+covered deterministically. The complete exact-1.94.1 local gate is green,
+including 32 direct question tests, all required workspace checks, the extended
+portability/dependency/documentation matrix, and a fresh locked release smoke.
+The authorized Cargo delta is test-only: native adds the existing audited
+`machine-god-reentrant-waker-test` path dev-dependency, whose package was
+already locked; production normal/build dependencies are unchanged. Formal
+cycle-5 review, remote workflows, integration, and delivery remain pending.
+See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

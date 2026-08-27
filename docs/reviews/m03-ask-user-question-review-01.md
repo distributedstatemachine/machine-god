@@ -1,9 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**. Formal cycle 4
-rejected its exact immutable candidate. Cycle-5 source, deterministic race
-evidence, complete local gate, three fresh formal reviews, remote workflows,
-integration, and delivery remain pending.
+Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 4
+rejected its exact immutable candidate. Cycle-5 source and deterministic race
+evidence now pass the complete local gate at the exact behavior head below.
+Three fresh formal reviews, remote workflows, integration, and delivery remain
+pending.
 
 ## Frozen lineage
 
@@ -67,6 +68,17 @@ integration, and delivery remain pending.
 - Formal cycle-4 candidate, **REJECTED**:
   `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
   `b761f7b93d535a1580910f43ff509c40aa07415b`
+- Cycle-5 independent evidence component:
+  `ad47fcb1a6eb751e4953d84933afa1c12dddfbd7`, integrated as `bcce292`
+- Cycle-5 source component:
+  `80382d8f3f4df53fea867f66c53620f1d6592c6d`, integrated as `e0fd8e0`
+- Cycle-4 finding-documentation component and exact cycle-5 behavior head:
+  `ba53f5539b68817d2ebe920039ccb5c8303d8b34`, integrated as
+  `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+  `0b025f8e42e18006a72d89becf0e395d35c91a57`
+- Direct cycle-5 cross-composition checkpoint:
+  `e1947c1495c7cbdc69236b8f7ab1599dda80ca07`, tree `e63f8272`, green for all
+  32 direct `ask_user_question` tests
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -79,9 +91,11 @@ Formal cycle 3 nevertheless rejected exact candidate `746e510`/`c49221e`.
 Cycle-4 core, native, and finding-documentation work compose at
 `cb93bff`/`fa402acb`, whose complete exact-1.94.1 replacement local gate is
 green. Formal cycle 4 nevertheless rejected exact candidate
-`42ce6f0`/`b761f7b` with a deduplicated `0/0/2/1` union. Cycle-5 remediation,
-its complete local gate, three fresh exact-SHA reviews, exact feature workflows,
-fast-forward integration, and exact `main` workflows remain required.
+`42ce6f0`/`b761f7b` with a deduplicated `0/0/2/1` union. Cycle-5 source,
+independent race evidence, and finding docs compose at `b870731`/`0b025f8`;
+its complete exact-1.94.1 local gate is green. Three fresh exact-SHA reviews,
+exact feature workflows, fast-forward integration, and exact `main` workflows
+remain required.
 
 ## Frozen first-slice decisions
 
@@ -497,7 +511,7 @@ candidate is rejected. The accepted findings are:
   configured active limit; and
 - `docs/native-reference-host.md` retained stale cycle-3-pending lineage.
 
-## Cycle-5 remediation target
+## Cycle-5 implemented remediation and local implementation gate
 
 Cycle 5 freezes the following correction without widening the first slice:
 
@@ -513,9 +527,57 @@ Cycle 5 freezes the following correction without widening the first slice:
 - deterministic race evidence covers synchronous final-Waker cancellation and
   concurrent moved-callback execution beyond outer drop.
 
-This section records accepted findings and intended remediation only. It does
-not claim cycle-5 source, evidence, Cargo/protected-input shape, local gate,
-formal review, remote workflow, integration, or delivery results.
+Independent evidence component
+`ad47fcb1a6eb751e4953d84933afa1c12dddfbd7`, integrated as `bcce292`, and
+source component `80382d8f3f4df53fea867f66c53620f1d6592c6d`, integrated as
+`e0fd8e0`, compose with finding-documentation component
+`ba53f5539b68817d2ebe920039ccb5c8303d8b34`, integrated as `b870731`, at exact
+behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Direct cross-composition at
+`e1947c1495c7cbdc69236b8f7ab1599dda80ca07`, tree `e63f8272`, passed all 32
+direct question tests.
+
+The integrated focused gate is green:
+
+- `cargo +1.94.1 fmt --all -- --check`;
+- 32 direct `ask_user_question` tests and one engine test;
+- nine all-feature reference-host tests and one reference-host session-
+  lifecycle test;
+- native all-target/all-feature Clippy with warnings denied; and
+- six native-manifest tests.
+
+Exact behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`, also passes the complete gate
+under Rust and Cargo 1.94.1 exactly without fallback:
+
+- all four required formatting, workspace warnings-denied Clippy, workspace
+  test, and workspace doctest commands are green;
+- repo-wide Python discovery passes 136 tests with eight intentional skips,
+  and pinned compatibility regeneration is byte-stable;
+- `cargo deny` passes with only the established duplicate-dependency warnings;
+  `cargo audit --no-fetch` loads 1,226 advisories, checks 211 dependencies, and
+  reports zero vulnerabilities;
+- native no-default compilation, the all-feature WASI library check, and
+  warnings-denied no-default FreeBSD Clippy are green; WASI emits only the
+  established unrelated `read_file::check_cancellation` dead-code warning;
+- documentation integrity reports 91 Markdown files, 318 fence markers, 701
+  parsed links, 534 local links, and zero missing targets;
+- the exact diff is clean, protected `.github`, benchmark, and compatibility
+  inputs are unchanged, and no Rust `unsafe` is added; and
+- a fresh locked release binary is 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated missing-root `--help`, `doctor --json`, and `sessions --json` smoke
+  checks pass without creating files.
+
+The Cargo change is explicit and development-only: native tests add the
+existing audited `machine-god-reentrant-waker-test` path dev-dependency. Its
+package already existed in `Cargo.lock`; only the native dependency-list lock
+line changed. The production normal/build dependency graph remains unchanged,
+and the audit inventory remains 211 dependencies. This gate is regression and
+delivery evidence, not a benchmark, product-performance, compatibility-
+promotion, fx-equivalence, formal-review, integration, or delivery-completion
+claim. Three fresh exact-SHA formal reviews and both feature and `main` remote
+workflow gates remain pending.
 
 ## Deferred and nonclaim record
 

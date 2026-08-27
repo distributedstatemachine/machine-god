@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 4 REJECTED — CYCLE 5
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -31,12 +31,17 @@ gate with 171 named focused executions. Formal cycle 4 rejected exact candidate
 `0/0/0/1`, lifecycle/platform `0/0/1/1`, performance/resources `0/0/1/0`, and
 the deduplicated union is `0/0/2/1`. Accepted findings are post-check
 cancellation during final-Waker destruction, a concurrently moved callback
-tail escaping permit ownership, and stale reference-host lineage. Cycle 5
-targets activity-backed Waker/callback ownership, a cached equivalent
-registration, teardown under activity, a final post-teardown cancellation
-check before direct returns, and deterministic race evidence. No cycle-5
-source, gate, formal-review, remote, integration, or delivery result is
-claimed. See
+tail escaping permit ownership, and stale reference-host lineage. Cycle-5
+evidence `ad47fcb`/`bcce292`, source `80382d8`/`e0fd8e0`, and finding docs
+`ba53f55`/`b870731` compose at exact behavior head
+`b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Activity-backed Waker/callback
+ownership, cached registration, teardown under activity, the final post-
+teardown cancellation check, and deterministic race evidence are implemented.
+All required exact-1.94.1 and extended local gates are green. The only Cargo
+delta is an existing audited path fixture added to native tests; production
+normal/build dependencies remain unchanged. Three fresh exact-SHA formal
+reviews, remote workflows, integration, and delivery remain pending. See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 
 Bounded slice 34, native `terminal`, is **DELIVERED** from exact delivered base

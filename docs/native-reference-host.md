@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**;
+`ask_user_question` is **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -25,9 +25,13 @@ finding docs `b057958` compose at exact behavior head
 gate is green with 171 named focused executions. Formal cycle 4 rejected exact
 candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
 `b761f7b93d535a1580910f43ff509c40aa07415b`, with track counts `0/0/0/1`,
-`0/0/1/1`, and `0/0/1/0`, deduplicated to `0/0/2/1`. Cycle-5 cancellation-
-activity source, evidence, local gate, formal review, and remote delivery gates
-remain pending.
+`0/0/1/1`, and `0/0/1/0`, deduplicated to `0/0/2/1`. Cycle-5 evidence
+`ad47fcb`/`bcce292`, source `80382d8`/`e0fd8e0`, and finding docs
+`ba53f55`/`b870731` compose at exact behavior head
+`b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Its complete exact-1.94.1 local
+gate, including nine all-feature reference-host tests and one host-lifecycle
+test, is green. Formal review and remote delivery gates remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -741,8 +745,10 @@ normalization `90d8f96`, candidate `72cf64f6`, replacement seal `f08dbd9e`, and
 feature record `6f66b6e5` cover the pre-slice-35 root-selection work only. They
 do not review or deliver the later `question_prompter` parameter or sixteen-tool
 catalog. Slice-35 formal cycles 2, 3, and 4 are rejected; the exact cycle-4
-candidate and findings are recorded above. Cycle-5 remediation remains in
-progress.
+candidate and findings are recorded above. Cycle-5 source and deterministic
+race evidence are composed at `b870731d25b81fb0dc643f99084a71d90c3ce7cf`,
+tree `0b025f8e42e18006a72d89becf0e395d35c91a57`, and the complete local gate is
+green. Formal cycle-5 review remains pending.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1263,7 +1269,7 @@ entries, and the active permit remains held through prompt/cancellation-Waker
 teardown. Formal cycle 4 showed that the final cancellation-Waker destructor
 could make cancellation observable only after the last check, while concurrent
 cancellation could move a registered callback whose tail continued after outer
-drop released that permit. Cycle 5 therefore requires activity-backed
+drop released that permit. Cycle 5 implements activity-backed
 cancellation Waker clones and callbacks to retain the originating permit
 through callback return, an equivalent cached registration, prompt/waiter/
 cached-Waker teardown under activity, and a final cancellation recheck after
@@ -1274,11 +1280,12 @@ permission events; this is a no-policy-authority disposition, while the
 `QuestionPrompter` separately owns host interaction authority. A noninteractive
 host must inject the fixed unavailable
 prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
-contract, rejected cycle-4 outcome, and cycle-5 remediation target are
+contract, rejected cycle-4 outcome, and cycle-5 local-gate checkpoint are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).
 The complete historical exact-1.94.1 cycle-4 local gate is green at
 `cb93bff`/`fa402acb`; exact candidate `42ce6f0`/`b761f7b` was nevertheless
 rejected with the deduplicated `0/0/2/1` union. Deterministic cycle-5 race
-evidence is required; no cycle-5 source, evidence, gate, formal-review, remote,
-integration, or delivery green result is claimed.
+evidence and source now compose at `b870731`/`0b025f8`, whose complete
+exact-1.94.1 local gate is green. Formal review, remote workflows, integration,
+and delivery remain pending.

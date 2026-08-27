@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-5 question resource remediation
 
-Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 5 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -753,8 +753,20 @@ observable only after the last direct-return check. Cycle 5 requires every
 registered or cached equivalent cancellation Waker clone and its callback to
 retain the originating permit through callback return, with prompt/waiter/
 cached-Waker teardown inside the activity and a final post-teardown
-cancellation check before direct returns. Deterministic evidence must pin both
-races without sleeps. No cycle-5 source, evidence, gate, formal-review, remote,
-integration, delivery, benchmark, or product-performance result is claimed.
-See
+cancellation check before direct returns. Cycle-5 evidence
+`ad47fcb`/`bcce292`, source `80382d8`/`e0fd8e0`, and finding docs
+`ba53f55`/`b870731` compose at exact behavior head
+`b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. Deterministic no-sleep evidence
+pins both races; direct cross-composition `e1947c1`, tree `e63f8272`, and the
+integrated 32-test direct suite are green. All required exact-1.94.1 and
+extended gates pass, including the portability, dependency, audit, and resource
+checks. The existing audited reentrant-Waker fixture is added only as a native
+path dev-dependency; production normal/build dependencies and the 211-package
+audit inventory are unchanged. The fresh locked release binary remains
+3,985,216 bytes with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+These are bounded ownership and regression facts, not a benchmark or product-
+performance result. Formal review, remote workflows, integration, and delivery
+remain pending. See
 [`ask-user-question.md`](ask-user-question.md).

@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 4
-REJECTED — CYCLE 5 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 5 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -181,13 +181,41 @@ root. Formal cycle 4 rejected exact candidate
 Accepted findings are cancellation becoming observable synchronously during
 final cancellation-Waker destruction after the last check; a concurrently
 moved registered callback continuing after outer drop and permit release; and
-stale cycle-3-pending lineage in the native reference-host document. Cycle 5
-freezes activity-backed cancellation Waker clones and callbacks that retain the
+stale cycle-3-pending lineage in the native reference-host document. Cycle-5
+evidence component `ad47fcb1a6eb751e4953d84933afa1c12dddfbd7`, integrated as
+`bcce292`, and source component `80382d8f3f4df53fea867f66c53620f1d6592c6d`,
+integrated as `e0fd8e0`, compose with finding-documentation component
+`ba53f5539b68817d2ebe920039ccb5c8303d8b34`, integrated as `b870731`, at exact
+behavior head `b870731d25b81fb0dc643f99084a71d90c3ce7cf`, tree
+`0b025f8e42e18006a72d89becf0e395d35c91a57`. The implementation uses
+activity-backed cancellation Waker clones and callbacks that retain the
 originating permit through callback return, an equivalent cached registration,
-prompt/waiter/cached-Waker teardown under activity, a final cancellation
-recheck after teardown before every direct return, and deterministic race
-evidence. Cycle-5 source, evidence, Cargo/protected-input shape, local gate,
-review, feature workflows, integration, delivery, and exact `main` workflows
+prompt/waiter/cached-Waker teardown under activity, and a final cancellation
+recheck after teardown before every direct return. Direct cross-composition at
+`e1947c1495c7cbdc69236b8f7ab1599dda80ca07`, tree `e63f8272`, is green for all
+32 direct question tests. The integrated focused gate is green for formatting,
+32 direct tests, one engine test, nine all-feature reference-host tests, one
+reference-host lifecycle test, native all-target/all-feature warnings-denied
+Clippy, and six native-manifest tests.
+
+The exact behavior head passes all four required exact-1.94.1 workspace gates.
+The extended gate is also green: Python 136 with eight intentional skips;
+byte-stable pinned compatibility regeneration; dependency policy with only
+established duplicate warnings; audit across 1,226 advisories and 211
+dependencies with zero vulnerabilities; native no-default, all-feature WASI,
+and warnings-denied no-default FreeBSD checks, with only the established
+unrelated WASI `read_file::check_cancellation` warning; documentation integrity
+91/318/701/534/0; clean diff; unchanged `.github`, benchmark, and compatibility
+inputs; and no added Rust `unsafe`. The authorized test-only Cargo delta adds
+the existing audited `machine-god-reentrant-waker-test` path dev-dependency to
+native tests. Its package was already locked, only the native dependency-list
+lock line changed, the production normal/build graph is unchanged, and audit
+remains 211 dependencies. The fresh locked release binary is 3,985,216 bytes
+with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+isolated `--help`, `doctor --json`, and `sessions --json` against missing XDG
+roots succeed without creating files. Three fresh formal reviews, feature
+workflows, fast-forward integration, delivery, and exact `main` workflows
 remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
@@ -4209,12 +4237,15 @@ matrix. At that checkpoint the tree was ready for immutable same-SHA formal
 review; remote workflows, integration, and delivery were pending.
 Formal cycle 4 then rejected exact candidate `42ce6f0`, tree `b761f7b`, with
 track counts `0/0/0/1`, `0/0/1/1`, and `0/0/1/0`, deduplicated to `0/0/2/1`.
-Cycle 5 must bind cancellation Waker clones and callbacks to the originating
-permit through callback return, cache equivalent registration, tear down the
-prompt/waiter/cached-Waker family under activity, recheck cancellation after
-teardown before every direct return, and prove both identified races
-deterministically. No cycle-5 source, evidence, gate, review, remote, or
-delivery result is claimed, so this combined item remains unchecked. Slice 33
+Cycle-5 evidence `ad47fcb`/`bcce292`, source `80382d8`/`e0fd8e0`, and finding
+docs `ba53f55`/`b870731` bind cancellation Waker clones and callbacks to the
+originating permit through callback return, cache equivalent registration,
+tear down the prompt/waiter/cached-Waker family under activity, recheck
+cancellation after teardown before every direct return, and deterministically
+prove both identified races. Exact behavior head `b870731`, tree `0b025f8`,
+passes the complete exact-1.94.1 local gate. Formal review, remote workflows,
+integration, and delivery remain pending, and `vision` plus `read_tool_result`
+remain unimplemented, so this combined item remains unchecked. Slice 33
 `web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark
 workflows are green. Slice 34
