@@ -1,8 +1,11 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is implemented and
-passes its complete local gate at exact behavior head `a76818e`, tree
-`f44def5`; formal review and delivery remain pending. Provider-neutral core
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 1
+REJECTED; CYCLE 2 REMEDIATION IN PROGRESS**. Historical behavior head
+`a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
+rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
+0 blocker / 1 high / 3 medium / 3 low union. Provider-neutral core
 adds only the explicit `PreparedToolAuthorization::NoAuthorityRequired`
 disposition. Native owns the strict bounded question codec, terminal-safe
 normalization, rootless injected `QuestionPrompter`, cancellation, fail-fast
@@ -11,7 +14,8 @@ alphabetical tools with `ask_user_question` first; its thirteen descriptor-
 backed tools still use one retained workspace descriptor plus twelve clones,
 while the question tool and two web tools are rootless. This adds no CLI UI,
 timeout, ambient terminal discovery, product-performance result, or
-fx-equivalence claim. See [`ask-user-question.md`](ask-user-question.md).
+fx-equivalence claim. Replacement evidence, review, and delivery remain
+pending. See [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
 delivered base `52b5885`. Provider-neutral core gains only the exact
@@ -2172,9 +2176,9 @@ Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
 fixed structural state (`has_provider` and tool count); it never invokes the
 provider's `name` method or copies provider-controlled text.
 
-## Slice 35 implemented question-interaction boundary
+## Slice 35 question-interaction boundary under remediation
 
-The implemented `ask_user_question` slice adds one portable native adapter,
+The `ask_user_question` slice adds one portable native adapter,
 not UI state to core or the CLI. Strict effect-free native preparation
 canonicalizes a bounded ordered question batch and selects
 `PreparedToolAuthorization::NoAuthorityRequired`. Core validates that explicit
@@ -2190,13 +2194,21 @@ environment, network, or persistence authority. The prompt carries normalized
 terminal-safe values; a structured outcome carries answers, explicit user
 cancellation, or noninteractive unavailability. Answers remain ordered and
 bounded but need not equal an option label, allowing a host-owned `Other` path.
+That absence of option-membership enforcement is the only answer-codec parity
+claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
+terminal encoding intentionally differ.
 
 The portable adapter is unconditional in `machine-god-native`. Current full
 reference-host construction remains under its existing Linux/macOS,
 non-WebAssembly HTTP feature gate and receives the prompter explicitly. Its
 catalog grows from fifteen to sixteen alphabetical tools without a
-workspace-descriptor clone. The complete bounds, precedence, output, and
-deferrals are normative in
-[`ask-user-question.md`](ask-user-question.md). Exact behavior head `a76818e`,
-tree `f44def5`, passes the complete local gate; formal review and delivery
-remain pending.
+workspace-descriptor clone. The normative output representation intentionally
+inserts `answer` before `question` independent of map implementation or feature
+unification. The rejected candidate instead depends on current lexical-map
+behavior. It also lacks an adjacent cancellation recheck after request cloning,
+widens direct prepared execution beyond the raw preparation preimage, and
+fully scans oversized JSON strings/keys before applying remaining byte budget.
+These are cycle-2 remediation items, not completed behavior. The complete
+bounds, precedence, output, and deferrals are normative in
+[`ask-user-question.md`](ask-user-question.md). Replacement gate, review, and
+delivery remain pending.

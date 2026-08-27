@@ -1,17 +1,21 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **IMPLEMENTED;
-LOCAL GATE GREEN; FORMAL REVIEW AND DELIVERY PENDING** from exact delivered base
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **FORMAL CYCLE 1
+REJECTED; CYCLE 2 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
 explicit rootless `QuestionPrompter`. Ordered answers may be bounded free-form
 values and need not equal an option. Preparation explicitly requires no
 external authority; `permission_request_id` approval escalation is rejected
 and deferred. No CLI UI, timeout, detached work, durable terminal expansion,
-`vision`, or `read_tool_result` is added. Exact behavior head `a76818e`, tree
-`f44def5`, passes the complete exact-1.94.1 local gate. Formal review, feature
-and `main` workflows, integration, and delivery remain pending; this makes no
-performance or fx-equivalence claim. The normative boundary is
+`vision`, or `read_tool_result` is added. Historical behavior head `a76818e`,
+tree `f44def5`, passed its recorded local gate. Formal cycle 1 rejected exact
+candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
+0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 remediation,
+replacement evidence and review, feature and `main` workflows, integration,
+and delivery remain pending; this makes no performance or fx-equivalence
+claim. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

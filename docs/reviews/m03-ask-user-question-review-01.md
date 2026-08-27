@@ -1,8 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **IMPLEMENTED — complete local gate green; exact review candidate,
-formal adversarial review, remote workflows, integration, and delivery
-pending**.
+Status: **CYCLE 1 REJECTED — CYCLE 2 REMEDIATION IN PROGRESS**. Replacement
+gate, replacement review, remote workflows, integration, and delivery are
+pending.
 
 ## Frozen lineage
 
@@ -28,11 +28,16 @@ pending**.
 - Independent evidence and exact current behavior head:
   `a76818e7779f8d306cdb0101903236d5e755488f`, tree
   `f44def500e9f2d598c81f97abf46f62e59ef1ce3`
+- Formal cycle-1 candidate, **REJECTED**:
+  `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+  `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`
 
-The exact behavior head implements and independently exercises the frozen
-slice. It is not yet an immutable formal-review candidate, a review result, or
-delivery. Three fresh exact-SHA adversarial tracks, exact feature workflows,
-fast-forward integration, and exact `main` workflows remain required.
+The earlier behavior head passed its recorded local gate, but formal cycle 1
+found product and evidence defects in the later immutable candidate. That
+candidate is rejected and must not be described as green. Cycle-2 source,
+evidence, and documentation remediation, a complete replacement gate, three
+fresh exact-SHA reviews, exact feature workflows, fast-forward integration,
+and exact `main` workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -92,32 +97,71 @@ Agents must not edit another owner's files or revert integrated work. Each
 iteration must end committed and clean before its worktree is safely removed.
 Active or uncommitted worktrees remain in place.
 
-## Implemented evidence coverage
+## Formal cycle-1 outcome
 
-Focused direct, engine, and composition evidence establishes:
+All three read-only tracks reviewed exact candidate
+`6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`:
 
-- strict root, nested object, required field, type, count, and unknown-field
-  failures, including the dedicated `permission_request_id` rejection;
-- exact raw, rendered, aggregate-presentation, normalized-argument, answer, and
-  serialized-result boundaries plus the first value beyond each reachable
-  boundary;
-- ASCII-only trim, post-render duplicate-label comparison (including escaped
-  control/literal collisions), Unicode non-folding, empty-description
-  normalization, and exact terminal-safe C0/DEL/C1/U+061C/bidi encoding;
-- no-authority preparation preserving every ordinary engine validation,
-  cancellation, event, durability, placeholder, result-size, and recovery path
-  while emitting no permission events and invoking no permission handler;
-- inert unpolled futures, first-poll prompt invocation exactly once, prompt
-  future ownership, pending drop cleanup, no detached work, and permit release;
-- default-one and explicit-eight concurrency, fail-fast ninth admission, no
-  capacity queue or Waker retention, recovery after completion/drop, and
-  independent tool-instance counters;
-- answer count/order, bounded non-label free-form success, deterministic JSON
-  key/order/escaping, explicit cancellation and noninteractive sentinels;
-- cancellation precedence before admission, before prompt, and against every
-  ready outcome; and
-- error, `Debug`, and host-composition redaction on native, FreeBSD, and WASI
-  compile paths, with active portable behavior where the repository can run it.
+| Track | Blocker | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: |
+| Correctness/API/schema | 0 | 0 | 2 | 2 |
+| Lifecycle/cancellation/platform | 0 | 1 | 0 | 1 |
+| Performance/concurrency/resources | 0 | 0 | 2 | 0 |
+| Deduplicated union | 0 | 1 | 3 | 3 |
+
+The evidence-overclaim medium was reported in both correctness and
+performance and counts once in the union. The following findings are accepted:
+
+- **High — adjacent cancellation:** execution checks cancellation, clones up
+  to 16 KiB of question presentation data, and then invokes the prompter
+  without another adjacent check. Cancellation becoming observable during
+  that work can still permit UI invocation.
+- **Medium — prepared-call preimage:** direct prepared execution admits a
+  printable 4,096-byte question that ordinary preparation rejects at the
+  1,024-byte raw limit, so direct execution widens the preparation boundary.
+- **Medium — remaining-budget scan:** serialized JSON sizing scans a complete
+  arbitrarily oversized string value or object key before applying the
+  remaining 32/48 KiB budget.
+- **Medium — evidence overclaim:** the ledger claimed exact and first-over
+  input/prepared/presentation/result boundaries, complete terminal classes,
+  default-one/maximum-eight/ninth-admission behavior, independent counters,
+  and deep/wrong-name/unpolled resource paths that the focused suite did not
+  fully establish.
+- **Low — pinned-fx wording:** parity was overstated. The shared property is
+  only that an answer need not match an option label; machine-god separately
+  trims, bounds, rejects empty answers, and terminal-safe encodes them.
+- **Low — output representation:** the candidate inserts `question` before
+  `answer` and relies on the current lexical map implementation to serialize
+  `answer` first, rather than intentionally expressing answer-then-question
+  insertion independent of feature unification.
+- **Low — reference-host documentation:** all four maintained constructor
+  signatures omitted `question_prompter`, and the composition prose still
+  described a fifteen-tool catalog instead of the actual sixteen-tool catalog.
+
+## Cycle-2 remediation and evidence plan
+
+Cycle 2 is in progress and is not green. Planned remediation is:
+
+- add the final adjacent cancellation check immediately before prompter
+  invocation, after all request cloning or other intervening work;
+- make direct prepared execution prove that normalized arguments have a valid
+  incoming preimage under the 32 KiB input and per-field raw limits;
+- make serialized string-value and object-key sizing consume a remaining byte
+  budget and stop scanning as soon as the applicable ceiling is exceeded;
+- construct successful output with intentional `answer` then `question`
+  insertion independent of map implementation or dependency features;
+- correct the pinned-fx statement and all four reference-host signatures and
+  document the exact sixteen-tool alphabetical catalog; and
+- add deterministic exact-limit and first-over-limit input, prepared,
+  presentation, and result tests; complete terminal-class coverage; explicit
+  one/eight/ninth-admission and independent-counter evidence; and the missing
+  deep, wrong-name, and unpolled resource-path tests.
+
+Until those tests are integrated and pass on a replacement candidate, the
+earlier suite establishes only the cases its assertions directly exercise. It
+does not establish the broader exact/+1 or maximum-concurrency claims listed
+above.
 
 User-visible execution through the fresh release binary is not applicable to
 this library-only slice because no CLI prompt UI is added. Reference-host
@@ -125,12 +169,11 @@ engine evidence with deterministic injected provider, permission handler, and
 question prompter is required instead. A later composed release-host slice owns
 interactive CLI evidence.
 
-## Formal review plan
+## Replacement review plan
 
-Production and independent evidence now compose and the complete exact-1.94.1
-local gate is green. The next step is to freeze one immutable candidate
-SHA/tree and spawn three fresh read-only product reviewers in isolated clean
-worktrees:
+After cycle-2 remediation passes a new complete exact-1.94.1 local gate, freeze
+a new immutable candidate SHA/tree and spawn three fresh read-only product
+reviewers in isolated clean worktrees:
 
 1. correctness/API/schema and pinned-fx boundary;
 2. lifecycle/cancellation/platform/host composition; and
@@ -160,15 +203,16 @@ not a product-performance or fx-equivalence claim.
 
 ## Local implementation gate
 
-Exact behavior head `a76818e7779f8d306cdb0101903236d5e755488f`, tree
+Historical behavior head `a76818e7779f8d306cdb0101903236d5e755488f`, tree
 `f44def500e9f2d598c81f97abf46f62e59ef1ce3`, passes the complete local gate
 under exact Rust and Cargo 1.94.1 without fallback:
 
 - all four required formatting, workspace warnings-denied Clippy, workspace
   test, and workspace doctest commands are green;
-- focused evidence is green for 20 direct tool tests, one engine test, and the
-  affected 15 configuration, three root-selection, nine reference-host, and
-  one reference-host lifecycle tests (49 total);
+- the recorded focused commands ran 20 direct tool tests, one engine test, and
+  the affected 15 configuration, three root-selection, nine reference-host,
+  and one reference-host lifecycle tests (49 total), but cycle 1 identified
+  the semantic coverage gaps listed above;
 - repo-wide Python discovery passes 136 tests with eight intentional skips,
   and the pinned-fx drift check is green;
 - `cargo deny` passes every category with the three established duplicate-
@@ -182,9 +226,10 @@ under exact Rust and Cargo 1.94.1 without fallback:
   `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
   isolated-root `help`, `doctor`, and `sessions` smoke checks pass.
 
-This gate makes no formal-review, CI, benchmark, performance, compatibility,
-fx-equivalence, integration, or delivery claim. Reviewer reports must identify
-the later exact immutable candidate they inspect.
+This historical gate makes no positive claim about rejected candidate
+`6c54ec3`, formal review, CI, benchmark, performance, compatibility,
+fx-equivalence, integration, or delivery. Replacement reviewer reports must
+identify the later exact immutable candidate they inspect.
 
 ## Deferred and nonclaim record
 

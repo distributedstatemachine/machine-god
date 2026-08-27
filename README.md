@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **IMPLEMENTED;
-LOCAL GATE GREEN; FORMAL REVIEW AND DELIVERY PENDING** from exact delivered base
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **FORMAL CYCLE 1
+REJECTED; CYCLE 2 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
 for terminal-safe presentation, and calls only an explicitly injected rootless
@@ -16,11 +16,13 @@ host can support `Other`. Explicit no-authority preparation prevents the
 question tool from recursively entering permission policy. The deferred
 `permission_request_id` field is always rejected. This first slice adds no
 CLI/TUI, timeout, detached work, approval escalation, durable terminal work,
-`vision`, or `read_tool_result`. Exact behavior head `a76818e`, tree
-`f44def5`, passes the complete local Rust 1.94.1, compatibility, dependency,
-portability, documentation, and release-smoke gate. Formal adversarial review,
-remote workflows, integration, and delivery remain pending; no performance or
-fx-equivalence claim is made. See the
+`vision`, or `read_tool_result`. Historical behavior head `a76818e`, tree
+`f44def5`, passed its recorded local gate. Formal cycle 1 rejected exact
+candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
+0 blocker / 1 high / 3 medium / 3 low union. Cycle-2 remediation,
+replacement evidence and review, remote workflows, integration, and delivery
+remain pending; no performance or fx-equivalence claim is made. See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

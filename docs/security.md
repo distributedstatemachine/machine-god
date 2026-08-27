@@ -2072,7 +2072,7 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 implemented interaction and authority rules
+## Slice 35 interaction and authority rules under remediation
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2097,11 +2097,19 @@ The injected prompter is a trusted rootless host boundary. The adapter cannot
 prevent a malicious prompter from displaying misleading UI, blocking its poll,
 or detaching private work; conformance requires the interaction to remain owned
 by its returned future and to clean up on drop. Machine-god adds no timeout or
-ambient terminal discovery. First-poll cancellation and fail-fast admission
-precede prompter invocation; cancellation wins any same-poll ready outcome.
+ambient terminal discovery. Normatively, first-poll cancellation, fail-fast
+admission, and an adjacent final cancellation check precede prompter
+invocation; cancellation wins any same-poll ready outcome. Formal cycle 1
+rejected exact candidate
+`6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, because it performs up to 16 KiB
+of request cloning after its cancellation check and then invokes the prompter
+without rechecking. That high-severity lifecycle finding is under cycle-2
+remediation.
 Explicit user cancellation and noninteractive use return fixed non-authorizing
 sentinels. Exact rules are in
-[`ask-user-question.md`](ask-user-question.md). Exact behavior head `a76818e`,
-tree `f44def5`, passes the complete local gate, including no-permission-event,
-redaction, cancellation, drop, and portability evidence. Formal adversarial
-review and delivery remain pending.
+[`ask-user-question.md`](ask-user-question.md). Historical behavior head
+`a76818e`, tree `f44def5`, passed its recorded local gate, but cycle 1 reported
+a deduplicated 0 blocker / 1 high / 3 medium / 3 low union. Replacement
+evidence, adversarial review, and delivery remain pending; no cycle-2 green
+claim is made.

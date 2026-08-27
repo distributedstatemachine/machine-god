@@ -1,8 +1,12 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **IMPLEMENTED WITH A GREEN LOCAL GATE; FORMAL REVIEW AND
-DELIVERY PENDING**; Milestone 03 remains **IN PROGRESS**.
+`ask_user_question` is **CYCLE 1 REJECTED; CYCLE 2 REMEDIATION IN PROGRESS**;
+Milestone 03 remains **IN PROGRESS**. Formal cycle 1 rejected exact candidate
+`6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
+0 blocker / 1 high / 3 medium / 3 low union. No replacement gate or review is
+green yet.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -660,6 +664,7 @@ NativeReferenceHost::compose_ai_gateway_http(
     workspace_root: &Path,
     session_root: &Path,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    question_prompter: Arc<dyn QuestionPrompter>,
     web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 
@@ -670,6 +675,7 @@ NativeReferenceHost::compose_with_ai_gateway_transport(
     workspace_root: &Path,
     session_root: &Path,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    question_prompter: Arc<dyn QuestionPrompter>,
     web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 
@@ -690,6 +696,7 @@ NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
     credential_environment: AiGatewayCredentialEnvironment,
     prepared_roots: PreparedNativeRoots,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    question_prompter: Arc<dyn QuestionPrompter>,
     web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 
@@ -699,11 +706,14 @@ NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots(
     network_target: NetworkTarget,
     prepared_roots: PreparedNativeRoots,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    question_prompter: Arc<dyn QuestionPrompter>,
     web_search_deadline: Arc<dyn WebSearchDeadline>,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError>
 ```
 
-These methods consume retained roots prepared under the separate
+In all four signatures the explicit `question_prompter` follows the permission
+prompter and precedes the web-search deadline. The two prepared-root methods
+consume retained roots prepared under the separate
 [`native root-selection contract`](native-root-selection.md), rather than
 reopening path arguments. Production and independent focused tests are present;
 formal adversarial review was green on exact behavior SHA `f1dc4751`; after the
@@ -735,17 +745,33 @@ this order:
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
 5. move that bearer token into production `AiGatewayHttpTransport`;
-6. construct `AiGatewayProvider` and the dedicated web-search transport with
-   the loaded configuration's projected model, canonical fixed production
-   target, and explicit deadline authority;
-7. wrap the injected prompter in `AskPermissionHandler`; and
-8. build `Engine` with exactly `copy_file`, `create_folder`, `delete_file`,
+6. construct descriptor-backed `TerminalTool`;
+7. construct the dedicated web-search transport and `WebSearchTool` with the
+   loaded configuration's projected model, canonical fixed production target,
+   and explicit deadline authority;
+8. construct `AiGatewayProvider`;
+9. construct rootless `WebFetchTool`;
+10. wrap the injected permission prompter in `AskPermissionHandler` and retain
+   the separately injected question prompter in rootless
+   `AskUserQuestionTool`; and
+11. build `Engine` with exactly `ask_user_question`, `copy_file`,
+   `create_folder`, `delete_file`,
    `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
    `open_file`, `read_file`, `rename_file`, workspace-backed `terminal`,
    rootless `web_fetch`, Gateway-backed rootless `web_search`, and `write_file`,
    default `EngineLimits`, and the default `NoopEventSink`; core's catalog
-   exposes those fifteen names in
+   exposes those sixteen names in
    deterministic alphabetical order.
+
+The prepared-root production constructor has the same order except that it
+consumes the already prepared workspace/session authorities together in place
+of the two path opens. The two custom-transport constructors omit credential
+discovery and production HTTP construction. After selection validation, their
+explicit-root variant opens workspace and session roots, while their
+prepared-root variant consumes both retained authorities. Each then constructs
+terminal, web-search transport/tool, provider, web-fetch, permission, question,
+and engine components in that exact relative order. Constructing the default
+question tool is infallible and adds no new build-error stage.
 
 The non-secret workspace and session roots are therefore opened before
 credential discovery and bearer-token handoff. A selection, workspace, or
@@ -758,9 +784,9 @@ The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
 with one tool and twelve descriptor clones of the same opened directory object
 feed the other twelve workspace-backed tools. The candidate engine registers
-exactly the fifteen alphabetical tools listed above; rootless `web_fetch` and
-Gateway-backed `web_search` receive no workspace descriptor. It discovers or
-registers no other tool.
+exactly the sixteen alphabetical tools listed above; rootless
+`ask_user_question`, `web_fetch`, and Gateway-backed `web_search` receive no
+workspace descriptor. It discovers or registers no other tool.
 This shared retained identity prevents separate path opens from selecting
 different workspace directory objects if the host path is replaced between
 tool construction steps. It does not make the workspace a sandbox against the
@@ -781,10 +807,11 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same fifteen candidate
-tools including workspace-backed `terminal`, rootless `web_fetch`, and
-Gateway-backed `web_search`, retains one original descriptor plus twelve clones
-for exactly thirteen workspace-backed tools, and uses the same
+the same provider, permission adapter, and rootless question tool, registers
+the same sixteen candidate tools including workspace-backed `terminal`,
+rootless `ask_user_question`, rootless `web_fetch`, and Gateway-backed
+`web_search`, retains one original descriptor plus twelve clones for exactly
+thirteen workspace-backed tools, and uses the same
 default engine limits and no-op sink. It deliberately
 performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.
@@ -1181,7 +1208,7 @@ are green. Milestone 03 remains in progress because remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.
 
-## Slice 35 implemented rootless composition
+## Slice 35 rootless composition under remediation
 
 Slice 35 adds one explicit shared `QuestionPrompter` parameter to
 each production and custom reference-host constructor. Construction stores the
@@ -1195,12 +1222,14 @@ must map to a fixed redacted composition stage rather than reflect prompt data.
 The exact local tool order is `ask_user_question`, `copy_file`, `create_folder`,
 `delete_file`, `edit_file`, `file_info`, `glob_files`, `grep_files`,
 `list_files`, `open_file`, `read_file`, `rename_file`, `terminal`, `web_fetch`,
-`web_search`, and `write_file`. Exact behavior head `a76818e`, tree `f44def5`,
-passes the complete local gate. The descriptor count stays thirteen: the
+`web_search`, and `write_file`. Historical behavior head `a76818e`, tree
+`f44def5`, passed its recorded local gate, but formal cycle 1 rejected exact
+candidate `6c54ec3`, tree `bea9024`; cycle-2 remediation and replacement
+evidence are pending. The descriptor count stays thirteen: the
 question tool and two web tools own no workspace descriptor. The no-authority
 question call invokes neither the separately injected `PermissionPrompter` nor
 permission events. A noninteractive host must inject the fixed unavailable
 prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
-contract and pending formal-review plan are
+contract and replacement-review plan are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).

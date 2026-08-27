@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **IMPLEMENTED — local gate green; formal review and delivery pending**.
+Status: **CYCLE 1 REJECTED — CYCLE 2 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -20,6 +20,14 @@ checks. This checkpoint establishes implementation and local regression
 evidence only. It does not establish an immutable review candidate, formal
 adversarial outcome, remote CI, benchmark evidence, integration, delivery,
 product performance, compatibility promotion, or fx equivalence.
+
+Formal cycle 1 reviewed exact candidate
+`6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
+`bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, and rejected it. The
+deduplicated result was 0 blocker, 1 high, 3 medium, and 3 low findings.
+Cycle-2 remediation and replacement evidence are in progress; no replacement
+gate or review is green yet. The detailed outcome and accepted findings are in
+the [`review ledger`](reviews/m03-ask-user-question-review-01.md).
 
 ## Product boundary
 
@@ -127,9 +135,14 @@ rendered byte. The final 49,152-byte result check is nevertheless authoritative
 and includes the complete `ToolOutput` envelope. Overflow uses checked
 arithmetic and fails rather than truncating.
 
-The input ceiling is checked by a bounded serialization pass before semantic
-traversal or string cloning. Per-field raw ceilings are checked after trim and
-before terminal encoding. Rendered
+Normatively, the input ceiling is checked by a bounded serialization pass
+before semantic traversal or string cloning. The rejected cycle-1 candidate
+does not yet satisfy that work bound for an arbitrarily oversized JSON string
+value or object key: its sizing helper scans the complete string before testing
+the remaining 32/48 KiB budget. Cycle-2 remediation must make string and key
+accounting remaining-budget-aware and stop as soon as the applicable ceiling
+is exceeded. Per-field raw ceilings are checked after trim and before terminal
+encoding. Rendered
 per-field and aggregate ceilings are checked during encoding. The normalized
 serialized ceiling is checked last. An input can fit 32 KiB and still fail a
 later rendered or normalized ceiling; no field is silently shortened.
@@ -167,9 +180,14 @@ encoding. Comparison is bytewise ASCII case-insensitive: `Yes` conflicts with
 non-ASCII case variants are not folded. Duplicate questions and labels reused
 in different questions are allowed.
 
-The normalized values supplied to `QuestionPrompter` are the exact normalized
-values retained in prepared execution arguments. Direct `execute` revalidates
-the same strict normalized shape and bounds; it cannot widen preparation.
+The normalized values supplied to `QuestionPrompter` must be the exact
+normalized values retained in prepared execution arguments. Direct `execute`
+must accept only a canonical normalized value that has an incoming preimage
+satisfying the same raw-field and incoming-serialization bounds as
+preparation. The rejected cycle-1 candidate widens preparation here: a direct
+prepared call can supply a printable 4,096-byte question that preparation
+would reject at the 1,024-byte raw limit. Preimage validation for direct
+execution is therefore a cycle-2 remediation item, not completed behavior.
 
 ## Injected prompt boundary
 
@@ -214,7 +232,10 @@ is ASCII-trimmed, must remain nonempty, and is checked against the per-answer
 and aggregate raw limits. Machine-god then applies the same terminal-safe
 encoding and aggregate rendered limit used above. It deliberately does not
 require an answer to equal an option label. This admits a bounded `Other`
-answer and matches pinned fx's answer-count-only codec boundary.
+answer. The only claimed parity with pinned fx's answer codec is the absence
+of option-label membership enforcement; machine-god additionally ASCII-trims
+answers, rejects empty answers, enforces raw/rendered/result bounds, and
+applies its own terminal-safe encoding.
 
 Successful answers produce deterministic ordered JSON as the `content` of a
 non-error `ToolOutput`:
@@ -228,13 +249,17 @@ non-error `ToolOutput`:
 ]
 ```
 
-The current compact `serde_json::Map` representation emits the two object keys
-in deterministic lexical order, `answer` then `question`; array order equals
-input question order. Questions are the exact normalized strings shown to the
-prompter. No option, description, internal ID, timing, or host metadata is
-returned. Pinned fx emits the same two object members in the opposite textual
-key order; JSON object order is not semantic, so this slice makes no byte-level
-fx result claim.
+The representation intentionally inserts `answer` and then `question` for each
+object; array order equals input question order. This order must not depend on
+the selected `serde_json::Map` implementation, lexical map behavior, or
+feature unification. The rejected cycle-1 candidate inserts `question` before
+`answer` and happens to serialize in the documented order only with the
+current lexical-map dependency behavior. Cycle-2 remediation must encode the
+intended insertion directly and add feature-robust evidence. Questions are the
+exact normalized strings shown to the prompter. No option, description,
+internal ID, timing, or host metadata is returned. Pinned fx emits the same two
+object members in the opposite textual key order; JSON object order is not
+semantic, so this slice makes no byte-level fx result claim.
 
 An explicit user `Cancelled` outcome returns the successful string content
 `(user cancelled the question)`. `Unavailable` returns the successful string
@@ -243,7 +268,12 @@ user freeform instead)`. These sentinels are not answer arrays and cannot be
 misread as authorization.
 
 Engine cancellation has precedence at first poll, immediately before prompt
-invocation, and after every ready prompt outcome before interpretation.
+invocation, and after every ready prompt outcome before interpretation. The
+rejected cycle-1 candidate checks cancellation and then clones up to 16 KiB of
+question presentation text before invoking the prompter, with no adjacent
+recheck. A concurrent cancellation can therefore become observable during
+that work yet still permit UI invocation. Cycle-2 remediation must add an
+adjacent pre-invocation cancellation check after the last intervening work.
 Cancellation that is observable in the same poll as answers, user
 cancellation, unavailability, or host failure wins and returns the fixed
 cancelled tool error. After cancellation wins, no answer result is published.
@@ -302,12 +332,15 @@ Thirteen are descriptor-backed; the question and web tools are rootless.
 
 ## Pinned-fx relationship and deferrals
 
-Pinned fx supplied the 1-4/2-6 schema, ASCII trimming, case-insensitive label
-deduplication, terminal-safe presentation, ordered answer JSON, cancellation
-sentinel, noninteractive sentinel, and answer-count-only result codec. This
-slice intentionally adds strict unknown-field/type validation and explicit
-resource/concurrency bounds. It intentionally omits fx's
-`permission_request_id` approval escalation.
+Pinned fx supplied the 1-4/2-6 schema, question/label ASCII trimming,
+case-insensitive label deduplication, terminal-safe presentation, ordered
+answer JSON, cancellation sentinel, noninteractive sentinel, and a result
+codec that does not require answers to match option labels. Machine-god uses a
+different stricter answer boundary: it trims and rejects empty answers,
+applies explicit byte bounds, and terminal-safe encodes them. This slice also
+adds strict unknown-field/type validation and explicit resource/concurrency
+bounds. It intentionally omits fx's `permission_request_id` approval
+escalation.
 
 Deferred work includes:
 
