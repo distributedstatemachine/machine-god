@@ -89,8 +89,9 @@ AI Gateway projection is conditional on the same request advertising
 inline. A larger result is replaced on that provider request by a projection
 envelope containing its opaque handle, complete source length, error
 disposition, reader name, and a preview of at most 4 KiB of source UTF-8. The
-separate wire budget and final request-body limit bound the envelope after JSON
-escaping. The durable transcript remains complete and unchanged.
+separate wire budget bounds the selected envelope text, while the final
+request-body limit bounds the fully escaped outer request. The durable
+transcript remains complete and unchanged.
 
 Source accounting and projected-wire accounting are independent. A result must
 first fit the source budget; projection cannot make an otherwise inadmissible

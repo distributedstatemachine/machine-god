@@ -165,8 +165,8 @@ Field order is exactly `type`, `handle`, `total_bytes`, `is_error`,
 `ToolOutput` byte length, and `is_error` preserves its disposition. `preview`
 is the longest prefix of the original compact serialization whose raw length is
 at most 4,096 bytes; it always ends at a UTF-8 boundary and is not promised to
-be complete JSON. The independent wire budget and final body limit bound the
-complete escaped projection envelope.
+be complete JSON. The independent wire budget bounds the selected projection
+text, while the final body limit bounds the fully escaped outer request.
 
 The opaque handle is content-bound to the request's session ID, session
 incarnation ID, resolved tool-call ID, and exact complete serialized output. Its
