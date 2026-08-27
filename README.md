@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 6
+REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -92,8 +92,18 @@ concurrent burst into one replay, closes stale delivery, and retains capacity
 through in-flight callbacks and final-clone drop. Two deterministic tests cover
 16-clone concurrent replay and post-completion stale delivery/capacity. The
 focused, all four required pinned, extended, and unchanged release-smoke gates
-are green, including 34 direct question tests. The slice is **CYCLE 6 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**; three fresh reviews, remote workflows,
+are green, including 34 direct question tests. Formal cycle 6 nevertheless
+rejected exact candidate `85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`. Correctness/API reported
+`0/0/0/1`; lifecycle/platform and performance/resources each reported
+`0/0/1/0`; the deduplicated union is `0/0/1/1`. Reentrant callbacks can rearm
+every replay and amplify one original wake into unbounded synchronous callback
+work. Cycle 7 requires observation-aware coalescing, constant bounded callback
+count, lossless observation-then-notice replay, and deterministic finite-budget
+evidence. The low finding is corrected here: every operative opening summary
+must agree on **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**, and a
+focused consistency scan must reject the superseded cycle-5 opening. No cycle-7
+green result is claimed; new gates, fresh reviews, remote workflows,
 integration, and delivery remain pending.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and

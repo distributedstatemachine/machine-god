@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -47,7 +47,13 @@ serializes callbacks, coalesces one lossless replay, closes stale delivery, and
 retains capacity through callback/final-clone teardown. The two deterministic
 many-clone regressions, 34 direct tests, one engine test, nine host tests, one
 host-lifecycle test, and the complete pinned/extended local gate are green.
-Three fresh reviews and remote delivery gates remain pending.
+Formal cycle 6 rejected exact `85058a8aa88fab6912d9313f1ce71e2778cc937f`,
+tree `fd3c5072c9473c7fe8767cc2692238eacb8a0f43`: correctness/API `0/0/0/1`,
+lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, union
+`0/0/1/1`. Reentrant replay can self-rearm indefinitely in one wake. Cycle-7
+observation-aware bounded callback delivery, lossless observation-then-notice
+replay, deterministic finite-budget evidence, opening-status consistency,
+new gates, and fresh reviews remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -767,7 +773,9 @@ tree `0b025f8e42e18006a72d89becf0e395d35c91a57`, and the complete local gate is
 green. Formal cycle 5 rejected exact `54b1aab`/`54586d2` with a deduplicated
 `0/0/1/0` product resource/capacity finding. Cycle-6 docs, evidence, and source
 compose at `707a794`/`1e60299`; both deterministic many-clone tests and the
-complete local gate are green. Three fresh reviews remain pending.
+complete local gate are green. Formal cycle 6 rejected exact
+`85058a8`/`fd3c507` with a `0/0/1/1` union. Cycle-7 bounded replay, status
+consistency, new gates, and fresh reviews remain pending.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1312,5 +1320,7 @@ clones can run concurrent blocking downstream callbacks behind one slot.
 Cycle-6 single-flight coalescing notification, lossless replay, target close,
 capacity ownership, and many-clone evidence compose at exact
 `707a794`/`1e60299`; focused, required pinned, extended, and unchanged release-
-smoke gates are green. Fresh reviews, remote workflows, integration, and
-delivery remain pending.
+smoke gates are green. Formal cycle 6 rejected exact `85058a8`/`fd3c507`
+because replay may self-rearm synchronously without bound; its low finding also
+requires consistent operative opening statuses. Cycle-7 source/evidence, gates,
+fresh reviews, remote workflows, integration, and delivery remain pending.

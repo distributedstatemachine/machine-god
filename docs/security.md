@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-6 interaction and authority remediation
+## Slice 35 cycle-7 interaction and authority remediation
 
-Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2198,5 +2198,22 @@ pinned, Python 136/8, compatibility, dependency/audit 1,226/211/zero,
 portability, docs 91/318/701/534/0, protected/no-added-unsafe, and unchanged
 release/missing-root smoke gates are green. The authorized manifest/lock delta
 remains only the existing audited test helper and one native lock dependency-
-list line; production normal/build dependencies are unchanged. Three fresh
-reviews, remote workflows, integration, and delivery remain pending.
+list line; production normal/build dependencies are unchanged. Formal cycle 6
+reviewed exact `85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`. Correctness/API reported
+`0/0/0/1`; lifecycle/platform and performance/resources each reported the same
+`0/0/1/0`; the deduplicated union is `0/0/1/1`.
+
+The medium is a product resource/lifecycle finding, not an authority expansion:
+each callback self-notice sets replay pending, so the callback loop can rearm
+itself without bound inside one original wake. Cycle 7 must use observation-
+aware coalescing to keep callback count constant-bounded under continual self-
+notification while preserving a notice that follows an outer observation.
+Deterministic finite-budget evidence, a replacement gate, and three fresh
+reviews are required.
+
+The low is stale opening status in `README.md`, `docs/README.md`, and
+`docs/architecture.md`. Every operative opening now says **CYCLE 6 REJECTED —
+CYCLE 7 REMEDIATION IN PROGRESS**, and a focused consistency scan must reject
+the superseded cycle-5 opening. No cycle-7 implementation, green gate, review,
+remote workflow, integration, or delivery result is claimed.

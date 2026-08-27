@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 5
-rejected its exact immutable candidate with one product resource/capacity
-finding. Cycle-6 source and deterministic evidence now pass the complete local
-gate at the exact behavior head below. Three fresh formal reviews, remote
-workflows, integration, and delivery remain pending.
+Status: **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**. Formal cycle 6
+rejected its exact immutable candidate with one product resource finding and
+one maintained-documentation finding. Cycle-7 source, deterministic evidence,
+and status-consistency remediation; a new complete local gate; three fresh
+formal reviews; remote workflows; integration; and delivery remain pending.
 
 ## Frozen lineage
 
@@ -93,6 +93,9 @@ workflows, integration, and delivery remain pending.
 - Independent cycle-6 cross-composition candidate:
   `236dd90`, tree `94b9fdd3980a413c594538fc9222b09007518bce`, green for 34 direct
   question tests, one engine test, and native warnings-denied Clippy
+- Formal cycle-6 candidate, **REJECTED**:
+  `85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+  `fd3c5072c9473c7fe8767cc2692238eacb8a0f43`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -111,8 +114,10 @@ its complete exact-1.94.1 local gate is green. Formal cycle 5 nevertheless
 rejected exact candidate `54b1aab`/`54586d2` with a deduplicated `0/0/1/0`
 union. Cycle-6 finding docs, evidence, and source compose at exact behavior head
 `707a794`/`1e60299`; its complete exact-1.94.1 local gate is green. Three fresh
-exact-SHA reviews, exact feature workflows, fast-forward integration, and exact
-`main` workflows remain required.
+exact-SHA reviews rejected later candidate `85058a8`/`fd3c507` with a
+deduplicated `0/0/1/1` union. Cycle-7 remediation, its complete local gate,
+three fresh exact-SHA reviews, exact feature workflows, fast-forward
+integration, and exact `main` workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -692,8 +697,44 @@ only one native dependency-list line changes in `Cargo.lock`. The production
 normal/build dependency graph remains unchanged, and audit still covers 211
 dependencies. This checkpoint is regression and delivery evidence, not a
 benchmark, product-performance, compatibility-promotion, fx-equivalence,
-formal-review, integration, or delivery-completion claim. Three fresh exact-SHA
-formal reviews and both feature and `main` remote workflow gates remain pending.
+formal-review, integration, or delivery-completion claim. Formal cycle 6 later
+rejected the exact candidate recorded below, so this historical gate does not
+approve it.
+
+## Formal cycle-6 outcome and cycle-7 remediation target
+
+All three fresh read-only tracks reviewed exact candidate
+`85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`:
+
+| Track | Blocker | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: |
+| Correctness/API/schema | 0 | 0 | 0 | 1 |
+| Lifecycle/cancellation/platform | 0 | 0 | 1 | 0 |
+| Performance/concurrency/resources | 0 | 0 | 1 | 0 |
+| Deduplicated union | 0 | 0 | 1 | 1 |
+
+The lifecycle and performance tracks reported the same medium, so it counts
+once in the union. Any nonzero finding rejects the candidate.
+
+- **Medium — unbounded synchronous replay amplification:** every reentrant
+  notice sets `pending_replay`, including a notice emitted by the replayed
+  downstream callback itself. The notifier loop can therefore call an
+  adversarial callback repeatedly in one original `wake` call as each callback
+  rearms its successor. A prompt slot then permits unbounded synchronous work.
+  Cycle 7 must make replay observation-aware: retain constant bounded callback
+  count for a callback that continually self-notifies, while losslessly
+  scheduling one replay only when an outer observation is followed by a new
+  notice. Deterministic finite-budget evidence must prove both properties
+  before a new complete gate and three fresh reviews.
+- **Low — stale operative opening status:** the opening summaries at
+  `README.md:9`, `docs/README.md:3`, and `docs/architecture.md:3` still said
+  cycle 5 was local-gate green while their later text said cycle 6 was local-
+  gate green. Cycle 7 must correct every operative opening to the current
+  rejection/remediation state and add a focused status-consistency scan that
+  fails on the superseded cycle-5 local-gate opening.
+
+No cycle-7 source, evidence, gate, or review result is claimed yet.
 
 ## Deferred and nonclaim record
 

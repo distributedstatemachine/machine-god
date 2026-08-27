@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 6 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 6 REJECTED — CYCLE 7
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -57,8 +57,18 @@ tests cover 16 concurrent retained clones and completed-prompt close/capacity.
 Independent `236dd90`/`94b9fdd` passes direct 34, engine one, and native Clippy.
 Focused, required pinned, extended, and unchanged release-smoke gates are
 green. The test-only helper/one lock-list-line delta remains explicit;
-production normal/build dependencies are unchanged. Three fresh exact-SHA
-reviews, remote workflows, integration, and delivery remain pending.
+production normal/build dependencies are unchanged. Formal cycle 6 reviewed
+exact `85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`: correctness/API `0/0/0/1`,
+lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, and
+deduplicated union `0/0/1/1`. The medium is unbounded synchronous replay
+amplification when every self-notice rearms the replay loop. The low is the
+stale cycle-5 status in three operative opening summaries. Cycle 7 requires
+observation-aware constant-bounded callback delivery, lossless observation-
+then-notice replay, deterministic finite-budget evidence, consistent openings,
+a focused status scan, new gates, and three fresh exact-SHA reviews. No future
+green result is claimed; remote workflows, integration, and delivery remain
+pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

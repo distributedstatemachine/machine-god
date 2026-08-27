@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-6 question resource remediation
+## Slice 35 cycle-7 question resource remediation
 
-Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -803,6 +803,25 @@ Python 136/8, pinned drift, dependency/audit 1,226/211/zero, portability, docs
 91/318/701/534/0, protected/no-unsafe, and unchanged release-smoke gates are
 green. The only manifest/lock delta remains the existing audited test-only
 helper and one native lock dependency-list line; production normal/build
-dependencies are unchanged. Three fresh reviews, remote workflows, integration,
-and delivery remain pending. See
+dependencies are unchanged. Formal cycle 6 reviewed exact candidate
+`85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`. Correctness/API reported
+`0/0/0/1`; lifecycle/platform and performance/resources each reported the same
+`0/0/1/0` medium; the deduplicated union is `0/0/1/1`.
+
+The medium rejects the current replay loop. Every notice during callback
+delivery sets `pending_replay`. A replay callback that self-notifies therefore
+rearms another loop iteration; one original wake can consume unbounded
+synchronous callback work even though maximum callback concurrency remains one.
+Cycle 7 must make coalescing observation-aware and hold callback count to a
+constant bound under continual self-notification. It must still replay a notice
+without loss when an outer observation occurs before the new notice.
+Deterministic finite-budget evidence must prove both paths before a replacement
+gate and three fresh reviews.
+
+The low is the stale cycle-5 local-gate status in the three operative opening
+summaries. Those openings now use the cycle-6-rejected/cycle-7-remediation
+status, and a focused consistency scan must fail if the superseded opening
+returns. No cycle-7 implementation, gate, formal-review, remote-workflow,
+integration, or delivery result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).

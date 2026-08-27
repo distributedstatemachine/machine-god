@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 6
+REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -75,9 +75,19 @@ delivery, coalesces concurrent notices into one replay, closes stale delivery,
 and retains the prompt slot through callback/final-clone ownership. The two
 deterministic 16-clone/replay and completion/close/capacity regressions pass.
 Focused, required pinned, extended, and unchanged release-smoke gates are
-green, including 34 direct tests. The slice is **CYCLE 6 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING**; three fresh reviews, remote workflows, integration,
-and delivery remain pending. The normative boundary is
+green, including 34 direct tests. That exact historical pre-review checkpoint
+was **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 6
+rejected exact `85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`: correctness/API `0/0/0/1`,
+lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, and
+deduplicated union `0/0/1/1`. Reentrant replay can repeatedly rearm itself and
+amplify one wake into unbounded synchronous callbacks. Cycle 7 requires
+observation-aware coalescing, constant bounded callback count, lossless
+observation-then-notice replay, deterministic finite-budget evidence, new
+gates, and fresh reviews. The stale-opening low is corrected in all three
+operative entry points and guarded by a focused consistency scan. The current
+status is **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**; no future
+green result is claimed. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

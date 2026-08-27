@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -219,7 +219,34 @@ release/missing-root smoke. The 3,985,216-byte binary SHA-256 is
 The dev-only reentrant-Waker path dependency and one native lock dependency-
 list line remain the only authorized manifest/lock delta; production normal/
 build dependencies and the 211-dependency audit inventory are unchanged.
-Formal review, remote workflows, integration, and delivery remain pending.
+Formal cycle 6 later rejected the exact candidate below, so this historical
+local gate does not approve it.
+
+## Formal cycle-6 outcome and cycle-7 remediation target
+
+Three fresh read-only tracks reviewed exact candidate
+`85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`. Correctness/API reported
+`0/0/0/1`; lifecycle/platform and performance/resources each reported
+`0/0/1/0`. The shared medium deduplicates across those two tracks, producing a
+`0/0/1/1` union and rejecting the candidate.
+
+The medium is unbounded synchronous replay amplification. Every reentrant
+notice sets the pending bit; when a replayed callback self-notifies, it rearms
+the loop again. One original `wake` can therefore execute an unbounded sequence
+of synchronous callbacks while consuming one prompt slot. Cycle 7 must make
+coalescing observation-aware: callback count stays bounded by a constant when a
+callback continually self-notifies, while a new notice after an outer
+observation is replayed without loss. A deterministic finite-budget regression
+must prove both the bound and the observation-then-notice replay before new
+gates and three fresh reviews.
+
+The low is inconsistent operative opening status. `README.md:9`,
+`docs/README.md:3`, and `docs/architecture.md:3` still described cycle 5 while
+later summaries described cycle 6. All operative openings now use **CYCLE 6
+REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**. A focused status-consistency scan
+must reject the superseded cycle-5 local-gate opening. No cycle-7 source,
+evidence, gate, review, workflow, integration, or delivery result is claimed.
 
 ## Product boundary
 

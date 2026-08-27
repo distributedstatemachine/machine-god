@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 6 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 6
+REJECTED — CYCLE 7 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -248,8 +248,20 @@ no-added-unsafe, and fresh locked release/missing-root smoke. The release is
 The authorized manifest/lock delta remains the existing audited test-only
 reentrant-Waker path dependency and one native lock dependency-list line;
 production normal/build dependencies are unchanged and audit remains 211.
-Three fresh reviews, feature workflows, fast-forward integration, delivery,
-and exact `main` workflows remain pending.
+Formal cycle 6 reviewed exact candidate
+`85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
+`fd3c5072c9473c7fe8767cc2692238eacb8a0f43`. Correctness/API reported
+`0/0/0/1`; lifecycle/platform and performance/resources each reported
+`0/0/1/0`; the deduplicated union is `0/0/1/1`. The medium is unbounded
+synchronous replay amplification: a replay callback can self-notify, rearm the
+pending bit, and extend one original wake indefinitely. Cycle 7 requires
+observation-aware coalescing, constant bounded callback count, lossless replay
+for a notice after an outer observation, and deterministic finite-budget
+evidence. The low is stale cycle-5 text in the three operative opening
+summaries; they now share the exact current status, and a focused consistency
+scan must prevent regression. Cycle-7 source/evidence, a new complete gate,
+three fresh reviews, feature workflows, fast-forward integration, delivery,
+and exact `main` workflows remain pending. No future green result is claimed.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4287,8 +4299,13 @@ teardown, and deterministic owned-future many-clone evidence. Finding docs
 `7dee269`/`e20023c`, evidence `b007ada`/`4a929c4`, and source
 `0488d71`/`707a794` compose at exact head `707a794`/`1e60299`; the 16-clone
 coalesced-replay and completed-prompt close/capacity regressions pass. Focused,
-required pinned, extended, and unchanged release-smoke gates are green. Three
-fresh reviews, remote workflows, integration, and delivery remain pending, and
+required pinned, extended, and unchanged release-smoke gates are green. Formal
+cycle 6 rejected exact `85058a8`/`fd3c507`: correctness/API `0/0/0/1`,
+lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, deduplicated
+`0/0/1/1`. Cycle-7 observation-aware constant-bounded replay, lossless
+observation-then-notice delivery, finite-budget evidence, consistent opening
+statuses, a focused status scan, new gates, and three fresh reviews remain
+pending. Remote workflows, integration, and delivery remain pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 5 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 6
+REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -68,9 +68,15 @@ deterministic owned-future many-clone regression. Finding docs
 One shared notifier now serializes delivery, coalesces concurrent notices into
 one replay, closes stale delivery, and retains activity through callback and
 final-clone teardown. Both deterministic many-clone regressions and the focused,
-required pinned, extended, and release-smoke gates are green. The slice is
-**CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; three fresh reviews remain
-pending. See
+required pinned, extended, and release-smoke gates are green. That historical
+pre-review checkpoint was **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Formal cycle 6 rejected exact `85058a8`/`fd3c507`: correctness/API
+`0/0/0/1`, lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, and
+union `0/0/1/1`. Reentrant replay can continually rearm the callback loop,
+making synchronous work unbounded. Cycle 7 requires observation-aware
+coalescing, constant bounded callback count, lossless observation-then-notice
+replay, finite-budget evidence, and a status-consistency scan covering all
+operative openings. No cycle-7 green result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2296,7 +2302,12 @@ clone evidence. Cycle-6 docs `7dee269`/`e20023c`, evidence
 `707a794`/`1e60299`. The activity-backed notifier serializes callback delivery,
 coalesces a burst into one replay, closes stale targets, and retains capacity
 through final clone drop. The two deterministic many-clone regressions and the
-complete local gate are green; formal review remains pending.
+complete local gate are green. Formal cycle 6 rejected exact
+`85058a8`/`fd3c507` with a deduplicated `0/0/1/1` union: reentrant notices can
+rearm every replay without an intervening outer observation, and the three
+operative opening summaries were stale. Cycle-7 observation-aware bounded
+replay, finite-budget evidence, status consistency, new gates, and fresh
+reviews remain pending.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2325,5 +2336,6 @@ rejected exact candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
 union. Cycle-5 source, evidence, and gate are established, but formal cycle 5
 rejected exact `54b1aab`/`54586d2` with a `0/0/1/0` union. Cycle-6 source,
 evidence, and complete local gate are established at `707a794`/`1e60299`.
-Fresh reviews, remote workflows, integration, and delivery remain
-unestablished.
+Formal cycle 6 rejected `85058a8`/`fd3c507` with a `0/0/1/1` union. Cycle-7
+source, evidence, gate, fresh reviews, remote workflows, integration, and
+delivery remain unestablished.
