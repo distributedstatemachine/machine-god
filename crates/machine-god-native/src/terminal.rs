@@ -494,9 +494,26 @@ impl TerminalTool {
     /// Returns a fixed configuration failure when unsupported or when the root
     /// or environment cannot be retained within the frozen bounds.
     pub fn open(root: &Path) -> Result<Self, TerminalConfigError> {
+        Self::open_with_limits(root, TerminalLimits::default())
+    }
+
+    /// Opens a workspace root with explicit bounded system-execution limits.
+    ///
+    /// The process environment is captured once at construction and the fixed
+    /// production executor is used for every execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure when unsupported, when `limits`
+    /// are invalid, or when the root or environment cannot be retained within
+    /// the frozen bounds.
+    pub fn open_with_limits(
+        root: &Path,
+        limits: TerminalLimits,
+    ) -> Result<Self, TerminalConfigError> {
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = root;
+            let _ = (root, limits);
             Err(TerminalConfigError::new(
                 TerminalConfigErrorKind::UnsupportedPlatform,
             ))
@@ -508,8 +525,8 @@ impl TerminalTool {
                 root,
                 std::env::vars_os().collect(),
                 Arc::new(SystemTerminalExecutor),
-                TerminalLimits::default(),
-                !cfg!(target_os = "linux"),
+                limits,
+                false,
             )
         }
     }
@@ -890,13 +907,15 @@ async fn await_executor(
             return Poll::Ready(Err(cancelled_error()));
         }
         if timer.poll_expired(context).is_ready() {
-            return Poll::Ready(
-                empty_outcome(
-                    TerminalExecutionStatus::TimedOut,
-                    bounded_duration(started.elapsed()),
-                )
-                .map_err(map_executor_error),
-            );
+            let timeout = empty_outcome(
+                TerminalExecutionStatus::TimedOut,
+                bounded_duration(started.elapsed()),
+            )
+            .map_err(map_executor_error);
+            if cancellation.is_cancelled() {
+                return Poll::Ready(Err(cancelled_error()));
+            }
+            return Poll::Ready(timeout);
         }
         match Pin::new(&mut future).poll(context) {
             Poll::Ready(_) if cancellation.is_cancelled() => Poll::Ready(Err(cancelled_error())),
@@ -1960,9 +1979,10 @@ fn fixed_tool_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        TERMINAL_MAX_TIMEOUT, TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome,
-        TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalLimits,
-        TerminalTool,
+        TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT,
+        TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT, TerminalCapturedOutput,
+        TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
+        TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool,
     };
     use machine_god_core::{
         CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId, ToolContext, TurnId,
@@ -1977,6 +1997,86 @@ mod tests {
 
     fn empty_capture() -> TerminalCapturedOutput {
         TerminalCapturedOutput::new(Vec::new(), 0).unwrap()
+    }
+
+    #[test]
+    fn terminal_limits_have_exact_defaults_and_bounds() {
+        let defaults = TerminalLimits::default();
+        assert_eq!(defaults.timeout(), TERMINAL_DEFAULT_TIMEOUT);
+        assert_eq!(
+            defaults.max_active_executions(),
+            TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS
+        );
+
+        let minimum = TerminalLimits::new(Duration::from_millis(1), 1).unwrap();
+        assert_eq!(minimum.timeout(), Duration::from_millis(1));
+        assert_eq!(minimum.max_active_executions(), 1);
+
+        let maximum =
+            TerminalLimits::new(TERMINAL_MAX_TIMEOUT, TERMINAL_MAX_ACTIVE_EXECUTIONS).unwrap();
+        assert_eq!(maximum.timeout(), TERMINAL_MAX_TIMEOUT);
+        assert_eq!(
+            maximum.max_active_executions(),
+            TERMINAL_MAX_ACTIVE_EXECUTIONS
+        );
+
+        assert!(TerminalLimits::new(Duration::ZERO, 1).is_err());
+        assert!(TerminalLimits::new(TERMINAL_MAX_TIMEOUT + Duration::from_nanos(1), 1).is_err());
+        assert!(TerminalLimits::new(Duration::from_millis(1), 0).is_err());
+        assert!(
+            TerminalLimits::new(Duration::from_millis(1), TERMINAL_MAX_ACTIVE_EXECUTIONS + 1)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn system_constructor_uses_requested_limits_or_fixed_unsupported() {
+        let limits = TerminalLimits::new(Duration::from_millis(7), 2).unwrap();
+
+        #[cfg(target_os = "linux")]
+        {
+            let root = std::env::current_dir().unwrap();
+            let defaults = TerminalTool::open(&root).unwrap();
+            assert_eq!(defaults.limits, TerminalLimits::default());
+
+            let configured = TerminalTool::open_with_limits(&root, limits).unwrap();
+            assert_eq!(configured.limits, limits);
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let absent = std::path::Path::new("/machine-god-terminal-root-must-not-be-opened");
+            let default_error = match TerminalTool::open(absent) {
+                Ok(_) => panic!("system terminal unexpectedly supported"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                default_error.kind(),
+                super::TerminalConfigErrorKind::UnsupportedPlatform
+            );
+
+            let configured_error = match TerminalTool::open_with_limits(absent, limits) {
+                Ok(_) => panic!("system terminal unexpectedly supported"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                configured_error.kind(),
+                super::TerminalConfigErrorKind::UnsupportedPlatform
+            );
+
+            let invalid_limits = TerminalLimits {
+                timeout: Duration::ZERO,
+                max_active_executions: 0,
+            };
+            let invalid_error = match TerminalTool::open_with_limits(absent, invalid_limits) {
+                Ok(_) => panic!("system terminal unexpectedly supported"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                invalid_error.kind(),
+                super::TerminalConfigErrorKind::UnsupportedPlatform
+            );
+        }
     }
 
     #[test]
