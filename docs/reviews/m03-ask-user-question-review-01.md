@@ -1,8 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 2 REJECTED — CYCLE 3 REMEDIATION IN PROGRESS**. Cycle 3 has no
-green local gate or formal review. Remote workflows, integration, and delivery
-remain pending.
+Status: **CYCLE 3 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. The cycle-3 tree
+is ready for immutable same-SHA formal review. No cycle-3 formal-review or
+remote-workflow result is claimed; integration and delivery remain pending.
 
 ## Frozen lineage
 
@@ -43,14 +43,24 @@ remain pending.
 - Formal cycle-2 candidate, **REJECTED**:
   `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
   `503a91f334156dbcf2470560b9bb456c3491fd3d`
+- Cycle-3 production component:
+  `cf531d1692a2946442a37e2049507369c4e12b5c`, integrated as
+  `b7b4358525ce1f8864e501a8176b8c3fbdf3790e`
+- Cycle-3 independent evidence component:
+  `3e3c0c7ea06131adaeca027053c677a670f1a09b`, integrated as `f3f6f9d`
+- Cycle-3 documentation component:
+  `bfdf05b6db1a343c8b4ab15cad98476986a77552`, integrated at exact behavior
+  head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
+  `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
 candidate remains rejected. Cycle-2 source, evidence, and cycle-1 finding docs
 now compose at `c8718c6`/`c27463b`, and the complete local gate for that exact
 head was green. Formal cycle 2 nevertheless rejected its later immutable
-candidate. Cycle-3 source, independent evidence, a complete replacement gate,
-three fresh exact-SHA reviews, exact feature workflows, fast-forward
+candidate. Cycle-3 source, independent evidence, and corrected documentation
+now compose at `8bdc33d`/`7a342fc`; its complete replacement gate is green.
+Three fresh exact-SHA reviews, exact feature workflows, fast-forward
 integration, and exact `main` workflows remain required.
 
 ## Frozen first-slice decisions
@@ -230,9 +240,9 @@ and counts once in the union. The accepted findings are:
 Any nonzero finding rejects the candidate, so cycle 2 is not green despite its
 earlier local-gate evidence.
 
-## Cycle-3 remediation plan
+## Cycle-3 implemented remediation and checkpoint
 
-Cycle 3 freezes these corrections before implementation:
+Cycle 3 implements every accepted cycle-2 correction:
 
 - check each complete host-returned answer and the aggregate complete answer
   bytes against 4,096 before ASCII trimming or any character scan;
@@ -244,9 +254,15 @@ Cycle 3 freezes these corrections before implementation:
 - correct the authority summary, review index, and historical reference-host
   lineage scope.
 
-After isolated production and independent-evidence remediation compose with
-these docs, run a complete exact-1.94.1 local gate and freeze a new immutable
-candidate. Then spawn three fresh read-only product reviewers:
+Isolated production `cf531d1`/`b7b4358`, independent evidence
+`3e3c0c7`/`f3f6f9d`, and documentation `bfdf05b` compose at exact behavior head
+`8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
+`7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. The 28-test direct suite proves
+the complete pre-trim per-answer and aggregate exact/first-over boundaries and
+the exact reachable 41,102-byte result maximum. The larger 49,152-byte guard is
+authoritative defense in depth but unreachable under the other legal limits.
+The complete local gate is green, so this tree is ready for immutable same-SHA
+review by three fresh read-only product reviewers:
 
 1. correctness/API/schema and pinned-fx boundary;
 2. lifecycle/cancellation/platform/host composition; and
@@ -256,7 +272,7 @@ Each reports blocker/high/medium/low counts and concrete evidence. Deduplicate
 overlap without lowering severity. Any confirmed finding rejects the candidate;
 remediation receives a new complete local gate and three fresh reviewers. Only
 an exact `0/0/0/0` union may proceed to feature workflows and `main`. No
-cycle-3 gate or review result exists yet.
+cycle-3 formal-review result exists yet.
 
 ## Required gates
 
@@ -307,6 +323,39 @@ regression/delivery evidence; it makes no formal-review, remote-CI, benchmark,
 product-performance, compatibility-promotion, fx-equivalence, integration, or
 delivery-completion claim. Replacement reviewer reports must identify the
 later exact immutable candidate they inspect.
+
+## Cycle-3 local implementation gate
+
+Exact behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
+`7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`, passes the complete local gate
+under exact Rust and Cargo 1.94.1 without fallback:
+
+- all four required formatting, workspace warnings-denied Clippy, workspace
+  test, and workspace doctest commands are green;
+- focused evidence is green for 28 direct tool tests, one engine test, and the
+  affected 15 configuration, three root-selection, nine reference-host, and
+  one reference-host lifecycle tests (57 total);
+- repo-wide Python discovery passes 136 tests with eight intentional skips,
+  and the pinned-fx drift check is green;
+- `cargo deny` passes every category with the established duplicate-dependency
+  warnings; `cargo audit --no-fetch` checks 1,226 advisories across 211
+  dependencies with zero vulnerabilities;
+- native no-default compilation, the all-feature WASI check, and warnings-
+  denied no-default-feature FreeBSD Clippy are green; WASI emits only the
+  established unrelated `read_file` dead-code warning;
+- documentation integrity reports 91 Markdown files, 318 fence markers, 701
+  parsed links, 534 local links, and zero missing targets; protected and exact
+  diff checks find no Cargo-file delta and no added unsafe Rust; and
+- a fresh locked release binary is 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated missing-root `help`, `doctor`, and `sessions` smoke checks pass
+  without creating the missing root.
+
+User-visible prompt execution does not apply because this library-only slice
+adds no CLI prompt UI. This gate is regression/delivery evidence; it makes no
+formal-review, remote-CI, benchmark, product-performance, compatibility-
+promotion, fx-equivalence, integration, or delivery-completion claim. The tree
+is ready for immutable same-SHA formal review.
 
 ## Deferred and nonclaim record
 

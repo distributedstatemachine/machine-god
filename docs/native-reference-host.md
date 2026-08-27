@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 2 REJECTED; CYCLE 3 REMEDIATION IN PROGRESS**;
+`ask_user_question` is **CYCLE 3 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -12,7 +12,11 @@ at exact `c8718c6`, tree `c27463b`; the complete exact-1.94.1 local gate is
 green with 55 focused tests. Formal cycle 2 rejected exact candidate
 `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
 `503a91f334156dbcf2470560b9bb456c3491fd3d`, with a deduplicated `0/0/2/2`
-union. Cycle-3 remediation has no green local gate or formal review yet.
+union. Cycle-3 source `cf531d1`/`b7b4358`, evidence `3e3c0c7`/`f3f6f9d`, and
+docs `bfdf05b` compose at exact behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`,
+tree `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. Its complete exact-1.94.1
+local gate is green with 57 focused tests. The tree is ready for immutable
+same-SHA formal review; review and remote delivery gates remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -1233,12 +1237,15 @@ The exact local tool order is `ask_user_question`, `copy_file`, `create_folder`,
 candidate `6c54ec3`, tree `bea9024`. Cycle-2 evidence and production corrections
 compose with the finding docs at exact `c8718c6`, tree `c27463b`; its complete
 local gate was green. Formal cycle 2 rejected exact candidate `910d7bc`, tree
-`503a91f`, with a deduplicated `0/0/2/2` union. Cycle-3 remediation and its
-replacement gate/review remain pending. The descriptor count stays thirteen:
+`503a91f`, with a deduplicated `0/0/2/2` union. Cycle-3 production, evidence,
+and docs compose at exact behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`,
+tree `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`; its replacement local gate is
+green with 57 focused tests, and immutable same-SHA formal review remains
+pending. The descriptor count stays thirteen:
 the question tool and two web tools own no workspace descriptor. The no-authority
 question call invokes neither the separately injected `PermissionPrompter` nor
 permission events. A noninteractive host must inject the fixed unavailable
 prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
-contract, rejected review outcome, and cycle-3 plan are
+contract, rejected cycle-2 outcome, and cycle-3 checkpoint are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).

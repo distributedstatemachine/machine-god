@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2
-REJECTED; CYCLE 3 REMEDIATION IN PROGRESS**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -18,11 +18,15 @@ fx-equivalence claim. Cycle-2 evidence `c77b336`/`0dd1128`, production
 `9d2e0f2`/`47e9505`, and cycle-1 finding docs compose at exact behavior head
 `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is green with
 55 focused tests. Formal cycle 2 rejected exact candidate `910d7bc`, tree
-`503a91f`, with a deduplicated `0/0/2/2` union. Cycle 3 must reject complete
-pre-trim host answers above 4,096 bytes before scanning, retain the 49,152-byte
-serialized-result guard only as defense in depth, prove the reachable
-41,102-byte maximum, and correct stale documentation. No cycle-3 local gate or
-review is green; remote workflows and delivery remain pending. See
+`503a91f`, with a deduplicated `0/0/2/2` union. Cycle-3 source
+`cf531d1`/`b7b4358`, evidence `3e3c0c7`/`f3f6f9d`, and documentation
+`bfdf05b` compose at exact behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`,
+tree `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. It rejects complete pre-trim
+host answers above 4,096 bytes before scanning and proves the reachable
+41,102-byte maximum while retaining the unreachable 49,152-byte serialized-
+result guard as defense in depth. The complete exact-1.94.1 local gate is green
+with 57 focused tests. This tree is ready for immutable same-SHA formal review;
+reviews, remote workflows, and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact

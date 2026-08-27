@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2
-REJECTED; CYCLE 3 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -21,11 +21,15 @@ with them at exact behavior head `c8718c6`, tree `c27463b`, whose complete
 exact-1.94.1 local gate was green with 55 focused tests. Formal cycle 2 rejected
 exact candidate `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
 `503a91f334156dbcf2470560b9bb456c3491fd3d`, with a deduplicated `0/0/2/2`
-union. Cycle 3 must bound complete pre-trim host answers before scanning,
-replace unreachable result-guard evidence with the reachable 41,102-byte
-maximum, and correct stale documentation. No cycle-3 local gate or review is
-green yet. Feature and `main` workflows, integration, and delivery remain
-pending. The normative boundary is
+union. Cycle-3 source `cf531d1`/`b7b4358`, evidence `3e3c0c7`/`f3f6f9d`, and
+documentation `bfdf05b` compose at exact behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`,
+tree `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. Complete pre-trim answer
+lengths are bounded before scanning, exact reachable-maximum evidence replaces
+the invalid result-guard claim, and the complete exact-1.94.1 local gate is
+green with 57 focused tests. Legal inputs reach 41,102 serialized result bytes;
+the unreachable 49,152-byte guard remains authoritative defense in depth. The
+tree is ready for immutable same-SHA formal review. Reviews, feature and `main`
+workflows, integration, and delivery remain pending. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

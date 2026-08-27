@@ -694,8 +694,10 @@ first-over-limit input, prepared, presentation, and answer evidence, plus
 explicit one/eight/ninth-admission and independent-counter evidence, were green
 in the 26-test direct suite. Its claimed exact/+1 49,152-byte result evidence
 was invalid because legal inputs reach at most 41,102 serialized bytes. Cycle 3
-must prove that exact reachable maximum and retain 49,152 only as a
-defense-in-depth guard; it must not claim a reachable guard rejection. Deep and
+adds exact and first-over complete pre-trim answer evidence and exact reachable
+41,102-byte maximum evidence, growing the direct suite to 28. The unreachable
+49,152-byte guard remains authoritative defense in depth and is not claimed as
+a reachable rejection boundary. Deep and
 maximum-depth drop paths,
 wrong-name/canonical-prepared rejection, and unpolled/pending/drop/unwind
 resource ownership are also exercised deterministically.
@@ -711,6 +713,11 @@ at exact `c8718c6`, tree `c27463b`; the complete exact-1.94.1 local gate is
 green with 55 focused tests. Formal cycle 2 rejected exact candidate
 `910d7bc`, tree `503a91f`: correctness/API reported `0/0/1/0`, lifecycle/
 platform `0/0/0/2`, performance/resources `0/0/2/0`, and the deduplicated union
-is `0/0/2/2`. No cycle-3 local gate or review is green. This is not a benchmark
-or product-performance result. See
+is `0/0/2/2`. Cycle-3 source `cf531d1`/`b7b4358`, evidence
+`3e3c0c7`/`f3f6f9d`, and docs `bfdf05b` compose at exact behavior head
+`8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
+`7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. The complete exact-1.94.1
+local gate is green with 57 focused tests, including 28 direct tests, and the
+tree is ready for immutable same-SHA formal review. Review and delivery remain
+pending. This is not a benchmark or product-performance result. See
 [`ask-user-question.md`](ask-user-question.md).

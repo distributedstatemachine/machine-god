@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 2
-REJECTED; CYCLE 3 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -28,11 +28,17 @@ with them at exact behavior head `c8718c6`, tree `c27463b`, whose complete
 exact-1.94.1 local gate was green with 55 focused tests. Formal cycle 2 then
 rejected exact candidate `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
 `503a91f334156dbcf2470560b9bb456c3491fd3d`, with a deduplicated
-0 blocker / 0 high / 2 medium / 2 low union. Cycle 3 must bound complete
-pre-trim host answers before scanning, correct result evidence to the reachable
-41,102-byte maximum while retaining the 49,152-byte defense-in-depth guard,
-and repair stale authority/review wording. No cycle-3 local gate or review is
-green yet; remote workflows, integration, and delivery remain pending. See the
+0 blocker / 0 high / 2 medium / 2 low union. Cycle-3 source
+`cf531d1692a2946442a37e2049507369c4e12b5c` (integrated as `b7b4358`),
+evidence `3e3c0c7ea06131adaeca027053c677a670f1a09b` (integrated as `f3f6f9d`),
+and documentation `bfdf05b6db1a343c8b4ab15cad98476986a77552` compose at exact
+behavior head `8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
+`7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. Complete pre-trim answer
+lengths are bounded before scanning, evidence proves the reachable
+41,102-byte maximum while retaining the unreachable 49,152-byte defense guard,
+and the complete local gate is green with 57 focused tests. The tree is ready
+for immutable same-SHA formal review; reviews, remote workflows, integration,
+and delivery remain pending. See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

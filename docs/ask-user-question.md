@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 2 REJECTED — CYCLE 3 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 3 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -21,15 +21,33 @@ composes with both at exact behavior head
 `c8718c60ead54b4e66916cecb1d382c1e8f82934`, tree
 `c27463b76607ae048363327e163c2077e296b898`.
 
-That exact composed head passes the complete exact-Rust-1.94.1 local gate,
-including all four required workspace commands and 55 focused tests: 26 direct
-tool, one engine, 15 configuration, three root-selection, nine reference-host,
-and one reference-host lifecycle test. This checkpoint establishes
-implementation and local regression/delivery evidence only. It does not
-establish a formal replacement-review outcome, remote CI, benchmark evidence,
-integration, delivery, product performance,
-compatibility promotion, or fx equivalence. No release-binary prompt exercise
-applies because this library-only slice adds no CLI prompt UI.
+Cycle-3 production component
+`cf531d1692a2946442a37e2049507369c4e12b5c` is integrated as
+`b7b4358525ce1f8864e501a8176b8c3fbdf3790e`; independent evidence component
+`3e3c0c7ea06131adaeca027053c677a670f1a09b` is integrated as `f3f6f9d`; and
+documentation component `bfdf05b6db1a343c8b4ab15cad98476986a77552` is
+integrated at exact behavior head
+`8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
+`7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`.
+
+That exact cycle-3 behavior head passes the complete exact-Rust-1.94.1 local
+gate, including all four required workspace commands and 57 focused tests: 28
+direct tool, one engine, 15 affected configuration, three root-selection, nine
+reference-host, and one reference-host lifecycle test. Repo-wide Python passes
+136 tests with eight intentional skips; pinned-fx drift, dependency policy,
+audit, native/FreeBSD/WASI portability, documentation, protected diff/no-added-
+unsafe, locked release, and isolated missing-root smoke checks are green.
+`cargo audit --no-fetch` checks 1,226 advisories across 211 dependencies with
+zero vulnerabilities. Documentation integrity is 91 Markdown files, 318 fence
+markers, 701 parsed links, 534 local links, and zero missing targets. The fresh
+locked release binary is 3,985,216 bytes with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+isolated `help`, `doctor`, and `sessions` runs do not create the missing root.
+This tree is ready for immutable same-SHA formal review. The checkpoint does
+not establish a formal review outcome, remote CI, benchmark evidence,
+integration, delivery, product performance, compatibility promotion, or fx
+equivalence. No release-binary prompt exercise applies because this library-
+only slice adds no CLI prompt UI.
 
 Formal cycle 1 reviewed exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -39,9 +57,9 @@ Cycle 2 implemented every accepted cycle-1 correction and passed its local
 gate, but formal review rejected exact candidate
 `910d7bc84cfd7800fb4daf9ab8537bf269027896`, tree
 `503a91f334156dbcf2470560b9bb456c3491fd3d`, with a deduplicated 0 blocker,
-0 high, 2 medium, and 2 low findings. Cycle 3 is in progress; it has no green
-local gate or formal review. The detailed outcome and remediation target are
-recorded in the
+0 high, 2 medium, and 2 low findings. Cycle 3 corrects every accepted finding
+and passes the local gate above, but formal review remains pending. The detailed
+outcome and remediation record are in the
 [`review ledger`](reviews/m03-ask-user-question-review-01.md).
 
 ## Product boundary

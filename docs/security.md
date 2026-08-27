@@ -2089,9 +2089,9 @@ Model-supplied questions, labels, and descriptions are untrusted presentation
 data. Strict objects, byte ceilings, ASCII-edge trimming, case-insensitive
 ASCII label deduplication, and exact terminal-safe control/bidi encoding run
 before presentation. The same normalized values reach execution and the
-injected prompter. Cycle 3 requires the complete pre-trim bytes of each host
-answer and their aggregate to be length-checked before any trim scan. Only
-within-bound answers are trimmed, empty-checked, terminal-safe encoded, and
+injected prompter. Cycle 3 length-checks the complete pre-trim bytes of each
+host answer and their aggregate before any trim scan. Only within-bound answers
+are trimmed, empty-checked, terminal-safe encoded, and
 serialized under the reachable 41,102-byte maximum plus a fixed 49,152-byte
 defense-in-depth guard. Errors and debug output
 reflect no input, answer, host diagnostic, identity, or executor data.
@@ -2119,5 +2119,11 @@ at exact `c8718c6`, tree `c27463b`; its complete exact-1.94.1 local gate is
 green. Formal cycle 2 rejected exact candidate `910d7bc`, tree `503a91f`, with
 a deduplicated `0/0/2/2` union: unbounded pre-trim host-answer scanning,
 unreachable result-bound evidence, incorrect external-authority wording, and
-stale/ambiguous review lineage. Cycle 3 has no green local gate or formal
-review; remote workflows and delivery remain pending.
+stale/ambiguous review lineage. Cycle-3 source `cf531d1`/`b7b4358`, evidence
+`3e3c0c7`/`f3f6f9d`, and docs `bfdf05b` compose at exact behavior head
+`8bdc33d96bf88f5986c0e01b3979a2cef0427e82`, tree
+`7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. Its complete exact-1.94.1
+local gate is green with 57 focused tests, including exact and first-over
+complete pre-trim per-answer/aggregate evidence and exact reachable 41,102-byte
+result evidence. The tree is ready for immutable same-SHA formal review;
+review, remote workflows, and delivery remain pending.
