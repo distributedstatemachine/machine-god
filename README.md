@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 12
-REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -224,11 +224,21 @@ and does not exercise cleanup-panic precedence, a target-drop secondary payload
 retaining the supplied Waker, stale-lane suppression, or detached-capacity
 recovery. The lows are stale clone-capacity wording in the normative contract
 and stale global release-abort wording in two current HTTP/security passages.
-Cycle 13 adds a real release prompt-drop-primary/target-drop-secondary probe for
-ordinary and ambient precedence, stale suppression, and recovery while closed
-clones remain retained; it changes no production behavior unless that evidence
-reveals a defect. The current status is **CYCLE 12 REJECTED — CYCLE 13
-REMEDIATION IN PROGRESS**; no integration, delivery, benchmark, product-
+Cycle-12 rejection docs `70c929f15d345431b4673f799a29b2b45eee2c5d`, tree
+`f74ebaf`, and cycle-13 evidence `c9f9535892441cc6b0f4a99f115365f10a7c8426`,
+integrated as `c252620f55eb75edbb1f771950200168671ef0f3`, tree `a921449`,
+replace the release evidence and rename one stale test without changing
+production source, API, or dependencies. The locked release probe covers
+ordinary prompt-drop and ambient primaries against a target-drop secondary
+payload owning the supplied Waker; destructor control panics while product
+suppression/forget preserves both primaries. Across both cases it records two
+target drops, two secondary callbacks, zero stale wakes, and two fresh-capacity
+admissions in exact 193-byte stdout with empty stderr. Focused 46/1/9/1/8 plus
+native Clippy, all four exact-1.94.1 required gates, the extended matrix, and
+the fresh 4,481,664-byte CLI release are green; the CLI SHA-256 is
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
+The current status is **CYCLE 13 LOCAL GATE GREEN — FORMAL
+REVIEW PENDING**; no integration, delivery, benchmark, product-
 performance, or fx-equivalence result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and

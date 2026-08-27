@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -711,9 +711,53 @@ second variant must preserve an ambient execution-drop panic. Both variants
 must keep closed supplied-Waker identities alive, suppress their stale wakes,
 and admit a fresh pending prompt while the intentionally forgotten identity
 remains. Cycle 13 also corrects the normative ownership contract and the
-separate cross-document profile wording. Integration, a new complete local
-gate, three fresh formal reviews, remote workflows, and delivery are still
-required; no cycle-13 green result is claimed here.
+separate cross-document profile wording.
+
+## Cycle-13 evidence and local checkpoint
+
+Formal cycle-12 rejection documentation
+`70c929f15d345431b4673f799a29b2b45eee2c5d`, tree
+`f74ebaf7fe4081e7068b9d7084a244f9744a04e1`, and independent cycle-13
+evidence `c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as exact
+behavior head `c252620f55eb75edbb1f771950200168671ef0f3`, tree
+`a921449778a5fa71d13a756670a1b41ea16fdc69`, complete the bounded remediation.
+Cycle 13 replaces the release evidence and renames one stale test. It changes no
+production source, API, dependency, authority, limit, or runtime behavior.
+
+The locked, offline, exact-1.94.1 optimized executable enters the public tool's
+actual cleanup path twice. Ordinary execution drop preserves the typed prompt-
+`Drop` panic as primary. Ambient unwind preserves its ambient typed primary.
+In each case final-target destruction invokes one target-`Drop` callback, whose
+secondary panic payload owns the supplied prompt Waker. A separate destructor
+control proves that secondary payload panics; the product path suppresses and
+intentionally forgets it before the selected primary resumes. Closed Waker
+identities remain retained across fresh admission. Across both cases target
+drops are two, secondary callbacks are two, stale target wakes are zero, and
+fresh-capacity admissions are two.
+
+The executable exits zero with empty stderr and exact 193-byte stdout
+`ordinary-primary=prompt-drop\nambient-primary=ambient-drop\nsecondary-payload-drop=panics\nsecondary-payloads=suppressed\nstale-target-wakes=0\ntarget-drops=2 secondary-callbacks=2\nfresh-capacity=2\n`.
+
+Focused exact-1.94.1 checks are green for direct questions 46, engine one,
+reference host nine, host lifecycle one, native manifest eight, and native all-
+target/all-feature warnings-denied Clippy. All four required exact-1.94.1
+workspace formatting, all-target/all-feature Clippy, test, and doctest commands
+pass. Extended evidence passes Python 138/130/eight skips, byte-stable pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef`, `cargo-deny` 0.19.9 with only
+the established `core-foundation`, `cpufeatures`, and `syn` duplicates,
+`cargo-audit` 0.22.2 at 1,226 advisories/211 dependencies/zero vulnerabilities,
+native/WASI/FreeBSD portability, documentation 91/318/701/534/0 with ten current
+status files and zero stale, and clean scope/protected/no-added-unsafe checks.
+
+The fresh locked arm64 Mach-O CLI release is 4,481,664 bytes with SHA-256
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
+Missing-root help, doctor JSON, and sessions JSON smokes are exactly 672, 418,
+and 62 bytes with empty stderr and create no roots. The manifest delta remains
+release panic `abort` to `unwind`, plus the existing dev-only fixture and one
+native lock dependency-list line; no dependency is added. Fresh formal review,
+remote workflows, integration, and delivery remain pending. This checkpoint
+makes no benchmark, product-performance, compatibility-promotion, or fx-
+equivalence claim.
 
 ## Product boundary
 

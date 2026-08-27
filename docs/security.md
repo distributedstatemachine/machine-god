@@ -2076,7 +2076,7 @@ action.
 
 ## Slice 35 cycle-13 interaction and authority remediation
 
-Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2394,9 +2394,19 @@ lifecycle/platform `0/0/1/2`, performance/resources `0/0/1/0`, and a
 deduplicated `0/0/1/2` union. Its shared medium is a release probe limited to a
 prompt-poll panic under `NoopWake`; prompt-drop/target-drop cleanup precedence,
 a secondary payload retaining the supplied Waker, stale suppression, and
-detached-capacity recovery remain unproved in release. Cycle 13 adds ordinary
-and ambient release evidence for those paths and corrects the documentation
-lows, without a production change unless evidence reveals one. Workflows,
-integration, and delivery remain pending. This is not benchmark, product-
-performance, compatibility-promotion, or fx-equivalence evidence. The analogous
-terminal path remains out of scope and is not claimed fixed.
+detached-capacity recovery remain unproved in release. Cycle-12 rejection docs
+`70c929f15d345431b4673f799a29b2b45eee2c5d`/`f74ebaf` and cycle-13 evidence
+`c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as
+`c252620f55eb75edbb1f771950200168671ef0f3`/`a921449`, replace that evidence
+and rename one stale test without production source, API, authority, or
+dependency changes. The release executable preserves ordinary prompt-drop and
+ambient primaries against a target-drop secondary payload owning the supplied
+Waker, proves the payload destructor panics in control, suppresses/forgets it in
+product, and records two target drops, two secondary callbacks, zero stale
+wakes, and two fresh admissions. Exact stdout is 193 bytes with empty stderr.
+The complete exact local gate and fresh CLI SHA-256
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4` are
+green. Formal review, workflows, integration, and delivery remain pending. This
+is not benchmark, product-performance, compatibility-promotion, or fx-
+equivalence evidence. The analogous terminal path remains out of scope and is
+not claimed fixed.

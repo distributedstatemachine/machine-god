@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 12
-REJECTED — CYCLE 13 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 13 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -551,14 +551,41 @@ says every activity clone retains the permit even though closed clones are now
 inert. The other is current global release-abort prose in the HTTP and security
 documents despite the root release profile now using `unwind`.
 
-Cycle 13 is bounded to documentation correction plus a real release executable
-that induces prompt-drop-primary and target-drop-secondary cleanup panics, with
-the secondary payload retaining the supplied Waker. Independent ordinary and
-ambient cases must prove primary precedence, stale delivery suppression, and
-fresh admission while closed clones remain retained. No production source
-change is planned unless this evidence exposes a behavior defect. A complete
-replacement gate and three fresh exact-SHA reviews remain required before
-workflows, integration, or delivery. No benchmark, product-performance,
+Formal cycle-12 rejection documentation
+`70c929f15d345431b4673f799a29b2b45eee2c5d`, tree
+`f74ebaf7fe4081e7068b9d7084a244f9744a04e1`, and independent cycle-13
+evidence `c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as exact
+behavior head `c252620f55eb75edbb1f771950200168671ef0f3`, tree
+`a921449778a5fa71d13a756670a1b41ea16fdc69`, complete the bounded remediation.
+Cycle 13 replaces the release evidence and renames one stale test; it changes no
+production source, API, dependency, authority, limit, or runtime behavior.
+
+The locked, offline, exact-1.94.1 release executable enters the real cleanup
+path for ordinary prompt-`Drop` primary and ambient primary cases. Each final-
+target `Drop` produces a secondary panic payload owning the supplied Waker. A
+separate destructor control panics, while product settlement suppresses and
+forgets the secondary, preserves the selected primary, closes stale delivery,
+and admits a fresh prompt while closed clones remain retained. The aggregate
+target-drop/secondary-callback/stale-wake/fresh-capacity counts are exactly
+`2/2/0/2`. The executable exits zero with empty stderr and exact 193-byte stdout
+`ordinary-primary=prompt-drop\nambient-primary=ambient-drop\nsecondary-payload-drop=panics\nsecondary-payloads=suppressed\nstale-target-wakes=0\ntarget-drops=2 secondary-callbacks=2\nfresh-capacity=2\n`.
+
+The focused exact-1.94.1 gate passes direct questions 46, engine one, reference
+host nine, host lifecycle one, native manifest eight, and native all-target/all-
+feature warnings-denied Clippy. All four required exact-1.94.1 workspace gates
+pass. Extended evidence passes Python 138/130/eight skips; byte-stable pinned fx
+`b1774fbf6c7602b503026f96f6e960e946c692ef`; `cargo-deny` 0.19.9 with only
+the three established duplicates; `cargo-audit` 0.22.2 at 1,226/211/zero;
+native/WASI/FreeBSD portability; documentation 91/318/701/534/0 and ten current
+status files/zero stale; and clean scope/protected/no-added-unsafe checks.
+
+The fresh locked arm64 Mach-O CLI release is 4,481,664 bytes with SHA-256
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
+Missing-root help, doctor JSON, and sessions JSON smokes are exactly 672/418/62
+bytes and create no roots. The manifest delta remains release panic `abort` to
+`unwind`, the existing dev-only fixture, and one native lock dependency-list
+line; no dependency is added. Three fresh exact-SHA reviews, workflows,
+integration, and delivery remain pending. No benchmark, product-performance,
 compatibility-promotion, or fx-equivalence result is claimed.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
@@ -4623,9 +4650,9 @@ complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 complete local gate compose at `696dccf`/`f8734a8`: release unwind and the
 product probe are established, and closed Waker identity retains no capacity.
 Formal cycle 12 rejected exact `3dec7a2`/`c34d20a` with a deduplicated
-`0/0/1/2` union. Cycle-13 release cleanup-panic evidence and documentation
-remediation are in progress; workflows, integration, and delivery remain
-pending. `vision` plus `read_tool_result` remain unimplemented, so this combined
+`0/0/1/2` union. Cycle-13 rejection docs/evidence and the complete local gate
+compose at exact `c252620`/`a921449`; formal review, workflows, integration, and
+delivery remain pending. `vision` plus `read_tool_result` remain unimplemented, so this combined
 item remains unchecked. Slice 33
 `web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark

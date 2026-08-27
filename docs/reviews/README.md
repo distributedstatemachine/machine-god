@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 12 REJECTED — CYCLE 13
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -166,11 +166,19 @@ release/smokes pass. Formal cycle 12 rejected exact
 deduplicated union `0/0/1/2`. The shared medium is that the release probe covers
 only a prompt-poll panic under `NoopWake`, not cleanup-panic precedence, a
 target-drop secondary payload retaining the supplied Waker, stale-lane
-suppression, or detached-capacity recovery. Cycle 13 adds ordinary and ambient
-release evidence for those paths and corrects the clone-capacity and global
-release-profile documentation lows, with no production change unless evidence
-reveals one. Workflows, integration, and delivery remain pending; no performance
-or fx-equivalence claim is made.
+suppression, or detached-capacity recovery. Cycle-12 rejection docs
+`70c929f15d345431b4673f799a29b2b45eee2c5d`/`f74ebaf` and cycle-13 evidence
+`c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as
+`c252620f55eb75edbb1f771950200168671ef0f3`/`a921449`, replace the release
+evidence and rename one stale test without production source, API, or dependency
+changes. The release probe proves ordinary prompt-drop and ambient primaries,
+the supplied-Waker-owning target-drop secondary, destructor panic control,
+product suppression/forget, and exact `2/2/0/2` drops/callbacks/stale-wakes/
+fresh-capacity totals. Exact stdout is 193 bytes with empty stderr. Focused
+46/1/9/1/8 plus native Clippy, all exact/extended gates, and fresh CLI SHA-256
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4` are
+green. Formal review, workflows, integration, and delivery remain pending; no
+performance or fx-equivalence claim is made.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

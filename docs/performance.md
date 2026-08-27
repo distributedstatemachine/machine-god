@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-13 question resource remediation
 
-Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -1026,9 +1026,18 @@ the deduplicated union is `0/0/1/2`. The shared resource/evidence medium is that
 the release probe uses only a prompt-poll panic and `NoopWake`; it does not
 exercise a target-drop secondary payload retaining the supplied Waker, stale-
 lane suppression, or capacity recovery while closed clones stay retained.
-Cycle 13 adds ordinary and ambient release cleanup evidence for those paths and
-corrects the two documentation lows. No production change is planned unless
-the evidence reveals one. Workflows, integration, and delivery remain pending.
-This is no benchmark, product-performance, compatibility-promotion, or fx-
-equivalence result. See
+Cycle-12 rejection docs `70c929f15d345431b4673f799a29b2b45eee2c5d`/
+`f74ebaf` and cycle-13 evidence `c9f9535892441cc6b0f4a99f115365f10a7c8426`,
+integrated as `c252620f55eb75edbb1f771950200168671ef0f3`/`a921449`, replace
+the release evidence and rename one stale test without changing production
+source, API, dependencies, or resource limits. The optimized two-case probe
+preserves ordinary prompt-drop and ambient primaries, creates a target-drop
+secondary payload owning the supplied Waker, proves its destructor panics in a
+control, suppresses/forgets it in product, and records two target drops, two
+secondary callbacks, zero stale wakes, and two fresh admissions. Exact stdout
+is 193 bytes and stderr is empty. The complete exact local gate is green,
+including a fresh 4,481,664-byte CLI release with SHA-256
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
+Workflows, integration, and delivery remain pending. This is no benchmark,
+product-performance, compatibility-promotion, or fx-equivalence result. See
 [`ask-user-question.md`](ask-user-question.md).

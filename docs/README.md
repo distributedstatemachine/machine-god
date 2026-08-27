@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 12
-REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**. Formal cycle
+status is **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -178,10 +178,19 @@ Formal cycle 12 rejected exact candidate
 the shared-medium/two-low deduplicated union is `0/0/1/2`. The release probe
 uses a prompt-poll panic plus `NoopWake`; it does not cover cleanup-primary
 precedence, a target-drop secondary payload retaining the supplied Waker,
-stale-lane suppression, or detached-capacity recovery. Cycle 13 adds that real
-release-profile ordinary/ambient evidence and corrects stale clone-capacity and
-global release-profile prose, with no production change unless evidence reveals
-one. Workflows, integration, and delivery remain pending.
+stale-lane suppression, or detached-capacity recovery. Cycle-12 rejection docs
+`70c929f15d345431b4673f799a29b2b45eee2c5d`/`f74ebaf` and cycle-13 evidence
+`c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as
+`c252620f55eb75edbb1f771950200168671ef0f3`/`a921449`, replace the release
+evidence and rename one stale test without production source, API, dependency,
+or manifest changes. The release probe proves ordinary prompt-drop and ambient
+primaries, a supplied-Waker-owning target-drop secondary, destructor-control
+panic, product suppression/forget, two target drops, two secondary callbacks,
+zero stale wakes, and two fresh admissions. Exact stdout is 193 bytes and stderr
+is empty. Focused 46/1/9/1/8 plus native Clippy, all four exact gates, the
+extended matrix, and a 4,481,664-byte CLI release with SHA-256
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4` are
+green. Formal review, workflows, integration, and delivery remain pending.
 The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the

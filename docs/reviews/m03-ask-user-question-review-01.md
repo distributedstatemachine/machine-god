@@ -1,9 +1,9 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**. Cycle-12
-source, independent evidence, and the complete local gate compose at the exact
-behavior head below. Three fresh formal reviews rejected the later exact
-candidate below; cycle-13 evidence and documentation remediation is in progress.
+Status: **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Cycle-13
+independent evidence and the complete local gate compose at the exact behavior
+head below. Fresh formal reviews, workflows, integration, and delivery remain
+pending.
 
 ## Frozen lineage
 
@@ -184,6 +184,13 @@ candidate below; cycle-13 evidence and documentation remediation is in progress.
 - Formal cycle-12 candidate, **REJECTED**:
   `3dec7a2f073fa85479af19765b03b06cdfd9da8c`, tree
   `c34d20a45f70b82652bf78df9653f39399d7fc6d`
+- Formal cycle-12 rejection-documentation component:
+  `70c929f15d345431b4673f799a29b2b45eee2c5d`, tree
+  `f74ebaf7fe4081e7068b9d7084a244f9744a04e1`
+- Cycle-13 independent evidence and exact behavior head:
+  `c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as
+  `c252620f55eb75edbb1f771950200168671ef0f3`, tree
+  `a921449778a5fa71d13a756670a1b41ea16fdc69`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -224,9 +231,10 @@ formal reviews rejected exact candidate `b1d454b`/`26d90d8` with a
 deduplicated `0/0/2/1` union. Cycle-12 rejection docs, source, and independent
 evidence now compose at exact behavior head `696dccf`/`f8734a8`; its complete
 exact-1.94.1 local gate is green. Three fresh formal reviews rejected later
-candidate `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-13
-evidence and documentation remediation is in progress; workflows, integration,
-and delivery remain pending.
+candidate `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-12
+rejection docs and cycle-13 evidence now compose at exact behavior head
+`c252620`/`a921449`; its complete exact-1.94.1 local gate is green. Fresh formal
+reviews, workflows, integration, and delivery remain pending.
 
 ## Frozen first-slice decisions
 
@@ -1560,6 +1568,65 @@ replacement gate, review, workflow, integration, or delivery result exists.
 The bounded cycle-13 target is evidence and documentation only; production
 source changes are permitted only if the new evidence exposes a behavior
 defect.
+
+## Cycle-13 evidence and local implementation gate
+
+Formal rejection documentation `70c929f15d345431b4673f799a29b2b45eee2c5d`,
+tree `f74ebaf7fe4081e7068b9d7084a244f9744a04e1`, and independent evidence
+`c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as exact behavior
+head `c252620f55eb75edbb1f771950200168671ef0f3`, tree
+`a921449778a5fa71d13a756670a1b41ea16fdc69`, complete the bounded cycle-13
+remediation. The evidence replaces the insufficient release probe and renames
+one stale test. It changes no production source, public API, dependency,
+authority, resource limit, or runtime behavior.
+
+The locked, offline, exact-1.94.1 optimized executable enters the public
+`AskUserQuestionTool` cleanup path in two scenarios. Ordinary execution drop
+preserves `PrimaryPromptDropPanic`; ambient unwind preserves
+`AmbientExecutionDropPanic`. In both, destruction of the final downstream
+target invokes one target-`Drop` callback that produces a secondary panic
+payload owning the retained supplied Waker. The standalone destructor control
+proves that `SecondaryTargetWithPromptWakerPanic` itself panics. Product
+settlement suppresses and intentionally forgets that payload before resuming
+the selected primary. Retained closed Wakers deliver no stale callback and do
+not prevent a second prompt from acquiring capacity.
+
+The two scenarios produce exactly two target drops, two secondary callbacks,
+zero stale target wakes, and two fresh prompt admissions. The executable exits
+zero with empty stderr and exact 193-byte stdout
+`ordinary-primary=prompt-drop\nambient-primary=ambient-drop\nsecondary-payload-drop=panics\nsecondary-payloads=suppressed\nstale-target-wakes=0\ntarget-drops=2 secondary-callbacks=2\nfresh-capacity=2\n`.
+
+The focused exact-1.94.1 gate is green for all 46 direct question tests, one
+question-engine test, nine all-feature reference-host tests, one reference-host
+lifecycle test, all eight native-manifest tests, and native all-target/all-
+feature warnings-denied Clippy. All four required exact-1.94.1 workspace
+formatting, all-target/all-feature Clippy, test, and doctest commands pass.
+
+The extended gate is green:
+
+- Python runs 138 tests: 130 pass and eight expected platform skips;
+- pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` regeneration is byte-stable;
+- `cargo-deny` 0.19.9 exits zero with only the established `core-foundation`,
+  `cpufeatures`, and `syn` duplicate warnings;
+- `cargo-audit` 0.22.2 loads 1,226 advisories, scans 211 dependencies, and
+  reports zero vulnerabilities;
+- native no-default, all-feature WASI, and warnings-denied no-default FreeBSD
+  checks pass with only the established unrelated WASI `read_file` warning;
+- documentation integrity is 91 Markdown files, 318 fence markers, 701 parsed
+  links, 534 local links, and zero missing targets; all ten maintained status
+  files are current with zero stale;
+- scope, protected-input, exact-diff, and no-added-unsafe checks are clean; and
+- the fresh locked arm64 Mach-O CLI release is 4,481,664 bytes with SHA-256
+  `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
+  Missing-root help, doctor JSON, and sessions JSON smokes are exactly 672, 418,
+  and 62 bytes with empty stderr and create no roots.
+
+The manifest delta remains root release panic `abort` to `unwind`, the existing
+dev-only native fixture, and one native dependency-list line in `Cargo.lock`;
+no dependency is added. This is regression/release-smoke evidence, not a formal-
+review, workflow, integration, delivery, benchmark, product-performance,
+compatibility-promotion, or fx-equivalence result. Fresh exact-SHA formal
+reviews and both feature and `main` workflows remain pending.
 
 ## Deferred and nonclaim record
 

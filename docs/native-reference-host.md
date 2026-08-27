@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**;
+`ask_user_question` is **CYCLE 13 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -145,10 +145,20 @@ exact `3dec7a2f073fa85479af19765b03b06cdfd9da8c`/`c34d20a` with correctness/API
 deduplicated union `0/0/1/2`. The shared medium is a release probe limited to a
 prompt-poll panic and `NoopWake`; it does not cover cleanup-panic precedence,
 the supplied-Waker secondary payload, stale-lane suppression, or detached-
-capacity recovery. Cycle 13 adds ordinary and ambient release evidence for
-those paths and corrects the documentation lows, without a production change
-unless evidence reveals one. Workflows, integration, and delivery remain
-pending; no dependency is added.
+capacity recovery. Cycle-12 rejection docs
+`70c929f15d345431b4673f799a29b2b45eee2c5d`/`f74ebaf` and cycle-13 evidence
+`c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated as
+`c252620f55eb75edbb1f771950200168671ef0f3`/`a921449`, replace the release
+probe and rename one stale test without changing production source, API,
+dependencies, or the sixteen-tool composition. The release executable proves
+ordinary prompt-drop and ambient primaries against a target-drop secondary
+payload owning the supplied Waker, its panicking destructor control, product
+suppression/forget, and aggregate `2/2/0/2` target drops/secondary callbacks/
+stale wakes/fresh admissions. Exact stdout is 193 bytes and stderr is empty.
+Focused 46/1/9/1/8 plus native Clippy, all exact and extended gates, and fresh
+CLI SHA-256 `a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`
+are green. Formal review, workflows, integration, and delivery remain pending;
+no dependency is added.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -884,8 +894,9 @@ distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
 complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 `b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source/evidence and the
 complete local gate compose at `696dccf`/`f8734a8`; formal cycle 12 rejected
-`3dec7a2`/`c34d20a` with a `0/0/1/2` union, and cycle-13 evidence remediation
-is in progress. Workflows, integration, and delivery remain pending.
+`3dec7a2`/`c34d20a` with a `0/0/1/2` union. Cycle-13 evidence and the complete
+local gate compose at `c252620`/`a921449`; formal review, workflows, integration,
+and delivery remain pending.
 The analogous preexisting terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
@@ -1450,7 +1461,8 @@ distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
 complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 `b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source/evidence and the
 complete local gate compose at `696dccf`/`f8734a8`; formal cycle 12 rejected
-`3dec7a2`/`c34d20a` with a `0/0/1/2` union, and cycle-13 evidence remediation
-is in progress. Workflows, integration, and delivery remain pending. Analogous
+`3dec7a2`/`c34d20a` with a `0/0/1/2` union. Cycle-13 evidence and the complete
+local gate compose at `c252620`/`a921449`; formal review, workflows, integration,
+and delivery remain pending. Analogous
 preexisting terminal code
 is out of scope and is not claimed fixed.

@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 12
-REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 13 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -168,11 +168,20 @@ release/smokes are green. Formal cycle 12 rejected exact candidate
 `0/0/1/2`, and `0/0/1/0`, deduplicated to `0/0/1/2`. Its release probe covers
 only a prompt-poll panic under `NoopWake`, not prompt-drop/target-drop cleanup
 precedence, a secondary payload retaining the supplied Waker, stale-lane
-suppression, or detached-capacity recovery. Cycle 13 adds ordinary and ambient
-release evidence for those paths and corrects the two documentation lows; no
-production change is planned unless the evidence reveals one. Workflows,
-integration, and delivery remain pending; no performance or equivalence result
-is claimed.
+suppression, or detached-capacity recovery. Cycle-12 rejection docs
+`70c929f15d345431b4673f799a29b2b45eee2c5d`/`f74ebaf` and cycle-13 evidence
+`c9f9535892441cc6b0f4a99f115365f10a7c8426`, integrated at exact head
+`c252620f55eb75edbb1f771950200168671ef0f3`, tree `a921449`, add the real
+release cleanup evidence and rename one stale test. Production source, API,
+dependencies, and runtime architecture are unchanged. The two-case release
+probe preserves ordinary prompt-drop and ambient primaries against a target-
+drop secondary payload that owns the supplied Waker, proves its destructor
+panics in control, suppresses/forgets it in product, and records drops/callbacks/
+stale-wakes/fresh-capacity `2/2/0/2` in exact 193-byte stdout with empty stderr.
+The complete exact local gate is green, including fresh CLI SHA-256
+`a568e58e07b02a3b9739f1210794ad698faa8c6aec9933247150e19fa67799b4`.
+Formal review, workflows, integration, and delivery remain pending; no
+performance or equivalence result is claimed.
 See
 [`ask-user-question.md`](ask-user-question.md).
 
@@ -2425,9 +2434,9 @@ distinct mediums and a `0/0/2/0` union. Cycle-11 source/evidence and the
 complete local gate compose at `b8b721a`/`4672150`. Formal cycle 11 rejected
 `b1d454b`/`26d90d8` with a deduplicated `0/0/2/1` union. Cycle-12 source,
 evidence, and complete local gate compose at `696dccf`/`f8734a8`; formal cycle
-12 rejected `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union, and cycle
-13 evidence remediation is in progress. Workflows, integration, and delivery
-remain pending.
+12 rejected `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-13
+evidence and the complete local gate compose at `c252620`/`a921449`; formal
+review, workflows, integration, and delivery remain pending.
 Analogous preexisting terminal code is out of scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
@@ -2472,7 +2481,7 @@ distinct mediums and a `0/0/2/0` union. Cycle-11 source, evidence, and the
 complete local gate are established at `b8b721a`/`4672150`. Formal cycle 11
 rejected `b1d454b`/`26d90d8` with a `0/0/2/1` union. Cycle-12 source, evidence,
 and complete local gate are established at `696dccf`/`f8734a8`; formal cycle 12
-rejected `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union, and cycle-13
-evidence remediation is in progress. Workflows, integration, and delivery
-remain pending. The analogous preexisting
+rejected `3dec7a2`/`c34d20a` with a deduplicated `0/0/1/2` union. Cycle-13
+evidence and the complete local gate compose at `c252620`/`a921449`; formal
+review, workflows, integration, and delivery remain pending. The analogous preexisting
 terminal path remains outside this bounded slice.
