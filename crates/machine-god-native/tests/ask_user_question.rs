@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind, panic_any};
 use std::pin::Pin;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Condvar, Mutex, Weak, mpsc};
 use std::task::{Context, Poll, Wake, Waker};
@@ -244,6 +245,79 @@ impl Future for PanicOnPoll {
     }
 }
 
+#[derive(Clone)]
+struct PrimaryPanicOncePrompter {
+    calls: Arc<AtomicUsize>,
+    pending_probe: Arc<PendingProbe>,
+}
+
+impl QuestionPrompter for PrimaryPanicOncePrompter {
+    fn prompt(&self, _request: QuestionPromptRequest) -> BoxFuture<'_, PromptResult> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 {
+            return Box::pin(PrimaryPromptPanicFuture);
+        }
+        self.pending_probe.live.fetch_add(1, Ordering::SeqCst);
+        Box::pin(PendingPrompt {
+            probe: Arc::clone(&self.pending_probe),
+        })
+    }
+}
+
+struct PrimaryPromptPanicFuture;
+
+impl Future for PrimaryPromptPanicFuture {
+    type Output = PromptResult;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        panic_any(PrimaryPromptPanic);
+    }
+}
+
+#[derive(Clone)]
+struct PromptDropPanicOncePrompter {
+    calls: Arc<AtomicUsize>,
+    pending_probe: Arc<PendingProbe>,
+}
+
+impl QuestionPrompter for PromptDropPanicOncePrompter {
+    fn prompt(&self, _request: QuestionPromptRequest) -> BoxFuture<'_, PromptResult> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 {
+            return Box::pin(PromptDropPanicFuture);
+        }
+        self.pending_probe.live.fetch_add(1, Ordering::SeqCst);
+        Box::pin(PendingPrompt {
+            probe: Arc::clone(&self.pending_probe),
+        })
+    }
+}
+
+struct PromptDropPanicFuture;
+
+impl Future for PromptDropPanicFuture {
+    type Output = PromptResult;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Pending
+    }
+}
+
+impl Drop for PromptDropPanicFuture {
+    fn drop(&mut self) {
+        panic_any(PrimaryPromptDropPanic);
+    }
+}
+
+struct ExecutionDropGuard<'a>(Option<BoxFuture<'a, Result<ToolOutput, ToolError>>>);
+
+impl Drop for ExecutionDropGuard<'_> {
+    fn drop(&mut self) {
+        let execution = self.0.take();
+        drop(execution);
+    }
+}
+
 #[derive(Default)]
 struct ReentrantState {
     calls: AtomicUsize,
@@ -447,6 +521,113 @@ impl Drop for PromptWakerFanoutFuture {
             std::mem::take(&mut inner.wakers)
         };
         drop(retained);
+    }
+}
+
+#[derive(Default)]
+struct SelfWakingPromptState {
+    calls: AtomicUsize,
+    polls: AtomicUsize,
+    retained: Mutex<Option<Waker>>,
+}
+
+#[derive(Clone, Default)]
+struct SelfWakingPrompter {
+    state: Arc<SelfWakingPromptState>,
+}
+
+impl SelfWakingPrompter {
+    fn calls(&self) -> usize {
+        self.state.calls.load(Ordering::SeqCst)
+    }
+
+    fn polls(&self) -> usize {
+        self.state.polls.load(Ordering::SeqCst)
+    }
+
+    fn retained_waker(&self) -> Waker {
+        self.state
+            .retained
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("self-waking prompt retained its supplied Waker")
+            .clone()
+    }
+}
+
+impl QuestionPrompter for SelfWakingPrompter {
+    fn prompt(&self, _request: QuestionPromptRequest) -> BoxFuture<'_, PromptResult> {
+        self.state.calls.fetch_add(1, Ordering::SeqCst);
+        let previous = self.state.retained.lock().unwrap().take();
+        assert!(
+            previous.is_none(),
+            "a new self-waking prompt started before prior Waker teardown"
+        );
+        Box::pin(SelfWakingPromptFuture {
+            state: Arc::clone(&self.state),
+        })
+    }
+}
+
+struct SelfWakingPromptFuture {
+    state: Arc<SelfWakingPromptState>,
+}
+
+impl Future for SelfWakingPromptFuture {
+    type Output = PromptResult;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.state.polls.fetch_add(1, Ordering::SeqCst);
+        let mut retained = self.state.retained.lock().unwrap();
+        if retained.is_none() {
+            *retained = Some(context.waker().clone());
+        }
+        drop(retained);
+        context.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
+
+impl Drop for SelfWakingPromptFuture {
+    fn drop(&mut self) {
+        let retained = self.state.retained.lock().unwrap().take();
+        drop(retained);
+    }
+}
+
+struct QueueOnlyWake {
+    queued: mpsc::Sender<()>,
+    calls: AtomicUsize,
+    in_flight: AtomicUsize,
+    max_in_flight: AtomicUsize,
+}
+
+impl QueueOnlyWake {
+    fn callback(&self) {
+        let in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_in_flight.fetch_max(in_flight, Ordering::SeqCst);
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.queued.send(()).unwrap();
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn snapshot(&self) -> (usize, usize, usize) {
+        (
+            self.calls.load(Ordering::SeqCst),
+            self.in_flight.load(Ordering::SeqCst),
+            self.max_in_flight.load(Ordering::SeqCst),
+        )
+    }
+}
+
+impl Wake for QueueOnlyWake {
+    fn wake(self: Arc<Self>) {
+        self.callback();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.callback();
     }
 }
 
@@ -703,10 +884,21 @@ impl Drop for ReplayTargetARelease {
 struct PrimaryCallbackPanic;
 
 #[derive(Debug)]
+struct PrimaryPromptPanic;
+
+#[derive(Debug)]
+struct PrimaryPromptDropPanic;
+
+#[derive(Debug)]
+struct AmbientExecutionDropPanic;
+
+#[derive(Debug)]
 struct SecondaryTargetPanic;
 
 #[derive(Debug)]
 struct SecondaryPayloadDropPanic;
+
+const PROMPT_DROP_PRECEDENCE_CHILD: &str = "MACHINE_GOD_PROMPT_DROP_PRECEDENCE_CHILD";
 
 impl Drop for SecondaryTargetPanic {
     fn drop(&mut self) {
@@ -1227,6 +1419,186 @@ fn assert_retained_prompt_capacity_recovers_after_last_clone(
     assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(prompter.calls(), 2);
     drop(recovered);
+}
+
+fn assert_queue_only_lifetime_bound(cancel_before_terminal_poll: bool) {
+    let prompter = SelfWakingPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let cancellation = CancellationToken::new();
+    let mut execution = Box::pin(tool.execute(context(), prepared.clone(), cancellation.clone()));
+    let (queued_sender, queued_receiver) = mpsc::channel();
+    let queue = Arc::new(QueueOnlyWake {
+        queued: queued_sender,
+        calls: AtomicUsize::new(0),
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+    });
+    let outer_waker = Waker::from(Arc::clone(&queue));
+
+    assert!(
+        execution
+            .as_mut()
+            .poll(&mut Context::from_waker(&outer_waker))
+            .is_pending()
+    );
+    let retained = prompter.retained_waker();
+    assert_eq!(queue.snapshot(), (1, 0, 1));
+
+    for callback in 1..REENTRANT_DELIVERY_LIMIT {
+        assert_eq!(queued_receiver.try_recv(), Ok(()));
+        assert!(
+            matches!(queued_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "callback {callback} queued more than one outer poll"
+        );
+        assert!(
+            execution
+                .as_mut()
+                .poll(&mut Context::from_waker(&outer_waker))
+                .is_pending(),
+            "queued poll {callback} terminated before the lifetime limit"
+        );
+        assert_eq!(queue.snapshot(), (callback + 1, 0, 1));
+    }
+
+    assert_eq!(queued_receiver.try_recv(), Ok(()));
+    assert!(matches!(
+        queued_receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    if cancel_before_terminal_poll {
+        assert!(cancellation.cancel());
+    }
+    let terminal = execution
+        .as_mut()
+        .poll(&mut Context::from_waker(&outer_waker));
+    let error = match terminal {
+        Poll::Ready(Err(error)) => error,
+        other => panic!("terminal queued poll did not resolve with a fixed error: {other:?}"),
+    };
+    if cancel_before_terminal_poll {
+        assert_error(
+            &error,
+            ToolErrorKind::Cancelled,
+            "ask_user_question_cancelled",
+            "ask_user_question was cancelled",
+            false,
+        );
+    } else {
+        assert_error(
+            &error,
+            ToolErrorKind::Execution,
+            "ask_user_question_prompt_failed",
+            "ask_user_question prompt failed",
+            false,
+        );
+    }
+
+    assert_eq!(prompter.polls(), REENTRANT_DELIVERY_LIMIT);
+    assert_eq!(queue.snapshot(), (REENTRANT_DELIVERY_LIMIT, 0, 1));
+    assert!(matches!(
+        queued_receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    retained.wake_by_ref();
+    assert_eq!(queue.snapshot(), (REENTRANT_DELIVERY_LIMIT, 0, 1));
+    drop(execution);
+    retained.wake_by_ref();
+    assert_eq!(queue.snapshot(), (REENTRANT_DELIVERY_LIMIT, 0, 1));
+
+    let busy = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
+        .unwrap_err();
+    assert_error(
+        &busy,
+        ToolErrorKind::Unavailable,
+        "ask_user_question_busy",
+        "ask_user_question prompt capacity is exhausted",
+        true,
+    );
+    assert_eq!(prompter.calls(), 1);
+    drop(retained);
+
+    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(prompter.calls(), 2);
+    drop(recovered);
+}
+
+fn assert_panic_marker<T: 'static, R>(
+    result: Result<R, Box<dyn std::any::Any + Send>>,
+    message: &str,
+) {
+    let Err(payload) = result else {
+        panic!("operation unexpectedly returned without panicking");
+    };
+    if !payload.is::<T>() {
+        std::mem::forget(payload);
+        panic!("{message}");
+    }
+    drop(payload);
+}
+
+fn panicking_drop_waker(entries: Arc<AtomicUsize>) -> Waker {
+    let (waker, _handle) = reentrant_waker(Callback::Drop, move || {
+        entries.fetch_add(1, Ordering::SeqCst);
+        panic_any(SecondaryTargetPanic);
+    });
+    waker
+}
+
+fn forget_panicking_target_drop(waker: Waker) {
+    let result = catch_unwind(AssertUnwindSafe(|| drop(waker)));
+    let payload = result.expect_err("panicking target Waker unexpectedly dropped cleanly");
+    if !payload.is::<SecondaryTargetPanic>() {
+        std::mem::forget(payload);
+        panic!("target Waker drop produced the wrong panic marker");
+    }
+    std::mem::forget(payload);
+}
+
+fn assert_prompt_drop_cleanup_precedence(ambient_unwind: bool) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pending_probe = Arc::new(PendingProbe::default());
+    let tool = AskUserQuestionTool::new(PromptDropPanicOncePrompter {
+        calls: Arc::clone(&calls),
+        pending_probe: Arc::clone(&pending_probe),
+    });
+    let prepared = prepare(&tool, basic_arguments());
+    let mut execution = tool.execute(context(), prepared.clone(), CancellationToken::new());
+    let secondary_entries = Arc::new(AtomicUsize::new(0));
+    let waker = panicking_drop_waker(Arc::clone(&secondary_entries));
+    assert!(
+        execution
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+
+    if ambient_unwind {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _drop_during_unwind = ExecutionDropGuard(Some(execution));
+            panic_any(AmbientExecutionDropPanic);
+        }));
+        assert_panic_marker::<AmbientExecutionDropPanic, _>(
+            result,
+            "cleanup panic replaced the ambient execution-drop panic",
+        );
+    } else {
+        let result = catch_unwind(AssertUnwindSafe(|| drop(execution)));
+        assert_panic_marker::<PrimaryPromptDropPanic, _>(
+            result,
+            "cleanup panic replaced the primary prompt-drop panic",
+        );
+    }
+
+    forget_panicking_target_drop(waker);
+    assert_eq!(secondary_entries.load(Ordering::SeqCst), 2);
+    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(pending_probe.live.load(Ordering::SeqCst), 1);
+    drop(recovered);
+    assert_eq!(pending_probe.live.load(Ordering::SeqCst), 0);
 }
 
 fn assert_invalid(tool: &AskUserQuestionTool, arguments: Value) {
@@ -2843,6 +3215,77 @@ fn cancellation_in_the_residual_wake_window_progresses_and_closes_delivery() {
         Some(ReentrantPollCompletion::Cancelled)
     );
     assert_eq!(closed, progressed);
+}
+
+#[test]
+fn queue_only_wakes_share_one_prompt_lifetime_delivery_bound() {
+    assert_queue_only_lifetime_bound(false);
+}
+
+#[test]
+fn cancellation_wins_after_the_terminal_queue_only_wake_is_enqueued() {
+    assert_queue_only_lifetime_bound(true);
+}
+
+#[test]
+fn prompt_poll_panic_precedes_panicking_target_cleanup_payload() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pending_probe = Arc::new(PendingProbe::default());
+    let tool = AskUserQuestionTool::new(PrimaryPanicOncePrompter {
+        calls: Arc::clone(&calls),
+        pending_probe: Arc::clone(&pending_probe),
+    });
+    let prepared = prepare(&tool, basic_arguments());
+    let mut execution = tool.execute(context(), prepared.clone(), CancellationToken::new());
+    let secondary_entries = Arc::new(AtomicUsize::new(0));
+    let waker = panicking_drop_waker(Arc::clone(&secondary_entries));
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        execution.as_mut().poll(&mut Context::from_waker(&waker))
+    }));
+    forget_panicking_target_drop(waker);
+    drop(execution);
+    assert_panic_marker::<PrimaryPromptPanic, _>(
+        result,
+        "cleanup payload destruction replaced the primary prompt-poll panic",
+    );
+
+    assert_eq!(secondary_entries.load(Ordering::SeqCst), 2);
+    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(pending_probe.live.load(Ordering::SeqCst), 1);
+    drop(recovered);
+    assert_eq!(pending_probe.live.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn prompt_drop_cleanup_precedence_survives_panicking_secondary_payloads() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "prompt_drop_cleanup_precedence_subprocess_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(PROMPT_DROP_PRECEDENCE_CHILD, "1")
+        .env("RUST_BACKTRACE", "0")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "isolated prompt-drop precedence process failed with {}",
+        output.status
+    );
+}
+
+#[test]
+fn prompt_drop_cleanup_precedence_subprocess_child() {
+    if std::env::var(PROMPT_DROP_PRECEDENCE_CHILD).as_deref() != Ok("1") {
+        return;
+    }
+    assert_prompt_drop_cleanup_precedence(false);
+    assert_prompt_drop_cleanup_precedence(true);
 }
 
 #[test]
