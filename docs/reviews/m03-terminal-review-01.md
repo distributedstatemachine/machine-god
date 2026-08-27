@@ -403,6 +403,70 @@ composition, name a replacement candidate or tree, claim a green gate or
 review, or advance remote delivery. Cycle 4 still requires a complete
 replacement gate and three fresh exact-SHA reviews.
 
+## Cycle 4 composition and replacement gate
+
+Cycle-4 remediation completed in three non-overlapping isolated worktrees.
+Maintained-documentation component
+`0aba476fcfc03fd428a3053e30ebb2c40aef005d`, tree
+`a0713151f29447f9de9f3f55d1c056ead3274a22`, integrated as `35c094f`.
+Independent-evidence component
+`99ed96ec07b2dab202b1c314cdb7afa73330ca93`, tree
+`7c90d23fabee4d9d2ed681feb700e05f9e8e41e6`, integrated as `b1dc1e6`.
+Production/private-evidence component
+`b204217f803de0f937602b190cd905f4995f2054`, tree
+`b4b9785785731ffd8242ae899cb384c1034b1f67`, integrated as exact behavior
+head `4fda23571ed98269469ada74c1c90d074b5beae7`, tree
+`6907c2742b0c0ee6c9a240cb4cbac9dab34fbc79`. Every worktree was clean before
+integration; all three worktrees and temporary branches were then removed and
+pruned.
+
+The composed behavior uses one `Arc`-owned execution activity for one admitted
+active slot. The outer execution, owned request/executor, transparent Waker
+wrappers supplied to injected executors, and native worker/deadline threads all
+share that activity. Retained Waker families, in-flight callbacks, requests,
+and no-Waker native thread tails therefore keep the same single count occupied
+until their last owner returns or is dropped; publishers never increment a
+second callback count. A shared atomic cause provides a single output-limit or
+timeout close. Cancellation remains first. Output limit claimed before timeout
+closes keeps the guardian pending until the executor publishes its validated
+bounded outcome; timeout that closes first remains authoritative over later
+overflow. A terminal executor error after an output claim becomes a fixed
+invariant failure rather than a fabricated contradictory result.
+
+The exact behavior head passes its complete replacement gate under exact Rust
+and Cargo 1.94.1 without fallback:
+
+- all four required commands pass, including warnings-denied workspace
+  all-target/all-feature Clippy, 1,163 listed non-documentation Rust tests, and
+  two doctests;
+- focused exact tests pass 27 external terminal, 12 private terminal, two
+  engine, and one unsupported-platform cases. The two independent activity-
+  ownership regressions deterministically failed the rejected cycle-3 base and
+  now pass. Private evidence controls the exact post-second-poll/pre-timeout-
+  close output claim and the no-Waker thread lifetime;
+- all 136 Python tests pass with eight expected macOS skips, while regeneration
+  against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` remains
+  byte-stable;
+- exact `cargo-deny` 0.20.2 accepts advisories, bans, licenses, and sources with
+  the three established duplicate warnings; `cargo-audit` loads 1,226
+  advisories, scans 211 lockfile dependencies, and reports no vulnerability;
+- Linux native-library and terminal-test checks and warnings-denied Clippy pass;
+  FreeBSD warnings-denied Clippy passes; WASI no-default and all-feature checks
+  pass with only the established unrelated `read_file` dead-code warning;
+- documentation integrity covers 89 maintained Markdown files, 312 fence
+  markers, 678 parsed links, and 515 repository-relative targets with zero
+  missing targets;
+- the exact 29-file base diff is +6,712/-193, adds no unsafe Rust, and leaves
+  workflows, benchmarks, compatibility data, the root manifest, and
+  `Cargo.lock` unchanged; and
+- a fresh locked 3,985,216-byte arm64 Mach-O release binary has SHA-256
+  `b515ce0951f44a1e30171ee69c400cb9e750430e3a9d4959028ab49a16a55383` and
+  passes help plus isolated no-residue status smoke.
+
+This gate makes no formal cycle-4 review or remote-delivery claim. Three fresh
+product-review tracks must identify the immutable candidate and tree recorded
+after this gate result is committed.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in
