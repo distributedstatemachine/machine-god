@@ -926,11 +926,15 @@ async fn await_executor(
     activity: Arc<ExecutionActivity>,
 ) -> Result<TerminalExecutionOutcome, ToolError> {
     let mut cancelled = Box::pin(cancellation.cancelled());
+    let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+    let notifier_waker = Waker::from(Arc::clone(&notifier));
     poll_fn(|context| {
-        if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
+        notifier.bind(context.waker());
+        let mut shared_context = Context::from_waker(&notifier_waker);
+        if cancelled.as_mut().poll(&mut shared_context).is_ready() || cancellation.is_cancelled() {
             return Poll::Ready(Err(cancelled_error()));
         }
-        let execution = poll_executor_with_activity(&mut future, context, &activity);
+        let execution = Pin::new(&mut future).poll(&mut shared_context);
         if cancellation.is_cancelled() {
             return Poll::Ready(Err(cancelled_error()));
         }
@@ -950,15 +954,15 @@ async fn await_executor(
                 Poll::Ready(Ok(outcome))
             }
             Poll::Ready(Err(error)) => {
+                let error = map_executor_error(error);
+                if matches!(activity.cause(), ExecutionCause::OutputLimit) {
+                    return Poll::Ready(Err(error));
+                }
                 if Instant::now() < deadline {
-                    return Poll::Ready(Err(map_executor_error(error)));
+                    return Poll::Ready(Err(error));
                 }
                 if matches!(activity.close_timeout(), ExecutionCause::OutputLimit) {
-                    // A production executor must join an authoritative output
-                    // limit to its valid bounded outcome. Once an executor has
-                    // instead completed with an error, it cannot be polled
-                    // again and the tool must not fabricate that outcome.
-                    return Poll::Ready(Err(executor_invariant()));
+                    return Poll::Ready(Err(error));
                 }
                 let timeout = empty_outcome(
                     TerminalExecutionStatus::TimedOut,
@@ -971,14 +975,13 @@ async fn await_executor(
                 Poll::Ready(timeout)
             }
             Poll::Pending => {
-                if timer.poll_expired(context).is_pending() {
+                if timer.poll_expired(&shared_context).is_pending() {
                     return Poll::Pending;
                 }
                 if cancellation.is_cancelled() {
                     return Poll::Ready(Err(cancelled_error()));
                 }
-                let deadline_execution =
-                    poll_executor_with_activity(&mut future, context, &activity);
+                let deadline_execution = Pin::new(&mut future).poll(&mut shared_context);
                 if cancellation.is_cancelled() {
                     return Poll::Ready(Err(cancelled_error()));
                 }
@@ -993,9 +996,10 @@ async fn await_executor(
                 if matches!(activity.close_timeout(), ExecutionCause::OutputLimit) {
                     return match deadline_execution {
                         Poll::Pending => Poll::Pending,
-                        // Ready is terminal: this executor can no longer
-                        // publish the valid bounded output-limit outcome.
-                        Poll::Ready(Err(_) | Ok(_)) => Poll::Ready(Err(executor_invariant())),
+                        Poll::Ready(Err(error)) => Poll::Ready(Err(map_executor_error(error))),
+                        // A non-output outcome after an output claim cannot
+                        // represent the validated bounded overflow result.
+                        Poll::Ready(Ok(_)) => Poll::Ready(Err(executor_invariant())),
                     };
                 }
                 let timeout = empty_outcome(
@@ -1011,19 +1015,6 @@ async fn await_executor(
         }
     })
     .await
-}
-
-fn poll_executor_with_activity(
-    future: &mut TerminalExecution,
-    context: &mut Context<'_>,
-    activity: &Arc<ExecutionActivity>,
-) -> Poll<Result<TerminalExecutionOutcome, TerminalExecutorError>> {
-    let waker = Waker::from(Arc::new(ActivityWaker {
-        _activity: Arc::clone(activity),
-        target: context.waker().clone(),
-    }));
-    let mut context = Context::from_waker(&waker);
-    Pin::new(future).poll(&mut context)
 }
 
 fn bounded_duration(duration: Duration) -> Duration {
@@ -1244,19 +1235,92 @@ impl Drop for ExecutionActivity {
     }
 }
 
-struct ActivityWaker {
+struct ActivityNotifier {
+    // State precedes the activity so the retained target Waker is destroyed
+    // before the last notifier-owned activity reference can be released.
+    state: Mutex<ActivityNotifierState>,
     _activity: Arc<ExecutionActivity>,
-    target: Waker,
 }
 
-impl Wake for ActivityWaker {
+#[derive(Default)]
+struct ActivityNotifierState {
+    target: Option<Arc<Waker>>,
+    notifying: bool,
+}
+
+impl ActivityNotifier {
+    fn new(activity: Arc<ExecutionActivity>) -> Self {
+        Self {
+            state: Mutex::new(ActivityNotifierState::default()),
+            _activity: activity,
+        }
+    }
+
+    fn bind(&self, target: &Waker) {
+        // Cloning and destroying an arbitrary Waker may execute foreign code,
+        // so only Arc bookkeeping and identity comparison happen under lock.
+        let incoming = Arc::new(target.clone());
+        let (replaced, unused) = {
+            let mut state = lock_activity_notifier(&self.state);
+            if state
+                .target
+                .as_deref()
+                .is_some_and(|existing| existing.will_wake(target))
+            {
+                (None, Some(incoming))
+            } else {
+                (state.target.replace(incoming), None)
+            }
+        };
+        drop(replaced);
+        drop(unused);
+    }
+
+    fn notify(&self) {
+        let target = {
+            let mut state = lock_activity_notifier(&self.state);
+            if state.notifying {
+                // The callback already in flight represents this whole burst:
+                // concurrent notices return without scheduling a sequential
+                // second callback.
+                return;
+            }
+            let Some(target) = state.target.as_ref().map(Arc::clone) else {
+                return;
+            };
+            state.notifying = true;
+            target
+        };
+
+        let notified = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            target.wake_by_ref();
+        }));
+        // Reset after the callback so a distinct later notice starts a new
+        // callback, including after the target panics.
+        lock_activity_notifier(&self.state).notifying = false;
+        drop(target);
+        if let Err(payload) = notified {
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+
+impl Wake for ActivityNotifier {
     fn wake(self: Arc<Self>) {
-        self.target.wake_by_ref();
+        self.notify();
     }
 
     fn wake_by_ref(self: &Arc<Self>) {
-        self.target.wake_by_ref();
+        self.notify();
     }
+}
+
+fn lock_activity_notifier(
+    state: &Mutex<ActivityNotifierState>,
+) -> MutexGuard<'_, ActivityNotifierState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct DeadlineTimer {
@@ -1474,7 +1538,6 @@ impl Tool for TerminalTool {
             check_cancellation(&cancellation)?;
             if Instant::now() >= deadline {
                 let _ = activity.close_timeout();
-                drop(activity);
                 return render_timeout(&parsed.cwd, started);
             }
             let timer = DeadlineTimer::new(deadline, Arc::clone(&activity))?;
@@ -1490,7 +1553,6 @@ impl Tool for TerminalTool {
             .await;
             check_cancellation(&cancellation)?;
             let outcome = outcome?;
-            drop(activity);
             let output = render_output(&parsed.cwd, &outcome)?;
             check_cancellation(&cancellation)?;
             Ok(output)
@@ -2420,7 +2482,7 @@ fn fixed_tool_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivityWaker, ExecutionActivity, ExecutionCause, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
+        ActivityNotifier, ExecutionActivity, ExecutionCause, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
         TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT,
         TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT, TerminalCapturedOutput,
         TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
@@ -2434,13 +2496,154 @@ mod tests {
     use serde_json::json;
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::task::{Context, Poll, Waker};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::task::{Context, Poll, Wake, Waker};
     use std::time::{Duration, Instant};
 
     fn empty_capture() -> TerminalCapturedOutput {
         TerminalCapturedOutput::new(Vec::new(), 0).unwrap()
+    }
+
+    struct BlockingNotifierTarget {
+        calls: AtomicUsize,
+        entered: Mutex<bool>,
+        changed: Condvar,
+        released: AtomicBool,
+        in_flight: Arc<AtomicUsize>,
+        maximum_in_flight: Arc<AtomicUsize>,
+    }
+
+    impl BlockingNotifierTarget {
+        fn new(in_flight: Arc<AtomicUsize>, maximum_in_flight: Arc<AtomicUsize>) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                entered: Mutex::new(false),
+                changed: Condvar::new(),
+                released: AtomicBool::new(false),
+                in_flight,
+                maximum_in_flight,
+            }
+        }
+
+        fn wait_until_entered(&self) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut entered = self
+                .entered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            while !*entered {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(!remaining.is_zero(), "notifier callback did not run");
+                entered = self
+                    .changed
+                    .wait_timeout(entered, remaining)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .0;
+            }
+        }
+
+        fn release(&self) {
+            self.released.store(true, Ordering::Release);
+            self.changed.notify_all();
+        }
+
+        fn notify(&self) {
+            self.calls.fetch_add(1, Ordering::AcqRel);
+            enter_notifier_callback(&self.in_flight, &self.maximum_in_flight);
+            {
+                let mut entered = self
+                    .entered
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *entered = true;
+                self.changed.notify_all();
+                while !self.released.load(Ordering::Acquire) {
+                    entered = self
+                        .changed
+                        .wait(entered)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                }
+            }
+            self.in_flight.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    impl Wake for BlockingNotifierTarget {
+        fn wake(self: Arc<Self>) {
+            self.notify();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.notify();
+        }
+    }
+
+    struct CountingNotifierTarget {
+        calls: AtomicUsize,
+        in_flight: Arc<AtomicUsize>,
+        maximum_in_flight: Arc<AtomicUsize>,
+    }
+
+    impl CountingNotifierTarget {
+        fn notify(&self) {
+            self.calls.fetch_add(1, Ordering::AcqRel);
+            enter_notifier_callback(&self.in_flight, &self.maximum_in_flight);
+            self.in_flight.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    impl Wake for CountingNotifierTarget {
+        fn wake(self: Arc<Self>) {
+            self.notify();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.notify();
+        }
+    }
+
+    fn enter_notifier_callback(in_flight: &AtomicUsize, maximum_in_flight: &AtomicUsize) {
+        let current = in_flight.fetch_add(1, Ordering::AcqRel) + 1;
+        maximum_in_flight.fetch_max(current, Ordering::AcqRel);
+    }
+
+    struct PanicOnceNotifierTarget(AtomicUsize);
+
+    impl PanicOnceNotifierTarget {
+        fn notify(&self) {
+            assert_ne!(
+                self.0.fetch_add(1, Ordering::AcqRel),
+                0,
+                "intentional notifier target panic"
+            );
+        }
+    }
+
+    impl Wake for PanicOnceNotifierTarget {
+        fn wake(self: Arc<Self>) {
+            self.notify();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.notify();
+        }
+    }
+
+    struct DropObservingNotifierTarget {
+        active: Arc<AtomicUsize>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Wake for DropObservingNotifierTarget {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    impl Drop for DropObservingNotifierTarget {
+        fn drop(&mut self) {
+            assert_eq!(self.active.load(Ordering::Acquire), 1);
+            self.dropped.store(true, Ordering::Release);
+        }
     }
 
     #[test]
@@ -2487,10 +2690,9 @@ mod tests {
         let activity = ExecutionActivity::acquire(&active, 1).expect("first activity");
         let worker = Arc::clone(&activity);
         let guardian = Arc::clone(&activity);
-        let worker_waker = Waker::from(Arc::new(ActivityWaker {
-            _activity: Arc::clone(&activity),
-            target: Waker::noop().clone(),
-        }));
+        let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+        notifier.bind(Waker::noop());
+        let worker_waker = Waker::from(Arc::clone(&notifier));
         let guardian_waker = worker_waker.clone();
         assert_eq!(active.load(Ordering::Acquire), 1);
 
@@ -2501,10 +2703,108 @@ mod tests {
         drop(worker_waker);
         assert!(ExecutionActivity::acquire(&active, 1).is_none());
         drop(guardian_waker);
+        drop(notifier);
 
         let recovered = ExecutionActivity::acquire(&active, 1).expect("activity tails finished");
         assert_eq!(active.load(Ordering::Acquire), 1);
         drop(recovered);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn activity_notifier_coalesces_a_burst_and_rebinds_after_callback_return() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let maximum_in_flight = Arc::new(AtomicUsize::new(0));
+        let blocking = Arc::new(BlockingNotifierTarget::new(
+            Arc::clone(&in_flight),
+            Arc::clone(&maximum_in_flight),
+        ));
+        let blocking_waker = Waker::from(Arc::clone(&blocking));
+        notifier.bind(&blocking_waker);
+        let notifier_waker = Waker::from(Arc::clone(&notifier));
+
+        let rebound = Arc::new(CountingNotifierTarget {
+            calls: AtomicUsize::new(0),
+            in_flight: Arc::clone(&in_flight),
+            maximum_in_flight: Arc::clone(&maximum_in_flight),
+        });
+        let rebound_waker = Waker::from(Arc::clone(&rebound));
+
+        std::thread::scope(|scope| {
+            let first_waker = notifier_waker.clone();
+            let first = scope.spawn(move || first_waker.wake());
+            blocking.wait_until_entered();
+            notifier.bind(&rebound_waker);
+
+            let mut burst = Vec::new();
+            for _ in 0..32 {
+                let burst_waker = notifier_waker.clone();
+                burst.push(scope.spawn(move || burst_waker.wake()));
+            }
+            for wake in burst {
+                wake.join().unwrap();
+            }
+            assert_eq!(blocking.calls.load(Ordering::Acquire), 1);
+            assert_eq!(rebound.calls.load(Ordering::Acquire), 0);
+
+            blocking.release();
+            first.join().unwrap();
+        });
+
+        notifier_waker.wake_by_ref();
+        assert_eq!(blocking.calls.load(Ordering::Acquire), 1);
+        assert_eq!(rebound.calls.load(Ordering::Acquire), 1);
+        assert_eq!(maximum_in_flight.load(Ordering::Acquire), 1);
+
+        drop(activity);
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(notifier_waker);
+        drop(notifier);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn activity_notifier_recovers_after_target_panic() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+        let target = Arc::new(PanicOnceNotifierTarget(AtomicUsize::new(0)));
+        let target_waker = Waker::from(Arc::clone(&target));
+        notifier.bind(&target_waker);
+        let notifier_waker = Waker::from(Arc::clone(&notifier));
+
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            notifier_waker.wake_by_ref();
+        }));
+        assert!(first.is_err());
+        notifier_waker.wake_by_ref();
+        assert_eq!(target.0.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn activity_notifier_drops_target_before_releasing_activity() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let target = Arc::new(DropObservingNotifierTarget {
+            active: Arc::clone(&active),
+            dropped: Arc::clone(&dropped),
+        });
+        let target_waker = Waker::from(Arc::clone(&target));
+        let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+        notifier.bind(&target_waker);
+        let notifier_waker = Waker::from(Arc::clone(&notifier));
+
+        drop(target_waker);
+        drop(target);
+        drop(activity);
+        drop(notifier_waker);
+        assert!(!dropped.load(Ordering::Acquire));
+        drop(notifier);
+        assert!(dropped.load(Ordering::Acquire));
         assert_eq!(active.load(Ordering::Acquire), 0);
     }
 
@@ -2770,7 +3070,72 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn output_claim_preserves_typed_cleanup_error_on_both_sides_of_deadline() {
+        for (timeout, delay, kind, code) in [
+            (
+                Duration::from_secs(1),
+                Duration::ZERO,
+                TerminalExecutorErrorKind::Wait,
+                "terminal_wait_failed",
+            ),
+            (
+                Duration::from_millis(1),
+                Duration::from_millis(5),
+                TerminalExecutorErrorKind::Pipe,
+                "terminal_pipe_failed",
+            ),
+        ] {
+            let root = std::env::current_dir().unwrap();
+            let tool = TerminalTool::with_executor(
+                &root,
+                Vec::new(),
+                Arc::new(OutputClaimThenErrorExecutor { delay, kind }),
+                TerminalLimits::new(timeout, 1).unwrap(),
+            )
+            .unwrap();
+            let error = futures_executor::block_on(tool.execute(
+                context(),
+                json!({
+                    "action": "exec",
+                    "command": "ignored",
+                    "cwd": ".",
+                    "profile": "clean"
+                }),
+                CancellationToken::new(),
+            ))
+            .unwrap_err();
+
+            assert_eq!(error.kind, ToolErrorKind::Execution);
+            assert_eq!(error.code, code);
+        }
+    }
+
+    #[cfg(unix)]
     struct DelayedErrorExecutor;
+
+    #[cfg(unix)]
+    struct OutputClaimThenErrorExecutor {
+        delay: Duration,
+        kind: TerminalExecutorErrorKind,
+    }
+
+    #[cfg(unix)]
+    impl TerminalExecutor for OutputClaimThenErrorExecutor {
+        fn execute(
+            &self,
+            request: TerminalExecutionRequest,
+            _cancellation: CancellationToken,
+        ) -> TerminalExecution {
+            let delay = self.delay;
+            let kind = self.kind;
+            Box::pin(async move {
+                assert!(request.activity.claim_output_limit());
+                std::thread::sleep(delay);
+                Err(TerminalExecutorError::new(kind))
+            })
+        }
+    }
 
     #[cfg(unix)]
     impl TerminalExecutor for DelayedErrorExecutor {
