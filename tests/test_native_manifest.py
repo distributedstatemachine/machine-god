@@ -38,6 +38,22 @@ MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
     "webpki-root-certs",
 }
 RELEASE_PANIC_PROBE = "ask_user_question_release_panic_probe"
+RELEASE_PANIC_PROBE_SOURCE = (
+    REPOSITORY_ROOT
+    / "crates"
+    / "machine-god-native"
+    / "examples"
+    / f"{RELEASE_PANIC_PROBE}.rs"
+)
+RELEASE_PANIC_PROBE_STDOUT = (
+    b"ordinary-primary=prompt-drop\n"
+    b"ambient-primary=ambient-drop\n"
+    b"secondary-payload-drop=panics\n"
+    b"secondary-payloads=suppressed\n"
+    b"stale-target-wakes=0\n"
+    b"target-drops=2 secondary-callbacks=2\n"
+    b"fresh-capacity=2\n"
+)
 
 
 class NativeManifestTests(unittest.TestCase):
@@ -56,7 +72,22 @@ class NativeManifestTests(unittest.TestCase):
             "unwind",
         )
 
-    def test_release_question_panic_probe_recovers_capacity(self) -> None:
+    def test_release_question_cleanup_probe_recovers_capacity(self) -> None:
+        self.assertEqual(len(RELEASE_PANIC_PROBE_STDOUT), 193)
+        source = RELEASE_PANIC_PROBE_SOURCE.read_text(encoding="utf-8")
+        for required_fragment in [
+            "struct PromptDropPanicFuture",
+            "struct SecondaryTargetWithPromptWakerPanic",
+            "Callback::Drop",
+            "PrimaryCase::PromptDrop",
+            "PrimaryCase::AmbientDrop",
+            "ExecutionDropGuard(Some(execution))",
+            "secondary_payload_drops.load(Ordering::SeqCst), 0",
+            "closed_waker.wake_by_ref()",
+        ]:
+            self.assertIn(required_fragment, source)
+        self.assertNotIn("struct PanickingPrompt", source)
+
         with tempfile.TemporaryDirectory(
             prefix="machine-god-release-panic-"
         ) as target_directory:
@@ -102,7 +133,6 @@ class NativeManifestTests(unittest.TestCase):
                 env=environment,
                 check=False,
                 capture_output=True,
-                text=True,
                 timeout=10,
             )
             self.assertLessEqual(len(completed.stdout), 256)
@@ -117,9 +147,9 @@ class NativeManifestTests(unittest.TestCase):
             )
             self.assertEqual(
                 completed.stdout,
-                "primary-caught\ncapacity-recovered\n",
+                RELEASE_PANIC_PROBE_STDOUT,
             )
-            self.assertEqual(completed.stderr, "")
+            self.assertEqual(completed.stderr, b"")
 
     def test_tokio_signal_feature_is_cli_only(self) -> None:
         workspace_tokio = self.workspace_manifest["workspace"]["dependencies"][

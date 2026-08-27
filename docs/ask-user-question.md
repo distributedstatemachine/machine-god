@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 12 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 12 REJECTED — CYCLE 13 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -641,10 +641,13 @@ composition `8378a479d11d52d80fdf7ba7b1d719dac3e0027f`, tree
 `522d0a454fa7c091277971b9fe21f78149638249`, independently checks the
 component composition.
 
-Root release panic handling is `unwind`. The independently built and run
-release-profile product probe catches the primary cleanup panic and admits a
-fresh prompt. Its stderr is empty and its exact 34-byte stdout is
-`primary-caught\ncapacity-recovered\n`.
+Root release panic handling is `unwind`. At the local checkpoint, the
+independently built and run release-profile product probe caught a prompt-poll
+panic and admitted a fresh prompt. Its stderr was empty and its exact 34-byte
+stdout was `primary-caught\ncapacity-recovered\n`. Formal cycle 12 determined
+that this probe never produced a cleanup panic, so the successful run does not
+establish cleanup precedence, secondary-payload suppression, stale-lane close,
+or detached capacity while a forgotten payload owns the supplied Waker.
 
 The prompt permit is now detachable state rather than lifetime ownership of an
 `ActivityWake` identity. Every admitted callback takes a local activity guard.
@@ -673,6 +676,44 @@ panic `abort` to `unwind`, plus the existing dev-only fixture and one native
 lock dependency-list line; no dependency is added. Formal review, workflows,
 integration, and delivery remain pending. This is not benchmark, product-
 performance, compatibility-promotion, or fx-equivalence evidence.
+
+## Formal cycle-12 outcome and cycle-13 requirements
+
+Formal cycle 12 reviewed exact candidate
+`3dec7a2f073fa85479af19765b03b06cdfd9da8c`, tree
+`c34d20a45f70b82652bf78df9653f39399d7fc6d`. Correctness/API reported
+`0/0/1/1`, lifecycle/platform reported `0/0/1/2`, and
+performance/resources reported `0/0/1/0`. The shared medium deduplicates
+across all three tracks; two distinct lows remain, producing a deduplicated
+`0/0/1/2` union. The candidate is rejected.
+
+The medium is insufficient release evidence. The optimized release probe's
+only panic comes directly from prompt polling under a no-op downstream Waker;
+every cleanup result is `Ok`. It therefore does not prove cleanup-panic
+precedence or no-abort behavior, suppression and intentional forgetting of a
+secondary panic payload, stale target closure, or capacity detachment while
+that forgotten payload owns a supplied-Waker clone.
+
+One low is this contract's stale capacity wording: it says the permit remains
+until every originating Waker clone is destroyed, contradicting close-time
+detachment. The other low is stale cross-document release-profile wording in
+the maintained AI Gateway/security summaries, which still describes production
+release panic handling as `abort` after the root profile changed to `unwind`.
+
+Cycle 13 replaces the executable with a locked, offline, exact-1.94.1 release
+probe that enters the public `AskUserQuestionTool` cleanup path. In ordinary
+drop, the first pending prompt retains its supplied Waker and its destructor's
+typed panic must remain primary. Destruction of the final downstream target
+must run exactly once and produce a secondary panic payload that owns a clone
+of that supplied Waker; a destructor control must prove the payload itself
+panics, while the product path must prove it is suppressed and forgotten. A
+second variant must preserve an ambient execution-drop panic. Both variants
+must keep closed supplied-Waker identities alive, suppress their stale wakes,
+and admit a fresh pending prompt while the intentionally forgotten identity
+remains. Cycle 13 also corrects the normative ownership contract and the
+separate cross-document profile wording. Integration, a new complete local
+gate, three fresh formal reviews, remote workflows, and delivery are still
+required; no cycle-13 green result is claimed here.
 
 ## Product boundary
 
@@ -860,9 +901,19 @@ and does not include question, option, description, or answer text.
 Calling `Tool::execute` creates an inert future. On first poll it checks
 cancellation, attempts one fail-fast active-prompt admission, and only then
 invokes the prompter exactly once. Capacity exhaustion does not queue, register
-a capacity Waker, or invoke the prompter. A successful permit belongs to the
-execution activity until the outer future and every cancellation Waker clone or
-callback originating from it have returned or been destroyed.
+a capacity Waker, or invoke the prompter. A successful permit is shared by the
+outer prompt-activity owner and the notifier state while that state is open.
+Every admitted downstream callback takes a local activity guard before leaving
+the state lock. Close marks the notifier closed, detaches its target and
+state-held guard, retains that guard through out-of-lock target destruction,
+and releases it before resuming a selected panic. The outer activity owner
+continues to cover prompt, cancellation-waiter, registration, and cached-Waker
+teardown. An already admitted callback independently retains its local guard
+through callback return, arbitrary target destruction, and lane settlement.
+Closed supplied-Waker clones are inert identities: they deliver no callback
+and retain no prompt capacity, so fresh admission never waits for every closed
+clone to be destroyed. Capacity is released only after the outer owner and all
+admitted callback or close guards are gone.
 
 The prompt future remains owned by the tool future. Dropping an unpolled tool
 future invokes no prompt. Cycle 5 requires pending-return, drop, and unwind

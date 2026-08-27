@@ -2759,7 +2759,7 @@ fn cloned_prompt_wakers_replay_once_after_outer_repoll_observes_the_burst() {
 }
 
 #[test]
-fn completed_prompt_closes_retained_waker_delivery_until_every_clone_drops() {
+fn completed_prompt_recovers_capacity_after_in_flight_callback_while_closed_clones_remain() {
     let prompter = PromptWakerFanoutPrompter::default();
     let tool = AskUserQuestionTool::new(prompter.clone());
     let prepared = prepare(&tool, basic_arguments());
