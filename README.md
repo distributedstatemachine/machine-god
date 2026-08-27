@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3
-REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -40,13 +40,19 @@ lengths are bounded before scanning, evidence proves the reachable
 and the complete local gate is green with 57 focused tests. Formal cycle 3
 rejected exact candidate `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
 `c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated
-0 blocker / 0 high / 3 medium / 2 low union. Cycle 4 will make the public
-capability accessor total and optional, bound the privately stored host-answer
-container to zero through four entries, and retain the prompt permit through
-prompt/cancellation-Waker teardown. It also corrects broad authority wording:
-the call skips policy-governed authority, while the injected prompter owns its
-host interaction authority. Cycle-4 source, gate, reviews, remote workflows,
-integration, and delivery remain pending. See the
+0 blocker / 0 high / 3 medium / 2 low union. Cycle-4 core component
+`e569514028cae3b3e6d7b2ba86bf9a738b8d5210` (integrated as `4c8cff3`) and
+native component `53c05cdf5e64e9e26266b89d78c8a20a2ac160df` (integrated as
+`1857a3f`) compose with finding-documentation component
+`b057958f950b8a2a1412ecbc83b6f452d6571a2f` at exact behavior head
+`cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`. Capability inspection is now
+total and returns an `Option`; answers use a private fixed four-slot container
+that represents zero through four entries; and prompt-future plus cancellation
+waiter/Waker destruction completes before capacity is released. The complete
+exact-1.94.1 local gate is green with 171 named focused executions. This tree
+is ready for immutable same-SHA formal review; no cycle-4 formal-review,
+remote-workflow, integration, or delivery result is claimed. See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

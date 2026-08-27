@@ -1,8 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**. Formal cycle 3
-rejected its exact immutable candidate. Cycle-4 source, replacement gate,
-review, remote workflows, integration, and delivery remain pending.
+Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 3
+rejected its exact immutable candidate. Cycle-4 source, evidence, and finding
+documentation now compose at one exact behavior head whose complete local gate
+is green. Three fresh formal reviews, remote workflows, integration, and
+delivery remain pending.
 
 ## Frozen lineage
 
@@ -55,6 +57,14 @@ review, remote workflows, integration, and delivery remain pending.
 - Formal cycle-3 candidate, **REJECTED**:
   `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
   `c49221efbea66c840b333f0de0161aa686aad52f`
+- Cycle-4 core component:
+  `e569514028cae3b3e6d7b2ba86bf9a738b8d5210`, integrated as `4c8cff3`
+- Cycle-4 native component:
+  `53c05cdf5e64e9e26266b89d78c8a20a2ac160df`, integrated as `1857a3f`
+- Cycle-3 finding-documentation component and exact cycle-4 behavior head:
+  `b057958f950b8a2a1412ecbc83b6f452d6571a2f`, integrated at
+  `cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+  `fa402acb75c6d364c41db66f6b55595aa1d0e59a`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -64,9 +74,10 @@ head was green. Formal cycle 2 nevertheless rejected its later immutable
 candidate. Cycle-3 source, independent evidence, and corrected documentation
 now compose at `8bdc33d`/`7a342fc`; its complete replacement gate is green.
 Formal cycle 3 nevertheless rejected exact candidate `746e510`/`c49221e`.
-Cycle-4 remediation, a complete replacement gate, three fresh exact-SHA
-reviews, exact feature workflows, fast-forward integration, and exact `main`
-workflows remain required.
+Cycle-4 core, native, and finding-documentation work now compose at
+`cb93bff`/`fa402acb`, whose complete exact-1.94.1 replacement local gate is
+green. Three fresh exact-SHA reviews, exact feature workflows, fast-forward
+integration, and exact `main` workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -320,7 +331,7 @@ are:
 Any nonzero finding rejects the candidate, so cycle 3 is not green despite its
 complete historical local-gate evidence.
 
-## Cycle-4 remediation target
+## Cycle-4 implemented remediation
 
 Cycle 4 freezes all accepted corrections without widening the first slice:
 
@@ -334,9 +345,11 @@ Cycle 4 freezes all accepted corrections without widening the first slice:
   waiter/Waker teardown completes on return, pending drop, and unwind; and
 - correct the public authority wording and stale architecture sentence.
 
-This record does not claim cycle-4 source composition, focused evidence, local
-gate, formal review, remote workflows, integration, or delivery. A complete
-replacement gate and three fresh exact-SHA reviews remain required.
+Core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and finding docs
+`b057958` implement these corrections at exact behavior head `cb93bff`, tree
+`fa402acb`. The focused and complete local gates below are green. This record
+does not claim a cycle-4 formal-review, remote-workflow, integration, or
+delivery result. Three fresh exact-SHA reviews remain required.
 
 ## Required gates
 
@@ -421,6 +434,41 @@ remote-CI, benchmark, product-performance, compatibility-promotion, fx-
 equivalence, integration, or delivery-completion claim. It was the historical
 pre-review gate for the later exact candidate `746e510`/`c49221e`, which formal
 cycle 3 rejected; it does not establish any cycle-4 gate result.
+
+## Cycle-4 local implementation gate
+
+Exact behavior head `cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`, passes the complete local gate
+under exact Rust and Cargo 1.94.1 without fallback:
+
+- all four required formatting, workspace warnings-denied Clippy, workspace
+  test, and workspace doctest commands are green;
+- named focused runs are green for 66 core contract, 22 testkit double, 30
+  direct question, one engine, 29 affected configuration, 11 plus two root-
+  selection, nine reference-host, and one reference-host lifecycle executions
+  (171 total);
+- repo-wide Python discovery passes 136 tests with eight intentional skips,
+  and the pinned-fx drift check is green;
+- `cargo deny` passes every category with three established duplicate-
+  dependency warnings; `cargo audit --no-fetch` checks 1,226 advisories across
+  211 dependencies with zero vulnerabilities;
+- native no-default compilation, the all-feature WASI check, and warnings-
+  denied no-default-feature FreeBSD Clippy are green; WASI emits only the
+  established unrelated `read_file` dead-code warning;
+- documentation integrity reports 91 Markdown files, 318 fence markers, 701
+  parsed links, 534 local links, and zero missing targets; protected-input and
+  exact diff checks find no Cargo-file delta and no added Rust `unsafe`; and
+- a fresh locked release binary is 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated missing-root `help`, `doctor`, and `sessions` smoke checks pass
+  without creating the missing root.
+
+User-visible prompt execution does not apply because this library-only slice
+adds no CLI prompt UI. This gate is regression/delivery evidence, not a
+benchmark or product-performance result. The exact tree is ready for immutable
+same-SHA formal review. It makes no formal-review, remote-CI, benchmark-
+workflow, compatibility-promotion, fx-equivalence, integration, or delivery-
+completion claim.
 
 ## Deferred and nonclaim record
 

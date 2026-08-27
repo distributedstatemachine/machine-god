@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3
-REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -30,13 +30,19 @@ green with 57 focused tests. Legal inputs reach 41,102 serialized result bytes;
 the unreachable 49,152-byte guard remains authoritative defense in depth. The
 formal cycle-3 candidate `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
 `c49221efbea66c840b333f0de0161aa686aad52f`, was rejected with a deduplicated
-`0/0/3/2` union. Cycle 4 freezes a total optional capability accessor, a
-privately stored zero-to-four-answer container that still permits count-
-mismatch validation, and cancellation waiter/Waker teardown while the prompt
-permit remains held. The tool requires no policy-governed authority, while its
-injected prompter separately owns host interaction authority. Cycle-4 source,
-gate, reviews, feature and `main` workflows, integration, and delivery remain
-pending. The normative boundary is
+`0/0/3/2` union. Cycle-4 core component `e569514`/`4c8cff3`, native component
+`53c05cd`/`1857a3f`, and finding-documentation component `b057958` compose at
+exact behavior head `cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`. The public capability accessor is
+total and optional; host answers occupy a private fixed four-slot container
+that admits zero through four entries; and prompt-future plus cancellation
+waiter/Waker destruction remains inside the active permit. The exact-1.94.1
+local gate is green with 171 named focused executions, all required and
+extended checks, and the unchanged locked release artifact. The tool requires
+no policy-governed authority, while its injected prompter separately owns host
+interaction authority. This tree is ready for immutable same-SHA formal
+review; formal review, feature and `main` workflows, integration, and delivery
+remain pending. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

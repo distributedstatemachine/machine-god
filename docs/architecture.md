@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 3
-REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -28,7 +28,15 @@ result guard as defense in depth. The complete exact-1.94.1 local gate is green
 with 57 focused tests. Formal cycle 3 rejected exact candidate
 `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
 `c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated `0/0/3/2`
-union. Cycle-4 source, gate, review, remote workflows, and delivery remain
+union. Cycle-4 core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and
+finding docs `b057958` compose at exact behavior head
+`cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`. The public capability projection
+is a total `Option`; native exposes a private fixed four-slot answer container;
+and the activity owns prompt and cancellation waiter/Waker teardown before its
+permit release. The complete exact-1.94.1 replacement local gate is green with
+171 named focused executions. This tree is ready for immutable same-SHA formal
+review; formal review, remote workflows, integration, and delivery remain
 pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
@@ -2202,7 +2210,7 @@ Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
 fixed structural state (`has_provider` and tool count); it never invokes the
 provider's `name` method or copies provider-controlled text.
 
-## Slice 35 cycle-4 question-interaction remediation boundary
+## Slice 35 cycle-4 question-interaction boundary
 
 The `ask_user_question` slice adds one portable native adapter,
 not UI state to core or the CLI. Strict effect-free native preparation
@@ -2246,7 +2254,11 @@ suite locally proved the cycle-2 input, prepared, presentation, terminal-class,
 maximum-concurrency, independent-counter, deep, wrong-name, unpolled, drop,
 and unwind corrections. It did not prove rejection at the unreachable
 49,152-byte result guard. Legal inputs reach at most 41,102 serialized output
-bytes; the larger guard remains defense in depth. The complete cycle-4 target
+bytes; the larger guard remains defense in depth. The complete cycle-4 boundary
 is normative in [`ask-user-question.md`](ask-user-question.md). Cycle 3 passed
 its local gate but formal review rejected exact candidate `746e510`, tree
-`c49221e`; no cycle-4 source, local gate, or review is green.
+`c49221e`. Cycle-4 core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and
+finding docs `b057958` compose at exact behavior head `cb93bff`, tree
+`fa402acb`; its complete exact-1.94.1 local gate is green. That tree is ready
+for immutable same-SHA formal review, but no cycle-4 formal-review, remote,
+integration, or delivery result is established.

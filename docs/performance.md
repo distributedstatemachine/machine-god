@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-4 question resource remediation
 
-Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -729,11 +729,19 @@ and retained Waker. Lifecycle reported both at low severity; the deduplicated
 union keeps their medium severity and totals `0/0/3/2` with the separate API
 and documentation findings.
 
-Cycle 4 privately stores at most four answer strings while still admitting
-zero through four entries so legal count mismatches remain testable. It also
-keeps the active permit held through prompt-future and cancellation waiter/
-Waker teardown on return, pending drop, and unwind, bounding those arbitrary
-destructor callbacks inside the configured concurrency slot. Cycle-4 source,
-evidence, gate, review, and delivery remain pending. This is not a benchmark or
-product-performance result. See
+Cycle 4 privately stores at most four answer strings in fixed four-slot storage
+while still admitting zero through four entries so legal count mismatches
+remain testable. It also keeps the active permit held through prompt-future and
+cancellation waiter/Waker teardown on return, pending drop, and unwind,
+bounding those arbitrary destructor callbacks inside the configured
+concurrency slot. Core `e569514`/`4c8cff3`, native
+`53c05cd`/`1857a3f`, and finding docs `b057958` compose at exact behavior head
+`cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`. Its complete exact-1.94.1 local
+gate is green, including 30 direct question tests and 171 named focused
+executions overall. The release artifact remains 3,985,216 bytes with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+This tree is ready for immutable same-SHA formal review; no formal-review,
+remote, integration, delivery, benchmark, or product-performance result is
+claimed. See
 [`ask-user-question.md`](ask-user-question.md).

@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**;
+`ask_user_question` is **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -18,7 +18,12 @@ tree `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`. Its complete exact-1.94.1
 local gate is green with 57 focused tests. Formal cycle 3 rejected exact
 candidate `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
 `c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated `0/0/3/2`
-union. Cycle-4 source, replacement gate, review, and remote delivery gates
+union. Cycle-4 core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and
+finding docs `b057958` compose at exact behavior head
+`cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`. Its complete exact-1.94.1 local
+gate is green with 171 named focused executions. The tree is ready for
+immutable same-SHA formal review; formal review and remote delivery gates
 remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
@@ -1221,7 +1226,7 @@ are green. Milestone 03 remains in progress because remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.
 
-## Slice 35 cycle-3 rootless-composition remediation
+## Slice 35 cycle-4 rootless composition
 
 Slice 35 adds one explicit shared `QuestionPrompter` parameter to
 each production and custom reference-host constructor. Construction stores the
@@ -1246,9 +1251,11 @@ tree `7a342fc27d6b2d65dcbdcf547cfbdc8214e73702`; its replacement local gate is
 green with 57 focused tests. Formal cycle 3 rejected exact candidate
 `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
 `c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated `0/0/3/2`
-union. Cycle 4 keeps host composition unchanged while making capability
-inspection total, bounding private answer ownership to zero through four
-entries, and retaining the active permit through prompt/cancellation-Waker
+union. Cycle-4 core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and
+finding docs `b057958` compose at exact behavior head `cb93bff`, tree
+`fa402acb`. Host composition is unchanged while capability inspection is total,
+private answer ownership is fixed to four slots admitting zero through four
+entries, and the active permit remains held through prompt/cancellation-Waker
 teardown. The descriptor count stays thirteen:
 the question tool and two web tools own no workspace descriptor. The no-authority
 question call invokes neither the separately injected `PermissionPrompter` nor
@@ -1256,6 +1263,9 @@ permission events; this is a no-policy-authority disposition, while the
 `QuestionPrompter` separately owns host interaction authority. A noninteractive
 host must inject the fixed unavailable
 prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
-contract, rejected cycle-3 outcome, and cycle-4 target are
+contract, rejected cycle-3 outcome, and cycle-4 implementation are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).
+The complete exact-1.94.1 local gate is green at `cb93bff`/`fa402acb`; the tree
+is ready for immutable same-SHA formal review. No formal-review, remote,
+integration, or delivery green result is claimed.

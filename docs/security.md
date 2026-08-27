@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-4 interaction and authority remediation
 
-Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2136,7 +2136,15 @@ complete pre-trim per-answer/aggregate evidence and exact reachable 41,102-byte
 result evidence. Formal cycle 3 rejected exact candidate
 `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
 `c49221efbea66c840b333f0de0161aa686aad52f`, with a deduplicated `0/0/3/2`
-union. Cycle 4 will make capability inspection total and optional, bound the
-privately stored answer container to zero through four entries, and retain the
-active prompt permit through prompt and cancellation-Waker teardown. Cycle-4
-source, gate, review, remote workflows, and delivery remain pending.
+union. Cycle-4 core `e569514`/`4c8cff3` makes capability inspection total and
+optional. Native `53c05cd`/`1857a3f` exposes only a private fixed four-slot
+answer container admitting zero through four entries and retains the active
+prompt permit through prompt plus cancellation waiter/Waker teardown. Finding
+docs `b057958` compose with both at exact behavior head
+`cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`. Its complete exact-1.94.1 local
+gate is green with 171 named focused executions, unchanged protected/Cargo
+inputs, no added Rust `unsafe`, and the full portability, dependency, audit,
+documentation, release, and isolated-root matrix green. This tree is ready for
+immutable same-SHA formal review; formal review, remote workflows, integration,
+and delivery remain pending.

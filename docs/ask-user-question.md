@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 3 REJECTED — CYCLE 4 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -45,11 +45,43 @@ locked release binary is 3,985,216 bytes with SHA-256
 isolated `help`, `doctor`, and `sessions` runs do not create the missing root.
 Formal cycle 3 reviewed exact candidate
 `746e510c7d8eb93229996e74f91827f489e5bb31`, tree
-`c49221efbea66c840b333f0de0161aa686aad52f`, and rejected it. That outcome does
-not establish cycle-4 source, gate, review, remote CI, benchmark evidence,
-integration, delivery, product performance, compatibility promotion, or fx
-equivalence. No release-binary prompt exercise applies because this library-
-only slice adds no CLI prompt UI.
+`c49221efbea66c840b333f0de0161aa686aad52f`, and rejected it.
+
+Cycle-4 core component `e569514028cae3b3e6d7b2ba86bf9a738b8d5210` is
+integrated as `4c8cff3`; native component
+`53c05cdf5e64e9e26266b89d78c8a20a2ac160df` is integrated as `1857a3f`; and
+finding-documentation component `b057958f950b8a2a1412ecbc83b6f452d6571a2f`
+is integrated at exact behavior head
+`cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`. That exact head implements every
+accepted cycle-3 correction and passes the complete local gate under Rust and
+Cargo 1.94.1 exactly, without fallback:
+
+- all four required formatting, workspace warnings-denied Clippy, workspace
+  test, and workspace doctest commands are green;
+- named focused runs are green for 66 core contract, 22 testkit double, 30
+  direct question, one engine, 29 affected configuration, 11 plus two root-
+  selection, nine reference-host, and one lifecycle executions (171 total);
+- repo-wide Python passes 136 tests with eight intentional skips, pinned-fx
+  regeneration is byte-stable, `cargo deny` passes with the three established
+  duplicate-dependency warnings, and `cargo audit --no-fetch` checks 1,226
+  advisories across 211 dependencies with zero vulnerabilities;
+- native no-default, all-feature WASI, and warnings-denied no-default FreeBSD
+  checks are green, with only the established unrelated WASI `read_file`
+  warning;
+- documentation integrity is 91 Markdown files, 318 fence markers, 701 parsed
+  links, 534 local links, and zero missing targets; protected inputs and Cargo
+  files are unchanged, and no Rust `unsafe` is added; and
+- the fresh locked release binary remains 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated missing-root `help`, `doctor`, and `sessions` runs pass without
+  creating the root.
+
+This exact tree is ready for immutable same-SHA formal review. It does not
+establish a cycle-4 formal-review, remote CI, benchmark workflow, integration,
+delivery, product-performance, compatibility-promotion, or fx-equivalence
+result. No release-binary prompt exercise applies because this library-only
+slice adds no CLI prompt UI.
 
 Formal cycle 1 reviewed exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -65,7 +97,7 @@ immutable candidate with a deduplicated 0 blocker, 0 high, 3 medium, and 2 low
 findings. The detailed outcome and cycle-4 remediation target are in the
 [`review ledger`](reviews/m03-ask-user-question-review-01.md).
 
-## Formal cycle-3 outcome and cycle-4 target
+## Formal cycle-3 outcome and cycle-4 implementation
 
 Correctness/API reported `0/0/1/2`, lifecycle/platform `0/0/0/2`, and
 performance/resources `0/0/2/0` on exact candidate
@@ -77,12 +109,14 @@ broad public authority wording, the stale architecture no-green-gate sentence,
 unbounded synchronous destruction of a malformed host answer vector, and
 permit release before cancellation waiter/Waker teardown.
 
-Cycle 4 freezes a total optional capability accessor, privately stored bounded
-answers admitting zero through four values so count mismatches remain
+Cycle 4 freezes a total optional capability accessor, privately stored fixed
+four-slot answers admitting zero through four values so count mismatches remain
 observable, and teardown of the prompt/cancellation waiter/Waker while the
-active permit remains held. Cycle-4 source, focused evidence, complete local
-gate, formal review, remote workflows, integration, and delivery are not yet
-established.
+active permit remains held. Components `e569514`/`4c8cff3`,
+`53c05cd`/`1857a3f`, and `b057958` implement those corrections at exact
+behavior head `cb93bff`, tree `fa402acb`, whose complete exact-1.94.1 local
+gate is green. Formal review, remote workflows, integration, and delivery are
+not yet established.
 
 ## Product boundary
 

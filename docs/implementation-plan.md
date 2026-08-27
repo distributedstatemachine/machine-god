@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 3
-REJECTED — CYCLE 4 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 4 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -148,11 +148,34 @@ a deduplicated `0/0/3/2` union. Accepted findings are the partial panicking
 capability accessor; contradictory broad public authority wording; the stale
 architecture no-green-gate sentence; unbounded synchronous destruction of a
 malformed host answer vector; and release of prompt capacity before
-cancellation waiter/Waker teardown. Cycle 4 freezes a total optional capability
-accessor, a privately stored zero-to-four-answer container that still permits
-count-mismatch validation, and waiter/Waker teardown under the active permit.
-Cycle-4 source, replacement gate, three fresh review tracks, feature workflows,
-integration, delivery, and exact `main` workflows remain pending.
+cancellation waiter/Waker teardown. Cycle-4 core component
+`e569514028cae3b3e6d7b2ba86bf9a738b8d5210`, integrated as `4c8cff3`, makes
+capability inspection total through `Option`. Native component
+`53c05cdf5e64e9e26266b89d78c8a20a2ac160df`, integrated as `1857a3f`, uses a
+private fixed four-slot answer container that admits zero through four entries
+and destroys the prompt future plus cancellation waiter/Wakers before releasing
+its permit. Finding-documentation component
+`b057958f950b8a2a1412ecbc83b6f452d6571a2f` composes with both at exact
+behavior head `cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
+`fa402acb75c6d364c41db66f6b55595aa1d0e59a`.
+
+That exact cycle-4 behavior head passes the complete local gate under Rust and
+Cargo 1.94.1 exactly without fallback: all four required commands; 66 core
+contract, 22 testkit-double, 30 direct-question, one engine, 29 affected-
+configuration, 11 plus two root-selection, nine reference-host, and one
+lifecycle named focused executions (171 total); Python 136 with eight
+intentional skips; byte-stable pinned-fx regeneration; dependency policy with
+three established duplicate warnings; audit across 1,226 advisories and 211
+dependencies with zero vulnerabilities; native no-default, all-feature WASI,
+and warnings-denied no-default FreeBSD checks with only the established WASI
+`read_file` warning; documentation integrity 91/318/701/534/0; unchanged
+protected and Cargo files with no added Rust `unsafe`; and a fresh 3,985,216-
+byte locked release binary with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+Isolated missing-root `help`, `doctor`, and `sessions` runs do not create the
+root. This tree is ready for immutable same-SHA formal review. Three fresh
+review tracks, feature workflows, integration, delivery, and exact `main`
+workflows remain pending; no formal-review or remote green result is claimed.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4162,11 +4185,16 @@ bytes are bounded before scanning; evidence proves the reachable 41,102-byte
 result maximum without claiming the unreachable 49,152-byte defense guard as a
 reachable boundary. The complete exact-1.94.1 local gate is green with 57
 focused tests. Formal cycle 3 rejected exact candidate `746e510`, tree
-`c49221e`, with a deduplicated `0/0/3/2` union. Cycle 4 targets total optional
-capability inspection, zero-to-four privately stored host answers, and prompt/
-cancellation-Waker teardown before releasing the active permit. Replacement
-source, gate, review, remote workflows, integration, and delivery remain
-pending, so this combined item remains unchecked. Slice 33 `web_search` is
+`c49221e`, with a deduplicated `0/0/3/2` union. Cycle-4 core
+`e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and finding docs `b057958`
+compose at exact behavior head `cb93bff`, tree `fa402acb`. Capability
+inspection is total and optional, a private fixed four-slot container admits
+zero through four host answers, and prompt/cancellation-Waker teardown occurs
+before active-permit release. The complete exact-1.94.1 replacement local gate
+is green with 171 named focused executions and the full extended evidence
+matrix. The tree is ready for immutable same-SHA formal review. Formal review,
+remote workflows, integration, and delivery remain pending, so this combined
+item remains unchecked. Slice 33 `web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark
 workflows are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that
