@@ -371,13 +371,37 @@ supplied Waker family, and both native guardian/worker threads until all of them
 finish. Public injected executors receive only the wrapped task Waker during
 polling, so a retained or in-flight callback also retains that originating
 slot. No publisher allocates a second active count. Native threads hold the same
-activity through return even without a registered Waker. The final deadline
-decision also closes or rechecks the shared authoritative production cause
-after executor destruction, so an observed output limit cannot be discarded.
+activity through return even without a registered Waker. Final cause selection
+checks cancellation first, then uses one linearized close: overflow observed
+before timeout closes must complete a valid output-limit outcome, while a
+timeout that closes first remains authoritative against later overflow.
 
 Every review worktree remained read-only and clean. Each worktree and temporary
-branch was removed and pruned immediately after its verdict. Cycle 4 requires a
-complete replacement gate and three fresh exact-SHA reviews.
+branch was removed and pruned immediately after its verdict.
+
+## Cycle 4 remediation in progress
+
+Cycle-4 source, independent-evidence, and maintained-documentation remediation
+is in progress in non-overlapping isolated worktrees. The intended replacement
+has one admitted execution activity consuming one active slot. That same slot,
+without a second active-count increment, is owned by the outer call, its request
+and executor, every TerminalTool-supplied Waker clone and callback, and native
+worker/deadline threads through actual return. TerminalTool wraps the task Waker
+before polling a public injected executor, so that executor needs no private
+counter authority. Retained requests or Wakers and native threads that observed
+no Waker keep the same activity; later admissions fail fast as busy until its
+last owner returns or is dropped.
+
+Final cause selection uses one linearized close after cancellation is checked
+first. Overflow observed before the timeout close wins and completes a valid
+output-limit outcome. A timeout close that wins first remains authoritative
+against overflow observed later. Publication cannot expose a contradictory
+status/counter pair.
+
+This is a remediation-status record only. It does not assert source/evidence
+composition, name a replacement candidate or tree, claim a green gate or
+review, or advance remote delivery. Cycle 4 still requires a complete
+replacement gate and three fresh exact-SHA reviews.
 
 ## Required composition
 

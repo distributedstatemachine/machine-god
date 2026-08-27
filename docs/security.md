@@ -18,13 +18,19 @@ termination grace. Success proves no observed signalable original-group member
 remains; without subreaper or privilege it does not prove adopted-zombie or
 credential-escaped cleanup, and `setsid` descendants remain outside
 containment. Bounded post-stop reads
-prevent an escaped pipe writer from blocking cleanup. Output-limit authority is
-visible before cleanup and wins a concurrent guardian. An arbitrary inline or
-blocking Waker callback may outlive publication after command resources are
-gone, but it retains the originating per-tool active slot until return; the
-configured capacity bounds callback threads/stacks and makes later calls fail
-fast as busy. A blocked host syscall, executor poll/drop, or callback remains
-outside the unconditional wall-clock claim. See [`terminal.md`](terminal.md).
+prevent an escaped pipe writer from blocking cleanup. Cancellation is first;
+one linearized final-cause close gives output limit authority when overflow is
+observed before timeout closes, and an earlier timeout close cannot be changed
+by later overflow. Publication preserves a valid status/counter pair. One
+admitted execution consumes one slot shared without increment by the outer
+call, owned request/executor, every TerminalTool-wrapped task-Waker clone and
+callback, and native worker/deadline threads through actual return. Public
+injected executors need no activity-counter authority. Retained requests or
+Wakers, arbitrary blocking callbacks, and no-Waker native thread tails retain
+the same slot, bounding OS threads/stacks by configured capacity and making
+later calls fail fast as busy. A blocked host syscall, executor poll/drop,
+thread return, or callback remains outside the unconditional wall-clock claim.
+See [`terminal.md`](terminal.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED**. Its composed behavior precursor
 `3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1

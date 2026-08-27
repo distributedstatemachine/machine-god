@@ -18,7 +18,13 @@ blocked host syscall, synchronous executor poll/drop, or Waker callback. Public
 system-executor construction is Linux-only; the private non-Linux reference-
 host entry remains advertised and returns fixed unsupported at allowed
 execution before cwd lookup or spawn. It adds no PTY, durable session, sandbox,
-CLI command, benchmark, product-performance, or fx-equivalence claim. See the
+CLI command, benchmark, product-performance, or fx-equivalence claim. Formal
+cycle 3 rejected exact candidate `3215b9e`, tree `3fafcad`, with a deduplicated
+`0/2/2/0` union. Cycle-4 remediation is in progress; its intended contract uses
+one shared, non-incrementing execution activity through retained requests,
+wrapped Wakers/callbacks, and native thread returns, plus one cancellation-first
+linearized output-limit/timeout close. No replacement composition, candidate,
+gate, review, or delivery is claimed. See the
 [`terminal` contract](docs/terminal.md) and
 [`live review ledger`](docs/reviews/m03-terminal-review-01.md).
 

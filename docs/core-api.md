@@ -30,14 +30,18 @@ before returning `ToolOutput`. Its timeout starts at first poll and is
 independent of the executor around controllable userspace phases, but core makes
 no wall-clock guarantee for a native thread blocked in filesystem, spawn,
 kernel-wait, other uninterruptible host work, synchronous executor poll/drop,
-or a Waker callback. Native publishes an observed output-limit cause before
-cleanup and preserves validated status/counter invariants during final
-arbitration. A blocking publisher or guardian callback retains its originating
-per-tool active slot until return, bounding notification threads and causing
-later admissions to fail fast at capacity. Public system construction is
-Linux-only; private non-Linux reference-host composition retains the advertised
-tool and returns fixed unsupported only after strict preparation, permission,
-and execution argument validation, before cwd lookup or spawn.
+or a Waker callback. Native checks cancellation first, then uses one linearized
+close to order output-limit observation against timeout while preserving
+validated status/counter invariants. One admitted execution owns one active
+slot shared without another increment by the outer call, request/executor,
+TerminalTool-wrapped task-Waker family, callbacks, and native worker/deadline
+threads through actual return. The wrapper is supplied even to public injected
+executors, which need no private counter authority. Retained requests or Wakers
+and no-Waker native thread tails keep the same slot, so later admissions fail
+fast at capacity. Public system construction is Linux-only; private non-Linux
+reference-host composition retains the advertised tool and returns fixed
+unsupported only after strict preparation, permission, and execution argument
+validation, before cwd lookup or spawn.
 
 ## Delivered slice-33 `web_search` boundary
 

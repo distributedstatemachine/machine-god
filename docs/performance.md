@@ -11,15 +11,22 @@ cutoff, 48 KiB serialized output, 120-second default deadline, default active
 limit four, and hard active limit sixteen are resource ceilings, not measured
 performance results. Each admitted call owns at most one deadline-guardian
 thread; Linux system execution additionally owns one worker and two readers.
-Once either reader observes more than 1 MiB aggregate production,
-`output_limit` is published before cleanup and remains authoritative against a
-concurrent guardian; fixed chunk/post-stop read-count ceilings bound overshoot
-while stopping both readers promptly. Publisher and guardian threads that are
-blocked in arbitrary Waker callbacks retain their originating active slots
-until return, so their threads and stacks remain bounded by configured capacity
-and further calls fail fast as busy. An already-exited foreground leader gets
-TERM and immediate final KILL while its identity is retained, avoiding a fixed
-termination-grace floor for normal commands. The first-poll deadline is
+Once either reader observes more than 1 MiB aggregate production, fixed chunk/
+post-stop read-count ceilings bound overshoot while stopping both readers
+promptly. Cancellation is first; one linearized cause close makes overflow
+authoritative when observed before timeout closes and makes timeout
+authoritative against overflow observed later, while publishing only a valid
+status/counter pair. One admitted call consumes one active slot shared without
+increment by the outer call, owned request/executor, all TerminalTool-wrapped
+Waker clones and callback returns, and native worker/deadline threads through
+actual return.
+The wrapper supplied to public injected executors needs no private counter
+authority. Retained requests or Wakers, blocking callbacks, and native threads
+that observed no Waker keep the same slot; later calls fail fast as busy, so OS
+threads and stacks cannot accumulate outside configured capacity. An already-
+exited foreground leader gets TERM and immediate final KILL while its identity
+is retained, avoiding a fixed termination-grace floor for normal commands. The
+first-poll deadline is
 independently enforced around controllable userspace phases, but a blocked
 filesystem lookup, `Command::spawn`, kernel wait, uninterruptible syscall,
 synchronous executor poll/drop, or Waker callback can exceed it in wall-clock

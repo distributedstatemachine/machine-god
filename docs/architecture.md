@@ -12,9 +12,15 @@ catalog and fails fixed unsupported at allowed execution before cwd lookup or
 spawn. Timeout is independently enforced from first poll around controllable
 userspace phases, but safe Rust cannot turn a blocked host syscall, synchronous
 executor poll/drop, or Waker callback into an unconditional wall-clock ceiling.
-Output-limit observation is published before cleanup and remains authoritative
-against a concurrent guardian. Blocking notification tails retain their
-originating active slots, bounding their threads and stacks by configured
+Cancellation is first and one linearized final-cause close orders output-limit
+observation against timeout: earlier overflow completes a valid output-limit
+outcome, while an earlier timeout close cannot be changed by later overflow.
+One successful admission creates one active execution slot shared without a
+second increment by the outer call, owned request/executor, every
+TerminalTool-wrapped Waker clone and callback supplied to built-in or public
+injected executors, and native worker/deadline threads through actual return.
+Retained requests, Wakers, callbacks, and no-Waker thread tails keep that slot,
+so later calls fail busy and native work cannot accumulate outside configured
 capacity. Group cleanup retains the leader through final signal dispatch;
 already-exited leaders bypass the termination grace, while all paths report
 ambiguous cleanup and prove only the disappearance of observed signalable

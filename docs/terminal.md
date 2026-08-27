@@ -143,6 +143,15 @@ defaults. `open_with_limits` selects the same fixed system executor with public
 validated bounds, and `with_executor` supplies a trusted executor plus those
 bounds. Accepted deadlines are 1 millisecond through 600 seconds.
 
+One successful admission creates exactly one execution activity and consumes
+exactly one active slot. That slot is shared, never incremented, by the outer
+call, its owned request and executor, every clone and callback in the
+TerminalTool-supplied Waker family, and the native worker and deadline threads
+through their actual returns. Retaining any request, executor, or supplied
+Waker keeps the same activity alive; later calls fail fast as busy while the
+configured capacity remains occupied. The slot is released exactly once, when
+the last activity owner returns or is dropped.
+
 The timeout deadline begins on first poll before capacity admission or cwd
 validation. After admission, one tool-owned condition-variable guardian wakes
 the outer future at that deadline independently of the executor. It enforces the
@@ -151,6 +160,12 @@ pending injected executor, which is destroyed at expiry. Failure to create that
 bounded guardian fails before executor construction or process spawn.
 Cancellation is rechecked after executor and guardian destruction and again
 immediately before a `ToolOutput` is returned.
+
+Before polling either the built-in or a public injected executor, TerminalTool
+wraps the task Waker in an opaque Waker that owns the same execution activity
+and supplies the resulting context to the executor. A public executor therefore
+needs and receives no access to the private activity counter. Every retained
+clone and in-flight callback keeps the originating slot until it returns.
 
 This timeout is not an unconditional wall-clock ceiling. Safe Rust cannot
 preempt a host thread blocked inside a filesystem lookup, `Command::spawn`, a
@@ -168,19 +183,22 @@ Across both streams, execution:
 - retains at most 64 KiB of raw output using deterministic head-and-tail
   retention;
 - continues draining and counting through 1 MiB of produced bytes;
-- makes `output_limit` authoritative once either reader observes an aggregate
-  produced count beyond 1 MiB, including when exit or deadline becomes ready
-  concurrently. That terminal cause is published to the outer guardian before
-  process-group cleanup begins, so a deadline during cleanup cannot discard the
-  authoritative overflow; and
+- attempts to publish `output_limit` once either reader observes an aggregate
+  produced count beyond 1 MiB. The shared final-cause close described below
+  decides whether that observation or a concurrent deadline is authoritative;
+  and
 - promptly stops both readers after that observation, with fixed chunk and
   post-stop read-count ceilings that deterministically bound overshoot rather
   than claiming termination on the first byte beyond 1 MiB.
 
-Final arbitration preserves the validated outcome invariants: a result with
-more than 1 MiB observed is always `output_limit`, and a `timed_out` result
-never carries counters that make it an output-limit outcome. A validated
-executor outcome is not rewritten into a contradictory status/counter pair.
+Cancellation is checked first. Output-limit observation and deadline expiry
+then use one linearized final-cause close. If a reader's overflow observation
+linearizes before the timeout close, output limit wins and cleanup completes a
+valid `output_limit` result. If the timeout close linearizes first, timeout wins
+and any overflow observed afterward cannot change that closed cause. Final
+publication never exposes a contradictory status/counter pair: a timed-out
+result does not publish later cleanup counters as an output-limit outcome, and
+a validated executor outcome is not rewritten inconsistently.
 
 Invalid UTF-8 is replaced lossily in presentation and identified by per-stream
 `*_lossy` flags; the output makes no byte-round-trip claim. Head/tail omission
@@ -256,16 +274,19 @@ clock claim.
 Reader shutdown uses deterministic fixed read-count and chunk-size bounds, so
 an escaped descendant that retains and continuously writes a pipe cannot make
 join unbounded. Owned descriptors, pipes, readers, and the direct child are
-cleaned before a result is published. A finished publisher or deadline-
-notification thread can overlap an arbitrary inline or blocking `Waker`;
-joining that thread from the consuming path could self-join or cross-thread
-deadlock. Its handle may therefore be released after command resources are
-gone, but its callback/final-bookkeeping tail retains the originating per-tool
-active slot until the callback returns. OS threads and stacks are consequently
-bounded by the configured active capacity even when a callback blocks
-indefinitely; further calls fail fast as busy rather than accumulating detached
-tails. This exception is not limited to self-reentrant Wakers and makes no
-wall-clock bound for callback completion.
+cleaned before a result is published. The one admitted execution activity is
+shared by the outer call, its owned request and executor, every
+TerminalTool-supplied Waker clone and callback, and each native worker or
+deadline thread. It is never incremented for a publisher or callback. A native
+thread retains that activity through its actual return even when it observed no
+Waker. A retained request or Waker and an arbitrary inline or blocking callback
+likewise retain it through callback return. Joining such a thread from the
+consuming path could self-join or cross-thread deadlock, so its handle may be
+released only while the same activity continues to own the slot. OS threads and
+stacks are consequently bounded by configured capacity; further calls fail
+fast as busy rather than accumulating work outside admission accounting. This
+ownership rule makes no wall-clock bound for executor destruction, native
+thread return, or callback completion.
 
 ## Acceptance evidence
 
@@ -275,12 +296,16 @@ denial with zero effects; retained-root cwd and symlink/replacement races;
 shell quoting, newlines, fixed program/argv, null stdin, and exact environment;
 separate streams, invalid UTF-8, pipe pressure, output and serialized caps;
 exit codes, signals, timeout, authoritative output overflow and bounded
-overshoot, cause visibility during cleanup, and validated outcome arbitration;
+overshoot, cancellation-first linearized output/deadline closure, each order of
+that close, and validated noncontradictory outcome arbitration;
 spawn/wait failure; cancellation before and after spawn plus the final
 prepublication check; drop and direct-child reaping; process groups,
 TERM-ignore/KILL, normal-exit latency, ambiguous cleanup, and leader-identity
-retention; concurrency limits, blocking-Waker saturation, and active-slot
-release; exact-tilde and tilde-prefixed cwd literals; redaction; public-
+retention; concurrency limits; one non-incrementing shared activity across the
+outer call, owned request/executor, built-in and injected wrapped-Waker families,
+callbacks, and native threads; retained-request and retained-Waker saturation;
+no-Waker thread return; exact-once active-slot release; exact-tilde and tilde-
+prefixed cwd literals; redaction; public-
 construction and private-host unsupported behavior; engine event/output
 persistence; and the fifteen-tool alphabetical reference catalog.
 The required exact Rust checks, release-mode focused tests, fresh release-binary

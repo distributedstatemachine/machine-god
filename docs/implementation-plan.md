@@ -69,8 +69,14 @@ independent evidence, and documentation remediation is composed through exact
 behavior head `62d0fe17e765b86be12efe8f99c96f871b47ba0c`, tree `0e6f94b`.
 Its complete exact-1.94.1 replacement gate was green. Formal cycle 3 rejected
 exact candidate `3215b9e`, tree `3fafcad`, with a deduplicated `0/2/2/0` union.
-Cycle-4 source, evidence, and documentation remediation is pending; its
-replacement gate, fresh exact-SHA reviews, and remote delivery remain pending.
+Cycle-4 source, evidence, and documentation remediation is in progress in
+non-overlapping tracks. The intended replacement shares one admitted execution
+activity without a second active-count increment across the outer call, owned
+request/executor, TerminalTool-wrapped Waker families and callback returns, and
+native worker/deadline threads through actual return. It also linearizes final
+output-limit/timeout closure after cancellation priority. This status does not
+assert source/evidence composition, a replacement candidate, a green gate or
+review, or remote delivery.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -103,8 +109,14 @@ documentation/diff/no-unsafe, and fresh release-binary gates green. Formal
 cycle 3 rejected exact candidate `3215b9e`, tree `3fafcad`, with two high and
 two medium deduplicated findings covering the last overflow/deadline race and a
 unified originating-slot ownership failure across injected executors, dual
-callbacks, and no-Waker native thread tails. Cycle-4 remediation is pending and
-does not establish a replacement candidate, green gate, review, or delivery.
+callbacks, and no-Waker native thread tails. Cycle-4 remediation is in progress
+in separate source, evidence, and maintained-documentation tracks. Its intended
+contract uses one shared, non-incrementing execution activity, supplies public
+injected executors only a TerminalTool-wrapped task Waker, retains the slot for
+retained requests/Wakers and native threads through actual return, and
+linearizes output-limit against timeout after cancellation priority. This does
+not establish component composition, a replacement candidate, green gate,
+review, or delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
@@ -3982,12 +3994,16 @@ documentation integrity, unchanged protected inputs, no added unsafe Rust, and
 fresh release smoke are green. Formal cycle 3 rejected exact candidate
 `3215b9e`, tree `3fafcad`: track counts `0/1/0/1`, `0/1/1/1`, and `0/0/1/0`
 deduplicate to `0 blocker / 2 high / 2 medium / 0 low`. Accepted cycle-4
-remediation must close the final overflow/deadline publication interleave and
-share one originating admission slot through the outer execution, injected and
-built-in Waker families, callback returns, and native thread completion. Every
-cycle-3 review worktree was removed and pruned. Replacement composition, its
-complete gate, three fresh reviews, and remote delivery remain pending, so this
-combined item stays unchecked. The delivered
+remediation is in progress. It must close the final overflow/deadline
+publication interleave after cancellation priority and share, without another
+active-count increment, one originating execution activity through the outer
+call, owned request/executor, built-in and injected TerminalTool-wrapped Waker
+families, callback returns, and native thread completion, including no-Waker
+returns. Retained requests and Wakers must keep the slot so later calls fail
+busy. Every cycle-3 review worktree was removed and pruned. This remediation
+status does not claim component composition. A replacement candidate, complete
+gate, three fresh reviews, and remote delivery remain pending, so this combined
+item stays unchecked. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit
