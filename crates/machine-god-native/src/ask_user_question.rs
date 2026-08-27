@@ -1353,9 +1353,19 @@ impl ActivityWake {
 
         loop {
             let notified = catch_unwind(AssertUnwindSafe(|| target.wake_by_ref()));
+            // Releasing a replaced callback target may run arbitrary Waker
+            // destruction. Keep the callback lane occupied, retain the
+            // activity, and let destructor-driven close or replacement settle
+            // before deciding whether any replay is still authoritative.
+            let target_drop = catch_unwind(AssertUnwindSafe(|| drop(target)));
+            let callback_failed = notified.is_err();
+            let target_drop_failed = target_drop.is_err();
             let next = {
                 let mut state = lock_activity_wake(&self.state);
-                if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) || notified.is_err() {
+                if matches!(state.lifecycle, ActivityWakeLifecycle::Closed)
+                    || callback_failed
+                    || target_drop_failed
+                {
                     state.notifying = false;
                     state.observed_while_notifying = false;
                     state.pending_after_observation = false;
@@ -1375,8 +1385,14 @@ impl ActivityWake {
                     None
                 }
             };
-            drop(target);
             if let Err(payload) = notified {
+                // The callback is the primary operation. If both it and target
+                // cleanup panic, destroy the captured cleanup payload before
+                // resuming the callback panic so precedence is deterministic.
+                drop(target_drop);
+                resume_unwind(payload);
+            }
+            if let Err(payload) = target_drop {
                 resume_unwind(payload);
             }
             let Some(next) = next else {
