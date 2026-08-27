@@ -93,6 +93,11 @@ separate wire budget bounds the selected envelope text, while the final
 request-body limit bounds the fully escaped outer request. The durable
 transcript remains complete and unchanged.
 
+A result produced by `read_tool_result` is never projected again, even when
+JSON escaping makes its complete wire form exceed the 16 KiB projection
+threshold. It remains subject to the same source, wire, and final request-body
+limits, preventing nested handles while preserving bounded requests.
+
 Source accounting and projected-wire accounting are independent. A result must
 first fit the source budget; projection cannot make an otherwise inadmissible
 source valid. The selected full or projected representation then consumes the
@@ -102,13 +107,16 @@ body limit. The exact Gateway envelope is specified in
 
 ## Limits and lifecycle
 
-Default `ReadToolResultLimits` enforce these independent inclusive bounds:
+Default `ReadToolResultLimits` and fixed reader ceilings enforce these
+independent inclusive bounds:
 
 | Resource | Default maximum |
 | --- | ---: |
 | Incoming compact arguments | 512 bytes |
 | Simultaneous active reads | 2 |
 | Hard configurable active-read limit | 8 |
+| Transcript messages traversed | 4,096 |
+| Content blocks traversed | 65,536 |
 | Prior tool-result blocks scanned | 4,096 |
 | Aggregate compact result bytes scanned | 8 MiB |
 | Default returned page | 8 KiB |
@@ -121,8 +129,9 @@ it is synchronous, nonblocking, effect-free, and does not load a session.
 
 `execute` returns an inert future. First poll checks cancellation and acquires
 active-read capacity without waiting. The tool performs at most one store load,
-then bounded record traversal, compact serialization, handle comparison, and
-UTF-8 range selection. It spawns no task or thread and performs no retry. Drop
+then newest-first bounded record traversal, cancellation-aware compact
+serialization into one reused buffer, fixed-digest handle comparison, and UTF-8
+range selection. It spawns no task or thread and performs no retry. Drop
 cancels ownership of the store future and releases capacity; a conforming
 injected store keeps its effects owned by that future or completes its own
 cleanup on drop.

@@ -1,12 +1,11 @@
 //! Bounded session-backed paging for projected tool results.
 
-use crate::tool_result_projection::valid_tool_result_handle;
+use crate::tool_result_projection::{tool_result_digest, valid_tool_result_handle};
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, PreparedToolCall, SessionRecord, SessionStore,
     Tool, ToolCall, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
 use serde_json::{Map, Number, Value, json};
-use sha2::{Digest, Sha256};
 use std::fmt;
 use std::future::{Future, poll_fn};
 use std::io::{self, Write};
@@ -30,7 +29,6 @@ const DEFAULT_MAX_SERIALIZED_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SCANNED_MESSAGES: usize = 4_096;
 const MAX_SCANNED_CONTENT_BLOCKS: usize = 65_536;
 const TOOL_RESULT_HANDLE_PREFIX: &str = "tool-result-sha256-";
-const TOOL_RESULT_HANDLE_DOMAIN: &[u8] = b"machine-god/tool-result-handle/v1\0";
 
 /// Stable construction-error category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -340,12 +338,13 @@ fn scan_record(
                 _ => return checked_error(cancellation, not_found()),
             };
             check_cancellation(cancellation)?;
-            let candidate_digest = tool_result_digest(
+            let candidate_digest: [u8; 32] = tool_result_digest(
                 &context.session_id,
                 &context.session_incarnation_id,
                 call_id,
                 &serialized,
-            );
+            )
+            .into();
             if candidate_digest == arguments.digest {
                 let output = match page_output(arguments, &serialized) {
                     Ok(output) => output,
@@ -446,28 +445,6 @@ const fn decode_hex(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         _ => None,
     }
-}
-
-fn tool_result_digest(
-    session_id: &machine_god_core::SessionId,
-    incarnation_id: &machine_god_core::SessionIncarnationId,
-    call_id: &machine_god_core::ToolCallId,
-    serialized_output: &[u8],
-) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(TOOL_RESULT_HANDLE_DOMAIN);
-    for component in [
-        session_id.as_str().as_bytes(),
-        incarnation_id.as_str().as_bytes(),
-        call_id.as_str().as_bytes(),
-        serialized_output,
-    ] {
-        let length =
-            u64::try_from(component.len()).expect("supported targets use at most 64-bit usize");
-        digest.update(length.to_be_bytes());
-        digest.update(component);
-    }
-    digest.finalize().into()
 }
 
 fn serialize_output_bounded(

@@ -176,6 +176,11 @@ specified in [`read-tool-result.md`](read-tool-result.md). Projection changes
 only this provider request; it neither replaces the complete durable transcript
 result nor writes a separate archive.
 
+Gateway results whose resolved tool name is `read_tool_result` remain complete
+instead of being projected recursively. They still consume the independent
+source and selected-wire budgets, and the fully escaped final request body must
+fit its limit.
+
 ## Streaming response
 
 The decoder consumes newline-delimited records and recognizes the pinned

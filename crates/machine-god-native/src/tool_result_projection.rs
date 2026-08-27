@@ -47,13 +47,23 @@ pub(crate) fn tool_result_handle(
     call_id: &ToolCallId,
     serialized_output: &[u8],
 ) -> String {
+    let digest = tool_result_digest(session_id, incarnation_id, call_id, serialized_output);
+    format!("{TOOL_RESULT_HANDLE_PREFIX}{digest:x}")
+}
+
+pub(crate) fn tool_result_digest(
+    session_id: &SessionId,
+    incarnation_id: &SessionIncarnationId,
+    call_id: &ToolCallId,
+    serialized_output: &[u8],
+) -> sha2::digest::Output<Sha256> {
     let mut digest = Sha256::new();
     digest.update(TOOL_RESULT_HANDLE_DOMAIN);
     update_length_prefixed(&mut digest, session_id.as_str().as_bytes());
     update_length_prefixed(&mut digest, incarnation_id.as_str().as_bytes());
     update_length_prefixed(&mut digest, call_id.as_str().as_bytes());
     update_length_prefixed(&mut digest, serialized_output);
-    format!("{TOOL_RESULT_HANDLE_PREFIX}{:x}", digest.finalize())
+    digest.finalize()
 }
 
 pub(crate) fn valid_tool_result_handle(handle: &str) -> bool {
