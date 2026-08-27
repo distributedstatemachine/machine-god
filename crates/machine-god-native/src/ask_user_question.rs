@@ -762,10 +762,6 @@ fn render_outcome(
             let mut content = Vec::with_capacity(answers.len());
             for (question, answer) in questions.iter().zip(answers) {
                 check_cancellation(cancellation)?;
-                let answer = trim_ascii_edges(&answer);
-                if answer.is_empty() {
-                    return Err(invalid_response());
-                }
                 if answer.len() > MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES {
                     return Err(resource_limit());
                 }
@@ -773,6 +769,10 @@ fn render_outcome(
                     .checked_add(answer.len())
                     .filter(|total| *total <= MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES)
                     .ok_or_else(resource_limit)?;
+                let answer = trim_ascii_edges(&answer);
+                if answer.is_empty() {
+                    return Err(invalid_response());
+                }
                 let answer = encode_terminal_safe(answer);
                 total_rendered = total_rendered
                     .checked_add(answer.len())
