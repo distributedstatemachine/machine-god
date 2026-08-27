@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, has a **FROZEN
-CONTRACT** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **IMPLEMENTED;
+LOCAL GATE GREEN; FORMAL REVIEW AND DELIVERY PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -67,9 +67,12 @@ prompt concurrency is default one/hard eight with fail-fast admission. The
 tool owns the prompt future, sets no timeout, and detaches no work. No CLI UI,
 durable terminal expansion, `vision`, `read_tool_result`, M05 surface,
 benchmark workload, performance result, or fx-equivalence claim is added.
-Implementation, independent evidence, composition, exact local gates, three
-fresh adversarial tracks, feature workflows, integration, and exact `main`
-workflows remain pending.
+Core `de1ce26`, contract `13cd366`, correction `399f960`, production
+`b24a673` (tree `47713c8`), and independent evidence compose through exact
+behavior head `a76818e`, tree `f44def5`. Its complete exact-1.94.1 local gate
+is green. Three fresh adversarial tracks, an immutable review candidate,
+feature workflows, integration, delivery, and exact `main` workflows remain
+pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4060,13 +4063,15 @@ gate:
   `read_tool_result`. Every authority-bearing tool requires normalized
   preflight, exact policy/execution agreement, resource bounds, redacted
 diagnostics, cancellation/drop tests, and platform scope stated before
-integration. Slice 35 freezes the ordinary-question-only `ask_user_question`
+integration. Slice 35 implements the ordinary-question-only `ask_user_question`
 contract from exact delivered slice-34 base `5846799`. It rejects the deferred
 `permission_request_id`, uses explicit no-authority preparation, injects a
 rootless bounded prompter, and permits ordered bounded free-form answers.
-Implementation and delivery are pending, so this combined item remains
-unchecked. Slice 33 `web_search` is delivered through exact record
-`52b5885`; its feature and main CI/Benchmark workflows are green. Slice 34
+Exact behavior head `a76818e`, tree `f44def5`, passes the complete local gate;
+formal review, remote workflows, integration, and delivery are pending, so
+this combined item remains unchecked. Slice 33 `web_search` is delivered
+through exact record `52b5885`; its feature and main CI/Benchmark workflows
+are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that
 exact base. Cycle 1 rejected exact candidate `fba499e` with a deduplicated
 `0 blocker / 3 high / 3 medium / 4 low` product-finding union. Independent

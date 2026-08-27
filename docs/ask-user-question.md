@@ -1,12 +1,25 @@
 # Native `ask_user_question`
 
-Status: **FROZEN CONTRACT — implementation and review pending**.
+Status: **IMPLEMENTED — local gate green; formal review and delivery pending**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
 fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`. This first slice asks only
 ordinary, bounded questions through an explicitly injected, rootless
 `QuestionPrompter`. It does not provide a terminal UI or approval escalation.
+
+## Local implementation checkpoint
+
+Core no-authority component `de1ce26`, frozen contract `13cd366`, contract
+correction `399f960`, production component `b24a673` (tree `47713c8`), and
+independent evidence compose through exact behavior head `a76818e`, tree
+`f44def5`. The complete exact-Rust-1.94.1 local gate is green, including the
+required workspace commands, 49 focused native/engine/composition tests,
+compatibility, dependency, portability, documentation, and fresh release
+checks. This checkpoint establishes implementation and local regression
+evidence only. It does not establish an immutable review candidate, formal
+adversarial outcome, remote CI, benchmark evidence, integration, delivery,
+product performance, compatibility promotion, or fx equivalence.
 
 ## Product boundary
 

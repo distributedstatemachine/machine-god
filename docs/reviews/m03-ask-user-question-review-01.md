@@ -1,7 +1,8 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CONTRACT FROZEN — implementation, exact candidate, review, and
-delivery pending**.
+Status: **IMPLEMENTED — complete local gate green; exact review candidate,
+formal adversarial review, remote workflows, integration, and delivery
+pending**.
 
 ## Frozen lineage
 
@@ -11,13 +12,26 @@ delivery pending**.
 - Pinned fx comparison:
   `b1774fbf6c7602b503026f96f6e960e946c692ef`
 - Integration branch: `agent/m03-ask-user-question`
-- Documentation component branch: `agent/m03-ask-docs`
 - Normative contract: [`../ask-user-question.md`](../ask-user-question.md)
+- Core no-authority component:
+  `de1ce26b5c99a526aadec3f527746b18d581d832`, tree
+  `fac2038cbd71bbe7077e9265833e08bac289c04e`
+- Frozen contract component:
+  `13cd366c92f7a692f4ae83f6fb8c28033e152de8`, tree
+  `938116d47163b8e5799ea49f304988c012009c8f`
+- Contract correction:
+  `399f9608550e96c385fd49ecceca6bdad6d3edd5`, tree
+  `b25cf4cc067820cf1239dbf68f6e2399922aed5b`
+- Native production component:
+  `b24a673a05529104d0f0b612e0168aecc2c69dfa`, tree
+  `47713c8b316d7385e460bffef450893f71c95551`
+- Independent evidence and exact current behavior head:
+  `a76818e7779f8d306cdb0101903236d5e755488f`, tree
+  `f44def500e9f2d598c81f97abf46f62e59ef1ce3`
 
-The contract component is review-exempt only as a planning checkpoint. It is
-not implementation evidence, a behavior candidate, a formal review result, or
-delivery. Production, independent evidence, composition, the complete local
-gate, three fresh exact-SHA adversarial tracks, exact feature workflows,
+The exact behavior head implements and independently exercises the frozen
+slice. It is not yet an immutable formal-review candidate, a review result, or
+delivery. Three fresh exact-SHA adversarial tracks, exact feature workflows,
 fast-forward integration, and exact `main` workflows remain required.
 
 ## Frozen first-slice decisions
@@ -78,9 +92,9 @@ Agents must not edit another owner's files or revert integrated work. Each
 iteration must end committed and clean before its worktree is safely removed.
 Active or uncommitted worktrees remain in place.
 
-## Required implementation evidence
+## Implemented evidence coverage
 
-Focused evidence must establish at least:
+Focused direct, engine, and composition evidence establishes:
 
 - strict root, nested object, required field, type, count, and unknown-field
   failures, including the dedicated `permission_request_id` rejection;
@@ -113,9 +127,10 @@ interactive CLI evidence.
 
 ## Formal review plan
 
-After production, evidence, and docs compose and the complete exact-1.94.1
-replacement gate is green, freeze one immutable candidate SHA/tree. Spawn three
-fresh read-only product reviewers in isolated clean worktrees:
+Production and independent evidence now compose and the complete exact-1.94.1
+local gate is green. The next step is to freeze one immutable candidate
+SHA/tree and spawn three fresh read-only product reviewers in isolated clean
+worktrees:
 
 1. correctness/API/schema and pinned-fx boundary;
 2. lifecycle/cancellation/platform/host composition; and
@@ -142,6 +157,34 @@ fx regeneration, dependency policy and audit, supported cross-target checks,
 documentation integrity, diff/protected-input/no-added-unsafe checks, and
 applicable release-binary smokes. Gate success is regression/delivery evidence,
 not a product-performance or fx-equivalence claim.
+
+## Local implementation gate
+
+Exact behavior head `a76818e7779f8d306cdb0101903236d5e755488f`, tree
+`f44def500e9f2d598c81f97abf46f62e59ef1ce3`, passes the complete local gate
+under exact Rust and Cargo 1.94.1 without fallback:
+
+- all four required formatting, workspace warnings-denied Clippy, workspace
+  test, and workspace doctest commands are green;
+- focused evidence is green for 20 direct tool tests, one engine test, and the
+  affected 15 configuration, three root-selection, nine reference-host, and
+  one reference-host lifecycle tests (49 total);
+- repo-wide Python discovery passes 136 tests with eight intentional skips,
+  and the pinned-fx drift check is green;
+- `cargo deny` passes every category with the three established duplicate-
+  dependency warnings; `cargo audit` checks 1,226 advisories across 211
+  dependencies with zero vulnerabilities;
+- the all-feature WASI check and warnings-denied no-default-feature FreeBSD
+  Clippy check are green;
+- documentation integrity reports `91/318/699/532/0`; exact diff checks find
+  no Cargo-file delta and no added unsafe Rust; and
+- a fresh locked release binary is 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated-root `help`, `doctor`, and `sessions` smoke checks pass.
+
+This gate makes no formal-review, CI, benchmark, performance, compatibility,
+fx-equivalence, integration, or delivery claim. Reviewer reports must identify
+the later exact immutable candidate they inspect.
 
 ## Deferred and nonclaim record
 

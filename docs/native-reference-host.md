@@ -1,13 +1,13 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` has a **FROZEN CONTRACT**; Milestone 03 remains
-**IN PROGRESS**.
-The delivered composition contains fifteen alphabetical tools: thirteen
+`ask_user_question` is **IMPLEMENTED WITH A GREEN LOCAL GATE; FORMAL REVIEW AND
+DELIVERY PENDING**; Milestone 03 remains **IN PROGRESS**.
+The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
-`web_search` own no workspace descriptor. Slice 35 will insert rootless
-`ask_user_question` first, producing sixteen tools without another workspace
+`web_search` own no workspace descriptor. Slice 35 inserts rootless
+`ask_user_question` first without another workspace
 descriptor. Its injected `QuestionPrompter` owns interaction and no CLI UI is
 selected implicitly. The delivered terminal Linux system executor remains the
 only platform-default process implementation in these two slices.
@@ -16,10 +16,11 @@ Private reference-host descriptor composition deliberately keeps `terminal` in
 the non-Linux catalog; after strict preparation and permission, allowed execute
 revalidates arguments and returns fixed unsupported before cwd lookup, guardian
 or worker creation, or spawn. See [`terminal.md`](terminal.md), the
-[`slice-34 ledger`](reviews/m03-terminal-review-01.md), the frozen
+[`slice-34 ledger`](reviews/m03-terminal-review-01.md), the implemented
 [`ask_user_question` contract](ask-user-question.md), and its
 [`slice-35 ledger`](reviews/m03-ask-user-question-review-01.md).
-Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
+Thirty-four bounded Milestone 03 slices are delivered; the local slice-35
+composition does not change that count. The earlier slice-27 reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
 `32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
@@ -1180,9 +1181,9 @@ are green. Milestone 03 remains in progress because remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.
 
-## Slice 35 frozen rootless composition
+## Slice 35 implemented rootless composition
 
-The slice-35 contract adds one explicit shared `QuestionPrompter` parameter to
+Slice 35 adds one explicit shared `QuestionPrompter` parameter to
 each production and custom reference-host constructor. Construction stores the
 prompter inside a rootless `AskUserQuestionTool`; it does not poll the prompter,
 inspect a terminal, discover interactivity, open another root, or start work.
@@ -1191,14 +1192,15 @@ provider, and engine failure ordering remains otherwise unchanged. An invalid
 question concurrency setting, if an explicit-limits host path is later exposed,
 must map to a fixed redacted composition stage rather than reflect prompt data.
 
-The candidate tool order is `ask_user_question`, `copy_file`, `create_folder`,
+The exact local tool order is `ask_user_question`, `copy_file`, `create_folder`,
 `delete_file`, `edit_file`, `file_info`, `glob_files`, `grep_files`,
 `list_files`, `open_file`, `read_file`, `rename_file`, `terminal`, `web_fetch`,
-`web_search`, and `write_file`. The descriptor count stays thirteen: the
+`web_search`, and `write_file`. Exact behavior head `a76818e`, tree `f44def5`,
+passes the complete local gate. The descriptor count stays thirteen: the
 question tool and two web tools own no workspace descriptor. The no-authority
 question call invokes neither the separately injected `PermissionPrompter` nor
 permission events. A noninteractive host must inject the fixed unavailable
 prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
-contract and pending review plan are
+contract and pending formal-review plan are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).

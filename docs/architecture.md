@@ -1,13 +1,27 @@
 # Architecture
 
+Bounded Milestone 03 slice 35, native `ask_user_question`, is implemented and
+passes its complete local gate at exact behavior head `a76818e`, tree
+`f44def5`; formal review and delivery remain pending. Provider-neutral core
+adds only the explicit `PreparedToolAuthorization::NoAuthorityRequired`
+disposition. Native owns the strict bounded question codec, terminal-safe
+normalization, rootless injected `QuestionPrompter`, cancellation, fail-fast
+capacity, and result construction. The reference-host catalog is now sixteen
+alphabetical tools with `ask_user_question` first; its thirteen descriptor-
+backed tools still use one retained workspace descriptor plus twelve clones,
+while the question tool and two web tools are rootless. This adds no CLI UI,
+timeout, ambient terminal discovery, product-performance result, or
+fx-equivalence claim. See [`ask-user-question.md`](ask-user-question.md).
+
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
 delivered base `52b5885`. Provider-neutral core gains only the exact
 `ProcessEnvironment` identity carried by `Capability::Process`; native owns the
 retained-root cwd walk, environment snapshot, fixed `/bin/sh`, process group,
 deadline guardian, worker/readers, output bounds, and cleanup. The system
-executor's public constructors are Linux-only. The reference host composes
-fifteen alphabetical tools, thirteen backed by one original workspace
-descriptor plus twelve clones; its private non-Linux terminal remains in that
+executor's public constructors are Linux-only. The slice-34 delivered host
+catalog had fifteen alphabetical tools; slice 35 now composes sixteen while
+preserving thirteen tools backed by one original workspace descriptor plus
+twelve clones. Its private non-Linux terminal remains in that
 catalog and fails fixed unsupported at allowed execution before cwd lookup or
 spawn. Timeout is independently enforced from first poll around controllable
 userspace phases, but safe Rust cannot turn a blocked host syscall, synchronous
@@ -2158,11 +2172,11 @@ Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
 fixed structural state (`has_provider` and tool count); it never invokes the
 provider's `name` method or copies provider-controlled text.
 
-## Slice 35 frozen question-interaction boundary
+## Slice 35 implemented question-interaction boundary
 
-The frozen `ask_user_question` design adds one portable native adapter, not UI
-state to core or the CLI. Strict effect-free native preparation canonicalizes a
-bounded ordered question batch and selects
+The implemented `ask_user_question` slice adds one portable native adapter,
+not UI state to core or the CLI. Strict effect-free native preparation
+canonicalizes a bounded ordered question batch and selects
 `PreparedToolAuthorization::NoAuthorityRequired`. Core validates that explicit
 prepared form but skips permission-request identity, permission events, and the
 permission handler. It still owns cancellation, `ToolStarted`/`ToolFinished`,
@@ -2179,9 +2193,10 @@ bounded but need not equal an option label, allowing a host-owned `Other` path.
 
 The portable adapter is unconditional in `machine-god-native`. Current full
 reference-host construction remains under its existing Linux/macOS,
-non-WebAssembly HTTP feature gate and will receive the prompter explicitly. Its
-candidate catalog grows from fifteen to sixteen alphabetical tools without a
+non-WebAssembly HTTP feature gate and receives the prompter explicitly. Its
+catalog grows from fifteen to sixteen alphabetical tools without a
 workspace-descriptor clone. The complete bounds, precedence, output, and
 deferrals are normative in
-[`ask-user-question.md`](ask-user-question.md). Implementation and formal
-review remain pending.
+[`ask-user-question.md`](ask-user-question.md). Exact behavior head `a76818e`,
+tree `f44def5`, passes the complete local gate; formal review and delivery
+remain pending.

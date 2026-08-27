@@ -2072,7 +2072,7 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 frozen interaction and authority rules
+## Slice 35 implemented interaction and authority rules
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2101,5 +2101,7 @@ ambient terminal discovery. First-poll cancellation and fail-fast admission
 precede prompter invocation; cancellation wins any same-poll ready outcome.
 Explicit user cancellation and noninteractive use return fixed non-authorizing
 sentinels. Exact rules are in
-[`ask-user-question.md`](ask-user-question.md); implementation and adversarial
-review remain pending.
+[`ask-user-question.md`](ask-user-question.md). Exact behavior head `a76818e`,
+tree `f44def5`, passes the complete local gate, including no-permission-event,
+redaction, cancellation, drop, and portability evidence. Formal adversarial
+review and delivery remain pending.

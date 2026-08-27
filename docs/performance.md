@@ -656,7 +656,7 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 frozen question resource model
+## Slice 35 implemented question resource model
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -678,5 +678,8 @@ outcome validation and result construction and ends on return or future drop.
 No timeout is claimed. Pending duration and externally allocated UI state are
 properties of the injected prompter. A conforming prompter detaches no work;
 the adapter starts no task, thread, timer, retry, channel, or runtime. Formal
-resource/cancellation evidence remains required before this slice can be
-called green. See [`ask-user-question.md`](ask-user-question.md).
+review remains pending. Exact behavior head `a76818e`, tree `f44def5`, passes
+the complete local regression/resource gate, including focused capacity,
+drop, cancellation, boundary, WASI, and FreeBSD evidence. This is not a
+benchmark or product-performance result. See
+[`ask-user-question.md`](ask-user-question.md).
