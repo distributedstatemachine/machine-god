@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 9 REJECTED — CYCLE 10
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 10 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -121,10 +121,18 @@ one-replay budget, a legal wake after the replay poll remains pending with no
 downstream scheduling until unrelated explicit notify activity. The committed
 test manually invokes `retained_wakers[2]`; a last self-wake or cancellation
 wake can otherwise leave the no-timeout prompt pending indefinitely. Cycle 10
-must provide autonomous post-poll progress while retaining bounded nonrecursive
-single-flight delivery, panic/drop ordering, and permit ownership. A deferred/
-trampoline dispatcher or justified public contract redesign may be needed. No
-cycle-10 source, evidence, gate, review, integration, or delivery is claimed.
+now provides autonomous post-poll progress through an
+`Open`/`DeliveryResourceExhausted`/`Closed` serialized nonrecursive lane capped
+at exactly 256 callbacks. Rejection docs
+`216c3b4`/`895c9d4`, final evidence `74a8497`/`5e46f56` (superseding
+`5cbd9b0`), and source `b043364` compose at exact behavior head
+`72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`. Short residual/cancellation
+chains progress through callback 3; continuous chains reach terminal callback
+256, then cancellation wins or the existing redacted nonretryable prompt-
+failed error returns. Direct 41 and the complete local gate are green. No
+thread, queue, dependency, or public API is added. Formal review, workflows,
+integration, and delivery remain pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**;
+`ask_user_question` is **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -98,11 +98,20 @@ activation budget is spent, a legal wake after the replay poll can remain
 pending without downstream
 scheduling until unrelated explicit notify activity; the committed test
 manually invokes `retained_wakers[2]`. A last self-wake or cancellation wake can
-therefore leave the no-timeout host prompt pending indefinitely. Cycle 10 must
-schedule every post-poll wake without unrelated activity while preserving
-bounded nonrecursive single-flight delivery, panic/drop ordering, and permit
-ownership. No cycle-10 source, evidence, or gate is claimed.
-No cycle-10 review, integration, or delivery exists yet.
+therefore leave the no-timeout host prompt pending indefinitely. Cycle 10 now
+schedules every post-poll wake without unrelated activity while preserving the
+existing safety invariants. Cycle-10 docs `216c3b4`/`895c9d4`, final evidence
+`74a8497`/`5e46f56`, and source `b043364` compose at exact behavior head
+`72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`. The `ActivityWake`
+`Open`/`DeliveryResourceExhausted`/`Closed` lane advances short chains
+autonomously, caps one activation at
+exactly 256 callbacks, and converts a continuing chain into cancellation-first
+terminal poll or the existing redacted nonretryable prompt-failed error. Close/
+panic, A-drop, panic ordering, permit retention, and no foreign Waker work under
+the mutex remain; no thread, queue, dependency, or public API is added. Direct
+41 and the complete local gate are green. Formal review, workflows,
+integration, and delivery remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -832,8 +841,9 @@ pending, and formal cycle 8 rejected `e929b5e`/`cfadc42` with a `0/0/2/0`
 union. Cycle-9 panic-primary and bounded-activation remediation/evidence plus
 the complete local gate compose at `0279b8c`/`50b2423`. Formal cycle 9 rejected
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
-work does not yet exist. The analogous preexisting terminal code is outside
-this slice.
+source/evidence and complete local gate now compose at
+`72e8e75`/`5405180`, with formal review pending. The analogous preexisting
+terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1391,5 +1401,7 @@ pending, and formal cycle 8 rejected exact `e929b5e`/`cfadc42` with a
 callback work, residual pending delivery, and the complete local gate compose
 at `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
-source, evidence, review, integration, and delivery do not exist. Analogous
-preexisting terminal code is out of scope and is not claimed fixed.
+source/evidence and the complete local gate compose at
+`72e8e75`/`5405180`. Formal review, workflows, integration, and delivery remain
+pending. Analogous preexisting terminal code is out of scope and is not claimed
+fixed.

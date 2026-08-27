@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-9 question resource remediation
+## Slice 35 cycle-10 question resource remediation
 
-Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -932,10 +932,32 @@ notify activity consumes the work. The committed regression manually invokes
 `retained_wakers[2]`, so a self-waking prompt or cancellation transition whose
 wake is last may remain `Pending` indefinitely. No timeout exists.
 
-Cycle 10 must schedule every corresponding post-poll wake without unrelated
-activity while retaining bounded nonrecursive callback work, single-flight,
-panic/drop ordering, and capacity ownership. A deferred/trampoline dispatcher
-or a justified public contract redesign may be required. No cycle-10 source,
-evidence, gate, review, integration, or delivery is claimed. No benchmark,
-product-performance, or fx-equivalence result is claimed. See
+Cycle-10 docs `216c3b4`/`895c9d4`, final evidence
+`74a849791e311759630d0204d692190a39da279c`/`5e46f56` (superseding
+`5cbd9b0`), and source `b0433648b1c836a8db6151f64b461196830fea92` compose at
+exact behavior head `72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`; disposable final composition
+`a8acbf4`/`54124807ac991cc93dc15db28bad21ac8e2a19ae` passes formatting/direct
+41.
+
+The serialized nonrecursive lane has `Open`, `DeliveryResourceExhausted`, and
+`Closed` states and an exact per-activation downstream cap of 256. Calls 1-255
+advance normal observation-aware wakes. Continuation after poll 255 records
+sticky exhaustion before terminal callback 256; its outer poll checks
+cancellation first and otherwise returns the existing redacted nonretryable
+prompt-failed error. Exhaustion suppresses retained binds/wakes until close.
+Short residual/cancellation chains now advance autonomously through callback 3.
+No thread, queue, dependency, public API, or lock-held foreign Waker operation
+is added; established close/panic/A-drop/panic-ordering/permit rules remain.
+
+`observed_residual_wakes_progress_without_an_unrelated_activation` proves base-
+two to autonomous-three short progress;
+`continuously_rewaking_prompt_stops_at_the_delivery_limit_with_redacted_error`
+proves base-two to exact terminal-256 continuous exhaustion; and
+`cancellation_in_the_residual_wake_window_progresses_and_closes_delivery`
+proves base-two/new-three cancellation-first close.
+Focused direct 41, all required exact-1.94.1 commands, and extended/release-
+smoke gates are green. Formal review, workflows, integration, and delivery
+remain pending. No benchmark, product-performance, or fx-equivalence result is
+claimed. See
 [`ask-user-question.md`](ask-user-question.md).

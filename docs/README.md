@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9
-REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**. Formal cycle
+status is **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -132,12 +132,18 @@ reported `0/0/0/0`, and the deduplicated union is `0/0/1/0`. After the callback
 plus one replay budget, a post-poll wake can remain pending without downstream
 scheduling until unrelated explicit activity; the committed test progresses
 only by manually calling `retained_wakers[2]`. A last self-wake or cancellation
-wake can therefore leave the no-timeout prompt pending indefinitely. Cycle 10
-must schedule every legal post-poll wake without unrelated activity while
-retaining bounded nonrecursive single-flight delivery, panic/drop ordering, and
-permit ownership, potentially through a deferred/trampoline dispatcher or a
-justified public contract redesign. No cycle-10 source, evidence, gate, review,
-integration, or delivery exists yet.
+wake can therefore leave the no-timeout prompt pending indefinitely. Cycle-10
+docs `216c3b4`/`895c9d4`, final evidence `74a8497`/`5e46f56` (superseding
+`5cbd9b0`), and source `b043364` compose at exact head
+`72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`. The lifecycle is
+`Open`/`DeliveryResourceExhausted`/`Closed`, one serialized nonrecursive lane,
+and exactly 256 callbacks per activation. Short chains now reach callback 3
+autonomously; a continuing chain reaches terminal callback 256, then
+cancellation wins or the existing redacted nonretryable prompt-failed error is
+returned. Focused direct 41 and all pinned/extended/release-smoke gates are
+green. No thread, queue, dependency, or public API is added. Formal review,
+workflows, integration, and delivery remain pending.
 The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the

@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9
-REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -122,11 +122,18 @@ after the replay poll remains only in
 is exhausted; lane release schedules nothing, and only unrelated later notify
 activity consumes it. The retained-Waker test manually calls
 `retained_wakers[2]`, so a last self-wake or cancellation wake can otherwise
-leave this no-timeout prompt pending indefinitely. Cycle 10 must provide
-autonomous post-poll scheduling while retaining bounded nonrecursive single-
-flight delivery, panic/drop ordering, and permit ownership, possibly through a
-deferred/trampoline dispatcher or a justified public contract redesign. No
-cycle-10 source, evidence, gate, review, integration, or delivery exists yet.
+leave this no-timeout prompt pending indefinitely. Cycle-10 docs
+`216c3b4`/`895c9d4`, final evidence `74a8497`/`5e46f56`, and source `b043364`
+compose at exact head `72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`. `ActivityWake` is now an
+`Open`/`DeliveryResourceExhausted`/`Closed` serialized nonrecursive lane with
+an exact 256-callback activation ceiling. Short chains progress autonomously;
+continuation after poll 255 records exhaustion before terminal callback 256,
+whose outer poll checks cancellation first. Existing close/panic/A-drop/panic-
+precedence/permit rules remain, with no foreign Waker work under the mutex and
+no thread, queue, dependency, or public API change. Direct 41 and the complete
+local gate are green; formal review, workflows, integration, and delivery
+remain pending.
 See
 [`ask-user-question.md`](ask-user-question.md).
 
@@ -2373,8 +2380,9 @@ remediation/evidence compose at `0279b8c`/`50b2423`: initial plus one replay is
 the activation ceiling, residual pending survives, and dual panic preserves the
 callback panic. Direct 39 and the complete local gate are green. Formal cycle 9
 rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
-cycle-10 work does not yet exist. Analogous preexisting terminal code is out of
-scope.
+cycle-10 source/evidence and the complete local gate now compose at
+`72e8e75`/`5405180`, with fresh review pending. Analogous preexisting terminal
+code is out of scope.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2412,6 +2420,7 @@ integration, and delivery were not established; formal cycle 8 rejected exact
 `e929b5e`/`cfadc42` with a `0/0/2/0` union. Cycle-9 source, evidence, and the
 complete local gate are established at `0279b8c`/`50b2423`. Formal cycle 9
 rejected `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium;
-cycle-10 source, evidence, reviews, workflows, integration, and delivery do not
-exist. The analogous preexisting terminal path remains outside this bounded
-slice.
+cycle-10 source, evidence, and the complete local gate are established at
+`72e8e75`/`5405180`. Formal reviews, workflows, integration, and delivery
+remain pending. The analogous preexisting terminal path remains outside this
+bounded slice.

@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 9
-REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 10 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -161,13 +161,23 @@ replay budget is spent, a legal wake after the replay poll can remain only
 pending, with no downstream
 schedule until unrelated later activity; the committed regression manually
 invokes `retained_wakers[2]`. A last self-wake or cancellation wake can
-therefore leave this no-timeout prompt pending indefinitely. Cycle 10 must make
-every wake after its corresponding poll schedule progress without unrelated
-activity while retaining bounded nonrecursive delivery, single-flight, panic/
-drop ordering, and permit ownership. A deferred/trampoline dispatcher or a
-justified public contract redesign may be required. The current status is
-**CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**; no cycle-10 source,
-evidence, gate, review, integration, or delivery is claimed.
+therefore leave this no-timeout prompt pending indefinitely. Cycle-10 rejection
+docs `216c3b4`/`895c9d4`, final evidence `74a8497`/`5e46f56` (superseding
+`5cbd9b0`), and source `b043364` compose at exact behavior head
+`72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`; disposable final composition
+`a8acbf4`/`5412480` is green for formatting/direct 41. `ActivityWake` now uses
+`Open`/`DeliveryResourceExhausted`/`Closed` lifecycle with one serialized,
+nonrecursive lane and an exact 256-callback activation cap. Short residual and
+cancellation chains progress autonomously; exhaustion schedules terminal
+callback 256, whose outer poll checks cancellation first and otherwise returns
+the existing redacted nonretryable prompt-failed error. Existing close/panic,
+A-drop, panic precedence, permit, and no-lock-held-foreign-Waker rules remain;
+no thread, queue, dependency, or public API is added. Focused direct 41 and the
+complete exact-1.94.1 pinned/extended/release-smoke gates are green. The current
+status is
+**CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review,
+integration, delivery, benchmark, or fx-equivalence result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

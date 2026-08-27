@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**. Formal cycle 9
+Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 9
 rejected its exact immutable candidate with one deduplicated correctness/
-lifecycle liveness finding. The historical cycle-9 source, deterministic
-evidence, and complete local gate remain recorded below. No cycle-10 source,
-evidence, gate, review, workflow, integration, or delivery exists yet.
+lifecycle liveness finding. Cycle-10 source, deterministic evidence, and the
+complete local gate now compose at the exact behavior head below. Three fresh
+formal reviews, remote workflows, integration, and delivery remain pending.
 
 ## Frozen lineage
 
@@ -138,6 +138,18 @@ evidence, gate, review, workflow, integration, or delivery exists yet.
 - Formal cycle-9 candidate, **REJECTED**:
   `1eeab670a552bc15b5602319b0bb1ce27d2be497`, tree
   `5c86e624cf3c0e6d521382c377a9ed9b0500ee5b`
+- Cycle-9 rejection-documentation component:
+  `216c3b4479d51dbe1052c2f9a6723089e600f77b`, integrated as `895c9d4`
+- Final cycle-10 independent evidence component:
+  `74a849791e311759630d0204d692190a39da279c`, integrated as `5e46f56`;
+  supersedes evidence precursor `5cbd9b0`
+- Cycle-10 source component and exact behavior head:
+  `b0433648b1c836a8db6151f64b461196830fea92`, integrated as
+  `72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+  `5405180e5b3b4b59c4d7e712f614bdbc958a9d75`
+- Final disposable cycle-10 source/evidence composition:
+  `a8acbf4`, tree `54124807ac991cc93dc15db28bad21ac8e2a19ae`, green for formatting
+  and all 41 direct question tests
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -168,8 +180,9 @@ union. Cycle-9 rejection docs, evidence, and source now compose at exact
 behavior head `0279b8c`/`50b2423`; its complete exact-1.94.1 local gate is
 green. Three fresh exact-SHA reviews rejected later candidate
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` union. Cycle-10 source,
-evidence, replacement gates, formal reviews, workflows, integration, and
-delivery do not exist yet.
+evidence, and cycle-9 rejection docs now compose at exact behavior head
+`72e8e75`/`5405180`; its complete exact-1.94.1 local gate is green. Three fresh
+formal reviews, workflows, integration, and delivery remain pending.
 
 ## Frozen first-slice decisions
 
@@ -1104,8 +1117,91 @@ progress without requiring unrelated activity. It must retain bounded,
 nonrecursive delivery, callback single-flight, established panic/target-drop
 ordering, and prompt-permit ownership. A deferred or trampoline dispatcher may
 be required; alternatively, a public contract redesign needs an explicit and
-justified progress rule. No cycle-10 source, independent evidence, local gate,
-formal review, workflow, integration, or delivery result is claimed.
+justified progress rule. At that rejection checkpoint, no cycle-10 source,
+independent evidence, local gate, formal review, workflow, integration, or
+delivery result was claimed.
+
+## Cycle-10 implemented remediation and local implementation gate
+
+Cycle-9 rejection documentation
+`216c3b4479d51dbe1052c2f9a6723089e600f77b`, integrated as `895c9d4`, final
+independent evidence `74a849791e311759630d0204d692190a39da279c`, integrated
+as `5e46f56` and superseding `5cbd9b0`, and source
+`b0433648b1c836a8db6151f64b461196830fea92` compose at exact behavior head
+`72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`. Final disposable source/evidence
+composition `a8acbf4`, tree `54124807ac991cc93dc15db28bad21ac8e2a19ae`, is
+green for formatting and all 41 direct question tests.
+
+`ActivityWake` now has explicit `Open`, `DeliveryResourceExhausted`, and
+`Closed` lifecycle states around one serialized, nonrecursive callback lane.
+One explicit activation has an exact ceiling of 256 downstream callbacks.
+Callbacks 1 through 255 carry ordinary observation-aware source-wake progress.
+If a wake after poll 255 would continue the chain, the lane records sticky
+delivery exhaustion before callback 256; callback 256 schedules one terminal
+outer poll. That poll checks cancellation first, so cancellation wins, then
+returns the existing nonretryable `Execution` error with kind
+`ask_user_question_prompt_failed` and redacted message
+`ask_user_question prompt failed` when exhaustion remains.
+
+The exhausted state suppresses retained binds and wakes until close. Short
+residual chains advance autonomously through callback 3 without unrelated
+activation. Close and panic paths, target-A destruction before replay
+arbitration, callback-primary dual-panic precedence, lone target-drop panic
+propagation, permit retention, and the prohibition on foreign Waker operations
+under the mutex remain intact. The remediation adds no threads, queues,
+dependency, or public API change.
+
+Deterministic evidence establishes the replacement behavior:
+
+- `observed_residual_wakes_progress_without_an_unrelated_activation` records
+  two callbacks on the rejected base and three autonomous callbacks now;
+- `continuously_rewaking_prompt_stops_at_the_delivery_limit_with_redacted_error`
+  records two callbacks on the rejected base and the exact terminal 256-callback
+  path now; and
+- `cancellation_in_the_residual_wake_window_progresses_and_closes_delivery`
+  records two callbacks on the rejected base and three now while proving
+  autonomous cancellation progress, cancellation-first precedence, and close
+  of retained delivery.
+
+The focused gate passes under exact Rust and Cargo 1.94.1 without fallback:
+formatting; 41 direct question tests; one question-engine test; nine all-
+feature reference-host tests; one reference-host lifecycle test; six native-
+manifest tests; and native all-target/all-feature warnings-denied Clippy.
+
+Exact behavior head `72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`, passes all four required exact-
+1.94.1 workspace formatting, all-target/all-feature warnings-denied Clippy,
+test, and doctest commands without fallback.
+
+The extended gate is green:
+
+- repo-wide Python passes 136 tests with eight intentional skips, and pinned
+  compatibility regeneration is byte-stable;
+- `cargo deny` passes with only the established `core-foundation`,
+  `cpufeatures`, and `syn` duplicate-dependency warnings;
+  `cargo audit --no-fetch` loads 1,226 advisories, checks 211 dependencies, and
+  reports zero vulnerabilities;
+- native no-default compilation, the all-feature WASI library check, and
+  warnings-denied no-default FreeBSD Clippy are green; WASI emits only the
+  established unrelated `read_file::check_cancellation` warning;
+- documentation integrity reports 91 Markdown files, 318 fence markers, 701
+  parsed links, 534 local links, and zero missing targets; all ten operative
+  status regions are current with zero stale openings;
+- the exact diff is clean, protected `.github`, benchmark, and compatibility
+  inputs are unchanged, and no Rust `unsafe` is added; and
+- a fresh locked release binary is 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated missing-root `--help`, `doctor --json`, and `sessions --json` smoke
+  checks pass without creating files.
+
+The authorized manifest delta remains development-only: the native test
+fixture line and one native dependency-list line in `Cargo.lock`. The
+production normal/build graph is unchanged. This is regression and release-
+smoke evidence, not a formal-review, integration, delivery, benchmark,
+product-performance, compatibility-promotion, or fx-equivalence claim. Three
+fresh exact-SHA formal reviews and both feature and `main` workflow gates remain
+pending.
 
 ## Deferred and nonclaim record
 

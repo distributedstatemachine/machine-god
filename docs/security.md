@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-9 interaction and authority remediation
+## Slice 35 cycle-10 interaction and authority remediation
 
-Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2319,11 +2319,26 @@ test manually invokes `retained_wakers[2]`. A self-waking prompt or cancellation
 transition whose wake is last can therefore remain `Pending` indefinitely, and
 no timeout exists.
 
-Cycle 10 must make every corresponding post-poll wake schedule progress without
-unrelated activity while preserving bounded nonrecursive delivery, callback
-single-flight, established panic/drop ordering, and permit ownership. A
-deferred/trampoline dispatcher or justified public contract redesign may be
-required. No cycle-10 source, evidence, gate, review, integration, or delivery
-is claimed. This is not benchmark, product-performance, or fx-equivalence
-evidence. The analogous terminal path remains out of scope and is not claimed
-fixed.
+Cycle-10 docs `216c3b4`/`895c9d4`, final evidence
+`74a849791e311759630d0204d692190a39da279c`/`5e46f56` (superseding
+`5cbd9b0`), and source `b0433648b1c836a8db6151f64b461196830fea92` compose at
+exact behavior head `72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`. `ActivityWake` is now an
+`Open`/`DeliveryResourceExhausted`/`Closed` serialized nonrecursive lane capped
+at exactly 256 callbacks. Calls
+1-255 carry observation-aware progress; continued wake activity records sticky
+exhaustion before terminal callback 256. Its outer poll checks cancellation
+first, then returns the existing redacted nonretryable prompt-failed error.
+
+Short residual/cancellation chains progress autonomously through callback 3.
+Exhaustion suppresses retained binds/wakes until close. Existing close/panic,
+A-drop-before-arbitration, callback-primary dual-panic, lone target-drop panic,
+permit ownership, and no-lock-held-foreign-Waker rules remain. No thread, queue,
+dependency, public API, or authority change is added. Three named tests prove
+base-two/new-three short and cancellation progress plus base-two/exact-
+terminal-256 exhaustion; their exact names are retained in the contract and
+ledger. Focused direct 41, all pinned/extended gates, and
+unchanged release smokes are green. Formal review, workflows, integration, and
+delivery remain pending. This is not benchmark, product-performance, or fx-
+equivalence evidence. The analogous terminal path remains out of scope and is
+not claimed fixed.

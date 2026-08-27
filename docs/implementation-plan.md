@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 9
-REJECTED — CYCLE 10 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 10 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -384,8 +384,38 @@ Cycle 10 must ensure every wake after its corresponding poll schedules progress
 without unrelated activity while preserving bounded nonrecursive delivery,
 single-flight, established panic/drop ordering, and permit ownership. A
 deferred/trampoline dispatcher or a justified public contract redesign may be
-required. No cycle-10 source, evidence, local gate, review, workflow,
-integration, or delivery exists yet.
+required. Rejection docs `216c3b4`/`895c9d4`, final evidence
+`74a849791e311759630d0204d692190a39da279c`/`5e46f56` (superseding
+`5cbd9b0`), and source `b0433648b1c836a8db6151f64b461196830fea92` compose at
+exact behavior head `72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`; disposable final composition
+`a8acbf4`/`54124807ac991cc93dc15db28bad21ac8e2a19ae` passes formatting and
+direct 41.
+
+`ActivityWake` is an `Open`/`DeliveryResourceExhausted`/`Closed` serialized,
+nonrecursive lane with an exact 256-callback activation ceiling. Callbacks
+1-255 preserve observation-aware source progress. A continuation wake after
+poll 255 records sticky exhaustion before callback 256, which schedules a
+terminal outer poll. Cancellation wins its first check; otherwise the poll
+returns the existing nonretryable `Execution`/
+`ask_user_question_prompt_failed`/`ask_user_question prompt failed` outcome.
+Exhaustion suppresses retained binds/wakes through close; short residual and
+cancellation chains now advance autonomously through callback 3. Existing
+close/panic, A-drop, panic precedence/propagation, permit, and no-lock-held-
+foreign-Waker rules remain. No thread, queue, dependency, or public API is
+added.
+
+Three deterministic tests prove short residual two-to-three progress,
+continuous base-two to exact terminal-256 exhaustion, and autonomous
+cancellation/close. Focused exact-1.94.1 formatting, direct 41, engine one,
+host nine/lifecycle one, manifest six, and native Clippy are green. All four
+required exact-1.94.1 commands pass without fallback. Extended Python 136/8,
+compatibility, deny/audit 1,226/211/zero, portability, docs
+91/318/701/534/0, status 10/0, diff/protected/no-unsafe, unchanged locked
+release/missing-root smokes, and the audited dev-only Cargo delta are green;
+the production dependency graph is unchanged. Formal review, workflows,
+integration, and delivery remain pending, with no benchmark, product-
+performance, or fx-equivalence claim.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4441,8 +4471,9 @@ override the primary, and re-poll/re-notify can execute 257 callbacks for budget
 residual pending delivery, direct 39, and the complete pinned/extended/release
 gate compose at exact `0279b8c`/`50b2423`. Formal cycle 9 rejected exact
 `1eeab67`/`5c86e62` with a deduplicated `0/0/1/0` liveness medium; cycle-10
-remediation, evidence, reviews, workflows, integration, and delivery do not
-exist yet, and
+remediation/evidence and the complete local gate compose at
+`72e8e75`/`5405180`; reviews, workflows, integration, and delivery remain
+pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

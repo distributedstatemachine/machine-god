@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 9 REJECTED — CYCLE 10 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 10 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -457,8 +457,56 @@ nonrecursive, callback execution single-flight, established callback/target-
 drop panic ordering unchanged, and the prompt permit retained through all
 activity ownership. A deferred/trampoline dispatcher may be necessary; a
 public contract redesign is acceptable only with an explicit, justified
-progress rule. No cycle-10 source, evidence, gate, review, workflow,
-integration, or delivery result is claimed.
+progress rule. At that rejection checkpoint, no cycle-10 source, evidence,
+gate, review, workflow, integration, or delivery result was claimed.
+
+## Cycle-10 implementation and local checkpoint
+
+Cycle-9 rejection docs `216c3b4479d51dbe1052c2f9a6723089e600f77b`/`895c9d4`,
+final evidence `74a849791e311759630d0204d692190a39da279c`/`5e46f56`
+(superseding `5cbd9b0`), and source
+`b0433648b1c836a8db6151f64b461196830fea92` compose at exact behavior head
+`72e8e75ba2490d4dfa0f680d9dca0b4e10a0401a`, tree
+`5405180e5b3b4b59c4d7e712f614bdbc958a9d75`. Final disposable composition
+`a8acbf4`/`54124807ac991cc93dc15db28bad21ac8e2a19ae` passes formatting and all
+41 direct tests.
+
+`ActivityWake` has `Open`, `DeliveryResourceExhausted`, and `Closed` states
+around one serialized, nonrecursive callback lane. An activation permits
+exactly 256 downstream callbacks. Calls 1 through 255 carry normal observation-
+aware source-wake progress. If a wake after poll 255 would continue, sticky
+exhaustion is recorded before callback 256, which schedules a terminal outer
+poll. That poll checks cancellation first, then returns the existing
+nonretryable `Execution` error with kind `ask_user_question_prompt_failed` and
+redacted message `ask_user_question prompt failed` if exhausted.
+
+Exhaustion suppresses retained binds/wakes until close. Short residual chains
+now progress autonomously through callback 3. Close/panic behavior, A-drop-
+before-arbitration, callback-primary dual-panic handling, lone target-drop panic
+propagation, permit retention, and no foreign Waker operations under the mutex
+remain. No threads, queues, dependency, or public API change is added.
+
+`observed_residual_wakes_progress_without_an_unrelated_activation` records two
+callbacks on the rejected base and three now.
+`continuously_rewaking_prompt_stops_at_the_delivery_limit_with_redacted_error`
+records two on the base and the exact terminal 256 now.
+`cancellation_in_the_residual_wake_window_progresses_and_closes_delivery`
+records base two/new three and proves autonomous cancellation progress,
+cancellation-first precedence, and closed delivery.
+
+The exact-1.94.1 focused gate passes formatting, direct 41, engine one, host
+nine, host lifecycle one, manifest six, and native warnings-denied Clippy. All
+four required exact-1.94.1 commands pass without fallback. Extended Python
+136/8, byte-stable compatibility, deny with established duplicates, audit
+1,226/211/zero, native/WASI/FreeBSD portability, docs 91/318/701/534/0,
+status 10/0, diff/protected/no-unsafe, and release-smoke gates are green. The
+locked release remains 3,985,216 bytes with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+three isolated missing-root smokes create no files. The authorized Cargo delta
+remains the dev-only native fixture plus one native lock dependency-list line;
+the production graph is unchanged. Formal review, workflows, integration, and
+delivery remain pending. This is not benchmark, product-performance,
+compatibility-promotion, or fx-equivalence evidence.
 
 ## Product boundary
 
