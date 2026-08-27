@@ -298,18 +298,30 @@ fn prepare_is_strict_effect_free_and_requests_exact_create_authority() {
         .prepare(call(arguments("./parent//literal\\ λ/final")))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("create_folder requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Create,
             path: "parent/literal\\ λ/final".to_owned(),
         }
     );
     assert_eq!(
-        serde_json::to_value(prepared.capability()).unwrap(),
+        serde_json::to_value(
+            prepared
+                .capability()
+                .expect("create_folder requires permission authority"),
+        )
+        .unwrap(),
         json!({"type": "filesystem", "access": "create", "path": "parent/literal\\ λ/final"})
     );
     assert_eq!(
-        serde_json::to_vec(prepared.capability()).unwrap(),
+        serde_json::to_vec(
+            prepared
+                .capability()
+                .expect("create_folder requires permission authority"),
+        )
+        .unwrap(),
         r#"{"type":"filesystem","access":"create","path":"parent/literal\\ λ/final"}"#.as_bytes()
     );
     assert_eq!(prepared.arguments(), &arguments("parent/literal\\ λ/final"));
@@ -331,7 +343,9 @@ fn preparation_does_not_reinspect_or_mutate_a_removed_retained_root() {
     let prepared = tool.prepare(call(arguments("parent/folder"))).unwrap();
     assert_eq!(prepared.arguments(), &arguments("parent/folder"));
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("create_folder requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Create,
             path: "parent/folder".to_owned(),

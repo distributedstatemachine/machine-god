@@ -483,14 +483,21 @@ fn prepare_is_effect_free_strict_and_uses_the_exact_open_file_capability() {
         .prepare(call(OPEN_FILE_TOOL_NAME, json!({ "path": "report.txt" })))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("open_file requires permission authority"),
         &Capability::OpenFile {
             path: "report.txt".to_owned()
         }
     );
     assert_eq!(prepared.arguments(), &json!({ "path": "report.txt" }));
     assert_eq!(
-        serde_json::to_value(prepared.capability()).unwrap(),
+        serde_json::to_value(
+            prepared
+                .capability()
+                .expect("open_file requires permission authority"),
+        )
+        .unwrap(),
         json!({ "type": "open_file", "path": "report.txt" })
     );
     launcher.with_state(|state| {

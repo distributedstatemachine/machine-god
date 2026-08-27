@@ -451,7 +451,9 @@ fn prepare_defaults_and_normalizes_exact_search_capability_and_arguments() {
     let tool = tool(temporary.path());
     let defaulted = tool.prepare(call(json!({"pattern": "Needle"}))).unwrap();
     assert_eq!(
-        defaulted.capability(),
+        defaulted
+            .capability()
+            .expect("grep_files requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::SearchContent,
             path: ".".to_owned(),
@@ -484,7 +486,9 @@ fn prepare_defaults_and_normalizes_exact_search_capability_and_arguments() {
         })))
         .unwrap();
     assert_eq!(
-        normalized.capability(),
+        normalized
+            .capability()
+            .expect("grep_files requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::SearchContent,
             path: "scope/nested".to_owned(),

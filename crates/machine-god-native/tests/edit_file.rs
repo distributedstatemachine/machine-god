@@ -318,7 +318,9 @@ fn prepare_normalizes_path_preserves_text_and_requests_exact_edit_authority() {
         )))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("edit_file requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Edit,
             path: "src/nested/file.rs".to_owned(),
@@ -338,7 +340,9 @@ fn prepare_treats_backslashes_spaces_and_unicode_as_literal_filename_bytes() {
         let prepared = tool.prepare(call(arguments(path, "a", "b"))).unwrap();
         assert_eq!(prepared.arguments()["path"], path);
         assert_eq!(
-            prepared.capability(),
+            prepared
+                .capability()
+                .expect("edit_file requires permission authority"),
             &Capability::Filesystem {
                 access: FilesystemAccess::Edit,
                 path: path.to_owned(),

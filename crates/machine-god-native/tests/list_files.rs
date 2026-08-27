@@ -239,7 +239,9 @@ fn prepare_defaults_the_omitted_path_to_the_workspace_root() {
     let prepared = tool(temporary.path()).prepare(call(json!({}))).unwrap();
 
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("list_files requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Enumerate,
             path: ".".to_owned(),
@@ -282,7 +284,9 @@ fn prepare_normalizes_root_dot_and_repeated_separators_for_policy_and_execution(
     ] {
         let prepared = tool.prepare(call(json!({ "path": path }))).unwrap();
         assert_eq!(
-            prepared.capability(),
+            prepared
+                .capability()
+                .expect("list_files requires permission authority"),
             &Capability::Filesystem {
                 access: FilesystemAccess::Enumerate,
                 path: normalized.to_owned(),
@@ -302,7 +306,9 @@ fn prepare_treats_unix_whitespace_and_backslashes_as_literal_filename_bytes() {
             .prepare(call(json!({ "path": path })))
             .expect("safe whitespace and backslashes are literal Unix filename bytes");
         assert_eq!(
-            prepared.capability(),
+            prepared
+                .capability()
+                .expect("list_files requires permission authority"),
             &Capability::Filesystem {
                 access: FilesystemAccess::Enumerate,
                 path: path.to_owned(),
@@ -372,7 +378,9 @@ fn prepare_of_a_missing_path_is_effect_free() {
         .unwrap();
 
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("list_files requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Enumerate,
             path: "missing/nested".to_owned(),

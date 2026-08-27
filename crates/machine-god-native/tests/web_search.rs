@@ -740,7 +740,9 @@ fn prepare_requires_exact_shape_and_canonicalizes_for_one_gateway_capability() {
         ))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("web_search requires permission authority"),
         &Capability::Network {
             target: gateway_target()
         }

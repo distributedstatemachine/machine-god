@@ -293,7 +293,9 @@ fn prepare_normalizes_both_paths_and_requests_exact_copy_authority() {
         )))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("copy_file requires permission authority"),
         &Capability::FilesystemCopy {
             source: "source/literal\\ λ.bin".to_owned(),
             destination: "destination/literal\\ λ.bin".to_owned(),
@@ -449,7 +451,9 @@ fn preparation_does_not_reinspect_a_removed_retained_root() {
         .unwrap();
 
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("copy_file requires permission authority"),
         &Capability::FilesystemCopy {
             source: "missing-source".to_owned(),
             destination: "missing-destination".to_owned(),

@@ -289,7 +289,9 @@ fn prepare_normalizes_literal_names_and_requests_exact_delete_authority() {
         .prepare(call(arguments("./src///./nested//file.rs")))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("delete_file requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Delete,
             path: "src/nested/file.rs".to_owned(),
@@ -301,7 +303,9 @@ fn prepare_normalizes_literal_names_and_requests_exact_delete_authority() {
         let prepared = tool.prepare(call(arguments(path))).unwrap();
         assert_eq!(prepared.arguments(), &arguments(path));
         assert_eq!(
-            prepared.capability(),
+            prepared
+                .capability()
+                .expect("delete_file requires permission authority"),
             &Capability::Filesystem {
                 access: FilesystemAccess::Delete,
                 path: path.to_owned(),

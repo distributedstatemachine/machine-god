@@ -860,7 +860,9 @@ fn spec_and_defaults_are_strict_and_prepare_exact_process_identity() {
         arguments,
         working_directory,
         environment,
-    } = prepared.capability()
+    } = prepared
+        .capability()
+        .expect("terminal requires permission authority")
     else {
         panic!("terminal must prepare a process capability")
     };
@@ -876,7 +878,12 @@ fn spec_and_defaults_are_strict_and_prepare_exact_process_identity() {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     );
     assert_eq!(
-        serde_json::to_value(prepared.capability()).unwrap(),
+        serde_json::to_value(
+            prepared
+                .capability()
+                .expect("terminal requires permission authority"),
+        )
+        .unwrap(),
         json!({
             "type": "process",
             "program": "/bin/sh",
@@ -1038,16 +1045,19 @@ fn environment_digest_is_order_stable_and_raw_values_never_reflect() {
         .prepare(call("terminal", arguments.clone()))
         .unwrap()
         .capability()
+        .expect("terminal requires permission authority")
         .clone();
     let second_capability = second
         .prepare(call("terminal", arguments.clone()))
         .unwrap()
         .capability()
+        .expect("terminal requires permission authority")
         .clone();
     let changed_capability = changed
         .prepare(call("terminal", arguments))
         .unwrap()
         .capability()
+        .expect("terminal requires permission authority")
         .clone();
     assert_eq!(first_capability, second_capability);
     assert_ne!(first_capability, changed_capability);

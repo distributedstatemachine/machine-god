@@ -331,7 +331,9 @@ fn prepare_canonicalizes_for_exact_policy_and_execution_without_transport() {
         "  HTTP://EXAMPLE.COM.:443/a/../report?q=private#fragment  ",
     );
     assert_eq!(
-        prepared_call.capability(),
+        prepared_call
+            .capability()
+            .expect("web_fetch requires permission authority"),
         &Capability::Network {
             target: NetworkTarget {
                 scheme: "https".to_owned(),
@@ -348,7 +350,9 @@ fn prepare_canonicalizes_for_exact_policy_and_execution_without_transport() {
 
     let non_default = prepared(&tool, "https://Example.COM.:8443/path#drop");
     assert_eq!(
-        non_default.capability(),
+        non_default
+            .capability()
+            .expect("web_fetch requires permission authority"),
         &Capability::Network {
             target: NetworkTarget {
                 scheme: "https".to_owned(),
@@ -457,7 +461,10 @@ fn prepare_rejects_non_public_hosts_and_accepts_strict_public_ip_literals() {
         ),
     ] {
         let prepared = prepared(&tool, url);
-        let Capability::Network { target } = prepared.capability() else {
+        let Capability::Network { target } = prepared
+            .capability()
+            .expect("web_fetch requires permission authority")
+        else {
             panic!("web_fetch must request network authority")
         };
         assert_eq!(target.host, host);
@@ -498,7 +505,10 @@ fn prepare_rejects_arpa_names_at_label_boundaries_without_transport() {
         ("https://public.notarpa/", "public.notarpa"),
     ] {
         let prepared = prepared(&tool, url);
-        let Capability::Network { target } = prepared.capability() else {
+        let Capability::Network { target } = prepared
+            .capability()
+            .expect("web_fetch requires permission authority")
+        else {
             panic!("web_fetch must request network authority")
         };
         assert_eq!(target.host, host);

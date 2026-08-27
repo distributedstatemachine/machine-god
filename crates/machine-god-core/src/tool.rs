@@ -76,12 +76,17 @@ impl PreparedToolCall {
         }
     }
 
-    /// Creates a prepared call that requires no permission or authority.
+    /// Creates a prepared call that requires no policy-governed permission or
+    /// authority.
     ///
     /// This is a trusted-host assertion, not an optimization. A tool must use
     /// this constructor only when executing the prepared arguments requires no
     /// policy-governed authority. Core skips permission request/resolution
-    /// events and does not invoke the permission handler for this call.
+    /// events and does not invoke the permission handler for this call. This
+    /// disposition does not assert that execution performs no host interaction:
+    /// a tool may use a separately injected host-interaction interface outside
+    /// permission policy only when its public contract explicitly documents
+    /// that interface and boundary.
     #[must_use]
     pub fn without_authority(arguments: Value) -> Self {
         Self {
@@ -96,20 +101,17 @@ impl PreparedToolCall {
         &self.authorization
     }
 
-    /// Returns the exact capability that will be presented to policy.
+    /// Returns the exact capability that will be presented to policy, if one
+    /// is required.
     ///
-    /// # Panics
-    ///
-    /// Panics when this call was explicitly prepared with
-    /// [`PreparedToolCall::without_authority`]. Inspect
-    /// [`PreparedToolCall::authorization`] when handling either disposition.
+    /// Returns `Some` for
+    /// [`PreparedToolAuthorization::PermissionRequired`] and `None` for
+    /// [`PreparedToolAuthorization::NoAuthorityRequired`].
     #[must_use]
-    pub fn capability(&self) -> &Capability {
+    pub fn capability(&self) -> Option<&Capability> {
         match &self.authorization {
-            PreparedToolAuthorization::PermissionRequired(capability) => capability,
-            PreparedToolAuthorization::NoAuthorityRequired => {
-                panic!("a no-authority prepared call has no permission capability")
-            }
+            PreparedToolAuthorization::PermissionRequired(capability) => Some(capability),
+            PreparedToolAuthorization::NoAuthorityRequired => None,
         }
     }
 
@@ -186,9 +188,15 @@ pub trait Tool: Send + Sync + 'static {
     /// any other authority. This method is synchronous and receives no
     /// cancellation token: core checks cancellation immediately before and
     /// after it returns, but cannot preempt an in-flight preparation.
-    /// [`Tool::execute`] must exercise no authority beyond the returned
-    /// capability and must interpret the returned arguments consistently with
-    /// the operation that capability describes.
+    /// For [`PreparedToolAuthorization::PermissionRequired`],
+    /// [`Tool::execute`] must exercise no policy-governed authority beyond the
+    /// returned capability and must interpret the returned arguments
+    /// consistently with the operation that capability describes. For
+    /// [`PreparedToolAuthorization::NoAuthorityRequired`], execution must not
+    /// require policy-governed authority. A separately injected host-
+    /// interaction interface outside permission policy is permitted only when
+    /// the tool's public contract explicitly documents that interface and
+    /// boundary.
     ///
     /// # Errors
     ///
@@ -208,6 +216,18 @@ pub trait Tool: Send + Sync + 'static {
         Ok(PreparedToolCall::new(capability, arguments))
     }
 
+    /// Executes one tool call.
+    ///
+    /// Core passes the arguments validated and normalized by [`Tool::prepare`].
+    /// For permission-required calls, core invokes this method only after the
+    /// host policy resolves their exact capability, and execution must stay
+    /// within that policy-governed authority. No-authority calls skip host
+    /// permission policy and must require no policy-governed authority. They
+    /// may use a separately injected host-interaction interface outside policy
+    /// only when the tool's public contract explicitly documents that
+    /// interface and boundary. Direct callers that bypass core orchestration
+    /// are responsible for establishing the same preparation and authorization
+    /// preconditions.
     fn execute(
         &self,
         context: ToolContext,

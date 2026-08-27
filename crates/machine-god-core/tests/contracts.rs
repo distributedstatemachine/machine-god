@@ -684,11 +684,11 @@ fn default_tool_preflight_preserves_policy_and_execution_inputs() {
     ));
     assert_eq!(
         prepared.capability(),
-        &Capability::Tool {
+        Some(&Capability::Tool {
             name: call.name,
             call_id: call.id,
             arguments: call.arguments,
-        }
+        })
     );
 }
 
@@ -702,6 +702,7 @@ fn no_authority_preparation_is_explicit_and_retains_exact_arguments() {
         prepared.authorization(),
         &PreparedToolAuthorization::NoAuthorityRequired
     );
+    assert_eq!(prepared.capability(), None);
 }
 
 #[test]

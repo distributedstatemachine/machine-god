@@ -151,6 +151,7 @@ fn denial_authorizes_exact_process_identity_without_executor_or_tool_events() {
         ))
         .unwrap()
         .capability()
+        .expect("terminal requires permission authority")
         .clone();
     let engine = Engine::builder()
         .provider(provider.clone())
@@ -205,6 +206,7 @@ fn allow_precedes_one_execution_and_persists_the_exact_bounded_output() {
         ))
         .unwrap()
         .capability()
+        .expect("terminal requires permission authority")
         .clone();
     let engine = Engine::builder()
         .provider(provider.clone())

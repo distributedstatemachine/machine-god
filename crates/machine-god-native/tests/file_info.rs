@@ -258,7 +258,9 @@ fn prepare_normalizes_root_dots_and_repeated_separators_for_exact_authority() {
     ] {
         let prepared = tool.prepare(call(json!({ "path": requested }))).unwrap();
         assert_eq!(
-            prepared.capability(),
+            prepared
+                .capability()
+                .expect("file_info requires permission authority"),
             &Capability::Filesystem {
                 access: FilesystemAccess::Metadata,
                 path: normalized.to_owned(),
@@ -326,7 +328,9 @@ fn prepare_of_a_missing_path_is_effect_free_and_preserves_exact_arguments() {
         .unwrap();
 
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("file_info requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Metadata,
             path: "missing/nested/file.txt".to_owned(),

@@ -263,7 +263,9 @@ fn prepare_normalizes_both_paths_and_requests_exact_two_endpoint_authority() {
         )))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("rename_file requires permission authority"),
         &Capability::FilesystemRename {
             old_path: "old/literal\\ λ.txt".to_owned(),
             new_path: "new/literal\\ λ.txt".to_owned(),

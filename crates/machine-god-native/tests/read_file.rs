@@ -244,7 +244,9 @@ fn prepare_normalizes_dot_and_repeated_separators_for_policy_and_execution() {
         .unwrap();
 
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("read_file requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Read,
             path: "src/nested/file.rs".to_owned(),
@@ -266,7 +268,9 @@ fn prepare_treats_windows_looking_backslashes_as_literal_unix_filenames() {
             .prepare(call(json!({ "path": path })))
             .expect("backslashes are literal filename bytes on supported Unix targets");
         assert_eq!(
-            prepared.capability(),
+            prepared
+                .capability()
+                .expect("read_file requires permission authority"),
             &Capability::Filesystem {
                 access: FilesystemAccess::Read,
                 path: path.to_owned(),
@@ -331,7 +335,9 @@ fn prepare_of_a_missing_path_is_effect_free() {
         .unwrap();
 
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("read_file requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Read,
             path: "missing/nested/file.txt".to_owned(),

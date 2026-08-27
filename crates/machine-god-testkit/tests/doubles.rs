@@ -145,7 +145,10 @@ fn assert_prepared_tool_snapshot(
                 .and_then(serde_json::Value::as_u64),
             Some(ordinal)
         );
-        match outcome.capability() {
+        match outcome
+            .capability()
+            .expect("prepared fixture requires policy")
+        {
             Capability::Custom { name, details } => {
                 assert_eq!(name, "prepared-fixture");
                 assert_eq!(

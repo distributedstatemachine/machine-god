@@ -328,7 +328,9 @@ fn prepare_defaults_and_normalizes_exact_policy_and_execution_arguments() {
     let tool = tool(temporary.path());
     let defaulted = tool.prepare(call(json!({ "pattern": "*.rs" }))).unwrap();
     assert_eq!(
-        defaulted.capability(),
+        defaulted
+            .capability()
+            .expect("glob_files requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::EnumerateRecursive,
             path: ".".to_owned(),
@@ -347,7 +349,9 @@ fn prepare_defaults_and_normalizes_exact_policy_and_execution_arguments() {
         })))
         .unwrap();
     assert_eq!(
-        normalized.capability(),
+        normalized
+            .capability()
+            .expect("glob_files requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::EnumerateRecursive,
             path: "scope/nested".to_owned(),
@@ -455,7 +459,9 @@ fn prepare_is_effect_free_for_a_missing_search_root() {
         })))
         .unwrap();
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("glob_files requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::EnumerateRecursive,
             path: "missing/nested".to_owned(),

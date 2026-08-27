@@ -311,7 +311,9 @@ fn prepare_normalizes_path_preserves_content_and_requests_exact_write_authority(
         .unwrap();
 
     assert_eq!(
-        prepared.capability(),
+        prepared
+            .capability()
+            .expect("write_file requires permission authority"),
         &Capability::Filesystem {
             access: FilesystemAccess::Write,
             path: "src/nested/file.rs".to_owned(),
@@ -332,7 +334,9 @@ fn prepare_treats_backslashes_as_literal_unix_filename_bytes() {
             .prepare(call(json!({ "path": path, "content": "x" })))
             .unwrap();
         assert_eq!(
-            prepared.capability(),
+            prepared
+                .capability()
+                .expect("write_file requires permission authority"),
             &Capability::Filesystem {
                 access: FilesystemAccess::Write,
                 path: path.to_owned(),
