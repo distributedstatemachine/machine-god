@@ -23,8 +23,10 @@ refreshes these status summaries. Exact cycle-6 behavior head `8705811`, tree
 candidate was `28292b7`, tree `487f160`; formal cycle 6 rejected it with a
 deduplicated `0/0/1/0` union because pending outer-future drop can leave an
 independently retained supplied Waker able to deliver to the stale host target.
-Cycle-7 remediation and review, remote delivery, product-performance, and fx-
-equivalence claims remain pending. See the
+Cycle-7 remediation is in progress: frame-owned RAII must close notification on
+normal return, pending future drop, and unwind without releasing activity owned
+by a retained supplied-Waker clone. Composition, review, remote delivery,
+product-performance, and fx-equivalence claims remain pending. See the
 [`terminal` contract](terminal.md) and
 [`live review ledger`](reviews/m03-terminal-review-01.md).
 

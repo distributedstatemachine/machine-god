@@ -752,6 +752,27 @@ immediately after its verdict. Cycle 7 requires non-overlapping source,
 independent-evidence, and maintained-documentation remediation, a complete
 replacement gate, and three fresh exact-SHA reviews.
 
+## Cycle 7 remediation in progress
+
+Cycle-7 remediation is split across non-overlapping source, independent-
+evidence, and maintained-documentation worktrees. The accepted replacement
+uses a close guard owned by the live await frame so notifier close runs on
+normal return, drop of a pending outer future, and unwind. Close must mark
+delivery closed, cancel queued replay, and take the external target under the
+notifier state lock, then detach and destroy the taken target outside that lock.
+No notice through a supplied Waker retained after outer-frame destruction may
+reach the stale host target. An independently retained supplied-Waker clone
+continues to own the originating activity and capacity until that clone is
+dropped, and a callback already in flight retains the same activity through its
+return.
+
+Independent public evidence must drop a pending outer future while retaining a
+supplied-Waker clone, prove that later wake attempts do not reach the stale host
+Waker, prove capacity remains busy while the clone survives, and prove recovery
+after its drop. Source, evidence, and documentation are not yet composed. This
+is a remediation-status record only; it does not claim a replacement gate,
+formal cycle-7 review, remote delivery, product performance, or fx equivalence.
+
 ## Delivery gate
 
 Only a review-green exact candidate may be pushed as the feature branch. Its

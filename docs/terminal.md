@@ -7,7 +7,8 @@ frozen from exact delivered base
 Exact cycle-6 behavior head `8705811`, tree `8a319c1`, passes the complete
 exact-1.94.1 replacement gate. Formal cycle 6 rejected exact candidate
 `28292b7`, tree `487f160`, because pending outer-future drop can leave stale
-Waker delivery open. Cycle-7 review and remote delivery remain pending.
+Waker delivery open. Cycle-7 remediation is in progress; composition, review,
+and remote delivery remain pending.
 
 ## Boundary
 
@@ -168,14 +169,17 @@ Waker keeps the same activity alive, so later calls fail fast as busy while the
 configured capacity remains occupied.
 
 The outer call retains that activity through bounded output rendering, the
-final cancellation check, and public function return. On outer completion the
-notifier closes, cancels any queued replay, and removes and destroys its external
-target outside the notifier lock. A notice through an independently retained
-supplied Waker after close does not deliver to the completed task, but that
-retained clone still owns the activity and capacity until it is dropped. A
-callback already in flight likewise owns the activity until it returns. The slot
-is released exactly once, only after the last outer, request, executor,
-notifier, Waker, callback, or native-thread activity owner returns or is dropped.
+final cancellation check, and public function return. A frame-owned RAII guard
+closes the notifier on every exit from the await frame: normal return, drop of a
+pending outer future, and unwind. Close marks delivery closed, cancels queued
+replay, and takes the external target while holding the state lock, then detaches
+and destroys that target outside the notifier lock. No notice through a supplied
+Waker retained past frame destruction may reach the stale external task. An
+independently retained supplied-Waker clone still owns the activity and capacity
+until it is dropped, and a callback already in flight likewise owns the activity
+until it returns. The slot is released exactly once, only after the last outer,
+request, executor, notifier, Waker, callback, or native-thread activity owner
+returns or is dropped.
 
 The timeout deadline begins on first poll before capacity admission or cwd
 validation. After admission, one tool-owned condition-variable guardian wakes
@@ -317,10 +321,12 @@ most one underlying caller-Waker callback is in flight. Notices preceding a
 re-poll coalesce into it; one notice following an observing poll is retained as
 a serialized replay to the latest bound target. No notifier lock spans
 arbitrary Waker clone, drop, or wake behavior. An inline or blocking callback
-retains the activity through callback return. Completion closes delivery,
-clears the external target outside the notifier lock, cancels replay, and
-suppresses subsequent notices to the completed task without releasing activity
-owned by an independently retained supplied-Waker clone.
+retains the activity through callback return. The frame-owned RAII guard closes
+delivery on normal return, pending outer-future drop, and unwind. It cancels
+replay and removes the external target under the notifier lock, destroys the
+taken target outside that lock, and suppresses subsequent notices to the stale
+task without releasing activity owned by an independently retained supplied-
+Waker clone or a callback already in flight.
 
 Joining a native notification thread from the consuming path could self-join or
 cross-thread deadlock, so its handle may be released only while the same
@@ -354,8 +360,10 @@ coalescing with at most one underlying callback, serialized replay after a poll-
 observed later notice, and no lock held across arbitrary Waker clone/drop/wake;
 executor-, deadline-, and cancellation-driven self-repoll through the supplied
 notifier Waker without replacing the external target; close-time replay
-cancellation and post-close delivery suppression; retained supplied-Waker clone
-busy behavior and recovery after its drop; no-Waker thread return; activity
+cancellation and post-close delivery suppression on normal return, pending
+outer-future drop, and unwind; target destruction outside the notifier lock;
+retained supplied-Waker clone busy behavior and recovery after its drop; no-
+Waker thread return; activity
 retention through bounded rendering, final cancellation, and public return;
 exact-once active-slot release; exact-tilde and tilde-prefixed cwd literals;
 redaction; public-

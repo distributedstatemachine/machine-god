@@ -11,8 +11,10 @@ tree `8a319c1`. Its complete exact-1.94.1 replacement gate is green. The
 immutable candidate was `28292b7`, tree `487f160`. Formal cycle 6 rejected it:
 correctness/API reported `0/0/1/0`, while lifecycle/platform and performance/
 resources each reported `0/0/0/0`. The sole medium is stale host-Waker delivery
-after pending outer-future drop. Cycle-7 remediation, review, and remote delivery
-remain pending. Scope and worktree cleanup are recorded in
+after pending outer-future drop. Cycle-7 source, independent evidence, and
+maintained-documentation remediation are in progress in non-overlapping
+worktrees; composition, a replacement gate, review, and remote delivery remain
+pending. Scope and worktree cleanup are recorded in
 [`m03-terminal-review-01.md`](m03-terminal-review-01.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED** from exact delivered
