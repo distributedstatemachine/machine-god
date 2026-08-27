@@ -74,8 +74,10 @@ only system tests. Exact precursor `ec8bbc9` passed the four required Rust gates
 but exposed three stale dependency-topology assertions in the first 136-test
 Python run. Exact evidence/documentation remediation `80c6ee0`, tree `027c4bc`,
 requires unconditional native `sha2` for terminal environment identity and
-passed the complete exact-1.94.1 replacement gate. Formal review and delivery
-remain pending.
+passed the complete exact-1.94.1 replacement gate. Formal cycle 1 rejected exact
+candidate `fba499e`, tree `8679917`, with a deduplicated `0/3/3/4` union.
+Source, evidence, and documentation remediation are pending; delivery has not
+begun.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base

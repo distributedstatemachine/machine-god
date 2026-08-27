@@ -70,7 +70,51 @@ and Cargo 1.94.1 without fallback:
   passes help and status smoke paths.
 
 This evidence makes no product-performance, compatibility-promotion, or fx-
-equivalence claim. Formal cycle 1 review remains pending.
+equivalence claim.
+
+## Formal cycle 1 review
+
+Three adversarial product tracks reviewed exact candidate
+`fba499e1410f307a9ec79ac3d1df72e82008a7ff`, tree
+`8679917ddab5225a92dc17d8ac19ff815c34b46f`, and **REJECTED** it:
+
+- correctness/API/schema reported `0/0/1/2`;
+- native process/lifecycle/platform reported `0/1/3/1`; and
+- performance/concurrency/resources reported `0/2/2/1`.
+
+Overlap deduplicates to `0 blocker / 3 high / 3 medium / 4 low`:
+
+1. **High:** deadline, output-limit, and direct-exit races can produce a non-
+   output-limit status with more than 1 MiB observed, which outcome validation
+   collapses to a generic executor invariant.
+2. **High:** process-group cleanup dispatches `SIGKILL` without bounded
+   observation or error discrimination, so its documented disappearance claim
+   is stronger than the implementation and Linux process model can prove.
+3. **High:** synchronous cwd/proc lookup and the spawn boundary can block beyond
+   the advertised absolute deadline before or beneath the guardian. Safe Rust
+   cannot preempt a blocked host syscall; remediation must narrow that claim and
+   retain deadline enforcement around every controllable phase.
+4. **Medium:** executor and guardian destruction can cancel the token after
+   `await_executor` returns, but no post-await or final pre-publication check
+   arbitrates that cancellation.
+5. **Medium:** readers continue hardware-rate draining during termination grace,
+   and overflow does not immediately stop both readers, so the 1 MiB work cutoff
+   and post-stop read claim are false.
+6. **Medium:** normal exit reaps the leader before signalling the numeric process
+   group, allowing theoretical PID/PGID reuse to target an unrelated group.
+7. **Low:** nested `~` cwd components are accepted despite the frozen grammar,
+   while the docs omit the implemented U+2028/U+2029 rejection.
+8. **Low:** public non-Linux system construction fails, but private reference-
+   host composition intentionally advertises a terminal that fails at execution;
+   the contract does not state that exception.
+9. **Low:** injected environments are content-sorted before individual and
+   aggregate size validation, allowing rejectable oversized inputs to cause work
+   outside the advertised construction bounds.
+10. **Low:** Linux system evidence does not yet prove retained-root replacement,
+    cwd-dependent execution, or the exact snapshotted environment.
+
+All findings are accepted for source, evidence, or honest-contract remediation.
+Cycle 2 requires a complete replacement gate and three fresh exact-SHA reviews.
 
 ## Required composition
 
