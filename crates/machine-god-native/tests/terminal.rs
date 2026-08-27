@@ -4,14 +4,13 @@ use std::ffi::OsString;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::sync::{Arc, Condvar, Mutex};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use machine_god_core::{
     CancellationToken, Capability, ProcessEnvironment, Tool, ToolError, ToolErrorKind, ToolOutput,
 };
-#[cfg(target_os = "linux")]
 use machine_god_native::MAX_TERMINAL_PRODUCED_OUTPUT_BYTES;
 use machine_god_native::{
     TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
@@ -33,6 +32,7 @@ enum Mode {
     Signaled(i32),
     TimedOut,
     OutputLimit,
+    DelayedOutputLimit(Duration),
     Error(TerminalExecutorErrorKind),
     Pending,
     CancelThenExit,
@@ -167,6 +167,9 @@ impl Future for FakeExecution {
         if matches!(self.mode, Mode::CancelThenExit) {
             assert!(self.cancellation.cancel());
         }
+        if let Mode::DelayedOutputLimit(delay) = self.mode {
+            std::thread::sleep(delay);
+        }
         if let Mode::Error(kind) = self.mode {
             return Poll::Ready(Err(TerminalExecutorError::new(kind)));
         }
@@ -175,7 +178,7 @@ impl Future for FakeExecution {
             Mode::CancelThenExit | Mode::DropCancelThenExit => TerminalExecutionStatus::Exited(0),
             Mode::Signaled(signal) => TerminalExecutionStatus::Signaled(signal),
             Mode::TimedOut => TerminalExecutionStatus::TimedOut,
-            Mode::OutputLimit => TerminalExecutionStatus::OutputLimit,
+            Mode::OutputLimit | Mode::DelayedOutputLimit(_) => TerminalExecutionStatus::OutputLimit,
             Mode::Error(_) | Mode::Pending => unreachable!(),
         };
         Poll::Ready(TerminalExecutionOutcome::new(
@@ -185,6 +188,68 @@ impl Future for FakeExecution {
             Duration::from_millis(7),
         ))
     }
+}
+
+#[derive(Default)]
+struct BlockingWakeState {
+    entered: bool,
+    released: bool,
+}
+
+#[derive(Default)]
+struct BlockingWake {
+    state: Mutex<BlockingWakeState>,
+    changed: Condvar,
+}
+
+impl BlockingWake {
+    fn wait_until_entered(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut state = self.state.lock().unwrap();
+        while !state.entered {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "terminal Waker callback did not run");
+            let waited = self.changed.wait_timeout(state, remaining).unwrap();
+            state = waited.0;
+        }
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
+
+    fn block(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.entered = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+}
+
+impl Wake for BlockingWake {
+    fn wake(self: Arc<Self>) {
+        self.block();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.block();
+    }
+}
+
+struct BlockingWakeRelease(Arc<BlockingWake>);
+
+impl Drop for BlockingWakeRelease {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+fn poll_with_waker<F: Future + ?Sized>(future: Pin<&mut F>, waker: &Waker) -> Poll<F::Output> {
+    future.poll(&mut Context::from_waker(waker))
 }
 
 impl Drop for FakeExecution {
@@ -399,6 +464,33 @@ fn exact_command_and_cwd_boundaries_prepare_successfully() {
         assert_eq!(prepared.arguments(), &exact_arguments(command, cwd));
     }
     assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn literal_tilde_prefixed_directory_names_are_not_home_expansion() {
+    let temporary = TemporaryDirectory::new("literal-tilde-cwd");
+    std::fs::create_dir(temporary.path().join("~cache")).unwrap();
+    std::fs::create_dir_all(temporary.path().join("parent/~cache")).unwrap();
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let tool = tool(temporary.path(), &executor);
+
+    for cwd in ["~cache", "parent/~cache"] {
+        let arguments = exact_arguments("true", cwd);
+        let prepared = tool.prepare(call("terminal", arguments.clone())).unwrap();
+        assert_eq!(prepared.arguments(), &arguments);
+        let output = execute(&tool, arguments, CancellationToken::new()).unwrap();
+        assert!(!output.is_error);
+        assert_eq!(output.content["cwd"], cwd);
+    }
+
+    for cwd in ["~", "parent/~/child"] {
+        let error = tool
+            .prepare(call("terminal", exact_arguments("true", cwd)))
+            .unwrap_err();
+        assert_invalid_input(&error);
+        assert_eq!(error.code, "terminal_invalid_cwd");
+    }
+    assert_eq!(executor.calls(), 2);
 }
 
 #[test]
@@ -844,6 +936,112 @@ fn absolute_deadline_drops_a_permanently_pending_executor_and_releases_capacity(
 }
 
 #[test]
+fn output_limit_ready_after_deadline_remains_authoritative() {
+    let temporary = TemporaryDirectory::new("output-limit-deadline");
+    let executor = FakeExecutor::new(Mode::DelayedOutputLimit(Duration::from_millis(30)))
+        .with_totals(
+            usize::try_from(MAX_TERMINAL_PRODUCED_OUTPUT_BYTES).unwrap() + 1,
+            0,
+        );
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        TerminalLimits::new(Duration::from_millis(10), 1).unwrap(),
+    )
+    .unwrap();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments("produce-overflow", "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(output.is_error);
+    assert_eq!(output.content["status"], "output_limit");
+    assert_eq!(
+        output.content["stdout_bytes"],
+        MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 1
+    );
+    assert_eq!(output.content["stderr_bytes"], 0);
+    assert_eq!(executor.polls(), 1);
+    assert_eq!(executor.drops(), 1);
+}
+
+#[test]
+fn blocked_deadline_waker_tail_retains_capacity_until_callback_returns() {
+    let temporary = TemporaryDirectory::new("deadline-waker-capacity");
+    let executor = FakeExecutor::new(Mode::Pending);
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        TerminalLimits::new(Duration::from_millis(20), 1).unwrap(),
+    )
+    .unwrap();
+    let blocking = Arc::new(BlockingWake::default());
+    let _release_on_unwind = BlockingWakeRelease(Arc::clone(&blocking));
+    let waker = Waker::from(Arc::clone(&blocking));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("first", "."),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &waker).is_pending());
+    blocking.wait_until_entered();
+    let first_output = match poll_once(first.as_mut()) {
+        Poll::Ready(Ok(output)) => output,
+        Poll::Ready(Err(error)) => panic!("deadline execution failed: {error}"),
+        Poll::Pending => panic!("deadline execution remained pending after its wake"),
+    };
+    drop(first);
+    assert_eq!(first_output.content["status"], "timed_out");
+
+    let mut blocked = Box::pin(tool.execute(
+        context(),
+        exact_arguments("blocked", "."),
+        CancellationToken::new(),
+    ));
+    match poll_once(blocked.as_mut()) {
+        Poll::Ready(Err(error)) => {
+            assert_eq!(error.kind, ToolErrorKind::Unavailable);
+            assert_eq!(error.code, "terminal_busy");
+        }
+        Poll::Ready(Ok(_)) => panic!("execution bypassed a blocked Waker tail"),
+        Poll::Pending => panic!("blocked Waker tail released terminal capacity early"),
+    }
+    drop(blocked);
+
+    blocking.release();
+    let recovery_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut recovered = Box::pin(tool.execute(
+            context(),
+            exact_arguments("recovered", "."),
+            CancellationToken::new(),
+        ));
+        match poll_once(recovered.as_mut()) {
+            Poll::Pending => {
+                drop(recovered);
+                break;
+            }
+            Poll::Ready(Err(error)) if error.code == "terminal_busy" => {
+                assert!(
+                    Instant::now() < recovery_deadline,
+                    "capacity did not recover"
+                );
+                drop(recovered);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Poll::Ready(Err(error)) => panic!("capacity recovery failed: {error}"),
+            Poll::Ready(Ok(_)) => panic!("pending executor unexpectedly completed"),
+        }
+    }
+}
+
+#[test]
 fn process_environment_contract_round_trips_exactly() {
     let environment = ProcessEnvironment {
         profile: "construction_snapshot".to_owned(),
@@ -1212,22 +1410,28 @@ fn linux_system_executor_terminates_on_aggregate_output_pressure() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn linux_system_deadline_output_overlap_never_publishes_a_contradictory_outcome() {
-    if !require_linux_executable("/usr/bin/head") || !std::path::Path::new("/dev/zero").exists() {
+fn linux_output_limit_wins_when_deadline_expires_during_term_ignoring_cleanup() {
+    if !require_linux_executable("/usr/bin/head")
+        || !require_linux_executable("/bin/sleep")
+        || !std::path::Path::new("/dev/zero").exists()
+    {
         eprintln!("skipping terminal deadline/output evidence because head or /dev/zero is absent");
         return;
     }
     let temporary = TemporaryDirectory::new("system-deadline-output");
     let tool = TerminalTool::open_with_limits(
         temporary.path(),
-        TerminalLimits::new(Duration::from_millis(5), 1).unwrap(),
+        TerminalLimits::new(Duration::from_millis(225), 1).unwrap(),
     )
     .unwrap();
     let started = Instant::now();
 
     let output = futures_executor::block_on(tool.execute(
         context(),
-        exact_arguments("/usr/bin/head -c 1048577 /dev/zero", "."),
+        exact_arguments(
+            "trap '' TERM; /usr/bin/head -c 1048577 /dev/zero; while :; do /bin/sleep 1; done",
+            ".",
+        ),
         CancellationToken::new(),
     ))
     .unwrap();
@@ -1236,11 +1440,32 @@ fn linux_system_deadline_output_overlap_never_publishes_a_contradictory_outcome(
     assert!(output.is_error);
     let produced = output.content["stdout_bytes"].as_u64().unwrap()
         + output.content["stderr_bytes"].as_u64().unwrap();
-    match output.content["status"].as_str().unwrap() {
-        "output_limit" => assert!(produced > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES),
-        "timed_out" => assert!(produced <= MAX_TERMINAL_PRODUCED_OUTPUT_BYTES),
-        status => panic!("unexpected deadline/output status {status}"),
-    }
+    assert_eq!(output.content["status"], "output_limit");
+    assert!(produced > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES);
+    assert!(produced <= MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 2 * 16 * 1024);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_trivial_exit_completes_inside_a_sub_term_grace_deadline() {
+    let temporary = TemporaryDirectory::new("system-trivial-exit");
+    let tool = TerminalTool::open_with_limits(
+        temporary.path(),
+        TerminalLimits::new(Duration::from_millis(225), 1).unwrap(),
+    )
+    .unwrap();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments(":", "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(!output.is_error);
+    assert_eq!(output.content["status"], "exited");
+    assert_eq!(output.content["exit_code"], 0);
+    assert!(output.content["duration_ms"].as_u64().unwrap() < 225);
 }
 
 #[cfg(target_os = "linux")]
@@ -1371,6 +1596,80 @@ fn linux_system_ready_publication_observes_term_ignoring_group_member_cleanup() 
         "TERM-ignoring original-group member survived successful publication"
     );
     drop(cleanup);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn blocked_linux_publisher_waker_tail_retains_capacity_until_callback_returns() {
+    if !require_linux_executable("/bin/sleep") {
+        return;
+    }
+    let temporary = TemporaryDirectory::new("system-publisher-waker-capacity");
+    let tool = TerminalTool::open_with_limits(
+        temporary.path(),
+        TerminalLimits::new(Duration::from_secs(5), 1).unwrap(),
+    )
+    .unwrap();
+    let blocking = Arc::new(BlockingWake::default());
+    let _release_on_unwind = BlockingWakeRelease(Arc::clone(&blocking));
+    let waker = Waker::from(Arc::clone(&blocking));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments(
+            "while [ ! -f publisher.release ]; do /bin/sleep 0.01; done",
+            ".",
+        ),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &waker).is_pending());
+    std::fs::write(temporary.path().join("publisher.release"), b"release").unwrap();
+    blocking.wait_until_entered();
+    let first_output = match poll_once(first.as_mut()) {
+        Poll::Ready(Ok(output)) => output,
+        Poll::Ready(Err(error)) => panic!("publisher execution failed: {error}"),
+        Poll::Pending => panic!("publisher result remained pending after its wake"),
+    };
+    drop(first);
+    assert!(!first_output.is_error);
+
+    let mut blocked = Box::pin(tool.execute(
+        context(),
+        exact_arguments(":", "."),
+        CancellationToken::new(),
+    ));
+    match poll_once(blocked.as_mut()) {
+        Poll::Ready(Err(error)) => {
+            assert_eq!(error.kind, ToolErrorKind::Unavailable);
+            assert_eq!(error.code, "terminal_busy");
+        }
+        Poll::Ready(Ok(_)) => panic!("execution bypassed a blocked publisher Waker tail"),
+        Poll::Pending => panic!("publisher Waker tail released terminal capacity early"),
+    }
+    drop(blocked);
+
+    blocking.release();
+    let recovery_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match futures_executor::block_on(tool.execute(
+            context(),
+            exact_arguments(":", "."),
+            CancellationToken::new(),
+        )) {
+            Ok(output) => {
+                assert!(!output.is_error);
+                break;
+            }
+            Err(error) if error.code == "terminal_busy" => {
+                assert!(
+                    Instant::now() < recovery_deadline,
+                    "capacity did not recover"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => panic!("capacity recovery failed: {error}"),
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
