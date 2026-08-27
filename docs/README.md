@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 REJECTED
+— CYCLE 9 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -90,7 +90,7 @@ owned, and foreign Waker work stays outside the lock. The base consumes 65
 callbacks for a finite budget of 64 while the fix consumes one; refined
 positive evidence proves lossless post-observation replay. Focused, required
 pinned, extended, status 10/0, and release-smoke gates are green. The current
-status is **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle
+status is **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**. Formal cycle
 7 rejected exact `617672984fbb897f2efec63de6a05bb32db9a3db`, tree
 `f2cd844449193b46cfa1473ae21edad68664157e`: correctness/API and performance/
 resources were `0/0/0/0`, lifecycle/platform was `0/0/1/0`, and the union is
@@ -106,9 +106,18 @@ panic wins if both occur, and maximum callback concurrency remains one. The
 rejected-base B=0 wedge/B=1 stale-delivery regressions now recover and suppress
 respectively while retaining capacity. Focused direct 37/engine one, complete
 pinned/extended, status 10/0, and unchanged release-smoke gates are green.
-Analogous preexisting `terminal` code remains outside this slice and is not
-claimed fixed. Three fresh reviews, remote workflows, integration, and delivery
-remain pending. The normative
+Formal cycle 8 rejected exact `e929b5ea7e3264c2b56066a416bc2a979a03b214`,
+tree `cfadc42814688a29c4d512e5fd91c843423821d4`: correctness/API was
+`0/0/0/0`, lifecycle/platform and performance/resources were each `0/0/1/0`,
+and the union is `0/0/2/0`. The distinct mediums are secondary panic-payload
+destruction overriding the promised callback panic, and synchronous re-poll/
+re-notify extending one activation to 257 callbacks for budget 256. Cycle 9
+must suppress or forget the secondary payload while proving primary marker,
+lane, capacity, and fresh delivery; and cap an explicit notify activation at
+initial plus one replay while retaining residual pending work for a later
+activation. Analogous preexisting `terminal` code is outside this slice and is
+not claimed fixed. Cycle-9 source/evidence, gates, three fresh reviews, remote
+workflows, integration, and delivery remain pending. The normative
 boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).

@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 8 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 8
+REJECTED — CYCLE 9 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -324,8 +324,24 @@ native/WASI/FreeBSD with only the established `read_file` warning, docs
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 The authorized Cargo delta remains the audited dev-only reentrant fixture and
 one native lock dependency-list line; the production normal/build graph is
-unchanged. Three fresh reviews, feature workflows, fast-forward integration,
-delivery, and exact `main` workflows remain pending.
+unchanged. Formal cycle 8 reviewed exact candidate
+`e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+`cfadc42814688a29c4d512e5fd91c843423821d4`. Correctness/API reported
+`0/0/0/0`; lifecycle/platform and performance/resources each reported
+`0/0/1/0`; the deduplicated union is `0/0/2/0`, so the candidate is rejected.
+
+The lifecycle medium is destruction of a captured secondary target-drop panic
+payload: its destructor can panic and override the promised primary callback
+panic. Cycle 9 must safely suppress/forget the secondary while deterministic
+markers prove primary identity, lane cleanup, capacity, and fresh delivery.
+The resource medium is a callback that synchronously re-polls then re-notifies,
+letting each replay repeat until 257 callbacks exceed budget 256. Cycle 9 must
+cap an explicit notify activation at the initial callback plus at most one
+replay, retain residual pending work for a later explicit activation, keep
+concurrency at most one, retain capacity, and add deterministic large-budget
+evidence. Any analogous preexisting terminal path is outside this slice and is
+not claimed fixed. Cycle-9 source/evidence, gates, reviews, feature workflows,
+fast-forward integration, delivery, and exact `main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4374,8 +4390,12 @@ green. Formal cycle 7 rejected exact `6176729`/`f2cd844` with a `0/0/1/0`
 union because replay B is selected before prior target A is destroyed. Cycle-8
 destruction-before-selection remediation, panic-recovery and reentrant-close-
 suppression evidence, direct 37, and the complete pinned/extended/release gate
-compose at exact `d8075ff`/`fa32564`. Three fresh reviews, remote workflows,
-integration, and delivery remain pending, and
+compose at exact `d8075ff`/`fa32564`. Formal cycle 8 rejected exact
+`e929b5e`/`cfadc42` with a `0/0/2/0` union: a secondary panic payload can
+override the primary, and re-poll/re-notify can execute 257 callbacks for budget
+256. Cycle-9 primary-preservation and initial-plus-one bounded activation,
+evidence, gates, three fresh reviews, remote workflows, integration, and
+delivery remain pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is

@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -350,9 +350,37 @@ smokes. The 3,985,216-byte release SHA-256 is
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 The existing audited reentrant-Waker fixture and one native lock dependency-
 list line remain the exact dev-only Cargo delta; the production normal/build
-graph is unchanged. Formal review, remote workflows, integration, and delivery
-remain pending. The analogous preexisting terminal path is still outside this
-bounded slice and is not claimed fixed.
+graph is unchanged. Formal cycle 8 later rejected the exact candidate below, so
+this historical checkpoint does not approve it. The analogous preexisting
+terminal path remains outside this bounded slice and is not claimed fixed.
+
+## Formal cycle-8 outcome and cycle-9 remediation target
+
+Three fresh tracks reviewed exact candidate
+`e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+`cfadc42814688a29c4d512e5fd91c843423821d4`. Correctness/API reported
+`0/0/0/0`; lifecycle/platform and performance/resources each reported
+`0/0/1/0`; the deduplicated union is `0/0/2/0`. Both distinct mediums reject
+cycle 8.
+
+First, when both the callback and target drop panic, the captured secondary
+panic payload is eventually destroyed. Its destructor can itself panic and
+override the callback panic that cycle 8 promised would win. Cycle 9 must
+safely suppress or forget that secondary payload so the primary callback panic
+survives. Deterministic marker evidence must also prove lane cleanup, retained
+capacity, and fresh delivery after recovery.
+
+Second, a callback can synchronously re-poll the outer future and then
+re-notify. Each replay can repeat that sequence, extending one notify activation
+to 257 callbacks for a budget of 256. Cycle 9 must bound every explicit notify
+activation to the initial callback plus at most one replay, retain residual
+pending notification for a later explicit activation, keep callback concurrency
+at most one, retain capacity, and add deterministic large-budget evidence for
+both the bound and later delivery.
+
+Any analogous native `terminal` path is preexisting and outside this bounded
+slice. It is not claimed fixed. No cycle-9 source, evidence, green gate, review,
+workflow, integration, delivery result, or future SHA is claimed.
 
 ## Product boundary
 

@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -72,8 +72,17 @@ panic clears lane flags, callback panic wins if both occur, and callback
 concurrency stays at most one without lock-held foreign work. The rejected-base
 B=0 wedge/B=1 stale-delivery tests now recover and suppress respectively while
 retaining capacity. Direct 37, host nine/lifecycle one, and the complete pinned/
-extended gate are green. The analogous preexisting terminal path is outside
-this bounded slice and is not claimed fixed. Fresh reviews remain pending.
+extended gate were green. Formal cycle 8 rejected exact
+`e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+`cfadc42814688a29c4d512e5fd91c843423821d4`: correctness/API was `0/0/0/0`,
+lifecycle/platform and performance/resources were each `0/0/1/0`, and the
+union is `0/0/2/0`. A captured secondary panic payload may panic on destruction
+and replace the promised primary; separately, synchronous re-poll/re-notify can
+execute 257 callbacks for budget 256. Cycle 9 must suppress/forget the
+secondary while proving primary marker/lane/capacity/fresh delivery, and cap an
+activation at initial plus one replay while retaining residual pending work for
+later activation. The analogous preexisting terminal path is outside this
+bounded slice and is not claimed fixed. Cycle-9 gates/reviews remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -799,6 +808,8 @@ consistency, source, evidence, and complete local gate compose at
 `fbb3f5c`/`7cee96e`. Formal cycle 7 rejected `6176729`/`f2cd844` with a
 `0/0/1/0` union. Cycle-8 destruction-before-selection remediation, evidence,
 and complete local gate compose at `d8075ff`/`fa32564`. Fresh reviews remain
+pending, and formal cycle 8 rejected `e929b5e`/`cfadc42` with a `0/0/2/0`
+union. Cycle-9 panic-primary and bounded-activation remediation/evidence remain
 pending; the analogous preexisting terminal code is outside this slice.
 
 Both integrated path constructors consume an already validated
@@ -1352,5 +1363,7 @@ reviews later rejected exact `6176729`/`f2cd844` with a `0/0/1/0` union.
 Cycle-8 prior-target destruction before replay selection, unwind recovery,
 reentrant-close suppression, and the complete local gate compose at
 `d8075ff`/`fa32564`. Reviews, remote workflows, integration, and delivery remain
-pending. Analogous preexisting terminal code is out of scope and is not claimed
-fixed.
+pending, and formal cycle 8 rejected exact `e929b5e`/`cfadc42` with a
+`0/0/2/0` union. Cycle-9 primary-panic preservation, constant per-activation
+callback work, gates, reviews, workflows, integration, and delivery remain
+pending. Analogous preexisting terminal code is out of scope and is not claimed fixed.

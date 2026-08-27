@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 7
-rejected its exact immutable candidate with one product lifecycle finding.
-Cycle-8 source, deterministic evidence, and the complete local gate now compose
-at the exact behavior head below. Three fresh formal reviews, remote workflows,
-integration, and delivery remain pending.
+Status: **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**. Formal cycle 8
+rejected its exact immutable candidate with two product lifecycle/resource
+findings. Cycle-8 source, evidence, and complete local gate remain recorded
+below. Cycle-9 source, evidence, a replacement gate, three fresh formal reviews,
+remote workflows, integration, and delivery remain pending.
 
 ## Frozen lineage
 
@@ -121,6 +121,9 @@ integration, and delivery remain pending.
 - Independent cycle-8 cross-composition candidate:
   `01d9a06`, tree `c917dce7856e9a1736651fa01696c5ad7e42fbcb`, green for formatting,
   37 direct question tests, one engine test, and native warnings-denied Clippy
+- Formal cycle-8 candidate, **REJECTED**:
+  `e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+  `cfadc42814688a29c4d512e5fd91c843423821d4`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -145,9 +148,11 @@ compose at exact behavior head `fbb3f5c`/`7cee96e`; its complete exact-1.94.1
 local gate is green. Three fresh exact-SHA reviews rejected later candidate
 `6176729`/`f2cd844` with a deduplicated `0/0/1/0` union. Cycle-8 remediation,
 evidence, and source now compose at exact behavior head `d8075ff`/`fa32564`;
-its complete exact-1.94.1 local gate is green. Three fresh exact-SHA reviews,
-exact feature workflows, fast-forward integration, and exact `main` workflows
-remain required.
+its complete exact-1.94.1 local gate is green. Three fresh exact-SHA reviews
+rejected later candidate `e929b5e`/`cfadc42` with a deduplicated `0/0/2/0`
+union. Cycle-9 remediation, evidence, a complete gate, three fresh exact-SHA
+reviews, exact feature workflows, fast-forward integration, and exact `main`
+workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -934,7 +939,46 @@ list line changes in `Cargo.lock`, and the production normal/build dependency
 graph remains unchanged. This checkpoint is regression and delivery evidence,
 not a benchmark, product-performance, compatibility-promotion, fx-equivalence,
 formal-review, integration, or delivery-completion claim. Three fresh exact-SHA
-formal reviews and both feature and `main` remote workflow gates remain pending.
+formal reviews later rejected the exact candidate below; this historical gate
+does not approve it.
+
+## Formal cycle-8 outcome and cycle-9 remediation target
+
+All three fresh read-only tracks reviewed exact candidate
+`e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+`cfadc42814688a29c4d512e5fd91c843423821d4`:
+
+| Track | Blocker | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: |
+| Correctness/API/schema | 0 | 0 | 0 | 0 |
+| Lifecycle/cancellation/platform | 0 | 0 | 1 | 0 |
+| Performance/concurrency/resources | 0 | 0 | 1 | 0 |
+| Deduplicated union | 0 | 0 | 2 | 0 |
+
+The two mediums are distinct, so both remain in the union. Any nonzero finding
+rejects the candidate.
+
+- **Medium — secondary panic payload can override the promised primary:** when
+  both the callback and target A's destructor panic, cycle 8 selects the
+  callback panic as primary. However, destruction of the captured secondary
+  target-drop panic payload can itself panic and replace that promised primary
+  during unwind. Cycle 9 must preserve the callback panic by safely suppressing
+  or forgetting the secondary payload. Deterministic marker evidence must prove
+  the primary identity, lane cleanup, capacity retention, and fresh delivery
+  after recovery.
+- **Medium — re-poll/re-notify replay amplification:** a callback can
+  synchronously re-poll the outer future, mark the callback observed, and then
+  re-notify. Every replay can repeat that sequence, so one activation executes
+  257 callbacks against a finite budget of 256. Cycle 9 must cap each explicit
+  notify activation at the initial callback plus at most one replay, retain any
+  residual pending notice for a later explicit activation, keep callback
+  concurrency at most one, retain capacity, and add deterministic large-budget
+  evidence for the bound and later delivery.
+
+Any analogous native `terminal` path is preexisting and outside this bounded
+slice-35 remediation. Nothing here claims that separate path is fixed. No
+cycle-9 source, evidence, gate, review, workflow, integration, or delivery
+result is claimed.
 
 ## Deferred and nonclaim record
 

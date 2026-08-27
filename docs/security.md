@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-8 interaction and authority remediation
+## Slice 35 cycle-9 interaction and authority remediation
 
-Status: **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2268,6 +2268,23 @@ wedge and stale B=1 delivery, then prove lane recovery, close suppression, and
 capacity retention. Cross-composition formatting/direct 37/engine one/native
 Clippy, all focused/pinned/extended gates, docs/status, unchanged release smoke,
 and the existing dev-only Cargo delta are green. The production graph remains
-unchanged. Formal review, remote workflows, integration, and delivery remain
-pending. The analogous preexisting terminal path remains out of scope and is
-not claimed fixed.
+unchanged. Formal cycle 8 reviewed exact
+`e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+`cfadc42814688a29c4d512e5fd91c843423821d4`: correctness/API was `0/0/0/0`,
+lifecycle/platform and performance/resources were each `0/0/1/0`, and the
+deduplicated union is `0/0/2/0`.
+
+The first medium is lifecycle/panic integrity, not new authority: destruction
+of a captured secondary target-drop panic payload can itself panic and replace
+the promised primary callback panic. Cycle 9 must safely suppress or forget the
+secondary payload while deterministic markers prove the primary identity, lane
+cleanup, retained capacity, and fresh delivery.
+
+The second medium is bounded callback work. A callback can synchronously re-
+poll, mark itself observed, and re-notify, letting every replay continue the
+loop until 257 callbacks exceed budget 256. Cycle 9 must cap one explicit notify
+activation at the initial callback plus at most one replay, retain residual
+pending work for a later explicit activation, and preserve callback concurrency
+at most one and capacity ownership. Deterministic large-budget evidence is
+required. The analogous preexisting terminal path remains outside this slice
+and is not claimed fixed. No cycle-9 green result or future SHA is claimed.

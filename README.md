@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 8 REJECTED
+— CYCLE 9 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -129,10 +129,21 @@ and callback concurrency remains at most one. The two deterministic regressions
 show the rejected base's fresh B=0 wedge and stale B=1 delivery, while the fix
 recovers/suppresses them and retains capacity. Cross-composition formatting,
 direct 37/engine one/native Clippy, all focused/pinned/extended gates, status
-10/0, and unchanged release smokes are green. Analogous preexisting `terminal`
-code is outside this bounded slice and is not claimed fixed. The current status
-is **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; no formal-review result
-is claimed.
+10/0, and unchanged release smokes were green. Formal cycle 8 rejected exact
+candidate `e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+`cfadc42814688a29c4d512e5fd91c843423821d4`: correctness/API was `0/0/0/0`,
+lifecycle/platform and performance/resources were each `0/0/1/0`, and the
+deduplicated union is `0/0/2/0`. A captured secondary target-drop panic payload
+can panic during destruction and override the promised primary callback panic.
+Separately, a callback can synchronously re-poll then re-notify every replay,
+executing 257 callbacks for budget 256. Cycle 9 must safely suppress/forget the
+secondary payload while preserving primary-marker, lane, capacity, and fresh-
+delivery evidence; and bound one explicit notify activation to the initial
+callback plus at most one replay while retaining residual pending work for a
+later explicit activation. Callback concurrency must remain at most one and
+capacity retained. Analogous preexisting `terminal` code is outside this slice
+and is not claimed fixed. The current status is **CYCLE 8 REJECTED — CYCLE 9
+REMEDIATION IN PROGRESS**; no cycle-9 green result or future SHA is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-8 question resource remediation
+## Slice 35 cycle-9 question resource remediation
 
-Status: **CYCLE 8 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 8 REJECTED — CYCLE 9 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -877,5 +877,24 @@ direct 37, engine one, and native Clippy. Focused, all four pinned, Python
 91/318/701/534/0, status 10/0, diff/protected/no-unsafe, and unchanged release-
 smoke gates are green. The exact Cargo delta remains the audited dev-only
 fixture and one native lock list line; the production graph is unchanged.
-Formal review, remote workflows, integration, and delivery remain pending. See
+Formal cycle 8 reviewed exact candidate
+`e929b5ea7e3264c2b56066a416bc2a979a03b214`, tree
+`cfadc42814688a29c4d512e5fd91c843423821d4`. Correctness/API reported
+`0/0/0/0`; lifecycle/platform and performance/resources each reported
+`0/0/1/0`; the distinct mediums produce a deduplicated `0/0/2/0` union.
+
+One medium is panic/lane integrity: destruction of a captured secondary target-
+drop panic payload can itself panic and override the promised primary callback
+panic. Cycle 9 must suppress or forget that secondary payload and use marker
+evidence to prove primary identity, lane recovery, capacity retention, and
+fresh delivery.
+
+The resource medium is unbounded replay work under synchronous re-poll/re-
+notify. Every callback can mark itself observed and earn another replay, so one
+activation executes 257 callbacks for budget 256. Cycle 9 must cap each explicit
+notify activation at the initial callback plus at most one replay, retain
+residual pending work for later explicit activation, preserve maximum callback
+concurrency one and capacity ownership, and add deterministic large-budget
+evidence. Analogous preexisting terminal code is outside this bounded slice and
+is not claimed fixed. No cycle-9 green result or future SHA is claimed. See
 [`ask-user-question.md`](ask-user-question.md).
