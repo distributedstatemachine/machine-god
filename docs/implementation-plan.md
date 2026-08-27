@@ -78,9 +78,13 @@ for cancellation, executor, and deadline registrations; stable typed cleanup-
 error precedence after an output-limit claim; and activity ownership through
 bounded publication and public return. Exact behavior head `3bfc0bf`, tree
 `d4ed10d`, passes the complete exact-1.94.1 replacement gate with poll-observed
-serialized wake replay and corrected retained-Waker fixture evidence. An
-immutable candidate, three fresh exact-SHA reviews, and remote delivery remain
-pending.
+serialized wake replay and corrected retained-Waker fixture evidence. Formal
+cycle 5 rejected exact candidate `0c04859`, tree `b0359fb`, with a deduplicated
+`0/1/0/1` union. Cycle-6 remediation prevents the shared notifier from binding
+its own supplied Waker, explicitly closes its target after completion, adds
+public retained-Waker re-poll delivery/recovery evidence, and updates stale
+top-level status summaries. A replacement gate, immutable candidate, three
+fresh exact-SHA reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -138,6 +142,15 @@ suites, 1,170 non-doc Rust tests, two doctests, Python 136/8 skips, pinned fx,
 dependency policy/audit, Linux/FreeBSD/WASI, 89/312/678/515 documentation
 integrity, protected/no-unsafe checks, and fresh release smoke all pass. This
 does not establish the immutable candidate, formal cycle-5 review result, or
+delivery. Formal cycle 5 rejected exact candidate `0c04859`, tree `b0359fb`.
+Correctness/API reported one high self-target notifier-cycle finding; native
+lifecycle/platform was green; performance/resources reported one low stale-
+status finding and no product defect. Cycle-6 replacement work prevents a
+retained supplied notifier Waker from becoming its own target, explicitly
+closes the target at completion while preserving retained-clone activity
+ownership, adds public executor/deadline/cancellation delivery and recovery
+evidence, and refreshes the top-level status entry points. Cycle 6 has not yet
+established composition, a replacement gate, candidate, review result, or
 delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact

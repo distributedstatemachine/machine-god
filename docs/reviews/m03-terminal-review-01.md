@@ -601,6 +601,53 @@ This gate makes no formal cycle-5 review or remote-delivery claim. Three fresh
 product-review tracks must identify the immutable candidate and tree recorded
 after this gate result is committed.
 
+## Formal cycle 5 review
+
+Three fresh adversarial product tracks reviewed exact candidate
+`0c04859ca48f81ff1fbaf89327e74231dee5e77c`, tree
+`b0359fb7209e150d2cd0eef9a316148e58e6b772`, and **REJECTED** it:
+
+- correctness, public API, schema, capability, and engine integration reported
+  `0/1/0/0`;
+- native process, cancellation, lifecycle, and platform behavior reported
+  `0/0/0/0`; and
+- performance, concurrency, memory/output bounds, and resource ownership
+  reported `0/0/0/1`.
+
+The deduplicated union is `0 blocker / 1 high / 0 medium / 1 low`:
+
+1. **High:** the outer host may legally re-poll the terminal future using the
+   TerminalTool-supplied Waker retained by an injected executor. The shared
+   notifier then binds its own Waker as its target, forming an `Arc` self-cycle.
+   Later executor, deadline, or cancellation notifications recurse into the
+   notifier and coalesce without reaching the original task Waker. The future
+   may hang and the activity slot remains permanently busy.
+2. **Low:** top-level [`../../README.md`](../../README.md) and
+   [`../README.md`](../README.md) still describe cycle-4 remediation as in
+   progress and deny that a replacement composition, gate, or candidate exists,
+   contradicting this ledger and the implementation plan.
+
+Both findings are accepted. Cycle-6 source must recognize the supplied notifier
+Waker and never install it as the notifier target, preserving the last external
+target. Completion must explicitly close the notifier, remove and destroy its
+target outside the lock, suppress later delivery to the completed task, and
+still let every independently retained supplied-Waker clone own the activity
+until that clone is dropped. Public evidence must re-poll with the retained
+supplied Waker and prove executor, deadline, and cancellation delivery plus
+capacity recovery without recursion or a cycle. Maintained status entry points
+must describe the exact cycle-5 gate and formal-review-pending cycle-6
+remediation state.
+
+Every cycle-5 review worktree remained read-only and clean. Each worktree and
+temporary branch was removed and pruned immediately after its verdict.
+
+## Cycle 6 remediation in progress
+
+Cycle-6 remediation is split across non-overlapping isolated source,
+independent-evidence, and maintained-documentation worktrees. This is a
+remediation-status record only; it does not assert composed behavior, a green
+replacement gate or review, or remote delivery.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in
