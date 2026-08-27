@@ -60,7 +60,7 @@ pub const ASK_USER_QUESTION_DEFAULT_MAX_ACTIVE_PROMPTS: usize = 1;
 pub const ASK_USER_QUESTION_MAX_ACTIVE_PROMPTS: usize = 8;
 
 const ASK_USER_QUESTION_DESCRIPTION: &str = "Ask the user one to four bounded questions with ordered options. Options guide the response but a bounded free-form answer is allowed. Use this only when progress requires an explicit user decision; it is not an approval or permission channel.";
-const MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY: usize = 256;
+const MAX_ACTIVITY_WAKE_CALLBACKS_PER_PROMPT: usize = 256;
 
 /// One normalized option supplied to a [`QuestionPrompter`].
 #[derive(Clone, Eq, PartialEq)]
@@ -519,7 +519,8 @@ impl Tool for AskUserQuestionTool {
                     }
                     Err(payload) => {
                         let doomed = activity.take();
-                        let _ = catch_unwind(AssertUnwindSafe(|| drop(doomed)));
+                        let cleanup = catch_unwind(AssertUnwindSafe(|| drop(doomed)));
+                        settle_cleanup_panics(true, [cleanup]);
                         resume_unwind(payload);
                     }
                 }
@@ -1141,6 +1142,7 @@ impl<'a> PromptActivity<'a> {
 
 impl Drop for PromptActivity<'_> {
     fn drop(&mut self) {
+        let preserve_existing_primary = std::thread::panicking();
         // A future may wake its retained supplied Waker from Drop. Close the
         // stale outer target first while the notifier still owns the permit.
         let registered_waker_close = catch_unwind(AssertUnwindSafe(|| {
@@ -1156,26 +1158,18 @@ impl Drop for PromptActivity<'_> {
         let registered_waker_drop = catch_unwind(AssertUnwindSafe(|| drop(registered_waker)));
         let activity = self.activity.take();
         drop(activity);
-        if let Err(payload) = prompt_drop
-            && !std::thread::panicking()
-        {
-            resume_unwind(payload);
-        }
-        if let Err(payload) = cancellation_wait_drop
-            && !std::thread::panicking()
-        {
-            resume_unwind(payload);
-        }
-        if let Err(payload) = registered_waker_close
-            && !std::thread::panicking()
-        {
-            resume_unwind(payload);
-        }
-        if let Err(payload) = registered_waker_drop
-            && !std::thread::panicking()
-        {
-            resume_unwind(payload);
-        }
+        // Preserve the established cleanup precedence. Every nonselected
+        // opaque payload is forgotten before resuming the selected panic so a
+        // payload destructor cannot replace it or abort an ambient unwind.
+        settle_cleanup_panics(
+            preserve_existing_primary,
+            [
+                prompt_drop,
+                cancellation_wait_drop,
+                registered_waker_close,
+                registered_waker_drop,
+            ],
+        );
     }
 }
 
@@ -1223,6 +1217,7 @@ impl ActivityWakerRegistration {
 
 impl Drop for ActivityWakerRegistration {
     fn drop(&mut self) {
+        let preserve_existing_primary = std::thread::panicking();
         // Retain the notifier and activity across arbitrary target destruction,
         // including unwind, before releasing the supplied Waker and owner Arc.
         let close = catch_unwind(AssertUnwindSafe(|| {
@@ -1234,16 +1229,8 @@ impl Drop for ActivityWakerRegistration {
         let waker_drop = catch_unwind(AssertUnwindSafe(|| drop(waker)));
         let wake = self.wake.take();
         drop(wake);
-        if let Err(payload) = close
-            && !std::thread::panicking()
-        {
-            resume_unwind(payload);
-        }
-        if let Err(payload) = waker_drop
-            && !std::thread::panicking()
-        {
-            resume_unwind(payload);
-        }
+        // Close retains precedence over cached-Waker destruction.
+        settle_cleanup_panics(preserve_existing_primary, [close, waker_drop]);
     }
 }
 
@@ -1257,6 +1244,7 @@ struct ActivityWake {
 #[derive(Default)]
 struct ActivityWakeState {
     target: Option<Arc<Waker>>,
+    delivery_callbacks_started: usize,
     notifying: bool,
     observed_while_notifying: bool,
     pending_after_observation: bool,
@@ -1269,6 +1257,36 @@ enum ActivityWakeLifecycle {
     Open,
     DeliveryResourceExhausted,
     Closed,
+}
+
+impl ActivityWakeState {
+    fn begin_callback(&mut self) -> Option<Arc<Waker>> {
+        if !matches!(self.lifecycle, ActivityWakeLifecycle::Open) {
+            return None;
+        }
+        if self.delivery_callbacks_started >= MAX_ACTIVITY_WAKE_CALLBACKS_PER_PROMPT {
+            self.lifecycle = ActivityWakeLifecycle::DeliveryResourceExhausted;
+            return None;
+        }
+        let target = self.target.as_ref().map(Arc::clone)?;
+        self.delivery_callbacks_started += 1;
+        if self.delivery_callbacks_started == MAX_ACTIVITY_WAKE_CALLBACKS_PER_PROMPT {
+            // Callback 256 is admitted only after exhaustion becomes sticky,
+            // so it schedules the terminal poll and every later wake/bind is
+            // suppressed for the remainder of this prompt activity.
+            self.lifecycle = ActivityWakeLifecycle::DeliveryResourceExhausted;
+        }
+        Some(target)
+    }
+
+    fn recover_after_callback_failure(&mut self) {
+        self.lifecycle =
+            if self.delivery_callbacks_started >= MAX_ACTIVITY_WAKE_CALLBACKS_PER_PROMPT {
+                ActivityWakeLifecycle::DeliveryResourceExhausted
+            } else {
+                ActivityWakeLifecycle::Open
+            };
+    }
 }
 
 impl ActivityWake {
@@ -1372,7 +1390,7 @@ impl ActivityWake {
                 }
                 return;
             }
-            let Some(target) = state.target.as_ref().map(Arc::clone) else {
+            let Some(target) = state.begin_callback() else {
                 return;
             };
             state.notifying = true;
@@ -1380,15 +1398,15 @@ impl ActivityWake {
             state.pending_after_observation = false;
             target
         };
-        let mut callbacks_started = 1_usize;
 
-        // This loop is an iterative trampoline: every ordinary replay is
-        // admitted only by a distinct outer bind/poll observation followed by
-        // a later source notification. Pre-observation notices and duplicate
-        // notices in one observation epoch coalesce. There is no scheduler to
-        // hand residual work to, so the final bounded callback instead makes
-        // the outer future observe a fixed terminal delivery failure.
+        // This loop is an iterative trampoline within one activation. The
+        // state-owned counter also bounds queue-only activations across the
+        // complete prompt lifetime. Every ordinary replay is admitted only by
+        // an outer bind/poll followed by a later source notification; the
+        // final bounded callback makes the outer future observe a fixed
+        // terminal delivery failure.
         loop {
+            let preserve_existing_primary = std::thread::panicking();
             let notified = catch_unwind(AssertUnwindSafe(|| target.wake_by_ref()));
             // Releasing a replaced callback target may run arbitrary Waker
             // destruction. Keep the callback lane occupied, retain the
@@ -1405,7 +1423,7 @@ impl ActivityWake {
                     state.pending_after_observation = false;
                     None
                 } else if callback_failed || target_drop_failed {
-                    state.lifecycle = ActivityWakeLifecycle::Open;
+                    state.recover_after_callback_failure();
                     state.notifying = false;
                     state.observed_while_notifying = false;
                     state.pending_after_observation = false;
@@ -1419,21 +1437,14 @@ impl ActivityWake {
                     state.pending_after_observation = false;
                     None
                 } else if state.pending_after_observation {
-                    if let Some(target) = state.target.as_ref().map(Arc::clone) {
-                        debug_assert!(callbacks_started < MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY);
-                        if callbacks_started + 1 == MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY {
-                            // Reserve the final callback for scheduling a poll
-                            // that observes the sticky bounded-delivery error.
-                            // Until close, retained Wakers cannot start more
-                            // callbacks even when the target queues its poll.
-                            state.lifecycle = ActivityWakeLifecycle::DeliveryResourceExhausted;
-                        }
+                    if let Some(target) = state.begin_callback() {
                         state.observed_while_notifying = false;
                         state.pending_after_observation = false;
                         Some(target)
                     } else {
                         state.notifying = false;
                         state.observed_while_notifying = false;
+                        state.pending_after_observation = false;
                         None
                     }
                 } else {
@@ -1443,24 +1454,13 @@ impl ActivityWake {
                     None
                 }
             };
-            match (notified, target_drop) {
-                (Err(primary), Err(secondary)) => {
-                    // Callback failure has documented precedence. The opaque
-                    // secondary payload may itself panic from Drop, so the
-                    // only total way to preserve that precedence is to leak
-                    // this one payload on the exceptional dual-panic path.
-                    std::mem::forget(secondary);
-                    resume_unwind(primary);
-                }
-                (Err(primary), Ok(())) => resume_unwind(primary),
-                (Ok(()), Err(secondary)) => resume_unwind(secondary),
-                (Ok(()), Ok(())) => {}
-            }
+            // Callback failure precedes target destruction. During an ambient
+            // unwind both are cleanup failures and neither may replace it.
+            settle_cleanup_panics(preserve_existing_primary, [notified, target_drop]);
             let Some(next) = next else {
                 return;
             };
             target = next;
-            callbacks_started += 1;
         }
     }
 }
@@ -1479,6 +1479,28 @@ fn lock_activity_wake(state: &Mutex<ActivityWakeState>) -> MutexGuard<'_, Activi
     state
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn settle_cleanup_panics<const N: usize>(
+    preserve_existing_primary: bool,
+    cleanups: [std::thread::Result<()>; N],
+) {
+    let mut selected = None;
+    for cleanup in cleanups {
+        if let Err(payload) = cleanup {
+            if preserve_existing_primary || selected.is_some() {
+                // Opaque panic payload destruction is arbitrary foreign work.
+                // On this exceptional suppression path, forgetting the
+                // payload is the only total way to preserve panic precedence.
+                std::mem::forget(payload);
+            } else {
+                selected = Some(payload);
+            }
+        }
+    }
+    if let Some(payload) = selected {
+        resume_unwind(payload);
+    }
 }
 
 struct JsonOwner(Option<Value>);
