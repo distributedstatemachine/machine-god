@@ -11,9 +11,9 @@ use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -386,8 +386,8 @@ pub struct TerminalExecutionRequest {
     cwd: String,
     environment: Vec<(OsString, OsString)>,
     environment_sha256: String,
-    #[cfg(target_os = "linux")]
-    callback_leases: Arc<CallbackLeaseAuthority>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    activity: Arc<ExecutionActivity>,
     #[cfg(target_os = "linux")]
     started: Instant,
     deadline: Instant,
@@ -466,10 +466,12 @@ pub type TerminalExecution =
 pub trait TerminalExecutor: Send + Sync + 'static {
     /// Creates an inert future. The executor owns every process, pipe, and worker
     /// it creates and must complete all controllable resource cleanup when the
-    /// future is dropped. A bounded notification callback tail may outlive that
-    /// cleanup when joining it could deadlock with its `Waker`; it retains its
-    /// active-slot lease and callback thread/stack, but no process resource or
-    /// other execution authority. Executors should honor
+    /// future is dropped. Every task `Waker` supplied while polling the returned
+    /// future transparently retains this execution's one active slot. A stored
+    /// or in-flight notification callback may therefore outlive cleanup when
+    /// joining it could deadlock, but the executor must release stored Wakers
+    /// when they are no longer usable and the tail must retain no process
+    /// resource or other execution authority. Executors should honor
     /// [`TerminalExecutionRequest::deadline`] so they can return bounded partial
     /// output. The tool also owns an independent deadline wake for controllable
     /// userspace phases; neither boundary can preempt a blocked host syscall.
@@ -795,11 +797,11 @@ impl TerminalTool {
         arguments: TerminalArguments,
         started: Instant,
         deadline: Instant,
-        callback_leases: Arc<CallbackLeaseAuthority>,
+        activity: Arc<ExecutionActivity>,
         cancellation: &CancellationToken,
     ) -> Result<TerminalExecutionRequest, ToolError> {
         #[cfg(not(target_os = "linux"))]
-        let _ = (started, callback_leases);
+        let _ = started;
         check_cancellation(cancellation)?;
         let mut directory = finish_precommit(
             rustix::fs::openat(
@@ -834,8 +836,7 @@ impl TerminalTool {
             cwd: arguments.cwd,
             environment: self.environment.entries.clone(),
             environment_sha256: self.environment.sha256.clone(),
-            #[cfg(target_os = "linux")]
-            callback_leases,
+            activity,
             #[cfg(target_os = "linux")]
             started,
             deadline,
@@ -853,7 +854,7 @@ impl TerminalTool {
         _arguments: TerminalArguments,
         _started: Instant,
         _deadline: Instant,
-        _callback_leases: Arc<CallbackLeaseAuthority>,
+        _activity: Arc<ExecutionActivity>,
         _cancellation: &CancellationToken,
     ) -> Result<TerminalExecutionRequest, ToolError> {
         Err(unsupported_platform())
@@ -922,30 +923,43 @@ async fn await_executor(
     deadline: Instant,
     started: Instant,
     timer: DeadlineTimer,
+    activity: Arc<ExecutionActivity>,
 ) -> Result<TerminalExecutionOutcome, ToolError> {
     let mut cancelled = Box::pin(cancellation.cancelled());
     poll_fn(|context| {
         if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
             return Poll::Ready(Err(cancelled_error()));
         }
-        let execution = Pin::new(&mut future).poll(context);
+        let execution = poll_executor_with_activity(&mut future, context, &activity);
         if cancellation.is_cancelled() {
             return Poll::Ready(Err(cancelled_error()));
         }
         match execution {
             Poll::Ready(Ok(mut outcome)) => {
-                if Instant::now() >= deadline
-                    && !matches!(
-                        outcome.status,
-                        TerminalExecutionStatus::TimedOut | TerminalExecutionStatus::OutputLimit
-                    )
-                {
-                    outcome.status = TerminalExecutionStatus::TimedOut;
-                    outcome.duration = bounded_duration(started.elapsed());
+                if matches!(outcome.status, TerminalExecutionStatus::OutputLimit) {
+                    let _ = activity.claim_output_limit();
+                } else if Instant::now() >= deadline {
+                    if matches!(activity.close_timeout(), ExecutionCause::OutputLimit) {
+                        return Poll::Ready(Err(executor_invariant()));
+                    }
+                    if !matches!(outcome.status, TerminalExecutionStatus::TimedOut) {
+                        outcome.status = TerminalExecutionStatus::TimedOut;
+                        outcome.duration = bounded_duration(started.elapsed());
+                    }
                 }
                 Poll::Ready(Ok(outcome))
             }
-            Poll::Ready(Err(_)) if Instant::now() >= deadline => {
+            Poll::Ready(Err(error)) => {
+                if Instant::now() < deadline {
+                    return Poll::Ready(Err(map_executor_error(error)));
+                }
+                if matches!(activity.close_timeout(), ExecutionCause::OutputLimit) {
+                    // A production executor must join an authoritative output
+                    // limit to its valid bounded outcome. Once an executor has
+                    // instead completed with an error, it cannot be polled
+                    // again and the tool must not fabricate that outcome.
+                    return Poll::Ready(Err(executor_invariant()));
+                }
                 let timeout = empty_outcome(
                     TerminalExecutionStatus::TimedOut,
                     bounded_duration(started.elapsed()),
@@ -956,7 +970,6 @@ async fn await_executor(
                 }
                 Poll::Ready(timeout)
             }
-            Poll::Ready(Err(error)) => Poll::Ready(Err(map_executor_error(error))),
             Poll::Pending => {
                 if timer.poll_expired(context).is_pending() {
                     return Poll::Pending;
@@ -964,14 +977,26 @@ async fn await_executor(
                 if cancellation.is_cancelled() {
                     return Poll::Ready(Err(cancelled_error()));
                 }
-                let deadline_execution = Pin::new(&mut future).poll(context);
+                let deadline_execution =
+                    poll_executor_with_activity(&mut future, context, &activity);
                 if cancellation.is_cancelled() {
                     return Poll::Ready(Err(cancelled_error()));
                 }
-                if let Poll::Ready(Ok(outcome)) = deadline_execution
+                if let Poll::Ready(Ok(outcome)) = &deadline_execution
                     && matches!(outcome.status, TerminalExecutionStatus::OutputLimit)
                 {
-                    return Poll::Ready(Ok(outcome));
+                    let _ = activity.claim_output_limit();
+                    return Poll::Ready(Ok(outcome.clone()));
+                }
+                #[cfg(test)]
+                activity.run_before_timeout_close();
+                if matches!(activity.close_timeout(), ExecutionCause::OutputLimit) {
+                    return match deadline_execution {
+                        Poll::Pending => Poll::Pending,
+                        // Ready is terminal: this executor can no longer
+                        // publish the valid bounded output-limit outcome.
+                        Poll::Ready(Err(_) | Ok(_)) => Poll::Ready(Err(executor_invariant())),
+                    };
                 }
                 let timeout = empty_outcome(
                     TerminalExecutionStatus::TimedOut,
@@ -986,6 +1011,19 @@ async fn await_executor(
         }
     })
     .await
+}
+
+fn poll_executor_with_activity(
+    future: &mut TerminalExecution,
+    context: &mut Context<'_>,
+    activity: &Arc<ExecutionActivity>,
+) -> Poll<Result<TerminalExecutionOutcome, TerminalExecutorError>> {
+    let waker = Waker::from(Arc::new(ActivityWaker {
+        _activity: Arc::clone(activity),
+        target: context.waker().clone(),
+    }));
+    let mut context = Context::from_waker(&waker);
+    Pin::new(future).poll(&mut context)
 }
 
 fn bounded_duration(duration: Duration) -> Duration {
@@ -1114,61 +1152,110 @@ impl fmt::Debug for TerminalTool {
     }
 }
 
-struct ActivePermit {
-    active: Arc<AtomicUsize>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum ExecutionCause {
+    Open = 0,
+    OutputLimit = 1,
+    TimedOut = 2,
 }
 
-impl ActivePermit {
-    fn acquire(active: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+struct ExecutionActivity {
+    active: Arc<AtomicUsize>,
+    cause: AtomicU8,
+    #[cfg(test)]
+    before_timeout_close: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl ExecutionActivity {
+    fn acquire(active: &Arc<AtomicUsize>, limit: usize) -> Option<Arc<Self>> {
         active
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
                 (value < limit).then(|| value + 1)
             })
             .ok()?;
-        Some(Self {
+        Some(Arc::new(Self {
             active: Arc::clone(active),
-        })
-    }
-}
-
-impl Drop for ActivePermit {
-    fn drop(&mut self) {
-        let previous = self.active.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(previous > 0, "terminal permit underflowed");
-    }
-}
-
-struct CallbackLeaseAuthority {
-    active: Arc<AtomicUsize>,
-}
-
-impl CallbackLeaseAuthority {
-    fn new(active: Arc<AtomicUsize>) -> Self {
-        Self { active }
+            cause: AtomicU8::new(ExecutionCause::Open as u8),
+            #[cfg(test)]
+            before_timeout_close: Mutex::new(None),
+        }))
     }
 
-    fn acquire(self: &Arc<Self>) -> CallbackLease {
-        let incremented = self
-            .active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
-                value.checked_add(1)
-            })
-            .is_ok();
-        assert!(incremented, "terminal callback lease counter overflowed");
-        CallbackLease {
-            authority: Arc::clone(self),
+    fn cause(&self) -> ExecutionCause {
+        match self.cause.load(Ordering::Acquire) {
+            value if value == ExecutionCause::Open as u8 => ExecutionCause::Open,
+            value if value == ExecutionCause::OutputLimit as u8 => ExecutionCause::OutputLimit,
+            value if value == ExecutionCause::TimedOut as u8 => ExecutionCause::TimedOut,
+            _ => unreachable!("terminal execution cause is valid"),
+        }
+    }
+
+    fn claim_output_limit(&self) -> bool {
+        match self.cause.compare_exchange(
+            ExecutionCause::Open as u8,
+            ExecutionCause::OutputLimit as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => true,
+            Err(value) => value == ExecutionCause::OutputLimit as u8,
+        }
+    }
+
+    fn close_timeout(&self) -> ExecutionCause {
+        match self.cause.compare_exchange(
+            ExecutionCause::Open as u8,
+            ExecutionCause::TimedOut as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => ExecutionCause::TimedOut,
+            Err(_) => self.cause(),
+        }
+    }
+
+    #[cfg(test)]
+    fn install_before_timeout_close(&self, hook: impl FnOnce() + Send + 'static) {
+        let mut installed = self
+            .before_timeout_close
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(installed.replace(Box::new(hook)).is_none());
+    }
+
+    #[cfg(test)]
+    fn run_before_timeout_close(&self) {
+        let hook = self
+            .before_timeout_close
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(hook) = hook {
+            hook();
         }
     }
 }
 
-struct CallbackLease {
-    authority: Arc<CallbackLeaseAuthority>,
+impl Drop for ExecutionActivity {
+    fn drop(&mut self) {
+        let previous = self.active.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "terminal activity underflowed");
+    }
 }
 
-impl Drop for CallbackLease {
-    fn drop(&mut self) {
-        let previous = self.authority.active.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(previous > 0, "terminal callback lease underflowed");
+struct ActivityWaker {
+    _activity: Arc<ExecutionActivity>,
+    target: Waker,
+}
+
+impl Wake for ActivityWaker {
+    fn wake(self: Arc<Self>) {
+        self.target.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.target.wake_by_ref();
     }
 }
 
@@ -1179,7 +1266,7 @@ struct DeadlineTimer {
 
 struct DeadlineTimerShared {
     deadline: Instant,
-    callback_leases: Arc<CallbackLeaseAuthority>,
+    _activity: Arc<ExecutionActivity>,
     state: Mutex<DeadlineTimerState>,
     changed: Condvar,
 }
@@ -1188,17 +1275,15 @@ struct DeadlineTimerShared {
 struct DeadlineTimerState {
     stopped: bool,
     expired: bool,
+    callback_in_flight: bool,
     waker: Option<Waker>,
 }
 
 impl DeadlineTimer {
-    fn new(
-        deadline: Instant,
-        callback_leases: Arc<CallbackLeaseAuthority>,
-    ) -> Result<Self, ToolError> {
+    fn new(deadline: Instant, activity: Arc<ExecutionActivity>) -> Result<Self, ToolError> {
         let shared = Arc::new(DeadlineTimerShared {
             deadline,
-            callback_leases,
+            _activity: activity,
             state: Mutex::new(DeadlineTimerState::default()),
             changed: Condvar::new(),
         });
@@ -1246,24 +1331,22 @@ impl DeadlineTimer {
 
 impl Drop for DeadlineTimer {
     fn drop(&mut self) {
-        let suppressed = {
+        let (suppressed, callback_in_flight) = {
             let mut state = lock_deadline(&self.shared.state);
             state.stopped = true;
-            state.waker.take()
+            (state.waker.take(), state.callback_in_flight)
         };
         drop(suppressed);
         self.shared.changed.notify_all();
         let Some(thread) = self.thread.take() else {
             return;
         };
-        if thread.is_finished() {
+        if thread.is_finished() || !callback_in_flight {
             let _ = thread.join();
         } else {
-            // Stopping removed the retained Waker and deadline authority. The
-            // thread can now own only its condition-variable or capacity-leased
-            // notification tail. Joining that tail can deadlock with a spurious
-            // poll whose task lock is held while an already-taken Waker is still
-            // running.
+            // The shared execution activity keeps the originating admission
+            // occupied through the actual thread return. Joining can deadlock
+            // while a taken Waker is running against the polling task lock.
             drop(thread);
         }
     }
@@ -1277,17 +1360,15 @@ fn run_deadline_timer(shared: &DeadlineTimerShared) {
         }
         let now = Instant::now();
         if now >= shared.deadline {
-            let callback_lease = state
-                .waker
-                .as_ref()
-                .map(|_| shared.callback_leases.acquire());
             state.expired = true;
             let waker = state.waker.take();
+            state.callback_in_flight = waker.is_some();
             drop(state);
             if let Some(waker) = waker {
                 waker.wake();
+                let mut state = lock_deadline(&shared.state);
+                state.callback_in_flight = false;
             }
-            drop(callback_lease);
             return;
         }
         let waited = shared
@@ -1372,8 +1453,8 @@ impl Tool for TerminalTool {
                 check_cancellation(&cancellation)?;
                 return render_timeout(&parsed.cwd, started);
             }
-            let Some(permit) =
-                ActivePermit::acquire(&self.active, self.limits.max_active_executions)
+            let Some(activity) =
+                ExecutionActivity::acquire(&self.active, self.limits.max_active_executions)
             else {
                 check_cancellation(&cancellation)?;
                 return if Instant::now() >= deadline {
@@ -1383,25 +1464,33 @@ impl Tool for TerminalTool {
                 };
             };
             check_cancellation(&cancellation)?;
-            let callback_leases = Arc::new(CallbackLeaseAuthority::new(Arc::clone(&self.active)));
             let request = self.execution_request(
                 parsed.clone(),
                 started,
                 deadline,
-                Arc::clone(&callback_leases),
+                Arc::clone(&activity),
                 &cancellation,
             )?;
             check_cancellation(&cancellation)?;
             if Instant::now() >= deadline {
-                drop(permit);
+                let _ = activity.close_timeout();
+                drop(activity);
                 return render_timeout(&parsed.cwd, started);
             }
-            let timer = DeadlineTimer::new(deadline, callback_leases)?;
+            let timer = DeadlineTimer::new(deadline, Arc::clone(&activity))?;
             let future = self.executor.execute(request, cancellation.clone());
-            let outcome = await_executor(future, &cancellation, deadline, started, timer).await;
+            let outcome = await_executor(
+                future,
+                &cancellation,
+                deadline,
+                started,
+                timer,
+                Arc::clone(&activity),
+            )
+            .await;
             check_cancellation(&cancellation)?;
             let outcome = outcome?;
-            drop(permit);
+            drop(activity);
             let output = render_output(&parsed.cwd, &outcome)?;
             check_cancellation(&cancellation)?;
             Ok(output)
@@ -1551,7 +1640,7 @@ impl Drop for SystemExecutionFuture {
 #[cfg(target_os = "linux")]
 struct SystemWorkerHandle {
     shared: Arc<Mutex<SystemWorkerState>>,
-    overflow: Arc<AtomicBool>,
+    activity: Arc<ExecutionActivity>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -1559,6 +1648,7 @@ struct SystemWorkerHandle {
 #[derive(Default)]
 struct SystemWorkerState {
     abort: bool,
+    callback_in_flight: bool,
     outcome: Option<Result<TerminalExecutionOutcome, TerminalExecutorError>>,
     waker: Option<Waker>,
 }
@@ -1570,24 +1660,21 @@ impl SystemWorkerHandle {
         cancellation: CancellationToken,
     ) -> Result<Self, TerminalExecutorError> {
         let shared = Arc::new(Mutex::new(SystemWorkerState::default()));
-        let overflow = Arc::new(AtomicBool::new(false));
+        let activity = Arc::clone(&request.activity);
         let worker_shared = Arc::clone(&shared);
-        let worker_overflow = Arc::clone(&overflow);
         let thread = thread::Builder::new()
             .name("machine-god-terminal".to_owned())
-            .spawn(move || {
-                system_worker(request, cancellation, worker_shared, &worker_overflow);
-            })
+            .spawn(move || system_worker(request, cancellation, worker_shared))
             .map_err(|_| executor_error(TerminalExecutorErrorKind::Spawn))?;
         Ok(Self {
             shared,
-            overflow,
+            activity,
             thread: Some(thread),
         })
     }
 
     fn output_limit_observed(&self) -> bool {
-        self.overflow.load(Ordering::Acquire)
+        matches!(self.activity.cause(), ExecutionCause::OutputLimit)
     }
 
     fn poll_outcome(
@@ -1677,14 +1764,15 @@ impl SystemWorkerHandle {
 
     fn finish_published(&mut self) -> bool {
         let thread = self.thread.take().expect("terminal worker thread exists");
-        if thread.is_finished() {
+        let callback_in_flight = lock_worker(&self.shared).callback_in_flight;
+        if thread.is_finished() || !callback_in_flight {
             thread.join().is_ok()
         } else {
             // The outcome is published only after the command, group, pipes,
             // readers, and request descriptor are released. An unfinished
-            // handle can therefore be only a capacity-leased Waker notification
-            // tail, which must not be joined while that Waker may be waiting for
-            // the polling task lock.
+            // handle can therefore be only an activity-retained Waker
+            // notification tail, which must not be joined while that Waker may
+            // be waiting for the polling task lock.
             drop(thread);
             true
         }
@@ -1735,22 +1823,23 @@ fn system_worker(
     request: TerminalExecutionRequest,
     cancellation: CancellationToken,
     shared: Arc<Mutex<SystemWorkerState>>,
-    overflow: &Arc<AtomicBool>,
 ) {
-    let outcome = run_system_command(&request, &cancellation, &shared, overflow);
-    let callback_leases = Arc::clone(&request.callback_leases);
+    let outcome = run_system_command(&request, &cancellation, &shared);
+    let _activity = Arc::clone(&request.activity);
     drop(request);
-    let (waker, callback_lease) = {
+    let waker = {
         let mut state = lock_worker(&shared);
-        let callback_lease = state.waker.as_ref().map(|_| callback_leases.acquire());
         state.outcome = Some(outcome);
-        (state.waker.take(), callback_lease)
+        let waker = state.waker.take();
+        state.callback_in_flight = waker.is_some();
+        waker
     };
     if let Some(waker) = waker {
         waker.wake();
+        let mut state = lock_worker(&shared);
+        state.callback_in_flight = false;
     }
     drop((cancellation, shared));
-    drop(callback_lease);
 }
 
 #[cfg(target_os = "linux")]
@@ -1759,12 +1848,12 @@ fn run_system_command(
     request: &TerminalExecutionRequest,
     cancellation: &CancellationToken,
     shared: &Mutex<SystemWorkerState>,
-    overflow: &Arc<AtomicBool>,
 ) -> Result<TerminalExecutionOutcome, TerminalExecutorError> {
     if cancellation.is_cancelled() || lock_worker(shared).abort {
         return Err(executor_error(TerminalExecutorErrorKind::Cancelled));
     }
     if Instant::now() >= request.deadline() {
+        let _ = request.activity.close_timeout();
         return empty_outcome(
             TerminalExecutionStatus::TimedOut,
             bounded_duration(request.started.elapsed()),
@@ -1787,6 +1876,7 @@ fn run_system_command(
         if cancellation.is_cancelled() || state.abort {
             None
         } else if Instant::now() >= request.deadline() {
+            let _ = request.activity.close_timeout();
             return empty_outcome(
                 TerminalExecutionStatus::TimedOut,
                 bounded_duration(request.started.elapsed()),
@@ -1826,7 +1916,7 @@ fn run_system_command(
         stdout,
         Arc::clone(&stop_readers),
         Arc::clone(&produced),
-        Arc::clone(overflow),
+        Arc::clone(&request.activity),
     );
     let stdout_reader = match stdout_reader {
         Ok(reader) => reader,
@@ -1841,7 +1931,7 @@ fn run_system_command(
         stderr,
         Arc::clone(&stop_readers),
         Arc::clone(&produced),
-        Arc::clone(overflow),
+        Arc::clone(&request.activity),
     );
     let stderr_reader = match stderr_reader {
         Ok(reader) => reader,
@@ -1863,17 +1953,33 @@ fn run_system_command(
             cleanup?;
             return Err(executor_error(TerminalExecutorErrorKind::Cancelled));
         }
-        if overflow.load(Ordering::Acquire) {
-            stop_readers.store(true, Ordering::Release);
-            break (
-                TerminalExecutionStatus::OutputLimit,
-                terminate_and_reap(&mut child, group),
-            );
+        match request.activity.cause() {
+            ExecutionCause::OutputLimit => {
+                stop_readers.store(true, Ordering::Release);
+                break (
+                    TerminalExecutionStatus::OutputLimit,
+                    terminate_and_reap(&mut child, group),
+                );
+            }
+            ExecutionCause::TimedOut => {
+                stop_readers.store(true, Ordering::Release);
+                break (
+                    TerminalExecutionStatus::TimedOut,
+                    terminate_and_reap(&mut child, group),
+                );
+            }
+            ExecutionCause::Open => {}
         }
         if Instant::now() >= request.deadline() {
             stop_readers.store(true, Ordering::Release);
+            let cause = request.activity.close_timeout();
             break (
-                TerminalExecutionStatus::TimedOut,
+                match cause {
+                    ExecutionCause::OutputLimit => TerminalExecutionStatus::OutputLimit,
+                    ExecutionCause::Open | ExecutionCause::TimedOut => {
+                        TerminalExecutionStatus::TimedOut
+                    }
+                },
                 terminate_and_reap(&mut child, group),
             );
         }
@@ -1900,10 +2006,19 @@ fn run_system_command(
     let stdout = stdout.map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
     let stderr = stderr.map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
     cleanup?;
-    if stdout.total_bytes().saturating_add(stderr.total_bytes())
-        > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES
-    {
-        terminal_status = TerminalExecutionStatus::OutputLimit;
+    let produced = stdout.total_bytes().saturating_add(stderr.total_bytes());
+    if produced > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES {
+        let _ = request.activity.claim_output_limit();
+    }
+    match request.activity.cause() {
+        ExecutionCause::OutputLimit => terminal_status = TerminalExecutionStatus::OutputLimit,
+        ExecutionCause::TimedOut if produced > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES => {
+            return empty_outcome(
+                TerminalExecutionStatus::TimedOut,
+                bounded_duration(request.started.elapsed()),
+            );
+        }
+        ExecutionCause::Open | ExecutionCause::TimedOut => {}
     }
     TerminalExecutionOutcome::new(
         terminal_status,
@@ -1962,7 +2077,7 @@ fn spawn_reader<R: PipeReader>(
     reader: R,
     stop: Arc<AtomicBool>,
     produced: Arc<AtomicU64>,
-    overflow: Arc<AtomicBool>,
+    activity: Arc<ExecutionActivity>,
 ) -> Result<JoinHandle<Result<TerminalCapturedOutput, TerminalExecutorError>>, TerminalExecutorError>
 {
     let flags = rustix::fs::fcntl_getfl(&reader)
@@ -1971,7 +2086,7 @@ fn spawn_reader<R: PipeReader>(
         .map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))?;
     thread::Builder::new()
         .name(name.to_owned())
-        .spawn(move || read_pipe(reader, &stop, &produced, &overflow))
+        .spawn(move || read_pipe(reader, &stop, &produced, &activity))
         .map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))
 }
 
@@ -1980,13 +2095,13 @@ fn read_pipe(
     mut reader: impl Read,
     stop: &AtomicBool,
     produced: &AtomicU64,
-    overflow: &AtomicBool,
+    activity: &ExecutionActivity,
 ) -> Result<TerminalCapturedOutput, TerminalExecutorError> {
     let mut capture = PipeCapture::default();
     let mut buffer = [0_u8; PIPE_READ_BYTES];
     let mut stopping_reads = 0_u8;
     loop {
-        if overflow.load(Ordering::Acquire) {
+        if matches!(activity.cause(), ExecutionCause::OutputLimit) {
             break;
         }
         if stop.load(Ordering::Acquire) {
@@ -2002,7 +2117,7 @@ fn read_pipe(
                 let total = previous.saturating_add(length as u64);
                 capture.push(&buffer[..length]);
                 if total > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES {
-                    overflow.store(true, Ordering::Release);
+                    let _ = activity.claim_output_limit();
                     stop.store(true, Ordering::Release);
                     break;
                 }
@@ -2305,7 +2420,7 @@ fn fixed_tool_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivePermit, CallbackLeaseAuthority, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
+        ActivityWaker, ExecutionActivity, ExecutionCause, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
         TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT,
         TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT, TerminalCapturedOutput,
         TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
@@ -2320,8 +2435,8 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::task::{Context, Poll};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::task::{Context, Poll, Waker};
     use std::time::{Duration, Instant};
 
     fn empty_capture() -> TerminalCapturedOutput {
@@ -2367,23 +2482,68 @@ mod tests {
     }
 
     #[test]
-    fn callback_leases_keep_capacity_closed_until_every_wake_returns() {
-        let active = Arc::new(std::sync::atomic::AtomicUsize::new(1));
-        let authority = Arc::new(CallbackLeaseAuthority::new(Arc::clone(&active)));
-        let worker_callback = authority.acquire();
-        let deadline_callback = authority.acquire();
-        assert_eq!(active.load(Ordering::Acquire), 3);
-
-        assert_eq!(active.fetch_sub(1, Ordering::AcqRel), 3);
-        assert!(ActivePermit::acquire(&active, 1).is_none());
-        drop(worker_callback);
-        assert!(ActivePermit::acquire(&active, 1).is_none());
-        drop(deadline_callback);
-
-        let permit =
-            ActivePermit::acquire(&active, 1).expect("finished callbacks release capacity");
+    fn one_execution_activity_owns_exactly_one_slot_across_every_tail() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).expect("first activity");
+        let worker = Arc::clone(&activity);
+        let guardian = Arc::clone(&activity);
+        let worker_waker = Waker::from(Arc::new(ActivityWaker {
+            _activity: Arc::clone(&activity),
+            target: Waker::noop().clone(),
+        }));
+        let guardian_waker = worker_waker.clone();
         assert_eq!(active.load(Ordering::Acquire), 1);
-        drop(permit);
+
+        drop(activity);
+        assert!(ExecutionActivity::acquire(&active, 1).is_none());
+        drop(worker);
+        drop(guardian);
+        drop(worker_waker);
+        assert!(ExecutionActivity::acquire(&active, 1).is_none());
+        drop(guardian_waker);
+
+        let recovered = ExecutionActivity::acquire(&active, 1).expect("activity tails finished");
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(recovered);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn execution_cause_has_one_linearizable_winner() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let output = ExecutionActivity::acquire(&active, 1).unwrap();
+        assert!(output.claim_output_limit());
+        assert_eq!(output.close_timeout(), ExecutionCause::OutputLimit);
+        drop(output);
+
+        let timeout = ExecutionActivity::acquire(&active, 1).unwrap();
+        assert_eq!(timeout.close_timeout(), ExecutionCause::TimedOut);
+        assert!(!timeout.claim_output_limit());
+        assert_eq!(timeout.cause(), ExecutionCause::TimedOut);
+    }
+
+    #[test]
+    fn no_waker_thread_gap_keeps_the_originating_slot_occupied() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let thread_activity = Arc::clone(&activity);
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let thread_entered = Arc::clone(&entered);
+        let thread_release = Arc::clone(&release);
+        let thread = std::thread::spawn(move || {
+            thread_entered.wait();
+            thread_release.wait();
+            drop(thread_activity);
+        });
+
+        drop(activity);
+        entered.wait();
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        assert!(ExecutionActivity::acquire(&active, 1).is_none());
+        release.wait();
+        thread.join().unwrap();
+        assert_eq!(active.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -2554,6 +2714,36 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn output_limit_claimed_after_final_deadline_poll_closes_timeout() {
+        let root = std::env::current_dir().unwrap();
+        let tool = TerminalTool::with_executor(
+            &root,
+            Vec::new(),
+            Arc::new(FinalPollOutputLimitExecutor),
+            TerminalLimits::new(Duration::from_millis(1), 1).unwrap(),
+        )
+        .unwrap();
+        let output = futures_executor::block_on(tool.execute(
+            context(),
+            json!({
+                "action": "exec",
+                "command": "ignored",
+                "cwd": ".",
+                "profile": "clean"
+            }),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+
+        assert_eq!(output.content["status"], "output_limit");
+        assert_eq!(
+            output.content["stdout_bytes"],
+            MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 1
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn non_output_executor_error_ready_after_deadline_yields_timeout() {
         let root = std::env::current_dir().unwrap();
         let tool = TerminalTool::with_executor(
@@ -2612,6 +2802,64 @@ mod tests {
 
     #[cfg(unix)]
     struct DelayedOutputLimitExecutor;
+
+    #[cfg(unix)]
+    struct FinalPollOutputLimitExecutor;
+
+    #[cfg(unix)]
+    impl TerminalExecutor for FinalPollOutputLimitExecutor {
+        fn execute(
+            &self,
+            request: TerminalExecutionRequest,
+            _cancellation: CancellationToken,
+        ) -> TerminalExecution {
+            let activity = Arc::clone(&request.activity);
+            let producer_activity = Arc::clone(&activity);
+            activity.install_before_timeout_close(move || {
+                std::thread::spawn(move || {
+                    assert!(producer_activity.claim_output_limit());
+                })
+                .join()
+                .unwrap();
+            });
+            Box::pin(FinalPollOutputLimitExecution {
+                _request: request,
+                polls: 0,
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    struct FinalPollOutputLimitExecution {
+        _request: TerminalExecutionRequest,
+        polls: u8,
+    }
+
+    #[cfg(unix)]
+    impl Future for FinalPollOutputLimitExecution {
+        type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
+
+        fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls += 1;
+            match self.polls {
+                1 => {
+                    std::thread::sleep(Duration::from_millis(5));
+                    Poll::Pending
+                }
+                2 => {
+                    context.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                _ => Poll::Ready(TerminalExecutionOutcome::new(
+                    TerminalExecutionStatus::OutputLimit,
+                    TerminalCapturedOutput::new(Vec::new(), MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 1)
+                        .unwrap(),
+                    empty_capture(),
+                    Duration::from_millis(1),
+                )),
+            }
+        }
+    }
 
     #[cfg(unix)]
     impl TerminalExecutor for DelayedOutputLimitExecutor {
