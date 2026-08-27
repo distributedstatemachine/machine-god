@@ -25,8 +25,6 @@ use serde_json::{Value, json};
 #[cfg(unix)]
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "linux")]
-use std::collections::VecDeque;
-#[cfg(target_os = "linux")]
 use std::io::Read;
 #[cfg(target_os = "linux")]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -86,6 +84,14 @@ pub const TERMINAL_MAX_ACTIVE_EXECUTIONS: usize = 16;
 const TERMINAL_DESCRIPTION: &str =
     "Run one foreground shell command from a workspace-relative directory";
 const PIPE_RETAINED_BYTES: usize = MAX_TERMINAL_RETAINED_OUTPUT_BYTES / 2;
+#[cfg(target_os = "linux")]
+const PIPE_READ_BYTES: usize = 16 * 1024;
+#[cfg(target_os = "linux")]
+const POST_STOP_READ_LIMIT: u8 = 64;
+#[cfg(target_os = "linux")]
+const PROCESS_GROUP_TERM_GRACE: Duration = Duration::from_millis(250);
+#[cfg(target_os = "linux")]
+const PROCESS_GROUP_KILL_OBSERVATION_GRACE: Duration = Duration::from_millis(250);
 
 /// Stable terminal construction-error category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -602,15 +608,7 @@ fn snapshot_environment(
     if entries.len() > MAX_TERMINAL_ENVIRONMENT_ENTRIES {
         return Err(invalid_environment());
     }
-    entries.sort_by(|left, right| {
-        raw_os_bytes(&left.0)
-            .cmp(raw_os_bytes(&right.0))
-            .then_with(|| raw_os_bytes(&left.1).cmp(raw_os_bytes(&right.1)))
-    });
-
     let mut aggregate = 0_usize;
-    let mut previous_key: Option<&[u8]> = None;
-    let mut hasher = Sha256::new();
     for (key, value) in &entries {
         let key = raw_os_bytes(key);
         let value = raw_os_bytes(value);
@@ -620,7 +618,6 @@ fn snapshot_environment(
             || key.contains(&b'=')
             || key.contains(&0)
             || value.contains(&0)
-            || previous_key == Some(key)
         {
             return Err(invalid_environment());
         }
@@ -629,6 +626,22 @@ fn snapshot_environment(
             .and_then(|total| total.checked_add(value.len()))
             .ok_or_else(invalid_environment)?;
         if aggregate > MAX_TERMINAL_ENVIRONMENT_BYTES {
+            return Err(invalid_environment());
+        }
+    }
+
+    entries.sort_by(|left, right| {
+        raw_os_bytes(&left.0)
+            .cmp(raw_os_bytes(&right.0))
+            .then_with(|| raw_os_bytes(&left.1).cmp(raw_os_bytes(&right.1)))
+    });
+
+    let mut previous_key: Option<&[u8]> = None;
+    let mut hasher = Sha256::new();
+    for (key, value) in &entries {
+        let key = raw_os_bytes(key);
+        let value = raw_os_bytes(value);
+        if previous_key == Some(key) {
             return Err(invalid_environment());
         }
         hasher.update((key.len() as u64).to_be_bytes());
@@ -746,6 +759,7 @@ fn validate_cwd(cwd: &str) -> Result<(), ToolError> {
         if component.is_empty()
             || component == "."
             || component == ".."
+            || component == "~"
             || component.len() > MAX_TERMINAL_CWD_COMPONENT_BYTES
         {
             return Err(invalid_cwd());
@@ -1164,11 +1178,14 @@ impl Drop for DeadlineTimer {
         let Some(thread) = self.thread.take() else {
             return;
         };
-        if thread.thread().id() == thread::current().id() {
-            // Only the resource-free tail of an inline deadline wake remains.
-            drop(thread);
-        } else {
+        if thread.is_finished() {
             let _ = thread.join();
+        } else {
+            // Stopping removed the retained Waker and deadline authority. The
+            // thread can now own only its condition-variable or notification
+            // tail. Joining that tail can deadlock with a spurious poll whose
+            // task lock is held while an already-taken Waker is still running.
+            drop(thread);
         }
     }
 }
@@ -1291,9 +1308,13 @@ impl Tool for TerminalTool {
             }
             let timer = DeadlineTimer::new(deadline)?;
             let future = self.executor.execute(request, cancellation.clone());
-            let outcome = await_executor(future, &cancellation, deadline, started, timer).await?;
+            let outcome = await_executor(future, &cancellation, deadline, started, timer).await;
+            check_cancellation(&cancellation)?;
+            let outcome = outcome?;
             drop(permit);
-            render_output(&parsed.cwd, &outcome)
+            let output = render_output(&parsed.cwd, &outcome)?;
+            check_cancellation(&cancellation)?;
+            Ok(output)
         })
     }
 }
@@ -1476,13 +1497,17 @@ impl SystemWorkerHandle {
     }
 
     fn abort_and_join(mut self) {
-        let suppressed = {
+        let (suppressed, resources_released) = {
             let mut state = lock_worker(&self.shared);
             state.abort = true;
-            state.waker.take()
+            (state.waker.take(), state.outcome.is_some())
         };
         drop(suppressed);
-        self.join_aborted();
+        if resources_released {
+            let _ = self.finish_published();
+        } else {
+            self.join_aborted();
+        }
     }
 
     fn join_finished(
@@ -1497,16 +1522,22 @@ impl SystemWorkerHandle {
     }
 
     fn join_published(&mut self) -> bool {
+        self.finish_published()
+    }
+
+    fn finish_published(&mut self) -> bool {
         let thread = self.thread.take().expect("terminal worker thread exists");
-        if thread.thread().id() == thread::current().id() {
-            // Publication happens only after the command, process group,
-            // pipes, and reader threads are completely cleaned up. An inline
-            // reentrant wake may consume the result on this worker; only that
-            // resource-free notification tail may self-detach.
+        if thread.is_finished() {
+            thread.join().is_ok()
+        } else {
+            // The outcome is published only after the command, group, pipes,
+            // readers, request descriptor, and capacity-relevant work are
+            // released. An unfinished handle can therefore be only a Waker
+            // notification tail, which must not be joined while that Waker may
+            // be waiting for the polling task lock.
             drop(thread);
-            return true;
+            true
         }
-        thread.join().is_ok()
     }
 
     fn join_aborted(&mut self) {
@@ -1523,12 +1554,17 @@ impl SystemWorkerHandle {
 impl Drop for SystemWorkerHandle {
     fn drop(&mut self) {
         if self.thread.is_some() {
-            {
+            let resources_released = {
                 let mut state = lock_worker(&self.shared);
                 state.abort = true;
                 state.waker = None;
+                state.outcome.is_some()
+            };
+            if resources_released {
+                let _ = self.finish_published();
+            } else {
+                self.join_aborted();
             }
-            self.join_aborted();
         }
     }
 }
@@ -1615,14 +1651,14 @@ fn run_system_command(
             .map_err(|_| executor_error(TerminalExecutorErrorKind::Invariant))?,
     )
     .ok_or_else(|| executor_error(TerminalExecutorErrorKind::Invariant))?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        terminate_and_reap(&mut child, group);
-        executor_error(TerminalExecutorErrorKind::Pipe)
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        terminate_and_reap(&mut child, group);
-        executor_error(TerminalExecutorErrorKind::Pipe)
-    })?;
+    let Some(stdout) = child.stdout.take() else {
+        terminate_and_reap(&mut child, group)?;
+        return Err(executor_error(TerminalExecutorErrorKind::Pipe));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_and_reap(&mut child, group)?;
+        return Err(executor_error(TerminalExecutorErrorKind::Pipe));
+    };
 
     let stop_readers = Arc::new(AtomicBool::new(false));
     let produced = Arc::new(AtomicU64::new(0));
@@ -1638,7 +1674,7 @@ fn run_system_command(
         Ok(reader) => reader,
         Err(error) => {
             stop_readers.store(true, Ordering::Release);
-            terminate_and_reap(&mut child, group);
+            terminate_and_reap(&mut child, group)?;
             return Err(error);
         }
     };
@@ -1653,39 +1689,48 @@ fn run_system_command(
         Ok(reader) => reader,
         Err(error) => {
             stop_readers.store(true, Ordering::Release);
-            terminate_and_reap(&mut child, group);
+            let cleanup = terminate_and_reap(&mut child, group);
             let _ = stdout_reader.join();
+            cleanup?;
             return Err(error);
         }
     };
 
-    let terminal_status = loop {
+    let (mut terminal_status, cleanup) = loop {
         if cancellation.is_cancelled() || lock_worker(shared).abort {
-            terminate_and_reap(&mut child, group);
             stop_readers.store(true, Ordering::Release);
+            let cleanup = terminate_and_reap(&mut child, group);
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
+            cleanup?;
             return Err(executor_error(TerminalExecutorErrorKind::Cancelled));
         }
-        if Instant::now() >= request.deadline() {
-            terminate_and_reap(&mut child, group);
-            break TerminalExecutionStatus::TimedOut;
-        }
         if overflow.load(Ordering::Acquire) {
-            terminate_and_reap(&mut child, group);
-            break TerminalExecutionStatus::OutputLimit;
+            stop_readers.store(true, Ordering::Release);
+            break (
+                TerminalExecutionStatus::OutputLimit,
+                terminate_and_reap(&mut child, group),
+            );
         }
-        match child.try_wait() {
+        if Instant::now() >= request.deadline() {
+            stop_readers.store(true, Ordering::Release);
+            break (
+                TerminalExecutionStatus::TimedOut,
+                terminate_and_reap(&mut child, group),
+            );
+        }
+        match observe_leader_exit(group) {
             Ok(Some(status)) => {
-                terminate_remaining_group(group);
-                break exit_status(status);
+                stop_readers.store(true, Ordering::Release);
+                break (status, cleanup_observed_leader(&mut child, group, status));
             }
             Ok(None) => thread::sleep(Duration::from_millis(2)),
             Err(_) => {
-                terminate_and_reap(&mut child, group);
                 stop_readers.store(true, Ordering::Release);
+                let cleanup = terminate_and_reap(&mut child, group);
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
+                cleanup?;
                 return Err(executor_error(TerminalExecutorErrorKind::Wait));
             }
         }
@@ -1696,6 +1741,12 @@ fn run_system_command(
     let stderr = stderr_reader.join();
     let stdout = stdout.map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
     let stderr = stderr.map_err(|_| executor_error(TerminalExecutorErrorKind::Pipe))??;
+    cleanup?;
+    if stdout.total_bytes().saturating_add(stderr.total_bytes())
+        > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES
+    {
+        terminal_status = TerminalExecutionStatus::OutputLimit;
+    }
     TerminalExecutionOutcome::new(
         terminal_status,
         stdout,
@@ -1710,6 +1761,33 @@ fn exit_status(status: ExitStatus) -> TerminalExecutionStatus {
         TerminalExecutionStatus::Exited(code)
     } else {
         TerminalExecutionStatus::Signaled(status.signal().unwrap_or(0))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn observe_leader_exit(
+    leader: rustix::process::Pid,
+) -> Result<Option<TerminalExecutionStatus>, TerminalExecutorError> {
+    let status = rustix::process::waitid(
+        rustix::process::WaitId::Pid(leader),
+        rustix::process::WaitIdOptions::EXITED
+            | rustix::process::WaitIdOptions::NOHANG
+            | rustix::process::WaitIdOptions::NOWAIT,
+    )
+    .map_err(|_| executor_error(TerminalExecutorErrorKind::Wait))?;
+    status.map(waitid_status).transpose()
+}
+
+#[cfg(target_os = "linux")]
+fn waitid_status(
+    status: rustix::process::WaitIdStatus,
+) -> Result<TerminalExecutionStatus, TerminalExecutorError> {
+    if let Some(code) = status.exit_status() {
+        Ok(TerminalExecutionStatus::Exited(code))
+    } else if let Some(signal) = status.terminating_signal() {
+        Ok(TerminalExecutionStatus::Signaled(signal))
+    } else {
+        Err(executor_error(TerminalExecutorErrorKind::Invariant))
     }
 }
 
@@ -1747,12 +1825,15 @@ fn read_pipe(
     overflow: &AtomicBool,
 ) -> Result<TerminalCapturedOutput, TerminalExecutorError> {
     let mut capture = PipeCapture::default();
-    let mut buffer = [0_u8; 16 * 1024];
+    let mut buffer = [0_u8; PIPE_READ_BYTES];
     let mut stopping_reads = 0_u8;
     loop {
+        if overflow.load(Ordering::Acquire) {
+            break;
+        }
         if stop.load(Ordering::Acquire) {
             stopping_reads = stopping_reads.saturating_add(1);
-            if stopping_reads > 64 {
+            if stopping_reads > POST_STOP_READ_LIMIT {
                 break;
             }
         }
@@ -1760,10 +1841,13 @@ fn read_pipe(
             Ok(0) => break,
             Ok(length) => {
                 let previous = produced.fetch_add(length as u64, Ordering::AcqRel);
-                if previous.saturating_add(length as u64) > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES {
-                    overflow.store(true, Ordering::Release);
-                }
+                let total = previous.saturating_add(length as u64);
                 capture.push(&buffer[..length]);
+                if total > MAX_TERMINAL_PRODUCED_OUTPUT_BYTES {
+                    overflow.store(true, Ordering::Release);
+                    stop.store(true, Ordering::Release);
+                    break;
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -1772,7 +1856,10 @@ fn read_pipe(
                 }
                 thread::sleep(Duration::from_millis(1));
             }
-            Err(_) => return Err(executor_error(TerminalExecutorErrorKind::Pipe)),
+            Err(_) => {
+                stop.store(true, Ordering::Release);
+                return Err(executor_error(TerminalExecutorErrorKind::Pipe));
+            }
         }
     }
     capture.finish()
@@ -1782,7 +1869,8 @@ fn read_pipe(
 #[derive(Default)]
 struct PipeCapture {
     head: Vec<u8>,
-    tail: VecDeque<u8>,
+    tail: Vec<u8>,
+    tail_start: usize,
     total: u64,
 }
 
@@ -1794,53 +1882,132 @@ impl PipeCapture {
         let missing_head = head_limit.saturating_sub(self.head.len());
         let head_bytes = std::cmp::min(missing_head, bytes.len());
         self.head.extend_from_slice(&bytes[..head_bytes]);
-        for byte in &bytes[head_bytes..] {
-            if self.tail.len() == PIPE_RETAINED_BYTES - head_limit {
-                self.tail.pop_front();
-            }
-            self.tail.push_back(*byte);
+        let bytes = &bytes[head_bytes..];
+        let tail_limit = PIPE_RETAINED_BYTES - head_limit;
+        let missing_tail = tail_limit.saturating_sub(self.tail.len());
+        let appended = std::cmp::min(missing_tail, bytes.len());
+        self.tail.extend_from_slice(&bytes[..appended]);
+        let bytes = &bytes[appended..];
+        if bytes.is_empty() {
+            return;
         }
+        debug_assert_eq!(self.tail.len(), tail_limit);
+        if bytes.len() >= tail_limit {
+            self.tail
+                .copy_from_slice(&bytes[bytes.len() - tail_limit..]);
+            self.tail_start = 0;
+            return;
+        }
+        let first = std::cmp::min(bytes.len(), tail_limit - self.tail_start);
+        self.tail[self.tail_start..self.tail_start + first].copy_from_slice(&bytes[..first]);
+        self.tail[..bytes.len() - first].copy_from_slice(&bytes[first..]);
+        self.tail_start = (self.tail_start + bytes.len()) % tail_limit;
     }
 
     fn finish(self) -> Result<TerminalCapturedOutput, TerminalExecutorError> {
         let mut retained = self.head;
-        retained.extend(self.tail);
+        retained.extend_from_slice(&self.tail[self.tail_start..]);
+        retained.extend_from_slice(&self.tail[..self.tail_start]);
         TerminalCapturedOutput::new(retained, self.total)
     }
 }
 
 #[cfg(target_os = "linux")]
-fn terminate_and_reap(child: &mut Child, group: rustix::process::Pid) {
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
-    let deadline = Instant::now() + Duration::from_millis(250);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                terminate_remaining_group(group);
-                return;
-            }
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(2)),
-            _ => break,
+fn terminate_and_reap(
+    child: &mut Child,
+    group: rustix::process::Pid,
+) -> Result<(), TerminalExecutorError> {
+    let term = signal_process_group(group, rustix::process::Signal::TERM);
+    let kill = match term {
+        Ok(true) => {
+            sleep_through_grace(PROCESS_GROUP_TERM_GRACE);
+            signal_process_group(group, rustix::process::Signal::KILL)
         }
-    }
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-    let _ = child.wait();
+        Ok(false) => Ok(false),
+        Err(error) => {
+            let _ = child.kill();
+            Err(error)
+        }
+    };
+    let reaped = child
+        .wait()
+        .map(|_| ())
+        .map_err(|_| executor_error(TerminalExecutorErrorKind::Wait));
+    let disappeared = observe_group_disappearance(group);
+    term?;
+    kill?;
+    reaped?;
+    disappeared
 }
 
 #[cfg(target_os = "linux")]
-fn terminate_remaining_group(group: rustix::process::Pid) {
-    if rustix::process::test_kill_process_group(group).is_err() {
-        return;
-    }
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
-    let deadline = Instant::now() + Duration::from_millis(250);
-    while Instant::now() < deadline {
-        if rustix::process::test_kill_process_group(group).is_err() {
-            return;
+fn cleanup_observed_leader(
+    child: &mut Child,
+    group: rustix::process::Pid,
+    observed: TerminalExecutionStatus,
+) -> Result<(), TerminalExecutorError> {
+    let term = signal_process_group(group, rustix::process::Signal::TERM);
+    let kill = match term {
+        Ok(true) => {
+            // The waitid-NOWAIT leader remains a zombie through every numeric
+            // group signal, pinning its PID/PGID identity against reuse.
+            sleep_through_grace(PROCESS_GROUP_TERM_GRACE);
+            signal_process_group(group, rustix::process::Signal::KILL)
         }
-        thread::sleep(Duration::from_millis(2));
+        Ok(false) => Ok(false),
+        Err(error) => Err(error),
+    };
+    let reaped = child
+        .wait()
+        .map_err(|_| executor_error(TerminalExecutorErrorKind::Wait));
+    let disappeared = observe_group_disappearance(group);
+    term?;
+    kill?;
+    let reaped = reaped?;
+    if exit_status(reaped) != observed {
+        return Err(executor_error(TerminalExecutorErrorKind::Invariant));
     }
-    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    disappeared
+}
+
+#[cfg(target_os = "linux")]
+fn signal_process_group(
+    group: rustix::process::Pid,
+    signal: rustix::process::Signal,
+) -> Result<bool, TerminalExecutorError> {
+    match rustix::process::kill_process_group(group, signal) {
+        Ok(()) => Ok(true),
+        Err(rustix::io::Errno::SRCH) => Ok(false),
+        Err(_) => Err(executor_error(TerminalExecutorErrorKind::Wait)),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn observe_group_disappearance(group: rustix::process::Pid) -> Result<(), TerminalExecutorError> {
+    let deadline = Instant::now() + PROCESS_GROUP_KILL_OBSERVATION_GRACE;
+    loop {
+        match rustix::process::test_kill_process_group(group) {
+            Err(rustix::io::Errno::SRCH) => return Ok(()),
+            Ok(()) if Instant::now() < deadline => thread::sleep(Duration::from_millis(2)),
+            // A signalable group, EPERM, and every other probe failure are all
+            // ambiguous. Only ESRCH proves that the original numeric group is
+            // no longer observable after the leader has been reaped.
+            Ok(()) | Err(_) => {
+                return Err(executor_error(TerminalExecutorErrorKind::Wait));
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn sleep_through_grace(duration: Duration) {
+    let deadline = Instant::now() + duration;
+    while Instant::now() < deadline {
+        thread::sleep(std::cmp::min(
+            Duration::from_millis(2),
+            deadline.saturating_duration_since(Instant::now()),
+        ));
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1985,7 +2152,8 @@ mod tests {
         TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool,
     };
     use machine_god_core::{
-        CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId, ToolContext, TurnId,
+        CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId, ToolContext,
+        ToolErrorKind, TurnId,
     };
     use serde_json::json;
     use std::future::Future;
@@ -2136,6 +2304,82 @@ mod tests {
         assert!(output.is_error);
         assert!(dropped.load(Ordering::Acquire));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executor_future_drop_cancellation_wins_over_ready_outcome() {
+        let root = std::env::current_dir().unwrap();
+        let tool = TerminalTool::with_executor(
+            &root,
+            Vec::new(),
+            Arc::new(CancelOnDropExecutor),
+            TerminalLimits::default(),
+        )
+        .unwrap();
+        let error = futures_executor::block_on(tool.execute(
+            context(),
+            json!({
+                "action": "exec",
+                "command": "ignored",
+                "cwd": ".",
+                "profile": "clean"
+            }),
+            CancellationToken::new(),
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.kind, ToolErrorKind::Cancelled);
+        assert_eq!(error.code, "terminal_cancelled");
+    }
+
+    #[cfg(unix)]
+    struct CancelOnDropExecutor;
+
+    #[cfg(unix)]
+    impl TerminalExecutor for CancelOnDropExecutor {
+        fn execute(
+            &self,
+            request: TerminalExecutionRequest,
+            cancellation: CancellationToken,
+        ) -> TerminalExecution {
+            Box::pin(CancelOnDropExecution {
+                _request: request,
+                cancellation,
+                outcome: Some(
+                    TerminalExecutionOutcome::new(
+                        TerminalExecutionStatus::Exited(0),
+                        empty_capture(),
+                        empty_capture(),
+                        Duration::ZERO,
+                    )
+                    .unwrap(),
+                ),
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    struct CancelOnDropExecution {
+        _request: TerminalExecutionRequest,
+        cancellation: CancellationToken,
+        outcome: Option<TerminalExecutionOutcome>,
+    }
+
+    #[cfg(unix)]
+    impl Future for CancelOnDropExecution {
+        type Output = Result<TerminalExecutionOutcome, super::TerminalExecutorError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Ready(Ok(self.get_mut().outcome.take().unwrap()))
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for CancelOnDropExecution {
+        fn drop(&mut self) {
+            self.cancellation.cancel();
+        }
     }
 
     #[cfg(unix)]
