@@ -1534,6 +1534,112 @@ fn exact_answer_and_aggregate_answer_boundaries_are_enforced() {
 }
 
 #[test]
+fn complete_pretrim_answer_bytes_have_an_exact_redacted_boundary() {
+    let visible = "bounded";
+    let leading = MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES / 2;
+    let exact = format!(
+        "{}{}{}",
+        " ".repeat(leading),
+        visible,
+        "\t".repeat(MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES - leading - visible.len())
+    );
+    assert_eq!(exact.len(), MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES);
+
+    let exact_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
+        QuestionPromptOutcome::Answered(vec![exact]),
+    )]));
+    let exact_prepared = prepare(&exact_tool, basic_arguments());
+    assert_eq!(
+        execute(&exact_tool, exact_prepared, CancellationToken::new())
+            .unwrap()
+            .content[0]["answer"],
+        visible,
+    );
+
+    let private = "PRIVATE_PRETRIM_ANSWER_MARKER";
+    let over = format!(
+        "{private}{}",
+        "\n".repeat(MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES + 1 - private.len())
+    );
+    assert_eq!(over.len(), MAX_ASK_USER_QUESTION_RAW_ANSWER_BYTES + 1);
+    let over_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
+        QuestionPromptOutcome::Answered(vec![over]),
+    )]));
+    let over_prepared = prepare(&over_tool, basic_arguments());
+    let error = execute(&over_tool, over_prepared, CancellationToken::new()).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::InvalidInput,
+        "ask_user_question_resource_limit",
+        "ask_user_question resource limit exceeded",
+        false,
+    );
+    assert!(!format!("{error:?} {error}").contains(private));
+}
+
+#[test]
+fn complete_pretrim_answer_bytes_share_the_aggregate_boundary() {
+    let questions = json!({
+        "questions": [
+            {"question":"first?","options":[{"label":"a"},{"label":"b"}]},
+            {"question":"second?","options":[{"label":"a"},{"label":"b"}]}
+        ]
+    });
+    let per_answer = MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES / 2;
+    let leading = per_answer / 2;
+    let first = format!(
+        "{}first{}",
+        " ".repeat(leading),
+        "\r".repeat(per_answer - leading - "first".len())
+    );
+    let second = format!(
+        "{}second{}",
+        "\t".repeat(leading),
+        "\n".repeat(per_answer - leading - "second".len())
+    );
+    assert_eq!(first.len(), per_answer);
+    assert_eq!(second.len(), per_answer);
+    assert_eq!(
+        first.len() + second.len(),
+        MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES
+    );
+
+    let exact_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
+        QuestionPromptOutcome::Answered(vec![first.clone(), second]),
+    )]));
+    let exact_prepared = prepare(&exact_tool, questions.clone());
+    assert_eq!(
+        execute(&exact_tool, exact_prepared, CancellationToken::new())
+            .unwrap()
+            .content,
+        json!([
+            {"answer":"first","question":"first?"},
+            {"answer":"second","question":"second?"}
+        ]),
+    );
+
+    let private = "PRIVATE_AGGREGATE_PRETRIM_MARKER";
+    let over_second = format!("{private}{}", " ".repeat(per_answer + 1 - private.len()));
+    assert_eq!(
+        first.len() + over_second.len(),
+        MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES + 1
+    );
+    let over_tool = AskUserQuestionTool::new(ScriptedPrompter::new([Ok(
+        QuestionPromptOutcome::Answered(vec![first, over_second]),
+    )]));
+    let over_prepared = prepare(&over_tool, questions);
+    let error = execute(&over_tool, over_prepared, CancellationToken::new()).unwrap_err();
+    assert_error(
+        &error,
+        ToolErrorKind::InvalidInput,
+        "ask_user_question_resource_limit",
+        "ask_user_question resource limit exceeded",
+        false,
+    );
+    assert!(!format!("{error:?} {error}").contains(private));
+}
+
+#[test]
 fn worst_case_terminal_rendering_keeps_the_complete_tool_output_bounded() {
     let arguments = json!({
         "questions": (0..MAX_ASK_USER_QUESTION_QUESTIONS).map(|question| json!({
