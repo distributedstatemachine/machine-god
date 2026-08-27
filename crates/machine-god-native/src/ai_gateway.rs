@@ -1,10 +1,13 @@
 //! Runtime-neutral codec for the pinned Vercel AI Gateway v3 wire contract.
 
+use crate::tool_result_projection::{
+    READ_TOOL_RESULT_TOOL_NAME, TOOL_RESULT_PROJECTION_THRESHOLD_BYTES, project_tool_result,
+};
 use futures_core::Stream;
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, MAX_SAFE_JSON_DEPTH, Message, ModelEvent,
     ModelEventStream, ModelProvider, ModelRequest, ProviderError, ProviderErrorKind, Role,
-    StopReason, TokenUsage, ToolCall, ToolCallId, ToolName,
+    SessionId, SessionIncarnationId, StopReason, TokenUsage, ToolCall, ToolCallId, ToolName,
 };
 use serde::Serialize;
 use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
@@ -572,11 +575,20 @@ fn build_request(
         return Err(invalid_request("gateway_invalid_model"));
     }
 
-    let mut projection_remaining = limits.max_request_bytes;
+    let reader_advertised = request
+        .tools
+        .iter()
+        .any(|tool| tool.name.as_str() == READ_TOOL_RESULT_TOOL_NAME);
+    let mut source_remaining = limits.max_request_bytes;
+    let mut wire_remaining = limits.max_request_bytes;
     let prompt = build_prompt(
         request.messages,
+        &request.session_id,
+        &request.session_incarnation_id,
+        reader_advertised,
         limits,
-        &mut projection_remaining,
+        &mut source_remaining,
+        &mut wire_remaining,
         cancellation,
     )?;
     let mut tools = Vec::new();
@@ -634,8 +646,12 @@ pub(crate) fn build_gateway_transport_request(
 
 fn build_prompt(
     messages: Vec<Message>,
+    session_id: &SessionId,
+    session_incarnation_id: &SessionIncarnationId,
+    reader_advertised: bool,
     limits: AiGatewayLimits,
-    projection_remaining: &mut usize,
+    source_remaining: &mut usize,
+    wire_remaining: &mut usize,
     cancellation: &CancellationToken,
 ) -> Result<Vec<GatewayMessage>, ProviderError> {
     let mut prompt = Vec::with_capacity(messages.len());
@@ -708,15 +724,30 @@ fn build_prompt(
                 let Some(name) = pending.remove(&call_id) else {
                     return Err(invalid_request("gateway_invalid_history"));
                 };
-                let value = String::from_utf8(serialize_bounded(
-                    &output,
-                    *projection_remaining,
-                    cancellation,
-                )?)
-                .map_err(|_| protocol_error("gateway_internal_encoding"))?;
-                *projection_remaining = projection_remaining
-                    .checked_sub(value.len())
+                let serialized_output =
+                    serialize_bounded(&output, *source_remaining, cancellation)?;
+                *source_remaining = source_remaining
+                    .checked_sub(serialized_output.len())
                     .expect("bounded serialization cannot exceed remaining budget");
+                check_cancel(cancellation)?;
+                let value = if reader_advertised
+                    && serialized_output.len() > TOOL_RESULT_PROJECTION_THRESHOLD_BYTES
+                {
+                    project_tool_result(
+                        session_id,
+                        session_incarnation_id,
+                        &call_id,
+                        &serialized_output,
+                        output.is_error,
+                    )
+                } else {
+                    String::from_utf8(serialized_output)
+                        .map_err(|_| protocol_error("gateway_internal_encoding"))?
+                };
+                check_cancel(cancellation)?;
+                *wire_remaining = wire_remaining
+                    .checked_sub(value.len())
+                    .ok_or_else(|| invalid_request("gateway_request_byte_limit"))?;
                 GatewayMessage {
                     role: "tool",
                     content: GatewayContent::Parts(vec![GatewayPart::ToolResult {

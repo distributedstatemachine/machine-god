@@ -187,6 +187,88 @@ fn request(messages: Vec<Message>) -> ModelRequest {
     }
 }
 
+fn read_tool_result_spec() -> ToolSpec {
+    ToolSpec {
+        name: ToolName::new("read_tool_result").unwrap(),
+        description: "Read a projected tool result".to_owned(),
+        input_schema: json!({"type":"object"}),
+    }
+}
+
+fn tool_result_with_serialized_len(target: usize, is_error: bool) -> ToolOutput {
+    let empty = ToolOutput {
+        content: Value::String(String::new()),
+        is_error,
+    };
+    let fixed = serde_json::to_vec(&empty).unwrap().len();
+    assert!(target >= fixed);
+    let output = ToolOutput {
+        content: Value::String("x".repeat(target - fixed)),
+        is_error,
+    };
+    assert_eq!(serde_json::to_vec(&output).unwrap().len(), target);
+    output
+}
+
+fn tool_result_request(
+    output: ToolOutput,
+    advertise_reader: bool,
+    session_id: &str,
+    incarnation_id: &str,
+    call_id: &str,
+) -> ModelRequest {
+    let call = ToolCall {
+        id: ToolCallId::new(call_id).unwrap(),
+        name: ToolName::new("echo").unwrap(),
+        arguments: json!({}),
+    };
+    let mut model_request = request(vec![
+        Message::text(Role::User, "run once"),
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolCall { call: call.clone() }],
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: call.id,
+                output,
+            }],
+        },
+    ]);
+    model_request.session_id = SessionId::new(session_id).unwrap();
+    model_request.session_incarnation_id = SessionIncarnationId::new(incarnation_id).unwrap();
+    if advertise_reader {
+        model_request.tools.push(read_tool_result_spec());
+    }
+    model_request
+}
+
+fn recorded_tool_result_value(request: &RecordedRequest) -> String {
+    let body: Value = serde_json::from_slice(&request.body).unwrap();
+    body["prompt"][2]["content"][0]["output"]["value"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn send_tool_result_request(
+    provider: &AiGatewayProvider,
+    transport: &ScriptedTransport,
+    request: ModelRequest,
+) -> String {
+    let stream = start(provider, request, CancellationToken::new()).unwrap();
+    let events = futures_executor::block_on(stream.collect::<Vec<_>>());
+    assert_eq!(
+        events,
+        [Ok(ModelEvent::Stop {
+            reason: StopReason::Completed,
+        })]
+    );
+    let requests = transport.requests();
+    recorded_tool_result_value(requests.last().unwrap())
+}
+
 fn start(
     provider: &AiGatewayProvider,
     request: ModelRequest,
@@ -1243,6 +1325,206 @@ fn tool_result_projection_uses_one_cumulative_request_budget() {
     let error = expect_start_error(
         start(&provider, model_request, CancellationToken::new()),
         "cumulative projected tool results",
+    );
+    assert_eq!(error.code, "gateway_request_byte_limit");
+    assert!(transport.requests().is_empty());
+}
+
+#[test]
+fn reader_advertisement_projects_only_above_the_exact_threshold() {
+    let transport = ScriptedTransport::new([bytes(finish("stop")), bytes(finish("stop"))]);
+    let provider = provider(&transport);
+
+    let exact_output = tool_result_with_serialized_len(16_384, false);
+    let exact_serialized = serde_json::to_string(&exact_output).unwrap();
+    let exact = send_tool_result_request(
+        &provider,
+        &transport,
+        tool_result_request(
+            exact_output,
+            true,
+            "threshold-session",
+            "threshold-incarnation",
+            "threshold-call",
+        ),
+    );
+    assert_eq!(exact, exact_serialized);
+
+    let projected = send_tool_result_request(
+        &provider,
+        &transport,
+        tool_result_request(
+            tool_result_with_serialized_len(16_385, false),
+            true,
+            "threshold-session",
+            "threshold-incarnation",
+            "projected-call",
+        ),
+    );
+    let value: Value = serde_json::from_str(&projected).unwrap();
+    assert_eq!(value["type"], "tool_result_preview");
+    assert_eq!(value["total_bytes"], 16_385);
+    assert_eq!(value["is_error"], false);
+    assert_eq!(value["read_more_with"], "read_tool_result");
+    assert_eq!(value["preview"].as_str().unwrap().len(), 4_096);
+    let handle = value["handle"].as_str().unwrap();
+    assert!(handle.starts_with("tool-result-sha256-"));
+    assert_eq!(handle.len(), "tool-result-sha256-".len() + 64);
+    assert!(
+        handle["tool-result-sha256-".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+}
+
+#[test]
+fn projected_handle_is_deterministic_and_isolated_by_session_context_and_call() {
+    let transport = ScriptedTransport::new([
+        bytes(finish("stop")),
+        bytes(finish("stop")),
+        bytes(finish("stop")),
+        bytes(finish("stop")),
+        bytes(finish("stop")),
+    ]);
+    let provider = provider(&transport);
+    let handle = |session: &str, incarnation: &str, call: &str| {
+        let projected = send_tool_result_request(
+            &provider,
+            &transport,
+            tool_result_request(
+                tool_result_with_serialized_len(16_385, false),
+                true,
+                session,
+                incarnation,
+                call,
+            ),
+        );
+        serde_json::from_str::<Value>(&projected).unwrap()["handle"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let first = handle("session-1", "incarnation-1", "call-1");
+    assert_eq!(first, handle("session-1", "incarnation-1", "call-1"));
+    assert_ne!(first, handle("session-2", "incarnation-1", "call-1"));
+    assert_ne!(first, handle("session-1", "incarnation-2", "call-1"));
+    assert_ne!(first, handle("session-1", "incarnation-1", "call-2"));
+}
+
+#[test]
+fn projection_preserves_error_and_uses_a_utf8_safe_source_prefix() {
+    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    let provider = provider(&transport);
+    let output = ToolOutput {
+        content: Value::String("🦀".repeat(5_000)),
+        is_error: true,
+    };
+    let full = serde_json::to_string(&output).unwrap();
+    assert!(full.len() > 16_384);
+    let projected = send_tool_result_request(
+        &provider,
+        &transport,
+        tool_result_request(
+            output,
+            true,
+            "utf8-session",
+            "utf8-incarnation",
+            "utf8-call",
+        ),
+    );
+    let value: Value = serde_json::from_str(&projected).unwrap();
+    let preview = value["preview"].as_str().unwrap();
+    assert!(preview.len() <= 4_096);
+    assert!(full.starts_with(preview));
+    assert!(full.is_char_boundary(preview.len()));
+    assert!(!preview.contains('\u{fffd}'));
+    assert_eq!(value["total_bytes"], full.len());
+    assert_eq!(value["is_error"], true);
+}
+
+#[test]
+fn absent_reader_preserves_full_output_above_projection_threshold() {
+    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    let provider = provider(&transport);
+    let output = tool_result_with_serialized_len(16_385, true);
+    let full = serde_json::to_string(&output).unwrap();
+    let wire = send_tool_result_request(
+        &provider,
+        &transport,
+        tool_result_request(
+            output,
+            false,
+            "absent-session",
+            "absent-incarnation",
+            "absent-call",
+        ),
+    );
+    assert_eq!(wire, full);
+}
+
+#[test]
+fn projection_retains_an_independent_full_source_work_budget() {
+    let limits = AiGatewayLimits {
+        max_request_bytes: 30_000,
+        ..AiGatewayLimits::default()
+    };
+
+    let one_transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    let one_provider =
+        AiGatewayProvider::with_limits("provider/model", Arc::new(one_transport.clone()), limits)
+            .unwrap();
+    let projected = send_tool_result_request(
+        &one_provider,
+        &one_transport,
+        tool_result_request(
+            tool_result_with_serialized_len(17_000, false),
+            true,
+            "budget-session",
+            "budget-incarnation",
+            "budget-call-1",
+        ),
+    );
+    let value: Value = serde_json::from_str(&projected).unwrap();
+    assert!(value["preview"].as_str().unwrap().len() <= 4_096);
+
+    let calls = ["budget-call-1", "budget-call-2"].map(|id| ToolCall {
+        id: ToolCallId::new(id).unwrap(),
+        name: ToolName::new("echo").unwrap(),
+        arguments: json!({}),
+    });
+    let mut model_request = request(vec![
+        Message::text(Role::User, "run both"),
+        Message {
+            role: Role::Assistant,
+            content: calls
+                .iter()
+                .cloned()
+                .map(|call| ContentBlock::ToolCall { call })
+                .collect(),
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: calls[0].id.clone(),
+                output: tool_result_with_serialized_len(17_000, false),
+            }],
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: calls[1].id.clone(),
+                output: tool_result_with_serialized_len(17_000, false),
+            }],
+        },
+    ]);
+    model_request.tools.push(read_tool_result_spec());
+    let transport = ScriptedTransport::new([]);
+    let provider =
+        AiGatewayProvider::with_limits("provider/model", Arc::new(transport.clone()), limits)
+            .unwrap();
+    let error = expect_start_error(
+        start(&provider, model_request, CancellationToken::new()),
+        "full source work exceeds cumulative request budget",
     );
     assert_eq!(error.code, "gateway_request_byte_limit");
     assert!(transport.requests().is_empty());
