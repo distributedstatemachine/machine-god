@@ -3949,8 +3949,12 @@ worktrees are removed and pruned. The complete exact-1.94.1 replacement gate is
 green with 1,150 non-documentation Rust tests, two doctests, 136 Python tests,
 pinned-fx regeneration, dependency policy/audit, Linux/FreeBSD/WASI checks,
 documentation/diff invariants, and fresh release-binary smoke. Three fresh
-cycle-2 reviews and remote delivery remain pending, so this combined item stays
-unchecked. The delivered
+cycle-2 tracks rejected exact candidate `a566db2`, tree `785c084`, with a
+deduplicated `0 blocker / 2 high / 1 medium / 2 low` union covering
+deadline/output arbitration, bounded notification tails, normal-exit latency,
+tilde grammar, and public Rustdoc. Every finding is accepted; cycle-3
+remediation, replacement gate, review, and remote delivery remain pending, so
+this combined item stays unchecked. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit

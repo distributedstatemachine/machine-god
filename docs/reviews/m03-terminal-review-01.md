@@ -179,6 +179,57 @@ This gate makes no formal cycle-2 review, remote workflow, integration,
 performance, sandbox, or fx-equivalence claim. Formal reviewers identify the
 exact immutable candidate and tree below.
 
+## Formal cycle 2 review
+
+Three fresh adversarial product tracks reviewed exact candidate
+`a566db2b44a40cc64e4c4029e42a664c80eea074`, tree
+`785c0841d15171c1efeecd9fdfd1c64690f535b6`, and **REJECTED** it:
+
+- correctness, public API, schema, capability, and engine integration reported
+  `0/1/0/1`;
+- native process, cancellation, lifecycle, and platform behavior reported
+  `0/1/0/2`; and
+- performance, concurrency, memory/output bounds, and resource ownership
+  reported `0/2/1/1`.
+
+Overlap deduplicates to `0 blocker / 2 high / 1 medium / 2 low`:
+
+1. **High:** the outer deadline guardian checks expiry before a ready executor
+   and rewrites every non-timeout result after the deadline. A valid
+   `output_limit` can therefore become a constructor-invalid `timed_out` result
+   with more than 1 MiB observed. Production readers also expose no cause marker
+   until group cleanup and outcome publication finish, so a deadline during
+   overflow cleanup can discard an already-observed authoritative overflow.
+2. **High:** worker and deadline threads invoke arbitrary Wakers inline, then
+   detach an unfinished notification tail after the outer future consumes the
+   result. A legal permanently blocking Waker can therefore leave one OS thread
+   and stack per completed execution outside the active-execution limit.
+3. **Medium:** ordinary Linux exit retains the zombie leader and consequently
+   sees a successful group TERM even when no live descendant exists, then
+   unconditionally sleeps through the full 250 ms grace before KILL and reap.
+   Every trivial command therefore pays that latency.
+4. **Low:** the grammar rejects components spelled exactly `~`, but the source
+   also rejects every leading tilde-prefixed literal such as `~cache` while
+   accepting the same literal when nested.
+5. **Low:** public `TerminalExecutor` Rustdoc still promises an unconditional
+   absolute bound and joining every worker, contradicting the maintained
+   controllable-phase and bounded-notification-tail contract.
+
+All findings are accepted. Replacement source must publish the production
+output cause before cleanup, arbitrate cancellation first and observed output
+second, and never mutate a validated outcome into an invalid status/counter
+combination. Blocking notification callbacks must retain a per-tool active
+lease until return so repeated legal callbacks fail fast at the configured cap
+instead of accumulating without bound. Normal-exit cleanup must preserve the
+leader identity through its final signal without imposing the cancellation/
+timeout grace on an already-exited foreground leader. Grammar and public
+Rustdoc must align with the frozen contract, with independent deterministic
+regressions for each behavior.
+
+All three review worktrees were read-only and clean; each was removed and
+pruned with its temporary branch immediately after its verdict. Cycle 3
+requires a complete replacement gate and three fresh exact-SHA reviews.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in
