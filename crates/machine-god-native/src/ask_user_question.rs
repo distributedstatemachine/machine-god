@@ -60,6 +60,7 @@ pub const ASK_USER_QUESTION_DEFAULT_MAX_ACTIVE_PROMPTS: usize = 1;
 pub const ASK_USER_QUESTION_MAX_ACTIVE_PROMPTS: usize = 8;
 
 const ASK_USER_QUESTION_DESCRIPTION: &str = "Ask the user one to four bounded questions with ordered options. Options guide the response but a bounded free-form answer is allowed. Use this only when progress requires an explicit user decision; it is not an approval or permission channel.";
+const MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY: usize = 2;
 
 /// One normalized option supplied to a [`QuestionPrompter`].
 #[derive(Clone, Eq, PartialEq)]
@@ -1350,8 +1351,11 @@ impl ActivityWake {
             state.pending_after_observation = false;
             target
         };
+        let mut callbacks_remaining = MAX_ACTIVITY_WAKE_CALLBACKS_PER_NOTIFY;
 
         loop {
+            debug_assert!(callbacks_remaining > 0);
+            callbacks_remaining -= 1;
             let notified = catch_unwind(AssertUnwindSafe(|| target.wake_by_ref()));
             // Releasing a replaced callback target may run arbitrary Waker
             // destruction. Keep the callback lane occupied, retain the
@@ -1370,30 +1374,36 @@ impl ActivityWake {
                     state.observed_while_notifying = false;
                     state.pending_after_observation = false;
                     None
-                } else if state.pending_after_observation {
-                    state.observed_while_notifying = false;
-                    state.pending_after_observation = false;
+                } else if callbacks_remaining > 0 && state.pending_after_observation {
                     if let Some(target) = state.target.as_ref().map(Arc::clone) {
+                        state.observed_while_notifying = false;
+                        state.pending_after_observation = false;
                         Some(target)
                     } else {
                         state.notifying = false;
+                        state.observed_while_notifying = false;
                         None
                     }
                 } else {
+                    // A notice observed during the one allowed replay remains
+                    // pending for a later explicit notification activation.
                     state.notifying = false;
                     state.observed_while_notifying = false;
                     None
                 }
             };
-            if let Err(payload) = notified {
-                // The callback is the primary operation. If both it and target
-                // cleanup panic, destroy the captured cleanup payload before
-                // resuming the callback panic so precedence is deterministic.
-                drop(target_drop);
-                resume_unwind(payload);
-            }
-            if let Err(payload) = target_drop {
-                resume_unwind(payload);
+            match (notified, target_drop) {
+                (Err(primary), Err(secondary)) => {
+                    // Callback failure has documented precedence. The opaque
+                    // secondary payload may itself panic from Drop, so the
+                    // only total way to preserve that precedence is to leak
+                    // this one payload on the exceptional dual-panic path.
+                    std::mem::forget(secondary);
+                    resume_unwind(primary);
+                }
+                (Err(primary), Ok(())) => resume_unwind(primary),
+                (Ok(()), Err(secondary)) => resume_unwind(secondary),
+                (Ok(()), Ok(())) => {}
             }
             let Some(next) = next else {
                 return;
