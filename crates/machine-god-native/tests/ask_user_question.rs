@@ -738,13 +738,15 @@ impl Drop for DualPanicReplayTarget {
     }
 }
 
-const REENTRANT_ACTIVATION_BUDGET: usize = 256;
+const REENTRANT_DELIVERY_LIMIT: usize = 256;
 
 struct ReentrantActivationDriver {
     commands: mpsc::Sender<ReentrantPollCommand>,
-    completed: Mutex<mpsc::Receiver<()>>,
+    completed: Mutex<mpsc::Receiver<ReentrantPollCompletion>>,
     retained: Mutex<Option<Waker>>,
+    cancel_after_rewake: Option<(usize, CancellationToken)>,
     calls: AtomicUsize,
+    terminal_completion: Mutex<Option<ReentrantPollCompletion>>,
     in_flight: AtomicUsize,
     max_in_flight: AtomicUsize,
     remaining: AtomicUsize,
@@ -755,16 +757,54 @@ enum ReentrantPollCommand {
     DropExecution,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReentrantPollCompletion {
+    Pending,
+    Cancelled,
+    PromptFailed,
+    Dropped,
+}
+
 impl ReentrantActivationDriver {
-    fn new(commands: mpsc::Sender<ReentrantPollCommand>, completed: mpsc::Receiver<()>) -> Self {
+    fn with_rewake_budget(
+        commands: mpsc::Sender<ReentrantPollCommand>,
+        completed: mpsc::Receiver<ReentrantPollCompletion>,
+        wake_budget: usize,
+    ) -> Self {
+        Self::with_options(commands, completed, wake_budget, None)
+    }
+
+    fn continuously_rewaking(
+        commands: mpsc::Sender<ReentrantPollCommand>,
+        completed: mpsc::Receiver<ReentrantPollCompletion>,
+    ) -> Self {
+        Self::with_options(commands, completed, usize::MAX, None)
+    }
+
+    fn cancelling_after_second_rewake(
+        commands: mpsc::Sender<ReentrantPollCommand>,
+        completed: mpsc::Receiver<ReentrantPollCompletion>,
+        cancellation: CancellationToken,
+    ) -> Self {
+        Self::with_options(commands, completed, 2, Some((2, cancellation)))
+    }
+
+    fn with_options(
+        commands: mpsc::Sender<ReentrantPollCommand>,
+        completed: mpsc::Receiver<ReentrantPollCompletion>,
+        wake_budget: usize,
+        cancel_after_rewake: Option<(usize, CancellationToken)>,
+    ) -> Self {
         Self {
             commands,
             completed: Mutex::new(completed),
             retained: Mutex::new(None),
+            cancel_after_rewake,
             calls: AtomicUsize::new(0),
+            terminal_completion: Mutex::new(None),
             in_flight: AtomicUsize::new(0),
             max_in_flight: AtomicUsize::new(0),
-            remaining: AtomicUsize::new(REENTRANT_ACTIVATION_BUDGET),
+            remaining: AtomicUsize::new(wake_budget),
         }
     }
 
@@ -782,23 +822,36 @@ impl ReentrantActivationDriver {
         self.commands
             .send(ReentrantPollCommand::DropExecution)
             .unwrap();
-        self.completed.lock().unwrap().recv().unwrap();
+        assert_eq!(
+            self.completed.lock().unwrap().recv().unwrap(),
+            ReentrantPollCompletion::Dropped
+        );
     }
 
-    fn poll_outer(&self, waker: &Waker) {
+    fn poll_outer(&self, waker: &Waker) -> ReentrantPollCompletion {
         self.commands
             .send(ReentrantPollCommand::Poll(waker.clone()))
             .unwrap();
-        self.completed.lock().unwrap().recv().unwrap();
+        self.completed.lock().unwrap().recv().unwrap()
     }
 
     fn callback(self: &Arc<Self>, wake: &Arc<ReentrantActivationWake>) {
-        self.calls.fetch_add(1, Ordering::SeqCst);
+        let callback = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
         let in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_in_flight.fetch_max(in_flight, Ordering::SeqCst);
 
         let outer_waker = Waker::from(Arc::clone(wake));
-        self.poll_outer(&outer_waker);
+        let completion = self.poll_outer(&outer_waker);
+        if completion != ReentrantPollCompletion::Pending {
+            assert!(matches!(
+                completion,
+                ReentrantPollCompletion::Cancelled | ReentrantPollCompletion::PromptFailed
+            ));
+            let previous = self.terminal_completion.lock().unwrap().replace(completion);
+            assert!(previous.is_none(), "execution completed more than once");
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
         let should_rewake = self
             .remaining
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
@@ -811,6 +864,19 @@ impl ReentrantActivationDriver {
                 retained.wake_by_ref();
             }
         }
+        if self
+            .cancel_after_rewake
+            .as_ref()
+            .is_some_and(|(cancel_after, _)| *cancel_after == callback)
+        {
+            assert!(
+                self.cancel_after_rewake
+                    .as_ref()
+                    .expect("matched cancellation configuration")
+                    .1
+                    .cancel()
+            );
+        }
 
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
     }
@@ -822,6 +888,64 @@ impl ReentrantActivationDriver {
             self.max_in_flight.load(Ordering::SeqCst),
             self.remaining.load(Ordering::SeqCst),
         )
+    }
+
+    fn terminal_completion(&self) -> Option<ReentrantPollCompletion> {
+        *self.terminal_completion.lock().unwrap()
+    }
+}
+
+fn classify_reentrant_poll(polled: Poll<Result<ToolOutput, ToolError>>) -> ReentrantPollCompletion {
+    match polled {
+        Poll::Pending => ReentrantPollCompletion::Pending,
+        Poll::Ready(Err(error)) if error.kind == ToolErrorKind::Cancelled => {
+            assert_error(
+                &error,
+                ToolErrorKind::Cancelled,
+                "ask_user_question_cancelled",
+                "ask_user_question was cancelled",
+                false,
+            );
+            ReentrantPollCompletion::Cancelled
+        }
+        Poll::Ready(Err(error)) => {
+            assert_error(
+                &error,
+                ToolErrorKind::Execution,
+                "ask_user_question_prompt_failed",
+                "ask_user_question prompt failed",
+                false,
+            );
+            ReentrantPollCompletion::PromptFailed
+        }
+        Poll::Ready(Ok(output)) => {
+            panic!("reentrant prompt unexpectedly returned output: {output:?}")
+        }
+    }
+}
+
+fn run_reentrant_poller(
+    mut execution: BoxFuture<'_, Result<ToolOutput, ToolError>>,
+    command_receiver: &mpsc::Receiver<ReentrantPollCommand>,
+    completed_sender: &mpsc::Sender<ReentrantPollCompletion>,
+) {
+    while let Ok(command) = command_receiver.recv() {
+        match command {
+            ReentrantPollCommand::Poll(waker) => {
+                completed_sender
+                    .send(classify_reentrant_poll(
+                        execution.as_mut().poll(&mut Context::from_waker(&waker)),
+                    ))
+                    .unwrap();
+            }
+            ReentrantPollCommand::DropExecution => {
+                drop(execution);
+                completed_sender
+                    .send(ReentrantPollCompletion::Dropped)
+                    .unwrap();
+                break;
+            }
+        }
     }
 }
 
@@ -2552,55 +2676,39 @@ fn callback_panic_precedes_panicking_replay_target_payload_drop() {
 }
 
 #[test]
-fn one_notify_activation_has_one_replay_and_leaves_residual_pending_work() {
+fn observed_residual_wakes_progress_without_an_unrelated_activation() {
     let prompter = PromptWakerFanoutPrompter::default();
     let tool = AskUserQuestionTool::new(prompter.clone());
     let prepared = prepare(&tool, basic_arguments());
     let execution = tool.execute(context(), prepared.clone(), CancellationToken::new());
     let (command_sender, command_receiver) = mpsc::channel();
     let (completed_sender, completed_receiver) = mpsc::channel();
-    let driver = Arc::new(ReentrantActivationDriver::new(
+    let driver = Arc::new(ReentrantActivationDriver::with_rewake_budget(
         command_sender,
         completed_receiver,
+        2,
     ));
     let host_wake = Arc::new(ReentrantActivationWake {
         driver: Arc::downgrade(&driver),
     });
     let host_waker = Waker::from(Arc::clone(&host_wake));
 
-    let (first_activation, second_activation, closed) = thread::scope(|scope| {
+    let (progressed, terminal_completion, closed) = thread::scope(|scope| {
         let poller = scope.spawn(move || {
-            let mut execution = execution;
-            while let Ok(command) = command_receiver.recv() {
-                match command {
-                    ReentrantPollCommand::Poll(waker) => {
-                        assert!(
-                            execution
-                                .as_mut()
-                                .poll(&mut Context::from_waker(&waker))
-                                .is_pending(),
-                            "unpublished reentrant prompt unexpectedly completed"
-                        );
-                        completed_sender.send(()).unwrap();
-                    }
-                    ReentrantPollCommand::DropExecution => {
-                        drop(execution);
-                        completed_sender.send(()).unwrap();
-                        break;
-                    }
-                }
-            }
+            run_reentrant_poller(execution, &command_receiver, &completed_sender);
         });
 
-        driver.poll_outer(&host_waker);
+        assert_eq!(
+            driver.poll_outer(&host_waker),
+            ReentrantPollCompletion::Pending
+        );
         let mut retained_wakers = prompter.take_wakers();
         assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
         driver.set_retained(retained_wakers[0].clone());
 
         retained_wakers[1].wake_by_ref();
-        let first_activation = driver.snapshot();
-        retained_wakers[2].wake_by_ref();
-        let second_activation = driver.snapshot();
+        let progressed = driver.snapshot();
+        let terminal_completion = driver.terminal_completion();
 
         driver.clear_retained();
         driver.drop_execution();
@@ -2613,12 +2721,128 @@ fn one_notify_activation_has_one_replay_and_leaves_residual_pending_work() {
             &mut retained_wakers,
         );
         poller.join().unwrap();
-        (first_activation, second_activation, closed)
+        (progressed, terminal_completion, closed)
     });
 
-    assert_eq!(first_activation, (2, 0, 1, 254));
-    assert_eq!(second_activation, (4, 0, 1, 252));
-    assert_eq!(closed, second_activation);
+    assert_eq!(progressed, (3, 0, 1, 0));
+    assert_eq!(terminal_completion, None);
+    assert_eq!(closed, progressed);
+}
+
+#[test]
+fn continuously_rewaking_prompt_stops_at_the_delivery_limit_with_redacted_error() {
+    let prompter = PromptWakerFanoutPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let execution = tool.execute(context(), prepared.clone(), CancellationToken::new());
+    let (command_sender, command_receiver) = mpsc::channel();
+    let (completed_sender, completed_receiver) = mpsc::channel();
+    let driver = Arc::new(ReentrantActivationDriver::continuously_rewaking(
+        command_sender,
+        completed_receiver,
+    ));
+    let host_wake = Arc::new(ReentrantActivationWake {
+        driver: Arc::downgrade(&driver),
+    });
+    let host_waker = Waker::from(Arc::clone(&host_wake));
+
+    let (progressed, terminal_completion, closed) = thread::scope(|scope| {
+        let poller = scope.spawn(move || {
+            run_reentrant_poller(execution, &command_receiver, &completed_sender);
+        });
+
+        assert_eq!(
+            driver.poll_outer(&host_waker),
+            ReentrantPollCompletion::Pending
+        );
+        let mut retained_wakers = prompter.take_wakers();
+        assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+        driver.set_retained(retained_wakers[0].clone());
+
+        retained_wakers[1].wake_by_ref();
+        let progressed = driver.snapshot();
+        let terminal_completion = driver.terminal_completion();
+
+        driver.clear_retained();
+        driver.drop_execution();
+        retained_wakers[2].wake_by_ref();
+        let closed = driver.snapshot();
+        assert_retained_prompt_capacity_recovers_after_last_clone(
+            &tool,
+            &prompter,
+            &prepared,
+            &mut retained_wakers,
+        );
+        poller.join().unwrap();
+        (progressed, terminal_completion, closed)
+    });
+
+    assert_eq!(progressed.0, REENTRANT_DELIVERY_LIMIT);
+    assert_eq!(progressed.1, 0);
+    assert_eq!(progressed.2, 1);
+    assert_eq!(
+        terminal_completion,
+        Some(ReentrantPollCompletion::PromptFailed)
+    );
+    assert_eq!(closed, progressed);
+}
+
+#[test]
+fn cancellation_in_the_residual_wake_window_progresses_and_closes_delivery() {
+    let prompter = PromptWakerFanoutPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let cancellation = CancellationToken::new();
+    let execution = tool.execute(context(), prepared.clone(), cancellation.clone());
+    let (command_sender, command_receiver) = mpsc::channel();
+    let (completed_sender, completed_receiver) = mpsc::channel();
+    let driver = Arc::new(ReentrantActivationDriver::cancelling_after_second_rewake(
+        command_sender,
+        completed_receiver,
+        cancellation,
+    ));
+    let host_wake = Arc::new(ReentrantActivationWake {
+        driver: Arc::downgrade(&driver),
+    });
+    let host_waker = Waker::from(Arc::clone(&host_wake));
+
+    let (progressed, terminal_completion, closed) = thread::scope(|scope| {
+        let poller = scope.spawn(move || {
+            run_reentrant_poller(execution, &command_receiver, &completed_sender);
+        });
+
+        assert_eq!(
+            driver.poll_outer(&host_waker),
+            ReentrantPollCompletion::Pending
+        );
+        let mut retained_wakers = prompter.take_wakers();
+        assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+        driver.set_retained(retained_wakers[0].clone());
+
+        retained_wakers[1].wake_by_ref();
+        let progressed = driver.snapshot();
+        let terminal_completion = driver.terminal_completion();
+
+        driver.clear_retained();
+        driver.drop_execution();
+        retained_wakers[2].wake_by_ref();
+        let closed = driver.snapshot();
+        assert_retained_prompt_capacity_recovers_after_last_clone(
+            &tool,
+            &prompter,
+            &prepared,
+            &mut retained_wakers,
+        );
+        poller.join().unwrap();
+        (progressed, terminal_completion, closed)
+    });
+
+    assert_eq!(progressed, (3, 0, 1, 0));
+    assert_eq!(
+        terminal_completion,
+        Some(ReentrantPollCompletion::Cancelled)
+    );
+    assert_eq!(closed, progressed);
 }
 
 #[test]
