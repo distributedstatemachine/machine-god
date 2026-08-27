@@ -217,9 +217,27 @@ fn tool_result_request(
     incarnation_id: &str,
     call_id: &str,
 ) -> ModelRequest {
+    named_tool_result_request(
+        output,
+        advertise_reader,
+        session_id,
+        incarnation_id,
+        call_id,
+        "echo",
+    )
+}
+
+fn named_tool_result_request(
+    output: ToolOutput,
+    advertise_reader: bool,
+    session_id: &str,
+    incarnation_id: &str,
+    call_id: &str,
+    tool_name: &str,
+) -> ModelRequest {
     let call = ToolCall {
         id: ToolCallId::new(call_id).unwrap(),
-        name: ToolName::new("echo").unwrap(),
+        name: ToolName::new(tool_name).unwrap(),
         arguments: json!({}),
     };
     let mut model_request = request(vec![
@@ -1375,6 +1393,112 @@ fn reader_advertisement_projects_only_above_the_exact_threshold() {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     );
+}
+
+#[test]
+fn reader_pages_remain_complete_while_other_large_results_still_project() {
+    let transport = ScriptedTransport::new([bytes(finish("stop")), bytes(finish("stop"))]);
+    let provider = provider(&transport);
+    let output = ToolOutput::success(json!({
+        "handle": format!("tool-result-sha256-{}", "a".repeat(64)),
+        "start_byte": 1,
+        "end_byte": 8_192,
+        "total_bytes": 40_000,
+        "serialized_tool_output": "\\".repeat(8_192),
+        "has_more": true,
+    }));
+    let complete = serde_json::to_string(&output).unwrap();
+    assert!(complete.len() > 16_384);
+
+    let reader_value = send_tool_result_request(
+        &provider,
+        &transport,
+        named_tool_result_request(
+            output.clone(),
+            true,
+            "reader-result-session",
+            "reader-result-incarnation",
+            "reader-call",
+            "read_tool_result",
+        ),
+    );
+    assert_eq!(reader_value, complete);
+
+    let ordinary_value = send_tool_result_request(
+        &provider,
+        &transport,
+        named_tool_result_request(
+            output,
+            true,
+            "reader-result-session",
+            "reader-result-incarnation",
+            "ordinary-call",
+            "echo",
+        ),
+    );
+    let projection: Value = serde_json::from_str(&ordinary_value).unwrap();
+    assert_eq!(projection["type"], "tool_result_preview");
+    assert_eq!(projection["read_more_with"], "read_tool_result");
+}
+
+#[test]
+fn complete_reader_pages_keep_source_and_final_request_limits() {
+    let output = ToolOutput::success(json!({
+        "handle": format!("tool-result-sha256-{}", "b".repeat(64)),
+        "start_byte": 1,
+        "end_byte": 8_192,
+        "total_bytes": 40_000,
+        "serialized_tool_output": "\\".repeat(8_192),
+        "has_more": true,
+    }));
+    let serialized_bytes = serde_json::to_vec(&output).unwrap().len();
+    assert!(serialized_bytes > 16_384);
+    let request = || {
+        named_tool_result_request(
+            output.clone(),
+            true,
+            "reader-budget-session",
+            "reader-budget-incarnation",
+            "reader-budget-call",
+            "read_tool_result",
+        )
+    };
+
+    let source_transport = ScriptedTransport::new([]);
+    let source_provider = AiGatewayProvider::with_limits(
+        "provider/model",
+        Arc::new(source_transport.clone()),
+        AiGatewayLimits {
+            max_request_bytes: serialized_bytes - 1,
+            ..AiGatewayLimits::default()
+        },
+    )
+    .unwrap();
+    let source_error = expect_start_error(
+        start(&source_provider, request(), CancellationToken::new()),
+        "reader page exceeding the source budget",
+    );
+    assert_eq!(source_error.code, "gateway_request_byte_limit");
+    assert!(source_transport.requests().is_empty());
+
+    let body_limit = serialized_bytes + 1_024;
+    let body_transport = ScriptedTransport::new([]);
+    let body_provider = AiGatewayProvider::with_limits(
+        "provider/model",
+        Arc::new(body_transport.clone()),
+        AiGatewayLimits {
+            max_request_bytes: body_limit,
+            ..AiGatewayLimits::default()
+        },
+    )
+    .unwrap();
+    assert!(serialized_bytes < body_limit);
+    let body_error = expect_start_error(
+        start(&body_provider, request(), CancellationToken::new()),
+        "reader page whose escaped outer body exceeds the request budget",
+    );
+    assert_eq!(body_error.code, "gateway_request_byte_limit");
+    assert!(body_transport.requests().is_empty());
 }
 
 #[test]

@@ -732,7 +732,7 @@ fn build_prompt(
                 let Some(name) = pending.remove(&call_id) else {
                     return Err(invalid_request("gateway_invalid_history"));
                 };
-                let value = build_tool_result_value(&output, &call_id, projection, budgets)?;
+                let value = build_tool_result_value(&output, &call_id, &name, projection, budgets)?;
                 GatewayMessage {
                     role: "tool",
                     content: GatewayContent::Parts(vec![GatewayPart::ToolResult {
@@ -758,6 +758,7 @@ fn build_prompt(
 fn build_tool_result_value(
     output: &machine_god_core::ToolOutput,
     call_id: &ToolCallId,
+    tool_name: &ToolName,
     projection: &PromptBuildContext<'_>,
     budgets: &mut ToolOutputBudgets,
 ) -> Result<String, ProviderError> {
@@ -768,7 +769,8 @@ fn build_tool_result_value(
         .checked_sub(serialized_output.len())
         .expect("bounded serialization cannot exceed remaining budget");
     check_cancel(projection.cancellation)?;
-    let value = if projection.reader_advertised
+    let value = if tool_name.as_str() != READ_TOOL_RESULT_TOOL_NAME
+        && projection.reader_advertised
         && serialized_output.len() > TOOL_RESULT_PROJECTION_THRESHOLD_BYTES
     {
         project_tool_result(

@@ -23,12 +23,20 @@ struct ContinuationState {
     bodies: Vec<Vec<u8>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct ContinuationTransport {
     state: Arc<Mutex<ContinuationState>>,
+    page_bytes: usize,
 }
 
 impl ContinuationTransport {
+    fn new(page_bytes: usize) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(ContinuationState::default())),
+            page_bytes,
+        }
+    }
+
     fn bodies(&self) -> Vec<Vec<u8>> {
         self.state.lock().unwrap().bodies.clone()
     }
@@ -67,11 +75,25 @@ impl AiGatewayTransport for ContinuationTransport {
                         &json!({
                             "handle": handle,
                             "start_byte": 1,
-                            "byte_count": 8_192,
+                            "byte_count": self.page_bytes,
                         }),
                     )
                 }
-                3 => text_response("continued from the exact durable result"),
+                3 => {
+                    let reader_wire = reader_wire(&state.bodies[2]);
+                    assert_eq!(reader_wire["is_error"], false);
+                    assert_eq!(reader_wire["content"]["start_byte"], 1);
+                    assert_eq!(reader_wire["content"]["has_more"], true);
+                    assert_eq!(
+                        reader_wire["content"]["serialized_tool_output"]
+                            .as_str()
+                            .unwrap()
+                            .len(),
+                        self.page_bytes
+                    );
+                    assert!(reader_wire.get("type").is_none());
+                    text_response("continued from the exact durable result")
+                }
                 call => panic!("unexpected gateway request {call}"),
             }
         };
@@ -134,6 +156,16 @@ fn projected_output(request: &Value) -> Value {
     serde_json::from_str(value).expect("structured preview")
 }
 
+fn reader_wire(body: &[u8]) -> Value {
+    let request: Value = serde_json::from_slice(body).unwrap();
+    serde_json::from_str(
+        request["prompt"][4]["content"][0]["output"]["value"]
+            .as_str()
+            .expect("complete reader result string"),
+    )
+    .unwrap()
+}
+
 fn large_tool() -> ScriptedTool {
     ScriptedTool::new(
         ToolSpec {
@@ -147,14 +179,14 @@ fn large_tool() -> ScriptedTool {
             }),
         },
         [ToolStep::Output(ToolOutput::success(json!({
-            "payload": "x".repeat(LARGE_PAYLOAD_BYTES),
+            "payload": "\\".repeat(LARGE_PAYLOAD_BYTES),
         })))],
     )
 }
 
 fn serialized_large_output_len() -> usize {
     serde_json::to_vec(&ToolOutput::success(json!({
-        "payload": "x".repeat(LARGE_PAYLOAD_BYTES),
+        "payload": "\\".repeat(LARGE_PAYLOAD_BYTES),
     })))
     .unwrap()
     .len()
@@ -162,89 +194,105 @@ fn serialized_large_output_len() -> usize {
 
 #[test]
 fn large_result_preview_continues_through_reader_without_new_permission_or_duplicate_storage() {
-    let transport = ContinuationTransport::default();
-    let provider = AiGatewayProvider::new("provider/model", Arc::new(transport.clone())).unwrap();
-    let store = InMemorySessionStore::new();
-    let reader_store: Arc<dyn SessionStore> = Arc::new(store.clone());
-    let policy =
-        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
-            scope: PermissionGrantScope::Once,
-        })]);
-    let large_tool = large_tool();
-    let engine = Engine::builder()
-        .provider(provider)
-        .session_store(store.clone())
-        .permission_handler(policy.clone())
-        .tool(large_tool.clone())
-        .tool(ReadToolResultTool::shared_session_store(reader_store))
-        .build()
-        .unwrap();
-    let session_id = SessionId::new("read-tool-result-engine").unwrap();
-    let session = engine
-        .create_session(
-            session_id.clone(),
-            SessionIncarnationId::new("read-tool-result-engine-incarnation").unwrap(),
-        )
-        .unwrap();
+    for page_bytes in [8_192, 16_384] {
+        let transport = ContinuationTransport::new(page_bytes);
+        let provider =
+            AiGatewayProvider::new("provider/model", Arc::new(transport.clone())).unwrap();
+        let store = InMemorySessionStore::new();
+        let reader_store: Arc<dyn SessionStore> = Arc::new(store.clone());
+        let policy =
+            ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+                scope: PermissionGrantScope::Once,
+            })]);
+        let large_tool = large_tool();
+        let engine = Engine::builder()
+            .provider(provider)
+            .session_store(store.clone())
+            .permission_handler(policy.clone())
+            .tool(large_tool.clone())
+            .tool(ReadToolResultTool::shared_session_store(reader_store))
+            .build()
+            .unwrap();
+        let session_id = SessionId::new(format!("read-tool-result-engine-{page_bytes}")).unwrap();
+        let session = engine
+            .create_session(
+                session_id.clone(),
+                SessionIncarnationId::new(format!(
+                    "read-tool-result-engine-incarnation-{page_bytes}"
+                ))
+                .unwrap(),
+            )
+            .unwrap();
 
-    let events = futures_executor::block_on(async {
-        session
-            .prompt("read the large result")
-            .await
-            .unwrap()
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-    });
+        let events = futures_executor::block_on(async {
+            session
+                .prompt("read the large result")
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        });
 
-    assert!(matches!(
-        events.last().map(|event| &event.payload),
-        Some(TurnEvent::Completed {
-            reason: StopReason::Completed,
-            ..
-        })
-    ));
-    assert_eq!(policy.requests().len(), 1);
-    assert_eq!(large_tool.invocations().len(), 1);
+        assert!(matches!(
+            events.last().map(|event| &event.payload),
+            Some(TurnEvent::Completed {
+                reason: StopReason::Completed,
+                ..
+            })
+        ));
+        assert_eq!(policy.requests().len(), 1);
+        assert_eq!(large_tool.invocations().len(), 1);
 
-    let bodies = transport.bodies();
-    assert_eq!(bodies.len(), 3);
-    let second: Value = serde_json::from_slice(&bodies[1]).unwrap();
-    let preview = projected_output(&second);
-    assert!(!preview.to_string().contains(&"x".repeat(4_097)));
-    let third: Value = serde_json::from_slice(&bodies[2]).unwrap();
-    let reader_wire: Value = serde_json::from_str(
-        third["prompt"][4]["content"][0]["output"]["value"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(reader_wire["is_error"], false);
-    assert_eq!(reader_wire["content"]["start_byte"], 1);
-    assert_eq!(reader_wire["content"]["has_more"], true);
-    assert!(
-        reader_wire["content"]["serialized_tool_output"]
-            .as_str()
-            .unwrap()
-            .starts_with("{\"content\":{\"payload\":\"xxx")
-    );
+        let bodies = transport.bodies();
+        assert_eq!(bodies.len(), 3);
+        let second: Value = serde_json::from_slice(&bodies[1]).unwrap();
+        let preview = projected_output(&second);
+        assert!(preview["preview"].as_str().unwrap().len() <= 4_096);
+        let reader_wire = reader_wire(&bodies[2]);
+        assert_eq!(reader_wire["is_error"], false);
+        assert_eq!(reader_wire["content"]["start_byte"], 1);
+        assert_eq!(reader_wire["content"]["has_more"], true);
+        assert_eq!(
+            reader_wire["content"]["serialized_tool_output"]
+                .as_str()
+                .unwrap()
+                .len(),
+            page_bytes
+        );
+        assert!(
+            reader_wire["content"]["serialized_tool_output"]
+                .as_str()
+                .unwrap()
+                .starts_with("{\"content\":{\"payload\":\"\\\\")
+        );
 
-    let record = store.record(&session_id).unwrap();
-    assert_eq!(record.messages.len(), 6);
-    assert_eq!(record.messages[2].role, Role::Tool);
-    let [ContentBlock::ToolResult { output, .. }] = record.messages[2].content.as_slice() else {
-        panic!("expected durable large result")
-    };
-    assert_eq!(
-        output.content["payload"].as_str().unwrap().len(),
-        LARGE_PAYLOAD_BYTES
-    );
-    assert_eq!(record.messages[4].role, Role::Tool);
-    let [ContentBlock::ToolResult { output, .. }] = record.messages[4].content.as_slice() else {
-        panic!("expected durable reader result")
-    };
-    assert_eq!(output.content["start_byte"], 1);
-    assert_eq!(record.messages[5].role, Role::Assistant);
+        let record = store.record(&session_id).unwrap();
+        assert_eq!(record.messages.len(), 6);
+        assert_eq!(record.messages[2].role, Role::Tool);
+        let [ContentBlock::ToolResult { output, .. }] = record.messages[2].content.as_slice()
+        else {
+            panic!("expected durable large result")
+        };
+        assert_eq!(
+            output.content["payload"].as_str().unwrap().len(),
+            LARGE_PAYLOAD_BYTES
+        );
+        assert_eq!(record.messages[4].role, Role::Tool);
+        let [ContentBlock::ToolResult { output, .. }] = record.messages[4].content.as_slice()
+        else {
+            panic!("expected durable reader result")
+        };
+        assert_eq!(output.content["start_byte"], 1);
+        assert_eq!(
+            output.content["serialized_tool_output"]
+                .as_str()
+                .unwrap()
+                .len(),
+            page_bytes
+        );
+        assert_eq!(record.messages[5].role, Role::Assistant);
+    }
 }
