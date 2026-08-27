@@ -850,6 +850,7 @@ dependencies = [
  "hyper",
  "libc",
  "machine-god-core",
+ "machine-god-reentrant-waker-test",
  "machine-god-testkit",
  "reqwest",
  "rustix",

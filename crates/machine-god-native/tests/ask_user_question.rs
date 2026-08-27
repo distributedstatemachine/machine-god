@@ -4,8 +4,10 @@ use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::task::{Context, Poll, Wake, Waker};
+use std::thread;
+use std::time::Duration;
 
 use machine_god_core::{
     BoxFuture, CancellationToken, PreparedToolAuthorization, SessionId, SessionIncarnationId, Tool,
@@ -27,6 +29,7 @@ use machine_god_native::{
     MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPromptAnswers, QuestionPromptError,
     QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
 };
+use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
 
 type PromptResult = Result<QuestionPromptOutcome, QuestionPromptError>;
@@ -343,6 +346,20 @@ struct NoopWake;
 
 impl Wake for NoopWake {
     fn wake(self: Arc<Self>) {}
+}
+
+struct BlockingWake {
+    entered: mpsc::Sender<()>,
+    release: Mutex<mpsc::Receiver<()>>,
+    calls: AtomicUsize,
+}
+
+impl Wake for BlockingWake {
+    fn wake(self: Arc<Self>) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.entered.send(()).unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+    }
 }
 
 fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
@@ -1282,6 +1299,43 @@ fn cancellation_wins_before_prompt_and_over_every_same_poll_outcome() {
 }
 
 #[test]
+fn cancellation_during_ready_activity_teardown_wins_over_every_prompt_result() {
+    for outcome in [
+        Ok(answered(["must not publish".to_owned()])),
+        Err(QuestionPromptError::new()),
+        Ok(answered([])),
+    ] {
+        let cancellation = CancellationToken::new();
+        let callback_cancellation = cancellation.clone();
+        let (waker, callback) = reentrant_waker(Callback::Drop, move || {
+            let _ = callback_cancellation.cancel();
+        });
+        let tool = AskUserQuestionTool::new(ScriptedPrompter::new([outcome]));
+        let prepared = prepare(&tool, basic_arguments());
+        let mut execution = Box::pin(tool.execute(context(), prepared, cancellation.clone()));
+        let result = match execution.as_mut().poll(&mut Context::from_waker(&waker)) {
+            Poll::Ready(result) => result,
+            Poll::Pending => panic!("ready prompt unexpectedly left execution pending"),
+        };
+
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            callback.calls(),
+            1,
+            "activity teardown must destroy one registered downstream Waker"
+        );
+        let error = result.expect_err("teardown cancellation must replace the prompt result");
+        assert_error(
+            &error,
+            ToolErrorKind::Cancelled,
+            "ask_user_question_cancelled",
+            "ask_user_question was cancelled",
+            false,
+        );
+    }
+}
+
+#[test]
 fn unpolled_pending_drop_and_fail_fast_capacity_are_owned_and_recoverable() {
     let probe = Arc::new(PendingProbe::default());
     let tool = AskUserQuestionTool::with_max_active_prompts(
@@ -1460,6 +1514,85 @@ fn outer_drop_destroys_the_cancellation_waker_before_releasing_capacity() {
     let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
     assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn in_flight_cancellation_wake_retains_capacity_until_callback_returns() {
+    let probe = Arc::new(PendingProbe::default());
+    let tool = AskUserQuestionTool::new(PendingPrompter {
+        probe: Arc::clone(&probe),
+    });
+    let prepared = prepare(&tool, basic_arguments());
+    let cancellation = CancellationToken::new();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let blocking = Arc::new(BlockingWake {
+        entered: entered_tx,
+        release: Mutex::new(release_rx),
+        calls: AtomicUsize::new(0),
+    });
+    let waker = Waker::from(Arc::clone(&blocking));
+    let mut active = Box::pin(tool.execute(context(), prepared.clone(), cancellation.clone()));
+    assert!(
+        active
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 1);
+    drop(waker);
+
+    let canceller = thread::spawn(move || cancellation.cancel());
+    if entered_rx.recv_timeout(Duration::from_secs(2)).is_err() {
+        let _ = release_tx.send(());
+        let _ = canceller.join();
+        panic!("cancellation did not enter the registered Waker callback");
+    }
+
+    drop(active);
+    let prompt_drops_during_callback = probe.drops.load(Ordering::SeqCst);
+    let prompt_live_during_callback = probe.live.load(Ordering::SeqCst);
+    let calls_before_competing_admission = probe.calls.load(Ordering::SeqCst);
+    let mut competing =
+        Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
+    let competing_poll = poll_once(competing.as_mut());
+
+    release_tx.send(()).unwrap();
+    assert!(canceller.join().unwrap());
+    let competing_error = match competing_poll {
+        Poll::Ready(Err(error)) => Some(error),
+        Poll::Ready(Ok(output)) => {
+            panic!("competing prompt unexpectedly succeeded: {output:?}")
+        }
+        Poll::Pending => None,
+    };
+    drop(competing);
+
+    assert_eq!(blocking.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt_drops_during_callback, 1);
+    assert_eq!(prompt_live_during_callback, 0);
+    assert_eq!(calls_before_competing_admission, 1);
+    let error = competing_error
+        .expect("in-flight cancellation callback must retain originating prompt capacity");
+    assert_error(
+        &error,
+        ToolErrorKind::Unavailable,
+        "ask_user_question_busy",
+        "ask_user_question prompt capacity is exhausted",
+        true,
+    );
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(probe.drops.load(Ordering::SeqCst), 1);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 0);
+
+    let mut recovered = Box::pin(tool.execute(context(), prepared, CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 1);
+    drop(recovered);
+    assert_eq!(probe.drops.load(Ordering::SeqCst), 2);
+    assert_eq!(probe.live.load(Ordering::SeqCst), 0);
 }
 
 #[test]
