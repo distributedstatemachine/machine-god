@@ -927,6 +927,10 @@ async fn await_executor(
 ) -> Result<TerminalExecutionOutcome, ToolError> {
     let mut cancelled = Box::pin(cancellation.cancelled());
     let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+    // This guard is retained in the suspended async frame. Its destructor
+    // closes delivery not only after `poll_fn` becomes ready, but also when
+    // the outer future is dropped or polling unwinds.
+    let notifier_close = ActivityNotifierCloseGuard::new(Arc::clone(&notifier));
     let notifier_waker = Waker::from(Arc::clone(&notifier));
     let result = poll_fn(|context| {
         notifier.bind(context.waker(), &notifier_waker);
@@ -1015,7 +1019,7 @@ async fn await_executor(
         }
     })
     .await;
-    notifier.close();
+    drop(notifier_close);
     result
 }
 
@@ -1242,6 +1246,22 @@ struct ActivityNotifier {
     // before the last notifier-owned activity reference can be released.
     state: Mutex<ActivityNotifierState>,
     _activity: Arc<ExecutionActivity>,
+}
+
+struct ActivityNotifierCloseGuard {
+    notifier: Arc<ActivityNotifier>,
+}
+
+impl ActivityNotifierCloseGuard {
+    fn new(notifier: Arc<ActivityNotifier>) -> Self {
+        Self { notifier }
+    }
+}
+
+impl Drop for ActivityNotifierCloseGuard {
+    fn drop(&mut self) {
+        self.notifier.close();
+    }
 }
 
 #[derive(Default)]
@@ -2564,12 +2584,12 @@ fn fixed_tool_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivityNotifier, ExecutionActivity, ExecutionCause, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
-        TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT,
-        TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT, TerminalCapturedOutput,
-        TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
-        TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
-        TerminalExecutorErrorKind, TerminalLimits, TerminalTool, validate_cwd,
+        ActivityNotifier, DeadlineTimer, ExecutionActivity, ExecutionCause,
+        MAX_TERMINAL_PRODUCED_OUTPUT_BYTES, TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS,
+        TERMINAL_DEFAULT_TIMEOUT, TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT,
+        TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome,
+        TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
+        TerminalExecutorErrorKind, TerminalLimits, TerminalTool, await_executor, validate_cwd,
     };
     use machine_god_core::{
         CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId, ToolContext,
@@ -2725,6 +2745,46 @@ mod tests {
         fn drop(&mut self) {
             assert_eq!(self.active.load(Ordering::Acquire), 1);
             self.dropped.store(true, Ordering::Release);
+        }
+    }
+
+    struct RetainingPendingExecution {
+        publisher_waker: Arc<Mutex<Option<Waker>>>,
+        independently_retained_waker: Arc<Mutex<Option<Waker>>>,
+        panic_after_retention: bool,
+    }
+
+    impl Future for RetainingPendingExecution {
+        type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
+
+        fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+            let mut publisher_waker = self
+                .publisher_waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if publisher_waker.is_none() {
+                let supplied_waker = context.waker().clone();
+                *publisher_waker = Some(supplied_waker.clone());
+                drop(publisher_waker);
+                *self
+                    .independently_retained_waker
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(supplied_waker);
+            }
+            assert!(
+                !self.panic_after_retention,
+                "intentional executor poll panic"
+            );
+            Poll::Pending
+        }
+    }
+
+    impl Drop for RetainingPendingExecution {
+        fn drop(&mut self) {
+            self.publisher_waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
         }
     }
 
@@ -3003,6 +3063,124 @@ mod tests {
         drop(notifier);
         assert_eq!(active.load(Ordering::Acquire), 1);
         drop(notifier_waker);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn await_executor_frame_drop_closes_delivery_but_retains_clone_activity() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let publisher_waker = Arc::new(Mutex::new(None));
+        let independently_retained_waker = Arc::new(Mutex::new(None));
+        let execution: TerminalExecution = Box::pin(RetainingPendingExecution {
+            publisher_waker: Arc::clone(&publisher_waker),
+            independently_retained_waker: Arc::clone(&independently_retained_waker),
+            panic_after_retention: false,
+        });
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let timer = DeadlineTimer::new(deadline, Arc::clone(&activity)).unwrap();
+        let cancellation = CancellationToken::new();
+        let mut awaiting = Box::pin(await_executor(
+            execution,
+            &cancellation,
+            deadline,
+            Instant::now(),
+            timer,
+            Arc::clone(&activity),
+        ));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let maximum_in_flight = Arc::new(AtomicUsize::new(0));
+        let target = Arc::new(CountingNotifierTarget {
+            calls: AtomicUsize::new(0),
+            in_flight,
+            maximum_in_flight,
+        });
+        let target_waker = Waker::from(Arc::clone(&target));
+        let mut context = Context::from_waker(&target_waker);
+
+        assert!(awaiting.as_mut().poll(&mut context).is_pending());
+        assert!(
+            publisher_waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some()
+        );
+        drop(activity);
+        drop(awaiting);
+
+        assert!(
+            publisher_waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        let retained_waker = independently_retained_waker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap();
+        retained_waker.wake_by_ref();
+        assert_eq!(target.calls.load(Ordering::Acquire), 0);
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(retained_waker);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn await_executor_poll_unwind_closes_delivery_but_retains_clone_activity() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let publisher_waker = Arc::new(Mutex::new(None));
+        let independently_retained_waker = Arc::new(Mutex::new(None));
+        let execution: TerminalExecution = Box::pin(RetainingPendingExecution {
+            publisher_waker: Arc::clone(&publisher_waker),
+            independently_retained_waker: Arc::clone(&independently_retained_waker),
+            panic_after_retention: true,
+        });
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let timer = DeadlineTimer::new(deadline, Arc::clone(&activity)).unwrap();
+        let cancellation = CancellationToken::new();
+        let mut awaiting = Box::pin(await_executor(
+            execution,
+            &cancellation,
+            deadline,
+            Instant::now(),
+            timer,
+            Arc::clone(&activity),
+        ));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let maximum_in_flight = Arc::new(AtomicUsize::new(0));
+        let target = Arc::new(CountingNotifierTarget {
+            calls: AtomicUsize::new(0),
+            in_flight,
+            maximum_in_flight,
+        });
+        let target_waker = Waker::from(Arc::clone(&target));
+        let mut context = Context::from_waker(&target_waker);
+
+        drop(activity);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = awaiting.as_mut().poll(&mut context);
+        }));
+        assert!(panic.is_err());
+        assert!(
+            publisher_waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+        let retained_waker = independently_retained_waker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap();
+        retained_waker.wake_by_ref();
+        assert_eq!(target.calls.load(Ordering::Acquire), 0);
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(awaiting);
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(retained_waker);
         assert_eq!(active.load(Ordering::Acquire), 0);
     }
 
