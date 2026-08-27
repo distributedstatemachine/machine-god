@@ -6,7 +6,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Wake, Waker};
 
 use machine_god_core::{
     BoxFuture, CancellationToken, Cancelled, PreparedToolCall, Tool, ToolCall, ToolContext,
@@ -359,14 +359,16 @@ impl AskUserQuestionTool {
         })
     }
 
-    fn try_acquire_prompt(&self) -> Option<ActivePromptPermit> {
+    fn try_acquire_prompt(&self) -> Option<Arc<ActivePromptPermit>> {
         self.active_prompts
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
                 (active < self.max_active_prompts).then(|| active + 1)
             })
             .ok()
-            .map(|_| ActivePromptPermit {
-                active_prompts: Some(Arc::clone(&self.active_prompts)),
+            .map(|_| {
+                Arc::new(ActivePromptPermit {
+                    active_prompts: Some(Arc::clone(&self.active_prompts)),
+                })
             })
     }
 }
@@ -516,19 +518,16 @@ impl Tool for AskUserQuestionTool {
             })
             .await;
 
-            let prompt_result = match prompted {
-                Ok(result) => result,
-                Err(error) => {
-                    drop(activity.take());
-                    return Err(error);
-                }
+            let output = match prompted {
+                Err(error) => Err(error),
+                Ok(Err(_)) => Err(prompt_failed()),
+                Ok(Ok(outcome)) => render_outcome(outcome, &output_questions, &cancellation),
             };
-            check_cancellation(&cancellation)?;
-            let outcome = prompt_result.map_err(|_| prompt_failed())?;
-            let output = render_outcome(outcome, &output_questions, &cancellation)?;
-            check_cancellation(&cancellation)?;
             drop(activity.take());
-            Ok(output)
+            match check_cancellation(&cancellation) {
+                Ok(()) => output,
+                Err(error) => Err(error),
+            }
         })
     }
 }
@@ -1051,41 +1050,78 @@ impl Drop for ActivePromptPermit {
 struct PromptActivity<'a> {
     prompt: Option<BoxFuture<'a, Result<QuestionPromptOutcome, QuestionPromptError>>>,
     cancellation_wait: Option<Cancelled>,
-    permit: Option<ActivePromptPermit>,
+    // This single registration keeps the downstream clone/drop boundary
+    // fixed across equivalent outer Wakers. Futures may still clone the
+    // activity-backed Waker without cloning arbitrary downstream state.
+    registered_waker: Option<ActivityWakerRegistration>,
+    activity: Option<Arc<ActivePromptPermit>>,
 }
 
 impl<'a> PromptActivity<'a> {
     fn new(
         prompt: BoxFuture<'a, Result<QuestionPromptOutcome, QuestionPromptError>>,
         cancellation_wait: Cancelled,
-        permit: ActivePromptPermit,
+        activity: Arc<ActivePromptPermit>,
     ) -> Self {
         Self {
             prompt: Some(prompt),
             cancellation_wait: Some(cancellation_wait),
-            permit: Some(permit),
+            registered_waker: None,
+            activity: Some(activity),
         }
     }
 
+    fn register_waker(&mut self, downstream: &Waker) {
+        if self
+            .registered_waker
+            .as_ref()
+            .is_some_and(|registered| registered.will_wake(downstream))
+        {
+            return;
+        }
+        let activity = Arc::clone(
+            self.activity
+                .as_ref()
+                .expect("prompt activity retains its permit while polling"),
+        );
+        let replacement = ActivityWakerRegistration::new(downstream, activity);
+        let previous = self.registered_waker.replace(replacement);
+        drop(previous);
+    }
+
     fn poll_cancellation(&mut self, context: &mut Context<'_>) -> Poll<()> {
+        self.register_waker(context.waker());
+        let waker = self
+            .registered_waker
+            .as_ref()
+            .expect("polling registers an activity-backed Waker")
+            .waker();
+        let mut activity_context = Context::from_waker(waker);
         Pin::new(
             self.cancellation_wait
                 .as_mut()
                 .expect("cancellation wait exists until activity teardown"),
         )
-        .poll(context)
+        .poll(&mut activity_context)
     }
 
     fn poll_prompt(
         &mut self,
         context: &mut Context<'_>,
     ) -> Poll<Result<QuestionPromptOutcome, QuestionPromptError>> {
+        self.register_waker(context.waker());
+        let waker = self
+            .registered_waker
+            .as_ref()
+            .expect("polling registers an activity-backed Waker")
+            .waker();
+        let mut activity_context = Context::from_waker(waker);
         let polled = self
             .prompt
             .as_mut()
             .expect("prompt exists until it completes")
             .as_mut()
-            .poll(context);
+            .poll(&mut activity_context);
         if polled.is_ready() {
             let completed = self.prompt.take();
             drop(completed);
@@ -1100,14 +1136,106 @@ impl Drop for PromptActivity<'_> {
         let prompt_drop = catch_unwind(AssertUnwindSafe(|| drop(prompt)));
         let cancellation_wait = self.cancellation_wait.take();
         let cancellation_wait_drop = catch_unwind(AssertUnwindSafe(|| drop(cancellation_wait)));
-        let permit = self.permit.take();
-        drop(permit);
+        let registered_waker = self.registered_waker.take();
+        let registered_waker_drop = catch_unwind(AssertUnwindSafe(|| drop(registered_waker)));
+        let activity = self.activity.take();
+        drop(activity);
         if let Err(payload) = prompt_drop
             && !std::thread::panicking()
         {
             resume_unwind(payload);
         }
         if let Err(payload) = cancellation_wait_drop
+            && !std::thread::panicking()
+        {
+            resume_unwind(payload);
+        }
+        if let Err(payload) = registered_waker_drop
+            && !std::thread::panicking()
+        {
+            resume_unwind(payload);
+        }
+    }
+}
+
+struct ActivityWakerRegistration {
+    wake: Arc<ActivityWake>,
+    waker: Option<Waker>,
+}
+
+impl ActivityWakerRegistration {
+    fn new(downstream: &Waker, activity: Arc<ActivePromptPermit>) -> Self {
+        let wake = Arc::new(ActivityWake {
+            downstream: Some(downstream.clone()),
+            activity: Some(activity),
+        });
+        Self {
+            waker: Some(Waker::from(Arc::clone(&wake))),
+            wake,
+        }
+    }
+
+    fn will_wake(&self, downstream: &Waker) -> bool {
+        let target = self
+            .wake
+            .downstream
+            .as_ref()
+            .expect("activity Waker retains its downstream target");
+        target.will_wake(downstream) || self.waker().will_wake(downstream)
+    }
+
+    fn waker(&self) -> &Waker {
+        self.waker
+            .as_ref()
+            .expect("activity Waker registration retains its Waker")
+    }
+}
+
+impl Drop for ActivityWakerRegistration {
+    fn drop(&mut self) {
+        // The separate `wake` Arc remains live while this cached wrapper is
+        // destroyed. Its downstream Waker and activity are released only
+        // when the last clone retained by a polled future is gone.
+        let waker = self.waker.take();
+        drop(waker);
+    }
+}
+
+struct ActivityWake {
+    downstream: Option<Waker>,
+    activity: Option<Arc<ActivePromptPermit>>,
+}
+
+impl Wake for ActivityWake {
+    fn wake(self: Arc<Self>) {
+        // `self` retains the originating active-prompt permit through both
+        // the arbitrary downstream clone and its consuming callback.
+        let downstream = self
+            .downstream
+            .as_ref()
+            .expect("activity Waker retains its downstream target")
+            .clone();
+        downstream.wake();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        // The borrowed Arc remains owned for the complete callback.
+        self.downstream
+            .as_ref()
+            .expect("activity Waker retains its downstream target")
+            .wake_by_ref();
+    }
+}
+
+impl Drop for ActivityWake {
+    fn drop(&mut self) {
+        // Destruction of an arbitrary downstream Waker may run host code, so
+        // it must complete before the final activity reference is released.
+        let downstream = self.downstream.take();
+        let downstream_drop = catch_unwind(AssertUnwindSafe(|| drop(downstream)));
+        let activity = self.activity.take();
+        drop(activity);
+        if let Err(payload) = downstream_drop
             && !std::thread::panicking()
         {
             resume_unwind(payload);
