@@ -56,6 +56,7 @@ mod session_listing;
 mod session_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
+mod terminal;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
 mod web_search;
@@ -242,6 +243,18 @@ pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
     FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES, MAX_LIST_SESSION_DIRECTORY_ENTRIES,
     MAX_LIST_SESSION_TOTAL_RECORD_BYTES, MAX_LIST_SESSIONS,
+};
+pub use terminal::{
+    MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_CWD_BYTES, MAX_TERMINAL_CWD_COMPONENT_BYTES,
+    MAX_TERMINAL_CWD_COMPONENTS, MAX_TERMINAL_ENVIRONMENT_BYTES, MAX_TERMINAL_ENVIRONMENT_ENTRIES,
+    MAX_TERMINAL_ENVIRONMENT_KEY_BYTES, MAX_TERMINAL_ENVIRONMENT_VALUE_BYTES,
+    MAX_TERMINAL_PRODUCED_OUTPUT_BYTES, MAX_TERMINAL_RETAINED_OUTPUT_BYTES,
+    MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES, MAX_TERMINAL_SERIALIZED_RESULT_BYTES,
+    TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT, TERMINAL_ENVIRONMENT_PROFILE,
+    TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT, TERMINAL_PROGRAM, TERMINAL_TOOL_NAME,
+    TerminalCapturedOutput, TerminalConfigError, TerminalConfigErrorKind, TerminalExecution,
+    TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor,
+    TerminalExecutorError, TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
 };
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 pub use web_fetch::{

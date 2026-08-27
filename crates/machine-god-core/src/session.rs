@@ -622,7 +622,7 @@ type WorkflowFuture = BoxFuture<'static, WorkflowExit>;
 
 enum TurnState {
     Running(WorkflowFuture),
-    EmitTerminal(TurnEvent),
+    EmitTerminal(Box<TurnEvent>),
     Done,
 }
 
@@ -2455,10 +2455,10 @@ impl Turn {
     fn establish_cancellation(&mut self) {
         self.terminal_seen = true;
         self.locally_synthesized_cancellation = true;
-        self.state = TurnState::EmitTerminal(TurnEvent::Completed {
+        self.state = TurnState::EmitTerminal(Box::new(TurnEvent::Completed {
             reason: StopReason::Cancelled,
             usage: self.usage,
-        });
+        }));
     }
 
     fn establish_cancellation_if_observed(&mut self) -> bool {
@@ -2608,11 +2608,15 @@ impl Stream for Turn {
                                 self.usage = usage;
                                 self.terminal_seen = true;
                                 self.state =
-                                    TurnState::EmitTerminal(TurnEvent::Completed { reason, usage });
+                                    TurnState::EmitTerminal(Box::new(TurnEvent::Completed {
+                                        reason,
+                                        usage,
+                                    }));
                             }
                             Poll::Ready(WorkflowExit::Failed(failure)) => {
                                 self.terminal_seen = true;
-                                self.state = TurnState::EmitTerminal(failure.into_event());
+                                self.state =
+                                    TurnState::EmitTerminal(Box::new(failure.into_event()));
                             }
                             Poll::Ready(WorkflowExit::Cancelled) => {
                                 self.establish_cancellation();
@@ -2620,7 +2624,7 @@ impl Stream for Turn {
                         }
                     }
                 }
-                TurnState::EmitTerminal(event) => self.stage(event),
+                TurnState::EmitTerminal(event) => self.stage(*event),
                 TurnState::Done => return Poll::Ready(None),
             }
         }

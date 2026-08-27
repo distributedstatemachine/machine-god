@@ -29,6 +29,15 @@ pub struct NetworkTarget {
     pub port: Option<u16>,
 }
 
+/// Stable identity of the exact environment installed for a process.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProcessEnvironment {
+    /// Host-defined environment profile name.
+    pub profile: String,
+    /// Lowercase SHA-256 digest of the profile's exact environment entries.
+    pub sha256: String,
+}
+
 /// An explicit capability that a host may authorize or deny.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -58,6 +67,8 @@ pub enum Capability {
     Process {
         program: String,
         arguments: Vec<String>,
+        working_directory: String,
+        environment: ProcessEnvironment,
     },
     Network {
         target: NetworkTarget,

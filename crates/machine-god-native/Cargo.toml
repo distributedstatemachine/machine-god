@@ -20,7 +20,6 @@ ai-gateway-model-catalog-http = [
     "dep:hyper",
     "dep:reqwest",
     "dep:rustls",
-    "dep:sha2",
     "dep:tokio",
     "dep:webpki-root-certs",
 ]
@@ -29,7 +28,6 @@ web-fetch-http = [
     "dep:hickory-resolver",
     "dep:reqwest",
     "dep:rustls",
-    "dep:sha2",
     "dep:tokio",
     "dep:webpki-root-certs",
 ]
@@ -39,6 +37,7 @@ futures-core.workspace = true
 machine-god-core.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 calcifer-macos-acl.workspace = true
@@ -53,12 +52,6 @@ reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 webpki-root-certs = { workspace = true, optional = true }
-
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-sha2.workspace = true
-
-[target.'cfg(all(not(target_family = "wasm"), not(any(target_os = "linux", target_os = "macos"))))'.dependencies]
-sha2 = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
