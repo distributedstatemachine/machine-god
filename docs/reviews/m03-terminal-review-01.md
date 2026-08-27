@@ -32,8 +32,45 @@ Exact focused evidence is green for four private limit/deadline/outcome tests,
 nineteen portable contract/lifecycle tests, two engine permission/durability
 tests, one unsupported-platform test, two workspace clone/failure tests, and
 eight reference-host tests. Seven real Linux process tests compile and await
-Linux execution. The complete exact candidate gate and formal review have not
-begun.
+Linux execution.
+
+## Cycle 1 candidate gate
+
+Exact precursor `ec8bbc97c23022db3f1884cac083c3cbe4460825`, tree
+`afe5445ffc0bef629db82ce8a678558c470a675d`, passed the four required Rust gates
+but failed the first supplemental Python run in three stale manifest assertions.
+They still expected `sha2` to be optional and HTTP-feature-scoped even though
+terminal now requires it for environment-snapshot identity in every native
+feature topology. Exact test/documentation remediation
+`80c6ee0d09c7fe5feaed96504a2f931aeb131208`, tree
+`027c4bc27b90526e172b1306d0ef3700dd39a745`, corrects those assertions without
+changing product Rust. Its complete replacement gate is green under exact Rust
+and Cargo 1.94.1 without fallback:
+
+- all four required commands pass: formatting, warnings-denied workspace all-
+  target/all-feature Clippy, 1,147 listed non-documentation tests, and two
+  doctests;
+- all 136 Python tests pass with eight expected macOS skips, and regeneration
+  against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` is byte-stable;
+- exact `cargo-deny` 0.20.2 passes with the three established duplicate
+  warnings, while `cargo-audit` 0.22.2 loads 1,226 advisories, scans 211 lockfile
+  dependencies, and reports zero vulnerabilities;
+- FreeBSD and WASI baseline checks pass, with only the established WASI
+  `read_file` warning. Linux terminal test checking and warnings-denied Clippy
+  pass. Foreign all-feature Linux compilation stops in `aws-lc-sys` because the
+  macOS host lacks Linux C headers, before product Rust; native Linux CI remains
+  authoritative;
+- documentation integrity covers 89 Markdown files, 312 fence markers, 678
+  parsed links, and 515 repository-relative targets with zero missing targets;
+- the exact 29-file base diff is +4,484/-192, adds no unsafe Rust, and leaves
+  workflows, benchmarks, generated compatibility data, the root manifest, and
+  `Cargo.lock` unchanged; and
+- a fresh locked 3,985,216-byte arm64 Mach-O release binary has SHA-256
+  `b515ce0951f44a1e30171ee69c400cb9e750430e3a9d4959028ab49a16a55383` and
+  passes help and status smoke paths.
+
+This evidence makes no product-performance, compatibility-promotion, or fx-
+equivalence claim. Formal cycle 1 review remains pending.
 
 ## Required composition
 

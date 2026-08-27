@@ -58,8 +58,9 @@ cleanup. The production system executor is Linux-only because safe standard
 Rust exposes no descriptor-relative process cwd primitive on macOS and unsafe
 Rust is forbidden. It is not a sandbox and makes no PTY, durable-session,
 fx-equivalence, benchmark, or product-performance claim. Production,
-independent evidence, documentation, local gates, three fresh adversarial
-product review tracks, and remote delivery are pending.
+independent evidence, documentation, and the complete local gate are composed;
+three fresh adversarial product review tracks and remote delivery remain
+pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -69,9 +70,12 @@ through exact `59b069a84e7d4dc4d76ac65520b9045603cae8af`. The composition adds t
 exact process-environment capability, strict native tool, Linux system executor,
 portable injected seam, deadline guardian, bounded process-group/pipe lifecycle,
 fifteen-tool host catalog, 23 portable/private focused tests, and seven Linux-
-only system tests. Exact focused tests, all-feature host composition, Clippy,
-FreeBSD, WASI, and Linux cross-compilation checks are green; the complete same-
-SHA local gate, formal review, and delivery remain pending.
+only system tests. Exact precursor `ec8bbc9` passed the four required Rust gates
+but exposed three stale dependency-topology assertions in the first 136-test
+Python run. Exact evidence/documentation remediation `80c6ee0`, tree `027c4bc`,
+requires unconditional native `sha2` for terminal environment identity and
+passed the complete exact-1.94.1 replacement gate. Formal review and delivery
+remain pending.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
