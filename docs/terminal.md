@@ -4,6 +4,9 @@ Status: **IN PROGRESS** as bounded Milestone 03 slice 34. The contract is
 frozen from exact delivered base
 `52b5885f275c9f6f4f16b378f71780c29f2ebab2` and pinned fx observation
 `b1774fbf6c7602b503026f96f6e960e946c692ef`.
+Exact cycle-6 behavior head `8705811`, tree `8a319c1`, passes the complete
+exact-1.94.1 replacement gate; immutable review and remote delivery remain
+pending.
 
 ## Boundary
 

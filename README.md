@@ -23,10 +23,12 @@ cycle-5 behavior head `3bfc0bf`, tree `d4ed10d`, passed its complete
 exact-1.94.1 replacement gate. Formal cycle 5 rejected exact candidate
 `0c04859`, tree `b0359fb`, with a deduplicated `0/1/0/1` union: one high
 self-target notifier-cycle defect and one low stale-status defect. Cycle-6
-remediation is in progress; it prevents the supplied notifier Waker from
-becoming its own target, explicitly closes notification on completion, and
-refreshes these status summaries. No cycle-6 gate, review, delivery, product-
-performance, or fx-equivalence claim is made. See the
+remediation prevents the supplied notifier Waker from becoming its own target,
+explicitly closes notification on completion, and refreshes these status
+summaries. Exact cycle-6 behavior head `8705811`, tree `8a319c1`, passes the
+complete exact-1.94.1 replacement gate. The immutable review candidate, formal
+review, remote delivery, product-performance, and fx-equivalence claims remain
+pending. See the
 [`terminal` contract](docs/terminal.md) and
 [`live review ledger`](docs/reviews/m03-terminal-review-01.md).
 

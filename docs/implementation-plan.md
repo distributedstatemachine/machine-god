@@ -83,8 +83,9 @@ cycle 5 rejected exact candidate `0c04859`, tree `b0359fb`, with a deduplicated
 `0/1/0/1` union. Cycle-6 remediation prevents the shared notifier from binding
 its own supplied Waker, explicitly closes its target after completion, adds
 public retained-Waker re-poll delivery/recovery evidence, and updates stale
-top-level status summaries. A replacement gate, immutable candidate, three
-fresh exact-SHA reviews, and remote delivery remain pending.
+top-level status summaries. Exact behavior head `8705811`, tree `8a319c1`,
+passes the complete exact-1.94.1 replacement gate. An immutable candidate,
+three fresh exact-SHA reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -149,9 +150,11 @@ status finding and no product defect. Cycle-6 replacement work prevents a
 retained supplied notifier Waker from becoming its own target, explicitly
 closes the target at completion while preserving retained-clone activity
 ownership, adds public executor/deadline/cancellation delivery and recovery
-evidence, and refreshes the top-level status entry points. Cycle 6 has not yet
-established composition, a replacement gate, candidate, review result, or
-delivery.
+evidence, and refreshes the top-level status entry points. Maintained docs
+component `31669fd`, independent evidence `059188d`, and production/private-
+evidence `1f14717` compose through exact behavior head `8705811`, tree
+`8a319c1`. Its complete exact-1.94.1 replacement gate is green. Cycle 6 has not
+yet established an immutable candidate, review result, or delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base

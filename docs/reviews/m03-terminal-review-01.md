@@ -648,7 +648,56 @@ independent-evidence, and maintained-documentation worktrees. This is a
 remediation-status record only; it does not assert composed behavior, a green
 replacement gate or review, or remote delivery.
 
-## Required composition
+## Cycle 6 composition and replacement gate
+
+Cycle-6 remediation completed from non-overlapping isolated components.
+Maintained-documentation component
+`31669fd316ad346429f54f7532547210ae0ea48c`, tree `c00ed8d`, integrated as
+`42238ae`. Independent-evidence component
+`059188df0366c18dbb7b4c18e84ea1cb7e781a75`, tree `3e71255`, integrated as
+`fe94963`. Production/private-evidence component
+`1f147172c12dfa03e14f166df9ba724a130f5ebf`, tree `b284812`, integrated as
+`8705811`. Every component worktree was verified clean, removed, and pruned
+immediately after integration; only the primary worktree remained.
+
+Exact behavior head `87058114c68bab601a0940114ba7687fa7aea664`, tree
+`8a319c135ee2cfaaa4c8f385334dde7471500c05`, passes the complete replacement
+gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- all four required commands pass, including warnings-denied workspace all-
+  target/all-feature Clippy, 1,175 listed non-documentation Rust tests, and two
+  doctests;
+- focused suites pass 32 external terminal, 19 private terminal, two engine,
+  and one unsupported-platform cases. Three public regressions prove that an
+  executor result, deadline, and cancellation still notify the original host
+  after an outer re-poll through the retained supplied Waker; each also proves
+  post-completion delivery suppression plus busy/recovery ownership across a
+  retained clone;
+- all 136 Python tests pass with eight expected macOS skips, while regeneration
+  against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` remains byte-
+  stable;
+- exact `cargo-deny` 0.20.2 accepts advisories, bans, licenses, and sources with
+  the three established duplicate warnings; `cargo-audit` 0.22.2 loads 1,226
+  advisories, scans 211 lockfile dependencies, and reports no vulnerability;
+- Linux native-library and terminal-test checks and warnings-denied Clippy pass;
+  FreeBSD warnings-denied Clippy passes; WASI no-default and all-feature checks
+  pass with only the established unrelated `read_file` dead-code warning;
+- documentation integrity covers 89 maintained Markdown files, 312 triple-
+  backtick occurrences, 680 parsed links, and 517 repository-relative targets
+  with zero missing targets;
+- the exact 29-file base diff is +8,324/-193, adds no unsafe Rust, and leaves
+  workflows, benchmarks, compatibility data, the root manifest, and
+  `Cargo.lock` unchanged; and
+- a fresh locked 3,985,216-byte arm64 Mach-O release binary has SHA-256
+  `b515ce0951f44a1e30171ee69c400cb9e750430e3a9d4959028ab49a16a55383` and
+  passes 672-byte help plus isolated status smoke with empty stderr and no state
+  residue.
+
+This gate makes no formal cycle-6 review or remote-delivery claim. Three fresh
+product-review tracks must identify the immutable candidate and tree recorded
+after this gate result is committed.
+
+## Formal cycle 6 review requirements
 
 Production, independent tests, and maintained documentation are owned in
 non-overlapping isolated worktrees. Each component must be committed, verified
