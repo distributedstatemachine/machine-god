@@ -534,6 +534,203 @@ impl Future for RetainedPublisherExecution {
     }
 }
 
+#[derive(Default)]
+struct ObservedWake {
+    calls: Mutex<usize>,
+    changed: Condvar,
+}
+
+impl ObservedWake {
+    fn calls(&self) -> usize {
+        *self.calls.lock().unwrap()
+    }
+
+    fn wait_for_calls(&self, expected: usize) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut calls = self.calls.lock().unwrap();
+        while *calls < expected {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "the original host Waker was not notified"
+            );
+            let waited = self.changed.wait_timeout(calls, remaining).unwrap();
+            calls = waited.0;
+        }
+    }
+
+    fn record(&self) {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        self.changed.notify_all();
+    }
+}
+
+impl Wake for ObservedWake {
+    fn wake(self: Arc<Self>) {
+        self.record();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.record();
+    }
+}
+
+#[derive(Default)]
+struct SelfRepollState {
+    calls: AtomicUsize,
+    inner: Mutex<SelfRepollInner>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct SelfRepollInner {
+    published: bool,
+    waker: Option<Waker>,
+}
+
+#[derive(Clone, Default)]
+struct SelfRepollExecutor {
+    state: Arc<SelfRepollState>,
+}
+
+impl SelfRepollExecutor {
+    fn calls(&self) -> usize {
+        self.state.calls.load(Ordering::SeqCst)
+    }
+
+    fn retained_waker(&self) -> Waker {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut inner = self.state.inner.lock().unwrap();
+        while inner.waker.is_none() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "injected executor did not retain the terminal-supplied Waker"
+            );
+            let waited = self.state.changed.wait_timeout(inner, remaining).unwrap();
+            inner = waited.0;
+        }
+        inner.waker.as_ref().expect("retained Waker exists").clone()
+    }
+
+    fn publish_and_wake(&self) {
+        let retained = {
+            let mut inner = self.state.inner.lock().unwrap();
+            inner.published = true;
+            inner.waker.take().expect("retained task Waker exists")
+        };
+        retained.wake();
+    }
+}
+
+impl TerminalExecutor for SelfRepollExecutor {
+    fn execute(
+        &self,
+        _request: TerminalExecutionRequest,
+        _cancellation: CancellationToken,
+    ) -> TerminalExecution {
+        self.state.calls.fetch_add(1, Ordering::SeqCst);
+        {
+            let mut inner = self.state.inner.lock().unwrap();
+            assert!(
+                inner.waker.is_none(),
+                "a new execution started with a stale Waker registration"
+            );
+            inner.published = false;
+        }
+        Box::pin(SelfRepollExecution {
+            state: Arc::clone(&self.state),
+        })
+    }
+}
+
+struct SelfRepollExecution {
+    state: Arc<SelfRepollState>,
+}
+
+impl Future for SelfRepollExecution {
+    type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut inner = self.state.inner.lock().unwrap();
+        if !inner.published {
+            if inner.waker.is_none() {
+                inner.waker = Some(context.waker().clone());
+                self.state.changed.notify_all();
+            }
+            return Poll::Pending;
+        }
+        drop(inner);
+        Poll::Ready(TerminalExecutionOutcome::new(
+            TerminalExecutionStatus::Exited(0),
+            TerminalCapturedOutput::new(Vec::new(), 0).unwrap(),
+            TerminalCapturedOutput::new(Vec::new(), 0).unwrap(),
+            Duration::from_millis(1),
+        ))
+    }
+}
+
+impl Drop for SelfRepollExecution {
+    fn drop(&mut self) {
+        let retained = {
+            let mut inner = self.state.inner.lock().unwrap();
+            inner.waker.take()
+        };
+        drop(retained);
+    }
+}
+
+fn assert_self_repoll_tail_is_busy(tool: &TerminalTool, executor: &SelfRepollExecutor) {
+    let mut blocked = Box::pin(tool.execute(
+        context(),
+        exact_arguments("blocked-by-retained-waker", "."),
+        CancellationToken::new(),
+    ));
+    match poll_once(blocked.as_mut()) {
+        Poll::Ready(Err(error)) => {
+            assert_eq!(error.kind, ToolErrorKind::Unavailable);
+            assert_eq!(error.code, "terminal_busy");
+        }
+        Poll::Ready(Ok(_)) => panic!("execution bypassed a retained terminal Waker"),
+        Poll::Pending => panic!("retained terminal Waker released its activity slot early"),
+    }
+    drop(blocked);
+    assert_eq!(executor.calls(), 1);
+}
+
+fn assert_self_repoll_capacity_recovers(tool: &TerminalTool, executor: &SelfRepollExecutor) {
+    let recovery_deadline = Instant::now() + Duration::from_secs(2);
+    let mut recovered = loop {
+        let mut candidate = Box::pin(tool.execute(
+            context(),
+            exact_arguments("recovered-after-retained-waker", "."),
+            CancellationToken::new(),
+        ));
+        match poll_once(candidate.as_mut()) {
+            Poll::Pending => break candidate,
+            Poll::Ready(Err(error)) if error.code == "terminal_busy" => {
+                assert!(
+                    Instant::now() < recovery_deadline,
+                    "capacity did not recover after the retained Waker was dropped"
+                );
+                drop(candidate);
+                std::thread::yield_now();
+            }
+            Poll::Ready(Err(error)) => panic!("capacity recovery failed: {error}"),
+            Poll::Ready(Ok(_)) => panic!("unpublished recovered execution completed"),
+        }
+    };
+    assert_eq!(executor.calls(), 2);
+    executor.publish_and_wake();
+    let output = match poll_once(recovered.as_mut()) {
+        Poll::Ready(Ok(output)) => output,
+        Poll::Ready(Err(error)) => panic!("recovered execution failed: {error}"),
+        Poll::Pending => panic!("published recovered execution remained pending"),
+    };
+    assert_eq!(output.content["status"], "exited");
+}
+
 fn assert_retained_publisher_capacity_recovers(
     tool: &TerminalTool,
     executor: &RetainedPublisherExecutor,
@@ -1317,6 +1514,138 @@ fn output_limit_ready_on_the_deadline_repoll_remains_authoritative() {
     assert_eq!(output.content["stderr_bytes"], 0);
     assert_eq!(executor.polls(), 2);
     assert_eq!(executor.drops(), 1);
+}
+
+#[test]
+fn executor_result_after_supplied_waker_repoll_reaches_the_original_host() {
+    let temporary = TemporaryDirectory::new("executor-self-repoll");
+    let executor = SelfRepollExecutor::default();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+    )
+    .unwrap();
+    let observed = Arc::new(ObservedWake::default());
+    let external_waker = Waker::from(Arc::clone(&observed));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("executor-self-repoll", "."),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &external_waker).is_pending());
+    let retained = executor.retained_waker();
+    assert_eq!(observed.calls(), 0);
+
+    // A host may legally poll with the Waker supplied to its injected
+    // executor. That must not replace the original task notification target.
+    assert!(poll_with_waker(first.as_mut(), &retained).is_pending());
+    executor.publish_and_wake();
+    observed.wait_for_calls(1);
+    assert_eq!(observed.calls(), 1);
+
+    let output = match poll_with_waker(first.as_mut(), &external_waker) {
+        Poll::Ready(Ok(output)) => output,
+        Poll::Ready(Err(error)) => panic!("self-repolled execution failed: {error}"),
+        Poll::Pending => panic!("published self-repolled execution remained pending"),
+    };
+    drop(first);
+    assert_eq!(output.content["status"], "exited");
+
+    // Completion closes notification delivery, but an independently retained
+    // supplied Waker continues to own this execution's capacity slot.
+    retained.wake_by_ref();
+    assert_eq!(observed.calls(), 1);
+    assert_self_repoll_tail_is_busy(&tool, &executor);
+    drop(retained);
+    assert_self_repoll_capacity_recovers(&tool, &executor);
+}
+
+#[test]
+fn deadline_after_supplied_waker_repoll_reaches_the_original_host() {
+    let temporary = TemporaryDirectory::new("deadline-self-repoll");
+    let executor = SelfRepollExecutor::default();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        TerminalLimits::new(Duration::from_millis(30), 1).unwrap(),
+    )
+    .unwrap();
+    let observed = Arc::new(ObservedWake::default());
+    let external_waker = Waker::from(Arc::clone(&observed));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("deadline-self-repoll", "."),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &external_waker).is_pending());
+    let retained = executor.retained_waker();
+    assert_eq!(observed.calls(), 0);
+    assert!(poll_with_waker(first.as_mut(), &retained).is_pending());
+
+    observed.wait_for_calls(1);
+    assert_eq!(observed.calls(), 1);
+    let output = match poll_with_waker(first.as_mut(), &external_waker) {
+        Poll::Ready(Ok(output)) => output,
+        Poll::Ready(Err(error)) => panic!("deadline execution failed: {error}"),
+        Poll::Pending => panic!("deadline execution remained pending after notification"),
+    };
+    drop(first);
+    assert_eq!(output.content["status"], "timed_out");
+
+    retained.wake_by_ref();
+    assert_eq!(observed.calls(), 1);
+    assert_self_repoll_tail_is_busy(&tool, &executor);
+    drop(retained);
+    assert_self_repoll_capacity_recovers(&tool, &executor);
+}
+
+#[test]
+fn cancellation_after_supplied_waker_repoll_reaches_the_original_host() {
+    let temporary = TemporaryDirectory::new("cancellation-self-repoll");
+    let executor = SelfRepollExecutor::default();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+    )
+    .unwrap();
+    let cancellation = CancellationToken::new();
+    let observed = Arc::new(ObservedWake::default());
+    let external_waker = Waker::from(Arc::clone(&observed));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("cancellation-self-repoll", "."),
+        cancellation.clone(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &external_waker).is_pending());
+    let retained = executor.retained_waker();
+    assert_eq!(observed.calls(), 0);
+    assert!(poll_with_waker(first.as_mut(), &retained).is_pending());
+
+    assert!(cancellation.cancel());
+    observed.wait_for_calls(1);
+    assert_eq!(observed.calls(), 1);
+    let error = match poll_with_waker(first.as_mut(), &external_waker) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(_)) => panic!("cancelled self-repolled execution returned output"),
+        Poll::Pending => panic!("cancelled self-repolled execution remained pending"),
+    };
+    drop(first);
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+
+    retained.wake_by_ref();
+    assert_eq!(observed.calls(), 1);
+    assert_self_repoll_tail_is_busy(&tool, &executor);
+    drop(retained);
+    assert_self_repoll_capacity_recovers(&tool, &executor);
 }
 
 #[test]
