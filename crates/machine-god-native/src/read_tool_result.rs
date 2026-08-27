@@ -1,11 +1,12 @@
 //! Bounded session-backed paging for projected tool results.
 
-use crate::tool_result_projection::{tool_result_handle, valid_tool_result_handle};
+use crate::tool_result_projection::valid_tool_result_handle;
 use machine_god_core::{
-    BoxFuture, CancellationToken, ContentBlock, PreparedToolCall, SessionStore, Tool, ToolCall,
-    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+    BoxFuture, CancellationToken, ContentBlock, PreparedToolCall, SessionRecord, SessionStore,
+    Tool, ToolCall, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
 use serde_json::{Map, Number, Value, json};
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::future::{Future, poll_fn};
 use std::io::{self, Write};
@@ -26,6 +27,10 @@ const DEFAULT_MAX_ACTIVE_READS: usize = 2;
 const HARD_MAX_ACTIVE_READS: usize = 8;
 const DEFAULT_MAX_SCANNED_RESULTS: usize = 4_096;
 const DEFAULT_MAX_SERIALIZED_SCAN_BYTES: usize = 8 * 1024 * 1024;
+const MAX_SCANNED_MESSAGES: usize = 4_096;
+const MAX_SCANNED_CONTENT_BLOCKS: usize = 65_536;
+const TOOL_RESULT_HANDLE_PREFIX: &str = "tool-result-sha256-";
+const TOOL_RESULT_HANDLE_DOMAIN: &[u8] = b"machine-god/tool-result-handle/v1\0";
 
 /// Stable construction-error category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -249,78 +254,115 @@ impl Tool for ReadToolResultTool {
 
             let mut load = session_store.load(context.session_id.clone());
             let mut cancellation_wait = Box::pin(cancellation.cancelled());
-            let loaded = poll_fn(|poll_context| {
+            let load_result = poll_fn(|poll_context| {
                 if cancellation_wait.as_mut().poll(poll_context).is_ready() {
                     return std::task::Poll::Ready(Err(cancelled()));
                 }
-                match load.as_mut().poll(poll_context) {
-                    std::task::Poll::Ready(result) => {
-                        if cancellation.is_cancelled() {
-                            std::task::Poll::Ready(Err(cancelled()))
-                        } else {
-                            std::task::Poll::Ready(
-                                result.map_err(|error| store_unavailable(error.retryable)),
-                            )
-                        }
-                    }
-                    std::task::Poll::Pending => std::task::Poll::Pending,
+                let result = load.as_mut().poll(poll_context);
+                if cancellation.is_cancelled() {
+                    return std::task::Poll::Ready(Err(cancelled()));
                 }
+                result.map(|result| result.map_err(|error| store_unavailable(error.retryable)))
             })
-            .await?;
+            .await;
+            drop(cancellation_wait);
+            drop(load);
+            check_cancellation(&cancellation)?;
+            let loaded = match load_result {
+                Ok(loaded) => loaded,
+                Err(error) => return checked_error(&cancellation, error),
+            };
             let Some(record) = loaded else {
-                return Err(not_found());
+                return checked_error(&cancellation, not_found());
             };
             if record.id != context.session_id
                 || record.incarnation_id != context.session_incarnation_id
             {
-                return Err(not_found());
+                return checked_error(&cancellation, not_found());
             }
 
-            let mut scanned_results = 0_usize;
-            let mut scanned_bytes = 0_usize;
-            for message in &record.messages {
-                check_cancellation(&cancellation)?;
-                for block in &message.content {
-                    let ContentBlock::ToolResult {
-                        ref call_id,
-                        ref output,
-                    } = *block
-                    else {
-                        continue;
-                    };
-                    scanned_results = scanned_results.checked_add(1).ok_or_else(not_found)?;
-                    if scanned_results > limits.scanned_tool_results {
-                        return Err(not_found());
-                    }
-                    let serialized = serde_json::to_vec(output).map_err(|_| resource_limit())?;
-                    scanned_bytes = scanned_bytes
-                        .checked_add(serialized.len())
-                        .ok_or_else(not_found)?;
-                    if scanned_bytes > limits.serialized_scan_bytes {
-                        return Err(not_found());
-                    }
+            match scan_record(&record, &context, &normalized, limits, &cancellation) {
+                Ok(output) => {
                     check_cancellation(&cancellation)?;
-                    let candidate = tool_result_handle(
-                        &context.session_id,
-                        &context.session_incarnation_id,
-                        call_id,
-                        &serialized,
-                    );
-                    if candidate == normalized.handle {
-                        let output = page_output(&normalized, &serialized)?;
-                        check_cancellation(&cancellation)?;
-                        return Ok(output);
-                    }
+                    Ok(output)
                 }
+                Err(error) => checked_error(&cancellation, error),
             }
-            Err(not_found())
         })
     }
+}
+
+fn scan_record(
+    record: &SessionRecord,
+    context: &ToolContext,
+    arguments: &NormalizedArguments,
+    limits: ReadToolResultLimits,
+    cancellation: &CancellationToken,
+) -> Result<ToolOutput, ToolError> {
+    let mut scanned_messages = 0_usize;
+    let mut scanned_blocks = 0_usize;
+    let mut scanned_results = 0_usize;
+    let mut scanned_bytes = 0_usize;
+    let mut serialized = Vec::new();
+    for message in record.messages.iter().rev() {
+        check_cancellation(cancellation)?;
+        scanned_messages = match scanned_messages.checked_add(1) {
+            Some(value) if value <= MAX_SCANNED_MESSAGES => value,
+            _ => return checked_error(cancellation, not_found()),
+        };
+        for block in message.content.iter().rev() {
+            check_cancellation(cancellation)?;
+            scanned_blocks = match scanned_blocks.checked_add(1) {
+                Some(value) if value <= MAX_SCANNED_CONTENT_BLOCKS => value,
+                _ => return checked_error(cancellation, not_found()),
+            };
+            let ContentBlock::ToolResult {
+                ref call_id,
+                ref output,
+            } = *block
+            else {
+                continue;
+            };
+            scanned_results = match scanned_results.checked_add(1) {
+                Some(value) if value <= limits.scanned_tool_results => value,
+                _ => return checked_error(cancellation, not_found()),
+            };
+            let Some(remaining) = limits.serialized_scan_bytes.checked_sub(scanned_bytes) else {
+                return checked_error(cancellation, not_found());
+            };
+            if let Err(error) =
+                serialize_output_bounded(output, &mut serialized, remaining, cancellation)
+            {
+                return checked_error(cancellation, error);
+            }
+            scanned_bytes = match scanned_bytes.checked_add(serialized.len()) {
+                Some(value) if value <= limits.serialized_scan_bytes => value,
+                _ => return checked_error(cancellation, not_found()),
+            };
+            check_cancellation(cancellation)?;
+            let candidate_digest = tool_result_digest(
+                &context.session_id,
+                &context.session_incarnation_id,
+                call_id,
+                &serialized,
+            );
+            if candidate_digest == arguments.digest {
+                let output = match page_output(arguments, &serialized) {
+                    Ok(output) => output,
+                    Err(error) => return checked_error(cancellation, error),
+                };
+                check_cancellation(cancellation)?;
+                return Ok(output);
+            }
+        }
+    }
+    checked_error(cancellation, not_found())
 }
 
 #[derive(Debug)]
 struct NormalizedArguments {
     handle: String,
+    digest: [u8; 32],
     start_byte: usize,
     byte_count: usize,
 }
@@ -357,8 +399,9 @@ fn normalize_arguments(arguments: &Value) -> Result<NormalizedArguments, ToolErr
         .get("handle")
         .and_then(Value::as_str)
         .filter(|handle| valid_tool_result_handle(handle))
-        .ok_or_else(invalid_arguments)?
-        .to_owned();
+        .ok_or_else(invalid_arguments)?;
+    let digest = parse_handle_digest(handle).ok_or_else(invalid_arguments)?;
+    let handle = handle.to_owned();
     let start_byte = optional_usize(object.get("start_byte"), DEFAULT_START_BYTE)?;
     let byte_count = optional_usize(object.get("byte_count"), DEFAULT_PAGE_BYTES)?;
     if start_byte == 0
@@ -369,6 +412,7 @@ fn normalize_arguments(arguments: &Value) -> Result<NormalizedArguments, ToolErr
     }
     Ok(NormalizedArguments {
         handle,
+        digest,
         start_byte,
         byte_count,
     })
@@ -380,6 +424,108 @@ fn optional_usize(value: Option<&Value>, default: usize) -> Result<usize, ToolEr
     };
     let number = value.as_u64().ok_or_else(invalid_arguments)?;
     usize::try_from(number).map_err(|_| invalid_arguments())
+}
+
+fn parse_handle_digest(handle: &str) -> Option<[u8; 32]> {
+    let encoded = handle.strip_prefix(TOOL_RESULT_HANDLE_PREFIX)?.as_bytes();
+    if encoded.len() != 64 {
+        return None;
+    }
+    let mut digest = [0_u8; 32];
+    for (index, pair) in encoded.chunks_exact(2).enumerate() {
+        digest[index] = decode_hex(pair[0])?
+            .checked_mul(16)?
+            .checked_add(decode_hex(pair[1])?)?;
+    }
+    Some(digest)
+}
+
+const fn decode_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
+fn tool_result_digest(
+    session_id: &machine_god_core::SessionId,
+    incarnation_id: &machine_god_core::SessionIncarnationId,
+    call_id: &machine_god_core::ToolCallId,
+    serialized_output: &[u8],
+) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(TOOL_RESULT_HANDLE_DOMAIN);
+    for component in [
+        session_id.as_str().as_bytes(),
+        incarnation_id.as_str().as_bytes(),
+        call_id.as_str().as_bytes(),
+        serialized_output,
+    ] {
+        let length =
+            u64::try_from(component.len()).expect("supported targets use at most 64-bit usize");
+        digest.update(length.to_be_bytes());
+        digest.update(component);
+    }
+    digest.finalize().into()
+}
+
+fn serialize_output_bounded(
+    output: &ToolOutput,
+    serialized: &mut Vec<u8>,
+    limit: usize,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    serialized.clear();
+    let (result, cancellation_observed, exceeded) = {
+        let mut writer = BoundedOutputWriter {
+            output: serialized,
+            remaining: limit,
+            cancellation,
+            cancellation_observed: false,
+            exceeded: false,
+        };
+        let result = serde_json::to_writer(&mut writer, output);
+        (result, writer.cancellation_observed, writer.exceeded)
+    };
+    if cancellation_observed || cancellation.is_cancelled() {
+        return Err(cancelled());
+    }
+    if exceeded {
+        return Err(not_found());
+    }
+    if result.is_err() {
+        return Err(resource_limit());
+    }
+    Ok(())
+}
+
+struct BoundedOutputWriter<'a> {
+    output: &'a mut Vec<u8>,
+    remaining: usize,
+    cancellation: &'a CancellationToken,
+    cancellation_observed: bool,
+    exceeded: bool,
+}
+
+impl Write for BoundedOutputWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.cancellation.is_cancelled() {
+            self.cancellation_observed = true;
+            return Err(io::Error::other("cancelled"));
+        }
+        if bytes.len() > self.remaining {
+            self.exceeded = true;
+            return Err(io::Error::other("limit"));
+        }
+        self.output.extend_from_slice(bytes);
+        self.remaining -= bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn check_argument_bytes(arguments: &Value) -> Result<(), ToolError> {
@@ -477,6 +623,11 @@ fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError>
     } else {
         Ok(())
     }
+}
+
+fn checked_error<T>(cancellation: &CancellationToken, error: ToolError) -> Result<T, ToolError> {
+    check_cancellation(cancellation)?;
+    Err(error)
 }
 
 fn invalid_arguments() -> ToolError {

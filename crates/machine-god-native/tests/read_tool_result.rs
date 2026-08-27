@@ -27,7 +27,14 @@ type LoadResult = Result<Option<SessionRecord>, SessionStoreError>;
 enum LoadStep {
     Ready(LoadResult),
     Pending,
+    CancelThenPending {
+        cancellation: CancellationToken,
+    },
     CancelThenReady {
+        cancellation: CancellationToken,
+        result: LoadResult,
+    },
+    CancelOnDropReady {
         cancellation: CancellationToken,
         result: LoadResult,
     },
@@ -92,7 +99,14 @@ impl SessionStore for ScriptStore {
 enum LoadState {
     Ready(Option<LoadResult>),
     Pending,
+    CancelThenPending {
+        cancellation: CancellationToken,
+    },
     CancelThenReady {
+        cancellation: CancellationToken,
+        result: Option<LoadResult>,
+    },
+    CancelOnDropReady {
         cancellation: CancellationToken,
         result: Option<LoadResult>,
     },
@@ -103,10 +117,20 @@ impl From<LoadStep> for LoadState {
         match step {
             LoadStep::Ready(result) => Self::Ready(Some(result)),
             LoadStep::Pending => Self::Pending,
+            LoadStep::CancelThenPending { cancellation } => {
+                Self::CancelThenPending { cancellation }
+            }
             LoadStep::CancelThenReady {
                 cancellation,
                 result,
             } => Self::CancelThenReady {
+                cancellation,
+                result: Some(result),
+            },
+            LoadStep::CancelOnDropReady {
+                cancellation,
+                result,
+            } => Self::CancelOnDropReady {
                 cancellation,
                 result: Some(result),
             },
@@ -125,10 +149,14 @@ impl Future for LoadFuture {
     fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
         self.probe.polls.fetch_add(1, Ordering::SeqCst);
         match &mut self.state {
-            LoadState::Ready(result) => {
+            LoadState::Ready(result) | LoadState::CancelOnDropReady { result, .. } => {
                 Poll::Ready(result.take().expect("load polled after ready"))
             }
             LoadState::Pending => Poll::Pending,
+            LoadState::CancelThenPending { cancellation } => {
+                cancellation.cancel();
+                Poll::Pending
+            }
             LoadState::CancelThenReady {
                 cancellation,
                 result,
@@ -142,6 +170,9 @@ impl Future for LoadFuture {
 
 impl Drop for LoadFuture {
     fn drop(&mut self) {
+        if let LoadState::CancelOnDropReady { cancellation, .. } = &self.state {
+            cancellation.cancel();
+        }
         let previous = self.probe.live.fetch_sub(1, Ordering::SeqCst);
         assert!(previous > 0, "load-future live count underflowed");
         self.probe.drops.fetch_add(1, Ordering::SeqCst);
@@ -551,6 +582,52 @@ fn stable_lookup_is_session_and_incarnation_scoped_with_fixed_not_found_collapse
 }
 
 #[test]
+fn reset_invalidates_old_handles_even_when_call_and_output_are_unchanged() {
+    let fixture = Fixture::new(
+        "reset-session",
+        "reset-incarnation-before",
+        "unchanged-call",
+        ToolOutput::success("unchanged output"),
+    );
+    let reset_incarnation = SessionIncarnationId::new("reset-incarnation-after").unwrap();
+    let reset_record = record_with_results(
+        fixture.session_id.clone(),
+        reset_incarnation.clone(),
+        [(fixture.call_id.clone(), fixture.output.clone())],
+    );
+    let reset_handle = handle_for(
+        &fixture.session_id,
+        &reset_incarnation,
+        &fixture.call_id,
+        &fixture.serialized,
+    );
+    let store = ScriptStore::new([
+        LoadStep::Ready(Ok(Some(reset_record.clone()))),
+        LoadStep::Ready(Ok(Some(reset_record))),
+    ]);
+    let tool = store.reader();
+    let reset_context = context(&fixture.session_id, &reset_incarnation);
+
+    assert_not_found(
+        &execute(
+            &tool,
+            reset_context.clone(),
+            arguments(&fixture.handle, 1, 4),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
+    let reset_page = execute(
+        &tool,
+        reset_context,
+        arguments(&reset_handle, 1, 16_384),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(page_text(&reset_page).as_bytes(), fixture.serialized);
+}
+
+#[test]
 fn utf8_ranges_accept_boundaries_backtrack_ends_and_distinguish_eof() {
     let fixture = Fixture::new(
         "utf8-session",
@@ -665,13 +742,13 @@ fn scan_count_and_aggregate_byte_limits_are_inclusive_and_fail_closed() {
         &execute(
             &result_bounded,
             tool_context.clone(),
-            arguments(&handles[2], 1, 4),
+            arguments(&handles[0], 1, 4),
             CancellationToken::new(),
         )
         .unwrap_err(),
     );
 
-    let exact_bytes = serialized[0].len() + serialized[1].len();
+    let exact_bytes = serialized[2].len() + serialized[1].len();
     let exact_store = ScriptStore::new([LoadStep::Ready(Ok(Some(record.clone())))]);
     let exact_tool =
         exact_store.bounded_reader(ReadToolResultLimits::new(1, 3, exact_bytes).unwrap());
@@ -698,6 +775,114 @@ fn scan_count_and_aggregate_byte_limits_are_inclusive_and_fail_closed() {
     assert_eq!(result_store.probe.loads.load(Ordering::SeqCst), 2);
     assert_eq!(exact_store.probe.loads.load(Ordering::SeqCst), 1);
     assert_eq!(over_store.probe.loads.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn newest_results_are_prioritized_and_candidates_cannot_exceed_remaining_budget() {
+    let session_id = SessionId::new("newest-session").unwrap();
+    let incarnation_id = SessionIncarnationId::new("newest-incarnation").unwrap();
+    let old_call = ToolCallId::new("old-large-call").unwrap();
+    let newest_call = ToolCallId::new("newest-call").unwrap();
+    let old_output = ToolOutput::success("x".repeat(4_096));
+    let newest_output = ToolOutput::success("newest target");
+    let old_serialized = serde_json::to_vec(&old_output).unwrap();
+    let newest_serialized = serde_json::to_vec(&newest_output).unwrap();
+    let old_handle = handle_for(&session_id, &incarnation_id, &old_call, &old_serialized);
+    let newest_handle = handle_for(
+        &session_id,
+        &incarnation_id,
+        &newest_call,
+        &newest_serialized,
+    );
+    let record = record_with_results(
+        session_id.clone(),
+        incarnation_id.clone(),
+        [(old_call, old_output), (newest_call, newest_output)],
+    );
+    let store = ScriptStore::new([
+        LoadStep::Ready(Ok(Some(record.clone()))),
+        LoadStep::Ready(Ok(Some(record))),
+    ]);
+    let tool =
+        store.bounded_reader(ReadToolResultLimits::new(1, 2, newest_serialized.len()).unwrap());
+    let tool_context = context(&session_id, &incarnation_id);
+
+    let newest = execute(
+        &tool,
+        tool_context.clone(),
+        arguments(&newest_handle, 1, 16_384),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(page_text(&newest).as_bytes(), newest_serialized);
+
+    assert_not_found(
+        &execute(
+            &tool,
+            tool_context,
+            arguments(&old_handle, 1, 4),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
+}
+
+#[test]
+fn non_result_content_blocks_are_hard_bounded_before_an_older_target() {
+    const MAX_SCANNED_CONTENT_BLOCKS: usize = 65_536;
+
+    let fixture = Fixture::new(
+        "content-bound-session",
+        "content-bound-incarnation",
+        "older-target",
+        ToolOutput::success("must remain outside the traversal bound"),
+    );
+    let mut record = fixture.record.clone();
+    record.messages.push(Message {
+        role: Role::Assistant,
+        content: (0..=MAX_SCANNED_CONTENT_BLOCKS)
+            .map(|_| ContentBlock::Text {
+                text: String::new(),
+            })
+            .collect(),
+    });
+    let store = ScriptStore::new([LoadStep::Ready(Ok(Some(record)))]);
+    let error = execute(
+        &store.reader(),
+        fixture.context(),
+        arguments(&fixture.handle, 1, 4),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_not_found(&error);
+}
+
+#[test]
+fn message_traversal_is_hard_bounded_before_an_older_target() {
+    const MAX_SCANNED_MESSAGES: usize = 4_096;
+
+    let fixture = Fixture::new(
+        "message-bound-session",
+        "message-bound-incarnation",
+        "older-target",
+        ToolOutput::success("must remain outside the message bound"),
+    );
+    let mut record = fixture.record.clone();
+    record
+        .messages
+        .extend((0..MAX_SCANNED_MESSAGES).map(|_| Message {
+            role: Role::Assistant,
+            content: Vec::new(),
+        }));
+    let store = ScriptStore::new([LoadStep::Ready(Ok(Some(record)))]);
+    let error = execute(
+        &store.reader(),
+        fixture.context(),
+        arguments(&fixture.handle, 1, 4),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_not_found(&error);
 }
 
 #[test]
@@ -818,6 +1003,65 @@ fn execution_is_inert_and_cancellation_wins_before_during_and_after_load_poll() 
     )
     .unwrap_err();
     assert!(same_poll_cancellation.is_cancelled());
+    assert_error(
+        &error,
+        ToolErrorKind::Cancelled,
+        "read_tool_result_cancelled",
+        "read_tool_result was cancelled",
+        false,
+    );
+    assert_eq!(store.probe.loads.load(Ordering::SeqCst), 2);
+    assert_eq!(store.probe.drops.load(Ordering::SeqCst), 2);
+    assert_eq!(store.probe.live.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn cancellation_wins_same_poll_pending_and_after_load_future_teardown() {
+    let fixture = Fixture::new(
+        "cancel-race-session",
+        "cancel-race-incarnation",
+        "cancel-race-source",
+        ToolOutput::success("cancel race target"),
+    );
+    let same_poll_pending_cancellation = CancellationToken::new();
+    let post_load_cancellation = CancellationToken::new();
+    let store = ScriptStore::new([
+        LoadStep::CancelThenPending {
+            cancellation: same_poll_pending_cancellation.clone(),
+        },
+        LoadStep::CancelOnDropReady {
+            cancellation: post_load_cancellation.clone(),
+            result: Ok(Some(fixture.record.clone())),
+        },
+    ]);
+    let tool = store.reader();
+    let args = arguments(&fixture.handle, 1, 4);
+
+    let mut same_poll_pending = Box::pin(tool.execute(
+        fixture.context(),
+        args.clone(),
+        same_poll_pending_cancellation.clone(),
+    ));
+    let Poll::Ready(Err(error)) = poll_once(same_poll_pending.as_mut()) else {
+        panic!("same-poll pending cancellation remained pending");
+    };
+    assert!(same_poll_pending_cancellation.is_cancelled());
+    assert_error(
+        &error,
+        ToolErrorKind::Cancelled,
+        "read_tool_result_cancelled",
+        "read_tool_result was cancelled",
+        false,
+    );
+
+    let error = execute(
+        &tool,
+        fixture.context(),
+        args,
+        post_load_cancellation.clone(),
+    )
+    .unwrap_err();
+    assert!(post_load_cancellation.is_cancelled());
     assert_error(
         &error,
         ToolErrorKind::Cancelled,
