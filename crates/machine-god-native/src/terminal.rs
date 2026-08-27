@@ -466,9 +466,10 @@ pub type TerminalExecution =
 pub trait TerminalExecutor: Send + Sync + 'static {
     /// Creates an inert future. The executor owns every process, pipe, and worker
     /// it creates and must complete all controllable resource cleanup when the
-    /// future is dropped. A bounded resource-free callback tail may outlive that
-    /// cleanup when joining it could deadlock with its `Waker`; it must retain no
-    /// process resource or other execution authority. Executors should honor
+    /// future is dropped. A bounded notification callback tail may outlive that
+    /// cleanup when joining it could deadlock with its `Waker`; it retains its
+    /// active-slot lease and callback thread/stack, but no process resource or
+    /// other execution authority. Executors should honor
     /// [`TerminalExecutionRequest::deadline`] so they can return bounded partial
     /// output. The tool also owns an independent deadline wake for controllable
     /// userspace phases; neither boundary can preempt a blocked host syscall.
@@ -943,6 +944,17 @@ async fn await_executor(
                     outcome.duration = bounded_duration(started.elapsed());
                 }
                 Poll::Ready(Ok(outcome))
+            }
+            Poll::Ready(Err(_)) if Instant::now() >= deadline => {
+                let timeout = empty_outcome(
+                    TerminalExecutionStatus::TimedOut,
+                    bounded_duration(started.elapsed()),
+                )
+                .map_err(map_executor_error);
+                if cancellation.is_cancelled() {
+                    return Poll::Ready(Err(cancelled_error()));
+                }
+                Poll::Ready(timeout)
             }
             Poll::Ready(Err(error)) => Poll::Ready(Err(map_executor_error(error))),
             Poll::Pending => {
@@ -2297,7 +2309,8 @@ mod tests {
         TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT,
         TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT, TerminalCapturedOutput,
         TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
-        TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool, validate_cwd,
+        TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
+        TerminalExecutorErrorKind, TerminalLimits, TerminalTool, validate_cwd,
     };
     use machine_god_core::{
         CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId, ToolContext,
@@ -2537,6 +2550,64 @@ mod tests {
             output.content["stdout_bytes"],
             MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 1
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_output_executor_error_ready_after_deadline_yields_timeout() {
+        let root = std::env::current_dir().unwrap();
+        let tool = TerminalTool::with_executor(
+            &root,
+            Vec::new(),
+            Arc::new(DelayedErrorExecutor),
+            TerminalLimits::new(Duration::from_millis(1), 1).unwrap(),
+        )
+        .unwrap();
+        let output = futures_executor::block_on(tool.execute(
+            context(),
+            json!({
+                "action": "exec",
+                "command": "ignored",
+                "cwd": ".",
+                "profile": "clean"
+            }),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+
+        assert_eq!(output.content["status"], "timed_out");
+        assert!(output.is_error);
+    }
+
+    #[cfg(unix)]
+    struct DelayedErrorExecutor;
+
+    #[cfg(unix)]
+    impl TerminalExecutor for DelayedErrorExecutor {
+        fn execute(
+            &self,
+            request: TerminalExecutionRequest,
+            _cancellation: CancellationToken,
+        ) -> TerminalExecution {
+            Box::pin(DelayedErrorExecution { _request: request })
+        }
+    }
+
+    #[cfg(unix)]
+    struct DelayedErrorExecution {
+        _request: TerminalExecutionRequest,
+    }
+
+    #[cfg(unix)]
+    impl Future for DelayedErrorExecution {
+        type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            std::thread::sleep(Duration::from_millis(5));
+            Poll::Ready(Err(TerminalExecutorError::new(
+                TerminalExecutorErrorKind::Spawn,
+            )))
+        }
     }
 
     #[cfg(unix)]
