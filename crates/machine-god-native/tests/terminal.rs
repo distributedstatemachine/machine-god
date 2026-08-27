@@ -271,6 +271,82 @@ impl Drop for BlockingWakeRelease {
     }
 }
 
+#[derive(Default)]
+struct CountingBlockingWakeState {
+    entered: usize,
+    in_flight: usize,
+    max_in_flight: usize,
+    released: bool,
+    returned: usize,
+}
+
+#[derive(Default)]
+struct CountingBlockingWake {
+    state: Mutex<CountingBlockingWakeState>,
+    changed: Condvar,
+}
+
+impl CountingBlockingWake {
+    fn wait_until_entered(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut state = self.state.lock().unwrap();
+        while state.entered == 0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "terminal Waker callback did not run");
+            let waited = self.changed.wait_timeout(state, remaining).unwrap();
+            state = waited.0;
+        }
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
+
+    fn snapshot(&self) -> (usize, usize, usize, usize) {
+        let state = self.state.lock().unwrap();
+        (
+            state.entered,
+            state.in_flight,
+            state.max_in_flight,
+            state.returned,
+        )
+    }
+
+    fn block(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.entered += 1;
+        state.in_flight += 1;
+        state.max_in_flight = state.max_in_flight.max(state.in_flight);
+        self.changed.notify_all();
+        while !state.released {
+            state = self.changed.wait(state).unwrap();
+        }
+        state.in_flight -= 1;
+        state.returned += 1;
+        self.changed.notify_all();
+    }
+}
+
+impl Wake for CountingBlockingWake {
+    fn wake(self: Arc<Self>) {
+        self.block();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.block();
+    }
+}
+
+struct CountingBlockingWakeRelease(Arc<CountingBlockingWake>);
+
+impl Drop for CountingBlockingWakeRelease {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
 fn poll_with_waker<F: Future + ?Sized>(future: Pin<&mut F>, waker: &Waker) -> Poll<F::Output> {
     future.poll(&mut Context::from_waker(waker))
 }
@@ -333,6 +409,96 @@ impl TerminalExecutor for RetainedPublisherExecutor {
 
 struct RetainedPublisherExecution {
     state: Arc<RetainedPublisherState>,
+}
+
+const CLONED_WAKER_FANOUT: usize = 16;
+
+#[derive(Default)]
+struct WakerFanoutState {
+    calls: AtomicUsize,
+    inner: Mutex<WakerFanoutInner>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct WakerFanoutInner {
+    published: bool,
+    wakers: Vec<Waker>,
+}
+
+#[derive(Clone, Default)]
+struct WakerFanoutExecutor {
+    state: Arc<WakerFanoutState>,
+}
+
+impl WakerFanoutExecutor {
+    fn calls(&self) -> usize {
+        self.state.calls.load(Ordering::SeqCst)
+    }
+
+    fn publish_and_take_wakers(&self) -> Vec<Waker> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut inner = self.state.inner.lock().unwrap();
+        while inner.wakers.len() != CLONED_WAKER_FANOUT {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "injected executor did not retain every cloned task Waker"
+            );
+            let waited = self.state.changed.wait_timeout(inner, remaining).unwrap();
+            inner = waited.0;
+        }
+        inner.published = true;
+        std::mem::take(&mut inner.wakers)
+    }
+}
+
+impl TerminalExecutor for WakerFanoutExecutor {
+    fn execute(
+        &self,
+        _request: TerminalExecutionRequest,
+        _cancellation: CancellationToken,
+    ) -> TerminalExecution {
+        self.state.calls.fetch_add(1, Ordering::SeqCst);
+        let mut inner = self.state.inner.lock().unwrap();
+        assert!(
+            inner.wakers.is_empty(),
+            "a new execution started while retained Wakers remained"
+        );
+        inner.published = false;
+        drop(inner);
+        Box::pin(WakerFanoutExecution {
+            state: Arc::clone(&self.state),
+        })
+    }
+}
+
+struct WakerFanoutExecution {
+    state: Arc<WakerFanoutState>,
+}
+
+impl Future for WakerFanoutExecution {
+    type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut inner = self.state.inner.lock().unwrap();
+        if !inner.published {
+            if inner.wakers.is_empty() {
+                inner.wakers = std::iter::repeat_with(|| context.waker().clone())
+                    .take(CLONED_WAKER_FANOUT)
+                    .collect();
+                self.state.changed.notify_all();
+            }
+            return Poll::Pending;
+        }
+        drop(inner);
+        Poll::Ready(TerminalExecutionOutcome::new(
+            TerminalExecutionStatus::Exited(0),
+            TerminalCapturedOutput::new(Vec::new(), 0).unwrap(),
+            TerminalCapturedOutput::new(Vec::new(), 0).unwrap(),
+            Duration::from_millis(1),
+        ))
+    }
 }
 
 impl Future for RetainedPublisherExecution {
@@ -988,7 +1154,7 @@ fn fail_fast_concurrency_releases_permit_after_drop() {
 }
 
 #[test]
-fn completed_execution_releases_capacity_before_output_publication() {
+fn completed_public_execution_releases_capacity_for_the_next_call() {
     let temporary = TemporaryDirectory::new("capacity-complete");
     let executor = FakeExecutor::new(Mode::Exited(0));
     let tool = TerminalTool::with_executor(
@@ -1174,6 +1340,160 @@ fn injected_publisher_waker_retains_the_originating_capacity_slot() {
     )
     .unwrap();
     assert!(!recovered.is_error);
+    assert_eq!(executor.calls(), 2);
+}
+
+#[test]
+fn blocking_cancellation_callback_retains_capacity_until_return() {
+    let temporary = TemporaryDirectory::new("cancellation-waker-capacity");
+    let executor = FakeExecutor::new(Mode::Pending);
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+    )
+    .unwrap();
+    let cancellation = CancellationToken::new();
+    let blocking = Arc::new(BlockingWake::default());
+    let waker = Waker::from(Arc::clone(&blocking));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("first", "."),
+        cancellation.clone(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &waker).is_pending());
+    std::thread::scope(|scope| {
+        let _release_on_unwind = BlockingWakeRelease(Arc::clone(&blocking));
+        let cancellation_publisher = scope.spawn(move || assert!(cancellation.cancel()));
+        blocking.wait_until_entered();
+
+        let first_error = match poll_once(first.as_mut()) {
+            Poll::Ready(Err(error)) => error,
+            Poll::Ready(Ok(_)) => panic!("cancelled execution published output"),
+            Poll::Pending => panic!("cancelled execution remained pending"),
+        };
+        drop(first);
+        assert_eq!(first_error.kind, ToolErrorKind::Cancelled);
+        assert_eq!(first_error.code, "terminal_cancelled");
+
+        let mut blocked = Box::pin(tool.execute(
+            context(),
+            exact_arguments("blocked", "."),
+            CancellationToken::new(),
+        ));
+        match poll_once(blocked.as_mut()) {
+            Poll::Ready(Err(error)) => {
+                assert_eq!(error.kind, ToolErrorKind::Unavailable);
+                assert_eq!(error.code, "terminal_busy");
+            }
+            Poll::Ready(Ok(_)) => panic!("pending executor unexpectedly completed"),
+            Poll::Pending => {
+                panic!("blocking cancellation callback released terminal capacity early")
+            }
+        }
+        drop(blocked);
+        assert_eq!(executor.calls(), 1);
+
+        blocking.release();
+        cancellation_publisher.join().unwrap();
+        blocking.wait_until_returned();
+    });
+
+    let mut recovered = Box::pin(tool.execute(
+        context(),
+        exact_arguments("recovered", "."),
+        CancellationToken::new(),
+    ));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(executor.calls(), 2);
+}
+
+#[test]
+fn cloned_injected_wakers_coalesce_blocking_callbacks_and_retain_one_slot() {
+    let temporary = TemporaryDirectory::new("cloned-waker-coalescing");
+    let executor = WakerFanoutExecutor::default();
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+    )
+    .unwrap();
+    let blocking = Arc::new(CountingBlockingWake::default());
+    let waker = Waker::from(Arc::clone(&blocking));
+    let mut first = Box::pin(tool.execute(
+        context(),
+        exact_arguments("first", "."),
+        CancellationToken::new(),
+    ));
+
+    assert!(poll_with_waker(first.as_mut(), &waker).is_pending());
+    let retained_wakers = executor.publish_and_take_wakers();
+    assert_eq!(retained_wakers.len(), CLONED_WAKER_FANOUT);
+
+    std::thread::scope(|scope| {
+        let _release_on_unwind = CountingBlockingWakeRelease(Arc::clone(&blocking));
+        let start = Arc::new(std::sync::Barrier::new(CLONED_WAKER_FANOUT + 1));
+        let (returned_sender, returned_receiver) = std::sync::mpsc::channel();
+        for retained_waker in retained_wakers {
+            let start = Arc::clone(&start);
+            let returned_sender = returned_sender.clone();
+            scope.spawn(move || {
+                start.wait();
+                retained_waker.wake();
+                let _ = returned_sender.send(());
+            });
+        }
+        drop(returned_sender);
+        start.wait();
+        blocking.wait_until_entered();
+
+        let first_output = match poll_once(first.as_mut()) {
+            Poll::Ready(Ok(output)) => output,
+            Poll::Ready(Err(error)) => panic!("injected execution failed: {error}"),
+            Poll::Pending => panic!("published injected execution remained pending"),
+        };
+        drop(first);
+        assert_eq!(first_output.content["status"], "exited");
+
+        let mut blocked = Box::pin(tool.execute(
+            context(),
+            exact_arguments("blocked", "."),
+            CancellationToken::new(),
+        ));
+        match poll_once(blocked.as_mut()) {
+            Poll::Ready(Err(error)) => {
+                assert_eq!(error.kind, ToolErrorKind::Unavailable);
+                assert_eq!(error.code, "terminal_busy");
+            }
+            Poll::Ready(Ok(_)) => panic!("execution bypassed a blocking Waker callback"),
+            Poll::Pending => panic!("blocking Waker callback released terminal capacity early"),
+        }
+        drop(blocked);
+        assert_eq!(executor.calls(), 1);
+
+        for _ in 1..CLONED_WAKER_FANOUT {
+            returned_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("concurrent Waker notifications did not coalesce and return");
+        }
+        assert_eq!(blocking.snapshot(), (1, 1, 1, 0));
+
+        blocking.release();
+        returned_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the forwarded Waker callback did not return after release");
+    });
+
+    assert_eq!(blocking.snapshot(), (1, 0, 1, 1));
+    let mut recovered = Box::pin(tool.execute(
+        context(),
+        exact_arguments("recovered", "."),
+        CancellationToken::new(),
+    ));
+    assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(executor.calls(), 2);
 }
 
