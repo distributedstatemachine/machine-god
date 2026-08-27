@@ -4,8 +4,8 @@ use std::fmt::{self, Write as _};
 use std::future::{Future, poll_fn};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Wake, Waker};
 
 use machine_god_core::{
@@ -1050,9 +1050,9 @@ impl Drop for ActivePromptPermit {
 struct PromptActivity<'a> {
     prompt: Option<BoxFuture<'a, Result<QuestionPromptOutcome, QuestionPromptError>>>,
     cancellation_wait: Option<Cancelled>,
-    // This single registration keeps the downstream clone/drop boundary
-    // fixed across equivalent outer Wakers. Futures may still clone the
-    // activity-backed Waker without cloning arbitrary downstream state.
+    // One registration is shared by the cancellation and prompt futures.
+    // Equivalent outer Wakers retain the cached target without clone/drop
+    // churn, while every supplied-Waker clone shares one callback lane.
     registered_waker: Option<ActivityWakerRegistration>,
     activity: Option<Arc<ActivePromptPermit>>,
 }
@@ -1063,30 +1063,20 @@ impl<'a> PromptActivity<'a> {
         cancellation_wait: Cancelled,
         activity: Arc<ActivePromptPermit>,
     ) -> Self {
+        let registered_waker = ActivityWakerRegistration::new(Arc::clone(&activity));
         Self {
             prompt: Some(prompt),
             cancellation_wait: Some(cancellation_wait),
-            registered_waker: None,
+            registered_waker: Some(registered_waker),
             activity: Some(activity),
         }
     }
 
-    fn register_waker(&mut self, downstream: &Waker) {
-        if self
-            .registered_waker
+    fn register_waker(&self, downstream: &Waker) {
+        self.registered_waker
             .as_ref()
-            .is_some_and(|registered| registered.will_wake(downstream))
-        {
-            return;
-        }
-        let activity = Arc::clone(
-            self.activity
-                .as_ref()
-                .expect("prompt activity retains its permit while polling"),
-        );
-        let replacement = ActivityWakerRegistration::new(downstream, activity);
-        let previous = self.registered_waker.replace(replacement);
-        drop(previous);
+            .expect("prompt activity retains its Waker registration")
+            .bind(downstream);
     }
 
     fn poll_cancellation(&mut self, context: &mut Context<'_>) -> Poll<()> {
@@ -1123,6 +1113,10 @@ impl<'a> PromptActivity<'a> {
             .as_mut()
             .poll(&mut activity_context);
         if polled.is_ready() {
+            self.registered_waker
+                .as_ref()
+                .expect("prompt activity retains its Waker registration")
+                .close();
             let completed = self.prompt.take();
             drop(completed);
         }
@@ -1132,6 +1126,13 @@ impl<'a> PromptActivity<'a> {
 
 impl Drop for PromptActivity<'_> {
     fn drop(&mut self) {
+        // A future may wake its retained supplied Waker from Drop. Close the
+        // stale outer target first while the notifier still owns the permit.
+        let registered_waker_close = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(registered_waker) = self.registered_waker.as_ref() {
+                registered_waker.close();
+            }
+        }));
         let prompt = self.prompt.take();
         let prompt_drop = catch_unwind(AssertUnwindSafe(|| drop(prompt)));
         let cancellation_wait = self.cancellation_wait.take();
@@ -1150,6 +1151,11 @@ impl Drop for PromptActivity<'_> {
         {
             resume_unwind(payload);
         }
+        if let Err(payload) = registered_waker_close
+            && !std::thread::panicking()
+        {
+            resume_unwind(payload);
+        }
         if let Err(payload) = registered_waker_drop
             && !std::thread::panicking()
         {
@@ -1159,29 +1165,31 @@ impl Drop for PromptActivity<'_> {
 }
 
 struct ActivityWakerRegistration {
-    wake: Arc<ActivityWake>,
+    wake: Option<Arc<ActivityWake>>,
     waker: Option<Waker>,
 }
 
 impl ActivityWakerRegistration {
-    fn new(downstream: &Waker, activity: Arc<ActivePromptPermit>) -> Self {
-        let wake = Arc::new(ActivityWake {
-            downstream: Some(downstream.clone()),
-            activity: Some(activity),
-        });
+    fn new(activity: Arc<ActivePromptPermit>) -> Self {
+        let wake = Arc::new(ActivityWake::new(activity));
         Self {
             waker: Some(Waker::from(Arc::clone(&wake))),
-            wake,
+            wake: Some(wake),
         }
     }
 
-    fn will_wake(&self, downstream: &Waker) -> bool {
-        let target = self
-            .wake
-            .downstream
+    fn bind(&self, downstream: &Waker) {
+        self.wake
             .as_ref()
-            .expect("activity Waker retains its downstream target");
-        target.will_wake(downstream) || self.waker().will_wake(downstream)
+            .expect("activity Waker registration retains its notifier")
+            .bind(downstream, self.waker());
+    }
+
+    fn close(&self) {
+        self.wake
+            .as_ref()
+            .expect("activity Waker registration retains its notifier")
+            .close();
     }
 
     fn waker(&self) -> &Waker {
@@ -1193,54 +1201,190 @@ impl ActivityWakerRegistration {
 
 impl Drop for ActivityWakerRegistration {
     fn drop(&mut self) {
-        // The separate `wake` Arc remains live while this cached wrapper is
-        // destroyed. Its downstream Waker and activity are released only
-        // when the last clone retained by a polled future is gone.
+        // Retain the notifier and activity across arbitrary target destruction,
+        // including unwind, before releasing the supplied Waker and owner Arc.
+        let close = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(wake) = self.wake.as_ref() {
+                wake.close();
+            }
+        }));
         let waker = self.waker.take();
-        drop(waker);
-    }
-}
-
-struct ActivityWake {
-    downstream: Option<Waker>,
-    activity: Option<Arc<ActivePromptPermit>>,
-}
-
-impl Wake for ActivityWake {
-    fn wake(self: Arc<Self>) {
-        // `self` retains the originating active-prompt permit through both
-        // the arbitrary downstream clone and its consuming callback.
-        let downstream = self
-            .downstream
-            .as_ref()
-            .expect("activity Waker retains its downstream target")
-            .clone();
-        downstream.wake();
-    }
-
-    fn wake_by_ref(self: &Arc<Self>) {
-        // The borrowed Arc remains owned for the complete callback.
-        self.downstream
-            .as_ref()
-            .expect("activity Waker retains its downstream target")
-            .wake_by_ref();
-    }
-}
-
-impl Drop for ActivityWake {
-    fn drop(&mut self) {
-        // Destruction of an arbitrary downstream Waker may run host code, so
-        // it must complete before the final activity reference is released.
-        let downstream = self.downstream.take();
-        let downstream_drop = catch_unwind(AssertUnwindSafe(|| drop(downstream)));
-        let activity = self.activity.take();
-        drop(activity);
-        if let Err(payload) = downstream_drop
+        let waker_drop = catch_unwind(AssertUnwindSafe(|| drop(waker)));
+        let wake = self.wake.take();
+        drop(wake);
+        if let Err(payload) = close
+            && !std::thread::panicking()
+        {
+            resume_unwind(payload);
+        }
+        if let Err(payload) = waker_drop
             && !std::thread::panicking()
         {
             resume_unwind(payload);
         }
     }
+}
+
+struct ActivityWake {
+    // State precedes the activity so any retained target is destroyed before
+    // the final notifier-owned permit reference on an unbound cleanup path.
+    state: Mutex<ActivityWakeState>,
+    _activity: Arc<ActivePromptPermit>,
+}
+
+#[derive(Default)]
+struct ActivityWakeState {
+    target: Option<Arc<Waker>>,
+    notifying: bool,
+    pending_replay: bool,
+    lifecycle: ActivityWakeLifecycle,
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum ActivityWakeLifecycle {
+    #[default]
+    Open,
+    Closed,
+}
+
+impl ActivityWake {
+    fn new(activity: Arc<ActivePromptPermit>) -> Self {
+        Self {
+            state: Mutex::new(ActivityWakeState::default()),
+            _activity: activity,
+        }
+    }
+
+    fn bind(&self, target: &Waker, notifier_waker: &Waker) {
+        let notifier_target = target.will_wake(notifier_waker);
+        {
+            let mut state = lock_activity_wake(&self.state);
+            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
+                return;
+            }
+            if state.notifying {
+                // This poll observes every notice before the bind. A later
+                // notice in the same callback window restores one replay.
+                state.pending_replay = false;
+            }
+            if notifier_target {
+                // A prompt future may use the supplied Waker to re-poll the
+                // outer task. Never replace the genuine target with this
+                // notifier itself or create a cycle/recursive delivery.
+                return;
+            }
+            if state
+                .target
+                .as_deref()
+                .is_some_and(|existing| existing.will_wake(target))
+            {
+                return;
+            }
+        }
+
+        // Arbitrary Waker cloning may execute foreign code. Do it outside the
+        // lock, then recheck lifecycle and identity after reacquiring it.
+        let incoming = Arc::new(target.clone());
+        let (replaced, unused) = {
+            let mut state = lock_activity_wake(&self.state);
+            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed)
+                || state
+                    .target
+                    .as_deref()
+                    .is_some_and(|existing| existing.will_wake(target))
+            {
+                (None, Some(incoming))
+            } else {
+                if state.notifying {
+                    state.pending_replay = false;
+                }
+                (state.target.replace(incoming), None)
+            }
+        };
+        // Arbitrary Waker destruction also remains outside the lock.
+        drop(replaced);
+        drop(unused);
+    }
+
+    fn close(&self) {
+        let target = {
+            let mut state = lock_activity_wake(&self.state);
+            state.lifecycle = ActivityWakeLifecycle::Closed;
+            state.pending_replay = false;
+            state.target.take()
+        };
+        // `self` owns the permit through target destruction; an in-flight
+        // callback likewise owns `self` through its complete return.
+        drop(target);
+    }
+
+    fn notify(&self) {
+        let mut target = {
+            let mut state = lock_activity_wake(&self.state);
+            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
+                return;
+            }
+            if state.notifying {
+                // Every concurrent or reentrant burst leaves one serialized
+                // replay. A later outer poll may consume it before return.
+                state.pending_replay = true;
+                return;
+            }
+            let Some(target) = state.target.as_ref().map(Arc::clone) else {
+                return;
+            };
+            state.notifying = true;
+            state.pending_replay = false;
+            target
+        };
+
+        loop {
+            let notified = catch_unwind(AssertUnwindSafe(|| target.wake_by_ref()));
+            let next = {
+                let mut state = lock_activity_wake(&self.state);
+                if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) || notified.is_err() {
+                    state.notifying = false;
+                    state.pending_replay = false;
+                    None
+                } else if state.pending_replay {
+                    state.pending_replay = false;
+                    if let Some(target) = state.target.as_ref().map(Arc::clone) {
+                        Some(target)
+                    } else {
+                        state.notifying = false;
+                        None
+                    }
+                } else {
+                    state.notifying = false;
+                    None
+                }
+            };
+            drop(target);
+            if let Err(payload) = notified {
+                resume_unwind(payload);
+            }
+            let Some(next) = next else {
+                return;
+            };
+            target = next;
+        }
+    }
+}
+
+impl Wake for ActivityWake {
+    fn wake(self: Arc<Self>) {
+        self.notify();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.notify();
+    }
+}
+
+fn lock_activity_wake(state: &Mutex<ActivityWakeState>) -> MutexGuard<'_, ActivityWakeState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct JsonOwner(Option<Value>);
