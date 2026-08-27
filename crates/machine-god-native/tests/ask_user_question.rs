@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::future::Future;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{AssertUnwindSafe, catch_unwind, panic_any};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Condvar, Mutex, Weak, mpsc};
@@ -696,6 +696,154 @@ struct ReplayTargetARelease(Arc<ReplayTargetProbe>);
 impl Drop for ReplayTargetARelease {
     fn drop(&mut self) {
         self.0.release_a();
+    }
+}
+
+#[derive(Debug)]
+struct PrimaryCallbackPanic;
+
+#[derive(Debug)]
+struct SecondaryTargetPanic;
+
+#[derive(Debug)]
+struct SecondaryPayloadDropPanic;
+
+impl Drop for SecondaryTargetPanic {
+    fn drop(&mut self) {
+        panic_any(SecondaryPayloadDropPanic);
+    }
+}
+
+struct DualPanicReplayTarget {
+    probe: Arc<ReplayTargetProbe>,
+    teardown: Option<Waker>,
+}
+
+impl Wake for DualPanicReplayTarget {
+    fn wake(self: Arc<Self>) {
+        self.probe.callback_a();
+        panic_any(PrimaryCallbackPanic);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.probe.callback_a();
+        panic_any(PrimaryCallbackPanic);
+    }
+}
+
+impl Drop for DualPanicReplayTarget {
+    fn drop(&mut self) {
+        let teardown = self.teardown.take();
+        drop(teardown);
+    }
+}
+
+const REENTRANT_ACTIVATION_BUDGET: usize = 256;
+
+struct ReentrantActivationDriver {
+    commands: mpsc::Sender<ReentrantPollCommand>,
+    completed: Mutex<mpsc::Receiver<()>>,
+    retained: Mutex<Option<Waker>>,
+    calls: AtomicUsize,
+    in_flight: AtomicUsize,
+    max_in_flight: AtomicUsize,
+    remaining: AtomicUsize,
+}
+
+enum ReentrantPollCommand {
+    Poll(Waker),
+    DropExecution,
+}
+
+impl ReentrantActivationDriver {
+    fn new(commands: mpsc::Sender<ReentrantPollCommand>, completed: mpsc::Receiver<()>) -> Self {
+        Self {
+            commands,
+            completed: Mutex::new(completed),
+            retained: Mutex::new(None),
+            calls: AtomicUsize::new(0),
+            in_flight: AtomicUsize::new(0),
+            max_in_flight: AtomicUsize::new(0),
+            remaining: AtomicUsize::new(REENTRANT_ACTIVATION_BUDGET),
+        }
+    }
+
+    fn set_retained(&self, retained: Waker) {
+        let previous = self.retained.lock().unwrap().replace(retained);
+        drop(previous);
+    }
+
+    fn clear_retained(&self) {
+        let retained = self.retained.lock().unwrap().take();
+        drop(retained);
+    }
+
+    fn drop_execution(&self) {
+        self.commands
+            .send(ReentrantPollCommand::DropExecution)
+            .unwrap();
+        self.completed.lock().unwrap().recv().unwrap();
+    }
+
+    fn poll_outer(&self, waker: &Waker) {
+        self.commands
+            .send(ReentrantPollCommand::Poll(waker.clone()))
+            .unwrap();
+        self.completed.lock().unwrap().recv().unwrap();
+    }
+
+    fn callback(self: &Arc<Self>, wake: &Arc<ReentrantActivationWake>) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_in_flight.fetch_max(in_flight, Ordering::SeqCst);
+
+        let outer_waker = Waker::from(Arc::clone(wake));
+        self.poll_outer(&outer_waker);
+        let should_rewake = self
+            .remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok();
+        if should_rewake {
+            let retained = self.retained.lock().unwrap().as_ref().cloned();
+            if let Some(retained) = retained {
+                retained.wake_by_ref();
+            }
+        }
+
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn snapshot(&self) -> (usize, usize, usize, usize) {
+        (
+            self.calls.load(Ordering::SeqCst),
+            self.in_flight.load(Ordering::SeqCst),
+            self.max_in_flight.load(Ordering::SeqCst),
+            self.remaining.load(Ordering::SeqCst),
+        )
+    }
+}
+
+struct ReentrantActivationWake {
+    driver: Weak<ReentrantActivationDriver>,
+}
+
+impl ReentrantActivationWake {
+    fn callback(self: &Arc<Self>) {
+        if let Some(driver) = self.driver.upgrade() {
+            driver.callback(self);
+        }
+    }
+}
+
+impl Wake for ReentrantActivationWake {
+    fn wake(self: Arc<Self>) {
+        self.callback();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.callback();
     }
 }
 
@@ -2324,6 +2472,153 @@ fn replay_target_drop_close_suppresses_selected_replay_and_retains_capacity() {
 
     assert_eq!(teardown_handle.calls(), 1);
     assert_eq!(closed, (1, 0, 0, 1));
+}
+
+#[test]
+fn callback_panic_precedes_panicking_replay_target_payload_drop() {
+    let prompter = PromptWakerFanoutPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let probe = Arc::new(ReplayTargetProbe::default());
+    let teardown_entries = Arc::new(AtomicUsize::new(0));
+    let callback_entries = Arc::clone(&teardown_entries);
+    let (teardown, _teardown_handle) = reentrant_waker(Callback::Drop, move || {
+        callback_entries.fetch_add(1, Ordering::SeqCst);
+        panic_any(SecondaryTargetPanic);
+    });
+    let callback_owner = Arc::new(DualPanicReplayTarget {
+        probe: Arc::clone(&probe),
+        teardown: Some(teardown),
+    });
+    let original_host_waker = Waker::from(Arc::clone(&callback_owner));
+    drop(callback_owner);
+    let replay_host_waker = Waker::from(Arc::new(ReplayTargetB {
+        probe: Arc::clone(&probe),
+    }));
+    let mut first = Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
+
+    assert!(
+        first
+            .as_mut()
+            .poll(&mut Context::from_waker(&original_host_waker))
+            .is_pending()
+    );
+    let mut retained_wakers = prompter.take_wakers();
+    assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+
+    let wake_result = thread::scope(|scope| {
+        let _release_on_unwind = ReplayTargetARelease(Arc::clone(&probe));
+        let first_notification = retained_wakers[0].clone();
+        let publisher =
+            scope.spawn(move || catch_unwind(AssertUnwindSafe(|| first_notification.wake())));
+        probe.wait_until_a_entered();
+
+        assert!(
+            first
+                .as_mut()
+                .poll(&mut Context::from_waker(&replay_host_waker))
+                .is_pending()
+        );
+        retained_wakers[1].wake_by_ref();
+        drop(original_host_waker);
+        probe.release_a();
+        publisher.join().unwrap()
+    });
+
+    retained_wakers[2].wake_by_ref();
+    let fresh = probe.snapshot();
+    drop(first);
+    retained_wakers[3].wake_by_ref();
+    let closed = probe.snapshot();
+    assert_retained_prompt_capacity_recovers_after_last_clone(
+        &tool,
+        &prompter,
+        &prepared,
+        &mut retained_wakers,
+    );
+
+    let payload = wake_result.expect_err("dual-panic wake unexpectedly succeeded");
+    let callback_won = payload.is::<PrimaryCallbackPanic>();
+    let secondary_payload_drop_won = payload.is::<SecondaryPayloadDropPanic>();
+    let _payload_drop = catch_unwind(AssertUnwindSafe(|| drop(payload)));
+    assert!(callback_won, "callback panic lost deterministic precedence");
+    assert!(
+        !secondary_payload_drop_won,
+        "secondary panic-payload destruction replaced the callback panic"
+    );
+    assert_eq!(teardown_entries.load(Ordering::SeqCst), 1);
+    assert_eq!(fresh, (1, 1, 0, 1));
+    assert_eq!(closed, fresh);
+}
+
+#[test]
+fn one_notify_activation_has_one_replay_and_leaves_residual_pending_work() {
+    let prompter = PromptWakerFanoutPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let execution = tool.execute(context(), prepared.clone(), CancellationToken::new());
+    let (command_sender, command_receiver) = mpsc::channel();
+    let (completed_sender, completed_receiver) = mpsc::channel();
+    let driver = Arc::new(ReentrantActivationDriver::new(
+        command_sender,
+        completed_receiver,
+    ));
+    let host_wake = Arc::new(ReentrantActivationWake {
+        driver: Arc::downgrade(&driver),
+    });
+    let host_waker = Waker::from(Arc::clone(&host_wake));
+
+    let (first_activation, second_activation, closed) = thread::scope(|scope| {
+        let poller = scope.spawn(move || {
+            let mut execution = execution;
+            while let Ok(command) = command_receiver.recv() {
+                match command {
+                    ReentrantPollCommand::Poll(waker) => {
+                        assert!(
+                            execution
+                                .as_mut()
+                                .poll(&mut Context::from_waker(&waker))
+                                .is_pending(),
+                            "unpublished reentrant prompt unexpectedly completed"
+                        );
+                        completed_sender.send(()).unwrap();
+                    }
+                    ReentrantPollCommand::DropExecution => {
+                        drop(execution);
+                        completed_sender.send(()).unwrap();
+                        break;
+                    }
+                }
+            }
+        });
+
+        driver.poll_outer(&host_waker);
+        let mut retained_wakers = prompter.take_wakers();
+        assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+        driver.set_retained(retained_wakers[0].clone());
+
+        retained_wakers[1].wake_by_ref();
+        let first_activation = driver.snapshot();
+        retained_wakers[2].wake_by_ref();
+        let second_activation = driver.snapshot();
+
+        driver.clear_retained();
+        driver.drop_execution();
+        retained_wakers[3].wake_by_ref();
+        let closed = driver.snapshot();
+        assert_retained_prompt_capacity_recovers_after_last_clone(
+            &tool,
+            &prompter,
+            &prepared,
+            &mut retained_wakers,
+        );
+        poller.join().unwrap();
+        (first_activation, second_activation, closed)
+    });
+
+    assert_eq!(first_activation, (2, 0, 1, 254));
+    assert_eq!(second_activation, (4, 0, 1, 252));
+    assert_eq!(closed, second_activation);
 }
 
 #[test]
