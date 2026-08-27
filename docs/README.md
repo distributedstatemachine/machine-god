@@ -67,9 +67,17 @@ clones can independently forward concurrent blocking downstream callbacks
 while consuming one prompt slot. Cycle 6 must add an activity-backed single-
 flight coalescing notifier, lossless replay, stale-target close, capacity
 ownership through callback/clone teardown, and deterministic owned-future many-
-clone evidence. The slice is **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN
-PROGRESS**; a new complete gate, three fresh reviews, remote workflows,
-integration, and delivery remain pending. The normative boundary is
+clone evidence. Finding docs `7dee269`/`e20023c`, evidence
+`b007ada`/`4a929c4`, and source `0488d71`/`707a794` compose at exact behavior
+head `707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`. One shared notifier serializes
+delivery, coalesces concurrent notices into one replay, closes stale delivery,
+and retains the prompt slot through callback/final-clone ownership. The two
+deterministic 16-clone/replay and completion/close/capacity regressions pass.
+Focused, required pinned, extended, and unchanged release-smoke gates are
+green, including 34 direct tests. The slice is **CYCLE 6 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING**; three fresh reviews, remote workflows, integration,
+and delivery remain pending. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

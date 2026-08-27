@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-5 interaction and authority remediation
+## Slice 35 cycle-6 interaction and authority remediation
 
-Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2179,6 +2179,24 @@ Waker clones independently forward concurrent blocking downstream callbacks
 while consuming one prompt slot. Cycle 6 must use an activity-backed single-
 flight coalescing notifier, replay notifications without loss, close the stale
 downstream target, retain capacity until callback and clone ownership is gone,
-and add deterministic owned-future many-clone evidence. A new complete gate,
-three fresh reviews, remote workflows, integration, and delivery remain
-pending; no cycle-6 green result is claimed.
+and add deterministic owned-future many-clone evidence.
+
+Finding docs `7dee269`/`e20023c`, evidence `b007ada`/`4a929c4`, and source
+`0488d71`/`707a794` compose at exact behavior head
+`707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`. The shared activity notifier
+serializes downstream callbacks, represents a concurrent burst as one replay,
+closes the downstream target/replay before prompt destruction, and retains the
+permit through in-flight callback and final-clone teardown. Target clone/drop
+executes outside its state lock, and binding refuses the notifier's own Waker.
+The deterministic 16-clone coalescing/replay regression and completed-prompt
+stale-delivery/capacity regression are green.
+
+Independent `236dd90`/`94b9fdd3980a413c594538fc9222b09007518bce` passes
+direct 34, engine one, and native Clippy. The integrated focused, required
+pinned, Python 136/8, compatibility, dependency/audit 1,226/211/zero,
+portability, docs 91/318/701/534/0, protected/no-added-unsafe, and unchanged
+release/missing-root smoke gates are green. The authorized manifest/lock delta
+remains only the existing audited test helper and one native lock dependency-
+list line; production normal/build dependencies are unchanged. Three fresh
+reviews, remote workflows, integration, and delivery remain pending.

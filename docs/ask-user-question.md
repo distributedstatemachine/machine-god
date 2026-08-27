@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -181,9 +181,45 @@ callbacks while consuming one prompt slot. Cycle 6 must introduce an activity-
 backed single-flight coalescing notifier, allow at most one callback in flight,
 replay notifications without loss, close the stale downstream target, and
 retain capacity until callback and clone ownership is gone. Deterministic
-owned-future evidence must cover many retained clones. A new complete gate and
-three fresh reviewers follow remediation; no cycle-6 source, evidence, gate, or
-review result is claimed yet.
+owned-future evidence must cover many retained clones.
+
+## Cycle-6 implementation and local checkpoint
+
+Finding docs `7dee2694660b3d16340f20de272c6631abdcbcef`/`e20023c`, evidence
+`b007ada85ce58727ea5d38ab810495dc68e57ef0`/`4a929c4`, and source
+`0488d71e2ca1b6b0877d5dc5e1e29ce059f1c5ff` compose at exact behavior head
+`707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`. Independent cross-composition
+`236dd90`/`94b9fdd3980a413c594538fc9222b09007518bce` is green for 34 direct
+tests, one engine test, and native warnings-denied Clippy.
+
+One activity-backed notifier now shares the prompt and cancellation Waker
+family. It serializes downstream callback delivery, coalesces a concurrent or
+reentrant burst into one lossless replay, and closes its target and replay state
+when the prompt completes or the outer future drops. Target clone/drop occurs
+outside the state lock. Retained notifier clones and in-flight callbacks keep
+the originating prompt permit until their ownership ends. The deterministic
+`cloned_prompt_wakers_coalesce_blocking_callbacks_and_replay_once` regression
+wakes 16 retained clones concurrently and proves maximum callback concurrency
+one plus exactly one replay. The deterministic
+`completed_prompt_closes_retained_waker_delivery_until_every_clone_drops`
+regression proves stale post-completion delivery is closed and capacity remains
+held through callback return and final-clone drop.
+
+The integrated focused gate passes exact-1.94.1 formatting, direct 34, engine
+one, all-feature host nine, host lifecycle one, native manifest six, and native
+all-target/all-feature warnings-denied Clippy. All four pinned workspace gates
+are green. The extended gate passes Python 136 with eight skips, pinned drift,
+dependency policy/audit (1,226 advisories, 211 dependencies, zero
+vulnerabilities), native/FreeBSD/WASI portability with only the established
+unrelated WASI `read_file::check_cancellation` warning, documentation
+91/318/701/534/0, clean protected/no-added-unsafe checks, and fresh locked
+release/missing-root smoke. The 3,985,216-byte binary SHA-256 is
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The dev-only reentrant-Waker path dependency and one native lock dependency-
+list line remain the only authorized manifest/lock delta; production normal/
+build dependencies and the 211-dependency audit inventory are unchanged.
+Formal review, remote workflows, integration, and delivery remain pending.
 
 ## Product boundary
 

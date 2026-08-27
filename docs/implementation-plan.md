@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 5
-REJECTED — CYCLE 6 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 6 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -224,9 +224,32 @@ concurrent blocking downstream callbacks while consuming one prompt slot.
 Cycle 6 requires an activity-backed single-flight coalescing notifier, at most
 one callback in flight, lossless notification replay, stale-target close,
 capacity retention through callback/clone ownership, and deterministic owned-
-future many-clone evidence. A new complete gate, three fresh reviews, feature
-workflows, fast-forward integration, delivery, and exact `main` workflows
-remain pending. No cycle-6 component or green result is claimed.
+future many-clone evidence. Finding docs `7dee269`/`e20023c`, evidence
+`b007ada`/`4a929c4`, and source `0488d71` compose at exact behavior head
+`707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`; independent cross-composition
+`236dd90`/`94b9fdd3980a413c594538fc9222b09007518bce` is green for direct 34,
+engine one, and native Clippy. The shared activity notifier now permits one
+callback in flight, coalesces a concurrent burst into one replay, closes stale
+delivery, and retains capacity through callback/final-clone ownership. Two
+deterministic owned-future regressions cover 16-clone replay and completed-
+prompt stale delivery/capacity.
+
+The integrated focused gate is green for formatting, direct 34, engine one,
+all-feature host nine, host lifecycle one, native manifest six, and native all-
+target/all-feature warnings-denied Clippy. All four pinned workspace gates are
+green. The extended gate passes Python 136/8 skips, byte-stable pinned drift,
+dependency policy with established duplicate warnings, audit 1,226/211/zero,
+native no-default, WASI with only the established unrelated `read_file`
+warning, FreeBSD warnings-denied Clippy, docs 91/318/701/534/0, protected diff/
+no-added-unsafe, and fresh locked release/missing-root smoke. The release is
+3,985,216 bytes with SHA-256
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The authorized manifest/lock delta remains the existing audited test-only
+reentrant-Waker path dependency and one native lock dependency-list line;
+production normal/build dependencies are unchanged and audit remains 211.
+Three fresh reviews, feature workflows, fast-forward integration, delivery,
+and exact `main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4260,10 +4283,14 @@ were `0/0/0/0`; performance/resources and the deduplicated union were
 concurrent blocking downstream callbacks behind one prompt slot. Cycle-6
 remediation requires an activity-backed single-flight coalescing notifier,
 lossless replay, stale-target close, capacity ownership until callback/clone
-teardown, deterministic owned-future many-clone evidence, a new complete gate,
-and three fresh reviews. Remote workflows, integration, and delivery remain
-pending, and `vision` plus `read_tool_result` remain unimplemented, so this
-combined item remains unchecked. Slice 33
+teardown, and deterministic owned-future many-clone evidence. Finding docs
+`7dee269`/`e20023c`, evidence `b007ada`/`4a929c4`, and source
+`0488d71`/`707a794` compose at exact head `707a794`/`1e60299`; the 16-clone
+coalesced-replay and completed-prompt close/capacity regressions pass. Focused,
+required pinned, extended, and unchanged release-smoke gates are green. Three
+fresh reviews, remote workflows, integration, and delivery remain pending, and
+`vision` plus `read_tool_result` remain unimplemented, so this combined item
+remains unchecked. Slice 33
 `web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark
 workflows are green. Slice 34

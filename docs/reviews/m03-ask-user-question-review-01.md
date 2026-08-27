@@ -1,10 +1,10 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**. Formal cycle 5
+Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 5
 rejected its exact immutable candidate with one product resource/capacity
-finding. Cycle-6 source and deterministic evidence remediation, a new complete
-local gate, three fresh formal reviews, remote workflows, integration, and
-delivery remain pending.
+finding. Cycle-6 source and deterministic evidence now pass the complete local
+gate at the exact behavior head below. Three fresh formal reviews, remote
+workflows, integration, and delivery remain pending.
 
 ## Frozen lineage
 
@@ -82,6 +82,17 @@ delivery remain pending.
 - Formal cycle-5 candidate, **REJECTED**:
   `54b1aab5660e90096b95518bde4ebffb93f28fa6`, tree
   `54586d2256c8a3d2289b92bc9bc842eed9ce4d07`
+- Cycle-5 finding-documentation component:
+  `7dee2694660b3d16340f20de272c6631abdcbcef`, integrated as `e20023c`
+- Cycle-6 independent evidence component:
+  `b007ada85ce58727ea5d38ab810495dc68e57ef0`, integrated as `4a929c4`
+- Cycle-6 source component and exact behavior head:
+  `0488d71e2ca1b6b0877d5dc5e1e29ce059f1c5ff`, integrated as
+  `707a794230758374fa2dab6d65eaf27449c7c477`, tree
+  `1e60299e21f45079f4e8cf27468a28d1ab4fe227`
+- Independent cycle-6 cross-composition candidate:
+  `236dd90`, tree `94b9fdd3980a413c594538fc9222b09007518bce`, green for 34 direct
+  question tests, one engine test, and native warnings-denied Clippy
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -98,9 +109,10 @@ green. Formal cycle 4 nevertheless rejected exact candidate
 independent race evidence, and finding docs compose at `b870731`/`0b025f8`;
 its complete exact-1.94.1 local gate is green. Formal cycle 5 nevertheless
 rejected exact candidate `54b1aab`/`54586d2` with a deduplicated `0/0/1/0`
-union. Cycle-6 remediation, its complete local gate, three fresh exact-SHA
-reviews, exact feature workflows, fast-forward integration, and exact `main`
-workflows remain required.
+union. Cycle-6 finding docs, evidence, and source compose at exact behavior head
+`707a794`/`1e60299`; its complete exact-1.94.1 local gate is green. Three fresh
+exact-SHA reviews, exact feature workflows, fast-forward integration, and exact
+`main` workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -610,8 +622,78 @@ the stale downstream target must be closed; and configured capacity must remain
 held until callback and retained-clone ownership is gone. Deterministic
 owned-future evidence must exercise many independently retained clones and
 concurrent blocking downstream callbacks. The remediation must then pass a new
-complete local gate and three fresh exact-SHA review agents. No cycle-6 source,
-evidence, gate, or review result is claimed yet.
+complete local gate and three fresh exact-SHA review agents.
+
+## Cycle-6 implemented remediation and local implementation gate
+
+Cycle 6 implements the accepted resource correction without widening the first
+slice. One activity-backed notifier is shared by the prompt and cancellation
+futures. Its mutex-protected state owns the current downstream target, open/
+closed lifecycle, callback-in-flight bit, and one coalesced replay bit. A notice
+that arrives during a callback sets the replay bit and returns; callback return
+serially replays once against the current target when still open. Arbitrary
+target cloning and destruction occur outside the state lock. Binding ignores
+the notifier's own supplied Waker, and prompt completion or outer-future drop
+closes the target and clears replay before prompt destruction can emit a stale
+notice. The notifier retains the originating permit through every retained
+clone, target destruction, and in-flight callback return.
+
+Finding documentation `7dee2694660b3d16340f20de272c6631abdcbcef`, integrated
+as `e20023c`, independent evidence
+`b007ada85ce58727ea5d38ab810495dc68e57ef0`, integrated as `4a929c4`, and
+source `0488d71e2ca1b6b0877d5dc5e1e29ce059f1c5ff` compose at exact behavior
+head `707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`. Independent cross-composition
+candidate `236dd90`, tree `94b9fdd3980a413c594538fc9222b09007518bce`, is green
+for 34 direct question tests, one engine test, and native warnings-denied
+Clippy.
+
+Two deterministic owned-future regressions establish the new boundary:
+
+- `cloned_prompt_wakers_coalesce_blocking_callbacks_and_replay_once` wakes 16
+  independently retained clones concurrently, proves only one downstream
+  callback is ever in flight, and observes exactly one replay after release;
+- `completed_prompt_closes_retained_waker_delivery_until_every_clone_drops`
+  completes and drops the prompt while a callback is blocked, proves a stale
+  clone cannot deliver another callback, and proves capacity remains exhausted
+  until that callback returns and the last retained clone is dropped.
+
+The integrated focused gate is green for exact-1.94.1 formatting; 34 direct
+question tests; one question-engine test; nine all-feature reference-host
+tests; one reference-host lifecycle test; six native-manifest tests; and native
+all-target/all-feature warnings-denied Clippy.
+
+Exact behavior head `707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`, also passes the complete pinned
+gate under Rust and Cargo 1.94.1 exactly without fallback:
+
+- all four required formatting, workspace all-target/all-feature warnings-
+  denied Clippy, workspace test, and workspace doctest commands are green;
+- repo-wide Python passes 136 tests with eight intentional skips, and pinned
+  compatibility regeneration is byte-stable;
+- `cargo deny` passes with only the established duplicate-dependency warnings;
+  `cargo audit --no-fetch` loads 1,226 advisories, checks 211 dependencies, and
+  reports zero vulnerabilities;
+- native no-default compilation, the all-feature WASI library check, and
+  warnings-denied no-default FreeBSD Clippy are green; WASI emits only the
+  established unrelated `read_file::check_cancellation` dead-code warning;
+- documentation integrity reports 91 Markdown files, 318 fence markers, 701
+  parsed links, 534 local links, and zero missing targets;
+- the exact diff is clean, protected `.github`, benchmark, and compatibility
+  inputs are unchanged, and no Rust `unsafe` is added; and
+- a fresh locked release binary is 3,985,216 bytes with SHA-256
+  `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`;
+  isolated missing-root `--help`, `doctor --json`, and `sessions --json` smoke
+  checks pass without creating files.
+
+The authorized manifest/lock delta remains development-only: native tests use
+the existing audited `machine-god-reentrant-waker-test` path dependency, and
+only one native dependency-list line changes in `Cargo.lock`. The production
+normal/build dependency graph remains unchanged, and audit still covers 211
+dependencies. This checkpoint is regression and delivery evidence, not a
+benchmark, product-performance, compatibility-promotion, fx-equivalence,
+formal-review, integration, or delivery-completion claim. Three fresh exact-SHA
+formal reviews and both feature and `main` remote workflow gates remain pending.
 
 ## Deferred and nonclaim record
 

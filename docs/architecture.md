@@ -62,9 +62,15 @@ concurrent blocking downstream callbacks while consuming one prompt slot.
 Cycle 6 must replace that fan-out with an activity-backed single-flight
 coalescing notifier, replay notifications without loss, close the stale target,
 retain capacity through callback/clone teardown, and prove the boundary with a
-deterministic owned-future many-clone regression. The slice is **CYCLE 5
-REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**; a new complete gate and three
-fresh reviews remain pending. See
+deterministic owned-future many-clone regression. Finding docs
+`7dee269`/`e20023c`, evidence `b007ada`/`4a929c4`, and source
+`0488d71`/`707a794` compose at exact behavior head `707a794`, tree `1e60299`.
+One shared notifier now serializes delivery, coalesces concurrent notices into
+one replay, closes stale delivery, and retains activity through callback and
+final-clone teardown. Both deterministic many-clone regressions and the focused,
+required pinned, extended, and release-smoke gates are green. The slice is
+**CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; three fresh reviews remain
+pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2285,7 +2291,12 @@ activity-Waker clones can independently forward concurrent blocking downstream
 callbacks behind one prompt slot. Cycle 6 requires an activity-backed single-
 flight coalescing notifier, lossless replay, stale-target close, capacity
 ownership through callback/clone teardown, and deterministic owned-future many-
-clone evidence before a new complete gate and three fresh reviews.
+clone evidence. Cycle-6 docs `7dee269`/`e20023c`, evidence
+`b007ada`/`4a929c4`, and source `0488d71`/`707a794` compose at exact head
+`707a794`/`1e60299`. The activity-backed notifier serializes callback delivery,
+coalesces a burst into one replay, closes stale targets, and retains capacity
+through final clone drop. The two deterministic many-clone regressions and the
+complete local gate are green; formal review remains pending.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2313,5 +2324,6 @@ rejected exact candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
 `b761f7b93d535a1580910f43ff509c40aa07415b`, with a deduplicated `0/0/2/1`
 union. Cycle-5 source, evidence, and gate are established, but formal cycle 5
 rejected exact `54b1aab`/`54586d2` with a `0/0/1/0` union. Cycle-6 source,
-evidence, gate, fresh reviews, remote workflows, integration, and delivery
-remain unestablished.
+evidence, and complete local gate are established at `707a794`/`1e60299`.
+Fresh reviews, remote workflows, integration, and delivery remain
+unestablished.

@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 5 REJECTED — CYCLE 6
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 6 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -49,8 +49,16 @@ clones independently forward concurrent blocking downstream callbacks while
 consuming one prompt slot. Cycle 6 requires an activity-backed single-flight
 coalescing notifier, lossless replay, stale-target close, capacity retention
 through callback/clone ownership, and deterministic owned-future many-clone
-evidence. A new complete gate, three fresh exact-SHA reviews, remote workflows,
-integration, and delivery remain pending; no cycle-6 green result is claimed.
+evidence. Finding docs `7dee269`/`e20023c`, evidence `b007ada`/`4a929c4`, and
+source `0488d71`/`707a794` compose at exact head `707a794`, tree `1e60299`.
+One shared notifier serializes callbacks, coalesces one replay, closes stale
+delivery, and owns capacity through callback/final-clone teardown. Deterministic
+tests cover 16 concurrent retained clones and completed-prompt close/capacity.
+Independent `236dd90`/`94b9fdd` passes direct 34, engine one, and native Clippy.
+Focused, required pinned, extended, and unchanged release-smoke gates are
+green. The test-only helper/one lock-list-line delta remains explicit;
+production normal/build dependencies are unchanged. Three fresh exact-SHA
+reviews, remote workflows, integration, and delivery remain pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

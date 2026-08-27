@@ -83,9 +83,18 @@ blocking downstream callbacks while consuming one prompt slot. Cycle-6
 remediation must use an activity-backed single-flight coalescing notifier,
 replay notifications without loss, close the stale downstream target, retain
 capacity through callback/clone ownership, and add deterministic owned-future
-many-clone evidence before a new complete gate and three fresh reviews. The
-slice is **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**; no cycle-6
-source or green result is claimed.
+many-clone evidence. Finding docs `7dee269`/`e20023c`, evidence
+`b007ada`/`4a929c4`, and source `0488d71` compose at exact behavior head
+`707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`. One shared activity-backed
+notifier now permits at most one downstream callback, losslessly coalesces a
+concurrent burst into one replay, closes stale delivery, and retains capacity
+through in-flight callbacks and final-clone drop. Two deterministic tests cover
+16-clone concurrent replay and post-completion stale delivery/capacity. The
+focused, all four required pinned, extended, and unchanged release-smoke gates
+are green, including 34 direct question tests. The slice is **CYCLE 6 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**; three fresh reviews, remote workflows,
+integration, and delivery remain pending.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

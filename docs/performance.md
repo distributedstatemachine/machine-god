@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-5 question resource remediation
+## Slice 35 cycle-6 question resource remediation
 
-Status: **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -780,7 +780,29 @@ Cycle 6 must introduce one activity-backed single-flight coalescing notifier.
 At most one callback may be in flight, pending notifications must replay
 without loss, the stale downstream target must close, and capacity must remain
 held until callback and retained-clone ownership is gone. Deterministic owned-
-future evidence must cover many independently retained clones. The new complete
-gate, three fresh reviews, remote workflows, integration, and delivery remain
-pending; no cycle-6 component or green result is claimed. See
+future evidence must cover many independently retained clones.
+
+Finding docs `7dee269`/`e20023c`, evidence `b007ada`/`4a929c4`, and source
+`0488d71`/`707a794` compose at exact head
+`707a794230758374fa2dab6d65eaf27449c7c477`, tree
+`1e60299e21f45079f4e8cf27468a28d1ab4fe227`. The notifier's one mutex-protected
+state tracks target, lifecycle, callback-in-flight, and one replay bit. Notice
+bursts return after setting that bit while one callback remains in flight;
+callback return performs one serialized replay if still open. Completion/drop
+closes target and replay, and notifier ownership retains the permit through
+every callback and retained clone.
+
+`cloned_prompt_wakers_coalesce_blocking_callbacks_and_replay_once` wakes 16
+retained clones concurrently, proves maximum callback concurrency one, and
+observes exactly one replay. `completed_prompt_closes_retained_waker_delivery_until_every_clone_drops`
+proves no stale callback after completion and no capacity recovery until the
+blocked callback returns and final clone drops. Independent
+`236dd90`/`94b9fdd3980a413c594538fc9222b09007518bce` passes direct 34, engine
+one, and native Clippy. The integrated focused, all four pinned workspace,
+Python 136/8, pinned drift, dependency/audit 1,226/211/zero, portability, docs
+91/318/701/534/0, protected/no-unsafe, and unchanged release-smoke gates are
+green. The only manifest/lock delta remains the existing audited test-only
+helper and one native lock dependency-list line; production normal/build
+dependencies are unchanged. Three fresh reviews, remote workflows, integration,
+and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).

@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 5 REJECTED — CYCLE 6 REMEDIATION IN PROGRESS**;
+`ask_user_question` is **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -39,8 +39,15 @@ platform were `0/0/0/0`; performance/resources and the deduplicated union were
 concurrent blocking downstream callbacks while consuming one prompt slot.
 Cycle 6 must add an activity-backed single-flight coalescing notifier, lossless
 replay, stale-target close, retained capacity through callback/clone teardown,
-and deterministic owned-future many-clone evidence before a new complete gate
-and three fresh reviews. Remote delivery gates remain pending.
+and deterministic owned-future many-clone evidence. Finding docs
+`7dee269`/`e20023c`, evidence `b007ada`/`4a929c4`, and source
+`0488d71`/`707a794` compose at exact head `707a794230758374fa2dab6d65eaf27449c7c477`,
+tree `1e60299e21f45079f4e8cf27468a28d1ab4fe227`. The shared notifier now
+serializes callbacks, coalesces one lossless replay, closes stale delivery, and
+retains capacity through callback/final-clone teardown. The two deterministic
+many-clone regressions, 34 direct tests, one engine test, nine host tests, one
+host-lifecycle test, and the complete pinned/extended local gate are green.
+Three fresh reviews and remote delivery gates remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
@@ -758,8 +765,9 @@ candidate and findings are recorded above. Cycle-5 source and deterministic
 race evidence are composed at `b870731d25b81fb0dc643f99084a71d90c3ce7cf`,
 tree `0b025f8e42e18006a72d89becf0e395d35c91a57`, and the complete local gate is
 green. Formal cycle 5 rejected exact `54b1aab`/`54586d2` with a deduplicated
-`0/0/1/0` product resource/capacity finding. Cycle-6 remediation, a new complete
-gate, and three fresh reviews remain pending.
+`0/0/1/0` product resource/capacity finding. Cycle-6 docs, evidence, and source
+compose at `707a794`/`1e60299`; both deterministic many-clone tests and the
+complete local gate are green. Three fresh reviews remain pending.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1302,5 +1310,7 @@ exact-1.94.1 local gate is green. Formal cycle 5 rejected exact
 `54b1aab`/`54586d2` because independently forwarding arbitrary retained Waker
 clones can run concurrent blocking downstream callbacks behind one slot.
 Cycle-6 single-flight coalescing notification, lossless replay, target close,
-capacity ownership, many-clone evidence, a new gate, fresh reviews, remote
-workflows, integration, and delivery remain pending.
+capacity ownership, and many-clone evidence compose at exact
+`707a794`/`1e60299`; focused, required pinned, extended, and unchanged release-
+smoke gates are green. Fresh reviews, remote workflows, integration, and
+delivery remain pending.
