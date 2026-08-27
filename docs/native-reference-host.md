@@ -61,7 +61,8 @@ Every successful host contains:
 - `AiGatewayProvider` over one shared `Arc<dyn AiGatewayTransport>`;
 - `AskPermissionHandler` over an injected `Arc<dyn PermissionPrompter>`;
 - `AskUserQuestionTool` over an injected `Arc<dyn QuestionPrompter>`;
-- one concrete `Arc<FileSessionStore>` shared exactly with the engine and
+- one concrete `Arc<FileSessionStore>` shared exactly, through the same erased
+  `Arc<dyn SessionStore>`, with the engine, `ReadToolResultTool`, and
   `NativeSessionLifecycle`;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - an explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing; and
@@ -75,7 +76,8 @@ credential source.
 
 ## Tool catalog
 
-The engine registers exactly sixteen tools in deterministic alphabetical order:
+The engine registers exactly seventeen tools in deterministic alphabetical
+order:
 
 1. `ask_user_question`
 2. `copy_file`
@@ -88,17 +90,19 @@ The engine registers exactly sixteen tools in deterministic alphabetical order:
 9. `list_files`
 10. `open_file`
 11. `read_file`
-12. `rename_file`
-13. `terminal`
-14. `web_fetch`
-15. `web_search`
-16. `write_file`
+12. `read_tool_result`
+13. `rename_file`
+14. `terminal`
+15. `web_fetch`
+16. `web_search`
+17. `write_file`
 
 Thirteen tools use one retained workspace identity. `glob_files` consumes the
 original descriptor; the other twelve workspace tools, including `terminal`,
 receive identity-preserving clones. `ask_user_question` and `web_fetch` are
-rootless. `web_search` is backed by the configured AI Gateway network target
-and shared transport rather than a workspace descriptor.
+rootless. `read_tool_result` uses the engine's exact session-store allocation
+and has no workspace authority. `web_search` is backed by the configured AI
+Gateway network target and shared transport rather than a workspace descriptor.
 
 Catalog membership does not imply that every platform can complete every
 effect. Each tool still performs strict preparation, permission handling when
@@ -160,7 +164,7 @@ component detail.
 
 The reference host does not yet supply a full interactive CLI/TUI, persistent
 grant policy, alternate provider or credential selections, MCP/ACP/skill or
-subagent infrastructure, encrypted storage, non-Unix root hardening, or the
-remaining native tools tracked by the plan. Those additions must preserve the
+subagent infrastructure, encrypted storage, non-Unix root hardening, or native
+`vision`. Those additions must preserve the
 crate ownership and authority boundaries in [architecture.md](architecture.md)
 and [security.md](security.md).

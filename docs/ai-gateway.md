@@ -129,7 +129,8 @@ The accepted provider-neutral transcript projection is intentionally narrow:
   by one or more complete tool-call blocks, or just its single text block;
 - each tool message contains exactly one tool-result block whose call ID
   resolves uniquely to calls in the immediately preceding assistant group; and
-- a tool result uses that resolved call's tool name and serializes the complete
+- a tool result uses that resolved call's tool name and, subject only to the
+  conditional large-result projection below, serializes the complete
   `ToolOutput` as the Gateway text output value.
 
 Assistant calls are emitted as `tool-call` content with `toolCallId`,
@@ -145,6 +146,35 @@ Cheap message, tool, selected-model, and per-role content-count checks run while
 the iterative request guard is still armed and before any JSON traversal.
 Traversal then checks cancellation at every metadata value, tool, message,
 content block, and JSON node.
+
+### Conditional large-result projection
+
+Projection is enabled for one request only when that request's tool catalog
+advertises the exact tool name `read_tool_result`. Without that tool, every
+historical result retains the prior complete wire representation. With it, a
+compact serialized `ToolOutput` of at most 16,384 bytes also remains complete;
+the threshold is inclusive. A source larger than 16,384 bytes is represented
+by this compact JSON object as the Gateway tool-result `output.value`:
+
+```json
+{"type":"tool_result_preview","handle":"tool-result-sha256-<64 lowercase hexadecimal digits>","total_bytes":32768,"is_error":false,"read_more_with":"read_tool_result","preview":"<UTF-8 prefix>"}
+```
+
+Field order is exactly `type`, `handle`, `total_bytes`, `is_error`,
+`read_more_with`, and `preview`. `total_bytes` is the complete compact
+`ToolOutput` byte length, and `is_error` preserves its disposition. `preview`
+is the longest prefix of the original compact serialization whose raw length is
+at most 4,096 bytes; it always ends at a UTF-8 boundary and is not promised to
+be complete JSON. The independent wire budget and final body limit bound the
+complete escaped projection envelope.
+
+The opaque handle is content-bound to the request's session ID, session
+incarnation ID, resolved tool-call ID, and exact complete serialized output. Its
+strict external syntax is the fixed `tool-result-sha256-` prefix followed by 64
+lowercase hexadecimal digits. The matching session-backed range reader is
+specified in [`read-tool-result.md`](read-tool-result.md). Projection changes
+only this provider request; it neither replaces the complete durable transcript
+result nor writes a separate archive.
 
 ## Streaming response
 
@@ -254,9 +284,14 @@ call does not enlarge another call's argument budget. The request-side node
 budget aggregates inference metadata, tool schemas, message JSON blocks,
 historical call arguments, and tool-result content. Each response record and
 each reconstructed streamed argument parse receives a fresh node budget.
-Serialized historical tool results also share one cumulative request-projection
-budget while the body is built, so intermediate retained strings cannot each
-claim the full request allowance.
+Historical tool results use two independent cumulative budgets, each initialized
+to the encoded-request maximum. Every complete compact `ToolOutput` must fit and
+decrement the source budget before projection is considered. Its selected full
+or projected Gateway value then fits and decrements the separate wire budget.
+Projection therefore cannot admit an oversized source by shrinking its wire
+form, and an unprojected result does not merge the two charges. The final outer
+request serialization remains independently subject to the encoded-body limit,
+so intermediate retained strings cannot each claim the full allowance.
 
 ## Errors and cancellation
 

@@ -22,18 +22,18 @@ input; it is not a machine-god product language or runtime dependency.
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `35`
-- Delivered main: `6e02324fb8523a07ca69bb03cbed5ab4869f54d0`
-- Main CI: `33078240749` (`GREEN`)
-- Main Benchmark evidence: `33078240522` (`GREEN`)
-- Active branch: `agent/m03-docs-single-source`
-- Active phase: `M03 documentation single-source maintenance integrated (docs-only; no slice increment)`
-- Next gate: `run the exact local gate, then push and require exact-SHA feature and main CI`
+- Delivered main: `89cae2099a40078aacdfbc84e95dfbc75add03fe`
+- Main CI: `33082850231` (`GREEN`)
+- Main Benchmark evidence: `33082850219` (`GREEN`)
+- Active branch: `agent/m03-read-tool-result`
+- Active phase: `range-only read_tool_result in progress`
+- Next gate: `focused tests, then the exact local gate and adversarial review`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit.
 The Benchmark evidence run retained the required exact-SHA artifacts. This
-maintenance phase changes no product behavior, does not increment the delivered
-slice count, and is exempt from a new adversarial product review.
+active behavior slice remains undelivered until its complete gate, review, and
+exact remote evidence succeed.
 
 ## Architecture ownership
 
@@ -152,10 +152,11 @@ requires an explicit reviewed plan change.
 
 ### Remaining
 
-- Implement native `vision` and `read_tool_result`. Every authority-bearing
-  tool needs normalized preflight, exact policy/execution agreement, explicit
-  resource bounds, redacted diagnostics, cancellation/drop evidence, and
-  declared platform scope before integration.
+- Complete the in-progress range-only, session-backed `read_tool_result` slice
+  with conditional AI Gateway projection. After that tool, native `vision`
+  remains. Every authority-bearing addition needs normalized preflight, exact
+  policy/execution agreement, explicit resource bounds, redacted diagnostics,
+  cancellation/drop evidence, and declared platform scope before integration.
 - Complete top-level CLI ownership for `help`, `ask`, `status`, `permissions`,
   `models`, `doctor`, `session`, `sessions`, `resume`, `replay`, and `workspace`.
   Existing partial/delivered commands do not close the combined boundary.

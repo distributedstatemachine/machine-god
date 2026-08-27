@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
-use machine_god_core::{Engine, NetworkTarget};
+use machine_god_core::{Engine, NetworkTarget, SessionStore};
 
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
@@ -11,8 +11,9 @@ use crate::{
     AiGatewayProvider, AiGatewayTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
     AskUserQuestionTool, FileSessionStore, LoadedNativeConfig, NativeCredentialSourceKind,
     NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
-    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, TerminalTool, WebFetchTool,
-    WebSearchDeadline, WebSearchLimits, WebSearchTool, discover_ai_gateway_credential,
+    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalTool,
+    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
+    discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -299,7 +300,8 @@ impl NativeReferenceHost {
         &self.engine
     }
 
-    /// Returns the concrete store shared exactly with the composed engine.
+    /// Returns the concrete store shared exactly with the engine, result reader,
+    /// and session lifecycle.
     #[must_use]
     pub const fn session_store(&self) -> &Arc<FileSessionStore> {
         &self.session_store
@@ -377,8 +379,10 @@ impl NativeReferenceHost {
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
         let session_store = Arc::new(session_store);
-        let engine_session_store: Arc<dyn machine_god_core::SessionStore> =
-            Arc::clone(&session_store) as Arc<dyn machine_god_core::SessionStore>;
+        let engine_session_store: Arc<dyn SessionStore> =
+            Arc::clone(&session_store) as Arc<dyn SessionStore>;
+        let read_tool_result =
+            ReadToolResultTool::shared_session_store(Arc::clone(&engine_session_store));
         let engine = Engine::builder()
             .provider(provider)
             .shared_session_store(engine_session_store)
@@ -394,6 +398,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.list_files)
             .tool(workspace_tools.open_file)
             .tool(workspace_tools.read_file)
+            .tool(read_tool_result)
             .tool(workspace_tools.rename_file)
             .tool(terminal)
             .tool(web_fetch)

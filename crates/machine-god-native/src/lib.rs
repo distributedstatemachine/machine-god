@@ -41,6 +41,7 @@ mod grep_files;
 mod list_files;
 mod open_file;
 mod read_file;
+mod read_tool_result;
 #[cfg(all(
     feature = "ai-gateway-http",
     not(target_family = "wasm"),
@@ -58,6 +59,7 @@ mod session_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
 mod terminal;
+mod tool_result_projection;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
 mod web_search;
@@ -225,6 +227,10 @@ pub use open_file::{
 pub use read_file::{
     MAX_READ_FILE_BYTES, MAX_READ_FILE_PATH_BYTES, READ_FILE_TOOL_NAME, ReadFileTool,
     ReadFileToolOpenError, ReadFileToolOpenErrorKind,
+};
+pub use read_tool_result::{
+    READ_TOOL_RESULT_TOOL_NAME, ReadToolResultConfigError, ReadToolResultConfigErrorKind,
+    ReadToolResultLimits, ReadToolResultTool,
 };
 #[cfg(all(
     feature = "ai-gateway-http",
