@@ -255,6 +255,71 @@ This is a remediation-status record only. It does not assert that source and
 evidence components have been composed, name a replacement candidate or tree,
 claim a green local gate or review, or advance remote delivery.
 
+## Cycle 3 remediation and replacement gate
+
+Cycle-3 remediation was completed in three non-overlapping isolated worktrees.
+Documentation component `2bf62a332534844d9d50298d843e2da3f3bdb4e8`, tree
+`4554f012`, was integrated as `9e2ed710`. Independent evidence component
+`6a1543855b8e2f7d569369de886299156af05952`, tree `c74b58`, was integrated as
+`6ec06ed3`. Production component
+`44f13efe473ef3a92fce71a04bfdc57c7bdad2c3`, tree `372f466`, was integrated as
+`281f5e96`. Exact follow-up `62d0fe17e765b86be12efe8f99c96f871b47ba0c`,
+tree `0e6f94b`, preserves timeout priority for a non-output executor error that
+becomes ready after the deadline and narrows the public callback-tail wording.
+Every source worktree was clean before integration; every source worktree and
+temporary branch was removed and pruned immediately afterward.
+
+The exact replacement behavior head
+`62d0fe17e765b86be12efe8f99c96f871b47ba0c`, tree
+`0e6f94ba8bb822f3bf5dd0f7ab79c875214aa0fd`, passes its complete local gate
+under exact Rust and Cargo 1.94.1 without fallback:
+
+- all four required commands pass, including warnings-denied workspace
+  all-target/all-feature Clippy, 1,157 listed non-documentation Rust tests, and
+  two doctests;
+- the external terminal suite passes 24 portable cases and the native library
+  includes nine private terminal cases. Deterministic regressions cover
+  output-limit/deadline priority, timeout/error priority, literal tilde-prefixed
+  directories, blocked worker and deadline Waker leases, Linux overflow during
+  process-group cleanup, and ordinary-exit latency;
+- all 136 Python tests pass with eight expected macOS skips, while regeneration
+  against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` remains
+  byte-stable;
+- exact `cargo-deny` 0.20.2 accepts advisories, bans, licenses, and sources with
+  the three established duplicate warnings; `cargo-audit` loads 1,226
+  advisories, scans 211 lockfile dependencies, and reports no vulnerability;
+- Linux native-library and terminal-test checks and warnings-denied Clippy pass;
+  FreeBSD warnings-denied Clippy passes; WASI no-default and all-feature checks
+  pass with only the established unrelated `read_file` dead-code warning;
+- documentation integrity covers 89 maintained Markdown files, 312 fence
+  markers, 678 parsed links, and 515 repository-relative targets with zero
+  missing targets;
+- the exact 29-file base diff is +5,926/-193, adds no unsafe Rust, and leaves
+  workflows, benchmarks, compatibility data, the root manifest, and
+  `Cargo.lock` unchanged; and
+- a fresh locked 3,985,216-byte arm64 Mach-O release binary has SHA-256
+  `b515ce0951f44a1e30171ee69c400cb9e750430e3a9d4959028ab49a16a55383` and
+  passes help and isolated no-residue status smoke. The terminal boundary is
+  exercised through native and engine integration tests because it is not a
+  CLI subcommand.
+
+The composed implementation publishes an output-limit cause before process
+cleanup and lets that validated cause win a simultaneous deadline. Cancellation
+still has first priority; a ready non-output error after the deadline remains a
+timeout. Each worker or deadline callback holds a shared per-tool active lease
+until its Waker returns, so arbitrary blocking callbacks consume capacity and
+cannot accumulate outside the configured admission bound. Ordinary observed
+foreground exit sends TERM and immediate final KILL before reap rather than
+waiting through the cancellation grace. Only a component exactly equal to `~`
+is rejected. Public documentation explicitly excludes blocked host syscalls,
+synchronous executor poll/drop, and arbitrary callback tails from an
+unconditional wall-clock guarantee.
+
+This replacement gate makes no formal cycle-3 review or remote-delivery claim.
+The immutable review candidate and tree are recorded only after the gate record
+is committed, and three fresh product-review tracks must inspect that exact
+object.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in

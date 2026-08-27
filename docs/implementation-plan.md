@@ -64,9 +64,11 @@ unsafe Rust is forbidden. Private reference-host composition retains the non-
 Linux catalog entry and fails fixed unsupported at allowed execution before cwd
 lookup or spawn. It is not a sandbox and makes no PTY, durable-session, fx-
 equivalence, benchmark, or product-performance claim. Formal cycle 2 rejected
-its exact candidate with a deduplicated `0/2/1/2` union. Cycle-3 source,
-evidence, and documentation remediation is in progress; its replacement gate,
-fresh exact-SHA reviews, and remote delivery remain pending.
+its exact candidate with a deduplicated `0/2/1/2` union. Cycle-3 production,
+independent evidence, and documentation remediation is composed through exact
+behavior head `62d0fe17e765b86be12efe8f99c96f871b47ba0c`, tree `0e6f94b`.
+Its complete exact-1.94.1 replacement gate is green; an immutable candidate,
+three fresh exact-SHA reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -92,8 +94,11 @@ blocking Waker callback; avoid a mandatory TERM grace after ordinary foreground
 exit while retaining the leader through final signal dispatch; accept literal
 tilde-prefixed components such as `~cache` while rejecting exact `~`; and keep
 the public timeout claim conditional around blocking syscalls, executor poll/
-drop, and callbacks. Remediation does not establish a replacement candidate,
-gate, review result, or delivery.
+drop, and callbacks. Exact behavior head `62d0fe17`, tree `0e6f94b`, passes all
+four required commands with 1,157 non-documentation tests and two doctests,
+Python 136/8 skips, pinned-fx drift, dependency policy/audit, Linux/FreeBSD/WASI,
+documentation/diff/no-unsafe, and fresh release-binary gates green. This does
+not yet establish the immutable review candidate, review result, or delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
@@ -3960,9 +3965,16 @@ cycle-2 tracks rejected exact candidate `a566db2`, tree `785c084`, with a
 deduplicated `0 blocker / 2 high / 1 medium / 2 low` union covering
 deadline/output arbitration, bounded notification tails, normal-exit latency,
 tilde grammar, and public Rustdoc. Every finding is accepted; cycle-3
-remediation is in progress in non-overlapping source, evidence, and maintained-
-documentation tracks. That remediation status does not establish a replacement
-candidate, gate, review result, or remote delivery, so this combined item stays
+documentation `2bf62a3`, evidence `6a15438`, and production `44f13ef`
+components plus exact deadline-priority follow-up `62d0fe1` are composed. Every
+isolated worktree was cleaned after integration. The exact behavior head
+`62d0fe17`, tree `0e6f94b`, passes the complete exact-1.94.1 replacement gate:
+24 portable external terminal tests, nine private terminal tests, 1,157 total
+non-documentation Rust tests, two doctests, Python 136/8 skips, byte-stable
+pinned fx, dependency policy/audit, Linux/FreeBSD/WASI, 89/312/678/515
+documentation integrity, unchanged protected inputs, no added unsafe Rust, and
+fresh release smoke are green. The immutable cycle-3 candidate, three fresh
+reviews, and remote delivery remain pending, so this combined item stays
 unchecked. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
