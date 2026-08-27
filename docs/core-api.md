@@ -12,9 +12,22 @@ host requirement; the optional native AI Gateway HTTP transport requires a
 host-owned Tokio runtime. All public extension traits are object-safe, `Send`,
 and `Sync`.
 
-## Slice-33 `web_search` boundary
+## Slice-34 `terminal` process capability
 
-The in-progress native [`web_search` slice](web-search.md) requires no new core
+The in-progress native [`terminal` slice](terminal.md) extends the existing
+provider-neutral `Capability::Process` with exact `working_directory` and a
+`ProcessEnvironment { profile, sha256 }` identity. Core receives strings and a
+digest only; it gains no process, filesystem, environment, timer, or executor
+authority. Native effect-free preparation fixes `/bin/sh`, `[-c, command]`, the
+canonical workspace-relative cwd, and the bounded construction-snapshot digest
+before the existing critical-risk authorization. Allowed execution reparses the
+canonical arguments and derives the same immutable identity from tool state.
+The environment values, retained descriptor, process group, pipes, deadline
+guardian, threads, and cleanup remain wholly native.
+
+## Delivered slice-33 `web_search` boundary
+
+The delivered native [`web_search` slice](web-search.md) requires no new core
 provider event, provider-tool advertisement, permission mode, or ambient
 authority. The outer model receives an ordinary `ToolSpec`; its `ToolCall`
 passes through the existing registered-tool, strict-round, effect-free
@@ -43,8 +56,8 @@ a deduplicated `0/0/1/1`. Exact finish-envelope remediation component
 `dc79c8d`, tree `e2fed70`, and host-fixture component `9f6c474` are composed in
 exact precursor `2e9c44d`, tree `3e25daa`, which passes the complete replacement
 gate. Formal cycle 5 is green on exact `782aa54`, tree `b1ba692`, with a
-`0/0/0/0` union. Delivery workflows remain pending, so the slice has no delivery,
-performance, or fx-equivalence claim.
+`0/0/0/0` union. Exact delivery record `52b5885` passed feature and main
+CI/Benchmark workflows. The slice makes no performance or fx-equivalence claim.
 
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};

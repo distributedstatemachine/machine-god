@@ -106,11 +106,12 @@ directory.
 
 Safe standard Rust has no descriptor-relative `Command` cwd primitive on
 macOS, and unsafe Rust is forbidden by repository policy. The production system
-executor is therefore Linux-only in this slice. macOS, FreeBSD, WASI, and other
-targets compile the public contract and fail with the fixed unsupported
-category before filesystem lookup, environment inspection, thread creation, or
-spawn. A trusted injected `TerminalExecutor` may implement the same ownership
-contract for deterministic tests or a future separately reviewed helper.
+executor is therefore Linux-only in this slice. Its construction on macOS,
+FreeBSD, WASI, and other targets fails with the fixed unsupported category
+before filesystem lookup, environment inspection, thread creation, or spawn.
+The public contract remains portable, and a trusted injected `TerminalExecutor`
+may implement the same ownership contract on Unix for deterministic tests or a
+future separately reviewed helper.
 
 ## Fixed execution protocol
 
@@ -120,16 +121,25 @@ machine-god-selected startup file is loaded. Standard input is null. Standard
 output and error are independent pipes and are never claimed to preserve their
 cross-stream interleaving.
 
-The execution future and injected executor are inert until first poll. The
-system executor acquires one fail-fast concurrency permit immediately before
-creating its owned worker. The default active limit is four and the public hard
+The execution future and injected executor are inert until first poll. The tool
+acquires one fail-fast concurrency permit before cwd lookup and creates no
+worker when saturated. The default active limit is four and the public hard
 maximum is sixteen; saturation returns a retryable busy result without a queue,
-thread, or child. The absolute default deadline is 120 seconds and begins on
-first poll before cwd validation or capacity admission. Test construction may
-select 1 millisecond through 600 seconds.
+thread, or child. `TerminalTool::open` selects the 120-second/four-active
+defaults. `open_with_limits` selects the same fixed system executor with public
+validated bounds, and `with_executor` supplies a trusted executor plus those
+bounds. Accepted deadlines are 1 millisecond through 600 seconds.
 
-The child starts in a new process group. Two bounded readers drain stdout and
-stderr concurrently to prevent pipe deadlock. Across both streams, execution:
+The absolute deadline begins on first poll before capacity admission or cwd
+validation. After admission, one tool-owned condition-variable guardian wakes
+the outer future at the deadline independently of the executor. Therefore even
+a permanently pending injected executor is synchronously dropped at expiry.
+Failure to create that bounded guardian fails before executor construction or
+process spawn. Cancellation is checked again when the guardian becomes ready.
+
+The child starts in a new process group. One system worker owns it and two
+bounded readers drain stdout and stderr concurrently to prevent pipe deadlock.
+Across both streams, execution:
 
 - retains at most 64 KiB of raw output using deterministic head-and-tail
   retention;
@@ -165,8 +175,9 @@ The public successful protocol object is:
 ```
 
 `status` is one of `exited`, `signaled`, `timed_out`, or `output_limit`.
-`exit_code` is an integer only for ordinary exit and `signal` is an integer
-only when the direct child terminated by signal. Exit zero is the sole
+`exit_code` is an integer from 0 through 255 only for ordinary exit and
+`signal` is an integer from 1 through 255 only when the direct child terminated
+by signal. Reported duration is bounded by 600 seconds. Exit zero is the sole
 `ToolOutput` success. Nonzero exit, signal, deadline, and output limit return
 the same bounded structured object with `is_error: true`; these are command
 outcomes, not reflected operating-system diagnostics. Spawn, wait, pipe,
@@ -186,10 +197,18 @@ After commit, cancellation, timeout, output overflow, or future drop sends
 `SIGKILL` if necessary, reaps the direct child, closes pipes, joins readers and
 the worker, and releases the permit. After the direct child exits normally, the
 executor also terminates any remaining members of the original group before
-returning. No owned task, thread, descriptor, child, process-group member, or
-permit may outlive future drop. A descendant that deliberately escapes the
-group with `setsid`, and a process stuck in an uninterruptible kernel wait, are
-outside the claimed containment boundary.
+returning. Once stop is requested, each nonblocking reader performs at most 64
+additional 16 KiB reads, so a deliberately escaped descendant that retains and
+continuously writes a pipe cannot make join unbounded.
+
+No command resource, descriptor, child, original process-group member, reader,
+or permit survives output publication or future drop. An inline Waker may
+re-enter and consume the completed result on the worker or deadline-guardian
+thread itself; that thread cannot join itself, so only its resource-free
+notification callback tail may briefly outlive the consuming poll. Non-self
+paths join the thread. A descendant that deliberately escapes the group with
+`setsid`, and a process stuck in an uninterruptible kernel wait, remain outside
+the claimed containment boundary.
 
 ## Acceptance evidence
 

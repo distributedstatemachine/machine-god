@@ -11,7 +11,8 @@ from exact delivered base `52b5885f275c9f6f4f16b378f71780c29f2ebab2`.
 The frozen first slice implements only bounded foreground `exec`: fixed
 `/bin/sh -c`, descriptor-retained workspace cwd, exact environment-snapshot
 identity in the process capability, separate bounded stdout/stderr, deadline,
-cancellation, fail-fast concurrency, and process-group cleanup. Its system
+cancellation, fail-fast concurrency, an independent deadline guardian, and
+process-group cleanup. Its system
 executor is Linux-only. It adds no PTY, durable session, sandbox, CLI command,
 benchmark, product-performance, or fx-equivalence claim. See the
 [`terminal` contract](docs/terminal.md) and

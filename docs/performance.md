@@ -9,7 +9,11 @@ claim-ineligible. Its 32 KiB command, 4,096-byte/256-component cwd, bounded
 256 KiB environment snapshot, 64 KiB retained raw output, 1 MiB produced-output
 cutoff, 48 KiB serialized output, 120-second default deadline, default active
 limit four, and hard active limit sixteen are resource ceilings, not measured
-performance results. No benchmark workload changes in this slice. See
+performance results. Each admitted call owns at most one deadline-guardian
+thread; Linux system execution additionally owns one worker and two readers.
+Every nonblocking reader performs at most 64 additional 16 KiB reads after stop
+is requested. These are bounded ownership facts, not latency or throughput
+claims. No benchmark workload changes in this slice. See
 [`terminal.md`](terminal.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED**, unmeasured, and

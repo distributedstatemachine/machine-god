@@ -61,6 +61,18 @@ fx-equivalence, benchmark, or product-performance claim. Production,
 independent evidence, documentation, local gates, three fresh adversarial
 product review tracks, and remote delivery are pending.
 
+The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
+`ecf3e78`, production precursor `ea216db`, independent-evidence component
+`785b193`, lifecycle remediation `64a4850`, configurable-system component
+`13dfd28`, and expanded Linux-evidence component `ebc631e` compose locally
+through exact `59b069a84e7d4dc4d76ac65520b9045603cae8af`. The composition adds the
+exact process-environment capability, strict native tool, Linux system executor,
+portable injected seam, deadline guardian, bounded process-group/pipe lifecycle,
+fifteen-tool host catalog, 23 portable/private focused tests, and seven Linux-
+only system tests. Exact focused tests, all-feature host composition, Clippy,
+FreeBSD, WASI, and Linux cross-compilation checks are green; the complete same-
+SHA local gate, formal review, and delivery remain pending.
+
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334`. Its normative boundary is
@@ -3911,19 +3923,13 @@ gate:
   `read_tool_result`. Every authority-bearing tool requires normalized
   preflight, exact policy/execution agreement, resource bounds, redacted
   diagnostics, cancellation/drop tests, and platform scope stated before
-  integration. Slice 33 contract-freezes `web_search` from exact delivered base
-  `4ba9f5a` with one locally permissioned, required Perplexity worker request,
-  a dedicated native provider-executed decoder over the shared transport, the
-  exact resource/platform/deferred boundary in `web-search.md`, and initial
-  production/test/documentation composition. Cycle 2 rejected exact candidate
-  `399f5f7` with a reported `1/1/1/1` union. Formal cycle 3 rejected exact
-  candidate `aef6abe`, tree `5abcef3`, with a deduplicated `1/0/2/2`; remediation
-  is composed from exact isolated components `5d45dca` and `454f8fd`. Exact
-  precursor `b834205`, tree `f3557a5`, passes the complete gate; formal cycle 4
-  rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
-  remediation is pending.
-  It is not yet review-green, integrated, or delivered, so this combined item
-  remains unchecked and the remaining tools stay pending. The delivered
+  integration. Slice 33 `web_search` is delivered through exact record
+  `52b5885`; its feature and main CI/Benchmark workflows are green. Slice 34
+  contract-freezes the bounded foreground-`exec` subset of `terminal` from that
+  exact base. Production, independent evidence, lifecycle hardening, and the
+  fifteen-tool host composition are present through `59b069a`; complete exact
+  local gates, formal review, and delivery remain pending. This combined item
+  therefore stays unchecked. The delivered
   seventeenth slice supplies only `file_info`; production
   and 34 focused tests are present and green at code-and-test head `f228c06`,
   with review hardening bringing the focused total to 36 plus five private unit

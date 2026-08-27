@@ -1,6 +1,16 @@
 # Architecture
 
-Bounded Milestone 03 slice 33 is **IN PROGRESS** from exact delivered base
+Bounded Milestone 03 slice 34, native `terminal`, is **IN PROGRESS** from exact
+delivered base `52b5885`. Provider-neutral core gains only the exact
+`ProcessEnvironment` identity carried by `Capability::Process`; native owns the
+retained-root cwd walk, environment snapshot, fixed `/bin/sh`, process group,
+deadline guardian, worker/readers, output bounds, and cleanup. The system
+executor is Linux-only. The reference host composes fifteen alphabetical tools,
+thirteen backed by one original workspace descriptor plus twelve clones. This
+is a bounded foreground-exec subset, not a sandbox, PTY, durable terminal,
+performance result, or fx-equivalence claim. See [`terminal.md`](terminal.md).
+
+Bounded Milestone 03 slice 33 is **DELIVERED** from exact delivered base
 `4ba9f5afde89b9666fe9929bb81fbabcaa834334`. It adds native `web_search` without
 moving provider-executed semantics into provider-neutral core. The outer model
 still sees and calls an ordinary local `web_search` function tool; core performs
@@ -56,12 +66,12 @@ and `454f8fd` compose its remediation. Exact precursor `b834205`, tree
 composed from exact component `dc79c8d`, tree `e2fed70`, and host-fixture
 component `9f6c474`. Exact precursor `2e9c44d`, tree `3e25daa`, passes the
 complete replacement gate. Formal cycle 5 is green on exact `782aa54`, tree
-`b1ba692`, with a `0/0/0/0` union. The candidate is review-green but not yet
-integrated or delivered, the delivered count remains 32, and no performance or
-fx-equivalence claim is made. Exact input,
+`b1ba692`, with a `0/0/0/0` union. Delivery record `52b5885` passed exact
+feature and main CI/Benchmark workflows; the delivered count is 33 and no
+performance or fx-equivalence claim is made. Exact input,
 DNS normalization, permission, provider identity, resources, platform scope,
 and deferrals are frozen in [`web-search.md`](web-search.md), with status in the
-[`slice-33 ledger`](reviews/m03-web-search-review-01.md). A candidate host has
+[`slice-33 ledger`](reviews/m03-web-search-review-01.md). The delivered host has
 fourteen alphabetical tools: twelve descriptor-backed workspace tools plus
 rootless `web_fetch` and Gateway-backed `web_search`.
 

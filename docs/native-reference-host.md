@@ -5,10 +5,10 @@ Status: **DELIVERED** through slice-33 `web_search`; slice-34 `terminal` is
 The delivered composition contains fourteen alphabetical tools: twelve
 workspace-backed tools share one original retained descriptor plus eleven
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
-`web_search` own no workspace descriptor. Slice 34 will insert workspace-backed
-`terminal` after `rename_file` and before `web_fetch`, producing fifteen tools
-and thirteen descriptor-backed tools. Its Linux system executor is the only
-platform-default process implementation in this slice. See
+`web_search` own no workspace descriptor. The slice-34 candidate inserts
+workspace-backed `terminal` after `rename_file` and before `web_fetch`,
+producing fifteen tools and thirteen descriptor-backed tools. Its Linux system
+executor is the only platform-default process implementation in this slice. See
 [`terminal.md`](terminal.md) and the
 [`slice-34 ledger`](reviews/m03-terminal-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
@@ -721,7 +721,7 @@ this order:
 1. validate the loaded permission, provider, transport, and credential-source
    selections;
 2. open the existing absolute workspace once and retain that directory
-   identity for the twelve workspace-backed candidate tools;
+   identity for the thirteen workspace-backed candidate tools;
 3. open the existing absolute session root as `FileSessionStore`;
 4. consume the injected `AiGatewayCredentialEnvironment` and discover one
    validated bearer token under its existing precedence rules;
@@ -732,9 +732,10 @@ this order:
 7. wrap the injected prompter in `AskPermissionHandler`; and
 8. build `Engine` with exactly `copy_file`, `create_folder`, `delete_file`,
    `edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
-   `open_file`, `read_file`, `rename_file`, rootless `web_fetch`, Gateway-backed
-   rootless `web_search`, and `write_file`, default `EngineLimits`, and the
-   default `NoopEventSink`; core's catalog exposes those fourteen names in
+   `open_file`, `read_file`, `rename_file`, workspace-backed `terminal`,
+   rootless `web_fetch`, Gateway-backed rootless `web_search`, and `write_file`,
+   default `EngineLimits`, and the default `NoopEventSink`; core's catalog
+   exposes those fifteen names in
    deterministic alphabetical order.
 
 The non-secret workspace and session roots are therefore opened before
@@ -746,9 +747,9 @@ endpoint and HTTP/TLS/status/cancellation policy.
 
 The workspace is opened once with the existing Linux/macOS final-component
 no-follow and authoritative directory checks. One retained descriptor remains
-with one tool and eleven descriptor clones of the same opened directory object
-feed the other eleven workspace-backed tools. The candidate engine registers
-exactly the fourteen alphabetical tools listed above; rootless `web_fetch` and
+with one tool and twelve descriptor clones of the same opened directory object
+feed the other twelve workspace-backed tools. The candidate engine registers
+exactly the fifteen alphabetical tools listed above; rootless `web_fetch` and
 Gateway-backed `web_search` receive no workspace descriptor. It discovers or
 registers no other tool.
 This shared retained identity prevents separate path opens from selecting
@@ -771,10 +772,10 @@ from `LoadedNativeConfig` or native status.
 `compose_with_ai_gateway_transport` is a trusted authority override. It still
 requires the same validated `ask` / `vercel_ai_gateway` / `ai_gateway_http`
 selection, opens the same workspace and session-store authorities, constructs
-the same provider and permission adapter, registers the same fourteen candidate
-tools including rootless `web_fetch` and Gateway-backed `web_search`, retains
-one original descriptor plus
-eleven clones for exactly twelve workspace-backed tools, and uses the same
+the same provider and permission adapter, registers the same fifteen candidate
+tools including workspace-backed `terminal`, rootless `web_fetch`, and
+Gateway-backed `web_search`, retains one original descriptor plus twelve clones
+for exactly thirteen workspace-backed tools, and uses the same
 default engine limits and no-op sink. It deliberately
 performs no
 credential discovery and does not construct `AiGatewayHttpTransport`.

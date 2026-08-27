@@ -7,6 +7,34 @@ Slice 34 begins from exact delivered base
 [`../terminal.md`](../terminal.md). It implements only bounded foreground
 `exec`; every other pinned-fx terminal action remains deferred.
 
+## Initial composition
+
+The review-exempt frozen-contract checkpoint is exact `79ae1b7`. Exact isolated
+host component `ecf3e78c4abc70bb4f3329a6f8dffa9237ff130b`, production precursor
+`ea216db80cb38601da268d84dd05b962c802c5df`, independent-evidence component
+`785b193e2735401ffd3966ed6ef84db637891d59`, and lifecycle remediation
+`64a48504275afc0e6989cee03eeeeb8174267225` are followed by configurable-system
+component `13dfd28b9f49424c5272545b7ce6ceb75f445b92` and expanded Linux-evidence
+component `ebc631e136bd052a41ff104534b5ecc0d5613d93`. They compose through local
+exact `59b069a84e7d4dc4d76ac65520b9045603cae8af`.
+
+Early independent evidence found that an inline reentrant Waker makes the
+literal no-thread-tail wording impossible: a worker cannot join itself from its
+own callback. The accepted invariant is stronger where it matters. Every child,
+original process-group member, pipe, reader, descriptor, and capacity permit is
+cleaned before publication; only the resource-free notification callback tail
+may self-detach. Non-self paths join. Production also remediated pre-spawn
+deadline, reader-join, escaped-writer, exit/signal-range, duration, pending-
+executor deadline, cancellation-precedence, and portability gaps before any
+formal candidate.
+
+Exact focused evidence is green for four private limit/deadline/outcome tests,
+nineteen portable contract/lifecycle tests, two engine permission/durability
+tests, one unsupported-platform test, two workspace clone/failure tests, and
+eight reference-host tests. Seven real Linux process tests compile and await
+Linux execution. The complete exact candidate gate and formal review have not
+begun.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in

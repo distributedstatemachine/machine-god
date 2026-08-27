@@ -6,7 +6,12 @@ exec boundary requires exact process capability identity before one fixed
 starting directory; this is explicitly not a sandbox, and an approved command
 may exercise host authority available to the machine account. The production
 system executor is Linux-only, output/time/concurrency are bounded, and
-cancellation/drop own process-group termination and reaping. See
+cancellation/drop own process-group termination and reaping. One independent
+deadline guardian prevents a pending injected executor from disabling timeout.
+An escaped `setsid` descendant is outside process-group containment, while
+bounded post-stop reads prevent its retained pipe from blocking cleanup. Only a
+resource-free inline-Waker callback tail may self-detach; command resources and
+capacity are released before publication. See
 [`terminal.md`](terminal.md).
 
 Bounded slice 33, native `web_search`, is **DELIVERED**. Its composed behavior precursor

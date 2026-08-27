@@ -5,7 +5,8 @@ from exact delivered base `52b5885f275c9f6f4f16b378f71780c29f2ebab2`.
 It freezes only bounded foreground `exec`: fixed `/bin/sh -c`, a descriptor-
 retained workspace-relative starting directory, exact environment-snapshot
 identity in the process capability, bounded separate stdout/stderr, timeout,
-cancellation, fail-fast concurrency, process-group cleanup, and a Linux-only
+cancellation, fail-fast concurrency, an independent deadline guardian,
+process-group cleanup, and a Linux-only
 system executor. It adds no PTY, durable session, sandbox, CLI command,
 benchmark, product-performance, or fx-equivalence claim. See the
 [`terminal` contract](terminal.md) and
