@@ -26,18 +26,12 @@ WEB_SEARCH_SOURCE = (
 )
 CLI_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-cli" / "Cargo.toml"
 NON_WASM_CFG = 'cfg(not(target_family = "wasm"))'
-SHA2_DEFAULT_NATIVE_CFG = 'cfg(any(target_os = "linux", target_os = "macos"))'
-SHA2_WEB_FETCH_ONLY_NATIVE_CFG = (
-    'cfg(all(not(target_family = "wasm"), '
-    'not(any(target_os = "linux", target_os = "macos"))))'
-)
 MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
     "hickory-proto",
     "hickory-resolver",
     "hyper",
     "reqwest",
     "rustls",
-    "sha2",
     "tokio",
     "webpki-root-certs",
 }
@@ -65,21 +59,16 @@ class NativeManifestTests(unittest.TestCase):
         self.assertTrue(cli_tokio["workspace"])
         self.assertEqual(cli_tokio["features"], ["signal"])
 
-    def test_web_fetch_sha2_is_optional_and_feature_gated(self) -> None:
+    def test_sha2_is_unconditional_for_terminal_environment_identity(self) -> None:
         features = self.manifest["features"]
         self.assertIn("web-fetch-http", features)
         self.assertIn("web-fetch-http", features["ai-gateway-http"])
-        self.assertEqual(
-            [entry for entry in features["web-fetch-http"] if "sha2" in entry],
-            ["dep:sha2"],
-        )
-        self.assertEqual(
-            [
-                entry
-                for entry in features["ai-gateway-model-catalog-http"]
-                if "sha2" in entry
-            ],
-            ["dep:sha2"],
+        self.assertFalse(
+            any(
+                "sha2" in entry
+                for feature in features.values()
+                for entry in feature
+            )
         )
 
         target_tables = self.manifest["target"]
@@ -89,10 +78,7 @@ class NativeManifestTests(unittest.TestCase):
             for entry in features["web-fetch-http"]
             if entry.startswith("dep:")
         }
-        self.assertLessEqual(
-            feature_dependencies - {"sha2"},
-            set(non_wasm_dependencies),
-        )
+        self.assertLessEqual(feature_dependencies, set(non_wasm_dependencies))
         self.assertNotIn("sha2", non_wasm_dependencies)
 
         dependency_tables = [
@@ -117,21 +103,15 @@ class NativeManifestTests(unittest.TestCase):
             sha2_placements,
             [
                 (
-                    "target",
-                    SHA2_DEFAULT_NATIVE_CFG,
+                    "dependencies",
+                    None,
                     "sha2",
                     {"workspace": True},
-                ),
-                (
-                    "target",
-                    SHA2_WEB_FETCH_ONLY_NATIVE_CFG,
-                    "sha2",
-                    {"workspace": True, "optional": True},
                 ),
             ],
         )
 
-    def test_web_fetch_sha2_dependency_tree_is_feature_scoped(self) -> None:
+    def test_terminal_sha2_dependency_tree_is_target_and_feature_neutral(self) -> None:
         def direct_dependencies(
             target: str, *feature_arguments: str
         ) -> set[str]:
@@ -166,25 +146,18 @@ class NativeManifestTests(unittest.TestCase):
                 if line
             }
 
-        for target in ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]:
-            self.assertIn("sha2", direct_dependencies(target))
-            self.assertIn(
-                "sha2",
-                direct_dependencies(target, "--features", "web-fetch-http"),
-            )
-
-        for target in ["x86_64-unknown-freebsd", "x86_64-pc-windows-msvc"]:
-            self.assertNotIn("sha2", direct_dependencies(target))
-            self.assertIn(
-                "sha2",
-                direct_dependencies(target, "--features", "web-fetch-http"),
-            )
-
-        for feature_arguments in [(), ("--features", "web-fetch-http")]:
-            self.assertNotIn(
-                "sha2",
-                direct_dependencies("wasm32-wasip1", *feature_arguments),
-            )
+        for target in [
+            "x86_64-unknown-linux-gnu",
+            "aarch64-apple-darwin",
+            "x86_64-unknown-freebsd",
+            "x86_64-pc-windows-msvc",
+            "wasm32-wasip1",
+        ]:
+            for feature_arguments in [(), ("--features", "web-fetch-http")]:
+                self.assertIn(
+                    "sha2",
+                    direct_dependencies(target, *feature_arguments),
+                )
 
     def test_model_catalog_http_feature_omits_web_fetch_dependencies(self) -> None:
         features = self.manifest["features"]

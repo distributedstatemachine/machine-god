@@ -267,15 +267,17 @@ The CLI enables only `ai-gateway-model-catalog-http`. Its resolved native
 feature graph contains the shared bearer/TLS and catalog HTTP dependencies plus
 Hickory's system-configuration support and its transitive protocol, network,
 and Moka cache dependencies. The narrow catalog feature activates direct
-optional `hickory-proto`, `hickory-resolver`, and `sha2` edges; the resolver dependency
+optional `hickory-proto` and `hickory-resolver` edges; the resolver dependency
 is retained only for bounded platform-configuration parsing and no longer
-enables its Tokio resolver integration. Reqwest's built-in `hickory-dns`
-feature is disabled. The graph does not activate generation-only direct `bytes`
-or `web-fetch-http`, and it still omits Tokio's signal backend. The CLI
-dependency, not native catalog HTTP, requests Tokio signal handling. Existing
-consumers of `ai-gateway-http` retain direct `bytes`, the catalog feature, and
-`web-fetch-http`; this topology change does not alter generation-transport
-behavior and makes no performance claim.
+enables its Tokio resolver integration. `sha2` is now an unconditional native
+dependency because the later terminal slice needs environment-snapshot identity
+in every feature topology; the catalog feature does not activate it. Reqwest's
+built-in `hickory-dns` feature is disabled. The graph does not activate
+generation-only direct `bytes` or `web-fetch-http`, and it still omits Tokio's
+signal backend. The CLI dependency, not native catalog HTTP, requests Tokio
+signal handling. Existing consumers of `ai-gateway-http` retain direct `bytes`,
+the catalog feature, and `web-fetch-http`; this topology change does not alter
+generation-transport behavior and makes no performance claim.
 
 Catalog production sends one bodyless HTTP/1.1 GET to
 `https://ai-gateway.vercel.sh/coding-agent/v1/models`. Its application-selected
