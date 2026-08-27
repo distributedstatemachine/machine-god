@@ -467,6 +467,72 @@ This gate makes no formal cycle-4 review or remote-delivery claim. Three fresh
 product-review tracks must identify the immutable candidate and tree recorded
 after this gate result is committed.
 
+## Formal cycle 4 review
+
+Three fresh adversarial product tracks reviewed exact candidate
+`105259befa46a26e2854820a60bfbbec0c7e39bb`, tree
+`003262f0167e4a3eedbc5b2c55211b386db82986`, and **REJECTED** it:
+
+- correctness, public API, schema, capability, and engine integration reported
+  `0/2/0/0`;
+- native process, cancellation, lifecycle, and platform behavior reported
+  `0/2/1/0`; and
+- performance, concurrency, memory/output bounds, and resource ownership
+  reported `0/1/1/1`.
+
+The performance track's low-severity wording discrepancy and the lifecycle
+track's medium-severity early activity release are the same underlying defect.
+After overlap deduplication at the higher severity, the union is
+`0 blocker / 2 high / 2 medium / 0 low`:
+
+1. **High:** the outer cancellation future is polled with the raw caller Waker.
+   Since cancellation invokes registered Wakers inline, a blocking cancellation
+   callback can outlive a concurrent completion and escape execution-activity
+   accounting. Repeated calls can accumulate callback threads and stacks beyond
+   configured capacity.
+2. **High:** after output limit claims the shared cause, executor cleanup may
+   still fail with a specific wait or pipe error. Before the deadline that error
+   is preserved, but after the deadline the guardian converts it to a generic
+   executor invariant. Classification therefore depends on elapsed time after
+   an already-linearized cause rather than on one documented precedence.
+3. **Medium:** each transparent activity Waker clone forwards independently.
+   One contract-valid injected executor can clone the supplied Waker and start
+   arbitrarily many simultaneous blocking callbacks. Those callbacks retain one
+   activity count but still create unbounded threads and stacks for one admitted
+   execution, contradicting the configured-capacity resource bound.
+4. **Medium:** the explicit final activity drop releases capacity before bounded
+   rendering, the last cancellation check, and public return. Maintained text
+   and acceptance evidence say the outer call owns the activity through return,
+   while an existing test encodes release before publication.
+
+All findings are accepted. Cycle-5 replacement uses one shared activity-backed
+coalescing notifier for every terminal-owned Waker registration: cancellation,
+injected/system executor polling, and deadline notification. Retained clones
+keep the activity, but at most one underlying caller-Waker callback is in flight
+for an execution; concurrent notifications coalesce without holding internal
+locks across arbitrary clone, drop, or wake behavior. An output-limit claim
+closes out timeout competition but does not fabricate an output-limit result:
+successful cleanup publishes the validated output-limit outcome, while cleanup
+failure preserves its specific typed error on either side of the deadline.
+Cancellation remains first. The outer activity remains owned through bounded
+rendering, the final cancellation check, and function return.
+
+Each review worktree remained read-only and clean. Every cycle-4 review
+worktree and temporary branch was removed and pruned immediately after its
+verdict. Cycle 5 requires non-overlapping source, independent-evidence, and
+maintained-documentation remediation, a complete replacement gate, and three
+fresh exact-SHA reviews.
+
+## Cycle 5 remediation in progress
+
+Cycle-5 remediation is split across isolated worktrees. Production owns the
+shared coalescing notifier, unified registration path, stable cleanup-error
+precedence, and through-return activity lifetime. Independent evidence owns
+deterministic public saturation/recovery and callback-fan-out regressions.
+Maintained documentation owns the exact notifier, precedence, and publication
+contract. This is a remediation-status record only: it does not assert composed
+behavior, a green gate or review, or remote delivery.
+
 ## Required composition
 
 Production, independent tests, and maintained documentation are owned in

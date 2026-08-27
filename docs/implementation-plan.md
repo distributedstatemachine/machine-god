@@ -71,7 +71,12 @@ Its complete exact-1.94.1 replacement gate was green. Formal cycle 3 rejected
 exact candidate `3215b9e`, tree `3fafcad`, with a deduplicated `0/2/2/0` union.
 Cycle-4 documentation `0aba476`, evidence `99ed96e`, and production `b204217`
 components are composed through exact behavior head `4fda235`, tree `6907c27`.
-The complete exact-1.94.1 replacement gate is green. An immutable candidate,
+The complete exact-1.94.1 replacement gate is green. Formal cycle 4 rejected
+exact candidate `105259b`, tree `003262f`, with a deduplicated `0/2/2/0`
+union. Cycle-5 remediation covers a single activity-backed coalescing notifier
+for cancellation, executor, and deadline registrations; stable typed cleanup-
+error precedence after an output-limit claim; and activity ownership through
+bounded publication and public return. A replacement gate, immutable candidate,
 three fresh exact-SHA reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
@@ -112,8 +117,15 @@ execution activity and linearized output-limit/timeout cause pass the complete
 replacement gate: focused 27/12/2/1 terminal suites, 1,163 non-doc Rust tests,
 two doctests, Python 136/8 skips, pinned fx, dependency policy/audit, Linux/
 FreeBSD/WASI, 89/312/678/515 documentation integrity, protected/no-unsafe, and
-fresh release smoke are green. This does not establish the immutable candidate,
-review result, or delivery.
+fresh release smoke are green. Formal cycle 4 rejected exact candidate
+`105259befa46a26e2854820a60bfbbec0c7e39bb`, tree `003262f`, with a
+deduplicated `0 blocker / 2 high / 2 medium / 0 low` union. The accepted
+cycle-5 replacement coalesces all terminal-owned Waker registrations behind one
+activity-backed notifier with one underlying callback in flight, preserves a
+specific executor cleanup error after an output-limit cause closes timeout
+competition, and retains the outer activity through bounded publication and
+return. Cycle 5 has not yet established composition, a replacement gate,
+candidate, review result, or delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
