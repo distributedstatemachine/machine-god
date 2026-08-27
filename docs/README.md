@@ -26,8 +26,11 @@ independently retained supplied Waker able to deliver to the stale host target.
 Cycle-7 frame-owned RAII closes notification on normal return, pending future
 drop, and unwind without releasing activity owned by a retained supplied-Waker
 clone. Exact behavior head `9810ee9`, tree `cf7390e`, passes the complete exact-
-1.94.1 replacement gate. The immutable candidate, formal review, remote
-delivery, product-performance, and fx-equivalence claims remain pending. See the
+1.94.1 replacement gate. Formal cycle 7 is **GREEN** on exact candidate
+`3f07389`, tree `f048cdc`:
+correctness/API, lifecycle/platform, and performance/resources each reported
+`0/0/0/0`. Remote delivery remains pending; no product-performance or fx-
+equivalence claim is made. See the
 [`terminal` contract](terminal.md) and
 [`live review ledger`](reviews/m03-terminal-review-01.md).
 

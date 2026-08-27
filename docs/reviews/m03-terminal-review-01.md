@@ -823,6 +823,36 @@ This gate makes no formal cycle-7 review or remote-delivery claim. Three fresh
 product-review tracks must identify the immutable candidate and tree recorded
 after this gate result is committed.
 
+## Formal cycle 7 review
+
+Three fresh read-only adversarial product tracks reviewed exact candidate
+`3f0738901466068d6b3bfb5f4fc387bf07a54857`, tree
+`f048cdc724fc4fb09de7eb236754e72858b1baca`, and are **GREEN**:
+
+- correctness, public API, schema, capability, and engine integration reported
+  `0/0/0/0`;
+- native process, cancellation, lifecycle, and platform behavior reported
+  `0/0/0/0`; and
+- performance, concurrency, memory/output bounds, and resource ownership
+  reported `0/0/0/0`.
+
+The deduplicated union is
+`0 blocker / 0 high / 0 medium / 0 low`. Correctness additionally passed 300
+repetitions each of the public outer-drop, private frame-drop, and private
+unwind regressions. Lifecycle passed 200 repeated drop/unwind/replay stress
+iterations plus Linux, FreeBSD, and WASI focused portability checks.
+Performance passed 600 retained-Waker outer-drop stress repetitions. Every
+track passed the exact focused 33 external, 21 private, two engine, and one
+unsupported-platform suites relevant to its scope; correctness also passed
+reference-host and workspace-composition evidence.
+
+Every cycle-7 review worktree remained read-only and clean at the exact
+candidate. Each worktree and temporary branch was removed and pruned
+immediately after its verdict; only the primary worktree remains. This
+documentation-only result record is review-exempt under the user's instruction:
+it records review of `3f07389` / `f048cdc` and does not imply that the record
+commit itself was reviewed. Remote delivery remains pending.
+
 ## Delivery gate
 
 Only a review-green exact candidate may be pushed as the feature branch. Its

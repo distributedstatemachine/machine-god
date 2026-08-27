@@ -91,8 +91,9 @@ an independently retained supplied clone. Cycle-7 frame-owned RAII notification
 close now covers normal return, pending future drop, and unwind while
 independently retained clones and already-running callbacks keep the original
 activity. Exact behavior head `9810ee9`, tree `cf7390e`, passes the complete
-exact-1.94.1 replacement gate. An immutable candidate, three fresh exact-SHA
-reviews, and remote delivery remain pending.
+exact-1.94.1 replacement gate. Formal cycle 7 is green on exact candidate
+`3f07389`, tree `f048cdc`: all three tracks and the deduplicated union report
+`0/0/0/0`. Remote delivery remains pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -172,7 +173,10 @@ normal return, pending outer-future drop, and unwind; detaches target and replay
 without holding the notifier lock across arbitrary destruction; suppresses
 stale post-drop delivery; and preserves retained-clone and in-flight-callback
 activity ownership. The complete exact-1.94.1 replacement gate is green. Cycle
-7 has not yet established an immutable candidate, review result, or delivery.
+7 is formally green on exact candidate `3f07389`, tree `f048cdc`:
+correctness/API, lifecycle/platform, and performance/resources each reported
+`0/0/0/0`. This documentation-only result record is review-exempt and does not
+claim remote delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base
