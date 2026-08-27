@@ -1498,18 +1498,18 @@ fn cloned_injected_wakers_coalesce_blocking_callbacks_and_retain_one_slot() {
 }
 
 #[test]
-fn deadline_and_injected_waker_families_share_one_capacity_slot() {
+fn deadline_and_injected_waker_families_share_one_callback_and_capacity_slot() {
     let temporary = TemporaryDirectory::new("dual-waker-capacity");
     let executor = RetainedPublisherExecutor::default();
     let tool = TerminalTool::with_executor(
         temporary.path(),
         environment(),
         Arc::new(executor.clone()),
-        TerminalLimits::new(Duration::from_millis(500), 1).unwrap(),
+        TerminalLimits::new(Duration::from_millis(30), 1).unwrap(),
     )
     .unwrap();
-    let publisher_blocking = Arc::new(BlockingWake::default());
-    let deadline_blocking = Arc::new(BlockingWake::default());
+    let publisher_blocking = Arc::new(CountingBlockingWake::default());
+    let deadline_blocking = Arc::new(CountingBlockingWake::default());
     let publisher_waker = Waker::from(Arc::clone(&publisher_blocking));
     let deadline_waker = Waker::from(Arc::clone(&deadline_blocking));
     let mut first = Box::pin(tool.execute(
@@ -1522,13 +1522,41 @@ fn deadline_and_injected_waker_families_share_one_capacity_slot() {
     assert!(poll_with_waker(first.as_mut(), &deadline_waker).is_pending());
     std::thread::scope(|scope| {
         let publisher_executor = executor.clone();
-        let publisher = scope.spawn(move || publisher_executor.publish_and_wake());
-        let _publisher_release_on_unwind = BlockingWakeRelease(Arc::clone(&publisher_blocking));
-        let _deadline_release_on_unwind = BlockingWakeRelease(Arc::clone(&deadline_blocking));
-        publisher_blocking.wait_until_entered();
+        let publisher = scope.spawn(move || {
+            let wait_deadline = Instant::now() + Duration::from_secs(2);
+            let mut inner = publisher_executor.state.inner.lock().unwrap();
+            while inner.waker.is_none() {
+                let remaining = wait_deadline.saturating_duration_since(Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "injected executor did not retain a task Waker"
+                );
+                let waited = publisher_executor
+                    .state
+                    .changed
+                    .wait_timeout(inner, remaining)
+                    .unwrap();
+                inner = waited.0;
+            }
+            let retained = inner.waker.take().expect("retained task Waker exists");
+            drop(inner);
+            retained.wake();
+        });
+        let _publisher_release_on_unwind =
+            CountingBlockingWakeRelease(Arc::clone(&publisher_blocking));
+        let _deadline_release_on_unwind =
+            CountingBlockingWakeRelease(Arc::clone(&deadline_blocking));
         deadline_blocking.wait_until_entered();
 
-        let first_output = match poll_once(first.as_mut()) {
+        // The executor notification is already blocked in the latest raw
+        // Waker. Let the independent deadline expire and notify the same
+        // shared terminal notifier; that second family must coalesce instead
+        // of forwarding another underlying callback.
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(publisher_blocking.snapshot(), (0, 0, 0, 0));
+        assert_eq!(deadline_blocking.snapshot(), (1, 1, 1, 0));
+
+        let first_output = match poll_with_waker(first.as_mut(), &deadline_waker) {
             Poll::Ready(Ok(output)) => output,
             Poll::Ready(Err(error)) => panic!("overlapping execution failed: {error}"),
             Poll::Pending => panic!("overlapping execution remained pending after its deadline"),
@@ -1536,42 +1564,33 @@ fn deadline_and_injected_waker_families_share_one_capacity_slot() {
         drop(first);
         assert_eq!(first_output.content["status"], "timed_out");
 
-        deadline_blocking.release();
-        deadline_blocking.wait_until_returned();
-        let must_remain_busy_until = Instant::now() + Duration::from_millis(100);
-        while Instant::now() < must_remain_busy_until {
-            let mut blocked = Box::pin(tool.execute(
-                context(),
-                exact_arguments("blocked-after-deadline-callback", "."),
-                CancellationToken::new(),
-            ));
-            match poll_once(blocked.as_mut()) {
-                Poll::Ready(Err(error)) => {
-                    assert_eq!(error.kind, ToolErrorKind::Unavailable);
-                    assert_eq!(error.code, "terminal_busy");
-                }
-                Poll::Ready(Ok(_)) => {
-                    panic!("deadline callback released the shared slot before publisher return")
-                }
-                Poll::Pending => {
-                    panic!("publisher callback no longer retained the shared capacity slot")
-                }
+        let mut blocked = Box::pin(tool.execute(
+            context(),
+            exact_arguments("blocked-during-shared-callback", "."),
+            CancellationToken::new(),
+        ));
+        match poll_once(blocked.as_mut()) {
+            Poll::Ready(Err(error)) => {
+                assert_eq!(error.kind, ToolErrorKind::Unavailable);
+                assert_eq!(error.code, "terminal_busy");
             }
-            std::thread::yield_now();
+            Poll::Ready(Ok(_)) => panic!("execution bypassed a blocking shared callback"),
+            Poll::Pending => panic!("blocking shared callback released terminal capacity early"),
         }
+        drop(blocked);
         assert_eq!(executor.calls(), 1);
 
-        publisher_blocking.release();
+        deadline_blocking.release();
         publisher.join().unwrap();
+        assert_eq!(deadline_blocking.snapshot(), (1, 0, 1, 1));
     });
 
-    let recovered = execute(
-        &tool,
+    let mut recovered = Box::pin(tool.execute(
+        context(),
         exact_arguments("recovered", "."),
         CancellationToken::new(),
-    )
-    .unwrap();
-    assert!(!recovered.is_error);
+    ));
+    assert!(poll_once(recovered.as_mut()).is_pending());
     assert_eq!(executor.calls(), 2);
 }
 
