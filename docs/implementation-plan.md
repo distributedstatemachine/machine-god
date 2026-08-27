@@ -18,7 +18,7 @@ Observable compatibility and performance claims require retained evidence
 against the pinned upstream revision. Zig is only an upstream benchmark build
 input; it is not a machine-god product language or runtime dependency.
 
-## Canonical live status
+## Current delivery state
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `35`
@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33078240749` (`GREEN`)
 - Main Benchmark evidence: `33078240522` (`GREEN`)
 - Active branch: `agent/m03-docs-single-source`
-- Active phase: `M03 documentation single-source maintenance (docs-only; no slice increment)`
-- Next gate: `integrate the documentation-policy worktrees, run the focused policy test and exact local gates, then push and require exact-SHA feature/main CI`
+- Active phase: `M03 documentation single-source maintenance integrated (docs-only; no slice increment)`
+- Next gate: `run the exact local gate, then push and require exact-SHA feature and main CI`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit.
