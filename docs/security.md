@@ -2072,9 +2072,9 @@ the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
 
-## Slice 35 cycle-4 interaction and authority remediation
+## Slice 35 cycle-5 interaction and authority remediation
 
-Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2109,8 +2109,14 @@ invocation; cancellation wins any same-poll ready outcome. Cycle 4 additionally
 admits only zero through four privately stored answer strings, preserving
 count-mismatch validation without accepting an unbounded host-owned vector. It
 keeps the prompt permit until the prompt future and cancellation waiter/Waker
-are destroyed, so a replacement call cannot overlap old-call destructor
-callbacks beyond the configured active limit. Formal cycle 1
+are destroyed. Formal cycle 4 showed that this does not cover a callback that
+concurrent cancellation has already moved out of the waiter, nor cancellation
+triggered synchronously by final-Waker destruction after the last check. Cycle
+5 requires an activity-backed Waker family whose clones and moved callbacks
+retain the originating permit through callback return, an equivalent cached
+registration, prompt/waiter/cached-Waker teardown under activity, and a final
+cancellation recheck after teardown before every direct success or error
+return. Formal cycle 1
 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, because it performed up to 16 KiB
@@ -2145,6 +2151,12 @@ docs `b057958` compose with both at exact behavior head
 `fa402acb75c6d364c41db66f6b55595aa1d0e59a`. Its complete exact-1.94.1 local
 gate is green with 171 named focused executions, unchanged protected/Cargo
 inputs, no added Rust `unsafe`, and the full portability, dependency, audit,
-documentation, release, and isolated-root matrix green. This tree is ready for
-immutable same-SHA formal review; formal review, remote workflows, integration,
-and delivery remain pending.
+documentation, release, and isolated-root matrix green. Formal cycle 4 rejected
+exact candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`: correctness/API reported
+`0/0/0/1`, lifecycle/platform `0/0/1/1`, and performance/resources
+`0/0/1/0`, deduplicated to `0/0/2/1`. The accepted security/lifecycle defects
+are the post-check synchronous cancellation and callback-tail capacity escape;
+the remaining low is stale reference-host lineage. Deterministic evidence must
+exercise both races. No cycle-5 source, evidence, local gate, formal review,
+remote workflow, integration, or delivery result is claimed.

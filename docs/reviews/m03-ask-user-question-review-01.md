@@ -1,10 +1,9 @@
 # Milestone 03 native `ask_user_question` review ledger
 
-Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**. Formal cycle 3
-rejected its exact immutable candidate. Cycle-4 source, evidence, and finding
-documentation now compose at one exact behavior head whose complete local gate
-is green. Three fresh formal reviews, remote workflows, integration, and
-delivery remain pending.
+Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**. Formal cycle 4
+rejected its exact immutable candidate. Cycle-5 source, deterministic race
+evidence, complete local gate, three fresh formal reviews, remote workflows,
+integration, and delivery remain pending.
 
 ## Frozen lineage
 
@@ -65,6 +64,9 @@ delivery remain pending.
   `b057958f950b8a2a1412ecbc83b6f452d6571a2f`, integrated at
   `cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
   `fa402acb75c6d364c41db66f6b55595aa1d0e59a`
+- Formal cycle-4 candidate, **REJECTED**:
+  `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+  `b761f7b93d535a1580910f43ff509c40aa07415b`
 
 The earlier behavior head passed its recorded local gate, but formal cycle 1
 found product and evidence defects in the later immutable candidate. That
@@ -74,10 +76,12 @@ head was green. Formal cycle 2 nevertheless rejected its later immutable
 candidate. Cycle-3 source, independent evidence, and corrected documentation
 now compose at `8bdc33d`/`7a342fc`; its complete replacement gate is green.
 Formal cycle 3 nevertheless rejected exact candidate `746e510`/`c49221e`.
-Cycle-4 core, native, and finding-documentation work now compose at
+Cycle-4 core, native, and finding-documentation work compose at
 `cb93bff`/`fa402acb`, whose complete exact-1.94.1 replacement local gate is
-green. Three fresh exact-SHA reviews, exact feature workflows, fast-forward
-integration, and exact `main` workflows remain required.
+green. Formal cycle 4 nevertheless rejected exact candidate
+`42ce6f0`/`b761f7b` with a deduplicated `0/0/2/1` union. Cycle-5 remediation,
+its complete local gate, three fresh exact-SHA reviews, exact feature workflows,
+fast-forward integration, and exact `main` workflows remain required.
 
 ## Frozen first-slice decisions
 
@@ -347,9 +351,9 @@ Cycle 4 freezes all accepted corrections without widening the first slice:
 
 Core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and finding docs
 `b057958` implement these corrections at exact behavior head `cb93bff`, tree
-`fa402acb`. The focused and complete local gates below are green. This record
-does not claim a cycle-4 formal-review, remote-workflow, integration, or
-delivery result. Three fresh exact-SHA reviews remain required.
+`fa402acb`. The focused and complete local gates below are green. Formal cycle
+4 later rejected exact candidate `42ce6f0`/`b761f7b`; the local gate remains
+historical regression evidence and does not approve that candidate.
 
 ## Required gates
 
@@ -465,10 +469,53 @@ under exact Rust and Cargo 1.94.1 without fallback:
 
 User-visible prompt execution does not apply because this library-only slice
 adds no CLI prompt UI. This gate is regression/delivery evidence, not a
-benchmark or product-performance result. The exact tree is ready for immutable
-same-SHA formal review. It makes no formal-review, remote-CI, benchmark-
-workflow, compatibility-promotion, fx-equivalence, integration, or delivery-
-completion claim.
+benchmark or product-performance result. Formal cycle 4 later rejected exact
+candidate `42ce6f0`/`b761f7b`; this historical gate makes no green-review,
+remote-CI, benchmark-workflow, compatibility-promotion, fx-equivalence,
+integration, or delivery-completion claim.
+
+## Formal cycle-4 outcome
+
+All three fresh read-only tracks reviewed exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`:
+
+- correctness/API reported 0 blocker, 0 high, 0 medium, and 1 low finding;
+- lifecycle/platform reported 0 blocker, 0 high, 1 medium, and 1 low finding;
+  and
+- performance/resources reported 0 blocker, 0 high, 1 medium, and 0 low
+  findings.
+
+Overlap deduplicates to 0 blocker, 0 high, 2 medium, and 1 low. The exact
+candidate is rejected. The accepted findings are:
+
+- cancellation triggered synchronously by destruction of the final registered
+  cancellation Waker became observable only after the last check, so a direct
+  success or error could escape;
+- concurrent cancellation could move and execute the registered Waker callback
+  after outer drop and permit release, allowing callback tails outside the
+  configured active limit; and
+- `docs/native-reference-host.md` retained stale cycle-3-pending lineage.
+
+## Cycle-5 remediation target
+
+Cycle 5 freezes the following correction without widening the first slice:
+
+- each registered or cached equivalent cancellation Waker clone retains one
+  originating execution activity, and any callback moved out by cancellation
+  retains that activity and permit through callback return;
+- equivalent registration is cached so teardown and the final cancellation
+  observation do not create an untracked Waker family;
+- prompt, cancellation waiter, and cached-Waker teardown occurs under the
+  execution activity on direct return, pending drop, and unwind;
+- after that teardown, every direct success or error path rechecks cancellation
+  before returning; and
+- deterministic race evidence covers synchronous final-Waker cancellation and
+  concurrent moved-callback execution beyond outer drop.
+
+This section records accepted findings and intended remediation only. It does
+not claim cycle-5 source, evidence, Cargo/protected-input shape, local gate,
+formal review, remote workflow, integration, or delivery results.
 
 ## Deferred and nonclaim record
 

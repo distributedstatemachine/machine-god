@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 4 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 4
+REJECTED — CYCLE 5 REMEDIATION IN PROGRESS** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -173,9 +173,22 @@ protected and Cargo files with no added Rust `unsafe`; and a fresh 3,985,216-
 byte locked release binary with SHA-256
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
 Isolated missing-root `help`, `doctor`, and `sessions` runs do not create the
-root. This tree is ready for immutable same-SHA formal review. Three fresh
-review tracks, feature workflows, integration, delivery, and exact `main`
-workflows remain pending; no formal-review or remote green result is claimed.
+root. Formal cycle 4 rejected exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`. Correctness/API reported
+`0/0/0/1`, lifecycle/platform `0/0/1/1`, and performance/resources
+`0/0/1/0`; overlap deduplicates to 0 blocker, 0 high, 2 medium, and 1 low.
+Accepted findings are cancellation becoming observable synchronously during
+final cancellation-Waker destruction after the last check; a concurrently
+moved registered callback continuing after outer drop and permit release; and
+stale cycle-3-pending lineage in the native reference-host document. Cycle 5
+freezes activity-backed cancellation Waker clones and callbacks that retain the
+originating permit through callback return, an equivalent cached registration,
+prompt/waiter/cached-Waker teardown under activity, a final cancellation
+recheck after teardown before every direct return, and deterministic race
+evidence. Cycle-5 source, evidence, Cargo/protected-input shape, local gate,
+review, feature workflows, integration, delivery, and exact `main` workflows
+remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4192,9 +4205,17 @@ inspection is total and optional, a private fixed four-slot container admits
 zero through four host answers, and prompt/cancellation-Waker teardown occurs
 before active-permit release. The complete exact-1.94.1 replacement local gate
 is green with 171 named focused executions and the full extended evidence
-matrix. The tree is ready for immutable same-SHA formal review. Formal review,
-remote workflows, integration, and delivery remain pending, so this combined
-item remains unchecked. Slice 33 `web_search` is
+matrix. At that checkpoint the tree was ready for immutable same-SHA formal
+review; remote workflows, integration, and delivery were pending.
+Formal cycle 4 then rejected exact candidate `42ce6f0`, tree `b761f7b`, with
+track counts `0/0/0/1`, `0/0/1/1`, and `0/0/1/0`, deduplicated to `0/0/2/1`.
+Cycle 5 must bind cancellation Waker clones and callbacks to the originating
+permit through callback return, cache equivalent registration, tear down the
+prompt/waiter/cached-Waker family under activity, recheck cancellation after
+teardown before every direct return, and prove both identified races
+deterministically. No cycle-5 source, evidence, gate, review, remote, or
+delivery result is claimed, so this combined item remains unchecked. Slice 33
+`web_search` is
 delivered through exact record `52b5885`; its feature and main CI/Benchmark
 workflows are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that

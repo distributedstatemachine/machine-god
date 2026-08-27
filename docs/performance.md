@@ -656,9 +656,9 @@ options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
 
-## Slice 35 cycle-4 question resource remediation
+## Slice 35 cycle-5 question resource remediation
 
-Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -741,7 +741,20 @@ concurrency slot. Core `e569514`/`4c8cff3`, native
 gate is green, including 30 direct question tests and 171 named focused
 executions overall. The release artifact remains 3,985,216 bytes with SHA-256
 `04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
-This tree is ready for immutable same-SHA formal review; no formal-review,
-remote, integration, delivery, benchmark, or product-performance result is
-claimed. See
+Formal cycle 4 rejected exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`. Correctness/API reported
+`0/0/0/1`, lifecycle/platform `0/0/1/1`, and performance/resources
+`0/0/1/0`; overlap deduplicates to `0/0/2/1`. The resource defect is that
+concurrent cancellation can move the registered Waker callback out of the
+waiter, after which outer drop can release capacity while the callback tail
+continues. The related final-Waker teardown path can also make cancellation
+observable only after the last direct-return check. Cycle 5 requires every
+registered or cached equivalent cancellation Waker clone and its callback to
+retain the originating permit through callback return, with prompt/waiter/
+cached-Waker teardown inside the activity and a final post-teardown
+cancellation check before direct returns. Deterministic evidence must pin both
+races without sleeps. No cycle-5 source, evidence, gate, formal-review, remote,
+integration, delivery, benchmark, or product-performance result is claimed.
+See
 [`ask-user-question.md`](ask-user-question.md).

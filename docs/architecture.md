@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4
+REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -35,9 +35,19 @@ finding docs `b057958` compose at exact behavior head
 is a total `Option`; native exposes a private fixed four-slot answer container;
 and the activity owns prompt and cancellation waiter/Waker teardown before its
 permit release. The complete exact-1.94.1 replacement local gate is green with
-171 named focused executions. This tree is ready for immutable same-SHA formal
-review; formal review, remote workflows, integration, and delivery remain
-pending. See
+171 named focused executions. Formal cycle 4 rejected exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`: the three track counts are
+`0/0/0/1`, `0/0/1/1`, and `0/0/1/0`, deduplicated to `0/0/2/1`.
+Cancellation observed only while the final registered Waker was destroyed
+could escape the last check, and a callback moved by concurrent cancellation
+could continue after outer drop released the permit. The reference-host
+lineage was also stale. Cycle 5 will make each cancellation Waker clone and
+callback activity-backed through callback return, retain an equivalent cached
+registration, destroy prompt/waiter/cached-Waker state under that activity,
+recheck cancellation after teardown before every direct return, and add
+deterministic race evidence. No cycle-5 source, gate, review, remote,
+integration, or delivery result is claimed. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2210,7 +2220,7 @@ Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
 fixed structural state (`has_provider` and tool count); it never invokes the
 provider's `name` method or copies provider-controlled text.
 
-## Slice 35 cycle-4 question-interaction boundary
+## Slice 35 cycle-5 question-interaction remediation
 
 The `ask_user_question` slice adds one portable native adapter,
 not UI state to core or the CLI. Strict effect-free native preparation
@@ -2237,6 +2247,18 @@ response: `Answered` privately stores zero through four strings. That range
 still lets execution reject every legal answer-count mismatch. Return, pending-
 drop, and unwind teardown destroy the prompt future and cancellation waiter/
 Waker while the active permit remains held, then release capacity.
+Formal cycle 4 showed this ownership order was not yet complete. Destruction of
+the final cancellation Waker can synchronously trigger cancellation after the
+last pre-return check, and concurrent cancellation can move the registered
+callback out of its waiter so that the callback tail survives outer drop and
+permit release. Cycle 5 therefore freezes one activity-backed cancellation
+family: every registered or cached equivalent Waker clone and every callback
+retains the originating permit through callback return. Prompt, waiter, and
+cached-Waker teardown remains under that activity, followed by a final
+cancellation recheck before any direct success or error return. Deterministic
+race evidence must cover synchronous final-Waker cancellation and the moved-
+callback overlap. This records the remediation target only; no cycle-5 source
+or gate is claimed.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2259,6 +2281,8 @@ is normative in [`ask-user-question.md`](ask-user-question.md). Cycle 3 passed
 its local gate but formal review rejected exact candidate `746e510`, tree
 `c49221e`. Cycle-4 core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and
 finding docs `b057958` compose at exact behavior head `cb93bff`, tree
-`fa402acb`; its complete exact-1.94.1 local gate is green. That tree is ready
-for immutable same-SHA formal review, but no cycle-4 formal-review, remote,
-integration, or delivery result is established.
+`fa402acb`; its complete exact-1.94.1 local gate is green. Formal cycle 4
+rejected exact candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`, with a deduplicated `0/0/2/1`
+union. Cycle-5 source, evidence, gate, formal review, remote workflows,
+integration, and delivery remain unestablished.

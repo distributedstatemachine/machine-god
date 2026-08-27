@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4
+REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -40,9 +40,20 @@ waiter/Waker destruction remains inside the active permit. The exact-1.94.1
 local gate is green with 171 named focused executions, all required and
 extended checks, and the unchanged locked release artifact. The tool requires
 no policy-governed authority, while its injected prompter separately owns host
-interaction authority. This tree is ready for immutable same-SHA formal
-review; formal review, feature and `main` workflows, integration, and delivery
-remain pending. The normative boundary is
+interaction authority. Formal cycle 4 rejected exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`: correctness/API reported
+`0/0/0/1`, lifecycle/platform `0/0/1/1`, and performance/resources
+`0/0/1/0`, deduplicated to `0/0/2/1`. Cancellation could become observable
+only while the final registered Waker was synchronously destroyed, after the
+last cancellation check, and a concurrently moved Waker callback could finish
+after outer drop released the permit. The reference-host record also retained
+stale cycle-3-pending lineage. Cycle 5 freezes activity-backed cancellation
+Waker ownership through callback return, an equivalent cached registration,
+prompt/waiter/cached-Waker teardown under that activity, a final cancellation
+recheck after teardown before every direct return, and deterministic race
+evidence. No cycle-5 source, local gate, review, remote workflow, integration,
+or delivery result is established. The normative boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

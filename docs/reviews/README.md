@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 4 LOCAL GATE GREEN —
-FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 4 REJECTED — CYCLE 5
+REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -25,9 +25,18 @@ the deduplicated union is `0/0/3/2`. Cycle-4 core `e569514`/`4c8cff3`, native
 `fa402acb75c6d364c41db66f6b55595aa1d0e59a`. Total optional capability
 inspection, private fixed four-slot answer ownership, and prompt/cancellation-
 Waker teardown under the active permit pass the complete exact-1.94.1 local
-gate with 171 named focused executions. This tree is ready for immutable same-
-SHA formal review; three fresh tracks, remote workflows, integration, and
-delivery remain pending. See
+gate with 171 named focused executions. Formal cycle 4 rejected exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`: correctness/API reported
+`0/0/0/1`, lifecycle/platform `0/0/1/1`, performance/resources `0/0/1/0`, and
+the deduplicated union is `0/0/2/1`. Accepted findings are post-check
+cancellation during final-Waker destruction, a concurrently moved callback
+tail escaping permit ownership, and stale reference-host lineage. Cycle 5
+targets activity-backed Waker/callback ownership, a cached equivalent
+registration, teardown under activity, a final post-teardown cancellation
+check before direct returns, and deterministic race evidence. No cycle-5
+source, gate, formal-review, remote, integration, or delivery result is
+claimed. See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 
 Bounded slice 34, native `terminal`, is **DELIVERED** from exact delivered base

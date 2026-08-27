@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
+Status: **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -77,11 +77,17 @@ Cargo 1.94.1 exactly, without fallback:
   isolated missing-root `help`, `doctor`, and `sessions` runs pass without
   creating the root.
 
-This exact tree is ready for immutable same-SHA formal review. It does not
-establish a cycle-4 formal-review, remote CI, benchmark workflow, integration,
-delivery, product-performance, compatibility-promotion, or fx-equivalence
-result. No release-binary prompt exercise applies because this library-only
-slice adds no CLI prompt UI.
+Formal cycle 4 reviewed exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`, and rejected it. Correctness/API
+reported `0/0/0/1`, lifecycle/platform `0/0/1/1`, and
+performance/resources `0/0/1/0`; the deduplicated union is 0 blocker, 0 high,
+2 medium, and 1 low. The historical cycle-4 local gate remains valid regression
+evidence for that rejected candidate, not approval. No cycle-5 source, local
+gate, formal review, remote CI, benchmark workflow, integration, delivery,
+product-performance, compatibility-promotion, or fx-equivalence result is
+established. No release-binary prompt exercise applies because this library-
+only slice adds no CLI prompt UI.
 
 Formal cycle 1 reviewed exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -94,29 +100,34 @@ gate, but formal review rejected exact candidate
 0 high, 2 medium, and 2 low findings. Cycle 3 corrected every accepted cycle-2
 finding and passed the local gate above, but formal review rejected its
 immutable candidate with a deduplicated 0 blocker, 0 high, 3 medium, and 2 low
-findings. The detailed outcome and cycle-4 remediation target are in the
+findings. The complete prior outcome and remediation history are in the
 [`review ledger`](reviews/m03-ask-user-question-review-01.md).
 
-## Formal cycle-3 outcome and cycle-4 implementation
+## Formal cycle-4 outcome and cycle-5 remediation target
 
-Correctness/API reported `0/0/1/2`, lifecycle/platform `0/0/0/2`, and
-performance/resources `0/0/2/0` on exact candidate
-`746e510c7d8eb93229996e74f91827f489e5bb31`, tree
-`c49221efbea66c840b333f0de0161aa686aad52f`. The lifecycle resource reports
-overlap both performance mediums, producing a deduplicated `0/0/3/2` union.
-Accepted findings are the partial panicking capability accessor, contradictory
-broad public authority wording, the stale architecture no-green-gate sentence,
-unbounded synchronous destruction of a malformed host answer vector, and
-permit release before cancellation waiter/Waker teardown.
+Correctness/API reported `0/0/0/1`, lifecycle/platform `0/0/1/1`, and
+performance/resources `0/0/1/0` on exact cycle-4 candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`. Overlap deduplicates to
+`0/0/2/1`. Accepted findings are:
 
-Cycle 4 freezes a total optional capability accessor, privately stored fixed
-four-slot answers admitting zero through four values so count mismatches remain
-observable, and teardown of the prompt/cancellation waiter/Waker while the
-active permit remains held. Components `e569514`/`4c8cff3`,
-`53c05cd`/`1857a3f`, and `b057958` implement those corrections at exact
-behavior head `cb93bff`, tree `fa402acb`, whose complete exact-1.94.1 local
-gate is green. Formal review, remote workflows, integration, and delivery are
-not yet established.
+- cancellation triggered synchronously by destruction of the final registered
+  cancellation Waker became observable only after the last cancellation check,
+  allowing a direct success or error to escape;
+- concurrent cancellation could move and execute the registered Waker callback
+  after outer drop and permit release, allowing callback tails outside the
+  configured active limit; and
+- the reference-host document retained stale cycle-3-pending lineage.
+
+Cycle 5 freezes activity-backed cancellation ownership. Every registered or
+cached equivalent cancellation Waker clone and callback must retain the
+originating permit through callback return. Prompt, waiter, and cached-Waker
+teardown stays under that activity. After teardown, execution must make one
+final cancellation recheck before every direct success or error return.
+Deterministic race evidence must exercise both synchronous final-Waker
+cancellation and a concurrently moved callback. This is the remediation target;
+cycle-5 source, evidence, gate, review, remote workflows, integration, and
+delivery are not yet established.
 
 ## Product boundary
 
@@ -304,17 +315,20 @@ and does not include question, option, description, or answer text.
 Calling `Tool::execute` creates an inert future. On first poll it checks
 cancellation, attempts one fail-fast active-prompt admission, and only then
 invokes the prompter exactly once. Capacity exhaustion does not queue, register
-a capacity Waker, or invoke the prompter. A successful permit is held until the
-tool returns or its future is dropped.
+a capacity Waker, or invoke the prompter. A successful permit belongs to the
+execution activity until the outer future and every cancellation Waker clone or
+callback originating from it have returned or been destroyed.
 
 The prompt future remains owned by the tool future. Dropping an unpolled tool
-future invokes no prompt. Cycle 4 requires pending-return, drop, and unwind
-paths to tear down the prompt future and cancellation waiter/Waker while the
-active-prompt permit is still held, then release that permit. This prevents a
-new call from entering while arbitrary destructor callbacks owned by the old
-call still execute. The adapter starts no thread, task, channel, timer,
-runtime, retry, or detached work. A conforming prompter must keep interaction
-work owned by the returned future or perform its own complete drop cleanup.
+future invokes no prompt. Cycle 5 requires pending-return, drop, and unwind
+paths to tear down the prompt future, cancellation waiter, and cached equivalent
+Waker under one activity. Registered and cached cancellation Waker clones, plus
+callbacks that cancellation has moved out of the waiter, retain that activity
+and its originating permit through callback return. Thus outer-future drop does
+not admit a replacement while an old callback tail still runs. The adapter
+starts no thread, task, channel, timer, runtime, retry, or detached work. A
+conforming prompter must keep interaction work owned by the returned future or
+perform its own complete drop cleanup.
 
 There is no tool timeout. The host/executor may apply an outer deadline, but
 this slice neither accepts nor starts one. A stalled or blocking injected
@@ -382,14 +396,18 @@ user freeform instead)`. These sentinels are not answer arrays and cannot be
 misread as authorization.
 
 Engine cancellation has precedence at first poll, immediately before prompt
-invocation, and after every ready prompt outcome before interpretation. The
+invocation, after every ready prompt outcome before interpretation, and after
+prompt/waiter/cached-Waker teardown immediately before every direct return. The
 rejected cycle-1 candidate checked cancellation and then cloned up to 16 KiB of
 question presentation text before invoking the prompter. Cycle 2 adds the
 adjacent pre-invocation cancellation check after that last intervening work,
 so observable cancellation prevents UI invocation.
 Cancellation that is observable in the same poll as answers, user
-cancellation, unavailability, or host failure wins and returns the fixed
-cancelled tool error. After cancellation wins, no answer result is published.
+cancellation, unavailability, host failure, or final cancellation-Waker
+destruction wins and returns the fixed cancelled tool error. After cancellation
+wins, no answer result is published. The cached equivalent registration avoids
+recreating an untracked Waker family while still permitting the final check to
+observe cancellation caused synchronously during teardown.
 
 For a non-cancelled ready result, precedence is:
 

@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4 LOCAL
-GATE GREEN — FORMAL REVIEW PENDING**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 4
+REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -50,9 +50,21 @@ native component `53c05cdf5e64e9e26266b89d78c8a20a2ac160df` (integrated as
 total and returns an `Option`; answers use a private fixed four-slot container
 that represents zero through four entries; and prompt-future plus cancellation
 waiter/Waker destruction completes before capacity is released. The complete
-exact-1.94.1 local gate is green with 171 named focused executions. This tree
-is ready for immutable same-SHA formal review; no cycle-4 formal-review,
-remote-workflow, integration, or delivery result is claimed. See the
+exact-1.94.1 local gate is green with 171 named focused executions. Formal
+cycle 4 later reviewed exact candidate
+`42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`, and rejected: correctness/API
+reported `0/0/0/1`, lifecycle/platform `0/0/1/1`, and performance/resources
+`0/0/1/0`; the deduplicated union is 0 blocker / 0 high / 2 medium / 1 low.
+Accepted findings cover cancellation becoming observable during final
+cancellation-Waker destruction after the last check, a concurrently moved
+Waker callback continuing after outer drop and permit release, and stale
+reference-host lineage. Cycle 5 will retain the originating permit through
+activity-backed cancellation Waker clones and callback return, cache an
+equivalent registration, tear down prompt/waiter/cached-Waker state inside the
+activity, recheck cancellation after teardown before every direct return, and
+add deterministic race evidence. No cycle-5 source, gate, review, remote-
+workflow, integration, or delivery result is claimed. See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).
 

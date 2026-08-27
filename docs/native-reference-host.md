@@ -1,7 +1,7 @@
 # Native reference-host composition
 
 Status: **DELIVERED** through slice-34 `terminal`; slice-35
-`ask_user_question` is **CYCLE 4 LOCAL GATE GREEN — FORMAL REVIEW PENDING**;
+`ask_user_question` is **CYCLE 4 REJECTED — CYCLE 5 REMEDIATION IN PROGRESS**;
 Milestone 03 remains **IN PROGRESS**.
 Formal cycle 1 rejected exact candidate
 `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
@@ -22,8 +22,11 @@ union. Cycle-4 core `e569514`/`4c8cff3`, native `53c05cd`/`1857a3f`, and
 finding docs `b057958` compose at exact behavior head
 `cb93bff35271e6dfc3f4c27ac7a72e621941845c`, tree
 `fa402acb75c6d364c41db66f6b55595aa1d0e59a`. Its complete exact-1.94.1 local
-gate is green with 171 named focused executions. The tree is ready for
-immutable same-SHA formal review; formal review and remote delivery gates
+gate is green with 171 named focused executions. Formal cycle 4 rejected exact
+candidate `42ce6f0ee132a94037c1d99fc19c71c7e0b00bcb`, tree
+`b761f7b93d535a1580910f43ff509c40aa07415b`, with track counts `0/0/0/1`,
+`0/0/1/1`, and `0/0/1/0`, deduplicated to `0/0/2/1`. Cycle-5 cancellation-
+activity source, evidence, local gate, formal review, and remote delivery gates
 remain pending.
 The exact local composition contains sixteen alphabetical tools: thirteen
 workspace-backed tools share one original retained descriptor plus twelve
@@ -737,8 +740,9 @@ reopening path arguments. Historical green behavior SHA `f1dc4751`, Linux lint
 normalization `90d8f96`, candidate `72cf64f6`, replacement seal `f08dbd9e`, and
 feature record `6f66b6e5` cover the pre-slice-35 root-selection work only. They
 do not review or deliver the later `question_prompter` parameter or sixteen-tool
-catalog. Formal cycle 2 of slice 35 is rejected; cycle-3 replacement review is
-pending.
+catalog. Slice-35 formal cycles 2, 3, and 4 are rejected; the exact cycle-4
+candidate and findings are recorded above. Cycle-5 remediation remains in
+progress.
 
 Both integrated path constructors consume an already validated
 `LoadedNativeConfig`; neither loads configuration nor reads the process
@@ -1226,7 +1230,7 @@ are green. Milestone 03 remains in progress because remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.
 
-## Slice 35 cycle-4 rootless composition
+## Slice 35 cycle-5 rootless-composition remediation
 
 Slice 35 adds one explicit shared `QuestionPrompter` parameter to
 each production and custom reference-host constructor. Construction stores the
@@ -1256,16 +1260,25 @@ finding docs `b057958` compose at exact behavior head `cb93bff`, tree
 `fa402acb`. Host composition is unchanged while capability inspection is total,
 private answer ownership is fixed to four slots admitting zero through four
 entries, and the active permit remains held through prompt/cancellation-Waker
-teardown. The descriptor count stays thirteen:
+teardown. Formal cycle 4 showed that the final cancellation-Waker destructor
+could make cancellation observable only after the last check, while concurrent
+cancellation could move a registered callback whose tail continued after outer
+drop released that permit. Cycle 5 therefore requires activity-backed
+cancellation Waker clones and callbacks to retain the originating permit
+through callback return, an equivalent cached registration, prompt/waiter/
+cached-Waker teardown under activity, and a final cancellation recheck after
+teardown before every direct return. The descriptor count stays thirteen:
 the question tool and two web tools own no workspace descriptor. The no-authority
 question call invokes neither the separately injected `PermissionPrompter` nor
 permission events; this is a no-policy-authority disposition, while the
 `QuestionPrompter` separately owns host interaction authority. A noninteractive
 host must inject the fixed unavailable
 prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
-contract, rejected cycle-3 outcome, and cycle-4 implementation are
+contract, rejected cycle-4 outcome, and cycle-5 remediation target are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).
-The complete exact-1.94.1 local gate is green at `cb93bff`/`fa402acb`; the tree
-is ready for immutable same-SHA formal review. No formal-review, remote,
+The complete historical exact-1.94.1 cycle-4 local gate is green at
+`cb93bff`/`fa402acb`; exact candidate `42ce6f0`/`b761f7b` was nevertheless
+rejected with the deduplicated `0/0/2/1` union. Deterministic cycle-5 race
+evidence is required; no cycle-5 source, evidence, gate, formal-review, remote,
 integration, or delivery green result is claimed.
