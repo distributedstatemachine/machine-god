@@ -151,8 +151,11 @@ through their actual returns. The notifier supplies the outer cancellation
 future, injected or system executor polling, and deadline notification. Every
 retained notifier or Waker clone owns the same activity, but at most one
 underlying caller-Waker callback is in flight for the admitted execution;
-concurrent notices coalesce. No notifier lock is held while an arbitrary Waker
-is cloned, dropped, or invoked. Retaining any request, executor, notifier, or
+concurrent notices before a re-poll coalesce into that callback. If a poll
+observes the in-flight callback and a later notice arrives before it returns,
+the notifier preserves one serialized replay to the latest bound caller Waker
+so that notice is not lost. No notifier lock is held while an arbitrary Waker is
+cloned, dropped, or invoked. Retaining any request, executor, notifier, or
 supplied Waker keeps the same activity alive, so later calls fail fast as busy
 while the configured capacity remains occupied.
 
@@ -296,10 +299,11 @@ or deadline thread. It is never incremented for a publisher or callback. A
 native thread retains that activity through its actual return even when it
 observed no Waker. A retained request, notifier, or Waker likewise retains the
 slot. Concurrent executor, cancellation, and deadline notices may race, but at
-most one underlying caller-Waker callback is in flight; the rest coalesce
-without holding a notifier lock across arbitrary Waker clone, drop, or wake
-behavior. An inline or blocking callback retains the activity through callback
-return.
+most one underlying caller-Waker callback is in flight. Notices preceding a
+re-poll coalesce into it; one notice following an observing poll is retained as
+a serialized replay to the latest bound target. No notifier lock spans
+arbitrary Waker clone, drop, or wake behavior. An inline or blocking callback
+retains the activity through callback return.
 
 Joining a native notification thread from the consuming path could self-join or
 cross-thread deadlock, so its handle may be released only while the same
@@ -329,10 +333,11 @@ retention; concurrency limits; one non-incrementing shared activity and notifier
 across the outer call, owned request/executor, cancellation, deadline, built-in
 and injected Waker registrations, callbacks, and native threads; retained-
 request and retained-Waker saturation; concurrent multi-family notice
-coalescing with at most one underlying callback and no lock held across arbitrary
-Waker clone/drop/wake; no-Waker thread return; activity retention through
-bounded rendering, final cancellation, and public return; exact-once active-
-slot release; exact-tilde and tilde-prefixed cwd literals; redaction; public-
+coalescing with at most one underlying callback, serialized replay after a poll-
+observed later notice, and no lock held across arbitrary Waker clone/drop/wake;
+no-Waker thread return; activity retention through bounded rendering, final
+cancellation, and public return; exact-once active-slot release; exact-tilde and
+tilde-prefixed cwd literals; redaction; public-
 construction and private-host unsupported behavior; engine event/output
 persistence; and the fifteen-tool alphabetical reference catalog.
 The required exact Rust checks, release-mode focused tests, fresh release-binary
