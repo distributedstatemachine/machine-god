@@ -2046,18 +2046,16 @@ mod tests {
         #[cfg(not(target_os = "linux"))]
         {
             let absent = std::path::Path::new("/machine-god-terminal-root-must-not-be-opened");
-            let default_error = match TerminalTool::open(absent) {
-                Ok(_) => panic!("system terminal unexpectedly supported"),
-                Err(error) => error,
+            let Err(default_error) = TerminalTool::open(absent) else {
+                panic!("system terminal unexpectedly supported");
             };
             assert_eq!(
                 default_error.kind(),
                 super::TerminalConfigErrorKind::UnsupportedPlatform
             );
 
-            let configured_error = match TerminalTool::open_with_limits(absent, limits) {
-                Ok(_) => panic!("system terminal unexpectedly supported"),
-                Err(error) => error,
+            let Err(configured_error) = TerminalTool::open_with_limits(absent, limits) else {
+                panic!("system terminal unexpectedly supported");
             };
             assert_eq!(
                 configured_error.kind(),
@@ -2068,9 +2066,8 @@ mod tests {
                 timeout: Duration::ZERO,
                 max_active_executions: 0,
             };
-            let invalid_error = match TerminalTool::open_with_limits(absent, invalid_limits) {
-                Ok(_) => panic!("system terminal unexpectedly supported"),
-                Err(error) => error,
+            let Err(invalid_error) = TerminalTool::open_with_limits(absent, invalid_limits) else {
+                panic!("system terminal unexpectedly supported");
             };
             assert_eq!(
                 invalid_error.kind(),
