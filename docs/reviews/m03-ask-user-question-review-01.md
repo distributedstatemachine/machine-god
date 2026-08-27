@@ -32,9 +32,10 @@ fast-forward integration, and exact `main` workflows remain required.
   absent.
 - Answers must exactly match the question count and order, but need not match
   an option. Bounded free-form answers support an `Other` path.
-- Preparation explicitly requires no external authority. Core must skip
+- Preparation explicitly requires no policy-governed authority. Core must skip
   permission-ID construction, permission events, and the permission handler
-  only for this trusted explicit disposition.
+  only for this trusted explicit disposition; the injected prompter separately
+  owns its host interaction authority.
 - The rootless injected `QuestionPrompter` owns interaction. The tool owns its
   future, detaches no work, sets no timeout, and has fail-fast bounded
   concurrency.
@@ -86,8 +87,9 @@ Focused evidence must establish at least:
 - exact raw, rendered, aggregate-presentation, normalized-argument, answer, and
   serialized-result boundaries plus the first value beyond each reachable
   boundary;
-- ASCII-only trim and duplicate-label comparison, Unicode non-folding, empty
-  description normalization, and exact terminal-safe C0/DEL/C1/bidi encoding;
+- ASCII-only trim, post-render duplicate-label comparison (including escaped
+  control/literal collisions), Unicode non-folding, empty-description
+  normalization, and exact terminal-safe C0/DEL/C1/U+061C/bidi encoding;
 - no-authority preparation preserving every ordinary engine validation,
   cancellation, event, durability, placeholder, result-size, and recovery path
   while emitting no permission events and invoking no permission handler;

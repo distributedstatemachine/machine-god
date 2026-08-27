@@ -2075,11 +2075,13 @@ action.
 ## Slice 35 frozen interaction and authority rules
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
-requires no external authority, so using it cannot recursively open the
-ask-mode permission prompter. The exception is narrow and trusted-tool-owned:
-every existing prepared call remains permission-required, and core retains all
-ordinary argument/result validation, cancellation, tool events, durability,
-and recovery. Any `permission_request_id` field is rejected before the question
+requires no policy-governed authority, so using it cannot recursively open the
+ask-mode permission prompter. The separately injected `QuestionPrompter` still
+owns whatever terminal, UI, or transport authority its host implementation
+needs. The core exception is narrow and trusted-tool-owned: every existing
+prepared call remains permission-required, and core retains all ordinary
+argument/result validation, cancellation, tool events, durability, and
+recovery. Any `permission_request_id` field is rejected before the question
 prompter is invoked. Generic prompt or answer text never authorizes another
 tool.
 

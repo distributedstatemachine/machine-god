@@ -1191,13 +1191,14 @@ provider, and engine failure ordering remains otherwise unchanged. An invalid
 question concurrency setting, if an explicit-limits host path is later exposed,
 must map to a fixed redacted composition stage rather than reflect prompt data.
 
-The candidate tool order is `ask_user_question`, the thirteen delivered
-descriptor-backed tools, `web_fetch`, and `web_search`. The descriptor count
-stays thirteen: the question tool, web tools, and Gateway search own no
-workspace descriptor. The no-authority question call invokes neither the
-separately injected `PermissionPrompter` nor permission events. A
-noninteractive host must inject the fixed unavailable prompter behavior; this
-slice does not inspect TTY state or add a CLI UI. The contract and pending
-review plan are
+The candidate tool order is `ask_user_question`, `copy_file`, `create_folder`,
+`delete_file`, `edit_file`, `file_info`, `glob_files`, `grep_files`,
+`list_files`, `open_file`, `read_file`, `rename_file`, `terminal`, `web_fetch`,
+`web_search`, and `write_file`. The descriptor count stays thirteen: the
+question tool and two web tools own no workspace descriptor. The no-authority
+question call invokes neither the separately injected `PermissionPrompter` nor
+permission events. A noninteractive host must inject the fixed unavailable
+prompter behavior; this slice does not inspect TTY state or add a CLI UI. The
+contract and pending review plan are
 [`ask-user-question.md`](ask-user-question.md) and
 [`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).

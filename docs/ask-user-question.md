@@ -142,16 +142,17 @@ discards a non-string description.
 
 Terminal-safe encoding preserves printable ASCII and printable valid Unicode.
 It replaces ASCII C0 control bytes and `DEL` with lowercase `\xnn`. It replaces
-C1 controls `U+0080..U+009F`, `U+200B..U+200F`, `U+2028..U+202E`,
-`U+2060..U+206F`, and `U+FEFF` with lowercase `\u{nnnn}` using at least four
-hex digits. JSON strings are valid UTF-8, so invalid UTF-8 cannot reach this
-stage. The encoder never interprets ANSI sequences, applies Unicode
-normalization, or removes visible text.
+C1 controls `U+0080..U+009F`, `U+061C`, `U+200B..U+200F`,
+`U+2028..U+202E`, `U+2060..U+206F`, and `U+FEFF` with lowercase
+`\u{nnnn}` using at least four hex digits. JSON strings are valid UTF-8, so
+invalid UTF-8 cannot reach this stage. The encoder never interprets ANSI
+sequences, applies Unicode normalization, or removes visible text.
 
-Labels must be unique within their question after trim. Comparison is
-bytewise ASCII case-insensitive: `Yes` conflicts with ` yes `, while non-ASCII
-case variants are not folded. Duplicate questions and labels reused in
-different questions are allowed.
+Labels must be unique within their question after trim and terminal-safe
+encoding. Comparison is bytewise ASCII case-insensitive: `Yes` conflicts with
+` yes `, and raw ESC conflicts with the literal rendered text `\x1b`, while
+non-ASCII case variants are not folded. Duplicate questions and labels reused
+in different questions are allowed.
 
 The normalized values supplied to `QuestionPrompter` are the exact normalized
 values retained in prepared execution arguments. Direct `execute` revalidates
@@ -280,9 +281,11 @@ The production `NativeReferenceHost` remains gated to its existing
 Linux/macOS, non-WebAssembly, `ai-gateway-http` boundary. Its constructors gain
 an explicit shared `QuestionPrompter`, register `ask_user_question` first in
 the alphabetical tool catalog, and do not discover a terminal, TTY,
-environment variable, file, or runtime for it. The catalog becomes sixteen
-tools: one rootless question tool, thirteen descriptor-backed tools, rootless
-`web_fetch`, and Gateway-backed `web_search`.
+environment variable, file, or runtime for it. The exact sixteen-tool order is
+`ask_user_question`, `copy_file`, `create_folder`, `delete_file`, `edit_file`,
+`file_info`, `glob_files`, `grep_files`, `list_files`, `open_file`, `read_file`,
+`rename_file`, `terminal`, `web_fetch`, `web_search`, and `write_file`.
+Thirteen are descriptor-backed; the question and web tools are rootless.
 
 ## Pinned-fx relationship and deferrals
 
