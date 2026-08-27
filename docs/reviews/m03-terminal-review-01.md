@@ -773,6 +773,56 @@ after its drop. Source, evidence, and documentation are not yet composed. This
 is a remediation-status record only; it does not claim a replacement gate,
 formal cycle-7 review, remote delivery, product performance, or fx equivalence.
 
+## Cycle 7 composition and replacement gate
+
+Cycle-7 remediation completed from non-overlapping isolated components.
+Independent-evidence component
+`f5643305c9ae1bdc53d514d9aa0e88ea4fa20312`, tree `a0fe197`, integrated as
+`01a996c`. Maintained-documentation component
+`f1b62d376560d6646fce47d35871ede53a839b6d`, tree `d1c05fb`, integrated as
+`953a74b`. Production/private-evidence component
+`f5487f94eb53f356ddbc30ad4ba54215760e611c`, tree `da0ccef`, integrated as
+`9810ee9`. Every component worktree was verified clean, removed, and pruned
+immediately after integration; only the primary worktree remained.
+
+The independent public regression was deterministically red on cycle-6
+production: waking an independently retained supplied clone after dropping the
+pending outer future invoked the stale host Waker once. Exact behavior head
+`9810ee98a994dc1c98584cd1062f63a7e70e2bca`, tree
+`cf7390e04dd34c069740ff29024bdb2e211645f8`, passes that regression and the
+complete replacement gate under exact Rust and Cargo 1.94.1 without fallback:
+
+- all four required commands pass, including warnings-denied workspace all-
+  target/all-feature Clippy, 1,178 listed non-documentation Rust tests, and two
+  doctests;
+- focused suites pass 33 external terminal, 21 private terminal, two engine,
+  and one unsupported-platform cases. Public evidence proves outer-future drop
+  suppresses stale delivery while a retained supplied clone keeps capacity busy
+  until its drop; private evidence covers both frame drop and poll unwind;
+- all 136 Python tests pass with eight expected macOS skips, while regeneration
+  against pinned fx `b1774fbf6c7602b503026f96f6e960e946c692ef` remains byte-
+  stable;
+- exact `cargo-deny` 0.20.2 accepts advisories, bans, licenses, and sources with
+  the three established duplicate warnings; `cargo-audit` 0.22.2 loads 1,226
+  advisories, scans 211 lockfile dependencies, and reports no vulnerability;
+- Linux native-library and terminal-test checks and warnings-denied Clippy pass;
+  FreeBSD warnings-denied Clippy passes; WASI no-default and all-feature checks
+  pass with only the established unrelated `read_file` dead-code warning;
+- documentation integrity covers 89 maintained Markdown files, 312 triple-
+  backtick occurrences, 680 parsed links, and 517 repository-relative targets
+  with zero missing targets;
+- the exact 29-file base diff is +8,693/-193, adds no unsafe Rust, and leaves
+  workflows, benchmarks, compatibility data, the root manifest, and
+  `Cargo.lock` unchanged; and
+- a fresh locked 3,985,216-byte arm64 Mach-O release binary has SHA-256
+  `b515ce0951f44a1e30171ee69c400cb9e750430e3a9d4959028ab49a16a55383` and
+  passes 672-byte help plus isolated status smoke with empty stderr and no state
+  residue.
+
+This gate makes no formal cycle-7 review or remote-delivery claim. Three fresh
+product-review tracks must identify the immutable candidate and tree recorded
+after this gate result is committed.
+
 ## Delivery gate
 
 Only a review-green exact candidate may be pushed as the feature branch. Its

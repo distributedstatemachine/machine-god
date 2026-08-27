@@ -87,13 +87,12 @@ top-level status summaries. Exact behavior head `8705811`, tree `8a319c1`,
 passes the complete exact-1.94.1 replacement gate. Formal cycle 6 rejected exact
 candidate `28292b7`, tree `487f160`, with a deduplicated `0/0/1/0` union: the
 pending outer-future drop path can leave stale host-Waker delivery open through
-an independently retained supplied clone. Cycle-7 remediation is in progress
-across non-overlapping source, independent-evidence, and maintained-
-documentation worktrees. It requires frame-owned RAII notification close on
-normal return, pending future drop, and unwind while independently retained
-clones and already-running callbacks keep the original activity. Composition,
-the complete replacement gate, three fresh exact-SHA reviews, and remote
-delivery remain pending.
+an independently retained supplied clone. Cycle-7 frame-owned RAII notification
+close now covers normal return, pending future drop, and unwind while
+independently retained clones and already-running callbacks keep the original
+activity. Exact behavior head `9810ee9`, tree `cf7390e`, passes the complete
+exact-1.94.1 replacement gate. An immutable candidate, three fresh exact-SHA
+reviews, and remote delivery remain pending.
 
 The frozen contract checkpoint is exact `79ae1b7`. Isolated host component
 `ecf3e78`, production precursor `ea216db`, independent-evidence component
@@ -166,14 +165,14 @@ established delivery: formal exact candidate `28292b7`, tree `487f160`, was
 rejected with a deduplicated `0/0/1/0` union. Correctness/API found the pending
 outer-future drop path leaves stale host-Waker delivery open through an
 independently retained supplied clone; lifecycle/platform and performance/
-resources were green. Cycle-7 remediation is in progress in non-overlapping
-source, independent-evidence, and maintained-documentation worktrees. The
-replacement must make notification close frame-owned RAII across normal return,
-pending outer-future drop, and unwind; detach the target and queued replay
-without holding the notifier lock across arbitrary destruction; suppress stale
-post-drop delivery; and preserve activity ownership in retained supplied-Waker
-clones and already-in-flight callbacks. No cycle-7 composition, gate, review, or
-delivery is established yet.
+resources were green. Cycle-7 documentation component `f1b62d3`, independent
+evidence `f564330`, and production/private-evidence `f5487f9` compose through
+exact behavior head `9810ee9`, tree `cf7390e`. Frame-owned RAII close covers
+normal return, pending outer-future drop, and unwind; detaches target and replay
+without holding the notifier lock across arbitrary destruction; suppresses
+stale post-drop delivery; and preserves retained-clone and in-flight-callback
+activity ownership. The complete exact-1.94.1 replacement gate is green. Cycle
+7 has not yet established an immutable candidate, review result, or delivery.
 
 The thirty-third bounded slice, native `web_search`, is **DELIVERED** from exact
 delivered base

@@ -7,8 +7,9 @@ frozen from exact delivered base
 Exact cycle-6 behavior head `8705811`, tree `8a319c1`, passes the complete
 exact-1.94.1 replacement gate. Formal cycle 6 rejected exact candidate
 `28292b7`, tree `487f160`, because pending outer-future drop can leave stale
-Waker delivery open. Cycle-7 remediation is in progress; composition, review,
-and remote delivery remain pending.
+Waker delivery open. Exact cycle-7 behavior head `9810ee9`, tree `cf7390e`,
+passes the complete exact-1.94.1 replacement gate; immutable review and remote
+delivery remain pending.
 
 ## Boundary
 
