@@ -1236,7 +1236,8 @@ struct ActivityWake {
 struct ActivityWakeState {
     target: Option<Arc<Waker>>,
     notifying: bool,
-    pending_replay: bool,
+    observed_while_notifying: bool,
+    pending_after_observation: bool,
     lifecycle: ActivityWakeLifecycle,
 }
 
@@ -1263,9 +1264,10 @@ impl ActivityWake {
                 return;
             }
             if state.notifying {
-                // This poll observes every notice before the bind. A later
-                // notice in the same callback window restores one replay.
-                state.pending_replay = false;
+                // This poll observes every notice that preceded the bind. A
+                // later notice in the same callback window needs one replay.
+                state.observed_while_notifying = true;
+                state.pending_after_observation = false;
             }
             if notifier_target {
                 // A prompt future may use the supplied Waker to re-poll the
@@ -1287,18 +1289,24 @@ impl ActivityWake {
         let incoming = Arc::new(target.clone());
         let (replaced, unused) = {
             let mut state = lock_activity_wake(&self.state);
-            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed)
-                || state
+            if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) {
+                (None, Some(incoming))
+            } else {
+                // Notification may have started while the arbitrary target
+                // clone ran. This bind is still an observing outer poll.
+                if state.notifying {
+                    state.observed_while_notifying = true;
+                    state.pending_after_observation = false;
+                }
+                if state
                     .target
                     .as_deref()
                     .is_some_and(|existing| existing.will_wake(target))
-            {
-                (None, Some(incoming))
-            } else {
-                if state.notifying {
-                    state.pending_replay = false;
+                {
+                    (None, Some(incoming))
+                } else {
+                    (state.target.replace(incoming), None)
                 }
-                (state.target.replace(incoming), None)
             }
         };
         // Arbitrary Waker destruction also remains outside the lock.
@@ -1310,7 +1318,8 @@ impl ActivityWake {
         let target = {
             let mut state = lock_activity_wake(&self.state);
             state.lifecycle = ActivityWakeLifecycle::Closed;
-            state.pending_replay = false;
+            state.observed_while_notifying = false;
+            state.pending_after_observation = false;
             state.target.take()
         };
         // `self` owns the permit through target destruction; an in-flight
@@ -1325,16 +1334,20 @@ impl ActivityWake {
                 return;
             }
             if state.notifying {
-                // Every concurrent or reentrant burst leaves one serialized
-                // replay. A later outer poll may consume it before return.
-                state.pending_replay = true;
+                // Notices before a re-poll are represented by the callback
+                // already in flight. A notice after that poll must be replayed
+                // once the callback returns or the wake could be lost.
+                if state.observed_while_notifying {
+                    state.pending_after_observation = true;
+                }
                 return;
             }
             let Some(target) = state.target.as_ref().map(Arc::clone) else {
                 return;
             };
             state.notifying = true;
-            state.pending_replay = false;
+            state.observed_while_notifying = false;
+            state.pending_after_observation = false;
             target
         };
 
@@ -1344,10 +1357,12 @@ impl ActivityWake {
                 let mut state = lock_activity_wake(&self.state);
                 if matches!(state.lifecycle, ActivityWakeLifecycle::Closed) || notified.is_err() {
                     state.notifying = false;
-                    state.pending_replay = false;
+                    state.observed_while_notifying = false;
+                    state.pending_after_observation = false;
                     None
-                } else if state.pending_replay {
-                    state.pending_replay = false;
+                } else if state.pending_after_observation {
+                    state.observed_while_notifying = false;
+                    state.pending_after_observation = false;
                     if let Some(target) = state.target.as_ref().map(Arc::clone) {
                         Some(target)
                     } else {
@@ -1356,6 +1371,7 @@ impl ActivityWake {
                     }
                 } else {
                     state.notifying = false;
+                    state.observed_while_notifying = false;
                     None
                 }
             };
