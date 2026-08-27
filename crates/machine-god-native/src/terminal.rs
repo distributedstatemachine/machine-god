@@ -1246,6 +1246,8 @@ struct ActivityNotifier {
 struct ActivityNotifierState {
     target: Option<Arc<Waker>>,
     notifying: bool,
+    observed_while_notifying: bool,
+    pending_after_observation: bool,
 }
 
 impl ActivityNotifier {
@@ -1262,6 +1264,12 @@ impl ActivityNotifier {
         let incoming = Arc::new(target.clone());
         let (replaced, unused) = {
             let mut state = lock_activity_notifier(&self.state);
+            if state.notifying {
+                // This poll observes every notice that preceded the bind. A
+                // later notice in the same callback window needs one replay.
+                state.observed_while_notifying = true;
+                state.pending_after_observation = false;
+            }
             if state
                 .target
                 .as_deref()
@@ -1277,30 +1285,60 @@ impl ActivityNotifier {
     }
 
     fn notify(&self) {
-        let target = {
+        let mut target = {
             let mut state = lock_activity_notifier(&self.state);
             if state.notifying {
-                // The callback already in flight represents this whole burst:
-                // concurrent notices return without scheduling a sequential
-                // second callback.
+                // Notices before a re-poll are represented by the callback
+                // already in flight. A notice after that poll must be replayed
+                // once the callback returns or the wake could be lost.
+                if state.observed_while_notifying {
+                    state.pending_after_observation = true;
+                }
                 return;
             }
             let Some(target) = state.target.as_ref().map(Arc::clone) else {
                 return;
             };
             state.notifying = true;
+            state.observed_while_notifying = false;
+            state.pending_after_observation = false;
             target
         };
 
-        let notified = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            target.wake_by_ref();
-        }));
-        // Reset after the callback so a distinct later notice starts a new
-        // callback, including after the target panics.
-        lock_activity_notifier(&self.state).notifying = false;
-        drop(target);
-        if let Err(payload) = notified {
-            std::panic::resume_unwind(payload);
+        loop {
+            let notified = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                target.wake_by_ref();
+            }));
+            let next = {
+                let mut state = lock_activity_notifier(&self.state);
+                if notified.is_err() {
+                    state.notifying = false;
+                    state.observed_while_notifying = false;
+                    state.pending_after_observation = false;
+                    None
+                } else if state.pending_after_observation {
+                    state.observed_while_notifying = false;
+                    state.pending_after_observation = false;
+                    if let Some(target) = state.target.as_ref().map(Arc::clone) {
+                        Some(target)
+                    } else {
+                        state.notifying = false;
+                        None
+                    }
+                } else {
+                    state.notifying = false;
+                    state.observed_while_notifying = false;
+                    None
+                }
+            };
+            drop(target);
+            if let Err(payload) = notified {
+                std::panic::resume_unwind(payload);
+            }
+            let Some(next) = next else {
+                return;
+            };
+            target = next;
         }
     }
 }
@@ -2712,7 +2750,7 @@ mod tests {
     }
 
     #[test]
-    fn activity_notifier_coalesces_a_burst_and_rebinds_after_callback_return() {
+    fn activity_notifier_replays_notice_after_poll_during_callback() {
         let active = Arc::new(AtomicUsize::new(0));
         let activity = ExecutionActivity::acquire(&active, 1).unwrap();
         let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
@@ -2754,16 +2792,59 @@ mod tests {
             first.join().unwrap();
         });
 
-        notifier_waker.wake_by_ref();
         assert_eq!(blocking.calls.load(Ordering::Acquire), 1);
         assert_eq!(rebound.calls.load(Ordering::Acquire), 1);
         assert_eq!(maximum_in_flight.load(Ordering::Acquire), 1);
+
+        notifier_waker.wake_by_ref();
+        assert_eq!(rebound.calls.load(Ordering::Acquire), 2);
 
         drop(activity);
         assert_eq!(active.load(Ordering::Acquire), 1);
         drop(notifier_waker);
         drop(notifier);
         assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn activity_notifier_coalesces_notices_observed_by_later_repoll() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let activity = ExecutionActivity::acquire(&active, 1).unwrap();
+        let notifier = Arc::new(ActivityNotifier::new(Arc::clone(&activity)));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let maximum_in_flight = Arc::new(AtomicUsize::new(0));
+        let blocking = Arc::new(BlockingNotifierTarget::new(
+            Arc::clone(&in_flight),
+            Arc::clone(&maximum_in_flight),
+        ));
+        let blocking_waker = Waker::from(Arc::clone(&blocking));
+        notifier.bind(&blocking_waker);
+        let notifier_waker = Waker::from(Arc::clone(&notifier));
+
+        std::thread::scope(|scope| {
+            let first_waker = notifier_waker.clone();
+            let first = scope.spawn(move || first_waker.wake());
+            blocking.wait_until_entered();
+
+            let mut burst = Vec::new();
+            for _ in 0..32 {
+                let burst_waker = notifier_waker.clone();
+                burst.push(scope.spawn(move || burst_waker.wake()));
+            }
+            for wake in burst {
+                wake.join().unwrap();
+            }
+
+            notifier.bind(&blocking_waker);
+            blocking.release();
+            first.join().unwrap();
+        });
+
+        assert_eq!(blocking.calls.load(Ordering::Acquire), 1);
+        assert_eq!(maximum_in_flight.load(Ordering::Acquire), 1);
+        notifier_waker.wake_by_ref();
+        assert_eq!(blocking.calls.load(Ordering::Acquire), 2);
+        assert_eq!(maximum_in_flight.load(Ordering::Acquire), 1);
     }
 
     #[test]
