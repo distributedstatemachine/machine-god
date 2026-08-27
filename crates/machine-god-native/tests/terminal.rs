@@ -46,6 +46,7 @@ struct RequestRecord {
     environment_sha256: String,
     environment: Vec<(OsString, OsString)>,
     deadline: Instant,
+    directory_identity: String,
     debug: String,
 }
 
@@ -116,6 +117,7 @@ impl TerminalExecutor for FakeExecutor {
         request: TerminalExecutionRequest,
         cancellation: CancellationToken,
     ) -> TerminalExecution {
+        let directory = rustix::fs::fstat(request.directory_fd()).unwrap();
         self.state.calls.fetch_add(1, Ordering::SeqCst);
         self.state.requests.lock().unwrap().push(RequestRecord {
             program: request.program().to_owned(),
@@ -126,6 +128,7 @@ impl TerminalExecutor for FakeExecutor {
             environment_sha256: request.environment_sha256().to_owned(),
             environment: request.environment().to_vec(),
             deadline: request.deadline(),
+            directory_identity: format!("{}:{}", directory.st_dev, directory.st_ino),
             debug: format!("{request:?}"),
         });
         Box::pin(FakeExecution {
@@ -480,6 +483,68 @@ fn direct_execute_revalidates_complete_canonical_arguments_without_effects() {
 }
 
 #[test]
+fn descriptor_relative_cwd_failures_never_reach_the_injected_executor() {
+    let temporary = TemporaryDirectory::new("cwd-failures");
+    std::fs::create_dir(temporary.path().join("directory")).unwrap();
+    std::fs::write(temporary.path().join("regular-file"), b"not a directory").unwrap();
+    std::os::unix::fs::symlink("directory", temporary.path().join("symlink")).unwrap();
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let tool = tool(temporary.path(), &executor);
+
+    for cwd in ["missing", "regular-file", "symlink"] {
+        let error = execute(
+            &tool,
+            exact_arguments("true", cwd),
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::Unavailable);
+        assert_eq!(error.code, "terminal_cwd_unavailable");
+        assert_eq!(error.message, "terminal working directory is unavailable");
+        assert!(!error.retryable);
+    }
+    assert_eq!(executor.calls(), 0);
+    assert_eq!(executor.polls(), 0);
+}
+
+#[test]
+fn retained_root_rename_and_path_replacement_cannot_redirect_request_identity() {
+    let temporary = TemporaryDirectory::new("retained-root");
+    let root = temporary.path().join("workspace");
+    let moved = temporary.path().join("workspace-moved");
+    std::fs::create_dir(&root).unwrap();
+    let original = rustix::fs::stat(&root).unwrap();
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let tool = tool(&root, &executor);
+
+    std::fs::rename(&root, &moved).unwrap();
+    std::fs::create_dir(&root).unwrap();
+    let replacement = rustix::fs::stat(&root).unwrap();
+    assert_ne!(
+        (original.st_dev, original.st_ino),
+        (replacement.st_dev, replacement.st_ino)
+    );
+
+    let output = execute(
+        &tool,
+        exact_arguments("true", "."),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(!output.is_error);
+    let requests = executor.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].directory_identity,
+        format!("{}:{}", original.st_dev, original.st_ino)
+    );
+    assert_ne!(
+        requests[0].directory_identity,
+        format!("{}:{}", replacement.st_dev, replacement.st_ino)
+    );
+}
+
+#[test]
 fn executor_is_inert_until_poll_and_drop_owns_the_pending_execution() {
     let temporary = TemporaryDirectory::new("future");
     let executor = FakeExecutor::new(Mode::Pending);
@@ -683,6 +748,37 @@ fn completed_execution_releases_capacity_before_output_publication() {
 }
 
 #[test]
+fn absolute_deadline_drops_a_permanently_pending_executor_and_releases_capacity() {
+    let temporary = TemporaryDirectory::new("pending-timeout");
+    let executor = FakeExecutor::new(Mode::Pending);
+    let tool = TerminalTool::with_executor(
+        temporary.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        TerminalLimits::new(Duration::from_millis(5), 1).unwrap(),
+    )
+    .unwrap();
+    let started = Instant::now();
+
+    for command in ["first", "second"] {
+        let output = futures_executor::block_on(tool.execute(
+            context(),
+            exact_arguments(command, "."),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert!(output.is_error);
+        assert_eq!(output.content["status"], "timed_out");
+        assert_eq!(output.content["exit_code"], Value::Null);
+        assert_eq!(output.content["signal"], Value::Null);
+    }
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(executor.calls(), 2);
+    assert!(executor.polls() >= 2);
+    assert_eq!(executor.drops(), 2);
+}
+
+#[test]
 fn process_environment_contract_round_trips_exactly() {
     let environment = ProcessEnvironment {
         profile: "construction_snapshot".to_owned(),
@@ -814,6 +910,81 @@ fn injected_outcome_contract_rejects_impossible_stream_and_status_reports() {
         undeclared_overflow.kind(),
         TerminalExecutorErrorKind::InvalidResponse
     );
+    for (status, duration) in [
+        (TerminalExecutionStatus::Exited(-1), Duration::ZERO),
+        (TerminalExecutionStatus::Exited(256), Duration::ZERO),
+        (TerminalExecutionStatus::Signaled(0), Duration::ZERO),
+        (TerminalExecutionStatus::Signaled(256), Duration::ZERO),
+        (
+            TerminalExecutionStatus::Exited(0),
+            Duration::from_secs(600) + Duration::from_millis(1),
+        ),
+    ] {
+        let error = TerminalExecutionOutcome::new(status, small(), small(), duration).unwrap_err();
+        assert_eq!(error.kind(), TerminalExecutorErrorKind::InvalidResponse);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn require_linux_executable(path: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 => true,
+        _ => {
+            eprintln!("skipping terminal system evidence because {path} is unavailable");
+            false
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_pid(path: &std::path::Path) -> rustix::process::Pid {
+    let pid = std::fs::read_to_string(path)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    rustix::process::Pid::from_raw(pid).expect("terminal process pid is positive")
+}
+
+#[cfg(target_os = "linux")]
+struct EscapedProcessGuard {
+    pid: rustix::process::Pid,
+}
+
+#[cfg(target_os = "linux")]
+impl EscapedProcessGuard {
+    fn new(pid: rustix::process::Pid) -> Self {
+        Self { pid }
+    }
+
+    fn terminate(&self) -> bool {
+        let _ = rustix::process::kill_process_group(self.pid, rustix::process::Signal::TERM);
+        if self.wait_until_gone(Duration::from_millis(500)) {
+            return true;
+        }
+        let _ = rustix::process::kill_process_group(self.pid, rustix::process::Signal::KILL);
+        self.wait_until_gone(Duration::from_secs(2))
+    }
+
+    fn wait_until_gone(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match rustix::process::test_kill_process(self.pid) {
+                Err(error) if error == rustix::io::Errno::SRCH => return true,
+                _ if Instant::now() >= deadline => return false,
+                _ => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for EscapedProcessGuard {
+    fn drop(&mut self) {
+        let _ = self.terminate();
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -845,6 +1016,128 @@ fn linux_system_executor_runs_fixed_shell_in_selected_cwd_with_separate_streams(
     assert_eq!(output.content["stderr_truncated"], false);
     assert_eq!(output.content["stdout_lossy"], false);
     assert_eq!(output.content["stderr_lossy"], false);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_system_executor_reports_direct_shell_signal_status() {
+    let temporary = TemporaryDirectory::new("system-signal");
+    let tool = TerminalTool::open(temporary.path()).unwrap();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments("kill -TERM \"$$\"", "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(output.is_error);
+    assert_eq!(output.content["status"], "signaled");
+    assert_eq!(output.content["exit_code"], Value::Null);
+    assert_eq!(output.content["signal"], 15);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_system_executor_terminates_on_aggregate_output_pressure() {
+    if !require_linux_executable("/usr/bin/head") || !std::path::Path::new("/dev/zero").exists() {
+        eprintln!("skipping terminal output-limit evidence because head or /dev/zero is absent");
+        return;
+    }
+    let temporary = TemporaryDirectory::new("system-output-limit");
+    let tool = TerminalTool::open(temporary.path()).unwrap();
+    let started = Instant::now();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments("/usr/bin/head -c 2097152 /dev/zero", "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(output.is_error);
+    assert_eq!(output.content["status"], "output_limit");
+    assert_eq!(output.content["exit_code"], Value::Null);
+    assert_eq!(output.content["signal"], Value::Null);
+    assert!(output.content["stdout_bytes"].as_u64().unwrap() > 1024 * 1024);
+    assert_eq!(output.content["stderr_bytes"], 0);
+    assert_eq!(output.content["stdout_truncated"], true);
+    assert_eq!(output.content["stdout_lossy"], false);
+    assert!(serde_json::to_vec(&output).unwrap().len() <= 48 * 1024);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_system_timeout_kills_a_term_ignoring_shell_before_publication() {
+    if !require_linux_executable("/bin/sleep") {
+        return;
+    }
+    let temporary = TemporaryDirectory::new("system-timeout");
+    let tool = TerminalTool::open_with_limits(
+        temporary.path(),
+        TerminalLimits::new(Duration::from_millis(100), 1).unwrap(),
+    )
+    .unwrap();
+    let started = Instant::now();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments(
+            "trap '' TERM; printf '%s' \"$$\" > timeout.pid; while :; do /bin/sleep 1; done",
+            ".",
+        ),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    let pid = read_linux_pid(&temporary.path().join("timeout.pid"));
+    let cleanup = EscapedProcessGuard::new(pid);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(output.is_error);
+    assert_eq!(output.content["status"], "timed_out");
+    assert_eq!(output.content["exit_code"], Value::Null);
+    assert_eq!(output.content["signal"], Value::Null);
+    assert_eq!(
+        rustix::process::test_kill_process(pid),
+        Err(rustix::io::Errno::SRCH),
+        "timed-out TERM-ignoring shell survived output publication"
+    );
+    drop(cleanup);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_system_reader_cleanup_is_bounded_when_setsid_process_retains_pipe() {
+    if !require_linux_executable("/usr/bin/setsid")
+        || !require_linux_executable("/bin/sh")
+        || !require_linux_executable("/bin/sleep")
+    {
+        return;
+    }
+    let temporary = TemporaryDirectory::new("system-setsid-pipe");
+    let tool = TerminalTool::open(temporary.path()).unwrap();
+    let command = "/usr/bin/setsid /bin/sh -c 'printf \"%s\" \"$$\" > escaped.pid; exec /bin/sleep 30' & i=0; while [ ! -s escaped.pid ] && [ \"$i\" -lt 200 ]; do i=$((i + 1)); /bin/sleep 0.01; done; test -s escaped.pid";
+    let started = Instant::now();
+
+    let output = futures_executor::block_on(tool.execute(
+        context(),
+        exact_arguments(command, "."),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    let escaped = read_linux_pid(&temporary.path().join("escaped.pid"));
+    let cleanup = EscapedProcessGuard::new(escaped);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(!output.is_error);
+    assert_eq!(output.content["status"], "exited");
+    assert_eq!(output.content["exit_code"], 0);
+    assert!(rustix::process::test_kill_process(escaped).is_ok());
+    assert!(
+        cleanup.terminate(),
+        "escaped setsid test process did not terminate during explicit cleanup"
+    );
 }
 
 #[cfg(target_os = "linux")]
