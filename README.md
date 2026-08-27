@@ -6,8 +6,8 @@ The engine is the primary product. The command-line application is its native
 reference host. Development status, architecture, compatibility, security, and
 performance evidence live in [`docs/`](docs/README.md).
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 6
-REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. It accepts one to four strict
 ordered questions with two to six strict options each, normalizes bounded text
@@ -98,13 +98,20 @@ rejected exact candidate `85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
 `0/0/0/1`; lifecycle/platform and performance/resources each reported
 `0/0/1/0`; the deduplicated union is `0/0/1/1`. Reentrant callbacks can rearm
 every replay and amplify one original wake into unbounded synchronous callback
-work. Cycle 7 requires observation-aware coalescing, constant bounded callback
-count, lossless observation-then-notice replay, and deterministic finite-budget
-evidence. The low finding is corrected here: every operative opening summary
-must agree on **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**, and a
-focused consistency scan must reject the superseded cycle-5 opening. No cycle-7
-green result is claimed; new gates, fresh reviews, remote workflows,
-integration, and delivery remain pending.
+work. Cycle-7 rejection docs `6128f03`/`1d354ff`, evidence
+`acca13c`/`b75fc54`, and source `3d48ce8` compose at exact behavior head
+`fbb3f5c5f40d0726b444b1ebc6f25fb1ee1fee36`, tree
+`7cee96e0701d11925360f3d1b6315f5801bbd807`. Callback entry clears observed/
+pending state; pre-observation notices coalesce into the in-flight callback; an
+outer bind marks observation; and only a later notice earns one serialized
+replay, which resets observation. Close/panic clears both flags. Callback
+concurrency remains at most one, activity ownership remains intact, and no
+foreign Waker work runs under the notifier lock. Finite-budget evidence rejects
+the base at 65 callbacks for budget 64 while the fix performs one, and a
+refined test proves one post-observation replay. Focused direct 35/engine one,
+all pinned/extended gates, status consistency 10/0, and unchanged release smoke
+are green. The current status is **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW
+PENDING**; no formal-review result is claimed.
 See the
 [`ask_user_question` contract](docs/ask-user-question.md) and
 [`review ledger`](docs/reviews/m03-ask-user-question-review-01.md).

@@ -658,7 +658,7 @@ require their own decode/allocation bounds.
 
 ## Slice 35 cycle-7 question resource remediation
 
-Status: **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 The first `ask_user_question` slice has no product-performance claim or new
 benchmark workload. Its resource contract is structural: at most four
@@ -820,8 +820,27 @@ Deterministic finite-budget evidence must prove both paths before a replacement
 gate and three fresh reviews.
 
 The low is the stale cycle-5 local-gate status in the three operative opening
-summaries. Those openings now use the cycle-6-rejected/cycle-7-remediation
-status, and a focused consistency scan must fail if the superseded opening
-returns. No cycle-7 implementation, gate, formal-review, remote-workflow,
-integration, or delivery result is claimed. See
+summaries. The rejection-doc checkpoint aligned their then-current status; this
+checkpoint advances all ten operative regions to cycle-7-local-gate-green with
+a focused 10-current/zero-stale result.
+
+Cycle-7 rejection docs `6128f03`/`1d354ff`, evidence `acca13c`/`b75fc54`, and
+source `3d48ce8`/`fbb3f5c` compose at exact behavior head
+`fbb3f5c5f40d0726b444b1ebc6f25fb1ee1fee36`, tree
+`7cee96e0701d11925360f3d1b6315f5801bbd807`. Entry to delivery clears observed
+and pending; pre-observation notices coalesce into the in-flight callback; bind
+marks observation; only a later notice earns one replay; replay clears
+observation; close/panic clears both. Maximum callback concurrency remains one,
+retained activity holds capacity, and no foreign Waker work occurs under lock.
+
+`reentrant_prompt_wake_before_outer_repoll_has_constant_callback_work` rejects
+the cycle-6 base after 65 callbacks exceed budget 64; the fix returns after one.
+`cloned_prompt_wakers_replay_once_after_outer_repoll_observes_the_burst` proves
+one lossless replay after observation. Cross-composition `c0c9eb0`/`6fd79ed`
+passes formatting, direct 35, engine one, and native Clippy. Focused, all four
+pinned, Python 136/8, compatibility, deny/audit 1,226/211/zero, portability,
+docs 91/318/701/534/0, status 10/0, protected/no-unsafe, and unchanged release-
+smoke gates are green. The exact Cargo delta remains the audited dev-only test
+fixture and one native lock list line; production graph is unchanged. Formal
+review, remote workflows, integration, and delivery remain pending. See
 [`ask-user-question.md`](ask-user-question.md).

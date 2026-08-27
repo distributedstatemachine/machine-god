@@ -1,6 +1,6 @@
 # Native `ask_user_question`
 
-Status: **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 Bounded Milestone 03 slice 35 starts from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. The comparison input is pinned
@@ -243,10 +243,50 @@ gates and three fresh reviews.
 
 The low is inconsistent operative opening status. `README.md:9`,
 `docs/README.md:3`, and `docs/architecture.md:3` still described cycle 5 while
-later summaries described cycle 6. All operative openings now use **CYCLE 6
-REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**. A focused status-consistency scan
-must reject the superseded cycle-5 local-gate opening. No cycle-7 source,
-evidence, gate, review, workflow, integration, or delivery result is claimed.
+later summaries described cycle 6. The rejection-doc checkpoint aligned every
+operative opening to its then-current rejection/remediation status. This local-
+gate checkpoint advances all ten operative status regions to **CYCLE 7 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**; the focused consistency scan reports ten
+current and zero stale.
+
+## Cycle-7 implementation and local checkpoint
+
+Rejection docs `6128f03adddfa566a8fc8f3b326fc16e927b0b05`/`1d354ff`, evidence
+`acca13c0613e12c2a20e903abbb768e87253c5b6`/`b75fc54`, and source
+`3d48ce852db57afe32601ebdd90bc8ef42d4a0fd` compose at exact behavior head
+`fbb3f5c5f40d0726b444b1ebc6f25fb1ee1fee36`, tree
+`7cee96e0701d11925360f3d1b6315f5801bbd807`. Independent cross-composition
+`c0c9eb0`/`6fd79edfac2705e8dfe79bbe43011ab83dc4cd94` is green for formatting,
+35 direct tests, one engine test, and native warnings-denied Clippy.
+
+Callback entry clears observed and pending state, so every notice before an
+outer observation coalesces into the callback already in flight. An outer bind
+marks observation; only a later notice earns one serialized replay, whose entry
+clears observation again. Close and panic clear both observation and pending
+state. Callback concurrency is at most one, retained Wakers and callbacks keep
+the prompt permit, and arbitrary downstream Waker clone/drop/callback work
+never runs while the notifier lock is held.
+
+`reentrant_prompt_wake_before_outer_repoll_has_constant_callback_work`
+rejects the cycle-6 base at 65 callbacks for a finite budget of 64 and records
+one callback for cycle 7. The refined
+`cloned_prompt_wakers_replay_once_after_outer_repoll_observes_the_burst`
+proves that one notice after an outer re-poll is delivered as one replay.
+
+The focused gate passes exact-1.94.1 formatting, direct 35, engine one, all-
+feature host nine, host lifecycle one, native manifest six, and native all-
+target/all-feature warnings-denied Clippy. All four pinned workspace gates are
+green. The extended gate passes Python 136/8 skips, pinned compatibility,
+dependency policy/audit 1,226/211/zero, native/FreeBSD/WASI portability with
+only the established unrelated `read_file` warning, documentation
+91/318/701/534/0, status consistency 10 current/zero stale, clean protected/no-
+unsafe checks, and a fresh locked release plus three missing-root smokes. The
+3,985,216-byte release SHA-256 is
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The existing audited reentrant-Waker path fixture and one native lock dependency-
+list line remain the exact dev-only Cargo delta; the production graph is
+unchanged. Formal review, remote workflows, integration, and delivery remain
+pending.
 
 ## Product boundary
 

@@ -1,7 +1,7 @@
 # Architecture
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 6
-REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**. Historical behavior head
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**. Historical behavior head
 `a76818e`, tree `f44def5`, passed its recorded local gate, but formal cycle 1
 rejected exact candidate `6c54ec3bf2c23983f14b0a4edeac723321a97900`, tree
 `bea90245a559e8e223cc5bb45e0ddfa15e426ee6`, with a deduplicated
@@ -73,10 +73,13 @@ pre-review checkpoint was **CYCLE 6 LOCAL GATE GREEN — FORMAL REVIEW PENDING**
 Formal cycle 6 rejected exact `85058a8`/`fd3c507`: correctness/API
 `0/0/0/1`, lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, and
 union `0/0/1/1`. Reentrant replay can continually rearm the callback loop,
-making synchronous work unbounded. Cycle 7 requires observation-aware
-coalescing, constant bounded callback count, lossless observation-then-notice
-replay, finite-budget evidence, and a status-consistency scan covering all
-operative openings. No cycle-7 green result is claimed. See
+making synchronous work unbounded. Cycle-7 docs `6128f03`/`1d354ff`, evidence
+`acca13c`/`b75fc54`, and source `3d48ce8`/`fbb3f5c` compose at exact head
+`fbb3f5c`/`7cee96e`. Observation-aware state bounds callback count, preserves
+one later replay, clears on close/panic, retains activity, and performs no
+foreign Waker work under lock. Finite-budget and positive replay evidence,
+focused direct 35/engine one, the complete pinned/extended gate, and status
+10/0 are green. Formal review remains pending. See
 [`ask-user-question.md`](ask-user-question.md).
 
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED** from exact
@@ -2306,8 +2309,10 @@ complete local gate are green. Formal cycle 6 rejected exact
 `85058a8`/`fd3c507` with a deduplicated `0/0/1/1` union: reentrant notices can
 rearm every replay without an intervening outer observation, and the three
 operative opening summaries were stale. Cycle-7 observation-aware bounded
-replay, finite-budget evidence, status consistency, new gates, and fresh
-reviews remain pending.
+replay, finite-budget evidence, and status consistency now compose through
+`fbb3f5c`/`7cee96e`. Entry/observation/replay state bounds callbacks and
+preserves one post-observation notice without lock-held foreign work. The
+focused and complete local gates are green; formal review remains pending.
 That absence of option-membership enforcement is the only answer-codec parity
 claimed with pinned fx; local trimming, empty-answer rejection, bounds, and
 terminal encoding intentionally differ.
@@ -2337,5 +2342,6 @@ union. Cycle-5 source, evidence, and gate are established, but formal cycle 5
 rejected exact `54b1aab`/`54586d2` with a `0/0/1/0` union. Cycle-6 source,
 evidence, and complete local gate are established at `707a794`/`1e60299`.
 Formal cycle 6 rejected `85058a8`/`fd3c507` with a `0/0/1/1` union. Cycle-7
-source, evidence, gate, fresh reviews, remote workflows, integration, and
-delivery remain unestablished.
+source, evidence, and complete local gate are established at
+`fbb3f5c`/`7cee96e`. Fresh reviews, remote workflows, integration, and delivery
+remain unestablished.

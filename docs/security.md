@@ -2074,7 +2074,7 @@ action.
 
 ## Slice 35 cycle-7 interaction and authority remediation
 
-Status: **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**.
+Status: **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**.
 
 `ask_user_question` is not an approval channel. Its prepared call explicitly
 requires no policy-governed authority, so using it cannot recursively open the
@@ -2213,7 +2213,24 @@ Deterministic finite-budget evidence, a replacement gate, and three fresh
 reviews are required.
 
 The low is stale opening status in `README.md`, `docs/README.md`, and
-`docs/architecture.md`. Every operative opening now says **CYCLE 6 REJECTED —
-CYCLE 7 REMEDIATION IN PROGRESS**, and a focused consistency scan must reject
-the superseded cycle-5 opening. No cycle-7 implementation, green gate, review,
-remote workflow, integration, or delivery result is claimed.
+`docs/architecture.md`. The rejection-doc checkpoint aligned the then-current
+status; this checkpoint advances all ten operative regions to **CYCLE 7 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**, with a focused 10-current/zero-stale scan.
+
+Cycle-7 rejection docs `6128f03`/`1d354ff`, evidence `acca13c`/`b75fc54`, and
+source `3d48ce8`/`fbb3f5c` compose at exact head
+`fbb3f5c5f40d0726b444b1ebc6f25fb1ee1fee36`, tree
+`7cee96e0701d11925360f3d1b6315f5801bbd807`. Callback entry clears observation/
+pending state; pre-observation notices coalesce; bind marks observation; only a
+later notice earns one replay; replay resets observation; close/panic clears
+both. Retained Wakers/callbacks retain capacity, concurrency stays at most one,
+and no foreign Waker work occurs under lock. This changes no permission or host-
+interaction authority.
+
+Finite-budget evidence rejects the base at 65 callbacks for budget 64 while
+the fix uses one; refined evidence proves one lossless post-observation replay.
+Focused direct 35/engine one/host nine/lifecycle one, all pinned and extended
+gates, status 10/0, and unchanged release smokes are green. The existing audited
+dev-only fixture and one native lock dependency-list line remain the exact
+Cargo delta; production graph is unchanged. Formal review, remote workflows,
+integration, and delivery remain pending.

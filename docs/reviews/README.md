@@ -1,7 +1,7 @@
 # Adversarial reviews
 
-Bounded slice 35, native `ask_user_question`, is **CYCLE 6 REJECTED — CYCLE 7
-REMEDIATION IN PROGRESS** from exact delivered base `5846799`. It is limited to
+Bounded slice 35, native `ask_user_question`, is **CYCLE 7 LOCAL GATE GREEN —
+FORMAL REVIEW PENDING** from exact delivered base `5846799`. It is limited to
 ordinary questions through an injected rootless prompter: strict 1-4/2-6 input,
 terminal-safe bounded text,
 bounded ordered free-form answers, explicit no-policy-authority preparation,
@@ -66,9 +66,16 @@ amplification when every self-notice rearms the replay loop. The low is the
 stale cycle-5 status in three operative opening summaries. Cycle 7 requires
 observation-aware constant-bounded callback delivery, lossless observation-
 then-notice replay, deterministic finite-budget evidence, consistent openings,
-a focused status scan, new gates, and three fresh exact-SHA reviews. No future
-green result is claimed; remote workflows, integration, and delivery remain
-pending.
+a focused status scan, new gates, and three fresh exact-SHA reviews. Rejection
+docs `6128f03`/`1d354ff`, evidence `acca13c`/`b75fc54`, and source
+`3d48ce8`/`fbb3f5c` compose at exact head `fbb3f5c`/`7cee96e`. Entry clears
+state, bind observes, one later notice earns one replay, and close/panic clears
+state; callback concurrency stays at most one without lock-held Waker work.
+Finite-budget evidence rejects the base at 65 callbacks for budget 64 while
+the fix uses one; positive evidence proves one lossless post-observation replay.
+Focused direct 35/engine one, all pinned/extended, status 10/0, and release-
+smoke gates are green. Three fresh exact-SHA reviews, remote workflows,
+integration, and delivery remain pending.
 See
 [`m03-ask-user-question-review-01.md`](m03-ask-user-question-review-01.md).
 

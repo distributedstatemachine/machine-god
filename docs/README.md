@@ -1,7 +1,7 @@
 # Documentation
 
-Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 6
-REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**
+Bounded Milestone 03 slice 35, native `ask_user_question`, is **CYCLE 7 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING**
 from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
 strict bounded batch, normalized for terminal-safe display and passed to an
@@ -81,13 +81,18 @@ rejected exact `85058a8aa88fab6912d9313f1ce71e2778cc937f`, tree
 `fd3c5072c9473c7fe8767cc2692238eacb8a0f43`: correctness/API `0/0/0/1`,
 lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, and
 deduplicated union `0/0/1/1`. Reentrant replay can repeatedly rearm itself and
-amplify one wake into unbounded synchronous callbacks. Cycle 7 requires
-observation-aware coalescing, constant bounded callback count, lossless
-observation-then-notice replay, deterministic finite-budget evidence, new
-gates, and fresh reviews. The stale-opening low is corrected in all three
-operative entry points and guarded by a focused consistency scan. The current
-status is **CYCLE 6 REJECTED — CYCLE 7 REMEDIATION IN PROGRESS**; no future
-green result is claimed. The normative boundary is
+amplify one wake into unbounded synchronous callbacks. Cycle-7 rejection docs
+`6128f03`/`1d354ff`, evidence `acca13c`/`b75fc54`, and source
+`3d48ce8`/`fbb3f5c` compose at exact behavior head `fbb3f5c`, tree `7cee96e`.
+Observation now gates one later serialized replay; callback count remains
+constant-bounded before observation, close/panic clears state, activity remains
+owned, and foreign Waker work stays outside the lock. The base consumes 65
+callbacks for a finite budget of 64 while the fix consumes one; refined
+positive evidence proves lossless post-observation replay. Focused, required
+pinned, extended, status 10/0, and release-smoke gates are green. The current
+status is **CYCLE 7 LOCAL GATE GREEN — FORMAL REVIEW PENDING**; formal review,
+remote workflows, integration, and delivery remain pending. The normative
+boundary is
 [`ask-user-question.md`](ask-user-question.md), with status in the
 [`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
 

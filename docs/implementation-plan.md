@@ -44,8 +44,8 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
-The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 6
-REJECTED — CYCLE 7 REMEDIATION IN PROGRESS** from exact delivered base
+The thirty-fifth bounded slice, native `ask_user_question`, is **CYCLE 7 LOCAL
+GATE GREEN — FORMAL REVIEW PENDING** from exact delivered base
 `5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
 [`ask-user-question.md`](ask-user-question.md) and its live ledger is
@@ -258,10 +258,35 @@ pending bit, and extend one original wake indefinitely. Cycle 7 requires
 observation-aware coalescing, constant bounded callback count, lossless replay
 for a notice after an outer observation, and deterministic finite-budget
 evidence. The low is stale cycle-5 text in the three operative opening
-summaries; they now share the exact current status, and a focused consistency
-scan must prevent regression. Cycle-7 source/evidence, a new complete gate,
-three fresh reviews, feature workflows, fast-forward integration, delivery,
-and exact `main` workflows remain pending. No future green result is claimed.
+summaries; the rejection docs aligned their then-current state, and this
+checkpoint advances all ten operative status regions with a 10/0 focused scan.
+Cycle-7 rejection docs `6128f03`/`1d354ff`,
+evidence `acca13c`/`b75fc54`, and source `3d48ce8` compose at exact behavior
+head `fbb3f5c5f40d0726b444b1ebc6f25fb1ee1fee36`, tree
+`7cee96e0701d11925360f3d1b6315f5801bbd807`; independent cross-composition
+`c0c9eb0`/`6fd79edfac2705e8dfe79bbe43011ab83dc4cd94` is green for formatting,
+direct 35, engine one, and native Clippy.
+
+Entry clears observed/pending state; pre-observation notices coalesce; an outer
+bind marks observation; only a later notice earns one replay; replay resets
+observation; and close/panic clear both flags. Callback concurrency stays at
+most one, retained Wakers/callbacks retain capacity, and foreign Waker work
+stays outside the lock. Finite-budget evidence rejects the base at 65 callbacks
+for budget 64 while the fix uses one; refined evidence proves one lossless
+post-observation replay.
+
+The integrated focused gate is green for formatting, direct 35, engine one,
+host nine, host lifecycle one, manifest six, and native warnings-denied Clippy.
+All four pinned gates pass. Extended evidence passes Python 136/8 skips,
+compatibility, deny with established duplicates, audit 1,226/211/zero, native/
+WASI/FreeBSD with only the established `read_file` warning, docs
+91/318/701/534/0, status 10/0, clean protected/no-unsafe checks, and fresh
+3,985,216-byte release/missing-root smokes. Release SHA-256 remains
+`04daccd31dc0c97c49c1af09471f9b37ba51590d4293b050972c0bf786da25cf`.
+The exact Cargo delta remains the audited dev-only reentrant fixture and one
+native lock dependency-list line; production graph is unchanged. Three fresh
+reviews, feature workflows, fast-forward integration, delivery, and exact
+`main` workflows remain pending.
 
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
@@ -4304,8 +4329,10 @@ cycle 6 rejected exact `85058a8`/`fd3c507`: correctness/API `0/0/0/1`,
 lifecycle/platform `0/0/1/0`, performance/resources `0/0/1/0`, deduplicated
 `0/0/1/1`. Cycle-7 observation-aware constant-bounded replay, lossless
 observation-then-notice delivery, finite-budget evidence, consistent opening
-statuses, a focused status scan, new gates, and three fresh reviews remain
-pending. Remote workflows, integration, and delivery remain pending, and
+statuses, and the focused status scan compose at exact head
+`fbb3f5c`/`7cee96e`. Direct 35 and the complete pinned/extended/release gate are
+green. Three fresh reviews, remote workflows, integration, and delivery remain
+pending, and
 `vision` plus `read_tool_result` remain unimplemented, so this combined item
 remains unchecked. Slice 33
 `web_search` is
