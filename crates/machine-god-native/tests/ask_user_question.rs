@@ -586,6 +586,119 @@ impl ReentrantWakeProbe {
     }
 }
 
+#[derive(Default)]
+struct ReplayTargetState {
+    a_calls: usize,
+    b_calls: usize,
+    in_flight: usize,
+    max_in_flight: usize,
+    a_released: bool,
+}
+
+#[derive(Default)]
+struct ReplayTargetProbe {
+    state: Mutex<ReplayTargetState>,
+    changed: Condvar,
+}
+
+impl ReplayTargetProbe {
+    fn callback_a(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.a_calls += 1;
+        state.in_flight += 1;
+        state.max_in_flight = state.max_in_flight.max(state.in_flight);
+        self.changed.notify_all();
+        while !state.a_released {
+            state = self.changed.wait(state).unwrap();
+        }
+        state.in_flight -= 1;
+        self.changed.notify_all();
+    }
+
+    fn callback_b(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.b_calls += 1;
+        state.in_flight += 1;
+        state.max_in_flight = state.max_in_flight.max(state.in_flight);
+        state.in_flight -= 1;
+        self.changed.notify_all();
+    }
+
+    fn wait_until_a_entered(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut state = self.state.lock().unwrap();
+        while state.a_calls == 0 || state.in_flight == 0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "prompt replay target A callback did not run"
+            );
+            let waited = self.changed.wait_timeout(state, remaining).unwrap();
+            state = waited.0;
+        }
+    }
+
+    fn release_a(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.a_released = true;
+        self.changed.notify_all();
+    }
+
+    fn snapshot(&self) -> (usize, usize, usize, usize) {
+        let state = self.state.lock().unwrap();
+        (
+            state.a_calls,
+            state.b_calls,
+            state.in_flight,
+            state.max_in_flight,
+        )
+    }
+}
+
+struct ReplayTargetA {
+    probe: Arc<ReplayTargetProbe>,
+    teardown: Option<Waker>,
+}
+
+impl Wake for ReplayTargetA {
+    fn wake(self: Arc<Self>) {
+        self.probe.callback_a();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.probe.callback_a();
+    }
+}
+
+impl Drop for ReplayTargetA {
+    fn drop(&mut self) {
+        let teardown = self.teardown.take();
+        drop(teardown);
+    }
+}
+
+struct ReplayTargetB {
+    probe: Arc<ReplayTargetProbe>,
+}
+
+impl Wake for ReplayTargetB {
+    fn wake(self: Arc<Self>) {
+        self.probe.callback_b();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.probe.callback_b();
+    }
+}
+
+struct ReplayTargetARelease(Arc<ReplayTargetProbe>);
+
+impl Drop for ReplayTargetARelease {
+    fn drop(&mut self) {
+        self.0.release_a();
+    }
+}
+
 impl Wake for BlockingWake {
     fn wake(self: Arc<Self>) {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -814,6 +927,34 @@ fn assert_error(
     assert_eq!(error.code, code);
     assert_eq!(error.message, message);
     assert_eq!(error.retryable, retryable);
+}
+
+fn assert_retained_prompt_capacity_recovers_after_last_clone(
+    tool: &AskUserQuestionTool,
+    prompter: &PromptWakerFanoutPrompter,
+    prepared: &Value,
+    retained_wakers: &mut Vec<Waker>,
+) {
+    while retained_wakers.len() > 1 {
+        drop(retained_wakers.pop());
+        let busy = poll_ready(tool.execute(context(), prepared.clone(), CancellationToken::new()))
+            .unwrap_err();
+        assert_error(
+            &busy,
+            ToolErrorKind::Unavailable,
+            "ask_user_question_busy",
+            "ask_user_question prompt capacity is exhausted",
+            true,
+        );
+        assert_eq!(prompter.calls(), 1);
+    }
+    drop(retained_wakers.pop());
+
+    let mut recovered =
+        Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
+    assert!(poll_once(recovered.as_mut()).is_pending());
+    assert_eq!(prompter.calls(), 2);
+    drop(recovered);
 }
 
 fn assert_invalid(tool: &AskUserQuestionTool, arguments: Value) {
@@ -2042,6 +2183,147 @@ fn reentrant_prompt_wake_before_outer_repoll_has_constant_callback_work() {
     assert_eq!(amplified, (1, 0, 1));
     assert_eq!(amplified_fixture_calls, 1);
     assert_eq!(closed, amplified);
+}
+
+#[test]
+fn replay_target_drop_panic_clears_lane_for_a_fresh_notification() {
+    let prompter = PromptWakerFanoutPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let probe = Arc::new(ReplayTargetProbe::default());
+    let teardown_entries = Arc::new(AtomicUsize::new(0));
+    let callback_entries = Arc::clone(&teardown_entries);
+    let (teardown, _teardown_handle) = reentrant_waker(Callback::Drop, move || {
+        callback_entries.fetch_add(1, Ordering::SeqCst);
+        panic!("intentional replay target teardown panic");
+    });
+    let callback_owner = Arc::new(ReplayTargetA {
+        probe: Arc::clone(&probe),
+        teardown: Some(teardown),
+    });
+    let original_host_waker = Waker::from(Arc::clone(&callback_owner));
+    drop(callback_owner);
+    let replay_host_waker = Waker::from(Arc::new(ReplayTargetB {
+        probe: Arc::clone(&probe),
+    }));
+    let mut first = Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
+
+    assert!(
+        first
+            .as_mut()
+            .poll(&mut Context::from_waker(&original_host_waker))
+            .is_pending()
+    );
+    let mut retained_wakers = prompter.take_wakers();
+    assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+
+    let wake_result = thread::scope(|scope| {
+        let _release_on_unwind = ReplayTargetARelease(Arc::clone(&probe));
+        let first_notification = retained_wakers[0].clone();
+        let publisher =
+            scope.spawn(move || catch_unwind(AssertUnwindSafe(|| first_notification.wake())));
+        probe.wait_until_a_entered();
+
+        assert!(
+            first
+                .as_mut()
+                .poll(&mut Context::from_waker(&replay_host_waker))
+                .is_pending()
+        );
+        retained_wakers[1].wake_by_ref();
+        drop(original_host_waker);
+        probe.release_a();
+        publisher.join().unwrap()
+    });
+
+    retained_wakers[2].wake_by_ref();
+    let fresh = probe.snapshot();
+    drop(first);
+    retained_wakers[3].wake_by_ref();
+    let closed = probe.snapshot();
+
+    assert_retained_prompt_capacity_recovers_after_last_clone(
+        &tool,
+        &prompter,
+        &prepared,
+        &mut retained_wakers,
+    );
+
+    assert!(wake_result.is_err());
+    assert_eq!(teardown_entries.load(Ordering::SeqCst), 1);
+    assert_eq!(fresh, (1, 1, 0, 1));
+    assert_eq!(closed, fresh);
+}
+
+#[test]
+fn replay_target_drop_close_suppresses_selected_replay_and_retains_capacity() {
+    let prompter = PromptWakerFanoutPrompter::default();
+    let tool = AskUserQuestionTool::new(prompter.clone());
+    let prepared = prepare(&tool, basic_arguments());
+    let probe = Arc::new(ReplayTargetProbe::default());
+    let (close_request_sender, close_request_receiver) = mpsc::channel();
+    let (close_complete_sender, close_complete_receiver) = mpsc::channel();
+    let close_complete_receiver = Mutex::new(close_complete_receiver);
+    let (teardown, teardown_handle) = reentrant_waker(Callback::Drop, move || {
+        close_request_sender.send(()).unwrap();
+        close_complete_receiver.lock().unwrap().recv().unwrap();
+    });
+    let callback_owner = Arc::new(ReplayTargetA {
+        probe: Arc::clone(&probe),
+        teardown: Some(teardown),
+    });
+    let original_host_waker = Waker::from(Arc::clone(&callback_owner));
+    drop(callback_owner);
+    let replay_host_waker = Waker::from(Arc::new(ReplayTargetB {
+        probe: Arc::clone(&probe),
+    }));
+    let mut first = Box::pin(tool.execute(context(), prepared.clone(), CancellationToken::new()));
+
+    assert!(
+        first
+            .as_mut()
+            .poll(&mut Context::from_waker(&original_host_waker))
+            .is_pending()
+    );
+    let mut retained_wakers = prompter.take_wakers();
+    assert_eq!(retained_wakers.len(), PROMPT_WAKER_FANOUT);
+
+    thread::scope(|scope| {
+        let _release_on_unwind = ReplayTargetARelease(Arc::clone(&probe));
+        let first_notification = retained_wakers[0].clone();
+        let publisher = scope.spawn(move || first_notification.wake());
+        probe.wait_until_a_entered();
+
+        assert!(
+            first
+                .as_mut()
+                .poll(&mut Context::from_waker(&replay_host_waker))
+                .is_pending()
+        );
+        retained_wakers[1].wake_by_ref();
+        drop(original_host_waker);
+        probe.release_a();
+
+        close_request_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("replay target A destructor did not request notifier close");
+        drop(first);
+        close_complete_sender.send(()).unwrap();
+        publisher.join().unwrap();
+    });
+
+    retained_wakers[2].wake_by_ref();
+    let closed = probe.snapshot();
+
+    assert_retained_prompt_capacity_recovers_after_last_clone(
+        &tool,
+        &prompter,
+        &prepared,
+        &mut retained_wakers,
+    );
+
+    assert_eq!(teardown_handle.calls(), 1);
+    assert_eq!(closed, (1, 0, 0, 1));
 }
 
 #[test]
