@@ -1,20 +1,24 @@
 # Native reference-host composition
 
-Status: **DELIVERED** through slice-33 `web_search`; slice-34 `terminal` is
-**IN PROGRESS**; Milestone 03 remains **IN PROGRESS**.
-The delivered composition contains fourteen alphabetical tools: twelve
-workspace-backed tools share one original retained descriptor plus eleven
+Status: **DELIVERED** through slice-34 `terminal`; slice-35
+`ask_user_question` has a **FROZEN CONTRACT**; Milestone 03 remains
+**IN PROGRESS**.
+The delivered composition contains fifteen alphabetical tools: thirteen
+workspace-backed tools share one original retained descriptor plus twelve
 identity-preserving clones, while rootless `web_fetch` and Gateway-backed
-`web_search` own no workspace descriptor. The slice-34 candidate inserts
-workspace-backed `terminal` after `rename_file` and before `web_fetch`,
-producing fifteen tools and thirteen descriptor-backed tools. Its Linux system
-executor is the only platform-default process implementation in this slice.
+`web_search` own no workspace descriptor. Slice 35 will insert rootless
+`ask_user_question` first, producing sixteen tools without another workspace
+descriptor. Its injected `QuestionPrompter` owns interaction and no CLI UI is
+selected implicitly. The delivered terminal Linux system executor remains the
+only platform-default process implementation in these two slices.
 Public `TerminalTool::open` and `open_with_limits` fail construction off Linux.
 Private reference-host descriptor composition deliberately keeps `terminal` in
 the non-Linux catalog; after strict preparation and permission, allowed execute
 revalidates arguments and returns fixed unsupported before cwd lookup, guardian
-or worker creation, or spawn. See [`terminal.md`](terminal.md) and the
-[`slice-34 ledger`](reviews/m03-terminal-review-01.md).
+or worker creation, or spawn. See [`terminal.md`](terminal.md), the
+[`slice-34 ledger`](reviews/m03-terminal-review-01.md), the frozen
+[`ask_user_question` contract](ask-user-question.md), and its
+[`slice-35 ledger`](reviews/m03-ask-user-question-review-01.md).
 Twenty-seven bounded Milestone 03 slices are delivered. Reviewed seal
 `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
 `633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
@@ -1175,3 +1179,25 @@ item is complete: the replacement reviews and exact feature and `main` gates
 are green. Milestone 03 remains in progress because remaining native tools,
 top-level CLI/slash-command ownership, and composed release-binary end-to-end
 evidence remain open.
+
+## Slice 35 frozen rootless composition
+
+The slice-35 contract adds one explicit shared `QuestionPrompter` parameter to
+each production and custom reference-host constructor. Construction stores the
+prompter inside a rootless `AskUserQuestionTool`; it does not poll the prompter,
+inspect a terminal, discover interactivity, open another root, or start work.
+Selection, workspace, session-store, credential, HTTP, web-search, terminal,
+provider, and engine failure ordering remains otherwise unchanged. An invalid
+question concurrency setting, if an explicit-limits host path is later exposed,
+must map to a fixed redacted composition stage rather than reflect prompt data.
+
+The candidate tool order is `ask_user_question`, the thirteen delivered
+descriptor-backed tools, `web_fetch`, and `web_search`. The descriptor count
+stays thirteen: the question tool, web tools, and Gateway search own no
+workspace descriptor. The no-authority question call invokes neither the
+separately injected `PermissionPrompter` nor permission events. A
+noninteractive host must inject the fixed unavailable prompter behavior; this
+slice does not inspect TTY state or add a CLI UI. The contract and pending
+review plan are
+[`ask-user-question.md`](ask-user-question.md) and
+[`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).

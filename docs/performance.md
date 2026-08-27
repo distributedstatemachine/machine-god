@@ -655,3 +655,28 @@ limits also cannot recover allocation already performed while a caller built
 options, a store decoded a record, a tool built a specification or result, a
 provider built an event value, or a policy built its decision; those producers
 require their own decode/allocation bounds.
+
+## Slice 35 frozen question resource model
+
+The first `ask_user_question` slice has no product-performance claim or new
+benchmark workload. Its resource contract is structural: at most four
+questions, 24 options, 32 KiB incoming serialized arguments, 32 KiB aggregate
+rendered presentation text, 48 KiB normalized arguments, 4 KiB aggregate raw
+answers, 16 KiB rendered answers, and a 48 KiB complete serialized result.
+Per-field raw and rendered limits prevent one string from consuming an
+aggregate budget. Every addition and encoding expansion is checked, and no
+overflow path truncates or partially publishes an answer.
+
+Preparation is linear in accepted input plus ASCII-only duplicate comparison
+over at most six labels per question, so its quadratic term has a fixed 24-label
+ceiling. Terminal encoding and result construction are linear in their bounded
+inputs. The tool owns one prompt future and one permit; default concurrency is
+one, the hard configurable maximum is eight, and saturation fails immediately
+without a waiter queue or capacity Waker. Permit lifetime extends through
+outcome validation and result construction and ends on return or future drop.
+
+No timeout is claimed. Pending duration and externally allocated UI state are
+properties of the injected prompter. A conforming prompter detaches no work;
+the adapter starts no task, thread, timer, retry, channel, or runtime. Formal
+resource/cancellation evidence remains required before this slice can be
+called green. See [`ask-user-question.md`](ask-user-question.md).

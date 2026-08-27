@@ -2071,3 +2071,33 @@ then fails unless the installed executable reports version `0.16.0`. This keeps
 the upstream-reference compiler outside the Rust product's dependency and
 authority surfaces while binding its CI bytes without a third-party setup
 action.
+
+## Slice 35 frozen interaction and authority rules
+
+`ask_user_question` is not an approval channel. Its prepared call explicitly
+requires no external authority, so using it cannot recursively open the
+ask-mode permission prompter. The exception is narrow and trusted-tool-owned:
+every existing prepared call remains permission-required, and core retains all
+ordinary argument/result validation, cancellation, tool events, durability,
+and recovery. Any `permission_request_id` field is rejected before the question
+prompter is invoked. Generic prompt or answer text never authorizes another
+tool.
+
+Model-supplied questions, labels, and descriptions are untrusted presentation
+data. Strict objects, byte ceilings, ASCII-edge trimming, case-insensitive
+ASCII label deduplication, and exact terminal-safe control/bidi encoding run
+before presentation. The same normalized values reach execution and the
+injected prompter. Answers are also trimmed, bounded, terminal-safe encoded,
+and serialized under a fixed complete-result ceiling. Errors and debug output
+reflect no input, answer, host diagnostic, identity, or executor data.
+
+The injected prompter is a trusted rootless host boundary. The adapter cannot
+prevent a malicious prompter from displaying misleading UI, blocking its poll,
+or detaching private work; conformance requires the interaction to remain owned
+by its returned future and to clean up on drop. Machine-god adds no timeout or
+ambient terminal discovery. First-poll cancellation and fail-fast admission
+precede prompter invocation; cancellation wins any same-poll ready outcome.
+Explicit user cancellation and noninteractive use return fixed non-authorizing
+sentinels. Exact rules are in
+[`ask-user-question.md`](ask-user-question.md); implementation and adversarial
+review remain pending.

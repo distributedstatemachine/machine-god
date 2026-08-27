@@ -1,5 +1,18 @@
 # Documentation
 
+Bounded Milestone 03 slice 35, native `ask_user_question`, has a **FROZEN
+CONTRACT** from exact delivered base
+`5846799b665d62fc8301b33520da5cda33e850b3`. Ordinary-question input is a
+strict bounded batch, normalized for terminal-safe display and passed to an
+explicit rootless `QuestionPrompter`. Ordered answers may be bounded free-form
+values and need not equal an option. Preparation explicitly requires no
+external authority; `permission_request_id` approval escalation is rejected
+and deferred. No CLI UI, timeout, detached work, durable terminal expansion,
+`vision`, or `read_tool_result` is added. Implementation and every review and
+delivery gate remain pending. The normative boundary is
+[`ask-user-question.md`](ask-user-question.md), with status in the
+[`slice-35 review ledger`](reviews/m03-ask-user-question-review-01.md).
+
 Bounded Milestone 03 slice 34, native `terminal`, is **DELIVERED**
 from exact delivered base `52b5885f275c9f6f4f16b378f71780c29f2ebab2`.
 It freezes only bounded foreground `exec`: fixed `/bin/sh -c`, a descriptor-

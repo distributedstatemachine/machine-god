@@ -44,6 +44,33 @@ aarch64 runner labels rather than relying on cross-compilation alone.
 | 06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | 07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
+The thirty-fifth bounded slice, native `ask_user_question`, has a **FROZEN
+CONTRACT** from exact delivered base
+`5846799b665d62fc8301b33520da5cda33e850b3` and pinned fx revision
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Its normative boundary is
+[`ask-user-question.md`](ask-user-question.md) and its live ledger is
+[`m03-ask-user-question-review-01.md`](reviews/m03-ask-user-question-review-01.md).
+This first slice accepts only a strict bounded ordinary-question batch through
+an explicitly injected rootless `QuestionPrompter`. It uses ASCII-edge trim,
+terminal-safe text encoding, per-field and aggregate byte limits, ordered
+options, ASCII-case-insensitive duplicate-label rejection, and deterministic
+ordered JSON results. Answers must match count and order but may be bounded
+free-form values to support `Other`.
+
+Preparation uses core's explicit no-authority disposition, so the engine does
+not construct a permission ID, emit permission events, or invoke the permission
+handler for this tool; every existing tool retains permission-required
+behavior. `permission_request_id` is always rejected because auto-denied
+approval continuation is deferred. Fixed input/prepared/result ceilings are
+32/48/48 KiB, presentation is 32 KiB, answer input is 4 KiB aggregate, and
+prompt concurrency is default one/hard eight with fail-fast admission. The
+tool owns the prompt future, sets no timeout, and detaches no work. No CLI UI,
+durable terminal expansion, `vision`, `read_tool_result`, M05 surface,
+benchmark workload, performance result, or fx-equivalence claim is added.
+Implementation, independent evidence, composition, exact local gates, three
+fresh adversarial tracks, feature workflows, integration, and exact `main`
+workflows remain pending.
+
 The thirty-fourth bounded slice, native `terminal`, is **DELIVERED** from exact
 delivered base
 `52b5885f275c9f6f4f16b378f71780c29f2ebab2`. Its normative boundary is
@@ -4033,7 +4060,12 @@ gate:
   `read_tool_result`. Every authority-bearing tool requires normalized
   preflight, exact policy/execution agreement, resource bounds, redacted
 diagnostics, cancellation/drop tests, and platform scope stated before
-integration. Slice 33 `web_search` is delivered through exact record
+integration. Slice 35 freezes the ordinary-question-only `ask_user_question`
+contract from exact delivered slice-34 base `5846799`. It rejects the deferred
+`permission_request_id`, uses explicit no-authority preparation, injects a
+rootless bounded prompter, and permits ordered bounded free-form answers.
+Implementation and delivery are pending, so this combined item remains
+unchecked. Slice 33 `web_search` is delivered through exact record
 `52b5885`; its feature and main CI/Benchmark workflows are green. Slice 34
 contract-freezes the bounded foreground-`exec` subset of `terminal` from that
 exact base. Cycle 1 rejected exact candidate `fba499e` with a deduplicated

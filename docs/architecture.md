@@ -2157,3 +2157,31 @@ guard, while equal revisions require whole-record identity.
 Diagnostic formatting is also an authority boundary. `Engine::fmt` emits only
 fixed structural state (`has_provider` and tool count); it never invokes the
 provider's `name` method or copies provider-controlled text.
+
+## Slice 35 frozen question-interaction boundary
+
+The frozen `ask_user_question` design adds one portable native adapter, not UI
+state to core or the CLI. Strict effect-free native preparation canonicalizes a
+bounded ordered question batch and selects
+`PreparedToolAuthorization::NoAuthorityRequired`. Core validates that explicit
+prepared form but skips permission-request identity, permission events, and the
+permission handler. It still owns cancellation, `ToolStarted`/`ToolFinished`,
+placeholder durability and replacement, result bounds, and recovery. All
+existing tools remain on `PermissionRequired(Capability)`.
+
+An injected `QuestionPrompter` owns presentation. The tool owns the returned
+prompt future and one fail-fast local permit, and releases both on completion
+or drop. It creates no runtime, timer, task, thread, queue, terminal, root,
+environment, network, or persistence authority. The prompt carries normalized
+terminal-safe values; a structured outcome carries answers, explicit user
+cancellation, or noninteractive unavailability. Answers remain ordered and
+bounded but need not equal an option label, allowing a host-owned `Other` path.
+
+The portable adapter is unconditional in `machine-god-native`. Current full
+reference-host construction remains under its existing Linux/macOS,
+non-WebAssembly HTTP feature gate and will receive the prompter explicitly. Its
+candidate catalog grows from fifteen to sixteen alphabetical tools without a
+workspace-descriptor clone. The complete bounds, precedence, output, and
+deferrals are normative in
+[`ask-user-question.md`](ask-user-question.md). Implementation and formal
+review remain pending.
