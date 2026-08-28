@@ -2461,20 +2461,21 @@ impl RecordOwner {
 impl Drop for RecordOwner {
     fn drop(&mut self) {
         if let Some(record) = self.record.as_mut() {
+            let mut scratch = JsonDropScratch::new();
             for value in std::mem::take(&mut record.metadata).into_values() {
-                drop_json_value_iterative(value);
+                scratch.drop_value(value);
             }
             for message in &mut record.messages {
                 for block in &mut message.content {
                     match block {
                         ContentBlock::Json { value } => {
-                            drop_json_value_iterative(std::mem::take(value));
+                            scratch.drop_value(std::mem::take(value));
                         }
                         ContentBlock::ToolCall { call } => {
-                            drop_json_value_iterative(std::mem::take(&mut call.arguments));
+                            scratch.drop_value(std::mem::take(&mut call.arguments));
                         }
                         ContentBlock::ToolResult { output, .. } => {
-                            drop_json_value_iterative(std::mem::take(&mut output.content));
+                            scratch.drop_value(std::mem::take(&mut output.content));
                         }
                         _ => {}
                     }
@@ -2501,7 +2502,7 @@ impl JsonValueOwner {
 impl Drop for JsonValueOwner {
     fn drop(&mut self) {
         if let Some(value) = self.value.take() {
-            drop_json_value_iterative(value);
+            JsonDropScratch::new().drop_value(value);
         }
     }
 }
@@ -2522,29 +2523,74 @@ impl Iterator for OwnedJsonChildren {
     }
 }
 
-fn drop_json_value_iterative(root: Value) {
-    let mut frames = Vec::<OwnedJsonChildren>::new();
-    let mut current = Some(root);
-    loop {
-        if let Some(value) = current.take() {
-            match value {
-                Value::Array(values) => frames.push(OwnedJsonChildren::Array(values.into_iter())),
-                Value::Object(values) => {
-                    frames.push(OwnedJsonChildren::Object(values.into_values()));
+struct JsonDropScratch {
+    frames: Vec<OwnedJsonChildren>,
+}
+
+impl JsonDropScratch {
+    fn new() -> Self {
+        Self { frames: Vec::new() }
+    }
+
+    fn drop_value(&mut self, root: Value) {
+        debug_assert!(self.frames.is_empty());
+        let mut current = Some(root);
+        loop {
+            if let Some(value) = current.take() {
+                match value {
+                    Value::Array(values) => {
+                        self.push(OwnedJsonChildren::Array(values.into_iter()));
+                    }
+                    Value::Object(values) => {
+                        self.push(OwnedJsonChildren::Object(values.into_values()));
+                    }
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
                 }
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+            }
+            loop {
+                let Some(frame) = self.frames.last_mut() else {
+                    return;
+                };
+                if let Some(child) = frame.next() {
+                    current = Some(child);
+                    break;
+                }
+                self.frames.pop();
             }
         }
-        loop {
-            let Some(frame) = frames.last_mut() else {
+    }
+
+    fn push(&mut self, frame: OwnedJsonChildren) {
+        if self.frames.len() == self.frames.capacity() {
+            let Some(remaining) = MAX_STORED_JSON_NODES.checked_sub(self.frames.len()) else {
+                std::mem::forget(frame);
                 return;
             };
-            if let Some(child) = frame.next() {
-                current = Some(child);
-                break;
+            if remaining == 0 {
+                // An input deeper than the aggregate JSON-node contract is
+                // already invalid. Forget its still-owned iterator instead of
+                // falling back to recursive destruction on the caller's stack.
+                std::mem::forget(frame);
+                return;
             }
-            frames.pop();
+            // The first container reserves the complete valid-depth bound.
+            // Invalid deeper input grows geometrically up to the aggregate
+            // node ceiling, keeping allocation count logarithmic and scratch
+            // bounded independently of the number of JSON roots.
+            let additional = if self.frames.capacity() == 0 {
+                MAX_STORED_JSON_DEPTH
+            } else {
+                self.frames.capacity()
+            }
+            .min(remaining);
+            if self.frames.try_reserve_exact(additional).is_err() {
+                // Drop must neither panic nor recursively destroy an unbounded
+                // subtree when scratch allocation is unavailable.
+                std::mem::forget(frame);
+                return;
+            }
         }
+        self.frames.push(frame);
     }
 }
 
@@ -2636,10 +2682,15 @@ fn save_ambiguous() -> SessionStoreError {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use machine_god_core::SessionStoreErrorKind;
+    use machine_god_core::{
+        ContentBlock, Message, Role, SessionId, SessionIncarnationId, SessionRecord,
+        SessionStoreErrorKind, ToolCall, ToolCallId, ToolName, ToolOutput,
+    };
+    use serde_json::Value;
 
     use super::{
-        FileSessionStore, JsonKeyFingerprint, JsonKeyTracker, JsonSummary, retry_interrupted,
+        FileSessionStore, JsonKeyFingerprint, JsonKeyTracker, JsonSummary, RecordOwner,
+        retry_interrupted, serialize_record, validate_record_json,
     };
 
     static NEXT_LISTING_ROOT: AtomicU64 = AtomicU64::new(0);
@@ -2716,6 +2767,61 @@ mod tests {
             tracker
                 .upsert(scope, collision, JsonSummary::scalar())
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn record_owner_reuses_drop_scratch_across_many_json_roots() {
+        const ROOTS_PER_KIND: usize = 8_000;
+
+        fn shallow_root() -> Value {
+            Value::Array(vec![Value::Null])
+        }
+
+        let mut record = SessionRecord::empty(
+            SessionId::new("drop-scratch").unwrap(),
+            SessionIncarnationId::new("drop-scratch-incarnation").unwrap(),
+        );
+        for index in 0..ROOTS_PER_KIND {
+            record
+                .metadata
+                .insert(format!("root-{index:04}"), shallow_root());
+        }
+
+        let call_id = ToolCallId::new("drop-scratch-call").unwrap();
+        let tool_name = ToolName::new("read_tool_result").unwrap();
+        let mut content = Vec::with_capacity(ROOTS_PER_KIND * 3);
+        for _ in 0..ROOTS_PER_KIND {
+            content.push(ContentBlock::Json {
+                value: shallow_root(),
+            });
+            content.push(ContentBlock::ToolCall {
+                call: ToolCall {
+                    id: call_id.clone(),
+                    name: tool_name.clone(),
+                    arguments: shallow_root(),
+                },
+            });
+            content.push(ContentBlock::ToolResult {
+                call_id: call_id.clone(),
+                output: ToolOutput::success(shallow_root()),
+            });
+        }
+        record.messages.push(Message {
+            role: Role::Assistant,
+            content,
+        });
+
+        assert!(validate_record_json(&record).is_ok());
+        assert!(serialize_record(&record).is_ok());
+        let mut record = Some(RecordOwner::new(record));
+        allocation_counter::measure(|| {});
+        let allocations = allocation_counter::measure(|| drop(record.take()));
+
+        assert!(record.is_none());
+        assert!(
+            allocations.count_total <= 4,
+            "dropping 32,000 shallow JSON roots allocated per root: {allocations:?}"
         );
     }
 }
