@@ -1208,6 +1208,114 @@ fn cancellation_after_source_acquisition_drops_stream_before_returning() {
     assert_eq!(drops.load(Ordering::SeqCst), 1);
 }
 
+#[derive(Clone)]
+struct CancelWithStartupErrorTransport;
+
+impl AiGatewayTransport for CancelWithStartupErrorTransport {
+    fn stream(
+        &self,
+        _request: AiGatewayTransportRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        Box::pin(async move {
+            cancellation.cancel();
+            Err(ProviderError::new(
+                ProviderErrorKind::Transport,
+                "PRIVATE_STARTUP_ERROR_CODE",
+                "PRIVATE_STARTUP_ERROR_MESSAGE",
+                true,
+            ))
+        })
+    }
+}
+
+#[test]
+fn cancellation_wins_same_poll_transport_startup_error() {
+    let worker =
+        AiGatewayVisionTransport::new(MODEL, Arc::new(CancelWithStartupErrorTransport)).unwrap();
+    let error = futures_executor::block_on(worker.analyze(
+        request(vec![png(1, b"PRIVATE_STARTUP_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_STARTUP_ERROR_CODE"));
+    assert!(!rendered.contains("PRIVATE_STARTUP_ERROR_MESSAGE"));
+    assert!(!rendered.contains("PRIVATE_STARTUP_IMAGE_SENTINEL"));
+}
+
+#[derive(Clone)]
+struct CancelWithStreamErrorTransport {
+    drops: Arc<AtomicUsize>,
+}
+
+struct CancelWithStreamError {
+    cancellation: CancellationToken,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for CancelWithStreamError {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.cancellation.cancel();
+        Poll::Ready(Some(Err(ProviderError::new(
+            ProviderErrorKind::Transport,
+            "PRIVATE_STREAM_ERROR_CODE",
+            "PRIVATE_STREAM_ERROR_MESSAGE",
+            true,
+        ))))
+    }
+}
+
+impl Drop for CancelWithStreamError {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl AiGatewayTransport for CancelWithStreamErrorTransport {
+    fn stream(
+        &self,
+        _request: AiGatewayTransportRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        let drops = Arc::clone(&self.drops);
+        Box::pin(async move {
+            Ok(Box::pin(CancelWithStreamError {
+                cancellation,
+                drops,
+            }) as AiGatewayByteStream)
+        })
+    }
+}
+
+#[test]
+fn cancellation_wins_same_poll_stream_item_error_and_releases_source() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    let worker = AiGatewayVisionTransport::new(
+        MODEL,
+        Arc::new(CancelWithStreamErrorTransport {
+            drops: Arc::clone(&drops),
+        }),
+    )
+    .unwrap();
+    let error = futures_executor::block_on(worker.analyze(
+        request(vec![png(1, b"PRIVATE_STREAM_ERROR_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_STREAM_ERROR_CODE"));
+    assert!(!rendered.contains("PRIVATE_STREAM_ERROR_MESSAGE"));
+    assert!(!rendered.contains("PRIVATE_STREAM_ERROR_IMAGE_SENTINEL"));
+}
+
 #[test]
 fn future_is_inert_before_poll_and_precancelled_request_never_reaches_transport() {
     let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));

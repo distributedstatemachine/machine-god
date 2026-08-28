@@ -158,16 +158,27 @@ async fn run_attempt(
     cancellation: CancellationToken,
 ) -> Result<AttemptResult, VisionTransportError> {
     check_cancelled(&cancellation)?;
-    let mut stream = transport
-        .stream(request, cancellation.clone())
-        .await
-        .map_err(|error| map_provider_error(&error))?;
-    check_cancelled(&cancellation)?;
+    let stream_result = transport.stream(request, cancellation.clone()).await;
+    if let Err(error) = check_cancelled(&cancellation) {
+        // A transport may make cancellation observable while completing its
+        // startup future. Release any acquired byte stream before publishing
+        // cancellation, which wins over both success and failure readiness.
+        drop(stream_result);
+        return Err(error);
+    }
+    let mut stream = stream_result.map_err(|error| map_provider_error(&error))?;
 
     let mut decoder = VisionSseDecoder::default();
     loop {
         check_cancelled(&cancellation)?;
         let next = poll_fn(|context| stream.as_mut().poll_next(context)).await;
+        if let Err(error) = check_cancelled(&cancellation) {
+            // Ready stream items can race cancellation in the same poll. Drop
+            // the source before publishing cancellation so neither a queued
+            // item nor an item error can win that race or retain capacity.
+            drop(stream);
+            return Err(error);
+        }
         let Some(chunk) = next else {
             break;
         };
