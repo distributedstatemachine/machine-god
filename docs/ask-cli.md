@@ -31,7 +31,8 @@ session, or network effects. Standard input is never read.
 
 ## Native composition
 
-On Linux and macOS, a valid request:
+On Linux and macOS, a valid request first starts an owned signal guardian and
+then:
 
 1. captures the process-native environment;
 2. loads the strict native configuration;
@@ -72,10 +73,13 @@ Only assistant `TextDelta` payload bytes are written to standard output, in
 event order and without terminal styling, forced newline, or buffering the
 complete answer. Reasoning, usage, lifecycle events, session identities,
 permission details, tool calls/results, and provider diagnostics are not
-printed. A successful empty answer therefore writes no bytes. When no output
-operation has failed, the command explicitly flushes acknowledged output after
-every terminal path. A write or flush failure is an output failure unless an
-already observed signal has precedence; a failed writer is not retried.
+printed. A successful empty answer therefore writes no bytes. When a started
+turn reaches a terminal path and no output operation has failed, the command
+explicitly flushes acknowledged output. Failures before a turn or output bridge
+exists schedule no standard-output operation and therefore no flush. A write or
+flush failure is an output failure unless an already observed signal has
+precedence; a failed writer is not retried. A writer panic is not converted into
+an apparently recoverable output failure.
 
 - A completed turn exits `0` after all preceding text bytes are written.
 - Invalid grammar exits `2` with the global invalid-arguments diagnostic.
@@ -84,17 +88,28 @@ already observed signal has precedence; a failed writer is not retried.
   `machine-god ask` diagnostic.
 - Standard-output failure cancels or drops the owned turn, exits `1`, and uses
   the existing fixed output diagnostic.
-- `SIGINT` and `SIGTERM` request turn cancellation, keep driving owned work to
-  terminal cleanup, and exit `130` and `143` respectively without starting a
-  detached task.
+- During a live turn, `SIGINT` and `SIGTERM` request cancellation, keep driving
+  owned work to terminal cleanup, and exit `130` and `143` respectively.
+- During configuration, root preparation, host/session setup, final diagnostic
+  presentation, or command finalization, the signal guardian exits with the
+  same signal code. A blocking setup operation or saturated standard-error
+  writer therefore cannot swallow the signal.
 
-Synchronous standard-output work stays on the calling thread. The runtime and
-turn run on one scoped worker and exchange one owned output item at a time over
-capacity-one work and acknowledgement channels, so output backpressure cannot
-block signal polling. After a signal, an outstanding write or flush receives a
-100 ms post-cleanup acknowledgement grace. If the borrowed writer remains
-blocked, the worker exits the process with the signal code only after the turn
-has reached terminal cleanup; otherwise the scoped worker joins normally.
+Synchronous standard-output work stays on the calling thread. The host runtime
+and turn run on one scoped worker and exchange one owned output item at a time
+over capacity-one work and acknowledgement channels. A separately owned
+current-thread signal runtime registers before valid-request effects and uses
+capacity-one signal and control channels. It switches from setup handling to
+turn forwarding only after a concrete cancellable turn exists, then stays live
+through diagnostics and final process exit. Output or setup backpressure
+therefore cannot stop signal observation or leave Tokio's installed Unix signal
+handler without an active receiver.
+
+After a turn signal, an outstanding write and any following flush share one
+absolute 100 ms post-cleanup acknowledgement deadline; the flush cannot restart
+the grace period. If the borrowed writer remains blocked, the guardian exits
+the process with the signal code only after the turn has reached terminal
+cleanup. Otherwise the scoped turn worker joins before final presentation.
 
 Partial assistant bytes already written before a later operational failure are
 not retracted. No failure text may include the prompt, a credential, a path,
@@ -108,10 +123,11 @@ provider data, tool data, operating-system diagnostics, or a session identity.
   permission reasons retain the default engine bounds.
 - Fresh session-ID generation and collision retries are bounded in the native
   lifecycle API; OS randomness is acquired only after its future is polled.
-- The current-thread runtime, its one scoped worker, two capacity-one output
-  channels, signal listeners, provider stream, permission or question future,
-  tool future, turn lease, and output borrow remain owned by the command and
-  are not detached.
+- The host current-thread runtime, its scoped worker, the signal guardian and
+  its current-thread runtime, four capacity-one output/signal/control channels,
+  signal listeners, provider stream, permission or question future, tool
+  future, turn lease, and output borrow remain owned by the command and are not
+  detached.
 
 This is scenario compatibility with the pinned upstream `ask` entry point, not
 full option, presentation, persistence-mode, or performance equivalence.

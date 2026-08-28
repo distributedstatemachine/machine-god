@@ -1983,7 +1983,7 @@ mod tests {
         TokioModelsSignalSource, list_models_with_signal_source, list_models_with_signals,
         run_models, terminate_signal_event,
     };
-    use crate::ask::{AskCommandHost, AskCommandOutcome};
+    use crate::ask::{AskCommandExecution, AskCommandHost, AskCommandOutcome};
     use machine_god_core::{
         AvailableModel, BoxFuture, ModelCatalog, ModelCatalogAccess, PublicCatalogReason,
     };
@@ -2051,14 +2051,15 @@ mod tests {
     }
 
     impl AskCommandHost for FakeAskHost {
-        fn execute(&self, prompt: String, output: &mut dyn io::Write) -> AskCommandOutcome {
+        fn execute(&self, prompt: String, output: &mut dyn io::Write) -> AskCommandExecution {
             self.calls.set(self.calls.get() + 1);
             self.prompts.borrow_mut().push(prompt);
-            if output.write_all(self.output).is_err() {
+            let outcome = if output.write_all(self.output).is_err() {
                 AskCommandOutcome::OutputFailure
             } else {
                 self.outcome
-            }
+            };
+            AskCommandExecution::without_finalizer(outcome)
         }
     }
 
