@@ -234,6 +234,39 @@ fn network_capability_has_exact_stable_json_contract() {
     );
 }
 
+#[test]
+fn vision_capability_has_exact_stable_json_contract() {
+    let capability = Capability::Vision {
+        paths: vec![
+            "screenshots/first.png".to_owned(),
+            "screenshots/nested/second.webp".to_owned(),
+        ],
+        target: NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "gateway.example.com".to_owned(),
+            port: Some(8_443),
+        },
+    };
+    let encoded = json!({
+        "type": "vision",
+        "paths": [
+            "screenshots/first.png",
+            "screenshots/nested/second.webp"
+        ],
+        "target": {
+            "scheme": "https",
+            "host": "gateway.example.com",
+            "port": 8_443
+        }
+    });
+
+    assert_eq!(serde_json::to_value(&capability).unwrap(), encoded);
+    assert_eq!(
+        serde_json::from_value::<Capability>(encoded).unwrap(),
+        capability
+    );
+}
+
 impl EngineTestSessions for Engine {
     fn create_test_session(&self, id: SessionId) -> Session {
         let incarnation = test_incarnation(&id);
@@ -830,6 +863,43 @@ fn prepared_capability_uses_its_derived_envelope_boundary() {
 }
 
 #[test]
+fn prepared_vision_capability_obeys_the_derived_envelope_boundary() {
+    const ARGUMENT_LIMIT: usize = 64;
+    let permissions = RecordingAllow::default();
+    let executions = Arc::new(Mutex::new(Vec::new()));
+    let events = boundary_events(
+        "prepared-vision-capability-plus-one",
+        ToolCall {
+            id: ToolCallId::new("vision-plus-one").unwrap(),
+            name: ToolName::new("vision-boundary").unwrap(),
+            arguments: json!({}),
+        },
+        RecordingPreparedTool {
+            name: ToolName::new("vision-boundary").unwrap(),
+            capability: Capability::Vision {
+                paths: vec![format!("screenshots/{}.png", "x".repeat(2_048))],
+                target: NetworkTarget {
+                    scheme: "https".to_owned(),
+                    host: "gateway.example.com".to_owned(),
+                    port: None,
+                },
+            },
+            arguments: json!({}),
+            executions: Arc::clone(&executions),
+        },
+        permissions.clone(),
+        ARGUMENT_LIMIT,
+    );
+
+    assert!(matches!(
+        &events.last().unwrap().payload,
+        TurnEvent::Failed { code, .. } if code == "tool_argument_size_limit"
+    ));
+    assert!(permissions.requests.lock().unwrap().is_empty());
+    assert!(executions.lock().unwrap().is_empty());
+}
+
+#[test]
 fn prepare_error_skips_policy_and_execution_then_recovers_next_round() {
     let provider_calls = Arc::new(AtomicUsize::new(0));
     let provider = ToolThenRecoverProvider {
@@ -891,6 +961,20 @@ fn prepared_tool_call_reclaims_deep_json_iteratively() {
     drop(prepared);
 
     drop(PreparedToolCall::without_authority(deep_value(20_000)));
+
+    drop(PreparedToolCall::new(
+        Capability::Vision {
+            paths: (0..20_000)
+                .map(|index| format!("screenshots/{index}.png"))
+                .collect(),
+            target: NetworkTarget {
+                scheme: "https".to_owned(),
+                host: "gateway.example.com".to_owned(),
+                port: None,
+            },
+        },
+        deep_value(20_000),
+    ));
 }
 
 #[test]

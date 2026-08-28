@@ -149,7 +149,8 @@ impl Drop for PreparedToolCall {
                 | Capability::FilesystemCopy { .. }
                 | Capability::OpenFile { .. }
                 | Capability::Process { .. }
-                | Capability::Network { .. } => {}
+                | Capability::Network { .. }
+                | Capability::Vision { .. } => {}
             }
         }
         crate::session::drop_json_value_iterative(std::mem::take(&mut self.arguments));

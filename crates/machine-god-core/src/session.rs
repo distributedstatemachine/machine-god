@@ -1713,7 +1713,8 @@ fn capability_json_value(capability: &Capability) -> Option<&Value> {
         | Capability::FilesystemCopy { .. }
         | Capability::OpenFile { .. }
         | Capability::Process { .. }
-        | Capability::Network { .. } => None,
+        | Capability::Network { .. }
+        | Capability::Vision { .. } => None,
     }
 }
 

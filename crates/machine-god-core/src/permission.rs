@@ -73,6 +73,12 @@ pub enum Capability {
     Network {
         target: NetworkTarget,
     },
+    /// Disclose the exact ordered set of approved workspace images to one
+    /// normalized provider destination for visual inspection.
+    Vision {
+        paths: Vec<String>,
+        target: NetworkTarget,
+    },
     Custom {
         name: String,
         details: Value,
