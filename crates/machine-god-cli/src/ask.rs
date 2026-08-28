@@ -5,25 +5,18 @@ pub(crate) const MAX_ASK_PROMPT_BYTES: usize = 256 * 1024;
 pub(crate) const ASK_OPERATIONAL_FAILURE: &str = "machine-god ask: request failed\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos")),
+    allow(
+        dead_code,
+        reason = "the production ask host has only one unsupported-platform outcome"
+    )
+)]
 pub(crate) enum AskCommandOutcome {
     Completed,
     OperationalFailure,
     OutputFailure,
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos")),
-        allow(
-            dead_code,
-            reason = "signals are supported only by the production Unix ask host"
-        )
-    )]
     Interrupted,
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "macos")),
-        allow(
-            dead_code,
-            reason = "signals are supported only by the production Unix ask host"
-        )
-    )]
     Terminated,
 }
 
@@ -59,6 +52,7 @@ impl AskCommandExecution {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn with_finalizer(
         outcome: AskCommandOutcome,
         finalizer: impl AskCommandFinalizer + 'static,
