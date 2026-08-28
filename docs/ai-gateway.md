@@ -395,17 +395,22 @@ and requires strict JSON evidence.
 
 The private decoder accepts bounded text deltas, optional strictly ordered
 `text-start` / `text-end` wrappers, one valid finish, and one terminal record
-containing exactly the authorized image IDs. A structurally invalid successful
-response, including empty evidence, receives one semantic retry with the same
-owned, verified image bytes. Transport, cancellation, deadline,
-authentication, rate-limit, availability, and typed output/resource-limit
-failures are not retried. The latter retain their classification across
-structured JSON-node and evidence string/list/count ceilings. The worker drops
-its byte stream before returning, so a capacity-one shared transport is
-available to the next outer provider round. Image bytes, base64, provider
-bodies, and evidence never enter provider-neutral prompt/history content. The
-complete authority, media, batching, result, redaction, resource, and lifecycle
-contract is [`vision.md`](vision.md).
+containing a nonempty set of unique authorized image IDs. Omitted authorized
+IDs are permitted and map to `missing_provider_record`; extra, duplicate, or
+unauthorized IDs are invalid. A structurally invalid successful response,
+including empty evidence, receives one semantic retry with the same owned,
+verified image bytes. Transport, cancellation, deadline, authentication,
+rate-limit, availability, and typed output/resource-limit failures are not
+retried. The latter retain their classification across structured JSON-node
+and evidence string/list/count ceilings. The worker drops its byte stream
+before returning, so a capacity-one shared transport is available to the next
+outer provider round. Raw image bytes, their request-only base64 encoding, and
+raw provider bodies never enter provider-neutral prompt/history content.
+Validated, bounded vision evidence is persisted as a structured `ToolResult`
+and may enter the next ordinary provider request; it remains untrusted
+arbitrary text and may repeat request content. The complete authority, media,
+batching, result, redaction, resource, and lifecycle contract is
+[`vision.md`](vision.md).
 
 ## Deferred scope
 
