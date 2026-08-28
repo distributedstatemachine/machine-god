@@ -405,22 +405,37 @@ generation codec. The outer stream is released at validated finish before a
 search round begins, and the search decoder incrementally retains one bounded
 SSE record.
 
-`TokioWebSearchDeadline` is the native fallible deadline adapter used by the
-reference host, including one-shot `ask`. `new` and `wait_until` are inert:
-constructing the adapter or returned future reads no clock driver, registers no
-timer, and requires no runtime. On first poll outside a Tokio runtime, the
-future returns the fixed redacted
-`WebSearchTransportErrorKind::RuntimeRequired` category. On a live runtime with
-time enabled, it converts the supplied absolute `std::time::Instant` to Tokio
-time and awaits that same deadline.
+`TokioWebSearchDeadline` is the native fallible deadline authority used by the
+reference host, including one-shot `ask`. Its sole constructor,
+`build_runtime_pair`, returns an owned `TokioWebSearchRuntime` driver together
+with an adapter privately bound to that exact runtime. Construction enables the
+current-thread runtime's I/O and time drivers. The driver exposes `block_on` but
+not a direct handle accessor; code running within `block_on` may still clone
+Tokio's current handle. Construction returns the fixed redacted
+`WebSearchTransportErrorKind::RuntimeRequired` category if runtime construction
+fails; callers cannot bind the adapter to an arbitrary or driverless runtime.
 
-The host owns and drives the Tokio runtime and its time driver; the adapter
-creates no runtime of its own. Its sleep future remains owned by the caller and
-is dropped with the enclosing operation, so the adapter spawns no task, thread,
-timer worker, or other detached work. If a Tokio handle exists without an
-enabled time driver, the adapter catches timer construction's unwind and
-returns the same fixed `RuntimeRequired` category. The production host still
-enables time explicitly.
+The host owns and drives the returned runtime. The adapter retains both that
+runtime's handle and private pair-liveness state, keeping the runtime identity
+non-reusable while the adapter is live and rejecting use after the runtime
+owner shuts down. The adapter does not own or retain the runtime itself.
+`wait_until` only captures the requested absolute `std::time::Instant`; it reads
+no current handle or liveness state, registers no timer, and remains inert until
+first poll. On first poll it requires the exact live paired runtime to be
+current. Polling without a runtime, after the paired runtime shuts down, on a
+driverless runtime, or on any other time-enabled runtime returns the same fixed
+`RuntimeRequired` category before invoking a Tokio timer API. Only the proven
+paired runtime converts the absolute instant to Tokio time and awaits that same
+deadline. This path does not catch or otherwise use panic as control flow.
+
+The sleep future remains owned by the caller and is dropped with the enclosing
+operation, so the adapter spawns no task, thread, timer worker, or other
+detached work. The adapter's handle and atomic liveness state do not own a task
+or the runtime, avoiding a runtime-to-task-to-adapter-to-runtime ownership
+cycle. Dropping the runtime driver marks the pair unavailable with a release
+store before normal Tokio shutdown; an adapter, including one polled through a
+previously cloned handle after shutdown, observes that state with an acquire
+load and returns only `RuntimeRequired`.
 
 ## Deferred scope
 
