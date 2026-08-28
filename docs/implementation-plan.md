@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `8e7d31779952e783e40e20ce4d5016c268101329`
 - Main CI: `33219163081` (`GREEN`)
 - Main Benchmark evidence: `33219163086` (`GREEN`)
-- Active branch: `agent/m03-ask-cli`
-- Active phase: `slice 38 ask is delivered and its documentation-only delivery seal is pending exact remote CI`
-- Next gate: `pass exact feature and main CI plus Benchmark evidence on the seal, clean the ask worktree, then begin bounded documentation consolidation`
+- Active branch: `agent/m03-ask-output-grace-test`
+- Active phase: `slice 38 ask is delivered; repeated Intel macOS CI exposed a scheduler-sensitive output-grace regression test`
+- Next gate: `replace the wall-clock assertion with deterministic virtual-time evidence, pass exact local review and remote gates, clean the worktree, then begin bounded documentation consolidation`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,

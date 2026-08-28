@@ -1036,7 +1036,7 @@ mod production {
     mod tests {
         use std::collections::VecDeque;
         use std::fs;
-        use std::future::{self, poll_fn};
+        use std::future::{self, Future, poll_fn};
         use std::io;
         use std::os::unix::fs::PermissionsExt;
         use std::path::{Path, PathBuf};
@@ -1063,10 +1063,11 @@ mod production {
         use super::{
             AskCommandOutcome, AskSignal, AskSignalControl, AskSignalControlSender,
             AskSignalController, AskSignalGuardianResult, AskSignalGuardianState,
-            AskSignalListeners, AskSignals, DenyPermissionPrompter, OutputBridge, SignalSource,
-            TurnDriveResult, TurnEventDisposition, UnavailableQuestionPrompter,
-            classify_turn_event, drive_turn_stream, execute_turn, final_outcome, map_thread_spawn,
-            poll_signal_guardian, serve_output,
+            AskSignalListeners, AskSignals, DenyPermissionPrompter, OutputAcknowledgement,
+            OutputBridge, OutputWork, SIGNAL_OUTPUT_GRACE, SignalSource, TurnDriveResult,
+            TurnDriveState, TurnEventDisposition, UnavailableQuestionPrompter, classify_turn_event,
+            drive_turn_stream, execute_turn, final_outcome, flush_terminal_output,
+            map_thread_spawn, poll_signal_guardian, record_signal_grace, serve_output,
         };
 
         const BLOCKED_OUTPUT_CHILD_MODE: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_CHILD";
@@ -2353,18 +2354,13 @@ mod production {
 
         #[test]
         fn blocked_output_signals_exit_after_terminal_drain() {
-            for (mode, kill_signal, expected_exit, max_signal_elapsed) in [
-                ("interrupt-write", "-INT", 130, None),
-                ("interrupt-repeated-write", "-INT", 130, None),
-                ("terminate-write", "-TERM", 143, None),
-                ("interrupt-flush", "-INT", 130, None),
-                ("interrupt-preflush", "-INT", 130, None),
-                (
-                    "interrupt-delayed-write-flush",
-                    "-INT",
-                    130,
-                    Some(Duration::from_millis(165)),
-                ),
+            for (mode, kill_signal, expected_exit) in [
+                ("interrupt-write", "-INT", 130),
+                ("interrupt-repeated-write", "-INT", 130),
+                ("terminate-write", "-TERM", 143),
+                ("interrupt-flush", "-INT", 130),
+                ("interrupt-preflush", "-INT", 130),
+                ("interrupt-delayed-write-flush", "-INT", 130),
             ] {
                 let prefix = format!("machine-god-ask-{}-{mode}", std::process::id());
                 let markers = ScopedMarkerPaths::new(&prefix);
@@ -2387,7 +2383,6 @@ mod production {
                 let mut child = ScopedChild::spawn(&mut command);
 
                 wait_for_marker(&mut child, &markers.ready);
-                let signal_started = Instant::now();
                 let kill_signals: &[&str] = if mode == "interrupt-repeated-write" {
                     &["-INT", "-TERM", "-INT"]
                 } else {
@@ -2402,13 +2397,6 @@ mod production {
                     assert!(kill_status.success());
                 }
                 let status = child.wait_for_exit(Duration::from_secs(10));
-                if let Some(max_signal_elapsed) = max_signal_elapsed {
-                    assert!(
-                        signal_started.elapsed() < max_signal_elapsed,
-                        "write and flush restarted the absolute output grace: {:?}",
-                        signal_started.elapsed()
-                    );
-                }
 
                 assert_eq!(status.code(), Some(expected_exit));
                 assert_eq!(
@@ -2416,6 +2404,64 @@ mod production {
                     b"terminal-drained"
                 );
             }
+        }
+
+        #[test]
+        fn write_and_flush_share_one_signal_output_deadline() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("test runtime should build");
+            runtime.block_on(async {
+                tokio::time::pause();
+                let started = tokio::time::Instant::now();
+                let (work_sender, mut work_receiver) = tokio::sync::mpsc::channel(1);
+                let (acknowledgement_sender, acknowledgement_receiver) =
+                    tokio::sync::mpsc::channel(1);
+                let mut output = OutputBridge {
+                    work: work_sender,
+                    acknowledgements: acknowledgement_receiver,
+                };
+                let mut state = TurnDriveState {
+                    requested_signal: Some(AskSignal::Interrupt),
+                    ..TurnDriveState::default()
+                };
+
+                let mut write_grace = Box::pin(record_signal_grace(
+                    &mut output.acknowledgements,
+                    &mut state,
+                ));
+                poll_fn(|context| {
+                    assert!(write_grace.as_mut().poll(context).is_pending());
+                    Poll::Ready(())
+                })
+                .await;
+                tokio::time::advance(Duration::from_millis(90)).await;
+                acknowledgement_sender
+                    .send(OutputAcknowledgement::Succeeded)
+                    .await
+                    .expect("write acknowledgement channel should remain open");
+                write_grace.await;
+                let deadline = state
+                    .signal_output_deadline
+                    .expect("signal output deadline should be recorded");
+                assert_eq!(deadline, started + SIGNAL_OUTPUT_GRACE);
+                assert_eq!(
+                    tokio::time::Instant::now(),
+                    started + Duration::from_millis(90)
+                );
+
+                flush_terminal_output(&mut output, &mut TestSignals::default(), &mut state).await;
+
+                assert!(matches!(work_receiver.try_recv(), Ok(OutputWork::Flush)));
+                assert_eq!(state.signal_output_deadline, Some(deadline));
+                assert!(
+                    tokio::time::Instant::now() <= deadline + Duration::from_millis(1),
+                    "terminal flush received a replacement signal-output grace"
+                );
+                assert!(state.stalled_output_after_signal);
+                drop(acknowledgement_sender);
+            });
         }
 
         #[test]
