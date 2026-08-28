@@ -126,13 +126,19 @@ impl VisionTransport for AiGatewayVisionTransport {
                     request.session_id().as_str(),
                     attempt_body,
                 );
-                let decoded = run_attempt(
+                let attempt_result = run_attempt(
                     Arc::clone(&self.inner),
                     gateway_request,
                     &request,
                     cancellation.clone(),
                 )
-                .await?;
+                .await;
+                // The completed attempt future and all of its source-owned
+                // state are gone before either success or failure crosses the
+                // public transport boundary. Re-adjudicate cancellation after
+                // that teardown so cleanup-triggered cancellation wins too.
+                check_cancelled(&cancellation)?;
+                let decoded = attempt_result?;
                 match decoded {
                     AttemptResult::Parsed(response) => return Ok(response),
                     AttemptResult::InvalidStructuredResponse if attempt == 0 => {}
