@@ -51,6 +51,7 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
 - Session-result paging: [read_tool_result](read-tool-result.md).
 - Network tools: [web_fetch](web-fetch.md) and
   [web_search](web-search.md).
+- Local image inspection: [vision](vision.md).
 
 Each contract owns its public input, authority, result, limit, cancellation,
 platform, race, and deferred-scope semantics. Use public Rust constants and the

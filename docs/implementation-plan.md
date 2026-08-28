@@ -22,18 +22,17 @@ input; it is not a machine-god product language or runtime dependency.
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `36`
-- Delivered main: `73712608bdc4253faa42aba93741506ebc5d4572`
-- Main CI: `33178362750` (`GREEN`)
-- Main Benchmark evidence: `33178362696` (`GREEN`)
+- Delivered main: `60fe9e4dec953a71f6ea0e87581c2e45ca3ea89a`
+- Main CI: `33179648286` (`GREEN`)
+- Main Benchmark evidence: `33179648264` (`GREEN`)
 - Active branch: `agent/m03-vision`
-- Active phase: `read_tool_result delivered; vision is the next native tool`
-- Next gate: `create agent/m03-vision and freeze its bounded contract`
+- Active phase: `vision contract frozen; implementation is in progress`
+- Next gate: `integrate the bounded tool, Gateway worker, host, tests, and docs`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
-and the Benchmark evidence run retained the required exact-SHA artifacts. No
-behavior slice is active between the completed reader delivery and the next
-bounded `vision` branch.
+and the Benchmark evidence run retained the required exact-SHA artifacts. The
+bounded `vision` behavior is active on the branch named above.
 
 ## Architecture ownership
 
