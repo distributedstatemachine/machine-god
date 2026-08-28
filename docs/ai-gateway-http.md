@@ -1,14 +1,8 @@
 # Optional native AI Gateway HTTP transport
 
-This page is the normative contract for the seventh integrated bounded
-Milestone 03 slice. It adds a Reqwest-backed `AiGatewayHttpTransport` as one
-optional native implementation of the injected byte-transport boundary in the
-[`AiGatewayProvider` codec](ai-gateway.md). The exact feature-branch review and
-remote evidence are recorded in the
-[`native AI Gateway HTTP transport review`](reviews/m03-ai-gateway-http-review-01.md).
-The documentation-seal commit and eventual `main` SHA retain their exact-run
-delivery gates. Milestone 03 remains in progress, and this is not a
-production-ready claim.
+This page defines the Reqwest-backed `AiGatewayHttpTransport`, an optional
+native implementation of the injected byte-transport boundary in the
+[`AiGatewayProvider` codec](ai-gateway.md).
 
 The transport implements `AiGatewayTransport` with standard futures and
 streams, but its concrete startup future and response stream must be polled
@@ -27,7 +21,7 @@ does not construct this transport or its required runtime.
 The generation implementation is opt-in through the `machine-god-native`
 Cargo feature `ai-gateway-http`. That compatibility feature includes both the
 narrower `ai-gateway-model-catalog-http` feature and `web-fetch-http`,
-preserving its delivered generation/reference-host behavior. The generation
+preserving its generation/reference-host feature topology. The generation
 transport exports remain `ai-gateway-http`-only. Both HTTP features and all of
 their concrete exports are cfg-gated off on WebAssembly; there is no WASM HTTP
 implementation. The base crate and custom injected transports do not require
@@ -216,7 +210,7 @@ system's native root store. This is deterministic and avoids silently trusting
 machine-installed authorities. The tradeoff is that enterprise interception
 roots and private authorities installed only in a native store are rejected,
 and OS trust-store changes do not take effect until the pinned Rust trust
-dependency is updated. No API in this slice injects another root or disables
+dependency is updated. No transport API injects another root or disables
 certificate or hostname verification.
 
 ## Cancellation and drop
@@ -252,7 +246,7 @@ terminate the host process, so this precondition remains mandatory.
 
 ## Separate model-catalog HTTP transport
 
-The delivered `models [--json]` path uses a separate GET transport; it
+The `models [--json]` path uses a separate GET transport; it
 does not change the POST generation transport above. Under the dedicated non-WASM
 `ai-gateway-model-catalog-http` gate, native publicly exports
 `AiGatewayModelCatalogHttpTransport`, `AiGatewayModelCatalogHttpEndpoint`,
@@ -271,14 +265,14 @@ and Moka cache dependencies. The narrow catalog feature activates direct
 optional `hickory-proto` and `hickory-resolver` edges; the resolver dependency
 is retained only for bounded platform-configuration parsing and no longer
 enables its Tokio resolver integration. `sha2` is now an unconditional native
-dependency because the later terminal slice needs environment-snapshot identity
+dependency because terminal execution needs environment-snapshot identity
 in every feature topology; the catalog feature does not activate it. Reqwest's
 built-in `hickory-dns` feature is disabled. The graph does not activate
 generation-only direct `bytes` or `web-fetch-http`, and it still omits Tokio's
 signal backend. The CLI dependency, not native catalog HTTP, requests Tokio
 signal handling. Existing consumers of `ai-gateway-http` retain direct `bytes`,
-the catalog feature, and `web-fetch-http`; this topology change does not alter
-generation-transport behavior and makes no performance claim.
+the catalog feature, and `web-fetch-http`; this topology does not alter
+generation-transport behavior.
 
 Catalog production sends one bodyless HTTP/1.1 GET to
 `https://ai-gateway.vercel.sh/coding-agent/v1/models`. Its application-selected
@@ -362,7 +356,7 @@ set of attempt-local waiters, but never a new provider deadline. The body
 buffer retains at most 256 KiB; a frame that would cross the inclusive cap is
 rejected before any of that frame is appended. Drop releases the request/
 response, buffer, and permit. The full parser, fallback, output, and delivery
-status are in [`models-cli.md`](models-cli.md).
+contract is in [`models-cli.md`](models-cli.md).
 
 The concrete deadline waiter checks for a current Tokio handle before it
 constructs a Tokio timer. Without a runtime it remains inert, allowing the
@@ -385,9 +379,9 @@ and generic-Unix bounded-file tests prove that request polling never loads
 platform configuration or entropy and that failures remain fixed, redacted,
 and permit-safe.
 
-## Slice-33 shared web-search use
+## Shared web-search use
 
-The in-progress native [`web_search` slice](web-search.md) reuses the same
+Native [`web_search`](web-search.md) reuses the same
 credential-bearing `Arc<dyn AiGatewayTransport>` and fixed production endpoint
 instead of adding a second HTTP client, credential lookup, proxy, redirect,
 certificate, or endpoint policy. Its one private worker request is still one
@@ -402,41 +396,39 @@ HTTP semaphore permit is returned before a resulting local `web_search` round
 starts, including when a custom transport's total capacity is one.
 
 `AiGatewayWebSearchTransport` is non-WebAssembly and available only with
-`ai-gateway-http`. The current production reference host remains Linux/macOS-
-only. It reuses the already validated configured model and credential source,
+`ai-gateway-http`. The production reference host is Linux/macOS-only. It reuses
+the already validated configured model and credential source,
 advertises only required Perplexity search, and makes no retry or fallback.
 The dedicated provider-executed decoder sits above this byte transport; the
 HTTP layer neither parses provider tool records nor changes the ordinary outer
-generation codec. Composed behavior precursor
-`3d2984000301e58762e0940504159aeb55b2389e` passed the complete exact-1.94.1
-local gate. Formal cycle 1 rejected exact `89c5ec95`, tree `8d91a55`, including
-shared-transport starvation and decoder-allocation findings. Source remediation
-from exact isolated components `096b11c4` and `ca0b990a` releases the outer
-stream at validated finish,
-incrementally retains one bounded SSE record, and injects explicit fallible
-deadline authority. Exact composed precursor `e662fa8`, tree `6c0ace9`, passes
-the complete local gate. Exact cycle-2 remediation `366cef9`, tree `40c05cb`,
-also passed its complete gate. Formal cycle 3 rejected exact candidate
-`aef6abe`, tree `5abcef3`, with a deduplicated `1/0/2/2`. Exact isolated
-components `5d45dca` and `454f8fd` compose its remediation. Exact precursor
-`b834205`, tree `f3557a5`, passes the complete replacement gate. Formal cycle 4
-rejected exact `cc1d3d1`, tree `ad0c3d3`, with a deduplicated `0/0/1/1`;
-finish-envelope remediation is composed from exact component `dc79c8d`, tree
-`e2fed70`, plus exact host-fixture component `9f6c474`. Exact precursor
-`2e9c44d`, tree `3e25daa`, passes the complete replacement gate. Formal cycle 5
-is green on exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union; delivery
-workflows are pending, so the slice is not yet delivered.
+generation codec. The outer stream is released at validated finish before a
+search round begins, and the search decoder incrementally retains one bounded
+SSE record.
+
+`TokioWebSearchDeadline` is the native fallible deadline adapter used by the
+reference host, including one-shot `ask`. `new` and `wait_until` are inert:
+constructing the adapter or returned future reads no clock driver, registers no
+timer, and requires no runtime. On first poll outside a Tokio runtime, the
+future returns the fixed redacted
+`WebSearchTransportErrorKind::RuntimeRequired` category. On a live runtime with
+time enabled, it converts the supplied absolute `std::time::Instant` to Tokio
+time and awaits that same deadline.
+
+The host owns and drives the Tokio runtime and its time driver; the adapter
+creates no runtime of its own. Its sleep future remains owned by the caller and
+is dropped with the enclosing operation, so the adapter spawns no task, thread,
+timer worker, or other detached work. A runtime without time enabled violates
+the host precondition and may panic when Tokio constructs the timer.
 
 ## Deferred scope
 
-The generation transport slice above adds no ambient credential or endpoint
+The generation transport adds no ambient credential or endpoint
 discovery, CLI or config composition, permission prompt, permission mode,
 session persistence, provider-executed tools in the HTTP layer or ordinary
 generation codec, retry/backoff, custom proxy, custom redirect policy,
 custom certificate roots, native enterprise trust, arbitrary destination,
 WASM transport, non-Tokio execution for the concrete transport, internal
-runtime, extra tool, package, GitHub release, compatibility promotion or
-performance claim. The plaintext endpoint is exclusively a deterministic-test
+runtime or extra tool. The plaintext endpoint is exclusively a deterministic-test
 facility and is not a supported production deployment mode.
 
 Schema v2 may declare `transport: "ai_gateway_http"`, but that is data only: it

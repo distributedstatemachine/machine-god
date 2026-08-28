@@ -1,120 +1,9 @@
 # Native root selection and preparation
 
-Status: integrated behavior contract for the fourteenth bounded Milestone 03
-slice; exact final-record workflows are reported at handoff.
-The prior thirteen slices are integrated through final delivery record
-`f840576af241c58d1e55399e66ba92f7770cd50c`; exact feature CI run
-`32583585145`, feature benchmark-evidence run `32583585148`, main CI run
-`32583871385`, and main benchmark-evidence run `32583871368` are green for that
-record. Production is present at `050d253`, with focused correctness fixes at
-`7420a3a` and `fa5119a`. Independent 2-test regression, 11-test core-contract,
-and 3-test prepared-host suites are present; their focused gates are green.
-Formal review of exact candidate `d59c7a5` found ambient-umask-dependent valid
-fixtures and a macOS extended-ACL authority gap. The fixture fix is `f5dbbca`;
-descriptor-bound ACL rejection and its independent regression are `8ae17db`
-and `041c83c`. First rereview found the protective macOS HOME deny-delete ACL
-compatibility issue and a Rustdoc mismatch; their finding-fix candidate includes
-the independent `bb2a856` regression and policy/Rustdoc fix `fa94d8a`. All
-three formal tracks were green together on exact behavior SHA
-`f1dc47517d5b2d6d37628be4eb2ab51871e20b5d`. Documentation seal `03fa9ba`
-then produced green Linux/macOS native-test jobs and green benchmark run
-`32588948975`, but feature CI run `32588948956` failed on three Linux-only
-strict-Clippy diagnostics. Portable lint normalization is present at
-`90d8f96`; local macOS and Linux cross-target strict Clippy plus the full test
-and documentation gates are green. Because production source changed after
-`f1dc4751`, all three tracks rereviewed exact candidate
-`72cf64f63e0dfa30bc1ee21d8aca16550e819c21` and are green together. A
-replacement documentation seal `f08dbd9eb2da81848b8eefb2d218006a64575835`
-is green under exact feature CI run `32589778343` and benchmark-evidence run
-`32589778374`. Feature-evidence record
-`6f66b6e5972e78ba0f0ccae06b899158d99bc864` is green under exact feature CI
-`32590128235` and benchmark evidence `32590128233`; it is fast-forwarded without
-force to `main` and green there under exact CI `32590429626` and benchmark
-evidence `32590429592`. This documentation-only commit is the final record; its
-exact feature and `main` workflows are reported at handoff.
-Milestone 03 remains `IN PROGRESS`. Eighteen slices are delivered. Seventeenth-
-slice `file_info` production `5c2d129` and independent tests `ca0091c` compose
-at `f228c06`, where the initial 34 focused tests are green. Review hardening
-brings the focused total to 36 plus five private unit tests at `b69ec4b`. The
-first formal candidate was not green; all three replacement review tracks are
-green on exact candidate `4193ecc`. Documentation seal and integrated `main`
-SHA `60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
-`32605071080` on successful retry attempt 2, feature benchmark-evidence run
-`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
-`32606050294`; all four workflows report that exact seal SHA. Benchmark success
-is delivery evidence only and makes no product-performance claim. This
-documentation-only commit is the final `file_info` delivery record, is
-explicitly exempt from another adversarial review after behavior was green, and
-reports its own exact workflows at handoff.
-The remaining
-native tools, CLI ownership, and composed end-to-end evidence also stay open.
-The delivered eighteenth slice starts from exact base
-`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`; production, independent tests,
-documentation, composition, and initial local gates were green at `60070d8`.
-The first formal review at `1f5de6a` found a high matcher-work bound defect; its
-fix, independent regression, and replacement local gates are green at exact
-`4171a4a8811a98888b7e4e161281a1216564746f`. All three replacement reviews are
-green on exact behavior SHA `523df858`. Documentation seal and integrated
-`main` SHA `35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
-`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
-and main benchmark evidence `32611208415`; all four report that exact seal SHA.
-The delivered nineteenth bounded `grep_files` slice starts from exact
-base `f6aa458bb875d6cb26565adc878703fe140916d3`; its tree-identical integration
-kickoff is `f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent
-tests, and documentation are parallel, non-overlapping components. Exact
-production `27eec2f` and initial test `6eaee93` components exist and initially
-compose through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677`
-makes focused production/test composition green. Documentation component
-`b04151a` produces fully composed behavior `42e4793`; lint fix and exact local
-gates are green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on
-exact `355a11a`. Remediation and exact replacement local gates are green at
-final code/test precursor `275d263`. First replacement candidate `ae87bf1` is
-historically **NOT GREEN** across all three tracks. Second-fix production and
-documentation compose through `ac5d772`, `d672210`, `7ad0863`, and exact local-
-gate-green precursor `b498ba0`. Formal second replacement candidate `5aeddc1`
-has correctness/API and filesystem/robustness **GREEN** with zero findings and
-performance/concurrency **NOT GREEN** with one medium allocation-amplification
-finding and two low documentation/evidence findings. Third production
-remediation `8777825` composes at `ab1c133`; independent regression `dcf57ad`
-composes at `d7526d4`; review-findings documentation `44afb23` composes at
-`f08c5f2`; lint follow-up `1f13f9a` produces exact fully composed local-gate
-precursor `a8f6179`. Exact Rust 1.94.1 formatting, warnings-denied workspace
-Clippy, 598 non-documentation tests plus two doctests, 25 private native tests,
-40 direct `grep_files` tests, four engine tests, cross-target/dependency/link
-validation, and diff checks are green. Compatibility/release validation is
-green. Formal third-cycle candidate
-`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
-**GREEN** with zero findings. Correctness/API and performance/concurrency are
-**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
-confirmed zero production defects. Isolated wording remediation
-`993b618bf78d30f6a68f3b248b572e33e4de1126` composes at exact
-`f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`; its documentation gates are
-green, and its behavior tree remains `a8f6179` except for documentation. Formal
-fourth-cycle exact behavior SHA
-`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is **GREEN** with zero findings
-in all three fresh tracks: correctness/API, filesystem/robustness, and
-performance/concurrency. Exact-SHA formatting, warnings-denied workspace
-Clippy/tests, Linux/FreeBSD cross-target and WASI gates, two doctests, 25 private
-tests, 40 direct `grep_files` tests, four engine tests, and the 58/420/270/0
-documentation inventory are green. All historical findings are closed,
-including the attempted-read-window storage wording. This documentation-only
-seal is exempt from another adversarial review under the user's explicit
-instruction. Documentation seal `0f48806310882caf3c668c72fe1b9d211cae744b`
-is feature-green: CI run `32623585346` passed all six jobs and benchmark-
-evidence run `32623585349` passed both jobs and artifacts, all for exact `0f`.
-`main` was fast-forwarded without force from `f6ab594` to exact `0f`. Main CI
-run `32623904784` is **GREEN** for exact `0f`: all six jobs and every step
-passed without reruns. Main benchmark-evidence run `32623904800` is **GREEN**
-on attempt 1 for exact `0f`: both jobs and every step passed, with two valid
-non-expired exact-SHA artifacts retained. The `grep_files` slice is delivered;
-the remaining native tools remain pending.
-This final delivery record is documentation-only and exempt from adversarial
-review; its own exact remote workflows are required after push and cannot be
-self-recorded.
-
-This slice adds an explicit Linux/macOS library boundary for selecting and
+This contract defines the Linux/macOS library boundary for selecting and
 retaining the workspace and state roots required by native reference-host
-composition. Selection is pure path derivation from caller-owned inputs.
+composition. Explicit selection is pure path derivation from caller-owned
+inputs. Process selection additionally captures the ambient current directory.
 Preparation is the only new root-creation authority, and it can create only a
 fixed state suffix beneath an already existing selected base. Core and the CLI
 receive no environment or root-creation authority.
@@ -124,6 +13,9 @@ receive no environment or root-creation authority.
 The public selection surface is:
 
 ```rust,ignore
+NativeRootSelection::from_current_process(
+    environment: &NativeEnvironment,
+) -> Result<NativeRootSelection, NativeRootSelectionError>
 NativeRootSelection::from_environment(
     environment: &NativeEnvironment,
     workspace_root: &Path,
@@ -133,6 +25,15 @@ NativeRootSelection::state_root(&self) -> &Path
 NativeRootSelectionError::kind(&self) -> NativeRootSelectionErrorKind
 NativeRootSelectionErrorKind::as_str(self) -> &'static str
 ```
+
+`NativeRootSelection::from_current_process(&NativeEnvironment)` has one narrow
+ambient authority: it captures `std::env::current_dir()` exactly once and uses
+that path as the workspace input. Its environment input remains the supplied
+`NativeEnvironment` snapshot; the constructor does not reread process
+environment variables. Current-directory capture failure returns the fixed
+`CurrentDirectory` category before state-root selection. A captured path then
+passes through the same lexical validation and state selection as
+`from_environment`.
 
 `NativeRootSelection::from_environment(&NativeEnvironment, &Path)` consumes no
 ambient process state. The caller supplies the environment snapshot and the
@@ -164,14 +65,17 @@ derived from configuration data or native status. `workspace_root()` and
 cloneable and equality-comparable. Its debug output is exactly
 `NativeRootSelection { .. }` and reports no path or environment value.
 
-Selection has three fixed, redacted categories:
+Selection has four fixed, redacted categories:
 
 | `NativeRootSelectionErrorKind` | Stable name | Exact `Display` |
 | --- | --- | --- |
+| `CurrentDirectory` | `current_directory` | `native current directory is unavailable` |
 | `InvalidWorkspaceRoot` | `invalid_workspace_root` | `native workspace root selection is invalid` |
 | `StateRootUnavailable` | `state_root_unavailable` | `native state root selection is unavailable` |
 | `InvalidStateEnvironment` | `invalid_state_environment` | `native state environment selection is invalid` |
 
+`CurrentDirectory` covers only failure to capture the process current
+directory; it does not retain the operating-system diagnostic.
 `InvalidWorkspaceRoot` covers a relative path or any lexical parent component.
 `StateRootUnavailable` means no nonempty XDG value or fallback `HOME` is
 available. `InvalidStateEnvironment` means the selected nonempty state value is
@@ -262,8 +166,8 @@ original path or a `/dev/fd` pathname. The product crate remains free of unsafe
 Rust and exact-pins `calcifer-macos-acl` 0.1.0 as a target-macOS-only narrow FFI
 boundary around the native descriptor API. Its crates.io checksum is retained
 in `Cargo.lock`; it has no normal dependencies. The dependency's complete
-published source was inspected for this slice, and dependency policy plus
-vulnerability gates apply normally. ACL validation is a point-in-time
+published source remains subject to dependency policy and vulnerability gates.
+ACL validation is a point-in-time
 preparation check; the same user or a privileged process can still mutate an
 accepted directory later.
 
@@ -324,24 +228,21 @@ Each error retains only its kind. `Debug` is exactly
 entry. It has no nested source. Paths, environment values, ownership and mode
 details, operating-system diagnostics, and raw error numbers are not retained
 or reflected. These selection and preparation types are exported only on Linux
-and macOS; other targets receive no public runtime API for this slice.
+and macOS; other targets receive no public runtime API for this boundary.
 
 ## Reference-host composition
 
-The new
 `NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots` and
 `NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots`
-constructors consume one `PreparedNativeRoots`. Under the nineteenth candidate,
-they transfer its original retained workspace descriptor plus four clones to
-exactly `file_info`, `glob_files`, `grep_files`, `list_files`, and `read_file`,
-and its separately retained state-root identity to `FileSessionStore`, without
-reopening either path. The exact tool membership is `file_info`, `glob_files`,
-`grep_files`, `list_files`, and `read_file`, which core
-exposes in deterministic alphabetical catalog order. The selected `machine-god`
-state root itself is the store root; no extra
-`sessions` suffix is inserted. The existing loaded configuration, permission
-prompter, production credential snapshot or trusted custom transport, default
-engine limits, and no-op event sink retain their existing meanings.
+constructors consume one `PreparedNativeRoots`. They transfer its retained
+workspace authority, cloning its descriptor only as required by the registered
+workspace-rooted tools, and transfer its separately retained state-root identity
+to `FileSessionStore` without reopening either path. Core exposes the composed
+tools in deterministic alphabetical catalog order. The selected `machine-god`
+state root itself is the store root; no extra `sessions` suffix is inserted.
+The loaded configuration, permission prompter, credential snapshot or trusted
+custom transport, engine limits, and event sink retain their documented
+meanings.
 
 The consuming constructors remain under the existing `ai-gateway-http`, non-
 WebAssembly, Linux/macOS composition gate. Root selection and preparation do
@@ -358,20 +259,20 @@ Root failure therefore does not discover or hand off a credential. The custom
 transport path still performs no native credential discovery or production HTTP
 construction.
 
-If transferring the prepared workspace descriptor into the five tools cannot
-clone it, the existing reference-host `WorkspaceRoot` stage is returned. The
-session store has already accepted the retained state descriptor during
-preparation, so prepared-root composition does not reopen a session path.
+If transferring the prepared workspace descriptor into a tool cannot clone it,
+the reference-host `WorkspaceRoot` stage is returned. The session store has
+already accepted the retained state descriptor during preparation, so
+prepared-root composition does not reopen a session path.
 
 The existing path constructors
 `NativeReferenceHost::compose_ai_gateway_http` and
 `NativeReferenceHost::compose_with_ai_gateway_transport` remain supported:
 both require an existing absolute workspace and an existing absolute session
 root, create nothing, and continue assigning disjointness to their trusted
-caller. Slice 33 additionally gives every composition path an explicit
-`WebSearchDeadline`; custom transport paths also receive the canonical
-`NetworkTarget` that core authorizes for search. These additions do not change
-root identity or creation semantics. `FileSessionStore::open` likewise remains
+caller. Every composition path receives an explicit `WebSearchDeadline`;
+custom transport paths also receive the canonical `NetworkTarget` that core
+authorizes for search. These inputs do not change root identity or creation
+semantics. `FileSessionStore::open` likewise remains
 an explicit existing-root, no-create constructor. Safe creation is available
 only through `PreparedNativeRoots::prepare`; the consuming host constructors
 only consume the result.
@@ -384,23 +285,21 @@ core gains environment, filesystem, or creation authority.
 
 Native status remains a metadata-only observation of the same resolved state
 path. It does not call `NativeRootSelection`, prepare roots, open directory
-descriptors, or create a missing directory. `machine-god`, help, version,
-human status, JSON status, invalid-argument, and write-error bytes remain exact
-and unchanged. No CLI command invokes root preparation.
+descriptors, or create a missing directory.
+
+The one-shot `machine-god ask` host captures one `NativeEnvironment` snapshot,
+passes it to `NativeRootSelection::from_current_process`, prepares the result,
+and consumes the prepared roots during reference-host composition. Its ambient
+current-directory read is therefore owned by this native boundary rather than
+core. Root selection and preparation occur only after the complete prompt has
+passed CLI validation. Other commands do not acquire root-preparation authority
+merely by observing status or configuration.
 
 ## Deferred scope
 
-This root sub-boundary did not implement session create, list, resume, replay,
-or reset; the delivered fifteenth and sixteenth slices now supply that bounded
-library behavior. It does not allocate a session ID or a new incarnation for reset,
-change the session record schema, migrate or encrypt state, add a cleanup or
-repair command, supply a terminal prompter, or expand CLI ownership. The
-delivered seventeenth slice consumes its retained workspace identity for
-`file_info`; the delivered eighteenth slice additionally consumes a clone of
-that same identity for `glob_files`; and the nineteenth candidate consumes one
-more clone for `grep_files`. None adds root-selection authority or behavior.
-
-The slice makes no compatibility, upstream-equivalence, or product-performance
-claim and does not change the pinned fx inventory, benchmark workloads,
-workflows, or schema. Zig remains solely the pinned upstream benchmark build
-input; machine-god remains a Rust product.
+This boundary does not implement session lifecycle operations, allocate session
+or incarnation identities, change the session record schema, migrate or encrypt
+state, add cleanup or repair authority, or supply a terminal prompter. Those
+behaviors remain owned by their respective native components. Workspace tools
+consume cloned prepared descriptors but add no root-selection authority or
+behavior of their own.

@@ -1,43 +1,24 @@
-# Native by-ID session lifecycle
+# Native session lifecycle
 
-Status: delivered fifteenth bounded Milestone 03 slice. Production, fourteen
-independently owned focused tests, one formal finding regression, and all three
-adversarial tracks are green; the tracks agree on exact candidate `e6a3804`.
-Feature record `dbba2c7` is green under exact feature CI `32594562796` and
-benchmark evidence `32594562785`, and on `main` under exact CI `32594846484`
-and benchmark evidence `32594846476`. This documentation-only commit is the
-final delivery record; its workflows are reported at handoff. Sixteen bounded
-slices are integrated. The delivered sixteenth slice extends this
-lifecycle with bounded IDs-only listing; production and 13 initial independent
-tests are composed through `dec98e0`, whose three first review tracks were not
-green. The isolated fixes and 18-test hardened suite are composed in exact
-behavior candidate `3fa5463`; all three replacement review tracks are green.
-First remote CI `32599591900` exposed the Linux removed-root gap; this portable
-fix is exact behavior candidate `17f1884`, green under both executable review
-tracks. Documentation seal `d3312d7` resolves its lineage finding, passed exact
-feature CI `32600292770` and benchmark evidence `32600292779`, was fast-forwarded
-without force to `main`, and passed exact main CI `32600567094` and benchmark
-evidence `32600567090`. Milestone 03 remains `IN PROGRESS` because other frozen
-scope remains open.
+This contract defines the Linux/macOS native reference host's durable library
+boundary for creating, listing, resuming, replaying, and resetting sessions in
+the current file-session schema. Callers may supply a validated core
+`SessionId` to `create`, or ask the lifecycle to generate a new identity with
+`create_generated`. The host allocates the `SessionIncarnationId` for every new
+logical lifetime.
 
-This slice gives the Linux/macOS native reference host a durable, by-ID library
-boundary for creating, resuming, replaying, and resetting sessions in the
-current file-session schema. The caller supplies a validated core `SessionId`;
-the host does not invent, enumerate, parse, or discover session IDs. The host
-allocates the `SessionIncarnationId` for a new logical lifetime.
-
-The owning component is `NativeSessionLifecycle`. Its production API exposes
-typed construction and operation errors plus inert `create`, `resume`,
-`replay`, and `reset` futures. `NativeReferenceHost` retains it and
+The owning component is `NativeSessionLifecycle`. Its public API exposes typed
+construction and operation errors plus inert `create`, `create_generated`,
+`list_sessions`, `resume`, `replay`, and `reset` futures.
+`NativeReferenceHost` retains it and
 exposes lifecycle and session-store observation over the same shared
 `FileSessionStore` instance. The engine, lifecycle component, and store
 therefore use one retained state-root identity rather than reopening a path or
 constructing independent stores.
 
 The separate [`native session-listing contract`](native-session-listing.md)
-defines the candidate `list_sessions` operation. It enumerates that same
-retained store root but does not change the by-ID create, resume, replay, or
-reset semantics below.
+defines `list_sessions`. It enumerates that same retained store root but does
+not change the create, resume, replay, or reset semantics below.
 
 ## Platform and authority boundary
 
@@ -53,12 +34,13 @@ The lifecycle takes no separate path, environment, configuration, network,
 terminal, process-execution, clock, or runtime authority. It does retain the
 engine and file store supplied by its host, so it transitively retains the
 engine's provider, permission, tool, and event-sink components; lifecycle
-operations never invoke those components. Its default incarnation source uses
-only OS randomness. A custom `SessionIncarnationSource` is explicitly trusted
-host code: its implementor is responsible for its own authority, effects,
-latency, allocation, internal work, and globally unique ID contract. It must
-not be model- or configuration-controlled merely because the lifecycle exposes
-an injection boundary.
+operations never invoke those components. Its default session-ID and
+incarnation sources use only OS randomness. A custom `SessionIdSource` or
+`SessionIncarnationSource` is explicitly trusted host code: its implementor is
+responsible for its own authority, effects, latency, allocation, internal work,
+and globally unique ID contract. Neither source may be model- or
+configuration-controlled merely because the lifecycle exposes an injection
+boundary.
 
 Store identity is an enforced invariant, not caller documentation. Every
 lifecycle constructor proves that the engine's configured session-store `Arc`
@@ -72,18 +54,28 @@ is consulted. `NativeReferenceHost` constructs one concrete shared store and
 wires that same allocation into both components; an impossible internal
 mismatch maps to its existing redacted engine-construction stage.
 
-Default production composition through `NativeReferenceHost` adds only one new
-native authority: a bounded operating-system random source used to allocate an
-incarnation for `create` and `reset`. It must not fall back to a timestamp,
+Default composition through `NativeReferenceHost` uses a bounded operating-
+system random source to allocate a session ID for `create_generated` and an
+incarnation for creation and reset. It does not fall back to a timestamp,
 process or thread ID, counter, model output, session ID hash, or general-purpose
-deterministic generator. Standalone constructors may instead receive a trusted
-custom-host source, whose additional authority and obligations are assigned
-above. Reference-host composition always selects the OS source and does not
-expose the override as ambient, model-controlled, or configuration input.
+deterministic generator. `with_identity_sources` may instead receive trusted
+custom-host `SessionIdSource` and `SessionIncarnationSource` implementations,
+whose additional authority and obligations are assigned above. Reference-host
+composition always selects the OS sources and does not expose either override
+as ambient, model-controlled, or configuration input.
 
-Each default production incarnation carries at least 128 bits from a fixed-size
-OS random draw and is encoded as a valid bounded `SessionIncarnationId`. Its
-exact textual encoding is not a public wire or file-format promise in this candidate.
+Every default generated session identity consumes 32 bytes (256 bits) from one
+OS-random draw and encodes them as `ses-` followed by exactly 64 lowercase
+hexadecimal digits. This 68-byte shape is current public behavior. The result
+is validated as a bounded core `SessionId` before any store operation.
+`MAX_SESSION_ID_ATTEMPTS` is `8`: an existing durable identity or incompatible
+live identity is treated as a collision, and generation considers at most
+eight source values. Exhaustion fails closed without replacing or resuming an
+existing session.
+
+Each default incarnation carries 256 bits from a fixed-size OS random draw and
+is encoded as a valid bounded `SessionIncarnationId`. Its exact textual encoding
+is not a public wire or file-format promise.
 `MAX_SESSION_INCARNATION_ATTEMPTS` is `8`: reset considers at most eight source
 values and never accepts one equal to the currently stored incarnation. Failure
 to obtain an acceptable value within that bound fails closed before publication
@@ -91,13 +83,21 @@ and never reuses the prior incarnation.
 
 ## Operation summary
 
-All four operations take one caller-supplied validated `SessionId` and return a
-future. Missing `resume`, `replay`, and `reset` are typed `NotFound` failures,
-not `Ok(None)`.
+Every operation returns a future. `create`, `resume`, `replay`, and `reset`
+take one caller-supplied validated `SessionId`; `create_generated` obtains its
+identity from the configured `SessionIdSource`. Missing `resume`, `replay`, and
+`reset` are typed `NotFound` failures, not `Ok(None)`.
+
+```rust,ignore
+NativeSessionLifecycle::create_generated(
+    &self,
+) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>>
+```
 
 | Operation | Durable effect on success | Successful result |
 | --- | --- | --- |
 | `create` | Atomically creates one empty current-schema record at revision `1` with a new host-generated incarnation. | A live core `Session` for that exact durable record. |
+| `create_generated` | Generates a bounded random identity and applies `create`, retrying only identity collisions. | A live core `Session` for the newly generated durable record. |
 | `resume` | No record write; loads and validates the current durable record. A present load may create the store's permanent lock sidecar. | The engine-canonical live `Session` for the stored incarnation. |
 | `replay` | No record write; loads and validates one current durable snapshot. A present load may create the lock sidecar. | An owned `SessionRecord` snapshot, not a UI transcript or event stream. |
 | `reset` | Atomically replaces the current record with an empty record under the same ID, a new incarnation, revision `old + 1`, and turn allocator `1`. | A live core `Session` for the newly persisted incarnation. |
@@ -113,7 +113,7 @@ Those effects remain behind a later explicit call to the core session.
 - the caller's `SessionId` is unchanged;
 - the configured source supplies a fresh incarnation; default reference-host
   composition uses OS randomness;
-- the unsaved candidate revision is the core zero sentinel;
+- the unsaved record revision is the core zero sentinel;
 - `next_turn_sequence` is `1`; and
 - messages and metadata are empty.
 
@@ -132,6 +132,18 @@ one engine, however, a competing create may first encounter the other create's
 incompatible local registry reservation and report `LiveSession` without
 reaching the store CAS. The implementation never forces that reservation or
 another incompatible live handle to adopt a different incarnation.
+
+`create_generated` obtains one validated identity from its configured
+`SessionIdSource` and applies the same durable-create protocol. It retries only
+`AlreadyExists` and `LiveSession`, because those categories prove an identity
+collision before this call publishes a new record. Every other lifecycle error
+is returned immediately. A source failure returns `SessionIdSource` and does
+not fall back to a weaker identity scheme. Eight collisions return
+`SessionIdExhausted`; the lifecycle neither performs a ninth source call nor
+reflects any collided identity. Collision attempts can perform the bounded
+record lookup, lock-sidecar, incarnation-source, and local-registry work of
+`create`, but they never overwrite, resume, merge, truncate, or delete the
+colliding session.
 
 As in the underlying store, failure before rename leaves no published record,
 although a permanent lock or safe temporary artifact may remain. A directory-
@@ -244,7 +256,7 @@ lifecycle does not cancel an active turn, revoke clones, mutate a live handle in
 place, or force it to adopt the new lifetime. The registry reservation also
 prevents a new local handle for the ID from being published across the reset
 check-and-commit window. Defensively, a nonconforming custom source that
-returns the incarnation of an already registered inactive empty candidate can
+returns the incarnation of an already registered inactive empty record can
 reuse that matching local state; deliberate reuse violates the source trait's
 globally unique ID contract and is not a supported custom-host coordination
 mechanism. Even that misconfiguration cannot reuse the currently durable
@@ -269,12 +281,14 @@ enumeration or takes a lock spanning multiple IDs.
 
 Constructing a lifecycle future performs no source call, entropy read, store
 call, record or lock creation, engine registration, provider work, prompt, or
-background work. Dropping it before first poll is effect-free. The lifecycle
-implementation and default source detach no task, thread, timer, retry loop, or
-runtime work while polling. A trusted custom incarnation source is called
-synchronously, but the lifecycle cannot constrain work that its implementation
-performs or detaches internally; custom hosts must enforce the same bounded,
-non-detaching source contract when they require those properties.
+background work. This includes `create_generated`: its session-ID source is not
+called until the returned future is polled. Dropping any lifecycle future
+before first poll is effect-free. The lifecycle implementation and default
+sources detach no task, thread, timer, retry loop, or runtime work while
+polling. A trusted custom identity source is called synchronously, but the
+lifecycle cannot constrain work that its implementation performs or detaches
+internally; custom hosts must enforce the same bounded, non-detaching source
+contract when they require those properties.
 
 The shared `FileSessionStore` performs bounded synchronous I/O and advisory
 locking on the polling thread. Once one of those calls is executing, dropping
@@ -284,7 +298,9 @@ must preserve executor responsiveness must arrange a suitable polling context.
 
 With the default OS source, per-call retained application data is bounded by:
 
-- one validated `SessionId`, at most 128 bytes;
+- one validated `SessionId`, at most 128 bytes, per create attempt;
+- for `create_generated`, at most `MAX_SESSION_ID_ATTEMPTS` (`8`) fixed-size
+  32-byte random draws and generated IDs;
 - one bounded incarnation and one fixed-size random draw for create, or at most
   `MAX_SESSION_INCARNATION_ATTEMPTS` (`8`) such draws for reset;
 - one current-schema record within `MAX_FILE_SESSION_BYTES` (`8_651_165`) plus
@@ -313,6 +329,8 @@ are:
 | `NotFound` | Resume, replay, or reset found no record. |
 | `LiveSession` | A locally live incompatible lifetime prevents the requested operation. |
 | `IncarnationSource` | The configured source failed, or reset exhausted its eight attempts without a value distinct from the durable incarnation. OS entropy failure is the default production case. |
+| `SessionIdSource` | The configured generated-ID source failed before supplying a validated identity. OS entropy failure is the default case. |
+| `SessionIdExhausted` | All eight generated identities collided with an existing durable or live session. |
 | `Conflict` | A stored revision/incarnation CAS changed before the requested update. |
 | `Corrupt` | The current file, schema, identity, counters, type, or bounds are invalid. |
 | `Unavailable` | Store I/O, locking, rename, or synchronization failed, possibly after publication. |
@@ -324,8 +342,9 @@ this contract. The mapping is normative: atomic create conflict becomes
 load becomes `NotFound`; store CAS mismatch remains `Conflict`; store corrupt
 remains `Corrupt`; store I/O and save-ambiguous remain `Unavailable`; store
 `Other` and core protocol/validation failures become `Engine`; engine
-incarnation conflict becomes `LiveSession`; and entropy failure becomes
-`IncarnationSource`.
+incarnation conflict becomes `LiveSession`; incarnation entropy failure becomes
+`IncarnationSource`; generated-ID source failure becomes `SessionIdSource`; and
+eight generated-ID collisions become `SessionIdExhausted`.
 
 The construction-time `MismatchedSessionStore` failure is separate from these
 operation errors. It cannot be deferred until the first create, resume, replay,
@@ -347,18 +366,8 @@ formats. Migration, explicit legacy import, encryption, record authentication,
 key management, secure erasure, stronger lifecycle concurrency hardening, and
 non-Unix support remain assigned to Milestone 04.
 
-This delivered fifteenth slice does not itself implement `list_sessions`, deletion,
-automatic cleanup, session-ID generation, CLI
-`session`/`sessions`/`resume`/`replay` commands, a UI replay, or CLI byte
-changes. The delivered sixteenth slice adds only bounded IDs-only
-library-level listing under the separate
-[`native session-listing contract`](native-session-listing.md). After that
-first composition the combined M03 root plus create/list/resume/replay/reset
-functional code scope exists, and its checklist item is complete. All three
-replacement listing review tracks are green on exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`; portable behavior `17f1884` and
-seal `d3312d7` passed exact feature and `main` delivery gates.
-
-The slice makes no compatibility, upstream-equivalence, or product-performance
-claim and changes no benchmark workload or workflow. Zig remains solely the
-pinned upstream fx benchmark build input; `machine-god` remains a Rust product.
+The lifecycle does not implement deletion, automatic cleanup, a UI replay, or
+CLI presentation. IDs-only enumeration is defined by the separate
+[`native session-listing contract`](native-session-listing.md). Top-level
+session commands decide which lifecycle operation to expose and remain
+responsible for their own parsing, output, and exit contracts.
