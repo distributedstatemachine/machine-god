@@ -78,9 +78,12 @@ capability-divergent input before opening a descriptor or polling the
 transport. It walks every path descriptor-relatively from the retained root,
 opens every component without following symbolic links, requires the final
 descriptor to be a regular file, and reads through that descriptor only.
-Directories, symbolic links, FIFOs, sockets, disappearing or growing files,
-and identity or root-validation failures become path-redacted per-image
-failures without provider access for that image.
+The reader fingerprints descriptor identity, link count, type/mode, size, and
+modification/change timestamps before the read and requires an exact match at
+EOF. Directories, symbolic links, FIFOs, sockets, disappearing, shrinking,
+growing, or concurrently changed files and identity or root-validation
+failures become path-redacted per-image failures without provider access for
+that image.
 
 Valid `image_ids` require no policy-governed effect in this milestone and are
 prepared without authority. They deterministically return the documented
@@ -97,15 +100,21 @@ extension:
 - WebP: a `RIFF` container with `WEBP` form type.
 
 No raster decoder runs locally. A malformed or unsupported signature is
-`image_unavailable`. Animated GIF/WebP content is admitted as compressed input
-within the same byte limits; interpreting frames belongs to the provider.
+`image_unavailable` and is rejected after at most the fixed 12-byte signature
+probe rather than reading the rest of that file. Animated GIF/WebP content is
+admitted as compressed input within the same byte limits; interpreting frames
+belongs to the provider.
 
 Every readable path receives a call-local positive `image_id` equal to its
 one-based source position. Local failures retain that position. Healthy images
 are processed in source order in sequential batches of at most eight images
 and at most 8 MiB aggregate raw bytes. A batch is sent before adding an image
-that would cross either boundary. At most 20 images and 64 MiB of admitted raw
-bytes are processed by one call.
+that would cross either boundary. At most 20 images and 64 MiB of aggregate
+image bytes are read by one call, including bytes consumed by later local
+failures. A file that grows at the exact aggregate boundary may consume one
+additional overflow-witness byte; after the budget is exhausted, remaining
+paths become local failures without content reads. Admitted raw bytes are
+therefore also bounded by 64 MiB.
 
 ## Private Gateway worker
 
@@ -167,8 +176,11 @@ and cancellation errors remain fixed and path/body/credential-free.
 A structurally invalid successful provider response receives exactly one
 semantic retry using the same owned, already verified image bytes. Transport
 failure, cancellation, timeout, authentication, rate limiting, and output-limit
-failure are not retried. Batches remain sequential. There is no backend
-fallback, live-provider retry policy, or hidden parallel request.
+failure are not retried. A valid `finishReason: length` is an output-limit
+failure. Gateway invalid-request and protocol failures are unavailable provider
+responses, not semantic-success retry exhaustion. Batches remain sequential.
+There is no backend fallback, live-provider retry policy, or hidden parallel
+request.
 
 ## Result
 
@@ -178,6 +190,12 @@ failure becomes `image_unavailable`. Malformed success after the semantic
 retry becomes `provider_response_invalid`; provider/transport failure becomes
 `vision_unavailable`; and exhausted evidence/output capacity becomes
 `output_limit_exceeded`.
+
+Each provider batch independently obeys its 20 KiB evidence ceiling. If the
+combined legal batch evidence would exceed the 48 KiB complete tool-result
+ceiling, successful records are replaced from the source-order suffix with
+fixed `output_limit_exceeded` records until the ordered total result fits. An
+individually valid earlier result is never discarded in favor of a later one.
 
 Failed records use this stable form:
 
@@ -210,7 +228,7 @@ credential, or endpoint diagnostic.
 | focus | 4,096 bytes |
 | normalized path | 4,096 bytes / 256 components / 255 bytes each |
 | one compressed image | 8 MiB plus one overflow witness |
-| aggregate admitted image bytes | 64 MiB |
+| aggregate image bytes read / admitted | 64 MiB plus at most one growth witness / 64 MiB |
 | image read chunk | 64 KiB |
 | images in one provider batch | 8 |
 | raw bytes in one provider batch | 8 MiB |
@@ -234,14 +252,16 @@ waiting. Cancellation wins same-poll races and is checked before each file or
 network effect, between fixed-size reads and encoding steps, after provider
 readiness, before semantic retry, and before publication.
 
-Constructors and futures are inert until polled and detach no task or thread.
-Dropping before the first poll performs no effect. Dropping an in-flight call
-closes owned descriptors, cancels/drops the transport future and byte stream,
-releases buffers and capacity, and publishes no partial result. Once a
-transport is polled, cancellation cannot retract bytes already accepted by the
-remote peer. The private worker drops its response stream before returning so
-a capacity-one shared Gateway transport cannot deadlock the next outer model
-round.
+Tool construction synchronously validates the target and opens, validates, and
+retains the workspace-root descriptor; it performs no file-content or network
+effect and starts no background work. Execution and transport futures are inert
+until polled and detach no task or thread. Dropping an execution future before
+its first poll performs no execution effect. Dropping an in-flight call closes
+owned descriptors, cancels/drops the transport future and byte stream, releases
+buffers and capacity, and publishes no partial result. Once a transport is
+polled, cancellation cannot retract bytes already accepted by the remote peer.
+The private worker drops its response stream before returning so a capacity-one
+shared Gateway transport cannot deadlock the next outer model round.
 
 `Debug`, `Display`, and error values for the tool, requests, images, transport,
 responses, and failures contain only fixed categories, counts, media kind, and

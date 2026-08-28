@@ -315,16 +315,27 @@ fn second_semantic_invalidity_returns_stable_error_after_exactly_two_attempts() 
 
 #[test]
 fn provider_outages_protocol_failures_and_output_limits_never_semantically_retry() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let outage = ErrorTransport {
-        kind: ProviderErrorKind::Unavailable,
-        calls: Arc::clone(&calls),
-    };
-    let error = execute(Arc::new(outage), request(vec![png(1, &[1])])).unwrap_err();
-    assert_eq!(error.kind(), VisionTransportErrorKind::Unavailable);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    let rendered = format!("{error:?} {error}");
-    assert!(!rendered.contains("PRIVATE_PROVIDER"));
+    for (provider_kind, expected) in [
+        (
+            ProviderErrorKind::Unavailable,
+            VisionTransportErrorKind::Unavailable,
+        ),
+        (
+            ProviderErrorKind::InvalidRequest,
+            VisionTransportErrorKind::InvalidRequest,
+        ),
+    ] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let outage = ErrorTransport {
+            kind: provider_kind,
+            calls: Arc::clone(&calls),
+        };
+        let error = execute(Arc::new(outage), request(vec![png(1, &[1])])).unwrap_err();
+        assert_eq!(error.kind(), expected);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let rendered = format!("{error:?} {error}");
+        assert!(!rendered.contains("PRIVATE_PROVIDER"));
+    }
 
     for (response, expected) in [
         (
@@ -359,6 +370,20 @@ fn provider_outages_protocol_failures_and_output_limits_never_semantically_retry
         ),
         (
             vec![b'x'; MAX_VISION_RESPONSE_BYTES + 1],
+            VisionTransportErrorKind::ResponseTooLarge,
+        ),
+        (
+            sse_events(&[
+                json!({"type": "stream-start", "warnings": []}),
+                json!({"type": "text-start", "id": "vision-text"}),
+                json!({
+                    "type": "text-delta",
+                    "id": "vision-text",
+                    "delta": valid_result().to_string()
+                }),
+                json!({"type": "text-end", "id": "vision-text"}),
+                json!({"type": "finish", "finishReason": {"unified": "length"}}),
+            ]),
             VisionTransportErrorKind::ResponseTooLarge,
         ),
     ] {

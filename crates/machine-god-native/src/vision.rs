@@ -43,7 +43,7 @@ pub const MAX_VISION_PATH_COMPONENTS: usize = 256;
 pub const MAX_VISION_PATH_COMPONENT_BYTES: usize = 255;
 /// Inclusive raw-byte limit for one admitted image.
 pub const MAX_VISION_IMAGE_BYTES: usize = 8 * 1024 * 1024;
-/// Inclusive aggregate raw-byte limit for one invocation.
+/// Inclusive aggregate image-read budget for one invocation.
 pub const MAX_VISION_TOTAL_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 /// Inclusive raw-byte limit for one provider batch.
 pub const MAX_VISION_BATCH_BYTES: usize = MAX_VISION_BATCH_RAW_BYTES;
@@ -57,6 +57,8 @@ pub const VISION_DEFAULT_MAX_ACTIVE_REQUESTS: usize = 2;
 pub const VISION_MAX_ACTIVE_REQUESTS: usize = 8;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
+#[cfg(unix)]
+const SIGNATURE_PROBE_BYTES: usize = 12;
 const VISION_DESCRIPTION: &str = "Inspect up to 20 workspace images with a focused question. Accepts exactly one of workspace-relative paths or prior image attachment IDs; attachment history is unavailable in this host slice.";
 
 /// Stable construction-error category for [`VisionTool`].
@@ -436,23 +438,24 @@ impl VisionTool {
         let mut results = BTreeMap::new();
         let mut batch = Vec::with_capacity(MAX_VISION_BATCH_IMAGES);
         let mut batch_bytes = 0_usize;
-        let mut admitted_bytes = 0_usize;
+        let mut processed_bytes = 0_usize;
         for (index, path) in paths.iter().enumerate() {
             check_cancellation_and_deadline(&cancellation, Some(deadline))?;
             let image_id = u64::try_from(index + 1).expect("at most 20 vision images fit u64");
-            let remaining_total = MAX_VISION_TOTAL_IMAGE_BYTES - admitted_bytes;
+            let remaining_total = MAX_VISION_TOTAL_IMAGE_BYTES.saturating_sub(processed_bytes);
             if remaining_total == 0 {
                 results.insert(image_id, RenderedImage::unavailable(image_id));
                 continue;
             }
             let image_limit = remaining_total.min(MAX_VISION_IMAGE_BYTES);
             match self.read_image(path, image_id, image_limit, &cancellation, deadline) {
-                Ok(image) => {
+                Ok(read) => {
+                    processed_bytes = processed_bytes.saturating_add(read.bytes_read);
+                    let Some(image) = read.image else {
+                        results.insert(image_id, RenderedImage::unavailable(image_id));
+                        continue;
+                    };
                     let image_bytes = image.bytes().len();
-                    admitted_bytes = admitted_bytes
-                        .checked_add(image_bytes)
-                        .filter(|total| *total <= MAX_VISION_TOTAL_IMAGE_BYTES)
-                        .expect("the image reader enforces the remaining aggregate budget");
                     let crosses_batch =
                         vision_batch_would_overflow(batch.len(), batch_bytes, image_bytes);
                     if crosses_batch {
@@ -493,9 +496,6 @@ impl VisionTool {
                 }
                 Err(LocalImageFailure::Cancelled) => return Err(cancelled_error()),
                 Err(LocalImageFailure::Timeout) => return Err(timeout_error()),
-                Err(LocalImageFailure::Unavailable) => {
-                    results.insert(image_id, RenderedImage::unavailable(image_id));
-                }
             }
         }
         if !batch.is_empty() {
@@ -599,85 +599,193 @@ impl VisionTool {
         max_bytes: usize,
         cancellation: &CancellationToken,
         deadline: Instant,
-    ) -> Result<VisionImage, LocalImageFailure> {
+    ) -> Result<LocalImageRead, LocalImageFailure> {
         local_boundary(cancellation, deadline)?;
         let mut directory: Option<OwnedFd> = None;
         let mut components = path.split('/').peekable();
         let file = loop {
             local_boundary(cancellation, deadline)?;
-            let component = components.next().ok_or(LocalImageFailure::Unavailable)?;
+            let Some(component) = components.next() else {
+                return Ok(LocalImageRead::unavailable(0));
+            };
             let directory_fd = directory
                 .as_ref()
                 .map_or_else(|| self.root.as_fd(), AsFd::as_fd);
             if components.peek().is_some() {
-                directory = Some(
-                    rustix::fs::openat(
-                        directory_fd,
-                        component,
-                        OFlags::RDONLY
-                            | OFlags::DIRECTORY
-                            | OFlags::NOFOLLOW
-                            | OFlags::CLOEXEC
-                            | OFlags::NONBLOCK,
-                        Mode::empty(),
-                    )
-                    .map_err(|_| LocalImageFailure::Unavailable)?,
-                );
+                let Ok(opened) = rustix::fs::openat(
+                    directory_fd,
+                    component,
+                    OFlags::RDONLY
+                        | OFlags::DIRECTORY
+                        | OFlags::NOFOLLOW
+                        | OFlags::CLOEXEC
+                        | OFlags::NONBLOCK,
+                    Mode::empty(),
+                ) else {
+                    return Ok(LocalImageRead::unavailable(0));
+                };
+                directory = Some(opened);
             } else {
-                break rustix::fs::openat(
+                let Ok(opened) = rustix::fs::openat(
                     directory_fd,
                     component,
                     OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
                     Mode::empty(),
-                )
-                .map_err(|_| LocalImageFailure::Unavailable)?;
+                ) else {
+                    return Ok(LocalImageRead::unavailable(0));
+                };
+                break opened;
             }
         };
 
         local_boundary(cancellation, deadline)?;
-        let metadata = rustix::fs::fstat(&file).map_err(|_| LocalImageFailure::Unavailable)?;
+        let Ok(metadata) = rustix::fs::fstat(&file) else {
+            return Ok(LocalImageRead::unavailable(0));
+        };
         if !FileType::from_raw_mode(metadata.st_mode).is_file()
-            || u64::try_from(metadata.st_size)
+            || metadata.st_nlink == 0
+            || usize::try_from(metadata.st_size)
                 .ok()
-                .is_none_or(|size| size > max_bytes as u64)
+                .is_none_or(|size| size > max_bytes)
         {
-            return Err(LocalImageFailure::Unavailable);
+            return Ok(LocalImageRead::unavailable(0));
         }
-
-        let capacity = usize::try_from(metadata.st_size)
-            .unwrap_or(0)
-            .min(max_bytes);
-        let mut bytes = Vec::with_capacity(capacity);
-        let mut chunk = vec![0_u8; READ_CHUNK_BYTES].into_boxed_slice();
-        loop {
-            local_boundary(cancellation, deadline)?;
-            let remaining = (max_bytes + 1).saturating_sub(bytes.len());
-            if remaining == 0 {
-                return Err(LocalImageFailure::Unavailable);
-            }
-            match rustix::io::read(&file, &mut chunk[..remaining.min(READ_CHUNK_BYTES)]) {
-                Ok(0) => break,
-                Ok(read) => {
-                    bytes.extend_from_slice(&chunk[..read]);
-                    local_boundary(cancellation, deadline)?;
-                    if bytes.len() > max_bytes {
-                        return Err(LocalImageFailure::Unavailable);
-                    }
-                }
-                Err(error) if error == rustix::io::Errno::INTR => {}
-                Err(_) => return Err(LocalImageFailure::Unavailable),
-            }
-        }
-        let media_type = sniff_media_type(&bytes).ok_or(LocalImageFailure::Unavailable)?;
-        VisionImage::new(image_id, media_type, bytes).map_err(|_| LocalImageFailure::Unavailable)
+        let Some(fingerprint) = ImageFingerprint::from_stat(&metadata) else {
+            return Ok(LocalImageRead::unavailable(0));
+        };
+        read_verified_image(&file, fingerprint, image_id, cancellation, deadline)
     }
 }
 
-#[derive(Clone, Copy)]
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ImageFingerprint {
+    device: i128,
+    inode: i128,
+    links: i128,
+    mode: rustix::fs::RawMode,
+    size: usize,
+    modified_seconds: i128,
+    modified_nanoseconds: i128,
+    changed_seconds: i128,
+    changed_nanoseconds: i128,
+}
+
+#[cfg(unix)]
+impl ImageFingerprint {
+    fn from_stat(metadata: &rustix::fs::Stat) -> Option<Self> {
+        Some(Self {
+            device: i128::from(metadata.st_dev),
+            inode: i128::from(metadata.st_ino),
+            links: i128::from(metadata.st_nlink),
+            mode: metadata.st_mode,
+            size: usize::try_from(metadata.st_size).ok()?,
+            modified_seconds: i128::from(metadata.st_mtime),
+            modified_nanoseconds: i128::from(metadata.st_mtime_nsec),
+            changed_seconds: i128::from(metadata.st_ctime),
+            changed_nanoseconds: i128::from(metadata.st_ctime_nsec),
+        })
+    }
+
+    fn matches(self, metadata: &rustix::fs::Stat) -> bool {
+        metadata.st_nlink != 0 && Self::from_stat(metadata) == Some(self)
+    }
+}
+
+#[cfg(unix)]
+struct LocalImageRead {
+    image: Option<VisionImage>,
+    bytes_read: usize,
+}
+
+#[cfg(unix)]
+impl LocalImageRead {
+    fn available(image: VisionImage, bytes_read: usize) -> Self {
+        Self {
+            image: Some(image),
+            bytes_read,
+        }
+    }
+
+    const fn unavailable(bytes_read: usize) -> Self {
+        Self {
+            image: None,
+            bytes_read,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn read_verified_image(
+    file: &OwnedFd,
+    fingerprint: ImageFingerprint,
+    image_id: u64,
+    cancellation: &CancellationToken,
+    deadline: Instant,
+) -> Result<LocalImageRead, LocalImageFailure> {
+    let mut bytes = Vec::with_capacity(fingerprint.size);
+    let mut chunk = vec![0_u8; READ_CHUNK_BYTES].into_boxed_slice();
+    let mut media_type = None;
+    loop {
+        local_boundary(cancellation, deadline)?;
+        let remaining = fingerprint
+            .size
+            .saturating_add(1)
+            .saturating_sub(bytes.len());
+        if remaining == 0 {
+            return Ok(LocalImageRead::unavailable(bytes.len()));
+        }
+        let read_limit = if media_type.is_none() {
+            SIGNATURE_PROBE_BYTES.saturating_sub(bytes.len())
+        } else {
+            READ_CHUNK_BYTES
+        };
+        match rustix::io::read(file, &mut chunk[..remaining.min(read_limit)]) {
+            Ok(0) => break,
+            Ok(read) => {
+                bytes.extend_from_slice(&chunk[..read]);
+                local_boundary(cancellation, deadline)?;
+                if bytes.len() > fingerprint.size {
+                    return Ok(LocalImageRead::unavailable(bytes.len()));
+                }
+                if media_type.is_none()
+                    && (bytes.len() >= SIGNATURE_PROBE_BYTES || bytes.len() == fingerprint.size)
+                {
+                    media_type = sniff_media_type(&bytes);
+                    if media_type.is_none() {
+                        return Ok(LocalImageRead::unavailable(bytes.len()));
+                    }
+                }
+            }
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(_) => return Ok(LocalImageRead::unavailable(bytes.len())),
+        }
+    }
+    if bytes.len() != fingerprint.size {
+        return Ok(LocalImageRead::unavailable(bytes.len()));
+    }
+    let Some(media_type) = media_type.or_else(|| sniff_media_type(&bytes)) else {
+        return Ok(LocalImageRead::unavailable(bytes.len()));
+    };
+    local_boundary(cancellation, deadline)?;
+    let Ok(final_metadata) = rustix::fs::fstat(file) else {
+        return Ok(LocalImageRead::unavailable(bytes.len()));
+    };
+    if !fingerprint.matches(&final_metadata) {
+        return Ok(LocalImageRead::unavailable(bytes.len()));
+    }
+    let bytes_read = bytes.len();
+    let Ok(image) = VisionImage::new(image_id, media_type, bytes) else {
+        return Ok(LocalImageRead::unavailable(bytes_read));
+    };
+    Ok(LocalImageRead::available(image, bytes_read))
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug)]
 enum LocalImageFailure {
     Cancelled,
     Timeout,
-    Unavailable,
 }
 
 fn local_boundary(
@@ -763,6 +871,8 @@ fn normalize_relative_path(path: &str) -> Result<String, ToolError> {
     if path.is_empty()
         || path.len() > MAX_VISION_PATH_BYTES
         || Path::new(path).is_absolute()
+        || path == "~"
+        || path.starts_with("~/")
         || path.chars().any(is_forbidden_path_character)
     {
         return Err(invalid_path_error());
@@ -846,6 +956,10 @@ impl RenderedImage {
 
     fn missing_provider_record(image_id: u64) -> Self {
         Self::provider_failure(image_id, VisionProviderFailureCode::MissingProviderRecord)
+    }
+
+    fn output_limit_exceeded(image_id: u64) -> Self {
+        Self::provider_failure(image_id, VisionProviderFailureCode::OutputLimitExceeded)
     }
 
     fn provider_failure(image_id: u64, code: VisionProviderFailureCode) -> Self {
@@ -944,13 +1058,13 @@ fn rendered_transport_failure(image_id: u64, kind: VisionTransportErrorKind) -> 
             image_id,
             VisionProviderFailureCode::OutputLimitExceeded,
         ),
-        VisionTransportErrorKind::InvalidRequest
-        | VisionTransportErrorKind::InvalidResponse
-        | VisionTransportErrorKind::Protocol => RenderedImage::provider_failure(
+        VisionTransportErrorKind::InvalidResponse => RenderedImage::provider_failure(
             image_id,
             VisionProviderFailureCode::ProviderResponseInvalid,
         ),
-        VisionTransportErrorKind::Authentication
+        VisionTransportErrorKind::InvalidRequest
+        | VisionTransportErrorKind::Protocol
+        | VisionTransportErrorKind::Authentication
         | VisionTransportErrorKind::RateLimited
         | VisionTransportErrorKind::Unavailable
         | VisionTransportErrorKind::Cancelled
@@ -966,7 +1080,7 @@ fn render_attachment_failures(image_ids: Vec<u64>) -> Result<ToolOutput, ToolErr
         .into_iter()
         .map(RenderedImage::unavailable)
         .collect::<Vec<_>>();
-    render_ordered(&images)
+    render_ordered(images)
 }
 
 fn render_results_in_source_order(
@@ -981,19 +1095,25 @@ fn render_results_in_source_order(
                 .unwrap_or_else(|| RenderedImage::missing_provider_record(image_id))
         })
         .collect::<Vec<_>>();
-    render_ordered(&images)
+    render_ordered(images)
 }
 
-fn render_ordered(images: &[RenderedImage]) -> Result<ToolOutput, ToolError> {
-    let successes = images.iter().filter(|image| image.is_success()).count();
-    let output = ToolOutput {
-        content: json!({ "images": images }),
-        is_error: successes == 0,
-    };
-    if !serialized_value_fits(&output, MAX_VISION_SERIALIZED_RESULT_BYTES) {
-        return Err(result_too_large_error());
+fn render_ordered(mut images: Vec<RenderedImage>) -> Result<ToolOutput, ToolError> {
+    loop {
+        let successes = images.iter().filter(|image| image.is_success()).count();
+        let output = ToolOutput {
+            content: json!({ "images": &images }),
+            is_error: successes == 0,
+        };
+        if serialized_value_fits(&output, MAX_VISION_SERIALIZED_RESULT_BYTES) {
+            return Ok(output);
+        }
+        let Some(index) = images.iter().rposition(RenderedImage::is_success) else {
+            return Err(result_too_large_error());
+        };
+        let image_id = images[index].image_id;
+        images[index] = RenderedImage::output_limit_exceeded(image_id);
     }
-    Ok(output)
 }
 
 async fn await_bounded<F: Future>(
@@ -1010,7 +1130,13 @@ async fn await_bounded<F: Future>(
                 VisionTransportErrorKind::Cancelled,
             )));
         }
-        match timeout.as_mut().poll(context) {
+        let timeout_result = timeout.as_mut().poll(context);
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(VisionTransportError::new(
+                VisionTransportErrorKind::Cancelled,
+            )));
+        }
+        match timeout_result {
             Poll::Ready(Ok(())) => {
                 return Poll::Ready(Err(VisionTransportError::new(
                     VisionTransportErrorKind::Timeout,
@@ -1267,6 +1393,7 @@ impl io::Write for JsonByteCounter {
 #[cfg(all(test, unix))]
 mod tests {
     use std::future;
+    use std::io::Write as _;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -1281,13 +1408,14 @@ mod tests {
 
     use crate::vision_portable::{
         VisionBatchRequest, VisionBatchResponse, VisionImageOutcome, VisionImageResult,
-        VisionMediaType, VisionTransport, VisionTransportError,
+        VisionMediaType, VisionTransport, VisionTransportError, VisionTransportErrorKind,
     };
 
     use super::{
-        MAX_VISION_FOCUS_BYTES, MAX_VISION_PATH_COMPONENTS, VisionConfigErrorKind, VisionDeadline,
-        VisionLimits, VisionTool, canonical_request, render_attachment_failures, render_ordered,
-        sniff_media_type,
+        ImageFingerprint, MAX_VISION_FOCUS_BYTES, MAX_VISION_PATH_COMPONENTS,
+        MAX_VISION_SERIALIZED_RESULT_BYTES, VisionConfigErrorKind, VisionDeadline, VisionLimits,
+        VisionTool, canonical_request, read_verified_image, render_attachment_failures,
+        render_ordered, sniff_media_type,
     };
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -1325,10 +1453,29 @@ mod tests {
         }
     }
 
+    struct CancelReadyDeadline {
+        cancellation: CancellationToken,
+    }
+
+    impl VisionDeadline for CancelReadyDeadline {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+            let cancellation = self.cancellation.clone();
+            Box::pin(std::future::poll_fn(move |_| {
+                assert!(cancellation.cancel());
+                std::task::Poll::Ready(Ok(()))
+            }))
+        }
+    }
+
     #[derive(Clone, Copy)]
     enum TransportMode {
         Success,
+        LargeEvidence,
         CancelThenSuccess,
+        InvalidRequest,
     }
 
     struct FakeTransport {
@@ -1363,6 +1510,7 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(batch);
+            let large_evidence = matches!(self.mode, TransportMode::LargeEvidence);
             let results = request
                 .images()
                 .iter()
@@ -1371,7 +1519,11 @@ mod tests {
                     VisionImageResult::new(
                         image.image_id(),
                         VisionImageOutcome::Ok {
-                            summary: format!("summary-{}", image.image_id()),
+                            summary: if large_evidence {
+                                "x".repeat(2_400)
+                            } else {
+                                format!("summary-{}", image.image_id())
+                            },
                             visible_text: Vec::new(),
                             details: vec![request.focus().to_owned()],
                         },
@@ -1381,9 +1533,15 @@ mod tests {
                 .collect();
             let response = VisionBatchResponse::new(results);
             let cancel = matches!(self.mode, TransportMode::CancelThenSuccess);
+            let invalid_request = matches!(self.mode, TransportMode::InvalidRequest);
             Box::pin(async move {
                 if cancel {
                     assert!(cancellation.cancel());
+                }
+                if invalid_request {
+                    return Err(VisionTransportError::new(
+                        VisionTransportErrorKind::InvalidRequest,
+                    ));
                 }
                 response
             })
@@ -1447,6 +1605,8 @@ mod tests {
             json!({"focus": "Inspect this", "image_ids": [0]}),
             json!({"focus": "Inspect this", "paths": ["../one.png"]}),
             json!({"focus": "Inspect this", "paths": ["./one.png"]}),
+            json!({"focus": "Inspect this", "paths": ["~"]}),
+            json!({"focus": "Inspect this", "paths": ["~/one.png"]}),
             json!({"focus": "Inspect this", "paths": ["images//one.png"]}),
             json!({"focus": "Inspect this", "paths": ["one.png"], "extra": true}),
         ] {
@@ -1471,11 +1631,32 @@ mod tests {
             .is_err()
         );
         assert!(canonical_request(json!({"focus": " \t\n", "paths": ["one.png"]})).is_err());
+        assert!(canonical_request(json!({"focus": "\u{a0}", "paths": ["one.png"]})).is_ok());
         let maximum_components = vec!["a"; MAX_VISION_PATH_COMPONENTS].join("/");
         let excess_components = vec!["a"; MAX_VISION_PATH_COMPONENTS + 1].join("/");
         assert!(canonical_request(json!({"focus": "x", "paths": [maximum_components]})).is_ok());
         assert!(canonical_request(json!({"focus": "x", "paths": [excess_components]})).is_err());
         assert!(canonical_request(json!({"focus": "x", "paths": ["a".repeat(256)]})).is_err());
+    }
+
+    #[test]
+    fn non_ascii_whitespace_focus_agrees_across_permission_and_execution() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+        let arguments = json!({"focus": "\u{a0}", "paths": ["one.png"]});
+        let prepared = tool
+            .prepare(call(arguments.clone()))
+            .expect("prepare non-ASCII whitespace focus");
+        assert!(matches!(
+            prepared.authorization(),
+            PreparedToolAuthorization::PermissionRequired(Capability::Vision { .. })
+        ));
+        let output = block_on(tool.execute(context(), arguments, CancellationToken::new()))
+            .expect("execute the same approved focus");
+        assert!(!output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -1533,7 +1714,7 @@ mod tests {
         );
         assert_eq!(
             output.content["images"][0]["error"]["suggestion"],
-            "Supply an available PNG, JPEG, GIF, or WebP image within the documented limits."
+            "Explain the local image failure; do not retry the same snapshot unchanged."
         );
         assert!(!format!("{output:?}").contains(root.path.to_string_lossy().as_ref()));
     }
@@ -1555,6 +1736,100 @@ mod tests {
             Some(VisionMediaType::Webp)
         );
         assert_eq!(sniff_media_type(b"not an image"), None);
+    }
+
+    #[test]
+    fn invalid_signatures_charge_only_the_fixed_probe() {
+        let root = TestRoot::new();
+        let path = root.path.join("invalid.bin");
+        let file = std::fs::File::create(&path).expect("create invalid image");
+        file.set_len(1024 * 1024).expect("size invalid image");
+        drop(file);
+        let descriptor = rustix::fs::open(
+            &path,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .expect("open invalid image");
+        let fingerprint = ImageFingerprint::from_stat(
+            &rustix::fs::fstat(&descriptor).expect("inspect invalid image"),
+        )
+        .expect("fingerprint invalid image");
+        let read = read_verified_image(
+            &descriptor,
+            fingerprint,
+            1,
+            &CancellationToken::new(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect("read invalid image");
+        assert!(read.image.is_none());
+        assert_eq!(read.bytes_read, super::SIGNATURE_PROBE_BYTES);
+    }
+
+    #[test]
+    fn maximum_invalid_signature_set_never_reaches_transport() {
+        let root = TestRoot::new();
+        let mut paths = Vec::new();
+        for index in 0..super::MAX_VISION_IMAGES {
+            let name = format!("invalid-{index}.bin");
+            let file =
+                std::fs::File::create(root.path.join(&name)).expect("create sparse invalid image");
+            file.set_len(super::MAX_VISION_IMAGE_BYTES as u64)
+                .expect("size sparse invalid image");
+            paths.push(name);
+        }
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+        let output = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": paths}),
+            CancellationToken::new(),
+        ))
+        .expect("project invalid signature failures");
+
+        assert!(output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+        let images = output.content["images"]
+            .as_array()
+            .expect("ordered image results");
+        assert_eq!(images.len(), super::MAX_VISION_IMAGES);
+        assert!(images.iter().all(|image| {
+            image["status"] == "failed" && image["error"]["code"] == "image_unavailable"
+        }));
+    }
+
+    #[test]
+    fn image_snapshot_growth_after_initial_metadata_is_rejected() {
+        let root = TestRoot::new();
+        let path = root.path.join("growing.png");
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\n").expect("write initial image");
+        let descriptor = rustix::fs::open(
+            &path,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .expect("open initial image");
+        let fingerprint = ImageFingerprint::from_stat(
+            &rustix::fs::fstat(&descriptor).expect("inspect initial image"),
+        )
+        .expect("fingerprint initial image");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open writer")
+            .write_all(b"growth")
+            .expect("grow image after metadata");
+        let read = read_verified_image(
+            &descriptor,
+            fingerprint,
+            1,
+            &CancellationToken::new(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect("read growing image");
+        assert!(read.image.is_none());
+        assert_eq!(read.bytes_read, fingerprint.size + 1);
     }
 
     #[test]
@@ -1678,6 +1953,52 @@ mod tests {
     }
 
     #[test]
+    fn legal_multi_batch_evidence_projects_a_bounded_ordered_result() {
+        let root = TestRoot::new();
+        let mut paths = Vec::new();
+        for index in 0..20 {
+            let name = format!("evidence-{index}.png");
+            std::fs::write(root.path.join(&name), b"\x89PNG\r\n\x1a\n")
+                .expect("write evidence image");
+            paths.push(name);
+        }
+        let transport = Arc::new(FakeTransport::new(TransportMode::LargeEvidence));
+        let tool = tool(&root, Arc::clone(&transport));
+        let output = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": paths}),
+            CancellationToken::new(),
+        ))
+        .expect("project legal multi-batch evidence");
+        assert!(!output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 3);
+        let images = output.content["images"]
+            .as_array()
+            .expect("ordered projected images");
+        assert_eq!(images.len(), 20);
+        let first_failure = images
+            .iter()
+            .position(|image| image["status"] == "failed")
+            .expect("combined legal evidence must require projection");
+        assert!(
+            first_failure > 0,
+            "the source-order prefix remains successful"
+        );
+        assert!(
+            images[..first_failure]
+                .iter()
+                .all(|image| image["status"] == "ok")
+        );
+        assert!(images[first_failure..].iter().all(|image| {
+            image["status"] == "failed" && image["error"]["code"] == "output_limit_exceeded"
+        }));
+        assert!(super::serialized_value_fits(
+            &output,
+            MAX_VISION_SERIALIZED_RESULT_BYTES
+        ));
+    }
+
+    #[test]
     fn execution_future_is_inert_until_polled() {
         let root = TestRoot::new();
         let transport = Arc::new(FakeTransport::new(TransportMode::Success));
@@ -1715,6 +2036,50 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_wins_when_deadline_becomes_ready_in_the_same_poll() {
+        let root = TestRoot::new();
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let cancellation = CancellationToken::new();
+        let tool = VisionTool::with_transport(
+            root.path.as_path(),
+            target(),
+            Arc::clone(&transport) as Arc<dyn VisionTransport>,
+            Arc::new(CancelReadyDeadline {
+                cancellation: cancellation.clone(),
+            }),
+        )
+        .expect("construct cancelling deadline tool");
+        let error = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["never-opened.png"]}),
+            cancellation,
+        ))
+        .expect_err("same-poll cancellation must precede deadline readiness");
+        assert_eq!(error.code, "vision_cancelled");
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn provider_invalid_request_is_an_unavailable_per_image_failure() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::InvalidRequest));
+        let tool = tool(&root, Arc::clone(&transport));
+        let output = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["one.png"]}),
+            CancellationToken::new(),
+        ))
+        .expect("render provider invalid request");
+        assert!(output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            output.content["images"][0]["error"]["code"],
+            "vision_unavailable"
+        );
+    }
+
+    #[test]
     fn limits_targets_and_serialized_output_are_bounded() {
         assert!(VisionLimits::new(Duration::ZERO, 1).is_err());
         assert!(VisionLimits::new(Duration::from_secs(60), 8).is_ok());
@@ -1748,8 +2113,12 @@ mod tests {
                 details: Vec::new(),
             },
         };
-        let error = render_ordered(&[oversized]).expect_err("reject oversized tool output");
-        assert_eq!(error.code, "vision_result_too_large");
+        let output = render_ordered(vec![oversized]).expect("project oversized tool output");
+        assert!(output.is_error);
+        assert_eq!(
+            output.content["images"][0]["error"]["code"],
+            "output_limit_exceeded"
+        );
     }
 
     #[test]

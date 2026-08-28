@@ -56,6 +56,11 @@ fn request_accepts_exact_bounds_and_preserves_order() {
     assert_eq!(request.images()[0].image_id(), 1);
     assert_eq!(request.images()[7].image_id(), 8);
     assert_eq!(request.focus().len(), MAX_VISION_FOCUS_BYTES);
+
+    let non_ascii_whitespace =
+        VisionBatchRequest::new(session(), "\u{a0}".to_owned(), vec![image(1, 1)])
+            .expect("ASCII-only blank validation must preserve non-ASCII whitespace");
+    assert_eq!(non_ascii_whitespace.focus(), "\u{a0}");
 }
 
 #[test]
@@ -196,7 +201,7 @@ fn stable_failure_diagnostics_match_upstream_codes() {
     }
     assert_eq!(
         VisionProviderFailure::new(VisionProviderFailureCode::ImageUnavailable).suggestion(),
-        "Supply an available PNG, JPEG, GIF, or WebP image within the documented limits."
+        "Explain the local image failure; do not retry the same snapshot unchanged."
     );
     futures_executor::block_on(PortableDeadline.wait_until(Instant::now())).unwrap();
 }

@@ -614,17 +614,21 @@ impl VisionResponseState {
         &mut self,
         mut object: Map<String, Value>,
     ) -> Result<(), VisionTransportError> {
+        let finish_reason = parse_finish_reason(object.remove("finishReason"));
         if self.completion != CompletionState::Reading
             || self.text_lifecycle != TextLifecycle::Ended
             || !known_keys(
                 &object,
                 &["type", "finishReason", "usage", "providerMetadata"],
             )
-            || !valid_finish_reason(object.remove("finishReason"))
+            || finish_reason.is_none()
             || !object.remove("usage").is_none_or(valid_usage)
             || !valid_provider_metadata(object.get("providerMetadata"))
         {
             return Err(protocol_error());
+        }
+        if finish_reason == Some(VisionFinishReason::Length) {
+            return Err(response_too_large());
         }
         self.completion = CompletionState::Finished;
         Ok(())
@@ -751,16 +755,29 @@ fn single_json_fence_payload(text: &str) -> Option<&str> {
     after_prefix.strip_suffix("```").map(str::trim)
 }
 
-fn valid_finish_reason(reason: Option<Value>) -> bool {
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum VisionFinishReason {
+    Stop,
+    Length,
+}
+
+fn parse_finish_reason(reason: Option<Value>) -> Option<VisionFinishReason> {
     let Some(Value::Object(reason)) = reason else {
-        return false;
+        return None;
     };
-    (1..=2).contains(&reason.len())
-        && reason.get("unified").and_then(Value::as_str) == Some("stop")
-        && reason.get("raw").is_none_or(Value::is_string)
-        && reason
+    if !(1..=2).contains(&reason.len())
+        || !reason.get("raw").is_none_or(Value::is_string)
+        || !reason
             .keys()
             .all(|name| matches!(name.as_str(), "unified" | "raw"))
+    {
+        return None;
+    }
+    match reason.get("unified").and_then(Value::as_str) {
+        Some("stop") => Some(VisionFinishReason::Stop),
+        Some("length") => Some(VisionFinishReason::Length),
+        _ => None,
+    }
 }
 
 fn valid_usage(usage: Value) -> bool {

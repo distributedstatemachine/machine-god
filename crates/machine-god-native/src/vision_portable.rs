@@ -134,7 +134,9 @@ impl VisionBatchRequest {
         focus: String,
         images: Vec<VisionImage>,
     ) -> Result<Self, VisionTransportError> {
-        if focus.trim().is_empty()
+        if focus
+            .trim_matches(|character: char| character.is_ascii_whitespace())
+            .is_empty()
             || focus.len() > MAX_VISION_FOCUS_BYTES
             || !(1..=MAX_VISION_BATCH_IMAGES).contains(&images.len())
         {
@@ -272,7 +274,7 @@ impl VisionProviderFailure {
     pub const fn suggestion(self) -> &'static str {
         match self.code {
             VisionProviderFailureCode::ImageUnavailable => {
-                "Supply an available PNG, JPEG, GIF, or WebP image within the documented limits."
+                "Explain the local image failure; do not retry the same snapshot unchanged."
             }
             VisionProviderFailureCode::ProviderResponseInvalid => {
                 "Try a later explicit Vision call if useful, or continue without visual claims."
