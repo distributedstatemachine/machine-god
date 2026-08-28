@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33208109021` (`GREEN`)
 - Main Benchmark evidence: `33208109055` (`GREEN`)
 - Active branch: `agent/m03-ask-cli`
-- Active phase: `bounded top-level ask CLI cycle-4 replacement closure is active on one exact candidate`
-- Next gate: `require complete exact-1.94.1 local green and zero findings from all three fresh adversarial review tracks on that candidate`
+- Active phase: `bounded top-level ask CLI passed the exact local gate and all three cycle-4 product reviews`
+- Next gate: `push the feature branch and require exact feature CI and Benchmark evidence green before fast-forwarding main`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
