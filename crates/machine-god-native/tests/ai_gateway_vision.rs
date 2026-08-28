@@ -8,9 +8,9 @@ use machine_god_native::{
     AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
     AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest,
     AiGatewayVisionConfigErrorKind, AiGatewayVisionTransport, MAX_VISION_ATTEMPT_EVIDENCE_BYTES,
-    MAX_VISION_BATCH_RAW_BYTES, MAX_VISION_REQUEST_BYTES, MAX_VISION_RESPONSE_BYTES,
-    VisionBatchRequest, VisionImage, VisionImageOutcome, VisionMediaType, VisionTransport,
-    VisionTransportErrorKind,
+    MAX_VISION_BATCH_RAW_BYTES, MAX_VISION_FOCUS_BYTES, MAX_VISION_REQUEST_BYTES,
+    MAX_VISION_RESPONSE_BYTES, MAX_VISION_RESPONSE_JSON_NODES, VisionBatchRequest, VisionImage,
+    VisionImageOutcome, VisionMediaType, VisionTransport, VisionTransportErrorKind,
 };
 use serde_json::{Value, json};
 use std::future::Future;
@@ -26,6 +26,7 @@ const PRIVATE_FOCUS: &str = "inspect PRIVATE_FOCUS_SENTINEL";
 struct CapturedRequest {
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    body_capacity: usize,
 }
 
 #[derive(Clone)]
@@ -61,12 +62,14 @@ impl AiGatewayTransport for ScriptedTransport {
     ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
         let index = self.calls.fetch_add(1, Ordering::SeqCst);
         let (headers, body) = request.into_parts();
+        let body_capacity = body.capacity();
         self.requests.lock().unwrap().push(CapturedRequest {
             headers: headers
                 .into_iter()
                 .map(machine_god_native::AiGatewayHeader::into_parts)
                 .collect(),
             body,
+            body_capacity,
         });
         let chunks = self.scripts[index].clone();
         Box::pin(async move {
@@ -111,9 +114,13 @@ fn poll_once<F: Future + ?Sized>(future: Pin<&mut F>) -> Poll<F::Output> {
 }
 
 fn request(images: Vec<VisionImage>) -> VisionBatchRequest {
+    request_with_focus(PRIVATE_FOCUS.to_owned(), images)
+}
+
+fn request_with_focus(focus: String, images: Vec<VisionImage>) -> VisionBatchRequest {
     VisionBatchRequest::new(
         SessionId::new("vision-gateway-session").unwrap(),
-        PRIVATE_FOCUS.to_owned(),
+        focus,
         images,
     )
     .unwrap()
@@ -154,6 +161,20 @@ fn sse_events(events: &[Value]) -> Vec<u8> {
     }
     bytes.extend_from_slice(b"data: [DONE]\n\n");
     bytes
+}
+
+fn json_node_count(value: &Value) -> usize {
+    let mut count = 0_usize;
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        count += 1;
+        match value {
+            Value::Array(values) => stack.extend(values),
+            Value::Object(values) => stack.extend(values.values()),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+    count
 }
 
 fn execute(
@@ -272,19 +293,68 @@ fn response_decoding_survives_every_byte_fragmentation() {
 }
 
 #[test]
-fn exact_raw_batch_limit_fits_the_serialized_request_ceiling() {
+fn exact_raw_batch_and_hostile_focus_use_one_exact_body_allocation_below_the_ceiling() {
     let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
     let bytes = vec![0xa5; MAX_VISION_BATCH_RAW_BYTES];
+    let focus = "\u{0001}".repeat(MAX_VISION_FOCUS_BYTES);
     execute(
         Arc::new(transport.clone()),
-        request(vec![
-            VisionImage::new(1, VisionMediaType::Png, bytes).unwrap(),
-        ]),
+        request_with_focus(
+            focus.clone(),
+            vec![VisionImage::new(1, VisionMediaType::Png, bytes).unwrap()],
+        ),
     )
     .unwrap();
     let requests = transport.requests();
     assert_eq!(requests.len(), 1);
     assert!(requests[0].body.len() <= MAX_VISION_REQUEST_BYTES);
+    assert_eq!(requests[0].body_capacity, requests[0].body.len());
+    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert!(
+        body["prompt"][1]["content"].as_array().unwrap()[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains(&focus)
+    );
+}
+
+#[test]
+fn response_json_node_budget_is_aggregate_across_events_and_structured_evidence() {
+    let result = valid_result();
+    let result_text = result.to_string();
+    let base_events = vec![
+        json!({"type": "stream-start", "warnings": []}),
+        json!({"type": "text-start", "id": "vision-text"}),
+        json!({"type": "text-delta", "id": "vision-text", "delta": result_text}),
+        json!({"type": "text-end", "id": "vision-text"}),
+        json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+    ];
+    let required_nodes =
+        base_events.iter().map(json_node_count).sum::<usize>() + json_node_count(&result);
+    let exact_padding = MAX_VISION_RESPONSE_JSON_NODES - required_nodes;
+
+    let mut exact_events = base_events.clone();
+    exact_events[0]["warnings"] = Value::Array(vec![json!(0); exact_padding]);
+    let exact_transport = ScriptedTransport::one(sse_events(&exact_events));
+    execute(
+        Arc::new(exact_transport.clone()),
+        request(vec![png(1, &[1])]),
+    )
+    .unwrap();
+    assert_eq!(exact_transport.calls.load(Ordering::SeqCst), 1);
+
+    let mut oversized_events = base_events;
+    oversized_events[0]["warnings"] = Value::Array(vec![json!(0); exact_padding + 1]);
+    let oversized = sse_events(&oversized_events);
+    let oversized_transport =
+        ScriptedTransport::new(vec![vec![oversized.clone()], vec![oversized]]);
+    let error = execute(
+        Arc::new(oversized_transport.clone()),
+        request(vec![png(1, &[1])]),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
+    assert_eq!(oversized_transport.calls.load(Ordering::SeqCst), 2);
 }
 
 #[test]
