@@ -393,16 +393,19 @@ bounded focus as user text and verified PNG, JPEG, GIF, or WebP bytes as
 standard-base64 `file` parts, advertises no tools, selects tool choice `none`,
 and requires strict JSON evidence.
 
-The private decoder accepts only bounded text deltas, one valid finish, and one
-terminal record containing exactly the authorized image IDs. A structurally
-invalid successful response receives one semantic retry with the same owned,
-verified image bytes; transport, cancellation, deadline, authentication,
-rate-limit, availability, and output-limit failures are not retried. The
-worker drops its byte stream before returning, so a capacity-one shared
-transport is available to the next outer provider round. Image bytes, base64,
-provider bodies, and evidence never enter provider-neutral prompt/history
-content. The complete authority, media, batching, result, redaction, resource,
-and lifecycle contract is [`vision.md`](vision.md).
+The private decoder accepts bounded text deltas, optional strictly ordered
+`text-start` / `text-end` wrappers, one valid finish, and one terminal record
+containing exactly the authorized image IDs. A structurally invalid successful
+response, including empty evidence, receives one semantic retry with the same
+owned, verified image bytes. Transport, cancellation, deadline,
+authentication, rate-limit, availability, and typed output/resource-limit
+failures are not retried. The latter retain their classification across
+structured JSON-node and evidence string/list/count ceilings. The worker drops
+its byte stream before returning, so a capacity-one shared transport is
+available to the next outer provider round. Image bytes, base64, provider
+bodies, and evidence never enter provider-neutral prompt/history content. The
+complete authority, media, batching, result, redaction, resource, and lifecycle
+contract is [`vision.md`](vision.md).
 
 ## Deferred scope
 

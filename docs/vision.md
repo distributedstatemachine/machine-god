@@ -77,16 +77,18 @@ target actually used by their opaque transport.
 After approval, execution reparses the canonical arguments and rejects any
 capability-divergent input before opening a descriptor or polling the
 transport. Linux performs one whole-path `openat2` lookup beneath the retained
-root with all symbolic links forbidden. macOS performs one whole-path
-`openat` lookup with `O_NOFOLLOW_ANY` and verifies the descriptor's exact
-root-relative binding before and after reading. No user-space intermediate
-directory descriptor is carried into a later component lookup. The reader
-then requires a regular file, fingerprints descriptor identity, link count,
-type/mode, size, and modification/change timestamps, and requires an exact
-match at EOF. Directories, symbolic links, FIFOs, sockets, relocated
-intermediates, disappearing, shrinking, growing, or concurrently changed
-files and identity or root-validation failures become path-redacted per-image
-failures without provider access for that image.
+root with all symbolic links forbidden, then repeats that confined whole-path
+lookup after reading and requires the fresh descriptor identity to match.
+macOS performs one whole-path `openat` lookup with `O_NOFOLLOW_ANY` and verifies
+the descriptor's exact root-relative binding before and after reading. No
+user-space intermediate directory descriptor is carried into a later component
+lookup. The reader then requires a regular file, fingerprints descriptor
+identity, link count, type/mode, size, and modification/change timestamps, and
+requires an exact match at EOF. Directories, symbolic links, FIFOs, sockets,
+intermediates that no longer bind the opened file beneath the root,
+disappearing, shrinking, growing, or concurrently changed files and identity or
+root-validation failures become path-redacted per-image failures without
+provider access for that image.
 
 Valid `image_ids` require no policy-governed effect in this milestone and are
 prepared without authority. They deterministically return the documented
@@ -106,8 +108,10 @@ No raster decoder runs locally. A malformed or unsupported signature is
 `image_unavailable` and is rejected after at most the fixed 12-byte signature
 probe rather than reading the rest of that file or reserving its advertised
 size. A supported descriptor receives one fallible exact-size reservation only
-after admission. Animated GIF/WebP content is admitted as compressed input
-within the same byte limits; interpreting frames belongs to the provider.
+after admission. The fixed-size read scratch is allocated fallibly and lazily
+only when bytes remain after the probe, then reused across images in the same
+call. Animated GIF/WebP content is admitted as compressed input within the same
+byte limits; interpreting frames belongs to the provider.
 
 Every readable path receives a call-local positive `image_id` equal to its
 one-based source position. Local failures retain that position. Healthy images
@@ -172,24 +176,29 @@ or a provider-declared batch failure record:
 }
 ```
 
-The decoder accepts only bounded text deltas followed by one valid finish and
-terminal record. Tool calls, tool results, media/file output, contradictory or
-duplicate finish state, output before the terminal record, malformed
-UTF-8/JSON, an unauthorized or duplicate image ID, and unknown fields fail
-closed. `[DONE]` is the transport ownership boundary: the worker publishes the
-already validated result and drops the source without polling a later chunk.
-Transport authentication, rate-limit, timeout, unavailable, protocol,
+The decoder accepts bounded text deltas followed by one valid finish and
+terminal record. A matching `text-start` / `text-end` pair may surround those
+deltas but is not required by the pinned delta-only sequence; when present, its
+ordering and identity are strict. Tool calls, tool results, media/file output,
+contradictory or duplicate finish state, nonterminal output after finish,
+malformed UTF-8/JSON, an unauthorized or duplicate image ID, and unknown fields
+fail closed. `[DONE]` is the transport ownership boundary: the worker publishes
+the already validated result and drops the source without polling a later
+chunk. Transport authentication, rate-limit, timeout, unavailable, protocol,
 response-size, and cancellation errors remain fixed and
 path/body/credential-free.
 
-A structurally invalid successful provider response receives exactly one
-semantic retry using the same owned, already verified image bytes. Transport
-failure, cancellation, timeout, authentication, rate limiting, and output-limit
-failure are not retried. A valid `finishReason: length` is an output-limit
-failure. Gateway invalid-request and protocol failures are unavailable provider
-responses, not semantic-success retry exhaustion. Batches remain sequential.
-There is no backend fallback, live-provider retry policy, or hidden parallel
-request.
+A structurally invalid successful provider response, including a cleanly
+finished empty evidence string, receives exactly one semantic retry using the
+same owned, already verified image bytes. Transport failure, cancellation,
+timeout, authentication, rate limiting, and typed output/resource-limit failure
+are not retried. Structured JSON-node, evidence string/list/count, aggregate
+evidence, and response-size exhaustion retain that output-limit classification
+rather than becoming semantic invalidity. A valid `finishReason: length` is
+also an output-limit failure. Gateway invalid-request and protocol failures are
+unavailable provider responses, not semantic-success retry exhaustion. Batches
+remain sequential. There is no backend fallback, live-provider retry policy,
+or hidden parallel request.
 
 ## Result
 
@@ -222,13 +231,15 @@ Failed records use this stable form:
 }
 ```
 
-Successful evidence requires a nonblank bounded `summary`; `visible_text` and
-`details` are ordered bounded string arrays. Provider records are reordered to
-the requested IDs. Extra, duplicate, or unauthorized records invalidate the
-batch. The tool succeeds when at least one image succeeds and sets
-`ToolOutput.is_error` only when every requested image fails. It never exposes a
-path, MIME diagnostic, image byte, base64 value, request body, provider body,
-credential, or endpoint diagnostic.
+Successful evidence requires a bounded `summary` that remains nonempty after
+trimming only ASCII space, tab, carriage return, and line feed; other Unicode
+whitespace is preserved as provider evidence, matching the pinned contract.
+`visible_text` and `details` are ordered bounded string arrays. Provider records
+are reordered to the requested IDs. Extra, duplicate, or unauthorized records
+invalidate the batch. The tool succeeds when at least one image succeeds and
+sets `ToolOutput.is_error` only when every requested image fails. It never
+exposes a path, MIME diagnostic, image byte, base64 value, request body,
+provider body, credential, or endpoint diagnostic.
 
 ## Resource and lifecycle limits
 
@@ -246,7 +257,7 @@ credential, or endpoint diagnostic.
 | captured provider evidence per attempt | 20 KiB |
 | complete provider response / one record | 64 KiB |
 | serialized tool result | 48 KiB |
-| total deadline, including capacity wait | 60 seconds |
+| userspace/network deadline, starting before capacity wait | 60 seconds |
 | default / hard active executions | 2 / 8 |
 
 Provider result string counts, per-string bytes, aggregate retained evidence,
@@ -262,14 +273,20 @@ descriptors, raw images, request/response buffers, transport futures, and
 results for the call are dropped. The absolute deadline starts before capacity
 waiting. Cancellation wins same-poll races and is checked before each file or
 network effect, between fixed-size reads and encoding steps, after provider
-readiness, before semantic retry, and before publication.
+readiness, before semantic retry, and before publication. Filesystem lookup and
+read use synchronous operating-system calls: a kernel or remote filesystem call
+that blocks inside one poll cannot be preempted by the userspace timer, and
+deadline or cancellation observation may therefore wait for that call to
+return. The deadline bounds controllable capacity, userspace, and network
+phases; it is not a hard wall-clock bound on an uninterruptible system call.
 
 Tool construction synchronously validates the target and opens, validates, and
 retains the workspace-root descriptor; it performs no file-content or network
 effect and starts no background work. Execution and transport futures are inert
 until polled and detach no task or thread. Dropping an execution future before
-its first poll performs no execution effect. Dropping an in-flight call closes
-owned descriptors, cancels/drops the transport future and byte stream, releases
+its first poll performs no execution effect. Once an in-progress synchronous
+filesystem call returns control to the future, dropping the call closes owned
+descriptors, cancels/drops the transport future and byte stream, releases
 buffers and capacity, and publishes no partial result. Once a transport is
 polled, cancellation cannot retract bytes already accepted by the remote peer.
 The private worker drops its response stream before returning so a capacity-one
@@ -284,11 +301,12 @@ or provider diagnostics.
 
 Portable media/request/response/error/limit and injected transport/deadline
 contracts are available without HTTP or Tokio and on WebAssembly. The concrete
-descriptor-reading `VisionTool` works only on Linux with `openat2` support and
-macOS with `O_NOFOLLOW_ANY`; reference-host composition has the same
-Linux/macOS boundary. Other targets retain a compile-checked portable surface,
-return the fixed unsupported-platform construction failure, and do not claim a
-working native image reader. Construction is network-inert.
+`VisionTool` type is available on non-WebAssembly native targets, but its
+descriptor-reading implementation works only on Linux with `openat2` support
+and macOS with `O_NOFOLLOW_ANY`; reference-host composition has the same
+Linux/macOS boundary. Other native targets return the fixed
+unsupported-platform construction failure and do not claim a working image
+reader. Construction is network-inert.
 
 ## Deliberately deferred
 

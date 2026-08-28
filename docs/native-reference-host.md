@@ -67,8 +67,9 @@ Every successful host contains:
   `NativeSessionLifecycle`;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
-  reused through a fixed category-only adapter as the vision deadline for its
-  complete capacity-wait, file, and Gateway operation; and
+  reused through a fixed category-only adapter for vision's capacity wait,
+  cooperative filesystem checkpoints, and Gateway operation, subject to the
+  synchronous-system-call caveat in the [vision contract](vision.md); and
 - the fixed tool catalog below.
 
 The production AI Gateway target is `https://ai-gateway.vercel.sh` with the
