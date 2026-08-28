@@ -66,9 +66,9 @@ Every successful host contains:
   `Arc<dyn SessionStore>`, with the engine, `ReadToolResultTool`, and
   `NativeSessionLifecycle`;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
-- an explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing;
-- an explicit vision deadline for the complete capacity-wait, file, and
-  Gateway operation; and
+- one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
+  reused through a fixed category-only adapter as the vision deadline for its
+  complete capacity-wait, file, and Gateway operation; and
 - the fixed tool catalog below.
 
 The production AI Gateway target is `https://ai-gateway.vercel.sh` with the

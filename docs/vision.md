@@ -126,7 +126,7 @@ text, then one file part per image:
 ```
 
 The request advertises no tools, selects tool choice `none`, and requests a
-strict JSON response named `machine_god_vision_evidence`. The response schema
+strict JSON response named `fx_vision_evidence`. The response schema
 requires exactly one record per submitted image and admits only:
 
 ```json
@@ -189,7 +189,7 @@ Failed records use this stable form:
     "code": "image_unavailable",
     "message": "Vision could not safely load or verify this image.",
     "retryable": false,
-    "suggestion": "Supply an available PNG, JPEG, GIF, or WebP image within the documented limits."
+    "suggestion": "Explain the local image failure; do not retry the same snapshot unchanged."
   }
 }
 ```
@@ -253,7 +253,7 @@ or provider diagnostics.
 Portable media/request/response/error/limit and injected transport/deadline
 contracts are available without HTTP or Tokio and on WebAssembly. The concrete
 descriptor-reading `VisionTool` is compiled with `ai-gateway-http` on Unix
-non-WebAssembly targets. Reference-host composition remains Linux/macOS-only.
+non-WebAssembly targets; reference-host composition remains Linux/macOS-only.
 Other targets retain a compile-checked portable surface and do not claim a
 working native image reader. Construction is network-inert.
 

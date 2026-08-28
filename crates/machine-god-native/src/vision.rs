@@ -440,54 +440,55 @@ impl VisionTool {
         for (index, path) in paths.iter().enumerate() {
             check_cancellation_and_deadline(&cancellation, Some(deadline))?;
             let image_id = u64::try_from(index + 1).expect("at most 20 vision images fit u64");
-            match self.read_image(path, image_id, &cancellation, deadline) {
+            let remaining_total = MAX_VISION_TOTAL_IMAGE_BYTES - admitted_bytes;
+            if remaining_total == 0 {
+                results.insert(image_id, RenderedImage::unavailable(image_id));
+                continue;
+            }
+            let image_limit = remaining_total.min(MAX_VISION_IMAGE_BYTES);
+            match self.read_image(path, image_id, image_limit, &cancellation, deadline) {
                 Ok(image) => {
                     let image_bytes = image.bytes().len();
-                    let next_total = admitted_bytes.checked_add(image_bytes);
-                    if next_total.is_none_or(|total| total > MAX_VISION_TOTAL_IMAGE_BYTES) {
-                        results.insert(image_id, RenderedImage::unavailable(image_id));
-                    } else {
-                        admitted_bytes = next_total.expect("checked admitted image total");
-                        let crosses_batch = !batch.is_empty()
-                            && (batch.len() == MAX_VISION_BATCH_IMAGES
-                                || batch_bytes
-                                    .checked_add(image_bytes)
-                                    .is_none_or(|bytes| bytes > MAX_VISION_BATCH_BYTES));
-                        if crosses_batch {
-                            self.dispatch_batch(
-                                std::mem::take(&mut batch),
-                                &context,
-                                &focus,
-                                &cancellation,
-                                deadline,
-                                Pin::new(&mut cancelled),
-                                timeout.as_mut(),
-                                &mut results,
-                            )
-                            .await?;
-                            batch_bytes = 0;
-                        }
-                        batch_bytes = batch_bytes
-                            .checked_add(image_bytes)
-                            .filter(|bytes| *bytes <= MAX_VISION_BATCH_BYTES)
-                            .expect("one admitted image fits an empty vision batch");
-                        batch.push(image);
-                        if batch.len() == MAX_VISION_BATCH_IMAGES
-                            || batch_bytes == MAX_VISION_BATCH_BYTES
-                        {
-                            self.dispatch_batch(
-                                std::mem::take(&mut batch),
-                                &context,
-                                &focus,
-                                &cancellation,
-                                deadline,
-                                Pin::new(&mut cancelled),
-                                timeout.as_mut(),
-                                &mut results,
-                            )
-                            .await?;
-                            batch_bytes = 0;
-                        }
+                    admitted_bytes = admitted_bytes
+                        .checked_add(image_bytes)
+                        .filter(|total| *total <= MAX_VISION_TOTAL_IMAGE_BYTES)
+                        .expect("the image reader enforces the remaining aggregate budget");
+                    let crosses_batch =
+                        vision_batch_would_overflow(batch.len(), batch_bytes, image_bytes);
+                    if crosses_batch {
+                        self.dispatch_batch(
+                            std::mem::take(&mut batch),
+                            &context,
+                            &focus,
+                            &cancellation,
+                            deadline,
+                            Pin::new(&mut cancelled),
+                            timeout.as_mut(),
+                            &mut results,
+                        )
+                        .await?;
+                        batch_bytes = 0;
+                    }
+                    batch_bytes = batch_bytes
+                        .checked_add(image_bytes)
+                        .filter(|bytes| *bytes <= MAX_VISION_BATCH_BYTES)
+                        .expect("one admitted image fits an empty vision batch");
+                    batch.push(image);
+                    if batch.len() == MAX_VISION_BATCH_IMAGES
+                        || batch_bytes == MAX_VISION_BATCH_BYTES
+                    {
+                        self.dispatch_batch(
+                            std::mem::take(&mut batch),
+                            &context,
+                            &focus,
+                            &cancellation,
+                            deadline,
+                            Pin::new(&mut cancelled),
+                            timeout.as_mut(),
+                            &mut results,
+                        )
+                        .await?;
+                        batch_bytes = 0;
                     }
                 }
                 Err(LocalImageFailure::Cancelled) => return Err(cancelled_error()),
@@ -595,6 +596,7 @@ impl VisionTool {
         &self,
         path: &str,
         image_id: u64,
+        max_bytes: usize,
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<VisionImage, LocalImageFailure> {
@@ -637,19 +639,19 @@ impl VisionTool {
         if !FileType::from_raw_mode(metadata.st_mode).is_file()
             || u64::try_from(metadata.st_size)
                 .ok()
-                .is_none_or(|size| size > MAX_VISION_IMAGE_BYTES as u64)
+                .is_none_or(|size| size > max_bytes as u64)
         {
             return Err(LocalImageFailure::Unavailable);
         }
 
         let capacity = usize::try_from(metadata.st_size)
             .unwrap_or(0)
-            .min(MAX_VISION_IMAGE_BYTES);
+            .min(max_bytes);
         let mut bytes = Vec::with_capacity(capacity);
         let mut chunk = vec![0_u8; READ_CHUNK_BYTES].into_boxed_slice();
         loop {
             local_boundary(cancellation, deadline)?;
-            let remaining = (MAX_VISION_IMAGE_BYTES + 1).saturating_sub(bytes.len());
+            let remaining = (max_bytes + 1).saturating_sub(bytes.len());
             if remaining == 0 {
                 return Err(LocalImageFailure::Unavailable);
             }
@@ -658,7 +660,7 @@ impl VisionTool {
                 Ok(read) => {
                     bytes.extend_from_slice(&chunk[..read]);
                     local_boundary(cancellation, deadline)?;
-                    if bytes.len() > MAX_VISION_IMAGE_BYTES {
+                    if bytes.len() > max_bytes {
                         return Err(LocalImageFailure::Unavailable);
                     }
                 }
@@ -803,6 +805,18 @@ fn sniff_media_type(bytes: &[u8]) -> Option<VisionMediaType> {
     } else {
         None
     }
+}
+
+fn vision_batch_would_overflow(
+    image_count: usize,
+    current_bytes: usize,
+    next_image_bytes: usize,
+) -> bool {
+    image_count > 0
+        && (image_count == MAX_VISION_BATCH_IMAGES
+            || current_bytes
+                .checked_add(next_image_bytes)
+                .is_none_or(|bytes| bytes > MAX_VISION_BATCH_BYTES))
 }
 
 #[derive(Serialize)]
