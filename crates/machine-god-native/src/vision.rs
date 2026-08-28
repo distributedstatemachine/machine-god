@@ -2622,6 +2622,25 @@ mod tests {
         }
     }
 
+    fn assert_path_rejected_without_effects(
+        tool: &VisionTool,
+        transport: &FakeTransport,
+        path: &str,
+    ) {
+        let arguments = json!({"focus": "Inspect", "paths": [path]});
+        let available_permits = tool.permits.available_permits();
+        let prepare_error = tool
+            .prepare(call(arguments.clone()))
+            .expect_err("forbidden path character must fail preparation");
+        let execute_error = block_on(tool.execute(context(), arguments, CancellationToken::new()))
+            .expect_err("forbidden path character must fail direct execution");
+
+        assert_eq!(prepare_error.code, "vision_invalid_path");
+        assert_eq!(execute_error.code, "vision_invalid_path");
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(tool.permits.available_permits(), available_permits);
+    }
+
     fn context() -> ToolContext {
         ToolContext {
             session_id: SessionId::new("vision-session").expect("valid session ID"),
@@ -2861,6 +2880,32 @@ mod tests {
         .expect("execute the exact prepared arguments");
         assert!(!output.is_error);
         assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn control_character_path_rejection_matches_preparation_without_effects() {
+        let root = TestRoot::new();
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+
+        for path in ["images/fi\tle.png", "images/fi\u{85}le.png"] {
+            assert_path_rejected_without_effects(&tool, transport.as_ref(), path);
+        }
+    }
+
+    #[test]
+    fn bidi_format_path_rejection_matches_preparation_without_effects() {
+        let root = TestRoot::new();
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+
+        for character in [
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{2028}', '\u{2029}', '\u{202a}', '\u{202b}',
+            '\u{202c}', '\u{202d}', '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+        ] {
+            let path = format!("images/fi{character}le.png");
+            assert_path_rejected_without_effects(&tool, transport.as_ref(), &path);
+        }
     }
 
     #[test]

@@ -44,9 +44,11 @@ rewrite the requested analysis.
 
 Milestone 03 implements workspace-relative `paths`. Absolute paths, `~/`,
 ASCII-whitespace-only paths, empty components, `.`, `..`, repeated separators,
-NUL, overlong components, and paths outside the retained workspace identity
-are rejected. Path strings are normalized before policy and execution and
-stable first-seen order is preserved. Attached-image storage and prompt image
+NUL or any other Unicode control character, U+061C, U+200E, U+200F, every code
+point from U+2028 through U+202E, every code point from U+2066 through U+2069,
+overlong components, and paths outside the retained workspace identity are
+rejected. Path strings are normalized before policy and execution and stable
+first-seen order is preserved. Attached-image storage and prompt image
 ingestion are not yet part of machine-god, so valid `image_ids` produce ordered
 `image_unavailable` records without filesystem or network effects. This
 retains the pinned public schema without inventing durable image state.
