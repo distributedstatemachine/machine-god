@@ -1669,6 +1669,11 @@ async fn await_bounded<F: Future>(
                 VisionTransportErrorKind::Cancelled,
             )));
         }
+        if deadline <= Instant::now() {
+            return Poll::Ready(Err(VisionTransportError::new(
+                VisionTransportErrorKind::Timeout,
+            )));
+        }
         match timeout_result {
             Poll::Ready(Ok(())) => {
                 return Poll::Ready(Err(VisionTransportError::new(
@@ -1677,11 +1682,6 @@ async fn await_bounded<F: Future>(
             }
             Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
             Poll::Pending => {}
-        }
-        if deadline <= Instant::now() {
-            return Poll::Ready(Err(VisionTransportError::new(
-                VisionTransportErrorKind::Timeout,
-            )));
         }
         match future.as_mut().poll(context) {
             Poll::Ready(_) if cancellation.is_cancelled() => Poll::Ready(Err(
@@ -2129,6 +2129,21 @@ mod tests {
             Box::pin(std::future::poll_fn(move |_| {
                 assert!(cancellation.cancel());
                 std::task::Poll::Ready(Ok(()))
+            }))
+        }
+    }
+
+    struct ErrorAfterDeadline;
+
+    impl VisionDeadline for ErrorAfterDeadline {
+        fn wait_until(&self, deadline: Instant) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+            Box::pin(std::future::poll_fn(move |_| {
+                std::thread::sleep(
+                    deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(5),
+                );
+                std::task::Poll::Ready(Err(VisionTransportError::new(
+                    VisionTransportErrorKind::RuntimeRequired,
+                )))
             }))
         }
     }
@@ -3393,6 +3408,30 @@ mod tests {
         ))
         .expect_err("same-poll cancellation must precede deadline readiness");
         assert_eq!(error.code, "vision_cancelled");
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn absolute_deadline_wins_when_deadline_future_crosses_it_then_errors() {
+        let root = TestRoot::new();
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = VisionTool::with_bounded_transport(
+            root.path.as_path(),
+            target(),
+            Arc::clone(&transport) as Arc<dyn VisionTransport>,
+            Arc::new(ErrorAfterDeadline),
+            VisionLimits::new(Duration::from_millis(1), 1).expect("short vision deadline"),
+        )
+        .expect("construct erroring deadline tool");
+
+        let error = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["never-opened.png"]}),
+            CancellationToken::new(),
+        ))
+        .expect_err("the crossed absolute deadline must override the waiter error");
+
+        assert_eq!(error.code, "vision_timeout");
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
     }
 
