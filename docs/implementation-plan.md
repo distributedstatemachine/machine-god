@@ -21,19 +21,18 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `36`
-- Delivered main: `60fe9e4dec953a71f6ea0e87581c2e45ca3ea89a`
-- Main CI: `33179648286` (`GREEN`)
-- Main Benchmark evidence: `33179648264` (`GREEN`)
-- Active branch: `agent/m03-vision`
-- Active phase: `vision behavior candidate 24b9daa41bdbe3f96998e3019d94b78b404b7163 is accepted after three zero-finding cycle-15 reviews; the compact historical ledger is sealed`
-- Next gate: `push the feature branch, require exact-SHA CI and Benchmark evidence, then fast-forward main without force`
+- Delivered slices: `37`
+- Delivered main: `0a32e2f127d81fd0a94f0a1d54400329c114a756`
+- Main CI: `33208109021` (`GREEN`)
+- Main Benchmark evidence: `33208109055` (`GREEN`)
+- Active branch: `agent/m03-ask-cli`
+- Active phase: `native vision is delivered; bounded top-level ask CLI contract discovery is next`
+- Next gate: `create the active branch, audit the existing host/CLI seams and pinned behavior, then freeze the ask contract before implementation`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded `vision` behavior is implemented on the branch named above and is not
-yet delivered.
+bounded `vision` behavior is delivered as slice 37.
 
 ## Architecture ownership
 
@@ -128,8 +127,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 34 | Bounded foreground `terminal` exec | [contract](terminal.md) | [review](reviews/m03-terminal-review-01.md) | `ddd6a89` |
 | 35 | Ordinary `ask_user_question` | [contract](ask-user-question.md) | [review](reviews/m03-ask-user-question-review-01.md) | `490d122` |
 | 36 | Range-only `read_tool_result` with conditional Gateway projection | [contract](read-tool-result.md) | [review](reviews/m03-read-tool-result-review-01.md) | `7371260` |
+| 37 | Native `vision` with bounded Gateway evidence | [contract](vision.md) | [review](reviews/m03-vision-review-01.md) | `0a32e2f` |
 
-The exact delivered-main record after slice 36 is in the canonical live-status
+The exact delivered-main record after slice 37 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -144,19 +144,15 @@ requires an explicit reviewed plan change.
 - Provider-neutral engine integration with the native provider, transport,
   permission, session, configuration, and reference-host seams represented by
   delivered slices 1-16.
-- Seventeen native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
+- Eighteen native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
   `write_file`, `edit_file`, `delete_file`, `rename_file`, `copy_file`,
   `create_folder`, `file_info`, `open_file`, `web_fetch`, `web_search`,
-  `terminal`, `ask_user_question`, and `read_tool_result`.
+  `terminal`, `ask_user_question`, `read_tool_result`, and `vision`.
 - Delivered CLI slices for `permissions`, `models`, `doctor`, `sessions`, and
   strict summary-only `session <id>`.
 
 ### Remaining
 
-- Complete native `vision`, the final remaining M03 tool. Every
-  authority-bearing addition needs normalized preflight, exact policy/execution
-  agreement, explicit resource bounds, redacted diagnostics, cancellation/drop
-  evidence, and declared platform scope before integration.
 - Complete top-level CLI ownership for `help`, `ask`, `status`, `permissions`,
   `models`, `doctor`, `session`, `sessions`, `resume`, `replay`, and `workspace`.
   Existing partial/delivered commands do not close the combined boundary.
