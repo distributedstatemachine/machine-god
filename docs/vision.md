@@ -10,9 +10,11 @@ workspace-only path authority are intentional machine-god bounds.
 
 `vision` inspects authorized local raster images through the configured AI
 Gateway model and returns bounded, structured factual evidence. Image bytes
-remain transient native data: they never become provider-neutral content
-blocks, ordinary conversation history, tool results, engine events, or durable
-session records.
+remain transient native data: machine-god adds no source-path, raw-image, or
+base64 fields to provider-neutral content blocks, ordinary conversation
+history, tool results, engine events, or durable session records. Provider
+evidence is untrusted arbitrary text and may repeat request content, including
+an encoding of image data; callers must not treat evidence strings as redacted.
 
 The exact model-visible input is an object containing `focus` and exactly one
 source:
@@ -203,12 +205,16 @@ or hidden parallel request.
 ## Result
 
 The tool returns a path-free object whose `images` array exactly matches input
-order. A partial provider response that omits one or more requested records
-becomes `missing_provider_record` for each omitted image. An entirely empty
-response is structurally invalid and becomes `provider_response_invalid`
-after the one semantic retry. Local admission failure becomes
-`image_unavailable`; provider/transport failure becomes `vision_unavailable`;
-and exhausted evidence/output capacity becomes `output_limit_exceeded`.
+order. "Path-free" describes the result schema: machine-god adds no source-path,
+raw-image, or base64 field. It does not constrain provider-authored evidence
+strings, which remain untrusted arbitrary text and may contain path-like text
+or repeat request content. A partial provider response that omits one or more
+requested records becomes `missing_provider_record` for each omitted image. An
+entirely empty response is structurally invalid and becomes
+`provider_response_invalid` after the one semantic retry. Local admission
+failure becomes `image_unavailable`; provider/transport failure becomes
+`vision_unavailable`; and exhausted evidence/output capacity becomes
+`output_limit_exceeded`.
 
 Each provider batch independently obeys its 20 KiB evidence ceiling. If the
 combined legal batch evidence would exceed the 48 KiB complete tool-result
@@ -237,9 +243,10 @@ whitespace is preserved as provider evidence, matching the pinned contract.
 `visible_text` and `details` are ordered bounded string arrays. Provider records
 are reordered to the requested IDs. Extra, duplicate, or unauthorized records
 invalidate the batch. The tool succeeds when at least one image succeeds and
-sets `ToolOutput.is_error` only when every requested image fails. It never
-exposes a path, MIME diagnostic, image byte, base64 value, request body,
-provider body, credential, or endpoint diagnostic.
+sets `ToolOutput.is_error` only when every requested image fails. Machine-god
+adds no source path, MIME diagnostic, raw image, base64 value, request body,
+provider body, credential, or endpoint diagnostic to that result; this does not
+redact or otherwise constrain provider evidence strings.
 
 ## Resource and lifecycle limits
 
