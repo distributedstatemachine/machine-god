@@ -126,9 +126,10 @@ impl VisionBatchRequest {
     ///
     /// # Errors
     ///
-    /// Returns a fixed invalid-request error when the focus is blank, contains
-    /// NUL, or is too long, the image count is outside `1..=8`, image IDs
-    /// repeat, or aggregate raw image bytes exceed 8 MiB.
+    /// Returns a fixed invalid-request error when the focus is blank under the
+    /// exact space, tab, CR, and LF edge set, contains NUL, or is too long, the
+    /// image count is outside `1..=8`, image IDs repeat, or aggregate raw image
+    /// bytes exceed 8 MiB.
     pub fn new(
         session_id: SessionId,
         focus: String,
@@ -158,11 +159,7 @@ impl VisionBatchRequest {
                     VisionTransportError::new(VisionTransportErrorKind::InvalidRequest)
                 })?;
         }
-        if focus
-            .trim_matches(|character: char| character.is_ascii_whitespace())
-            .is_empty()
-            || focus.contains('\0')
-        {
+        if focus_is_blank(&focus) || focus.contains('\0') {
             return Err(VisionTransportError::new(
                 VisionTransportErrorKind::InvalidRequest,
             ));
@@ -468,6 +465,10 @@ fn valid_outcome_content(outcome: &VisionImageOutcome) -> bool {
 
 fn trim_ascii_edges(value: &str) -> &str {
     value.trim_matches(|character| matches!(character, ' ' | '\t' | '\r' | '\n'))
+}
+
+fn focus_is_blank(focus: &str) -> bool {
+    trim_ascii_edges(focus).is_empty()
 }
 
 fn retained_evidence_bytes(images: &[VisionImageResult]) -> Option<usize> {

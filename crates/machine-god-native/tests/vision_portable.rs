@@ -64,6 +64,24 @@ fn request_accepts_exact_bounds_and_preserves_order() {
 }
 
 #[test]
+fn request_uses_only_the_pinned_focus_blank_edges() {
+    for focus in ["\u{b}", "\u{c}"] {
+        let request = VisionBatchRequest::new(session(), focus.to_owned(), vec![image(1, 1)])
+            .expect("vertical tab and form feed are nonblank focus content");
+        assert_eq!(request.focus(), focus);
+    }
+
+    for focus in [" ", "\t", "\r", "\n", " \t\r\n"] {
+        assert_eq!(
+            VisionBatchRequest::new(session(), focus.to_owned(), vec![image(1, 1)])
+                .unwrap_err()
+                .kind(),
+            VisionTransportErrorKind::InvalidRequest
+        );
+    }
+}
+
+#[test]
 fn request_rejects_blank_or_oversized_focus_and_invalid_image_sets() {
     let cases = [
         VisionBatchRequest::new(session(), " \n".to_owned(), vec![image(1, 1)]),
