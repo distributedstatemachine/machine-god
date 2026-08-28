@@ -8,9 +8,10 @@ use machine_god_native::{
     AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
     AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest,
     AiGatewayVisionConfigErrorKind, AiGatewayVisionTransport, MAX_VISION_ATTEMPT_EVIDENCE_BYTES,
-    MAX_VISION_BATCH_RAW_BYTES, MAX_VISION_FOCUS_BYTES, MAX_VISION_REQUEST_BYTES,
-    MAX_VISION_RESPONSE_BYTES, MAX_VISION_RESPONSE_JSON_NODES, VisionBatchRequest, VisionImage,
-    VisionImageOutcome, VisionMediaType, VisionTransport, VisionTransportErrorKind,
+    MAX_VISION_BATCH_RAW_BYTES, MAX_VISION_EVIDENCE_LIST_ITEMS, MAX_VISION_EVIDENCE_STRING_BYTES,
+    MAX_VISION_FOCUS_BYTES, MAX_VISION_REQUEST_BYTES, MAX_VISION_RESPONSE_BYTES,
+    MAX_VISION_RESPONSE_JSON_NODES, VisionBatchRequest, VisionImage, VisionImageOutcome,
+    VisionMediaType, VisionTransport, VisionTransportErrorKind,
 };
 use serde_json::{Value, json};
 use std::future::Future;
@@ -150,6 +151,20 @@ fn sse_text(text: &str) -> Vec<u8> {
         json!({"type": "text-end", "id": "vision-text"}),
         json!({"type": "finish", "finishReason": {"unified": "stop"}}),
     ])
+}
+
+fn sse_unframed_text(text: &str) -> Vec<u8> {
+    sse_events(&[
+        json!({"type": "text-delta", "id": "vision-text", "delta": text}),
+        json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+    ])
+}
+
+fn sse_empty_text() -> Vec<u8> {
+    sse_events(&[json!({
+        "type": "finish",
+        "finishReason": {"unified": "stop"}
+    })])
 }
 
 fn sse_events(events: &[Value]) -> Vec<u8> {
@@ -293,6 +308,14 @@ fn response_decoding_survives_every_byte_fragmentation() {
 }
 
 #[test]
+fn pinned_raw_v4_unframed_text_delta_finish_and_done_sequence_is_accepted() {
+    let transport = ScriptedTransport::one(sse_unframed_text(&valid_result().to_string()));
+    let result = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap();
+    assert_eq!(result.images().len(), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn exact_raw_batch_and_hostile_focus_use_one_exact_body_allocation_below_the_ceiling() {
     let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
     let bytes = vec![0xa5; MAX_VISION_BATCH_RAW_BYTES];
@@ -346,15 +369,14 @@ fn response_json_node_budget_is_aggregate_across_events_and_structured_evidence(
     let mut oversized_events = base_events;
     oversized_events[0]["warnings"] = Value::Array(vec![json!(0); exact_padding + 1]);
     let oversized = sse_events(&oversized_events);
-    let oversized_transport =
-        ScriptedTransport::new(vec![vec![oversized.clone()], vec![oversized]]);
+    let oversized_transport = ScriptedTransport::one(oversized);
     let error = execute(
         Arc::new(oversized_transport.clone()),
         request(vec![png(1, &[1])]),
     )
     .unwrap_err();
-    assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
-    assert_eq!(oversized_transport.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(error.kind(), VisionTransportErrorKind::ResponseTooLarge);
+    assert_eq!(oversized_transport.calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -381,6 +403,119 @@ fn second_semantic_invalidity_returns_stable_error_after_exactly_two_attempts() 
     let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
     assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
     assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn empty_success_output_retries_once_then_accepts_valid_structured_evidence() {
+    let empty = sse_empty_text();
+    let valid = sse_unframed_text(&valid_result().to_string());
+    let transport = ScriptedTransport::new(vec![vec![empty], vec![valid]]);
+
+    let result = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap();
+    assert_eq!(result.images().len(), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn two_empty_success_outputs_exhaust_the_single_semantic_retry() {
+    let empty = sse_empty_text();
+    let transport = ScriptedTransport::new(vec![vec![empty.clone()], vec![empty]]);
+
+    let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
+    assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn summary_blankness_uses_ascii_edges_and_preserves_nbsp_content() {
+    let ascii_blank = json!({"images": [{
+        "image_id": 1,
+        "status": "ok",
+        "summary": " \t\r\n",
+        "visible_text": [],
+        "details": []
+    }]});
+    let blank_response = sse_unframed_text(&ascii_blank.to_string());
+    let blank_transport =
+        ScriptedTransport::new(vec![vec![blank_response.clone()], vec![blank_response]]);
+    let error = execute(
+        Arc::new(blank_transport.clone()),
+        request(vec![png(1, &[1])]),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
+    assert_eq!(blank_transport.calls.load(Ordering::SeqCst), 2);
+
+    let nbsp = json!({"images": [{
+        "image_id": 1,
+        "status": "ok",
+        "summary": "\u{00a0}",
+        "visible_text": [],
+        "details": []
+    }]});
+    let nbsp_response = sse_unframed_text(&nbsp.to_string());
+    let nbsp_transport =
+        ScriptedTransport::new(vec![vec![nbsp_response.clone()], vec![nbsp_response]]);
+    let result = execute(
+        Arc::new(nbsp_transport.clone()),
+        request(vec![png(1, &[1])]),
+    )
+    .unwrap();
+    let VisionImageOutcome::Ok { summary, .. } = result.images()[0].outcome() else {
+        panic!("expected successful evidence")
+    };
+    assert_eq!(summary, "\u{00a0}");
+    assert_eq!(nbsp_transport.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn structured_evidence_resource_ceilings_never_semantically_retry() {
+    let oversized = [
+        json!({"images": [{
+            "image_id": 1,
+            "status": "ok",
+            "summary": "s".repeat(MAX_VISION_EVIDENCE_STRING_BYTES + 1),
+            "visible_text": [],
+            "details": []
+        }]}),
+        json!({"images": [{
+            "image_id": 1,
+            "status": "ok",
+            "summary": "ok",
+            "visible_text": vec![""; MAX_VISION_EVIDENCE_LIST_ITEMS + 1],
+            "details": []
+        }]}),
+        json!({"images": [
+            {
+                "image_id": 1,
+                "status": "ok",
+                "summary": "one",
+                "visible_text": [],
+                "details": []
+            },
+            {
+                "image_id": 2,
+                "status": "ok",
+                "summary": "two",
+                "visible_text": [],
+                "details": []
+            }
+        ]}),
+        json!({"images": [{
+            "image_id": 1,
+            "status": "ok",
+            "summary": "s".repeat(7_000),
+            "visible_text": ["v".repeat(7_000)],
+            "details": ["d".repeat(7_000)]
+        }]}),
+    ];
+
+    for result in oversized {
+        let transport = ScriptedTransport::one(sse_unframed_text(&result.to_string()));
+        let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
+        assert_eq!(error.kind(), VisionTransportErrorKind::ResponseTooLarge);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[test]
@@ -465,12 +600,11 @@ fn provider_outages_protocol_failures_and_output_limits_never_semantically_retry
 }
 
 #[test]
-fn strict_text_lifecycle_rejects_delta_end_or_finish_out_of_sequence() {
+fn optional_text_lifecycle_remains_strict_when_start_or_end_is_present() {
     let cases = [
         vec![
             json!({"type": "text-delta", "id": "vision-text", "delta": "{}"}),
-            json!({"type": "text-end", "id": "vision-text"}),
-            json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+            json!({"type": "text-start", "id": "vision-text"}),
         ],
         vec![
             json!({"type": "text-end", "id": "vision-text"}),
@@ -480,6 +614,10 @@ fn strict_text_lifecycle_rejects_delta_end_or_finish_out_of_sequence() {
             json!({"type": "text-start", "id": "vision-text"}),
             json!({"type": "text-delta", "id": "vision-text", "delta": "{}"}),
             json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+        ],
+        vec![
+            json!({"type": "text-delta", "id": "vision-text", "delta": "{}"}),
+            json!({"type": "text-end", "id": "vision-text"}),
         ],
         vec![
             json!({"type": "text-start", "id": "vision-text"}),

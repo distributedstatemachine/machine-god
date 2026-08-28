@@ -2,11 +2,12 @@
 
 use crate::ai_gateway::{build_gateway_transport_request, parse_strict_json, valid_model};
 use crate::{
-    AiGatewayTransport, MAX_VISION_ATTEMPT_EVIDENCE_BYTES, MAX_VISION_REQUEST_BYTES,
-    MAX_VISION_RESPONSE_BYTES, MAX_VISION_RESPONSE_JSON_NODES, MAX_VISION_RESPONSE_RECORD_BYTES,
-    MAX_VISION_RESPONSE_RECORDS, VisionBatchRequest, VisionBatchResponse, VisionImageOutcome,
-    VisionImageResult, VisionProviderFailure, VisionProviderFailureCode, VisionTransport,
-    VisionTransportError, VisionTransportErrorKind,
+    AiGatewayTransport, MAX_VISION_ATTEMPT_EVIDENCE_BYTES, MAX_VISION_EVIDENCE_LIST_ITEMS,
+    MAX_VISION_EVIDENCE_STRING_BYTES, MAX_VISION_REQUEST_BYTES, MAX_VISION_RESPONSE_BYTES,
+    MAX_VISION_RESPONSE_JSON_NODES, MAX_VISION_RESPONSE_RECORD_BYTES, MAX_VISION_RESPONSE_RECORDS,
+    VisionBatchRequest, VisionBatchResponse, VisionImageOutcome, VisionImageResult,
+    VisionProviderFailure, VisionProviderFailureCode, VisionTransport, VisionTransportError,
+    VisionTransportErrorKind,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -180,12 +181,11 @@ async fn run_attempt(
     drop(stream);
     check_cancelled(&cancellation)?;
     let evidence = decoder.finish(&cancellation)?;
-    Ok(
-        match decode_structured_response(&evidence.text, source, evidence.remaining_json_nodes) {
-            Ok(response) => AttemptResult::Parsed(response),
-            Err(()) => AttemptResult::InvalidStructuredResponse,
-        },
-    )
+    match decode_structured_response(&evidence.text, source, evidence.remaining_json_nodes) {
+        Ok(response) => Ok(AttemptResult::Parsed(response)),
+        Err(StructuredDecodeError::Invalid) => Ok(AttemptResult::InvalidStructuredResponse),
+        Err(StructuredDecodeError::ResponseTooLarge) => Err(response_too_large()),
+    }
 }
 
 fn build_worker_body(
@@ -535,7 +535,7 @@ impl VisionSseDecoder {
             self.pending_line_end = false;
             self.consume_record(cancellation)?;
         }
-        if !matches!(self.state.completion, CompletionState::Done) || self.state.text.is_empty() {
+        if !matches!(self.state.completion, CompletionState::Done) {
             return Err(protocol_error());
         }
         let remaining_json_nodes = MAX_VISION_RESPONSE_JSON_NODES
@@ -568,6 +568,7 @@ enum TextLifecycle {
     #[default]
     NotStarted,
     Started,
+    Unframed,
     Ended,
 }
 
@@ -662,8 +663,10 @@ impl VisionResponseState {
         &mut self,
         object: &Map<String, Value>,
     ) -> Result<(), VisionTransportError> {
-        if self.text_lifecycle != TextLifecycle::Started
-            || !known_keys(object, &["type", "id", "delta", "providerMetadata"])
+        if !matches!(
+            self.text_lifecycle,
+            TextLifecycle::NotStarted | TextLifecycle::Started | TextLifecycle::Unframed
+        ) || !known_keys(object, &["type", "id", "delta", "providerMetadata"])
             || !valid_provider_metadata(object.get("providerMetadata"))
         {
             return Err(protocol_error());
@@ -676,6 +679,9 @@ impl VisionResponseState {
             return Err(response_too_large());
         }
         self.text.extend_from_slice(delta.as_bytes());
+        if self.text_lifecycle == TextLifecycle::NotStarted {
+            self.text_lifecycle = TextLifecycle::Unframed;
+        }
         Ok(())
     }
 
@@ -700,7 +706,7 @@ impl VisionResponseState {
     ) -> Result<(), VisionTransportError> {
         let finish_reason = parse_finish_reason(object.remove("finishReason"));
         if self.completion != CompletionState::Reading
-            || self.text_lifecycle != TextLifecycle::Ended
+            || self.text_lifecycle == TextLifecycle::Started
             || !known_keys(
                 &object,
                 &["type", "finishReason", "usage", "providerMetadata"],
@@ -736,43 +742,62 @@ impl VisionResponseState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StructuredDecodeError {
+    Invalid,
+    ResponseTooLarge,
+}
+
 fn decode_structured_response(
     text: &[u8],
     request: &VisionBatchRequest,
     remaining_json_nodes: usize,
-) -> Result<VisionBatchResponse, ()> {
+) -> Result<VisionBatchResponse, StructuredDecodeError> {
     if text.len() > MAX_VISION_ATTEMPT_EVIDENCE_BYTES {
-        return Err(());
+        return Err(StructuredDecodeError::ResponseTooLarge);
     }
-    let text = std::str::from_utf8(text).map_err(|_| ())?;
+    let text = std::str::from_utf8(text).map_err(|_| StructuredDecodeError::Invalid)?;
     let payload = single_json_fence_payload(text).unwrap_or(text);
-    let value = parse_strict_json(payload, remaining_json_nodes).map_err(|_| ())?;
-    validate_json_string_bounds(&value).map_err(|_| ())?;
+    let value = parse_strict_json(payload, remaining_json_nodes).map_err(|error| {
+        if strict_json_error_is_node_limit(&error) {
+            StructuredDecodeError::ResponseTooLarge
+        } else {
+            StructuredDecodeError::Invalid
+        }
+    })?;
+    validate_json_string_bounds(&value).map_err(|_| StructuredDecodeError::ResponseTooLarge)?;
     let Value::Object(mut root) = value else {
-        return Err(());
+        return Err(StructuredDecodeError::Invalid);
     };
     if root.len() != 1 {
-        return Err(());
+        return Err(StructuredDecodeError::Invalid);
     }
-    let Value::Array(records) = root.remove("images").ok_or(())? else {
-        return Err(());
+    let Value::Array(records) = root
+        .remove("images")
+        .ok_or(StructuredDecodeError::Invalid)?
+    else {
+        return Err(StructuredDecodeError::Invalid);
     };
-    if records.is_empty() || records.len() > request.images().len() {
-        return Err(());
+    if records.is_empty() {
+        return Err(StructuredDecodeError::Invalid);
+    }
+    if records.len() > request.images().len() {
+        return Err(StructuredDecodeError::ResponseTooLarge);
     }
     let mut decoded = Vec::with_capacity(records.len());
+    let mut retained_evidence_bytes = 0_usize;
     for record in records {
         let Value::Object(mut record) = record else {
-            return Err(());
+            return Err(StructuredDecodeError::Invalid);
         };
         let status = record
             .remove("status")
             .and_then(|value| value.as_str().map(str::to_owned))
-            .ok_or(())?;
+            .ok_or(StructuredDecodeError::Invalid)?;
         let image_id = record
             .remove("image_id")
             .and_then(|value| value.as_u64())
-            .ok_or(())?;
+            .ok_or(StructuredDecodeError::Invalid)?;
         if image_id == 0
             || !request
                 .images()
@@ -782,53 +807,99 @@ fn decode_structured_response(
                 .iter()
                 .any(|previous: &VisionImageResult| previous.image_id() == image_id)
         {
-            return Err(());
+            return Err(StructuredDecodeError::Invalid);
         }
         let outcome = match status.as_str() {
             "ok" => {
                 if record.len() != 3 {
-                    return Err(());
+                    return Err(StructuredDecodeError::Invalid);
                 }
                 let summary = take_string(&mut record, "summary")?;
-                if summary.trim().is_empty() {
-                    return Err(());
+                if summary.len() > MAX_VISION_EVIDENCE_STRING_BYTES {
+                    return Err(StructuredDecodeError::ResponseTooLarge);
                 }
+                if summary.trim_ascii().is_empty() {
+                    return Err(StructuredDecodeError::Invalid);
+                }
+                let visible_text = take_strings(&mut record, "visible_text")?;
+                let details = take_strings(&mut record, "details")?;
+                retained_evidence_bytes = charge_evidence(
+                    retained_evidence_bytes,
+                    std::iter::once(&summary)
+                        .chain(visible_text.iter())
+                        .chain(details.iter()),
+                )?;
                 VisionImageOutcome::Ok {
                     summary,
-                    visible_text: take_strings(&mut record, "visible_text")?,
-                    details: take_strings(&mut record, "details")?,
+                    visible_text,
+                    details,
                 }
             }
             "failed" => {
                 if record.len() != 1 || take_string(&mut record, "error")? != "vision_unavailable" {
-                    return Err(());
+                    return Err(StructuredDecodeError::Invalid);
                 }
                 VisionImageOutcome::Failed {
                     error: VisionProviderFailure::new(VisionProviderFailureCode::VisionUnavailable),
                 }
             }
-            _ => return Err(()),
+            _ => return Err(StructuredDecodeError::Invalid),
         };
-        decoded.push(VisionImageResult::new(image_id, outcome).map_err(|_| ())?);
+        decoded.push(
+            VisionImageResult::new(image_id, outcome)
+                .map_err(|_| StructuredDecodeError::Invalid)?,
+        );
     }
-    VisionBatchResponse::new(decoded).map_err(|_| ())
+    VisionBatchResponse::new(decoded).map_err(|_| StructuredDecodeError::Invalid)
 }
 
-fn take_string(object: &mut Map<String, Value>, name: &str) -> Result<String, ()> {
-    object
-        .remove(name)
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .ok_or(())
-}
-
-fn take_strings(object: &mut Map<String, Value>, name: &str) -> Result<Vec<String>, ()> {
-    let Value::Array(values) = object.remove(name).ok_or(())? else {
-        return Err(());
+fn take_string(
+    object: &mut Map<String, Value>,
+    name: &str,
+) -> Result<String, StructuredDecodeError> {
+    let Some(Value::String(value)) = object.remove(name) else {
+        return Err(StructuredDecodeError::Invalid);
     };
-    values
-        .into_iter()
-        .map(|value| value.as_str().map(str::to_owned).ok_or(()))
-        .collect()
+    Ok(value)
+}
+
+fn take_strings(
+    object: &mut Map<String, Value>,
+    name: &str,
+) -> Result<Vec<String>, StructuredDecodeError> {
+    let Value::Array(values) = object.remove(name).ok_or(StructuredDecodeError::Invalid)? else {
+        return Err(StructuredDecodeError::Invalid);
+    };
+    if values.len() > MAX_VISION_EVIDENCE_LIST_ITEMS {
+        return Err(StructuredDecodeError::ResponseTooLarge);
+    }
+    let mut strings = Vec::with_capacity(values.len());
+    for value in values {
+        let Value::String(value) = value else {
+            return Err(StructuredDecodeError::Invalid);
+        };
+        if value.len() > MAX_VISION_EVIDENCE_STRING_BYTES {
+            return Err(StructuredDecodeError::ResponseTooLarge);
+        }
+        strings.push(value);
+    }
+    Ok(strings)
+}
+
+fn charge_evidence<'a>(
+    initial: usize,
+    mut strings: impl Iterator<Item = &'a String>,
+) -> Result<usize, StructuredDecodeError> {
+    strings.try_fold(initial, |total, value| {
+        total
+            .checked_add(value.len())
+            .filter(|total| *total <= MAX_VISION_ATTEMPT_EVIDENCE_BYTES)
+            .ok_or(StructuredDecodeError::ResponseTooLarge)
+    })
+}
+
+fn strict_json_error_is_node_limit(error: &serde_json::Error) -> bool {
+    error.to_string().starts_with("JSON node limit exceeded")
 }
 
 fn single_json_fence_payload(text: &str) -> Option<&str> {
