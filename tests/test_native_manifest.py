@@ -26,8 +26,22 @@ WEB_SEARCH_SOURCE = (
     / "src"
     / "web_search.rs"
 )
+VISION_PORTABLE_SOURCE = (
+    REPOSITORY_ROOT
+    / "crates"
+    / "machine-god-native"
+    / "src"
+    / "vision_portable.rs"
+)
 CLI_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-cli" / "Cargo.toml"
 NON_WASM_CFG = 'cfg(not(target_family = "wasm"))'
+VISION_ADAPTER_CFG = (
+    'cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))'
+)
+VISION_TOOL_CFG = (
+    'cfg(all(feature = "ai-gateway-http", '
+    'not(target_family = "wasm"), unix))'
+)
 MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
     "hickory-proto",
     "hickory-resolver",
@@ -283,6 +297,7 @@ class NativeManifestTests(unittest.TestCase):
             set(features["ai-gateway-http"]),
             {
                 "ai-gateway-model-catalog-http",
+                "dep:base64",
                 "dep:bytes",
                 "web-fetch-http",
             },
@@ -428,6 +443,90 @@ class NativeManifestTests(unittest.TestCase):
             self.assertNotIn("tokio", dependencies)
             self.assertNotIn("reqwest", dependencies)
             self.assertNotIn("hickory-resolver", dependencies)
+
+    def test_vision_portable_contract_and_native_edges_are_feature_scoped(
+        self,
+    ) -> None:
+        lib_source = NATIVE_LIB_SOURCE.read_text(encoding="utf-8")
+        portable_source = VISION_PORTABLE_SOURCE.read_text(encoding="utf-8")
+        features = self.manifest["features"]
+
+        self.assertEqual(lib_source.count("\nmod vision_portable;\n"), 1)
+        self.assertEqual(lib_source.count("pub use vision_portable::{"), 1)
+        module_prefix = lib_source[: lib_source.index("mod vision_portable;")]
+        self.assertNotIn("#[cfg", module_prefix.rsplit(";", maxsplit=1)[1])
+        export_prefix = lib_source[: lib_source.index("pub use vision_portable::{")]
+        self.assertNotIn("#[cfg", export_prefix.rsplit("};", maxsplit=1)[1])
+        self.assertIn("VisionDeadline", portable_source)
+        self.assertIn("pub trait VisionDeadline", portable_source)
+        self.assertIn("VisionDeadline, VisionImage", lib_source)
+        for dependency in ["base64", "reqwest", "tokio"]:
+            self.assertNotIn(dependency, portable_source)
+
+        tool_cfg = f"#[{VISION_TOOL_CFG}]\n"
+        self.assertEqual(lib_source.count(tool_cfg + "mod vision;"), 1)
+        self.assertEqual(lib_source.count(tool_cfg + "pub use vision::{"), 1)
+
+        adapter_cfg = f"#[{VISION_ADAPTER_CFG}]\n"
+        self.assertEqual(
+            lib_source.count(adapter_cfg + "mod ai_gateway_vision;"),
+            1,
+        )
+        self.assertEqual(
+            lib_source.count(adapter_cfg + "pub use ai_gateway_vision::{"),
+            1,
+        )
+
+        self.assertEqual(features["ai-gateway-http"].count("dep:base64"), 1)
+        self.assertEqual(
+            [
+                (feature, dependency)
+                for feature, dependencies in features.items()
+                for dependency in dependencies
+                if "base64" in dependency
+            ],
+            [("ai-gateway-http", "dep:base64")],
+        )
+        self.assertEqual(
+            self.manifest["dependencies"]["base64"],
+            {"workspace": True, "optional": True},
+        )
+
+        completed = subprocess.run(
+            [
+                "cargo",
+                "+1.94.1",
+                "tree",
+                "--locked",
+                "-p",
+                "machine-god-native",
+                "--edges",
+                "normal",
+                "--depth",
+                "1",
+                "--prefix",
+                "none",
+                "--format",
+                "{p}",
+                "--no-default-features",
+                "--target",
+                "wasm32-wasip1",
+            ],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        direct_dependencies = {
+            line.split(maxsplit=1)[0]
+            for line in completed.stdout.splitlines()[1:]
+            if line
+        }
+        self.assertTrue(
+            {"base64", "bytes", "reqwest", "tokio"}.isdisjoint(
+                direct_dependencies
+            )
+        )
 
 
 if __name__ == "__main__":
