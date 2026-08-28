@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33179648286` (`GREEN`)
 - Main Benchmark evidence: `33179648264` (`GREEN`)
 - Active branch: `agent/m03-vision`
-- Active phase: `vision implementation complete; exact local gate is in progress`
-- Next gate: `pass the complete local gate and three fresh adversarial reviews`
+- Active phase: `vision exact local gate complete; adversarial review is next`
+- Next gate: `obtain zero findings from three fresh adversarial review tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
