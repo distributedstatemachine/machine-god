@@ -12,7 +12,7 @@ use machine_god_core::{
     BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolCall, Tool, ToolCall,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::BTreeMap;
@@ -39,6 +39,8 @@ use crate::vision_portable::{
 use rustix::fd::OwnedFd;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fs::{FileType, Mode, OFlags};
+
+use crate::session_store::JsonValueOwner;
 
 /// Model-visible tool name.
 pub const VISION_TOOL_NAME: &str = "vision";
@@ -304,7 +306,7 @@ impl fmt::Debug for VisionTool {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct VisionArguments {
     focus: String,
@@ -371,10 +373,14 @@ impl Tool for VisionTool {
     }
 
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
-        if call.name != vision_name() {
+        let ToolCall {
+            name, arguments, ..
+        } = call;
+        let arguments = JsonValueOwner::new(arguments);
+        if name != vision_name() {
             return Err(invalid_arguments_error());
         }
-        let request = canonical_request(call.arguments)?;
+        let request = canonical_request_owned(&arguments)?;
         match &request.sources {
             VisionSources::Paths(paths) => Ok(PreparedToolCall::new(
                 Capability::Vision {
@@ -395,8 +401,10 @@ impl Tool for VisionTool {
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        let arguments = JsonValueOwner::new(arguments);
         Box::pin(async move {
-            let request = canonical_request(arguments)?;
+            let request = canonical_request_owned(&arguments)?;
+            drop(arguments);
             check_cancellation_and_deadline(&cancellation, None)?;
 
             let CanonicalVisionRequest { focus, sources, .. } = request;
@@ -435,36 +443,38 @@ impl VisionTool {
         let deadline = Instant::now()
             .checked_add(self.limits.request_timeout)
             .ok_or_else(timeout_error)?;
-        let mut cancelled = cancellation.cancelled();
-        let mut timeout = self.deadline.wait_until(deadline);
-        let permit = self
-            .acquire_capacity(
-                &cancellation,
-                deadline,
-                Pin::new(&mut cancelled),
-                timeout.as_mut(),
-            )
-            .await?;
-        check_cancellation_and_deadline(&cancellation, Some(deadline))?;
-
-        let result = self
-            .process_paths(
-                &context,
-                &focus,
-                &paths,
-                &cancellation,
-                deadline,
-                Pin::new(&mut cancelled),
-                timeout.as_mut(),
-            )
-            .await;
-        drop(permit);
-        drop(timeout);
-        drop(cancelled);
-        match result {
-            Ok(output) => publish_output(output, &cancellation, Some(deadline)),
+        let mut teardown = VisionInvocationTeardown::new(
+            cancellation.cancelled(),
+            self.deadline.wait_until(deadline),
+        );
+        let acquired = {
+            let (cancelled, timeout) = teardown.waiters();
+            self.acquire_capacity(&cancellation, deadline, cancelled, timeout)
+                .await
+        };
+        let result = match acquired {
+            Ok(permit) => {
+                teardown.set_permit(permit);
+                match check_cancellation_and_deadline(&cancellation, Some(deadline)) {
+                    Ok(()) => {
+                        let (cancelled, timeout) = teardown.waiters();
+                        self.process_paths(
+                            &context,
+                            &focus,
+                            &paths,
+                            &cancellation,
+                            deadline,
+                            cancelled,
+                            timeout,
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             Err(error) => Err(error),
-        }
+        };
+        teardown.finish(&cancellation, deadline, result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1061,10 +1071,53 @@ fn local_boundary(
     }
 }
 
+#[cfg(test)]
 fn canonical_request(arguments: Value) -> Result<CanonicalVisionRequest, ToolError> {
-    preflight_arguments(&arguments)?;
-    let arguments: VisionArguments =
-        serde_json::from_value(arguments).map_err(|_| invalid_arguments_error())?;
+    canonical_request_owned(&JsonValueOwner::new(arguments))
+}
+
+fn canonical_request_owned(
+    arguments: &JsonValueOwner,
+) -> Result<CanonicalVisionRequest, ToolError> {
+    preflight_arguments(arguments.get())?;
+    let object = arguments
+        .get()
+        .as_object()
+        .expect("vision preflight admitted an object");
+    let focus = object
+        .get("focus")
+        .and_then(Value::as_str)
+        .expect("vision preflight admitted a string focus")
+        .to_owned();
+    let paths = object.get("paths").map(|paths| {
+        paths
+            .as_array()
+            .expect("vision preflight admitted a path array")
+            .iter()
+            .map(|path| {
+                path.as_str()
+                    .expect("vision preflight admitted string paths")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    });
+    let image_ids = object.get("image_ids").map(|image_ids| {
+        image_ids
+            .as_array()
+            .expect("vision preflight admitted an image ID array")
+            .iter()
+            .map(|image_id| {
+                image_id
+                    .as_u64()
+                    .expect("vision preflight admitted unsigned image IDs")
+            })
+            .collect::<Vec<_>>()
+    });
+    let arguments = VisionArguments {
+        focus,
+        paths,
+        image_ids,
+    };
     if arguments.focus.len() > MAX_VISION_FOCUS_BYTES
         || arguments
             .focus
@@ -1461,6 +1514,137 @@ fn render_ordered(mut images: Vec<RenderedImage>) -> Result<ToolOutput, ToolErro
         };
         let image_id = images[index].image_id;
         images[index] = RenderedImage::output_limit_exceeded(image_id);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+type VisionTimeoutFuture<'a> = dyn Future<Output = Result<(), VisionTransportError>> + Send + 'a;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+type VisionWaiters<'borrow, 'future> = (
+    Pin<&'borrow mut machine_god_core::Cancelled>,
+    Pin<&'borrow mut VisionTimeoutFuture<'future>>,
+);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct VisionInvocationTeardown<'a> {
+    cancellation_wait: Option<machine_god_core::Cancelled>,
+    timeout: Option<BoxFuture<'a, Result<(), VisionTransportError>>>,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'a> VisionInvocationTeardown<'a> {
+    fn new(
+        cancellation_wait: machine_god_core::Cancelled,
+        timeout: BoxFuture<'a, Result<(), VisionTransportError>>,
+    ) -> Self {
+        Self {
+            cancellation_wait: Some(cancellation_wait),
+            timeout: Some(timeout),
+            permit: None,
+        }
+    }
+
+    fn waiters(&mut self) -> VisionWaiters<'_, 'a> {
+        let Self {
+            cancellation_wait,
+            timeout,
+            ..
+        } = self;
+        (
+            Pin::new(
+                cancellation_wait
+                    .as_mut()
+                    .expect("vision cancellation wait exists until teardown"),
+            ),
+            timeout
+                .as_mut()
+                .expect("vision deadline wait exists until teardown")
+                .as_mut(),
+        )
+    }
+
+    fn set_permit(&mut self, permit: OwnedSemaphorePermit) {
+        debug_assert!(self.permit.is_none());
+        self.permit = Some(permit);
+    }
+
+    fn finish<T>(
+        mut self,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+        outcome: Result<T, ToolError>,
+    ) -> Result<T, ToolError> {
+        let timeout = self.timeout.take();
+        let timeout_drop = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(timeout)));
+        let cancellation_wait = self.cancellation_wait.take();
+        let cancellation_wait_drop =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(cancellation_wait)));
+
+        // Teardown-triggered cancellation and an elapsed cooperative deadline
+        // arbitrate both successful and failed work while capacity is retained.
+        let outcome = match check_cancellation_and_deadline(cancellation, Some(deadline)) {
+            Ok(()) => outcome,
+            Err(error) => Err(error),
+        };
+
+        let permit = self.permit.take();
+        let permit_drop = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(permit)));
+        // Releasing capacity may synchronously wake arbitrary waiter code or
+        // cross the absolute deadline. Re-adjudicate without retaining capacity
+        // while publishing or returning an earlier error.
+        let outcome = match check_cancellation_and_deadline(cancellation, Some(deadline)) {
+            Ok(()) => outcome,
+            Err(error) => Err(error),
+        };
+        settle_vision_cleanup_panics([timeout_drop, cancellation_wait_drop, permit_drop]);
+        outcome
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for VisionInvocationTeardown<'_> {
+    fn drop(&mut self) {
+        let preserve_existing_primary = std::thread::panicking();
+        let timeout = self.timeout.take();
+        let timeout_drop = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(timeout)));
+        let cancellation_wait = self.cancellation_wait.take();
+        let cancellation_wait_drop =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(cancellation_wait)));
+        let permit = self.permit.take();
+        let permit_drop = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(permit)));
+        settle_vision_cleanup_panics_preserving(
+            preserve_existing_primary,
+            [timeout_drop, cancellation_wait_drop, permit_drop],
+        );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn settle_vision_cleanup_panics<const N: usize>(cleanups: [std::thread::Result<()>; N]) {
+    settle_vision_cleanup_panics_preserving(false, cleanups);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn settle_vision_cleanup_panics_preserving<const N: usize>(
+    preserve_existing_primary: bool,
+    cleanups: [std::thread::Result<()>; N],
+) {
+    let mut selected = None;
+    for cleanup in cleanups {
+        if let Err(payload) = cleanup {
+            if preserve_existing_primary || selected.is_some() {
+                // Opaque panic-payload destruction is arbitrary work. Forget
+                // suppressed payloads so they cannot replace the primary panic.
+                std::mem::forget(payload);
+            } else {
+                selected = Some(payload);
+            }
+        }
+    }
+    if let Some(payload) = selected {
+        std::panic::resume_unwind(payload);
     }
 }
 
@@ -1867,11 +2051,12 @@ impl io::Write for JsonByteCounter {
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use std::cell::Cell;
-    use std::future;
+    use std::future::{self, Future as _};
     use std::io::Write as _;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::task::Context;
     use std::time::{Duration, Instant};
 
     use futures_executor::block_on;
@@ -1879,6 +2064,7 @@ mod tests {
         BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolAuthorization,
         SessionId, SessionIncarnationId, Tool, ToolCall, ToolCallId, ToolContext, ToolName, TurnId,
     };
+    use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
     use serde_json::{Value, json};
 
     use crate::vision_portable::{
@@ -1888,11 +2074,12 @@ mod tests {
 
     use super::{
         ImageFingerprint, LocalImageFailure, MAX_VISION_FOCUS_BYTES, MAX_VISION_PATH_COMPONENTS,
-        MAX_VISION_SERIALIZED_RESULT_BYTES, VisionConfigErrorKind, VisionDeadline, VisionLimits,
-        VisionTool, binding_syscall, canonical_request, finish_verified_image,
-        probe_verified_image, publish_output, render_attachment_failures, render_ordered,
-        sniff_media_type,
+        MAX_VISION_SERIALIZED_RESULT_BYTES, VisionConfigErrorKind, VisionDeadline,
+        VisionInvocationTeardown, VisionLimits, VisionTool, binding_syscall, canonical_request,
+        finish_verified_image, probe_verified_image, publish_output, render_attachment_failures,
+        render_ordered, sniff_media_type,
     };
+    use tokio::sync::Semaphore;
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -1982,6 +2169,87 @@ mod tests {
         }
     }
 
+    struct ObservePermitOnDropDeadline {
+        cancellation: CancellationToken,
+        permits: Arc<Mutex<Option<Arc<Semaphore>>>>,
+    }
+
+    impl VisionDeadline for ObservePermitOnDropDeadline {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+            Box::pin(ObservePermitOnDropFuture {
+                cancellation: self.cancellation.clone(),
+                permits: Arc::clone(&self.permits),
+            })
+        }
+    }
+
+    struct ObservePermitOnDropFuture {
+        cancellation: CancellationToken,
+        permits: Arc<Mutex<Option<Arc<Semaphore>>>>,
+    }
+
+    impl std::future::Future for ObservePermitOnDropFuture {
+        type Output = Result<(), VisionTransportError>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            std::task::Poll::Pending
+        }
+    }
+
+    impl Drop for ObservePermitOnDropFuture {
+        fn drop(&mut self) {
+            let permits = self
+                .permits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert_eq!(
+                permits
+                    .as_ref()
+                    .expect("test installs the vision semaphore")
+                    .available_permits(),
+                0,
+                "deadline teardown must retain active vision capacity",
+            );
+            assert!(self.cancellation.cancel());
+        }
+    }
+
+    struct PanicOnDropDeadline;
+
+    impl VisionDeadline for PanicOnDropDeadline {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+            Box::pin(PanicOnDropFuture)
+        }
+    }
+
+    struct PanicOnDropFuture;
+
+    impl std::future::Future for PanicOnDropFuture {
+        type Output = Result<(), VisionTransportError>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            std::task::Poll::Pending
+        }
+    }
+
+    impl Drop for PanicOnDropFuture {
+        fn drop(&mut self) {
+            panic!("injected vision deadline teardown panic");
+        }
+    }
+
     #[derive(Clone, Copy)]
     enum TransportMode {
         Success,
@@ -1989,6 +2257,8 @@ mod tests {
         CancelThenSuccess,
         InvalidRequest,
         ResponseTooLarge,
+        RuntimeRequired,
+        Pending,
     }
 
     struct FakeTransport {
@@ -2069,7 +2339,12 @@ mod tests {
             let cancel = matches!(self.mode, TransportMode::CancelThenSuccess);
             let invalid_request = matches!(self.mode, TransportMode::InvalidRequest);
             let response_too_large = matches!(self.mode, TransportMode::ResponseTooLarge);
+            let runtime_required = matches!(self.mode, TransportMode::RuntimeRequired);
+            let pending = matches!(self.mode, TransportMode::Pending);
             Box::pin(async move {
+                if pending {
+                    future::pending::<()>().await;
+                }
                 if cancel {
                     assert!(cancellation.cancel());
                 }
@@ -2081,6 +2356,11 @@ mod tests {
                 if response_too_large {
                     return Err(VisionTransportError::new(
                         VisionTransportErrorKind::ResponseTooLarge,
+                    ));
+                }
+                if runtime_required {
+                    return Err(VisionTransportError::new(
+                        VisionTransportErrorKind::RuntimeRequired,
                     ));
                 }
                 response
@@ -2122,6 +2402,75 @@ mod tests {
             turn_id: TurnId::new("vision-turn").expect("valid turn ID"),
             call_id: ToolCallId::new("vision-call").expect("valid test call ID"),
         }
+    }
+
+    fn deeply_nested_value(depth: usize) -> Value {
+        let mut value = Value::Null;
+        for _ in 0..depth {
+            value = Value::Array(vec![value]);
+        }
+        value
+    }
+
+    fn run_on_small_stack(operation: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .name("vision-small-stack".to_owned())
+            .stack_size(64 * 1024)
+            .spawn(operation)
+            .expect("spawn small-stack vision test")
+            .join()
+            .expect("small-stack vision operation completes");
+    }
+
+    #[test]
+    fn raw_json_ownership_is_nonrecursive_on_every_early_boundary() {
+        const DEPTH: usize = 32_000;
+
+        run_on_small_stack(|| {
+            let root = TestRoot::new();
+            let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+            let tool = tool(&root, transport);
+            let mut wrong_name = call(deeply_nested_value(DEPTH));
+            wrong_name.name = ToolName::new("not_vision").expect("valid wrong tool name");
+            let error = tool
+                .prepare(wrong_name)
+                .expect_err("wrong-name preparation rejects raw arguments");
+            assert_eq!(error.code, "vision_invalid_arguments");
+        });
+
+        run_on_small_stack(|| {
+            let root = TestRoot::new();
+            let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+            let tool = tool(&root, transport);
+            let error = block_on(tool.execute(
+                context(),
+                deeply_nested_value(DEPTH),
+                CancellationToken::new(),
+            ))
+            .expect_err("direct execution preflight rejects nested arguments");
+            assert_eq!(error.code, "vision_invalid_arguments");
+        });
+
+        run_on_small_stack(|| {
+            let root = TestRoot::new();
+            let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+            let tool = tool(&root, transport);
+            let error = tool
+                .prepare(call(deeply_nested_value(DEPTH)))
+                .expect_err("borrowed preflight rejects nested arguments");
+            assert_eq!(error.code, "vision_invalid_arguments");
+        });
+
+        run_on_small_stack(|| {
+            let root = TestRoot::new();
+            let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+            let tool = tool(&root, transport);
+            drop(tool.execute(
+                context(),
+                deeply_nested_value(DEPTH),
+                CancellationToken::new(),
+            ));
+        });
     }
 
     #[test]
@@ -2265,7 +2614,7 @@ mod tests {
 
             assert!(result.is_some_and(|result| result.is_err()));
             assert!(
-                allocations.count_total <= 2,
+                allocations.count_total <= 3,
                 "raw argument rejection cloned or deserialized the prebuilt value: {allocations:?}"
             );
         }
@@ -3053,15 +3402,21 @@ mod tests {
         std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
         let transport = Arc::new(FakeTransport::new(TransportMode::Success));
         let cancellation = CancellationToken::new();
-        let tool = VisionTool::with_transport(
+        let observed_permits = Arc::new(Mutex::new(None));
+        let tool = VisionTool::with_bounded_transport(
             root.path.as_path(),
             target(),
             Arc::clone(&transport) as Arc<dyn VisionTransport>,
-            Arc::new(CancelOnDropDeadline {
+            Arc::new(ObservePermitOnDropDeadline {
                 cancellation: cancellation.clone(),
+                permits: Arc::clone(&observed_permits),
             }),
+            VisionLimits::new(Duration::from_secs(60), 1).expect("capacity-one vision limits"),
         )
         .expect("construct drop-cancelling deadline tool");
+        *observed_permits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&tool.permits));
 
         let error = block_on(tool.execute(
             context(),
@@ -3071,6 +3426,146 @@ mod tests {
         .expect_err("teardown cancellation must reject completed visual output");
 
         assert_eq!(error.code, "vision_cancelled");
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dropping_pending_execution_tears_down_waiters_before_releasing_capacity() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Pending));
+        let cancellation = CancellationToken::new();
+        let observed_permits = Arc::new(Mutex::new(None));
+        let tool = VisionTool::with_bounded_transport(
+            root.path.as_path(),
+            target(),
+            Arc::clone(&transport) as Arc<dyn VisionTransport>,
+            Arc::new(ObservePermitOnDropDeadline {
+                cancellation: cancellation.clone(),
+                permits: Arc::clone(&observed_permits),
+            }),
+            VisionLimits::new(Duration::from_secs(60), 1).expect("capacity-one vision limits"),
+        )
+        .expect("construct pending drop vision tool");
+        *observed_permits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&tool.permits));
+
+        let mut execution = tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["one.png"]}),
+            cancellation.clone(),
+        );
+        let waker = futures_util::task::noop_waker();
+        let mut poll_context = Context::from_waker(&waker);
+        assert!(execution.as_mut().poll(&mut poll_context).is_pending());
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(tool.permits.available_permits(), 0);
+
+        drop(execution);
+
+        assert!(cancellation.is_cancelled());
+        assert_eq!(tool.permits.available_permits(), 1);
+    }
+
+    #[test]
+    fn deadline_teardown_cancellation_overrides_fatal_transport_and_capacity_errors() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+
+        let transport = Arc::new(FakeTransport::new(TransportMode::RuntimeRequired));
+        let fatal_cancellation = CancellationToken::new();
+        let fatal_tool = VisionTool::with_transport(
+            root.path.as_path(),
+            target(),
+            Arc::clone(&transport) as Arc<dyn VisionTransport>,
+            Arc::new(CancelOnDropDeadline {
+                cancellation: fatal_cancellation.clone(),
+            }),
+        )
+        .expect("construct fatal-transport vision tool");
+        let fatal = block_on(fatal_tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["one.png"]}),
+            fatal_cancellation,
+        ))
+        .expect_err("deadline teardown cancellation overrides fatal transport");
+        assert_eq!(fatal.code, "vision_cancelled");
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+
+        let capacity_cancellation = CancellationToken::new();
+        let capacity_tool = VisionTool::with_transport(
+            root.path.as_path(),
+            target(),
+            Arc::new(FakeTransport::new(TransportMode::Success)),
+            Arc::new(CancelOnDropDeadline {
+                cancellation: capacity_cancellation.clone(),
+            }),
+        )
+        .expect("construct capacity-error vision tool");
+        capacity_tool.permits.close();
+        let capacity = block_on(capacity_tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["one.png"]}),
+            capacity_cancellation,
+        ))
+        .expect_err("deadline teardown cancellation overrides capacity error");
+        assert_eq!(capacity.code, "vision_cancelled");
+    }
+
+    #[test]
+    fn capacity_release_reentrant_cancellation_wins_after_waiter_teardown() {
+        let cancellation = CancellationToken::new();
+        let semaphore = Arc::new(Semaphore::new(1));
+        let active = block_on(Arc::clone(&semaphore).acquire_owned())
+            .expect("acquire sole active vision permit");
+        let mut teardown =
+            VisionInvocationTeardown::new(cancellation.cancelled(), Box::pin(future::pending()));
+        teardown.set_permit(active);
+
+        let mut waiting = Box::pin(Arc::clone(&semaphore).acquire_owned());
+        let reentrant_cancellation = cancellation.clone();
+        let (waker, wake_handle) = reentrant_waker(Callback::Wake, move || {
+            reentrant_cancellation.cancel();
+        });
+        let mut poll_context = Context::from_waker(&waker);
+        assert!(waiting.as_mut().poll(&mut poll_context).is_pending());
+
+        let error = teardown
+            .finish(
+                &cancellation,
+                Instant::now() + Duration::from_secs(1),
+                Ok(()),
+            )
+            .expect_err("permit-release wake cancellation must reject success");
+        assert_eq!(error.code, "vision_cancelled");
+        assert!(wake_handle.calls() >= 1);
+        drop(waiting);
+    }
+
+    #[test]
+    fn panicking_deadline_teardown_releases_capacity_before_resuming_unwind() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = VisionTool::with_transport(
+            root.path.as_path(),
+            target(),
+            Arc::clone(&transport) as Arc<dyn VisionTransport>,
+            Arc::new(PanicOnDropDeadline),
+        )
+        .expect("construct panic-on-drop deadline tool");
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = block_on(tool.execute(
+                context(),
+                json!({"focus": "Inspect", "paths": ["one.png"]}),
+                CancellationToken::new(),
+            ));
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(tool.permits.available_permits(), 2);
         assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
     }
 
