@@ -50,8 +50,8 @@ pub const MAX_LIST_SESSION_DIRECTORY_ENTRIES: usize = 1_024;
 /// decoded, or returned.
 pub const MAX_LIST_SESSION_TOTAL_RECORD_BYTES: usize = 64 * 1_024 * 1_024;
 
-const MAX_STORED_JSON_DEPTH: usize = 64;
-const MAX_STORED_JSON_NODES: usize = 65_536;
+pub(crate) const MAX_STORED_JSON_DEPTH: usize = 64;
+pub(crate) const MAX_STORED_JSON_NODES: usize = 65_536;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SESSION_INSPECTION_READ_BUFFER_BYTES: usize = 4 * 1_024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

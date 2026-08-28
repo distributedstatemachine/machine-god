@@ -117,6 +117,8 @@ independent inclusive bounds:
 | Hard configurable active-read limit | 8 |
 | Transcript messages traversed | 4,096 |
 | Content blocks traversed | 65,536 |
+| Aggregate stored JSON nodes | 65,536 |
+| Stored JSON container depth | 64 |
 | Prior tool-result blocks scanned | 4,096 |
 | Aggregate compact result bytes scanned | 8 MiB |
 | Default returned page | 8 KiB |
@@ -129,9 +131,13 @@ it is synchronous, nonblocking, effect-free, and does not load a session.
 
 `execute` returns an inert future. First poll checks cancellation and acquires
 active-read capacity without waiting. The tool performs at most one store load,
-then newest-first bounded record traversal, cancellation-aware compact
-serialization into one reused buffer, fixed-digest handle comparison, and UTF-8
-range selection. It spawns no task or thread and performs no retry. Drop
+immediately guards the returned record for iterative destruction, and validates
+its JSON depth and aggregate node count. It scans only messages preceding the
+current assistant tool-call round, newest first, so current sibling results and
+placeholders do not consume prior-result limits. Compact serialization uses one
+reused buffer and checks cancellation while scanning string and key bytes in
+chunks of at most 1 KiB before fixed-digest comparison and UTF-8 range
+selection. The tool spawns no task or thread and performs no retry. Drop
 cancels ownership of the store future and releases capacity; a conforming
 injected store keeps its effects owned by that future or completes its own
 cleanup on drop.
@@ -170,6 +176,8 @@ taxonomy. `Display` is always `<code>: <message>`.
 
 Missing records, wrong incarnations, unknown handles, and handles whose prior
 result is outside the bounded scan all collapse to `read_tool_result_not_found`.
+An injected record exceeding the fixed JSON depth or aggregate-node ceiling is
+`read_tool_result_resource_limit` and is destroyed iteratively.
 A store failure preserves only `SessionStoreError.retryable`; its kind, code,
 message, debug detail, session identity, and persistence diagnostics are
 discarded. Public error and debug forms do not expose session IDs,

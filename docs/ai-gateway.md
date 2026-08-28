@@ -293,6 +293,10 @@ Historical tool results use two independent cumulative budgets, each initialized
 to the encoded-request maximum. Every complete compact `ToolOutput` must fit and
 decrement the source budget before projection is considered. Its selected full
 or projected Gateway value then fits and decrements the separate wire budget.
+The shared nonrecursive compact encoder bounds depth and nodes and checks
+cancellation while scanning string and key bytes in chunks of at most 1 KiB;
+an oversized unescaped string therefore stops at the remaining source budget
+instead of being scanned in full.
 Projection therefore cannot admit an oversized source by shrinking its wire
 form, and an unprojected result does not merge the two charges. The final outer
 request serialization remains independently subject to the encoded-body limit,

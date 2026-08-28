@@ -1,6 +1,11 @@
 //! Bounded session-backed paging for projected tool results.
 
-use crate::session_store::{RecordOwner, validate_record_json};
+use crate::session_store::{
+    MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner, validate_record_json,
+};
+use crate::tool_output_serializer::{
+    CompactToolOutputError, CompactToolOutputLimits, serialize_tool_output_compact,
+};
 use crate::tool_result_projection::{tool_result_digest, valid_tool_result_handle};
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, Message, PreparedToolCall, Role, SessionRecord,
@@ -477,56 +482,23 @@ fn serialize_output_bounded(
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
-    serialized.clear();
-    let (result, cancellation_observed, exceeded) = {
-        let mut writer = BoundedOutputWriter {
-            output: serialized,
-            remaining: limit,
-            cancellation,
-            cancellation_observed: false,
-            exceeded: false,
-        };
-        let result = serde_json::to_writer(&mut writer, output);
-        (result, writer.cancellation_observed, writer.exceeded)
-    };
-    if cancellation_observed || cancellation.is_cancelled() {
-        return Err(cancelled());
-    }
-    if exceeded {
-        return Err(not_found());
-    }
-    if result.is_err() {
-        return Err(resource_limit());
-    }
-    Ok(())
-}
-
-struct BoundedOutputWriter<'a> {
-    output: &'a mut Vec<u8>,
-    remaining: usize,
-    cancellation: &'a CancellationToken,
-    cancellation_observed: bool,
-    exceeded: bool,
-}
-
-impl Write for BoundedOutputWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.cancellation.is_cancelled() {
-            self.cancellation_observed = true;
-            return Err(io::Error::other("cancelled"));
-        }
-        if bytes.len() > self.remaining {
-            self.exceeded = true;
-            return Err(io::Error::other("limit"));
-        }
-        self.output.extend_from_slice(bytes);
-        self.remaining -= bytes.len();
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+    serialize_tool_output_compact(
+        output,
+        serialized,
+        CompactToolOutputLimits {
+            output_bytes: limit,
+            json_depth: MAX_STORED_JSON_DEPTH,
+            json_nodes: MAX_STORED_JSON_NODES,
+        },
+        cancellation,
+    )
+    .map_err(|error| match error {
+        CompactToolOutputError::Cancelled => cancelled(),
+        CompactToolOutputError::OutputLimit => not_found(),
+        CompactToolOutputError::JsonDepth
+        | CompactToolOutputError::JsonNodes
+        | CompactToolOutputError::Invalid => resource_limit(),
+    })
 }
 
 fn check_argument_bytes(arguments: &Value) -> Result<(), ToolError> {
